@@ -672,6 +672,10 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
         renderLeaf={renderLeaf}
         onKeyDown={handleCommandKeys}
         tabIndex={tabIndex}
+        autoCorrect='off'
+        autoCapitalize='off'
+        autoComplete='off'
+        spellCheck='false'
       />
     </EditFieldErrorBoundary>;
 

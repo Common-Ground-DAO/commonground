@@ -20,11 +20,13 @@ import { useUserData } from 'context/UserDataProvider';
 import LoginBanner from 'components/molecules/LoginBanner/LoginBanner';
 import { useOwnUser } from 'context/OwnDataProvider';
 import GatedDialogModal, { CalculatedPermission } from '../GatedDialogModal/GatedDialogModal';
-import { ArrowsOutSimple, Chat, Spinner } from '@phosphor-icons/react';
+import { ArrowsOutSimple, Chat, Flag, Spinner } from '@phosphor-icons/react';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import Tag, { TagIcon } from 'components/atoms/Tag/Tag';
 import { tagStringToPredefinedTag } from 'components/molecules/inputs/TagInputField/TagInputField';
 import ArticleCommentSection from '../ArticleCommentSection/ArticleCommentSection';
+import { useReportModalContext } from 'context/ReportModalProvider';
+import { ReportType } from 'common/enums';
 
 const RELATED_ARTICLE_LIMIT = 3;
 
@@ -51,6 +53,7 @@ function formatDate(date: Date): string {
 const GenericArticle: React.FC<Props> = ({ article, itemArticle, url, isLoading, error, canEdit, moreArticles, sidebarMode, goBack, gatedState, showGatedDialog, setShowGatedDialog }) => {
   const navigate = useNavigate();
   const ownUser = useOwnUser();
+  const { showReportModal } = useReportModalContext();
   const { isMobile } = useWindowSizeContext();
   const [, setContentReadState] = useLocalStorage<ReadArticlesState>({}, 'content-read-state');
   const imageUrl = useSignedUrl(article?.headerImageId);
@@ -160,6 +163,12 @@ const GenericArticle: React.FC<Props> = ({ article, itemArticle, url, isLoading,
                 buttonText='Share' contentTitle={article?.title || ''}
                 contentText={`Read "${article?.title}" on Common Ground`}
               />
+              {ownUser && article && ownUser.id !== article.creatorId && <Button
+                iconLeft={<Flag weight='duotone' className='w-5 h-5' />}
+                role='chip'
+                text='Report'
+                onClick={() => showReportModal({ type: ReportType.ARTICLE, targetId: article.articleId })}
+              />}
               {canEdit && <Button
                 iconLeft={<PencilIcon className='w-5 h-5' />}
                 role='chip'

@@ -73,23 +73,28 @@ EMAIL_FROM=no-reply@${CG_DOMAIN}
 CG_RECAPTCHA_SITE_KEY=
 GOOGLE_RECAPTCHA_SECRET_KEY=
 
-# blockchain RPC endpoints (token-gated roles, balances). Empty = onchain
-# features unavailable.
-QUIKNODE_ETH=
-QUIKNODE_BSC=
-QUIKNODE_MATIC=
-QUIKNODE_XDAI=
-QUIKNODE_FANTOM=
-QUIKNODE_AVAX=
-QUIKNODE_ARBITRUM=
-QUIKNODE_OPTIMISM=
-QUIKNODE_BASE=
-INFURA_LINEA=
-QUIKNODE_ARBITRUM_NOVA=
-QUIKNODE_CELO=
-QUIKNODE_POLYGON_ZKEVM=
-QUIKNODE_SCROLL=
-QUIKNODE_ZKSYNC=
+# Blockchain RPC endpoints (token-gated roles, balances, premium payments).
+# The QUIKNODE_* names are historical — any JSON-RPC URL works. Defaults are
+# free public endpoints (rate-limited but fine for small instances); swap in
+# paid endpoints (QuikNode, Alchemy, Infura, ...) for heavier use.
+# CG_ACTIVE_CHAINS controls which chains the instance offers (backend workers
+# AND the chain lists in the UI) — keep it in sync with the endpoints you set.
+CG_ACTIVE_CHAINS=eth,arbitrum,xdai,base,matic,lukso
+QUIKNODE_ETH=https://ethereum-rpc.publicnode.com
+QUIKNODE_BSC=https://bsc-rpc.publicnode.com
+QUIKNODE_MATIC=https://polygon-bor-rpc.publicnode.com
+QUIKNODE_XDAI=https://rpc.gnosischain.com
+QUIKNODE_FANTOM=https://rpc.fantom.network
+QUIKNODE_AVAX=https://avalanche-c-chain-rpc.publicnode.com
+QUIKNODE_ARBITRUM=https://arbitrum-one-rpc.publicnode.com
+QUIKNODE_OPTIMISM=https://optimism-rpc.publicnode.com
+QUIKNODE_BASE=https://mainnet.base.org
+INFURA_LINEA=https://linea-rpc.publicnode.com
+QUIKNODE_ARBITRUM_NOVA=https://arbitrum-nova.publicnode.com
+QUIKNODE_CELO=https://celo-rpc.publicnode.com
+QUIKNODE_POLYGON_ZKEVM=https://zkevm-rpc.com
+QUIKNODE_SCROLL=https://rpc.scroll.io
+QUIKNODE_ZKSYNC=https://mainnet.era.zksync.io
 
 # Twitter login
 TWITTER_CALLBACK_URL=https://${CG_DOMAIN}/twitter-callback

@@ -122,13 +122,40 @@ if (!foundDeployment) {
   console.error('Deployment not found, will run in production mode to be safe');
 }
 
-const ACTIVE_CHAINS: ChainIdentifier[] = 
+const DEFAULT_ACTIVE_CHAINS: ChainIdentifier[] =
   // prod chains
   DEPLOYMENT === 'prod' ? ["eth", "arbitrum", "xdai", "base", "matic", "lukso"]
   : // staging chains
   DEPLOYMENT === 'staging' ? ["eth", "xdai", "lukso"]
   : // dev chains
   ["eth", "arbitrum", "xdai", "base", "matic", "lukso", ("hardhat" as ChainIdentifier)];
+
+// instances can restrict/extend the chain set to what their RPC endpoints
+// actually support: browser via instance config, backend via CG_ACTIVE_CHAINS
+// (comma-separated). Unknown chain keys are ignored.
+function resolveActiveChains(): ChainIdentifier[] {
+  let requested: string[] | undefined;
+  if (instance?.activeChains) {
+    requested = instance.activeChains;
+  }
+  else if (
+    'process' in that &&
+    'env' in that.process &&
+    typeof that.process.env.CG_ACTIVE_CHAINS === 'string' &&
+    that.process.env.CG_ACTIVE_CHAINS.length > 0
+  ) {
+    requested = that.process.env.CG_ACTIVE_CHAINS.split(',').map((c: string) => c.trim());
+  }
+  if (!requested) {
+    return DEFAULT_ACTIVE_CHAINS;
+  }
+  const valid = requested.filter(
+    (c): c is ChainIdentifier => c in AVAILABLE_CHAINS || c === 'hardhat'
+  );
+  return valid.length > 0 ? valid : DEFAULT_ACTIVE_CHAINS;
+}
+
+const ACTIVE_CHAINS: ChainIdentifier[] = resolveActiveChains();
 
 const config = {
   // general settings

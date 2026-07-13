@@ -51,6 +51,7 @@ services:
       - CG_APP_URL=https://${CG_DOMAIN}
       - CG_CGID_URL=https://${CG_ID_DOMAIN}/#
       - CG_RECAPTCHA_SITE_KEY=${CG_RECAPTCHA_SITE_KEY}
+      - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
     depends_on:
       - api
     networks:
@@ -173,6 +174,7 @@ services:
       - DEPLOYMENT=prod
       - BASE_URL=https://${CG_DOMAIN}
       - CGID_URL=https://${CG_ID_DOMAIN}
+      - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
     depends_on:
       - db
       - redis-sessions
@@ -201,6 +203,7 @@ services:
       - S3_SECRET=${S3_SECRET}
       - EMAIL_FROM=${EMAIL_FROM}
       - CG_RECAPTCHA_SITE_KEY=${CG_RECAPTCHA_SITE_KEY}
+      - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
       - GOOGLE_RECAPTCHA_SECRET_KEY=${GOOGLE_RECAPTCHA_SECRET_KEY}
       - SENDGRID_API_KEY=${SENDGRID_API_KEY}
       - TWITTER_CALLBACK_URL=${TWITTER_CALLBACK_URL}
@@ -297,6 +300,7 @@ services:
       - DEPLOYMENT=prod
       - S3_SECRET=${S3_SECRET}
       - BASE_URL=https://${CG_DOMAIN}
+      - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
       - QUIKNODE_ETH=${QUIKNODE_ETH}
       - QUIKNODE_BSC=${QUIKNODE_BSC}
       - QUIKNODE_MATIC=${QUIKNODE_MATIC}

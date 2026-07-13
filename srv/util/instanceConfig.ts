@@ -26,6 +26,11 @@ function buildInstanceConfig(): InstanceConfig {
   if (typeof process.env.CG_RECAPTCHA_SITE_KEY === "string") {
     instance.recaptchaSiteKey = process.env.CG_RECAPTCHA_SITE_KEY;
   }
+  // config.ACTIVE_CHAINS already resolves CG_ACTIVE_CHAINS on the backend;
+  // forward the resolved list so the frontend agrees with the server
+  if (process.env.CG_ACTIVE_CHAINS) {
+    instance.activeChains = config.ACTIVE_CHAINS as unknown as string[];
+  }
   return instance;
 }
 

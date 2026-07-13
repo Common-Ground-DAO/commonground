@@ -25,6 +25,8 @@ export type InstanceConfig = {
   cgidUrl?: string;
   /** reCAPTCHA v2 site key for this instance; empty disables the default key. */
   recaptchaSiteKey?: string;
+  /** Chains this instance supports (working RPC endpoints); keys of AVAILABLE_CHAINS. */
+  activeChains?: string[];
 };
 
 let cached: InstanceConfig | undefined;
@@ -51,6 +53,12 @@ export function getInstanceConfig(): InstanceConfig | undefined {
   }
   if (typeof raw.recaptchaSiteKey === 'string') {
     cfg.recaptchaSiteKey = raw.recaptchaSiteKey;
+  }
+  if (Array.isArray(raw.activeChains)) {
+    const chains = raw.activeChains.filter((c: unknown) => typeof c === 'string' && /^[a-z0-9_]+$/.test(c));
+    if (chains.length > 0) {
+      cfg.activeChains = chains;
+    }
   }
   cached = cfg;
   return cached;

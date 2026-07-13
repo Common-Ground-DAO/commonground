@@ -132,9 +132,16 @@ if (config.DEPLOYMENT === 'dev') {;
   activeChains.push(hardhat);
 }
 
+// self-hosted instances (identified by an injected instance config) can't use
+// CG's domain-locked Alchemy key — their requests fail CORS. They use each
+// chain's default public RPC instead; operators can front their own RPCs.
+const isSelfHosted = !!(window as any).__CG_INSTANCE__;
+
 const { chains, publicClient, webSocketPublicClient } = configureChains(
   activeChains,
-  [alchemyProvider({ apiKey: '_sIiYKLDy9V9dQChacf2G5Nz7mxxghqZ' }), publicProvider()],
+  isSelfHosted
+    ? [publicProvider()]
+    : [alchemyProvider({ apiKey: '_sIiYKLDy9V9dQChacf2G5Nz7mxxghqZ' }), publicProvider()],
 );
 
 const { connectors } = getDefaultWallets({

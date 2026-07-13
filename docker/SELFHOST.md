@@ -70,9 +70,25 @@ All third-party services are optional; leave their keys empty in
 |---|---|---|
 | `SENDGRID_API_KEY`, `EMAIL_FROM` | email login, verification, notifications | email features unavailable |
 | `CG_RECAPTCHA_SITE_KEY`, `GOOGLE_RECAPTCHA_SECRET_KEY` | signup captcha | registration is open (fine for private instances) |
-| `QUIKNODE_*`, `INFURA_LINEA` | token-gated roles, balances | onchain features unavailable |
 | `TWITTER_OAUTH2_*` | Twitter login | Twitter login unavailable |
 | `SUMSUB_*` | KYC verification | KYC unavailable |
+
+## Blockchain RPC endpoints and chains
+
+`init.sh` prefills the `QUIKNODE_*`/`INFURA_LINEA` variables with **free public
+RPC endpoints** (the names are historical — any JSON-RPC URL works), so
+token-gated roles, balance checks and premium payments work out of the box.
+Public endpoints are rate-limited; for larger instances put your own paid
+endpoints (QuikNode, Alchemy, Infura, ...) there.
+
+`CG_ACTIVE_CHAINS` (comma-separated chain keys, e.g.
+`eth,arbitrum,xdai,base,matic,lukso`) controls which chains the instance
+offers — it drives both the backend chain workers and the chain lists in the
+UI (token gating, wallets). Keep it in sync with the endpoints you configure.
+
+Frontend wallet interactions on self-hosted instances use each chain's
+default public RPC (CG's own Alchemy key is domain-locked to app.cg and is
+not used when an instance config is present).
 
 ## Resource tuning
 

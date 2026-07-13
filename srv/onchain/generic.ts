@@ -75,6 +75,7 @@ export default class GenericConnector implements Models.Server.OnchainConnector 
     if (!this.eventListeningRunning) {
       this.eventListeningRunning = true;
       (async() => {
+        // an unhandled rejection here kills the whole onchain process
         let _chain: (Models.Contract.ChainIdentifier | "hardhat") = this.chain as any;
         if (
           _chain === "hardhat" ||
@@ -96,7 +97,10 @@ export default class GenericConnector implements Models.Server.OnchainConnector 
                 contractData = dbResult;
               }
               if (!contractData) {
-                const fetchResult = await this.contractData(premiumToken.address, OnchainPriority.HIGH);
+                // must never crash the process: on instances without working
+                // RPC endpoints (or unreachable contracts) premium payments
+                // are simply unavailable
+                const fetchResult = await this.contractData(premiumToken.address, OnchainPriority.HIGH).catch(() => null);
                 if (!fetchResult) {
                   console.error(`ERROR: Could not get contract data for premium token ${premiumToken.address} on chain ${this.chain}`);
                 }
@@ -136,7 +140,9 @@ export default class GenericConnector implements Models.Server.OnchainConnector 
           }
         }
         this._getLogsInterval();
-      })();
+      })().catch((e) => {
+        console.error(`Event listener setup failed for chain ${this.chain}, continuing without it`, e);
+      });
     }
   }
 

@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { isMainThread } from 'worker_threads';
-import emailUtils from '../api/emails';
+import emailUtils, { emailEnabled } from '../api/emails';
 import emailHelper from '../repositories/emails';
 import articleHelper from '../repositories/articles';
 import newsletterHelper from '../repositories/newsletter';
@@ -71,6 +71,10 @@ const eventNotifications = async () => {
 }
 
 (async () => {
+    if (!emailEnabled()) {
+        console.log('Email delivery is not configured, skipping email notifications');
+        process.exit(0);
+    }
     await articleNotifications();
     await eventNotifications();
     process.exit(0);

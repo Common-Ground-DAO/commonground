@@ -343,7 +343,7 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
               }
             }}
           />
-          <Button
+          {config.TWITTER_AUTH_ENABLED && <Button
             key='x'
             className='splash-login-button'
             role='chip'
@@ -353,7 +353,7 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
             </>}
             onClick={attemptConnectTwitter}
             disabled={twitterButtonDisabled}
-          />
+          />}
           {selectedProfile === 'lukso' && (!luksoData || luksoData.universalProfileValid) && <div className='grid grid-flow-row' style={{ gridColumn: 'span 2' }}>
             <UniversalProfileStatus />
             <UniversalProfileSignButton

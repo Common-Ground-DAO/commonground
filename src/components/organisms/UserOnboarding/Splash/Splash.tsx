@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import config from "common/config";
 import { OnboardingStep, useUserOnboardingContext } from "context/UserOnboarding";
 import SplashLoginActions, { LoginButtonType, LoginOption } from "./SplashLoginActions";
 
@@ -46,8 +47,10 @@ import { FarcasterStatus } from "../FarcasterSign/FarcasterSign";
 import OnboardingPostOnX from "./OnboardingPostOnX/OnboardingPostOnX";
 */
 
-const loginButtons: LoginButtonType[] = ['x', 'eth', 'lukso', 'farcaster', 'fuel', 'email', 'keyphrase'];
-const createButtons: LoginButtonType[] = ['x', 'eth', 'lukso', 'farcaster', 'fuel', 'email'];
+const loginButtons: LoginButtonType[] = (['x', 'eth', 'lukso', 'farcaster', 'fuel', 'email', 'keyphrase'] as LoginButtonType[])
+  .filter(b => b !== 'x' || config.TWITTER_AUTH_ENABLED);
+const createButtons: LoginButtonType[] = (['x', 'eth', 'lukso', 'farcaster', 'fuel', 'email'] as LoginButtonType[])
+  .filter(b => b !== 'x' || config.TWITTER_AUTH_ENABLED);
 
 const Splash: React.FC = () => {
   const {

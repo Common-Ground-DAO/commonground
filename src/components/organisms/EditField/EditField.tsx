@@ -45,6 +45,7 @@ import LinkPreviewSkeleton from 'components/molecules/LinkPreview/LinkPreviewSke
 import communityApi from 'data/api/community';
 import { useMultipleUserData } from 'context/UserDataProvider';
 import GiphyPicker from './GiphyPicker/GiphyPicker';
+import { giphyEnabled } from 'util/giphy';
 import GiphyAttachment from 'components/molecules/GiphyAttachment/GiphyAttachment';
 import EmojiPickerTooltip from 'components/molecules/EmojiPickerTooltip/EmojiPickerTooltip';
 import { useSnackbarContext } from 'context/SnackbarContext';
@@ -714,13 +715,13 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
         onPick={focus}
         attachmentLimit={attachmentLimit}
       />}
-      <GiphyPicker
+      {giphyEnabled && <GiphyPicker
         setAttachments={setAttachments}
         setAttachmentError={showAttachmentError}
         setLockFocus={setLockFocus}
         onPick={focus}
         attachmentLimit={attachmentLimit}
-      />
+      />}
 
       {!isMobile && <EmojiPickerTooltip
         placement='top-start'

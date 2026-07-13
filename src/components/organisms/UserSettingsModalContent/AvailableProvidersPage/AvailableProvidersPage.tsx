@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useRef } from 'react'
+import config from 'common/config';
 import UserSettingsButton from '../../../molecules/UserSettingsButton/UserSettingsButton';
 import { EnvelopeIcon } from '@heroicons/react/24/solid';
 import { ChevronRightIcon } from '@heroicons/react/20/solid';
@@ -166,7 +167,7 @@ const AvailableProvidersPage: React.FC<Props> = (props) => {
           onClick={() => setPage('email-account-available-providers')}
         />}
 
-        {!hasTwitterAcc && <UserSettingsButton
+        {!hasTwitterAcc && config.TWITTER_AUTH_ENABLED && <UserSettingsButton
           disabled={buttonDisabled}
           text={<div className='flex flex-col cg-text-main'>
             <span className='cg-text-lg-500'>x.com</span>

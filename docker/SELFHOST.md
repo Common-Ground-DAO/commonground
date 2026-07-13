@@ -66,12 +66,20 @@ artifacts work for any domain — the domain is configuration, not code.
 All third-party services are optional; leave their keys empty in
 `.env.selfhost` to disable the corresponding feature:
 
+All integrations degrade gracefully: the server derives capability flags
+from which keys are configured and ships them to the frontend via the
+instance config, so unavailable features are hidden or replaced with an
+honest message instead of breaking.
+
 | Env keys | Feature | Without it |
 |---|---|---|
-| `SENDGRID_API_KEY`, `EMAIL_FROM` | email login, verification, notifications | email features unavailable |
+| `SENDGRID_API_KEY`, `EMAIL_FROM` | email verification, one-time-code login, event mails, newsletters | password/passkey/wallet login still work; OTP login and newsletter UI hidden; event RSVP works without verified email |
 | `CG_RECAPTCHA_SITE_KEY`, `GOOGLE_RECAPTCHA_SECRET_KEY` | signup captcha | registration is open (fine for private instances) |
-| `TWITTER_OAUTH2_*` | Twitter login | Twitter login unavailable |
-| `SUMSUB_*` | KYC verification | KYC unavailable |
+| `TWITTER_API_KEY`, `TWITTER_API_SECRET` | Twitter/X login and account linking | X buttons hidden |
+| `SUMSUB_APP_TOKEN`, `SUMSUB_SECRET_KEY` | KYC verification | KYC steps show "not available on this instance" |
+| `MAILCHIMP_API_KEY`, `MAILCHIMP_LIST_ID` | CG-updates newsletter list sync | subscription preference stored locally only |
+| `CG_GIPHY_API_KEY` | GIF picker in the composer | GIF picker hidden |
+| `CG_WALLETCONNECT_PROJECT_ID` | WalletConnect wallets (QR / mobile deep-link) | injected wallets (MetaMask etc.) still work |
 
 ## Blockchain RPC endpoints and chains
 

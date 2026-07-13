@@ -5,6 +5,7 @@
 import config from "../common/config";
 import type { InstanceConfig } from "../common/instance";
 import urls from "./urls";
+import { dockerSecret } from ".";
 
 // Builds the <script> tag that declares this instance's identity to the
 // frontend (window.__CG_INSTANCE__). Injected into every index.html the
@@ -30,6 +31,24 @@ function buildInstanceConfig(): InstanceConfig {
   // forward the resolved list so the frontend agrees with the server
   if (process.env.CG_ACTIVE_CHAINS) {
     instance.activeChains = config.ACTIVE_CHAINS as unknown as string[];
+  }
+  // capability flags: derived from which secrets this server actually has,
+  // so the frontend can hide features that would only fail
+  const configured = (v: string | undefined) => !!v && v !== "placeholder" && v !== "your-key";
+  instance.features = {
+    email: configured(dockerSecret("sendgrid_api") || process.env.SENDGRID_API_KEY),
+    twitterAuth:
+      configured(dockerSecret("twitter_api_v1_key") || process.env.TWITTER_API_KEY) &&
+      configured(dockerSecret("twitter_api_v1_secret") || process.env.TWITTER_API_SECRET),
+    kyc:
+      configured(dockerSecret("sumsub_app_token") || process.env.SUMSUB_APP_TOKEN) &&
+      configured(dockerSecret("sumsub_secret_key") || process.env.SUMSUB_SECRET_KEY),
+  };
+  if (typeof process.env.CG_GIPHY_API_KEY === "string") {
+    instance.giphyApiKey = process.env.CG_GIPHY_API_KEY;
+  }
+  if (process.env.CG_WALLETCONNECT_PROJECT_ID) {
+    instance.walletConnectProjectId = process.env.CG_WALLETCONNECT_PROJECT_ID;
   }
   return instance;
 }

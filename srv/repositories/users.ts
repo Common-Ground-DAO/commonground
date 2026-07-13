@@ -1579,15 +1579,18 @@ class UserHelper {
   }
 
   public async subscribeNewsletter(userId: string, email: string) {
-    try {
-      await mailchimpClient.lists.setListMember(
-        serverconfig.MAILCHIMP_DEFAULT_LIST_ID,
-        email,
-        { email_address: email, status_if_new: 'subscribed', status: 'subscribed' }
-      );
-    } catch (e) {
-      console.log(e);
-      throw new Error(errors.server.UNKNOWN);
+    // instances without a Mailchimp key keep the subscription state locally
+    if (serverconfig.MAILCHIMP_API_KEY !== 'placeholder') {
+      try {
+        await mailchimpClient.lists.setListMember(
+          serverconfig.MAILCHIMP_DEFAULT_LIST_ID,
+          email,
+          { email_address: email, status_if_new: 'subscribed', status: 'subscribed' }
+        );
+      } catch (e) {
+        console.log(e);
+        throw new Error(errors.server.UNKNOWN);
+      }
     }
     await _updateUser(pool, { id: userId, newsletter: true });
     
@@ -1602,15 +1605,18 @@ class UserHelper {
   }
 
   public async unsubscribeNewsletter(userId: string, email: string) {
-    try {
-      await mailchimpClient.lists.updateListMember(
-        serverconfig.MAILCHIMP_DEFAULT_LIST_ID,
-        email,
-        { email_address: email, status: 'unsubscribed' }
-      );
-    } catch (e) {
-      console.log(e);
-      throw new Error(errors.server.UNKNOWN);
+    // instances without a Mailchimp key keep the subscription state locally
+    if (serverconfig.MAILCHIMP_API_KEY !== 'placeholder') {
+      try {
+        await mailchimpClient.lists.updateListMember(
+          serverconfig.MAILCHIMP_DEFAULT_LIST_ID,
+          email,
+          { email_address: email, status: 'unsubscribed' }
+        );
+      } catch (e) {
+        console.log(e);
+        throw new Error(errors.server.UNKNOWN);
+      }
     }
     await _updateUser(pool, { id: userId, newsletter: false });
 
@@ -1627,6 +1633,9 @@ class UserHelper {
   public async addContactEmail(userId: string, email: string, withNewCommunitycreatedTag?: boolean): Promise<void> {
     await this.subscribeNewsletter(userId, email);
 
+    if (serverconfig.MAILCHIMP_API_KEY === 'placeholder') {
+      return;
+    }
     const tags = [{ name: 'New Member', status: 'active' }];
     if (withNewCommunitycreatedTag) {
       tags.push({ name: 'New Community created', status: 'active' });

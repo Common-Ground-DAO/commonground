@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useEffect, useState } from 'react';
+import config from 'common/config';
 import { ChevronDownIcon } from '@heroicons/react/20/solid';
 import { useNavigationContext } from 'components/SuspenseRouter/SuspenseRouter';
 import Button from 'components/atoms/Button/Button';
@@ -32,6 +33,9 @@ const NewslettersManagement = () => {
   const navigate = useNavigate();
 
   const audienceCount = useAsyncMemo(async () => {
+    if (!config.EMAIL_ENABLED) {
+      return undefined;
+    }
     const memberRole = roles.find(r => r.title === PredefinedRole.Member);
 
     if (memberRole) {
@@ -43,6 +47,9 @@ const NewslettersManagement = () => {
   }, [community.id]);
 
   const newsletterHistory = useAsyncMemo(async () => {
+    if (!config.EMAIL_ENABLED) {
+      return undefined;
+    }
     return communityApi.getNewsletterHistory({
       communityId: community.id,
       timeframe
@@ -154,6 +161,15 @@ const NewslettersManagement = () => {
       </div>
     </div>
   </div>;
+
+  // email delivery is a per-instance capability; without it newsletters
+  // cannot be sent at all
+  if (!config.EMAIL_ENABLED) {
+    return <div className={`flex flex-col gap-4 cg-text-main${isMobile ? ' px-4' : ''}`}>
+      {header}
+      <span>Email delivery is not configured on this instance, so community newsletters are unavailable.</span>
+    </div>
+  }
 
   if (isMobile) {
     return <div className={`flex flex-col h-full cg-text-main`}>

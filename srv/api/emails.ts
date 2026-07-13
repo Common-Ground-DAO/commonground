@@ -7,6 +7,14 @@ import { EmailPost } from '../repositories/emails';
 import { generateEventICSFile, getUrl } from '../common/util';
 import urlConfig from '../util/urls';
 import communityHelper from '../repositories/communities';
+import serverconfig from '../serverconfig';
+import errors from '../common/errors';
+
+// email delivery is optional (self-hosted instances may run without a
+// SendGrid key); callers can check this to skip email work entirely
+export function emailEnabled(): boolean {
+    return !!serverconfig.SENDGRID_API_KEY && serverconfig.SENDGRID_API_KEY !== 'placeholder';
+}
 
 export type EventEmailOptions = {
     type: 'attending' | 'starting' | 'changed' | 'cancelled';
@@ -28,12 +36,16 @@ class EmailUtils {
             html,
             attachments
         };
+        if (!emailEnabled()) {
+            console.warn(`Email delivery is not configured, dropping email to ${to} ("${subject}")`);
+            throw new Error(errors.server.EMAIL_DISABLED);
+        }
         try {
             await sgMail.send(msg);
         } catch (error: any) {
             console.error('Error sending email to: ', to);
             console.error('Error: ', error);
-            console.error('Response: ', (error as ResponseError).response.body);
+            console.error('Response: ', (error as ResponseError)?.response?.body);
             throw new Error('Error sending email');
         }
     }

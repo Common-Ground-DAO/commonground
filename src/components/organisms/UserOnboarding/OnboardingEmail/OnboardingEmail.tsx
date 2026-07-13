@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useEffect, useState } from 'react';
+import config from 'common/config';
 import TextInputField from 'components/molecules/inputs/TextInputField/TextInputField';
 import { EnvelopeOpenIcon } from '@heroicons/react/20/solid';
 import PasswordField from 'components/molecules/PasswordField/PasswordField';
@@ -107,7 +108,7 @@ export const OnboardingEmailStatus: React.FC<Props> = ({ step, onSubmit, state, 
           onEnterPressed={onClickSubmit}
           sublabel={type === 'password' ? 'Requires 8+ characters' : '10-digit code sent to your email'}
         />
-        {step.startsWith('login') && <div className='w-full cg-text-md-500 cg-text-main'>
+        {step.startsWith('login') && config.EMAIL_ENABLED && <div className='w-full cg-text-md-500 cg-text-main'>
           Hint: {type === 'password' ? 'You can also use a one-time code which will be sent to your email.' : 'You can also use your password to log in.'}
         </div>}
         {type === 'code' && <Button
@@ -138,7 +139,7 @@ export const OnboardingEmailStatus: React.FC<Props> = ({ step, onSubmit, state, 
             }
           }}
         />}
-        {step.startsWith('login') && <Button
+        {step.startsWith('login') && config.EMAIL_ENABLED && <Button
           loading={state.loading}
           className='w-full cg-text-lg-500'
           role="primary"

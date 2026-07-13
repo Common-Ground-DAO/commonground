@@ -283,7 +283,12 @@ export async function handleSumsubWebhook(data: {
     console.error("No email found for user:", userId);
     return;
   } else {
-    await emailUtils.sendKycResultEmail(email, kycSuccess, data.levelName, data.reviewResult.moderationComment);
+    // email failures must not fail the webhook ack
+    try {
+      await emailUtils.sendKycResultEmail(email, kycSuccess, data.levelName, data.reviewResult.moderationComment);
+    } catch (e) {
+      console.error("Error sending KYC result email", e);
+    }
   }
 }
 

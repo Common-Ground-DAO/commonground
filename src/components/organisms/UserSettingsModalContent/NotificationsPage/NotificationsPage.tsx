@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import config from 'common/config';
 import { ChevronRightIcon } from '@heroicons/react/20/solid';
 import ToggleInputField from 'components/molecules/inputs/ToggleInputField/ToggleInputField';
 import UserSettingsButton from '../../../molecules/UserSettingsButton/UserSettingsButton';
@@ -331,18 +332,18 @@ const NotificationsPage: React.FC<Props> = (props) => {
         rightElement={<ToggleInputField toggled={dmNotifications} />}
         onClick={() => setDmNotifications(old => !old)}
       />
-      <UserSettingsButton
+      {config.EMAIL_ENABLED && <UserSettingsButton
         leftElement={<EnvelopeSimple weight='duotone' className='w-5 h-5' />}
         text='CG Updates Newsletter'
         rightElement={<ToggleInputField toggled={newsletter} />}
         onClick={onToggleNewsletter}
-      />
-      <UserSettingsButton
+      />}
+      {config.EMAIL_ENABLED && <UserSettingsButton
         leftElement={<EnvelopeSimple weight='duotone' className='w-5 h-5' />}
         text='Weekly Summaries'
         rightElement={<ToggleInputField toggled={weeklyNewsletter} />}
         onClick={onToggleWeeklyNewsletter}
-      />
+      />}
     </div>
     <div className='cg-separator' />
 
@@ -441,7 +442,7 @@ const NotificationsPage: React.FC<Props> = (props) => {
             <span className='flex-1 cg-text-md-500 cg-text-main'>Calls</span>
             <CheckboxBase type='checkbox' size='small-20' checked={community.notificationState?.notifyCalls} />
           </div>
-          {community.enablePersonalNewsletter && <>
+          {community.enablePersonalNewsletter && config.EMAIL_ENABLED && <>
             <div className='cg-separator' />
             <div className='flex py-2 px-4 gap-2 w-full items-center cursor-pointer' onClick={() => toggleOption(community.id, 'newsletter')}>
               <EnvelopeSimple weight='duotone' className='w-5 h-5 cg-text-brand' />

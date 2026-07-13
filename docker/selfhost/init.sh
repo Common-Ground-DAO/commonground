@@ -96,14 +96,32 @@ QUIKNODE_POLYGON_ZKEVM=https://zkevm-rpc.com
 QUIKNODE_SCROLL=https://rpc.scroll.io
 QUIKNODE_ZKSYNC=https://mainnet.era.zksync.io
 
-# Twitter login
+# Twitter/X login (v1 consumer keys drive the login feature; without them
+# the X buttons are hidden)
 TWITTER_CALLBACK_URL=https://${CG_DOMAIN}/twitter-callback
+TWITTER_API_KEY=
+TWITTER_API_SECRET=
 TWITTER_OAUTH2_CLIENT_ID=
 TWITTER_OAUTH2_CLIENT_SECRET=
 
-# SumSub KYC
+# SumSub KYC (without keys, KYC steps show as unavailable)
 SUMSUB_APP_TOKEN=
 SUMSUB_SECRET_KEY=
+
+# Mailchimp (CG-updates newsletter list; without it, subscription state is
+# kept locally only)
+MAILCHIMP_API_KEY=
+MAILCHIMP_LIST_ID=
+
+# Giphy Web SDK key (https://developers.giphy.com). Without it the GIF
+# picker is hidden.
+CG_GIPHY_API_KEY=
+
+# WalletConnect Cloud project id (https://cloud.walletconnect.com). Project
+# ids are origin-allowlisted, so create your own for your domain; without it
+# WalletConnect-based wallets may fail to connect (injected wallets like
+# MetaMask still work).
+CG_WALLETCONNECT_PROJECT_ID=
 EOF
   chmod 600 .env.selfhost
   echo "Wrote .env.selfhost"

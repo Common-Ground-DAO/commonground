@@ -28,7 +28,7 @@ import { dockerSecret } from "../util";
 import permissionHelper from "../repositories/permissions";
 import ipRateLimitHandler from "../util/rateLimit";
 import config from "../common/config";
-import emailUtils from "./emails";
+import emailUtils, { emailEnabled } from "./emails";
 import emailHelper from "../repositories/emails";
 import { uniqueNamesGenerator, adjectives, colors, animals } from 'unique-names-generator';
 import { ethers } from "ethers";
@@ -1502,6 +1502,10 @@ registerPostRoute<
     if (user) {
       throw new Error(errors.server.ALREADY_LOGGED_IN);
     }
+    if (!emailEnabled()) {
+      // tell the client honestly instead of pretending a code was sent
+      throw new Error(errors.server.EMAIL_DISABLED);
+    }
     const { email } = data;
     const userId = await userHelper.getUserIdByEmail(email);
     const otp = await emailHelper.generateVerificationEmailToken(userId);
@@ -1511,7 +1515,7 @@ registerPostRoute<
       console.error(error);
     }
   }
-); 
+);
 
 registerPostRoute<
   API.User.redeemWizardCodeForExistingUser.Request,

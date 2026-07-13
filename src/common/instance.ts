@@ -27,6 +27,16 @@ export type InstanceConfig = {
   recaptchaSiteKey?: string;
   /** Chains this instance supports (working RPC endpoints); keys of AVAILABLE_CHAINS. */
   activeChains?: string[];
+  /** Capability flags derived from which secrets the server has configured. Absent flag = feature available (official instances). */
+  features?: {
+    email?: boolean;
+    twitterAuth?: boolean;
+    kyc?: boolean;
+  };
+  /** Giphy API key for this instance; empty disables the GIF picker. */
+  giphyApiKey?: string;
+  /** WalletConnect Cloud project id for this instance (origin-allowlisted upstream). */
+  walletConnectProjectId?: string;
 };
 
 let cached: InstanceConfig | undefined;
@@ -59,6 +69,20 @@ export function getInstanceConfig(): InstanceConfig | undefined {
     if (chains.length > 0) {
       cfg.activeChains = chains;
     }
+  }
+  if (raw.features && typeof raw.features === 'object') {
+    cfg.features = {};
+    for (const key of ['email', 'twitterAuth', 'kyc'] as const) {
+      if (typeof raw.features[key] === 'boolean') {
+        cfg.features[key] = raw.features[key];
+      }
+    }
+  }
+  if (typeof raw.giphyApiKey === 'string') {
+    cfg.giphyApiKey = raw.giphyApiKey;
+  }
+  if (typeof raw.walletConnectProjectId === 'string' && /^[a-z0-9]*$/i.test(raw.walletConnectProjectId)) {
+    cfg.walletConnectProjectId = raw.walletConnectProjectId;
   }
   cached = cfg;
   return cached;

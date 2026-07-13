@@ -294,6 +294,16 @@ const config = {
   // Google reCAPTCHA v2 (self-hosted instances provide their own key via instance config)
   GOOGLE_RECAPTCHA_SITE_KEY: instance?.recaptchaSiteKey ?? '6Lc_EBspAAAAAAPbsmkudhzCyuBoDFgxAar9wWtW',
 
+  // capability flags: self-hosted instances disable features whose backing
+  // service isn't configured (see src/common/instance.ts); official
+  // instances have everything on
+  EMAIL_ENABLED: instance?.features?.email ?? true,
+  TWITTER_AUTH_ENABLED: instance?.features?.twitterAuth ?? true,
+  KYC_ENABLED: instance?.features?.kyc ?? true,
+  // per-instance third-party keys (CG defaults are locked to the official domains)
+  GIPHY_API_KEY: instance?.giphyApiKey ?? (instance ? '' : 'ir89rjdyvl6GNuHNHO71QldCPQzSAjI4'),
+  WALLETCONNECT_PROJECT_ID: instance?.walletConnectProjectId ?? 'a58ac26ec0960773dad148a0585ef011',
+
   STATUS_COLORS: {
     online: '#27AE60',
     away: '#FFD600',

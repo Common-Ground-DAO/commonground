@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { EnvelopeOpenIcon } from '@heroicons/react/20/solid';
+import config from 'common/config';
 import { validateEmailInput, validatePassword } from 'common/validators';
 import Button from 'components/atoms/Button/Button';
 import PasswordField from 'components/molecules/PasswordField/PasswordField';
@@ -79,8 +80,10 @@ const EmailPage: React.FC<Props> = ({ saveOnCloseMode, goBack }) => {
     try {
       if (email !== userOwnEmail) {
         await data.user.updateOwnData({ email });
-        await userApi.requestEmailVerification({ email });
-        showSnackbar({ type: 'warning', text: `We've sent you an email with a verification link, please check your inbox` });
+        if (config.EMAIL_ENABLED) {
+          await userApi.requestEmailVerification({ email });
+          showSnackbar({ type: 'warning', text: `We've sent you an email with a verification link, please check your inbox` });
+        }
       }
       if (password) await userApi.setPassword({ password });
 

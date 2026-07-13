@@ -10,6 +10,11 @@
 #   CG_CGID_URL           e.g. https://id.chat.example.org/#
 #   CG_RECAPTCHA_SITE_KEY reCAPTCHA v2 site key; empty disables captcha
 #   CG_ACTIVE_CHAINS      comma-separated chain keys this instance supports
+#   CG_FEATURE_EMAIL      "true" if email delivery is configured
+#   CG_FEATURE_TWITTER    "true" if Twitter/X auth is configured
+#   CG_FEATURE_KYC        "true" if SumSub KYC is configured
+#   CG_GIPHY_API_KEY      Giphy key; empty hides the GIF picker
+#   CG_WALLETCONNECT_PROJECT_ID  WalletConnect Cloud project id
 set -e
 
 if [ -z "$CG_APP_URL" ]; then
@@ -24,6 +29,12 @@ fi
 if [ -n "$CG_ACTIVE_CHAINS" ]; then
   chains_json=$(printf '%s' "$CG_ACTIVE_CHAINS" | awk -F, '{for(i=1;i<=NF;i++){gsub(/ /,"",$i); printf "%s\"%s\"", (i>1?",":""), $i}}')
   cfg="$cfg,\"activeChains\":[$chains_json]"
+fi
+bool() { [ "$1" = "true" ] && echo "true" || echo "false"; }
+cfg="$cfg,\"features\":{\"email\":$(bool "$CG_FEATURE_EMAIL"),\"twitterAuth\":$(bool "$CG_FEATURE_TWITTER"),\"kyc\":$(bool "$CG_FEATURE_KYC")}"
+cfg="$cfg,\"giphyApiKey\":\"$CG_GIPHY_API_KEY\""
+if [ -n "$CG_WALLETCONNECT_PROJECT_ID" ]; then
+  cfg="$cfg,\"walletConnectProjectId\":\"$CG_WALLETCONNECT_PROJECT_ID\""
 fi
 cfg="$cfg,\"recaptchaSiteKey\":\"$CG_RECAPTCHA_SITE_KEY\"}"
 snippet="<script>window.__CG_INSTANCE__ = $cfg;</script>"

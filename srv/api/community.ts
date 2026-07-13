@@ -1572,10 +1572,15 @@ registerPostRoute<
     }
 
     // Todo: If event ever creates notifications, emit them here
-    const eventOptions = await communityEventHelper.prepareEventToSendEmail(result.id, user.id, "changed", result);
-    const userEmails = await communityEventHelper.getUserEmailsToNotify({eventId: result.id});
-    for (const userEmail of userEmails) {
-      await emailUtils.sendEventEmail(userEmail, eventOptions);
+    // email failures must not fail the update itself
+    try {
+      const eventOptions = await communityEventHelper.prepareEventToSendEmail(result.id, user.id, "changed", result);
+      const userEmails = await communityEventHelper.getUserEmailsToNotify({eventId: result.id});
+      for (const userEmail of userEmails) {
+        await emailUtils.sendEventEmail(userEmail, eventOptions);
+      }
+    } catch (e) {
+      console.error("Error sending event update emails", e);
     }
     return result;
   }
@@ -1606,11 +1611,16 @@ registerPostRoute<
     }
     const existingEvent = await communityEventHelper.getCommunityEvent({ id: data.eventId }, user.id);
     await communityEventHelper.deleteCommunityEvent(data.eventId);
-  
-    const eventOptions = await communityEventHelper.prepareEventToSendEmail(data.eventId, user.id, "cancelled", existingEvent);
-    const userEmails = await communityEventHelper.getUserEmailsToNotify({eventId: data.eventId});
-    for (const userEmail of userEmails) {
-      await emailUtils.sendEventEmail(userEmail, eventOptions);
+
+    // email failures must not fail the deletion itself
+    try {
+      const eventOptions = await communityEventHelper.prepareEventToSendEmail(data.eventId, user.id, "cancelled", existingEvent);
+      const userEmails = await communityEventHelper.getUserEmailsToNotify({eventId: data.eventId});
+      for (const userEmail of userEmails) {
+        await emailUtils.sendEventEmail(userEmail, eventOptions);
+      }
+    } catch (e) {
+      console.error("Error sending event cancellation emails", e);
     }
   }
 );
@@ -1640,10 +1650,15 @@ registerPostRoute<
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
     await communityEventHelper.insertEventParticipant(user.id, data);
-    const eventOptions = await communityEventHelper.prepareEventToSendEmail(data.eventId, user.id, "attending");
-    const userEmail = await userHelper.getUserEmail(user.id);
-    if (!!userEmail) {
-      await emailUtils.sendEventEmail(userEmail, eventOptions);
+    // email failures must not fail the registration itself
+    try {
+      const eventOptions = await communityEventHelper.prepareEventToSendEmail(data.eventId, user.id, "attending");
+      const userEmail = await userHelper.getUserEmail(user.id);
+      if (!!userEmail) {
+        await emailUtils.sendEventEmail(userEmail, eventOptions);
+      }
+    } catch (e) {
+      console.error("Error sending event attendance email", e);
     }
   }
 );

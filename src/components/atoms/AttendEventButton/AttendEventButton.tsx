@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import config from 'common/config';
 import Button from '../Button/Button';
 import { CheckIcon, ChevronDownIcon, LockClosedIcon } from '@heroicons/react/20/solid';
 import { useCallContext } from 'context/CallProvider';
@@ -185,7 +186,9 @@ const AttendEventButton: React.FC<Props> = (props) => {
       return;
     }
 
-    if (!ownUser.emailVerified) {
+    // on instances without email delivery, verification is impossible —
+    // don't gate attendance on it
+    if (!ownUser.emailVerified && config.EMAIL_ENABLED) {
       openModal('signup');
       return;
     }

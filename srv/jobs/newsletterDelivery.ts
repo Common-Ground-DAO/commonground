@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { isMainThread } from 'worker_threads';
-import emailUtils from '../api/emails';
+import emailUtils, { emailEnabled } from '../api/emails';
 import emailHelper from '../repositories/emails';
 import newsletterHelper from '../repositories/newsletter';
 
@@ -43,6 +43,10 @@ async function sendEmails(users: { userId: string, email: string }[], newsletter
 }
 
 (async () => {
+    if (!emailEnabled()) {
+        console.log('Email delivery is not configured, skipping newsletter delivery');
+        process.exit(0);
+    }
     const newsletterId = generateNewsletterId();
     const users = await newsletterHelper.createNewsletterEntries(newsletterId);
     if (users.length === 0) {

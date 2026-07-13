@@ -4,6 +4,7 @@
 
 import "./SumsubKyc.css";
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import config from "common/config";
 import SumsubWebSdk from "@sumsub/websdk-react";
 import { MessageHandler, ErrorHandler } from "@sumsub/websdk";
 import { EventPayload, SnsError } from "@sumsub/websdk/types/types";
@@ -99,7 +100,18 @@ export default function SumsubKyc({ kycType, handleWizardAction, actions, sideba
   }, [actions]);
 
   const content = useMemo(() => {
-    if (!accessToken) {
+    if (!config.KYC_ENABLED) {
+      // instances without SumSub credentials can't run KYC — say so instead
+      // of spinning forever
+      return (
+        <div className={`sumsub-kyc mt-8${sidebarMode ? ' sidebar-mode' : ''}`}>
+          <div className="flex justify-center m-8 text-center cg-text-main">
+            Identity verification is not available on this instance.
+          </div>
+        </div>
+      );
+    }
+    else if (!accessToken) {
       return (
         <div className={`sumsub-kyc mt-8${sidebarMode ? ' sidebar-mode' : ''}`}>
           <div className="spinner flex justify-center m-8">

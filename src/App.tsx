@@ -145,8 +145,10 @@ const { chains, publicClient, webSocketPublicClient } = configureChains(
 );
 
 const { connectors } = getDefaultWallets({
-  appName: 'My RainbowKit App',
-  projectId: 'a58ac26ec0960773dad148a0585ef011',
+  appName: 'Common Ground',
+  // WalletConnect Cloud project ids are origin-allowlisted upstream, so
+  // self-hosted instances configure their own (CG_WALLETCONNECT_PROJECT_ID)
+  projectId: config.WALLETCONNECT_PROJECT_ID,
   chains
 });
 

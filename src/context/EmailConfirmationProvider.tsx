@@ -4,6 +4,7 @@
 
 import CommunityJoinedModal from "components/organisms/CommunityJoinedModal/CommunityJoinedModal";
 import EmailConfirmationModal, { EmailConfirmationModalState } from "components/organisms/EmailConfirmationModal/EmailConfirmationModal";
+import config from "common/config";
 import { useOwnUser } from "context/OwnDataProvider";
 import data from "data";
 import { useLiveQuery } from "dexie-react-hooks";
@@ -33,6 +34,10 @@ export function EmailConfirmationProvider(props: React.PropsWithChildren<{}>) {
   }, [user?.emailVerified, modalState]);
 
   const openModal = useCallback((state: EmailConfirmationModalState) => {
+    if (!config.EMAIL_ENABLED) {
+      // verification mails can never arrive on this instance — don't ask
+      return;
+    }
     setModalState(state);
     setModalOpen(true);
   }, []);

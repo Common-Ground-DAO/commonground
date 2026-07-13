@@ -206,6 +206,9 @@ window.onload = async () => {
 
     useEffect(() => {
       if (
+        // CG's matomo only tracks the official instances; self-hosted
+        // instances (identified by an injected instance config) skip it
+        !(window as any).__CG_INSTANCE__ &&
         (config.DEPLOYMENT === "staging" || config.DEPLOYMENT === "prod") &&
         loadingFinished === true &&
         matomoInjected.current === false

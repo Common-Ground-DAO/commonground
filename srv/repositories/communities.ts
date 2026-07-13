@@ -1963,6 +1963,10 @@ class CommunityHelper {
         firstArticleOriginalId = config.COMMUNITY_CREATION_ARTICLE_DEV;
       }
       if (!!firstArticleOriginalId) {
+        // the welcome-article template may not exist (e.g. fresh self-hosted
+        // instances); a savepoint keeps a failure here from aborting the
+        // whole community-creation transaction
+        await client.query("SAVEPOINT initial_article");
         try {
           const articleInsertResult = await client.query(`
             WITH insert_channel AS (
@@ -2021,7 +2025,8 @@ class CommunityHelper {
           `);
         }
         catch (e) {
-          console.error("Creating initial article failed", e);
+          await client.query("ROLLBACK TO SAVEPOINT initial_article");
+          console.error("Creating initial article failed, continuing without it", e);
         }
       }
 

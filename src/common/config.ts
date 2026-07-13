@@ -2,6 +2,8 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import { getInstanceConfig } from './instance';
+
 export const APP_VERSION = '0.9.9' as const;
 
 /**
@@ -79,12 +81,19 @@ type ChainIdentifier = keyof typeof AVAILABLE_CHAINS;
 let DEPLOYMENT: 'prod' | 'staging' | 'dev' = 'prod';
 let foundDeployment = false;
 const that: any = globalThis;
+const instance = getInstanceConfig();
 // deployment settings
 
+// self-hosted instances declare their mode at serve time via window.__CG_INSTANCE__,
+// independent of which domain they run on
+if (instance?.deployment) {
+  foundDeployment = true;
+  DEPLOYMENT = instance.deployment;
+}
 // browser environment
-if (
+else if (
   'location' in that &&
-  'href' in that.location && 
+  'href' in that.location &&
   typeof that.location.href === 'string'
 ) {
   foundDeployment = true;
@@ -255,8 +264,8 @@ const config = {
     } as const,
   } as const,
 
-  // Google reCAPTCHA v2
-  GOOGLE_RECAPTCHA_SITE_KEY: '6Lc_EBspAAAAAAPbsmkudhzCyuBoDFgxAar9wWtW',
+  // Google reCAPTCHA v2 (self-hosted instances provide their own key via instance config)
+  GOOGLE_RECAPTCHA_SITE_KEY: instance?.recaptchaSiteKey ?? '6Lc_EBspAAAAAAPbsmkudhzCyuBoDFgxAar9wWtW',
 
   STATUS_COLORS: {
     online: '#27AE60',

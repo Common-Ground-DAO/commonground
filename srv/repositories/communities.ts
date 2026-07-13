@@ -22,6 +22,7 @@ import { type Pool, type PoolClient } from "pg";
 import format from 'pg-format';
 import errors from "../common/errors";
 import config from "../common/config";
+import urls from "../util/urls";
 import eventHelper from "./event";
 import permissionHelper from "./permissions";
 import { randomString } from "../util";
@@ -3500,7 +3501,7 @@ class CommunityHelper {
       items.push({
         url: [
           {
-            loc: `https://${config.DEPLOYMENT === "staging" ? "staging." : ""}app.cg${item.relativeUrl}`,
+            loc: `${urls.APP_URL}${item.relativeUrl}`,
           },
           {
             lastmod: item.lastModified,

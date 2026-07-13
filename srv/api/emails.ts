@@ -22,7 +22,7 @@ class EmailUtils {
     public async sendEmail(to: string, subject: string, text: string, html: string, attachments?: sgMail.MailDataRequired['attachments'], from?: string) {
         const msg: sgMail.MailDataRequired = {
             to,
-            from: from || 'no-reply@app.cg',
+            from: from || process.env.EMAIL_FROM || 'no-reply@app.cg',
             subject,
             text,
             html,

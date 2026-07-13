@@ -24,6 +24,7 @@ import fs from "fs";
 import pool from "../util/postgres";
 import passport from "passport";
 import pluginHelper from "../repositories/plugins";
+import { instanceConfigScriptTag } from "../util/instanceConfig";
 dayjs.extend(advancedFormat);
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -47,6 +48,10 @@ const getRoutesRouter = express.Router();
 let indexhtml: string = '';
 try {
   indexhtml = readFileSync("/dist/index.html").toString();
+  // declare this instance's identity to the frontend (see src/common/instance.ts)
+  if (!indexhtml.includes('__CG_INSTANCE__')) {
+    indexhtml = indexhtml.replace('<head>', `<head>${instanceConfigScriptTag()}`);
+  }
 } catch (e) {
   console.error('ERROR: No index.html present! Social previews will not work.');
   console.log(e);

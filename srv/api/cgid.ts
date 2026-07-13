@@ -18,6 +18,7 @@ import {
   type PublicKeyCredentialRequestOptionsJSON,
 } from "@simplewebauthn/types";
 import config from "../common/config";
+import urls from "../util/urls";
 import walletHelper from "../repositories/wallets";
 import dayjs from "dayjs";
 import eventHelper from "../repositories/event";
@@ -30,13 +31,13 @@ if (config.DEPLOYMENT === "dev") {
   rpID = "localhost";
   expectedOrigin = ["http://localhost:3000", "http://localhost:8000"];
 }
-else if (config.DEPLOYMENT === 'staging') {
-  rpID = "id.staging.app.cg";
-  expectedOrigin = "https://id.staging.app.cg";
-}
 else {
-  rpID = "id.app.cg";
-  expectedOrigin = "https://id.app.cg";
+  // the CG ID app lives on its own origin (id.<domain>); derive it from
+  // CGID_URL so self-hosted instances get working passkeys
+  // (id.app.cg / id.staging.app.cg unchanged)
+  const cgidOrigin = new URL(process.env.CGID_URL || `https://id.${urls.APP_HOSTNAME}`).origin;
+  rpID = new URL(cgidOrigin).hostname;
+  expectedOrigin = cgidOrigin;
 }
 
 registerPostRoute<

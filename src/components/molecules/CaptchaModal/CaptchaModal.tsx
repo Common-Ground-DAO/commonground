@@ -14,6 +14,18 @@ import './CaptchaModal.css';
 const CaptchaModal = () => {
   const mode = useDarkModeContext();
 
+  // instances without a reCAPTCHA site key (self-hosted) verify with a stub
+  // token; the backend skips captcha checks when it has no secret key either
+  React.useEffect(() => {
+    if (!config.GOOGLE_RECAPTCHA_SITE_KEY) {
+      userApi.verifyCaptcha({ token: 'stub' });
+    }
+  }, []);
+
+  if (!config.GOOGLE_RECAPTCHA_SITE_KEY) {
+    return null;
+  }
+
   return (
     <Modal hideHeader modalInnerClassName={`captcha-modal-outer`}>
       <div className='captcha-modal-content mt-2'>

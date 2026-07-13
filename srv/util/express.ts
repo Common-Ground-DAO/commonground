@@ -11,6 +11,7 @@ import redisManager from '../redis';
 import { dockerSecret } from '.';
 import config from '../common/config';
 import serverconfig from '../serverconfig';
+import urls from './urls';
 import { UserV2 } from 'twitter-api-v2';
 import {
   type PublicKeyCredentialCreationOptionsJSON,
@@ -152,13 +153,11 @@ const sessionOptions: session.SessionOptions = {
   rolling: true,
 };
 
-// allow session cookie for subdomain so that
-// app.cg and id.app.cg share a session
-if (config.DEPLOYMENT === 'prod') {
-  sessionOptions.cookie!.domain = '.app.cg';
-}
-else if (config.DEPLOYMENT === 'staging') {
-  sessionOptions.cookie!.domain = '.staging.app.cg';
+// allow session cookie for subdomains so that the app and the CG ID app
+// (id.<domain>) share a session; derived from BASE_URL so self-hosted
+// instances get their own domain (.app.cg / .staging.app.cg unchanged)
+if (config.DEPLOYMENT !== 'dev') {
+  sessionOptions.cookie!.domain = `.${urls.APP_HOSTNAME}`;
 }
 
 app.use(session(sessionOptions));

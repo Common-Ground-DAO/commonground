@@ -45,7 +45,7 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
   const [usernameError, setUsernameError] = useState('');
   const [userPhoto, setUserPhoto] = useState<File | undefined>();
   const [genericError, setGenericError] = useState<string>('');
-  const [recaptchaToken, setRecaptchaToken] = useState<string>(config.DEPLOYMENT === 'dev' ? 'stub' : '');
+  const [recaptchaToken, setRecaptchaToken] = useState<string>(config.DEPLOYMENT === 'dev' || !config.GOOGLE_RECAPTCHA_SITE_KEY ? 'stub' : '');
   const [selectedProfile, setSelectedProfile] = useState<Models.User.ProfileItemType>(createUserData.displayAccount);
   const { connectToUniversalProfile, hasExtension: hasUniversalProfileExtension, isConnected: isUniversalProfileConnected } = useUniversalProfile();
   const mode = useDarkModeContext();
@@ -299,7 +299,7 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
         <span className='cg-heading-2 p-4 text-center'>Looks great!</span>
         <div className='grid grid-flow-row grid-cols-1 gap-4 justify-center items-center w-full'></div>
         {profile}
-        {config.DEPLOYMENT !== 'dev' && <div className='grid justify-items-center items-center pt-4'>
+        {config.DEPLOYMENT !== 'dev' && !!config.GOOGLE_RECAPTCHA_SITE_KEY && <div className='grid justify-items-center items-center pt-4'>
           <ReCAPTCHA
             sitekey={config.GOOGLE_RECAPTCHA_SITE_KEY || ''}
             theme={mode.isDarkMode ? 'dark' : 'light'}

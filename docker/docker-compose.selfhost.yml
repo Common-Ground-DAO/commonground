@@ -14,6 +14,10 @@
 # Usage: see docker/SELFHOST.md. Never run this with the committed dev .env —
 # use docker/selfhost/init.sh to generate .env.selfhost with fresh secrets.
 
+# distinct project name: containers and volumes stay separate from the dev
+# stack (docker-compose.yml) even when both live in the same directory
+name: cg-selfhost
+
 services:
   caddy:
     image: caddy:2-alpine

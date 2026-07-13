@@ -1,9 +1,11 @@
-version: "3.1"
 services:
   db:
     build:
       context: ./db
     image: cryptogram/db
+    # without an explicit config_file, postgres ignores the mounted
+    # postgresql.conf and runs on image defaults
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     environment:
       - POSTGRES_DB=postgres
       - POSTGRES_USER=postgres
@@ -48,12 +50,12 @@ services:
       - cryptogram
     restart: unless-stopped
 
-  redis-blockscout:
-    image: redis:6.2.7-alpine
-    command: redis-server --maxmemory 2GB --save ""
-    networks:
-      - cryptogram
-    restart: unless-stopped
+  # redis-blockscout:
+  #   image: redis:6.2.7-alpine
+  #   command: redis-server --maxmemory 2GB --save ""
+  #   networks:
+  #     - cryptogram
+  #   restart: unless-stopped
 
   wsapi:
     image: cryptogram/backend

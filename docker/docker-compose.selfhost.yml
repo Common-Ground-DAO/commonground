@@ -1,0 +1,354 @@
+# Self-hosted, single-server production deployment of Common Ground.
+#
+# Differences from the dev compose file (docker-compose.yml):
+#   - caddy terminates TLS (Let's Encrypt) for the app, the CG ID subdomain
+#     and mediasoup call signalling
+#   - nginx is built from Dockerfile_selfhost (real domains, instance-config
+#     injection, parameterized CSP)
+#   - DEPLOYMENT=prod: full production semantics on any domain
+#   - no hardhat dev chain, no redis-blockscout, no test contracts
+#   - postgres actually loads the tuned postgresql.conf
+#   - redis maxmemory tuned for a small single machine (override via
+#     REDIS_MAXMEMORY)
+#
+# Usage: see docker/SELFHOST.md. Never run this with the committed dev .env —
+# use docker/selfhost/init.sh to generate .env.selfhost with fresh secrets.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+      - "4443:4443"
+    environment:
+      - CG_DOMAIN=${CG_DOMAIN}
+      - CG_ID_DOMAIN=${CG_ID_DOMAIN}
+      - CG_ACME_EMAIL=${CG_ACME_EMAIL}
+    volumes:
+      - ./selfhost/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - cryptogram
+    restart: unless-stopped
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile_selfhost
+      args:
+        - SERVER_NAME=${CG_DOMAIN}
+        - CGID_SERVER_NAME=${CG_ID_DOMAIN}
+    image: cryptogram/nginx-selfhost
+    environment:
+      - CG_DEPLOYMENT=prod
+      - CG_APP_URL=https://${CG_DOMAIN}
+      - CG_CGID_URL=https://${CG_ID_DOMAIN}/#
+      - CG_RECAPTCHA_SITE_KEY=${CG_RECAPTCHA_SITE_KEY}
+    depends_on:
+      - api
+    networks:
+      - cryptogram
+    restart: unless-stopped
+
+  db:
+    build:
+      context: ./db
+    image: cryptogram/db
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${PG_SU_PASSWORD}
+      - PG_WRITER_PASSWORD=${PG_WRITER_PASSWORD}
+      - PG_READER_PASSWORD=${PG_READER_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/postgresql.conf:/etc/postgresql/postgresql.conf
+    networks:
+      - cryptogram
+    shm_size: '256m'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 1m
+      timeout: 5s
+      retries: 5
+    stop_signal: SIGINT
+    stop_grace_period: 1m
+    restart: unless-stopped
+
+  redis-sessions:
+    image: redis:6.2.7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory ${REDIS_MAXMEMORY:-512mb} --save ""
+    networks:
+      - cryptogram
+    restart: unless-stopped
+
+  redis-socketio:
+    image: redis:6.2.7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory ${REDIS_MAXMEMORY:-512mb} --save ""
+    networks:
+      - cryptogram
+    restart: unless-stopped
+
+  redis-data:
+    image: redis:6.2.7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory ${REDIS_MAXMEMORY:-512mb} --save ""
+    networks:
+      - cryptogram
+    restart: unless-stopped
+
+  seaweedmaster:
+    image: chrislusf/seaweedfs
+    command: "master -ip=seaweedmaster -volumeSizeLimitMB=${SEAWEED_VOLUME_LIMIT_MB:-1024}"
+    restart: unless-stopped
+    networks:
+      - cryptogram
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
+
+  seaweedvolume:
+    image: chrislusf/seaweedfs
+    command: "volume -mserver=seaweedmaster:9333 -port=8080 -ip=seaweedvolume -preStopSeconds=1"
+    restart: unless-stopped
+    volumes:
+      - seaweedfs-volume:/data
+    networks:
+      - cryptogram
+    depends_on:
+      - seaweedmaster
+
+  s3:
+    image: chrislusf/seaweedfs
+    command: 'filer -master="seaweedmaster:9333" -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333'
+    restart: unless-stopped
+    networks:
+      cryptogram:
+        aliases:
+          - s3.local
+    volumes:
+      - ./s3_config/s3.selfhost.json:/etc/seaweedfs/s3.json:ro
+      - seaweedfs-buckets:/data
+    depends_on:
+      - seaweedmaster
+      - seaweedvolume
+
+  migrate-db:
+    image: cryptogram/backend
+    environment:
+      - PG_SU_PASSWORD=${PG_SU_PASSWORD}
+      - PG_MEDIASOUP_PASSWORD=${PG_MEDIASOUP_PASSWORD}
+      - PG_SU_NAME=postgres
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - S3_SECRET=${S3_SECRET}
+      - DEPLOYMENT=prod
+      - BASE_URL=https://${CG_DOMAIN}
+    depends_on:
+      - db
+    networks:
+      - cryptogram
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 2s
+        max_attempts: 2
+        window: 60s
+    command: node /dist/migrateDb.js
+    stop_grace_period: 1m
+
+  wsapi:
+    image: cryptogram/backend
+    environment:
+      - DB_TYPE=writer
+      - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_SECRET=${REDIS_SECRET}
+      - DEPLOYMENT=prod
+      - BASE_URL=https://${CG_DOMAIN}
+      - CGID_URL=https://${CG_ID_DOMAIN}
+    depends_on:
+      - db
+      - redis-sessions
+      - redis-socketio
+      - redis-data
+    networks:
+      - cryptogram
+    command: ["node", "/dist/wsapi.js"]
+    stop_grace_period: 1m
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile_dev_stage_1
+    image: cryptogram/backend
+    environment:
+      - DB_TYPE=writer
+      - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_SECRET=${REDIS_SECRET}
+      - REDIS_LEGACY_MODE=true
+      - DEPLOYMENT=prod
+      - BASE_URL=https://${CG_DOMAIN}
+      - CGID_URL=https://${CG_ID_DOMAIN}
+      - S3_SECRET=${S3_SECRET}
+      - EMAIL_FROM=${EMAIL_FROM}
+      - CG_RECAPTCHA_SITE_KEY=${CG_RECAPTCHA_SITE_KEY}
+      - GOOGLE_RECAPTCHA_SECRET_KEY=${GOOGLE_RECAPTCHA_SECRET_KEY}
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
+      - TWITTER_CALLBACK_URL=${TWITTER_CALLBACK_URL}
+      - TWITTER_OAUTH2_CLIENT_ID=${TWITTER_OAUTH2_CLIENT_ID}
+      - TWITTER_OAUTH2_CLIENT_SECRET=${TWITTER_OAUTH2_CLIENT_SECRET}
+      - SUMSUB_SECRET_KEY=${SUMSUB_SECRET_KEY}
+      - SUMSUB_APP_TOKEN=${SUMSUB_APP_TOKEN}
+    depends_on:
+      - db
+      - redis-sessions
+      - redis-socketio
+      - redis-data
+      - seaweedmaster
+      - s3
+      - memberlist
+    networks:
+      - cryptogram
+    volumes:
+      - "./vapid_keys.json:/run/secrets/vapid_keys_json:ro"
+      - "./api_data:/api_data:ro"
+    command: ["node", "/dist/api.js"]
+    stop_grace_period: 1m
+    restart: unless-stopped
+
+  memberlist:
+    image: cryptogram/backend
+    environment:
+      - DB_TYPE=writer
+      - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      - DEPLOYMENT=prod
+      - BASE_URL=https://${CG_DOMAIN}
+    depends_on:
+      - db
+    networks:
+      - cryptogram
+    command: ["node", "/dist/memberlist.js"]
+    stop_grace_period: 1m
+    restart: unless-stopped
+
+  job-runner:
+    image: cryptogram/backend
+    environment:
+      - DB_TYPE=writer
+      - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_SECRET=${REDIS_SECRET}
+      - DEPLOYMENT=prod
+      - BASE_URL=https://${CG_DOMAIN}
+      - CGID_URL=https://${CG_ID_DOMAIN}
+      - S3_SECRET=${S3_SECRET}
+      - EMAIL_FROM=${EMAIL_FROM}
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
+    depends_on:
+      - db
+      - redis-sessions
+      - redis-socketio
+      - redis-data
+      - seaweedmaster
+      - s3
+    networks:
+      - cryptogram
+    command: ["node", "/dist/jobs.js"]
+    stop_grace_period: 1m
+    restart: unless-stopped
+
+  mediasoup:
+    image: cryptogram/backend
+    environment:
+      - DB_TYPE=mediasoup
+      - PG_PASSWORD=${PG_MEDIASOUP_PASSWORD}
+      - DEPLOYMENT=prod
+      - HTTPS_CERT_FULLCHAIN=/dist/mediasoup/certs/selfhost/server.crt
+      - HTTPS_CERT_PRIVKEY=/dist/mediasoup/certs/selfhost/server.key
+      - MEDIASOUP_ANNOUNCED_IP=${CG_PUBLIC_IP}
+      - DOMAIN=${CG_DOMAIN}
+      - INTERACTIVE=false
+      - MEDIASOUP_DISABLE_LIBURING=${MEDIASOUP_DISABLE_LIBURING:-true}
+    volumes:
+      - "./selfhost/certs:/dist/mediasoup/certs/selfhost:ro"
+    networks:
+      - cryptogram
+    command: ["node", "/dist/mediasoup.js"]
+    ports:
+      - "40000-40099:40000-40099/udp"
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  onchain:
+    image: cryptogram/backend
+    environment:
+      - DB_TYPE=writer
+      - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DEPLOYMENT=prod
+      - S3_SECRET=${S3_SECRET}
+      - BASE_URL=https://${CG_DOMAIN}
+      - QUIKNODE_ETH=${QUIKNODE_ETH}
+      - QUIKNODE_BSC=${QUIKNODE_BSC}
+      - QUIKNODE_MATIC=${QUIKNODE_MATIC}
+      - QUIKNODE_XDAI=${QUIKNODE_XDAI}
+      - QUIKNODE_FANTOM=${QUIKNODE_FANTOM}
+      - QUIKNODE_AVAX=${QUIKNODE_AVAX}
+      - QUIKNODE_ARBITRUM=${QUIKNODE_ARBITRUM}
+      - QUIKNODE_OPTIMISM=${QUIKNODE_OPTIMISM}
+      - QUIKNODE_BASE=${QUIKNODE_BASE}
+      - INFURA_LINEA=${INFURA_LINEA}
+      - QUIKNODE_ARBITRUM_NOVA=${QUIKNODE_ARBITRUM_NOVA}
+      - QUIKNODE_CELO=${QUIKNODE_CELO}
+      - QUIKNODE_POLYGON_ZKEVM=${QUIKNODE_POLYGON_ZKEVM}
+      - QUIKNODE_SCROLL=${QUIKNODE_SCROLL}
+      - QUIKNODE_ZKSYNC=${QUIKNODE_ZKSYNC}
+      - RECALCULATE_BALANCES_AND_ROLES=${RECALCULATE_BALANCES_AND_ROLES:-false}
+    depends_on:
+      - db
+      - redis-sessions
+      - redis-socketio
+      - redis-data
+    networks:
+      - cryptogram
+    command: ["node", "/dist/onchain.js"]
+    stop_grace_period: 1m
+    restart: unless-stopped
+
+  cg-builder:
+    build:
+      context: ./node20
+      args:
+        - BUILDER_UID=${BUILDER_UID:-1000}
+        - BUILDER_GID=${BUILDER_GID:-1000}
+    image: commonground/node20
+    user: "${BUILDER_UID:-1000}:${BUILDER_GID:-1000}"
+    environment:
+      - YARN_CACHE_FOLDER=/builder-cache
+      - YARN_ENABLE_GLOBAL_CACHE=false
+      - BUILDER_UID=${BUILDER_UID:-1000}
+      - BUILDER_GID=${BUILDER_GID:-1000}
+    restart: "no"
+    volumes:
+      - ../:/cg
+      - builder-cache:/builder-cache
+    networks:
+      - cryptogram
+    command: ["echo", "Not running interactive, exiting..."]
+
+volumes:
+  pgdata:
+  seaweedfs-volume:
+  seaweedfs-buckets:
+  builder-cache:
+  caddy-data:
+  caddy-config:
+
+networks:
+  cryptogram:
+    attachable: true

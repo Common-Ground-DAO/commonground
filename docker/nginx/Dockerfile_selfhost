@@ -1,0 +1,12 @@
+FROM nginx
+ARG SERVER_NAME
+ARG CGID_SERVER_NAME
+SHELL ["/bin/bash", "-c"]
+COPY ./nginx_selfhost.conf /etc/nginx/nginx.conf
+ADD ./dist /www/
+COPY ./inject-instance-config.sh /docker-entrypoint.d/40-cg-instance-config.sh
+RUN chmod +x /docker-entrypoint.d/40-cg-instance-config.sh
+RUN chown -R www-data:www-data /www
+RUN sed -i -e "s/{SERVER_NAME}/$SERVER_NAME/g" /etc/nginx/nginx.conf
+RUN sed -i -e "s/{CGID_SERVER_NAME}/$CGID_SERVER_NAME/g" /etc/nginx/nginx.conf
+RUN printf "Sitemap: https://$SERVER_NAME/sitemap.xml\n" >> /www/robots.txt

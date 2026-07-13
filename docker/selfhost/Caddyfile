@@ -1,0 +1,29 @@
+# TLS terminator for self-hosted Common Ground.
+# Caddy obtains and renews Let's Encrypt certificates automatically for
+# CG_DOMAIN and CG_ID_DOMAIN (both must point to this server in DNS).
+
+{
+	email {$CG_ACME_EMAIL}
+}
+
+# main app
+{$CG_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy nginx:80
+}
+
+# CG ID (passkey identity app)
+{$CG_ID_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy nginx:80
+}
+
+# mediasoup call signalling (wss). The internal hop uses mediasoup's
+# self-signed certificate; clients only ever see the Let's Encrypt one.
+{$CG_DOMAIN}:4443 {
+	reverse_proxy https://mediasoup:4443 {
+		transport http {
+			tls_insecure_skip_verify
+		}
+	}
+}

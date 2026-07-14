@@ -8,12 +8,8 @@ import botHelper from "../repositories/bots";
 import validators from "../validators";
 import { registerPostRoute } from "./util";
 import botTokenHelper from "../repositories/botTokens";
-import { allowBotRoute } from "../util/botPrincipal";
-import { getBotIdentity } from "../util/botProtocol";
 
 const botRouter = express.Router();
-
-allowBotRoute('POST', '/Bot/whoami');
 
 function sessionUserId(request: express.Request) {
   const user = request.session.user;
@@ -103,13 +99,6 @@ registerPostRoute<API.Bot.revokeToken.Request, API.Bot.revokeToken.Response>(
   '/tokens/revoke',
   validators.API.Bot.revokeToken,
   (request, response, data) => botTokenHelper.revokeToken(sessionUserId(request), data.botUserId, data.tokenId),
-);
-
-registerPostRoute<API.Bot.whoami.Request, API.Bot.whoami.Response>(
-  botRouter,
-  '/whoami',
-  undefined,
-  request => getBotIdentity(request),
 );
 
 export default botRouter;

@@ -35,7 +35,6 @@ for (const route of [
   '/setReaction',
   '/unsetReaction',
 ] as const) {
-  allowBotRoute('POST', `/Message${route}`);
   allowBotRoute('POST', `/BotV1/messages${route}`);
 }
 

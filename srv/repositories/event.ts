@@ -5,6 +5,7 @@
 import { Emitter } from "@socket.io/redis-emitter";
 import {
   articleRoomKey,
+  botTokenRoomKey,
   communityRoomKey,
   deviceRoomKey,
   expressSessionRoomKey,
@@ -184,6 +185,11 @@ class EventHelper {
     }
     const io = await this.#io;
     io.in(deviceRoomKey(deviceId)).socketsLeave(rooms);
+  }
+
+  public async disconnectBotTokenSockets(tokenId: string) {
+    const io = await this.#io;
+    io.in(botTokenRoomKey(tokenId)).disconnectSockets(true);
   }
 }
 

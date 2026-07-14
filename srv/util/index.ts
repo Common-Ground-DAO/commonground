@@ -195,3 +195,4 @@ export const roleRoomKey = (roleId: string) => `role:${roleId}`;
 export const deviceRoomKey = (deviceId: string) => `device:${deviceId}`;
 export const expressSessionRoomKey = (sessionId: string) => `expressSession:${sessionId}`;
 export const articleRoomKey = (articleId: string) => `article:${articleId}`;
+export const botTokenRoomKey = (tokenId: string) => `botToken:${tokenId}`;

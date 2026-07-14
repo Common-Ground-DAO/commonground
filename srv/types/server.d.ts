@@ -25,6 +25,7 @@ declare {
             interface SocketData {
                 userId?: string;
                 deviceId?: string;
+                botTokenId?: string;
                 signableSecret?: string;
                 temporaryCommunityId?: string;
                 walletRequestId?: string;

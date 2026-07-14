@@ -651,6 +651,66 @@ class BotHelper {
     }
   }
 
+  public async getActiveSocketRoomIds(botUserId: string, tokenId: string) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const bot = await _getBot(client, botUserId);
+      const token = await client.query(`
+        SELECT 1
+        FROM bot_tokens
+        WHERE id = $1
+          AND "botUserId" = $2
+          AND "revokedAt" IS NULL
+      `, [tokenId, botUserId]);
+      if (token.rowCount !== 1) throw new Error(errors.server.NOT_ALLOWED);
+      const memberships = await client.query<{ communityId: string }>(`
+        SELECT DISTINCT r."communityId"
+        FROM roles_users_users ruu
+        INNER JOIN roles r ON r.id = ruu."roleId"
+        INNER JOIN communities c ON c.id = r."communityId"
+        WHERE ruu."userId" = $1
+          AND ruu.claimed = TRUE
+          AND r."deletedAt" IS NULL
+          AND c."deletedAt" IS NULL
+      `, [botUserId]);
+      const communityIds: string[] = [];
+      const roleIds: string[] = [];
+      for (const membership of memberships.rows) {
+        try {
+          await _assertBotPolicy(client, bot, membership.communityId);
+          await _assertBotInstalled(client, botUserId, membership.communityId);
+        } catch (error) {
+          if (
+            error instanceof Error
+            && (error.message === errors.server.NOT_ALLOWED || error.message === errors.server.NOT_FOUND)
+          ) {
+            continue;
+          }
+          throw error;
+        }
+        communityIds.push(membership.communityId);
+        const roles = await client.query<{ roleId: string }>(`
+          SELECT ruu."roleId"
+          FROM roles_users_users ruu
+          INNER JOIN roles r ON r.id = ruu."roleId"
+          WHERE ruu."userId" = $1
+            AND r."communityId" = $2
+            AND ruu.claimed = TRUE
+            AND r."deletedAt" IS NULL
+        `, [botUserId, membership.communityId]);
+        roleIds.push(...roles.rows.map(role => role.roleId));
+      }
+      await client.query('COMMIT');
+      return { communityIds, roleIds };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   public async updateBot(actorUserId: string, data: API.Bot.updateBot.Request): Promise<API.Bot.BotView> {
     const client = await pool.connect();
     let platformChanged = false;
@@ -702,10 +762,17 @@ class BotHelper {
   public async disableBot(actorUserId: string, botUserId: string): Promise<void> {
     const client = await pool.connect();
     const left: MembershipChange[] = [];
+    const tokenIds: string[] = [];
     try {
       await client.query('BEGIN');
       const bot = await _getBot(client, botUserId);
       await _assertOwnerAuthorization(client, actorUserId, bot.ownerType, bot.ownerId);
+      const tokens = await client.query<{ id: string }>(`
+        SELECT id FROM bot_tokens
+        WHERE "botUserId" = $1 AND "revokedAt" IS NULL
+        FOR UPDATE
+      `, [botUserId]);
+      tokenIds.push(...tokens.rows.map(token => token.id));
       const communities = await client.query<{ communityId: string }>(`
         SELECT DISTINCT r."communityId"
         FROM roles_users_users ruu
@@ -726,11 +793,13 @@ class BotHelper {
       client.release();
     }
     for (const change of left) await _emitLeave(change);
+    for (const tokenId of tokenIds) await eventHelper.disconnectBotTokenSockets(tokenId);
   }
 
   public async disableBotsForOwner(ownerType: 'user' | 'community', ownerId: string): Promise<void> {
     const client = await pool.connect();
     const left: MembershipChange[] = [];
+    const tokenIds: string[] = [];
     try {
       await client.query('BEGIN');
       const bots = await client.query<{ userId: string }>(`
@@ -753,6 +822,12 @@ class BotHelper {
           if (change) left.push(change);
         }
       }
+      const tokens = await client.query<{ id: string }>(`
+        SELECT id FROM bot_tokens
+        WHERE "botUserId" = ANY($1::uuid[]) AND "revokedAt" IS NULL
+        FOR UPDATE
+      `, [bots.rows.map(bot => bot.userId)]);
+      tokenIds.push(...tokens.rows.map(token => token.id));
       await client.query(`
         UPDATE bot_tokens
         SET "revokedAt" = now()
@@ -771,6 +846,7 @@ class BotHelper {
       client.release();
     }
     for (const change of left) await _emitLeave(change);
+    for (const tokenId of tokenIds) await eventHelper.disconnectBotTokenSockets(tokenId);
   }
 
   public async installBot(actorUserId: string, data: API.Bot.installBot.Request): Promise<void> {

@@ -16,7 +16,7 @@ import serverconfig from "../serverconfig";
 import userHelper, { type CreateBotUserData } from "./users";
 import eventHelper from "./event";
 
-type BotRecord = {
+export type BotRecord = {
   userId: string;
   deviceId: string;
   ownerType: Models.User.BotOwnerType;
@@ -614,6 +614,17 @@ class BotHelper {
     }
   }
 
+  public async assertCanManageBot(
+    client: PoolClient,
+    actorUserId: string,
+    botUserId: string,
+    activeOnly = true,
+  ) {
+    const bot = await _getBot(client, botUserId, activeOnly);
+    await _assertOwnerAuthorization(client, actorUserId, bot.ownerType, bot.ownerId);
+    return bot;
+  }
+
   public async updateBot(actorUserId: string, data: API.Bot.updateBot.Request): Promise<API.Bot.BotView> {
     const client = await pool.connect();
     let platformChanged = false;
@@ -679,6 +690,7 @@ class BotHelper {
         const change = await _removeMembership(client, botUserId, row.communityId);
         if (change) left.push(change);
       }
+      await client.query(`UPDATE bot_tokens SET "revokedAt" = now() WHERE "botUserId" = $1 AND "revokedAt" IS NULL`, [botUserId]);
       await client.query(`UPDATE bots SET "deletedAt" = now(), "updatedAt" = now() WHERE "userId" = $1`, [botUserId]);
       await client.query('COMMIT');
     } catch (error) {
@@ -715,6 +727,11 @@ class BotHelper {
           if (change) left.push(change);
         }
       }
+      await client.query(`
+        UPDATE bot_tokens
+        SET "revokedAt" = now()
+        WHERE "botUserId" = ANY($1::uuid[]) AND "revokedAt" IS NULL
+      `, [bots.rows.map(bot => bot.userId)]);
       await client.query(`
         UPDATE bots
         SET "deletedAt" = now(), "updatedAt" = now()

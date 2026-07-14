@@ -25,6 +25,15 @@ declare global {
                 disabledAt: string | null;
             };
 
+            type TokenView = {
+                id: string;
+                botUserId: string;
+                name: string | null;
+                lastUsedAt: string | null;
+                createdAt: string;
+                revokedAt: string | null;
+            };
+
             type Owner = {
                 ownerType: Models.User.BotOwnerType;
                 ownerId: string | null;
@@ -93,6 +102,26 @@ declare global {
                     allowUserBots: boolean;
                 };
                 type Response = void;
+            }
+
+            namespace issueToken {
+                type Request = { botUserId: string; name: string | null };
+                type Response = { token: string; tokenData: TokenView };
+            }
+
+            namespace listTokens {
+                type Request = { botUserId: string };
+                type Response = TokenView[];
+            }
+
+            namespace revokeToken {
+                type Request = { botUserId: string; tokenId: string };
+                type Response = void;
+            }
+
+            namespace whoami {
+                type Request = undefined;
+                type Response = { userId: string; deviceId: string; tokenId: string };
             }
         }
     }

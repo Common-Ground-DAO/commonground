@@ -7,8 +7,12 @@ import errors from "../common/errors";
 import botHelper from "../repositories/bots";
 import validators from "../validators";
 import { registerPostRoute } from "./util";
+import botTokenHelper from "../repositories/botTokens";
+import { allowBotRoute } from "../util/botPrincipal";
 
 const botRouter = express.Router();
+
+allowBotRoute('POST', '/Bot/whoami');
 
 function sessionUserId(request: express.Request) {
   const user = request.session.user;
@@ -70,6 +74,42 @@ registerPostRoute<API.Bot.setAllowUserBots.Request, API.Bot.setAllowUserBots.Res
   '/setAllowUserBots',
   validators.API.Bot.setAllowUserBots,
   (request, response, data) => botHelper.setAllowUserBots(sessionUserId(request), data.communityId, data.allowUserBots),
+);
+
+registerPostRoute<API.Bot.issueToken.Request, API.Bot.issueToken.Response>(
+  botRouter,
+  '/tokens/issue',
+  validators.API.Bot.issueToken,
+  (request, response, data) => botTokenHelper.issueToken(sessionUserId(request), data.botUserId, data.name),
+);
+
+registerPostRoute<API.Bot.listTokens.Request, API.Bot.listTokens.Response>(
+  botRouter,
+  '/tokens/list',
+  validators.API.Bot.listTokens,
+  (request, response, data) => botTokenHelper.listTokens(sessionUserId(request), data.botUserId),
+);
+
+registerPostRoute<API.Bot.revokeToken.Request, API.Bot.revokeToken.Response>(
+  botRouter,
+  '/tokens/revoke',
+  validators.API.Bot.revokeToken,
+  (request, response, data) => botTokenHelper.revokeToken(sessionUserId(request), data.botUserId, data.tokenId),
+);
+
+registerPostRoute<API.Bot.whoami.Request, API.Bot.whoami.Response>(
+  botRouter,
+  '/whoami',
+  undefined,
+  (request) => {
+    const principal = request.botPrincipal;
+    if (!principal) throw new Error(errors.server.NOT_ALLOWED);
+    return {
+      userId: principal.user.id,
+      deviceId: principal.user.deviceId,
+      tokenId: principal.tokenId,
+    };
+  },
 );
 
 export default botRouter;

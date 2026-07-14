@@ -70,6 +70,20 @@ const botApi = {
     communityId: common.Uuid.required(),
     allowUserBots: Joi.boolean().strict().required(),
   }).strict(true).required(),
+
+  issueToken: Joi.object<API.Bot.issueToken.Request>({
+    botUserId: common.Uuid.required(),
+    name: Joi.string().trim().min(1).max(100).allow(null).required(),
+  }).strict(true).required(),
+
+  listTokens: Joi.object<API.Bot.listTokens.Request>({
+    botUserId: common.Uuid.required(),
+  }).strict(true).required(),
+
+  revokeToken: Joi.object<API.Bot.revokeToken.Request>({
+    botUserId: common.Uuid.required(),
+    tokenId: common.Uuid.required(),
+  }).strict(true).required(),
 };
 
 export default botApi;

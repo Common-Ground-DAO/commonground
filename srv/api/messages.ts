@@ -36,6 +36,7 @@ for (const route of [
   '/unsetReaction',
 ] as const) {
   allowBotRoute('POST', `/Message${route}`);
+  allowBotRoute('POST', `/BotV1/messages${route}`);
 }
 
 const ARTICLE_ROOM_LIMIT = 5;
@@ -236,7 +237,12 @@ async function emitMessageEvents(events: Events.Message.Message[], access: API.M
   }
 }
 
-async function createMessage(user: User, data: API.Messages.createMessage.Request, isModerationMessage: boolean) {
+async function createMessage(
+  user: User,
+  data: API.Messages.createMessage.Request,
+  isModerationMessage: boolean,
+  creatorIsBot = false,
+) {
   let channelMessageNotificationData: Awaited<ReturnType<typeof messageHelper.getChannelMessageNotifyData>> = [];
   const { access } = data;
   if ('callId' in access) {
@@ -333,7 +339,7 @@ async function createMessage(user: User, data: API.Messages.createMessage.Reques
   const event: Events.Message.Message = {
     type: "cliMessageEvent",
     action: "new",
-    data: message,
+    data: { ...message, creatorIsBot },
   };
 
   emitMessageEvents([event], access, { deviceIds: [user.deviceId] });
@@ -569,7 +575,7 @@ registerPostRoute<
     }
     await permissionHelper.hasTrustOrThrow({ userId: user.id, trust: '1.0' });
 
-    return createMessage(user, data, false);
+    return createMessage(user, data, false, !!request.botPrincipal);
   }
 );
 

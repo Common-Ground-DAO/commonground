@@ -16,6 +16,7 @@ import {
 } from './util';
 import cors from "cors";
 import { Server, type Socket } from "socket.io";
+import { BOT_PROTOCOL_VERSION } from "./common/botProtocol";
 import { createAdapter } from "@socket.io/redis-adapter";
 import deviceHelper from "./repositories/device";
 import validators from './validators';
@@ -147,6 +148,11 @@ io.use(async (socket, next) => {
     return;
   }
   try {
+    const requestedVersion = socket.handshake.auth?.protocolVersion;
+    if (requestedVersion !== undefined && requestedVersion !== BOT_PROTOCOL_VERSION) {
+      next(new Error('unsupported_bot_protocol'));
+      return;
+    }
     const principal = await botTokenHelper.authenticate(token);
     if (!principal) {
       next(new Error('unauthorized'));
@@ -160,6 +166,7 @@ io.use(async (socket, next) => {
       roleIds: ids.roleIds,
       communityIds: ids.communityIds,
     });
+    socket.data.botProtocolVersion = BOT_PROTOCOL_VERSION;
     next();
   } catch {
     next(new Error('unauthorized'));

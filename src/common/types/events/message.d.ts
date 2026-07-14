@@ -8,7 +8,10 @@ declare namespace Events {
       type: 'cliMessageEvent';
     } & ({
       action: 'new';
-      data: Models.Message.ApiMessage;
+      data: Models.Message.ApiMessage & {
+        // Stable Bot API v1 signal used to prevent accidental bot-to-bot loops.
+        creatorIsBot: boolean;
+      };
     } | {
       action: 'update';
       data:

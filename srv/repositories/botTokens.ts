@@ -7,6 +7,7 @@ import errors from "../common/errors";
 import serverconfig from "../serverconfig";
 import pool from "../util/postgres";
 import botHelper from "./bots";
+import eventHelper from "./event";
 
 export type BotTokenPrincipal = {
   kind: 'bot-token';
@@ -101,6 +102,7 @@ class BotTokenHelper {
     } finally {
       client.release();
     }
+    await eventHelper.disconnectBotTokenSockets(tokenId);
   }
 
   public async authenticate(rawToken: string): Promise<BotTokenPrincipal | null> {

@@ -11,10 +11,11 @@ import {
   communityRoomKey,
   deviceRoomKey,
   expressSessionRoomKey,
+  botTokenRoomKey,
   dockerSecret,
 } from './util';
 import cors from "cors";
-import { Server } from "socket.io";
+import { Server, type Socket } from "socket.io";
 import { createAdapter } from "@socket.io/redis-adapter";
 import deviceHelper from "./repositories/device";
 import validators from './validators';
@@ -22,6 +23,8 @@ import userHelper from './repositories/users';
 import redisManager from './redis';
 import { fakeHealthcheck } from './healthcheck';
 import buildId from './common/random_build_id';
+import botTokenHelper from './repositories/botTokens';
+import botHelper from './repositories/bots';
 
 import cookieParser from 'cookie-parser';
 // import signature from 'cookie-signature';
@@ -101,6 +104,68 @@ const io = new Server<
   perMessageDeflate: false,
 });
 
+type AppSocket = Socket<
+  API.Server.ServerToClientEvents,
+  API.Server.ClientToServerEvents,
+  API.Server.InterServerEvents,
+  API.Server.SocketData
+>;
+
+async function joinAuthenticatedRooms(
+  socket: AppSocket,
+  identity: {
+    userId: string;
+    deviceId: string;
+    roleIds: string[];
+    communityIds: string[];
+    tokenId?: string;
+  },
+) {
+  socket.data.userId = identity.userId;
+  socket.data.deviceId = identity.deviceId;
+  const rooms = [
+    deviceRoomKey(identity.deviceId),
+    userRoomKey(identity.userId),
+    ...identity.roleIds.map(roleRoomKey),
+    ...identity.communityIds.map(communityRoomKey),
+  ];
+  if (identity.tokenId) {
+    socket.data.botTokenId = identity.tokenId;
+    rooms.push(botTokenRoomKey(identity.tokenId));
+  }
+  await socket.join(rooms);
+}
+
+io.use(async (socket, next) => {
+  const token = socket.handshake.auth?.token;
+  if (token === undefined) {
+    next();
+    return;
+  }
+  if (typeof token !== 'string' || token.length === 0 || socket.handshake.headers.cookie) {
+    next(new Error('unauthorized'));
+    return;
+  }
+  try {
+    const principal = await botTokenHelper.authenticate(token);
+    if (!principal) {
+      next(new Error('unauthorized'));
+      return;
+    }
+    const ids = await botHelper.getActiveSocketRoomIds(principal.user.id, principal.tokenId);
+    await joinAuthenticatedRooms(socket, {
+      userId: principal.user.id,
+      deviceId: principal.user.deviceId,
+      tokenId: principal.tokenId,
+      roleIds: ids.roleIds,
+      communityIds: ids.communityIds,
+    });
+    next();
+  } catch {
+    next(new Error('unauthorized'));
+  }
+});
+
 redisManager.isReady.then(async () => {
   io.adapter(createAdapter(
     redisManager.getClient('socketIOPub'),
@@ -116,16 +181,25 @@ redisManager.isReady.then(async () => {
 
     socket.emit("buildId", buildId, Date.now());
 
-    const { cookie } = socket.handshake.headers;
-    if (cookie) {
-      const sessionId = decodeSessionId(cookie);
-      socket.join(expressSessionRoomKey(sessionId));
+    if (socket.data.botTokenId) {
+      socket.on("cgPing", (callback) => {
+        try {
+          callback(Date.now());
+        } catch {
+          socket.disconnect(true);
+        }
+      });
+      return;
     }
-    else {
+
+    const { cookie } = socket.handshake.headers;
+    if (!cookie) {
       socket.disconnect(true);
       console.error("No express sessionId cookie found, closing socket...");
       return;
     }
+    const sessionId = decodeSessionId(cookie);
+    socket.join(expressSessionRoomKey(sessionId));
 
     socket.on("getSignableSecret", (callback) => {
       const signableSecret = randomString(20);
@@ -205,18 +279,12 @@ redisManager.isReady.then(async () => {
           const ids = await userHelper.getUserRoleAndCommunityIds(userId);
           delete socket.data.signableSecret;
           localOnlineUsers.add(userId);
-          socket.data.userId = userId;
-          socket.data.deviceId = data.deviceId;
-          let promises: any[] = [];
-          promises.push(socket.join(deviceRoomKey(data.deviceId)));
-          promises.push(socket.join(userRoomKey(userId)));
-          for (const roleId of ids.roleIds) {
-            promises.push(socket.join(roleRoomKey(roleId)));
-          }
-          for (const communityId of ids.communityIds) {
-            promises.push(socket.join(communityRoomKey(communityId)));
-          }
-          await Promise.all(promises.filter(p => p !== undefined));
+          await joinAuthenticatedRooms(socket, {
+            userId,
+            deviceId: data.deviceId,
+            roleIds: ids.roleIds,
+            communityIds: ids.communityIds,
+          });
           await userHelper.setUserOnlineStatus(userId, 'online');
         }
         callback("OK");
@@ -255,7 +323,7 @@ redisManager.isReady.then(async () => {
 
     socket.on("disconnect", () => {
       const { userId } = socket.data;
-      if (!!userId) {
+      if (!!userId && !socket.data.botTokenId) {
         const ownRoomSize = io.sockets.adapter.rooms.get(userRoomKey(userId))?.size;
         if (!ownRoomSize) {
           if (!shuttingDown) {
@@ -290,7 +358,7 @@ const shutdown = async (code = 0) => {
     const sockets = await io.local.fetchSockets();
     const offlineUserIds = sockets.reduce<string[]>((agg, socket) => {
       const { userId } = socket.data;
-      if (!!userId) {
+      if (!!userId && !socket.data.botTokenId) {
         const ownRoomSize = io.sockets.adapter.rooms.get(userRoomKey(userId))?.size;
         if (ownRoomSize === 1) {
           console.log(`User ${userId} will disconnect the last socket and then be offline`);

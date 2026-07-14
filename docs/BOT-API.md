@@ -239,8 +239,9 @@ allowlist and permission checks are authoritative.
 
 ## Instance operator configuration
 
-Self-hosted deployments configure these in `docker/.env.selfhost` and recreate
-the `api` service after changes:
+Self-hosted deployments configure these in `docker/.env.selfhost`, then run
+`./selfhost/selfhost.sh up` from `docker/` so Compose recreates services whose
+configuration changed:
 
 | Variable | Default | Meaning |
 |---|---:|---|

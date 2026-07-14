@@ -121,7 +121,8 @@ for larger instances.
 Bot management is API/CLI only in v1. Existing instances should add the bot
 owner/token/rate-limit variables documented in
 [`docs/BOT-API.md`](../docs/BOT-API.md#instance-operator-configuration) to
-`.env.selfhost`, then recreate the `api` service. In particular,
+`.env.selfhost`, then run `./selfhost/selfhost.sh up` so Compose recreates the
+services whose configuration changed. In particular,
 `PLATFORM_OPERATOR_USER_IDS` is a comma-separated allowlist of human user UUIDs
 that may create and manage platform-owned bots; it is empty by default.
 

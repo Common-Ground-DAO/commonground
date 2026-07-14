@@ -383,6 +383,9 @@ async function _assertRoleSetAllowed(
   }
   if (bot.ownerType !== BotOwnerType.USER || roleIds.length === 0) return;
 
+  // Bot bearer principals cannot reach community-management routes in v1.
+  // The user-owner cap therefore applies to the channel permissions that the
+  // messaging allowlist can actually exercise.
   const excess = await db.query(`
     WITH bot_permissions AS (
       SELECT ccrp."channelId", unnest(ccrp.permissions)::text AS permission
@@ -908,10 +911,37 @@ class BotHelper {
         const bot = await _getBot(client, row.userId);
         try {
           await _assertBotPolicy(client, bot, communityId);
-          roleChanges.push(await _setBotRoles(client, bot, communityId, []));
-        } catch {
+        } catch (error) {
+          if (!(error instanceof Error) || ![
+            errors.server.NOT_ALLOWED,
+            errors.server.NOT_FOUND,
+          ].includes(error.message)) {
+            throw error;
+          }
           const change = await _removeMembership(client, bot.userId, communityId);
           if (change) left.push(change);
+          continue;
+        }
+
+        const current = await client.query<{ roleId: string }>(`
+          SELECT ruu."roleId"
+          FROM roles_users_users ruu
+          INNER JOIN roles r ON r.id = ruu."roleId"
+          WHERE ruu."userId" = $1
+            AND r."communityId" = $2
+            AND r.type <> $3
+        `, [bot.userId, communityId, RoleType.PREDEFINED]);
+        const currentRoleIds = current.rows.map(role => role.roleId);
+        try {
+          await _assertRoleSetAllowed(client, bot, communityId, currentRoleIds);
+        } catch (error) {
+          if (!(error instanceof Error) || ![
+            errors.server.INVALID_REQUEST,
+            errors.server.NOT_ALLOWED,
+          ].includes(error.message)) {
+            throw error;
+          }
+          roleChanges.push(await _setBotRoles(client, bot, communityId, []));
         }
       }
       await client.query('COMMIT');

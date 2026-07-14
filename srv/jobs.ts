@@ -6,6 +6,7 @@ import { Worker } from 'worker_threads';
 import cron from "node-cron";
 import path from 'path';
 import config from './common/config';
+import { fakeHealthcheck } from './healthcheck';
 
 let processIsExiting = false;
 
@@ -87,6 +88,11 @@ createPermanentWorker('handleCommunityAirdrops', true, 30000);
 if (config.DEPLOYMENT === 'prod') {
   createPermanentWorker('tokenSaleNotifications', true, 30000);
 }
+
+// the backend image's HEALTHCHECK reads healthcheck.txt; without this the
+// job-runner container reports permanently unhealthy (every other backend
+// service already does the same)
+fakeHealthcheck();
 
 createCronOrIntervalWorker('onlineStatusCheck', { interval: 30000 });
 createCronOrIntervalWorker('activityScore', { cronExpression: '*/10 * * * *' });

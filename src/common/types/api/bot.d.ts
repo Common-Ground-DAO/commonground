@@ -17,6 +17,7 @@ declare global {
                 deviceId: string;
                 ownerType: Models.User.BotOwnerType;
                 ownerId: string | null;
+                owner: Models.User.BotOwnerSummary;
                 username: string;
                 imageId: string | null;
                 description: string | null;
@@ -36,9 +37,10 @@ declare global {
                 revokedAt: string | null;
             };
 
-            type CommunityBotView = Pick<BotView, 'userId' | 'username' | 'imageId' | 'description'> & {
+            type CommunityBotView = Pick<BotView,
+                'userId' | 'ownerType' | 'ownerId' | 'owner' | 'username' | 'imageId' | 'description'
+            > & {
                 roleIds: string[];
-                communityOwned: boolean;
             };
 
             type InstallableUserBotView = Pick<BotView, 'userId' | 'username' | 'imageId' | 'description'> & {

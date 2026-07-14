@@ -135,6 +135,19 @@ async function _getBotView(db: PoolClient, botUserId: string): Promise<API.Bot.B
       b."deviceId",
       b."ownerType",
       b."ownerId",
+      CASE b."ownerType"
+        WHEN 'user' THEN json_build_object(
+          'type', 'user',
+          'id', b."ownerId",
+          'username', owner_account."displayName"
+        )
+        WHEN 'community' THEN json_build_object(
+          'type', 'community',
+          'id', b."ownerId",
+          'title', owner_community.title
+        )
+        ELSE json_build_object('type', 'platform')
+      END AS owner,
       ua."displayName" AS username,
       ua."imageId",
       b.description,
@@ -168,6 +181,11 @@ async function _getBotView(db: PoolClient, botUserId: string): Promise<API.Bot.B
       ON ua."userId" = b."userId"
       AND ua.type = 'bot'
       AND ua."deletedAt" IS NULL
+    LEFT JOIN user_accounts owner_account
+      ON owner_account."userId" = b."ownerId"
+      AND owner_account.type = 'cg'
+    LEFT JOIN communities owner_community
+      ON owner_community.id = b."ownerId"
     WHERE b."userId" = $1
   `, [botUserId, PredefinedRole.Member, RoleType.PREDEFINED]);
   if (result.rowCount !== 1) {
@@ -638,11 +656,13 @@ class BotHelper {
         const bot = await _getBotView(client, userId);
         return {
           userId: bot.userId,
+          ownerType: bot.ownerType,
+          ownerId: bot.ownerId,
+          owner: bot.owner,
           username: bot.username,
           imageId: bot.imageId,
           description: bot.description,
           roleIds,
-          communityOwned: bot.ownerType === BotOwnerType.COMMUNITY && bot.ownerId === communityId,
         };
       }));
       await client.query('COMMIT');

@@ -310,14 +310,19 @@ const AddUserBotModal: React.FC<{
 
 const InstalledBotRow: React.FC<{
   bot: API.Bot.CommunityBotView;
-  isCommunityOwned: boolean;
   communityId: string;
   onManageRoles: () => void;
   onManageBot: () => void;
   onChanged: () => void;
-}> = ({ bot, isCommunityOwned, communityId, onManageRoles, onManageBot, onChanged }) => {
+}> = ({ bot, communityId, onManageRoles, onManageBot, onChanged }) => {
   const { showSnackbar } = useSnackbarContext();
   const imageUrl = useSignedUrl(bot.imageId);
+  const isCommunityOwned = bot.ownerType === 'community' && bot.ownerId === communityId;
+  const ownershipLabel = bot.owner.type === 'community'
+    ? 'Community bot'
+    : bot.owner.type === 'user'
+      ? `User bot · Owned by @${bot.owner.username}`
+      : 'Platform bot · Managed by this instance';
 
   const remove = useCallback(async () => {
     if (!window.confirm('Remove this bot from the community? It keeps existing but loses access here.')) return;
@@ -340,7 +345,7 @@ const InstalledBotRow: React.FC<{
           @{bot.username}
         </span>
         <span className='cg-text-sm-400 cg-text-secondary'>
-          {isCommunityOwned ? 'Community bot' : 'External bot'}
+          {ownershipLabel}
         </span>
       </div>
     </div>
@@ -348,7 +353,9 @@ const InstalledBotRow: React.FC<{
       <Button role='secondary' text='Roles' onClick={onManageRoles} />
       {isCommunityOwned
         ? <Button role='primary' text='Manage' onClick={onManageBot} />
-        : <Button role='destructive' text='Remove' onClick={remove} />}
+        : bot.ownerType === 'user'
+          ? <Button role='destructive' text='Remove' onClick={remove} />
+          : null}
     </div>
   </div>;
 };
@@ -436,7 +443,6 @@ const BotManagement: React.FC<Props> = ({ showHeading = true }) => {
               key={bot.userId}
               bot={bot}
               communityId={communityId}
-              isCommunityOwned={bot.communityOwned}
               onManageRoles={() => setRoleModalBot(bot)}
               onManageBot={() => setManagedBot(communityOwnedBots.get(bot.userId) ?? null)}
               onChanged={load}

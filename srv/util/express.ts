@@ -18,6 +18,7 @@ import {
   type PublicKeyCredentialRequestOptionsJSON,
 } from '@simplewebauthn/types';
 import passport from 'passport';
+import { botAllowlistMiddleware, botAuthenticationMiddleware } from './botPrincipal';
 
 // TYPES
 export type User = {
@@ -160,16 +161,32 @@ if (config.DEPLOYMENT !== 'dev') {
   sessionOptions.cookie!.domain = `.${urls.APP_HOSTNAME}`;
 }
 
-app.use(session(sessionOptions));
-app.use(passport.initialize());
-app.use(passport.session());
+const sessionMiddleware = session(sessionOptions);
+const passportInitializeMiddleware = passport.initialize();
+const passportSessionMiddleware = passport.session();
+
+app.use(botAuthenticationMiddleware);
+app.use((request, response, next) => {
+  if (request.botPrincipal) return next();
+  sessionMiddleware(request, response, next);
+});
+app.use((request, response, next) => {
+  if (request.botPrincipal) return next();
+  passportInitializeMiddleware(request, response, next);
+});
+app.use((request, response, next) => {
+  if (request.botPrincipal) return next();
+  passportSessionMiddleware(request, response, next);
+});
 
 app.use((request, response, next) => {
+  if (request.botPrincipal) return next();
   if (!request.session.createdAt) {
     request.session.createdAt = new Date();
   }
   next();
 });
+app.use(botAllowlistMiddleware);
 
   /**
  * ==========  start server  ==========

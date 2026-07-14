@@ -22,6 +22,7 @@ import SignWalletPage from './SignWalletPage/SignWalletPage';
 import SignWalletPageFuel from './SignWalletPage/SignWalletPageFuel';
 import SignWalletPageAeternity from './SignWalletPage/SignWalletPageAeternity';
 import ExternalAccountPage from './ExternalAccountPage/ExternalAccountPage';
+import { ExternalAccountType } from './AccountsPage/AccountsPage';
 import SignWithUniversalProfile from './SignWalletPage/SignWithUniversalProfile';
 import AnimatedTabPageContainer from 'components/atoms/AnimatedTabPage/AnimatedTabPageContainer';
 import AnimatedTabPage from 'components/atoms/AnimatedTabPage/AnimatedTabPage';
@@ -119,7 +120,7 @@ const UserSettingsModalContent: React.FC<Props> = (props) => {
   const { setIsClosed } = props;
   const { isMobile } = useWindowSizeContext();
   const { currentPage, setCurrentPage } = useUserSettingsContext();
-  const [currentAccount, setCurrentAccount] = useState<Models.User.ProfileItemType>('twitter');
+  const [currentAccount, setCurrentAccount] = useState<ExternalAccountType>('twitter');
   const [currentWallet, setCurrentWallet] = useState('');
   const [currentHeight, setCurrentHeight] = useState(0);
   const lockModal = useMemo(() => props.lockModal || (() => { }), [props.lockModal]);

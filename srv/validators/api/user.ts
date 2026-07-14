@@ -12,7 +12,8 @@ import {
   PremiumRenewal,
 } from "../../common/enums";
 
-const accountTypes = Object.values(UserProfileTypeEnum);
+const humanAccountTypes = Object.values(UserProfileTypeEnum)
+  .filter(type => type !== UserProfileTypeEnum.BOT);
 const premiumFeature = Joi.string().valid(...Object.values(UserPremiumFeatureName));
 const premiumRenewal = Joi.string().valid(...Object.values(PremiumRenewal)).allow(null);
 
@@ -110,7 +111,7 @@ const userApi = {
       email: TldSafeEmailValidator.required(),
       wizardId: common.Uuid.required(),
     }).strict(true),
-    displayAccount: Joi.string().valid(...accountTypes).required(),
+    displayAccount: Joi.string().valid(...humanAccountTypes).required(),
     recaptchaToken: Joi.string().required(),
     device: newDeviceValidator.required(),
   }).required().strict(true),
@@ -121,7 +122,7 @@ const userApi = {
     newsletter: Joi.boolean(),
     weeklyNewsletter: Joi.boolean(),
     email: TldSafeEmailValidator.allow(null),
-    displayAccount: Joi.string().valid(...accountTypes),
+    displayAccount: Joi.string().valid(...humanAccountTypes),
     dmNotifications: Joi.boolean(),
     tags: Joi.alternatives().try(common.Tags, Joi.equal(null)),
   }).strict(true).min(1).required(),
@@ -159,7 +160,7 @@ const userApi = {
   ).strict(true).required(),
 
   addUserAccount: Joi.object<API.User.addUserAccount.Request>({
-    type: Joi.string().valid(...accountTypes).required(),
+    type: Joi.string().valid(...humanAccountTypes).required(),
     displayName: Joi.when('type', {
       is: 'cg',
       then: common.CgProfileDisplayName.required(),
@@ -191,7 +192,7 @@ const userApi = {
   }).min(2).required().strict(true),
 
   removeUserAccount: Joi.object<API.User.addUserAccount.Request>({
-    type: Joi.string().valid(...accountTypes).required(),
+    type: Joi.string().valid(...humanAccountTypes).required(),
   }).required().strict(true),
 
   prepareWalletAction: Joi.object<API.User.prepareWalletAction.Request>({

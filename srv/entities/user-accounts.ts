@@ -20,6 +20,7 @@ import { User } from "./users";
 @Index("idx_user_accounts_type_id", { synchronize: false })
 @Index("idx_user_accounts_type_lower_id", { synchronize: false })
 @Index("idx_user_accounts_cg_unique_displayName", { synchronize: false })
+@Index("idx_user_accounts_bot_unique_displayName", { synchronize: false })
 @Index("idx_user_accounts_displayName_gin_trgm", { synchronize: false })
 export class UserAccount {
     @Index()

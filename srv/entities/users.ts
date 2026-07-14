@@ -64,6 +64,9 @@ export class User {
     @Column({ type: 'enum', enum: UserProfileTypeEnum, nullable: false, select: false })
     displayAccount!: Models.User.ProfileItemType;
 
+    @Column({ name: 'is_bot', type: 'boolean', nullable: false, default: false })
+    isBot!: boolean;
+
     @OneToMany(() => UserAccount, (userAccount) => userAccount.user)
     userAccounts!: UserAccount[];
 

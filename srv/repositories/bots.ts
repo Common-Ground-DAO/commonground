@@ -625,6 +625,32 @@ class BotHelper {
     return bot;
   }
 
+  public async assertActiveCommunityAccess(botUserId: string, tokenId: string, communityId: string) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const bot = await _getBot(client, botUserId);
+      const token = await client.query(`
+        SELECT 1
+        FROM bot_tokens
+        WHERE id = $1
+          AND "botUserId" = $2
+          AND "revokedAt" IS NULL
+      `, [tokenId, botUserId]);
+      if (token.rowCount !== 1) {
+        throw new Error(errors.server.NOT_ALLOWED);
+      }
+      await _assertBotPolicy(client, bot, communityId);
+      await _assertBotInstalled(client, botUserId, communityId);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   public async updateBot(actorUserId: string, data: API.Bot.updateBot.Request): Promise<API.Bot.BotView> {
     const client = await pool.connect();
     let platformChanged = false;

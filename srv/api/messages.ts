@@ -19,12 +19,80 @@ import ogs from 'open-graph-scraper';
 import fileHelper from "../repositories/files";
 import axios from "../util/axios";
 import articleHelper from "../repositories/articles";
+import botHelper from "../repositories/bots";
+import { allowBotRoute } from "../util/botPrincipal";
+import { enforceBotRateLimit } from "../util/botRateLimit";
 
 const t = shortUUID();
 
 const messagingRouter = express.Router();
 
+for (const route of [
+  '/loadMessages',
+  '/messagesById',
+  '/loadUpdates',
+  '/createMessage',
+  '/setReaction',
+  '/unsetReaction',
+] as const) {
+  allowBotRoute('POST', `/Message${route}`);
+}
+
 const ARTICLE_ROOM_LIMIT = 5;
+
+function isExactCommunityChannelAccess(
+  access: API.Messages.MessageAccess,
+): access is { communityId: string; channelId: string } {
+  const keys = Object.keys(access).sort();
+  return keys.length === 2
+    && keys[0] === 'channelId'
+    && keys[1] === 'communityId'
+    && typeof (access as { channelId?: unknown }).channelId === 'string'
+    && typeof (access as { communityId?: unknown }).communityId === 'string';
+}
+
+async function getMessageRequestUser(
+  request: express.Request,
+  access: API.Messages.MessageAccess,
+  countAsMessage = false,
+): Promise<User | undefined> {
+  const principal = request.botPrincipal;
+  if (!principal) return request.session.user;
+  if (!isExactCommunityChannelAccess(access)) {
+    throw new Error(errors.server.NOT_ALLOWED);
+  }
+  await enforceBotRateLimit(principal.tokenId, 'api');
+  if (countAsMessage) {
+    await enforceBotRateLimit(principal.tokenId, 'message');
+  }
+  await botHelper.assertActiveCommunityAccess(
+    principal.user.id,
+    principal.tokenId,
+    access.communityId,
+  );
+  return principal.user;
+}
+
+async function checkMessageReadAccess(access: API.Messages.MessageAccess, userId?: string) {
+  if ('communityId' in access) {
+    await _checkAccessOrThrow(access, [
+      ChannelPermission.CHANNEL_EXISTS,
+      ChannelPermission.CHANNEL_READ,
+    ], userId);
+  }
+  else if ('callId' in access) {
+    await _checkAccessOrThrow(access, [
+      CallPermission.CALL_EXISTS,
+      CallPermission.CHANNEL_READ,
+    ], userId);
+  }
+  else if ('articleId' in access) {
+    await _checkAccessOrThrow(access, [ArticlePermission.ARTICLE_READ], userId);
+  }
+  else {
+    await _checkAccessOrThrow(access, userId);
+  }
+}
 
 export async function _checkAccessOrThrow(access: { channelId: string, communityId: string }, permissions: ChannelPermission[], userId?: string): Promise<void>;
 export async function _checkAccessOrThrow(access: { channelId: string, callId: string }, permissions: CallPermission[], userId?: string): Promise<void>;
@@ -495,7 +563,7 @@ registerPostRoute<
   '/createMessage',
   validators.API.Message.createMessage,
   async (request, response, data) => {
-    const { user } = request.session;
+    const user = await getMessageRequestUser(request, data.access, true);
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
@@ -731,27 +799,9 @@ registerPostRoute<
   '/loadMessages',
   validators.API.Message.loadMessages,
   async (request, response, data) => {
-    const { user } = request.session;
+    const user = await getMessageRequestUser(request, data.access);
     const { access } = data;
-    if ('communityId' in access) {
-      await _checkAccessOrThrow(access, [
-        ChannelPermission.CHANNEL_EXISTS,
-        ChannelPermission.CHANNEL_READ
-      ], user?.id);
-    }
-    else if ('callId' in access) {
-      await _checkAccessOrThrow(access, [
-        CallPermission.CALL_EXISTS,
-        CallPermission.CHANNEL_READ,
-      ], user?.id);
-    }
-    else if ('articleId' in access) {
-      await _checkAccessOrThrow(access, [
-        ArticlePermission.ARTICLE_READ,
-      ], user?.id);
-    } else {
-      await _checkAccessOrThrow(access, user?.id);
-    }
+    await checkMessageReadAccess(access, user?.id);
 
     return await messageHelper.loadMessages(user?.id, data);
   }
@@ -765,28 +815,9 @@ registerPostRoute<
   '/messagesById',
   validators.API.Message.messagesById,
   async (request, response, data) => {
-    const { user } = request.session;
+    const user = await getMessageRequestUser(request, data.access);
     const { access } = data;
-    if ('communityId' in access) {
-      await _checkAccessOrThrow(access, [
-        ChannelPermission.CHANNEL_EXISTS,
-        ChannelPermission.CHANNEL_READ
-      ], user?.id);
-    }
-    else if ('callId' in access) {
-      await _checkAccessOrThrow(access, [
-        CallPermission.CALL_EXISTS,
-        CallPermission.CHANNEL_READ,
-      ], user?.id);
-    }
-    else if ('articleId' in access) {
-      await _checkAccessOrThrow(access, [
-        ArticlePermission.ARTICLE_READ,
-      ], user?.id);
-    }
-    else {
-      await _checkAccessOrThrow(access, user?.id);
-    }
+    await checkMessageReadAccess(access, user?.id);
 
     return await messageHelper.loadMessagesById(user?.id, data);
   }
@@ -800,28 +831,9 @@ registerPostRoute<
   '/loadUpdates',
   validators.API.Message.loadUpdates,
   async (request, response, data) => {
-    const { user } = request.session;
+    const user = await getMessageRequestUser(request, data.access);
     const { access } = data;
-    if ('communityId' in access) {
-      await _checkAccessOrThrow(access, [
-        ChannelPermission.CHANNEL_EXISTS,
-        ChannelPermission.CHANNEL_READ
-      ], user?.id);
-    }
-    else if ('callId' in access) {
-      await _checkAccessOrThrow(access, [
-        CallPermission.CALL_EXISTS,
-        CallPermission.CHANNEL_READ,
-      ], user?.id);
-    }
-    else if ('articleId' in access) {
-      await _checkAccessOrThrow(access, [
-        ArticlePermission.ARTICLE_READ,
-      ], user?.id);
-    }
-    else {
-      await _checkAccessOrThrow(access, user?.id);
-    }
+    await checkMessageReadAccess(access, user?.id);
 
     return await messageHelper.loadMessageUpdates(user?.id, data);
   }
@@ -835,33 +847,14 @@ registerPostRoute<
   '/setReaction',
   validators.API.Message.setReaction,
   async (request, response, data) => {
-    const { user } = request.session;
+    const user = await getMessageRequestUser(request, data.access);
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
     await permissionHelper.hasTrustOrThrow({ userId: user.id, trust: '1.0' });
 
     const { access } = data;
-    if ('communityId' in access) {
-      await _checkAccessOrThrow(access, [
-        ChannelPermission.CHANNEL_EXISTS,
-        ChannelPermission.CHANNEL_READ,
-      ], user.id);
-    }
-    else if ('callId' in access) {
-      await _checkAccessOrThrow(access, [
-        CallPermission.CALL_EXISTS,
-        CallPermission.CHANNEL_READ,
-      ], user.id);
-    }
-    else if ('articleId' in access) {
-      await _checkAccessOrThrow(access, [
-        ArticlePermission.ARTICLE_READ,
-      ], user.id);
-    }
-    else {
-      await _checkAccessOrThrow(access, user.id);
-    }
+    await checkMessageReadAccess(access, user.id);
 
     const result = await messageHelper.setReaction(user.id, data);
 
@@ -899,11 +892,12 @@ registerPostRoute<
   '/unsetReaction',
   validators.API.Message.unsetReaction,
   async (request, response, data) => {
-    const { user } = request.session;
+    const user = await getMessageRequestUser(request, data.access);
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
     const { access } = data;
+    await checkMessageReadAccess(access, user.id);
     const result = await messageHelper.unsetReaction(user.id, data);
 
     if (!!result) {

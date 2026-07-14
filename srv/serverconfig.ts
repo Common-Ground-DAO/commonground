@@ -28,6 +28,8 @@ const serverconfig = {
     BOT_COMMUNITY_OWNER_LIMIT: positiveInteger(process.env.BOT_COMMUNITY_OWNER_LIMIT, 10),
     BOT_PLATFORM_OWNER_LIMIT: positiveInteger(process.env.BOT_PLATFORM_OWNER_LIMIT, 10),
     BOT_ACTIVE_TOKEN_LIMIT: positiveInteger(process.env.BOT_ACTIVE_TOKEN_LIMIT, 10),
+    BOT_API_RATE_LIMIT_PER_MINUTE: positiveInteger(process.env.BOT_API_RATE_LIMIT_PER_MINUTE, 120),
+    BOT_MESSAGE_RATE_LIMIT_PER_MINUTE: positiveInteger(process.env.BOT_MESSAGE_RATE_LIMIT_PER_MINUTE, 30),
 }
 
 mailchimpClient.setConfig({

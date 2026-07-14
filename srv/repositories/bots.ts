@@ -548,6 +548,69 @@ class BotHelper {
     }
   }
 
+  public async listCommunityBots(
+    actorUserId: string,
+    communityId: string,
+  ): Promise<API.Bot.CommunityBotView[]> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await _assertCommunityManager(client, actorUserId, communityId);
+      const installed = await client.query<{ userId: string; roleIds: string[] }>(`
+        SELECT
+          b."userId",
+          COALESCE(
+            array_agg(custom_role.id ORDER BY custom_role.id)
+              FILTER (WHERE custom_role.id IS NOT NULL),
+            ARRAY[]::uuid[]
+          ) AS "roleIds"
+        FROM bots b
+        INNER JOIN users u
+          ON u.id = b."userId"
+          AND u.is_bot = TRUE
+          AND u."deletedAt" IS NULL
+        INNER JOIN roles_users_users member_assignment
+          ON member_assignment."userId" = b."userId"
+          AND member_assignment.claimed = TRUE
+        INNER JOIN roles member_role
+          ON member_role.id = member_assignment."roleId"
+          AND member_role."communityId" = $1
+          AND member_role.title = $2
+          AND member_role.type = $3
+          AND member_role."deletedAt" IS NULL
+        LEFT JOIN roles_users_users custom_assignment
+          ON custom_assignment."userId" = b."userId"
+          AND custom_assignment.claimed = TRUE
+        LEFT JOIN roles custom_role
+          ON custom_role.id = custom_assignment."roleId"
+          AND custom_role."communityId" = $1
+          AND custom_role.type <> $3
+          AND custom_role."deletedAt" IS NULL
+        WHERE b."deletedAt" IS NULL
+        GROUP BY b."userId", b."createdAt"
+        ORDER BY b."createdAt", b."userId"
+      `, [communityId, PredefinedRole.Member, RoleType.PREDEFINED]);
+      const bots = await Promise.all(installed.rows.map(async ({ userId, roleIds }) => {
+        const bot = await _getBotView(client, userId);
+        return {
+          userId: bot.userId,
+          displayName: bot.displayName,
+          imageId: bot.imageId,
+          description: bot.description,
+          roleIds,
+          communityOwned: bot.ownerType === BotOwnerType.COMMUNITY && bot.ownerId === communityId,
+        };
+      }));
+      await client.query('COMMIT');
+      return bots;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   public async createBot(actorUserId: string, data: API.Bot.createBot.Request): Promise<API.Bot.BotView> {
     const client = await pool.connect();
     const joined: MembershipChange[] = [];

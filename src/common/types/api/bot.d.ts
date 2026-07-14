@@ -34,6 +34,11 @@ declare global {
                 revokedAt: string | null;
             };
 
+            type CommunityBotView = Pick<BotView, 'userId' | 'displayName' | 'imageId' | 'description'> & {
+                roleIds: string[];
+                communityOwned: boolean;
+            };
+
             type Owner = {
                 ownerType: Models.User.BotOwnerType;
                 ownerId: string | null;
@@ -42,6 +47,11 @@ declare global {
             namespace listBots {
                 type Request = Owner;
                 type Response = BotView[];
+            }
+
+            namespace listCommunityBots {
+                type Request = { communityId: string };
+                type Response = CommunityBotView[];
             }
 
             namespace createBot {

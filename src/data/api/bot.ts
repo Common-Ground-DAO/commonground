@@ -17,6 +17,14 @@ class BotApiConnector extends BaseApiConnector {
     );
   }
 
+  public async listCommunityBots(data: API.Bot.listCommunityBots.Request): Promise<API.Bot.listCommunityBots.Response> {
+    return await this.ajax<API.Bot.listCommunityBots.Response>(
+      "POST",
+      "/listCommunityBots",
+      data,
+    );
+  }
+
   public async createBot(data: API.Bot.createBot.Request): Promise<API.Bot.createBot.Response> {
     return await this.ajax<API.Bot.createBot.Response>(
       "POST",

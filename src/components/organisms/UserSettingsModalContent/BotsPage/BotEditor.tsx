@@ -14,15 +14,19 @@ import { useSnackbarContext } from 'context/SnackbarContext';
 import { useSignedUrl } from 'hooks/useSignedUrl';
 import botApi from 'data/api/bot';
 import fileApi from 'data/api/file';
-import { PageType } from '../UserSettingsModalContent';
+import communityApi from 'data/api/community';
+import { useMultipleCommunityListViews } from 'context/CommunityListViewProvider';
+import type { PageType } from '../UserSettingsModalContent';
 
 const MAX_NAME = 255;
 const MAX_DESCRIPTION = 2000;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type Props = {
   bot: API.Bot.BotView | null;
   owner: API.Bot.Owner;
   onSaved: (bot: API.Bot.BotView) => void;
+  onDisabled?: () => void;
   setPage: (pageType: PageType) => void;
 };
 
@@ -70,10 +74,14 @@ const TokenSection: React.FC<{ botUserId: string }> = ({ botUserId }) => {
     }
   }, [botUserId, load, showSnackbar]);
 
-  const copyIssued = useCallback(() => {
+  const copyIssued = useCallback(async () => {
     if (!issuedToken) return;
-    navigator.clipboard.writeText(issuedToken);
-    showSnackbar({ type: 'info', text: 'Token copied to clipboard' });
+    try {
+      await navigator.clipboard.writeText(issuedToken);
+      showSnackbar({ type: 'info', text: 'Token copied to clipboard' });
+    } catch {
+      showSnackbar({ type: 'warning', text: 'Could not copy token; select and copy it manually' });
+    }
   }, [issuedToken, showSnackbar]);
 
   const activeTokens = useMemo(() => tokens?.filter(t => !t.revokedAt) ?? [], [tokens]);
@@ -119,9 +127,10 @@ const TokenSection: React.FC<{ botUserId: string }> = ({ botUserId }) => {
   </div>;
 };
 
-const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, setPage }) => {
+const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, onDisabled, setPage }) => {
   const { showSnackbar } = useSnackbarContext();
   const isEdit = !!bot;
+  const isPlatform = owner.ownerType === 'platform';
 
   const [displayName, setDisplayName] = useState(bot?.displayName ?? '');
   const [description, setDescription] = useState(bot?.description ?? '');
@@ -130,7 +139,14 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, setPage }) => {
   const [platformMode, setPlatformMode] = useState<Models.User.BotPlatformPresenceMode>(
     bot?.platformPresence?.mode ?? 'selected',
   );
+  const [platformCommunityIds, setPlatformCommunityIds] = useState<string[]>(
+    bot?.platformPresence?.communityIds ?? [],
+  );
+  const [communityQuery, setCommunityQuery] = useState('');
+  const [communityResults, setCommunityResults] = useState<Models.Community.ListView[]>([]);
+  const [searchingCommunities, setSearchingCommunities] = useState(false);
   const [saving, setSaving] = useState(false);
+  const selectedCommunities = useMultipleCommunityListViews(platformCommunityIds);
 
   // Reset local state whenever the selected bot changes (create <-> edit, or switching bots).
   useEffect(() => {
@@ -139,7 +155,43 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, setPage }) => {
     setImageId(bot?.imageId ?? null);
     setImageFile(undefined);
     setPlatformMode(bot?.platformPresence?.mode ?? 'selected');
+    setPlatformCommunityIds(bot?.platformPresence?.communityIds ?? []);
+    setCommunityQuery('');
+    setCommunityResults([]);
   }, [bot]);
+
+  useEffect(() => {
+    if (!isPlatform || platformMode !== 'selected' || !communityQuery.trim()) {
+      setCommunityResults([]);
+      setSearchingCommunities(false);
+      return;
+    }
+    let cancelled = false;
+    setSearchingCommunities(true);
+    const handle = setTimeout(async () => {
+      try {
+        const query = communityQuery.trim();
+        const communities = UUID_PATTERN.test(query)
+          ? await communityApi.getCommunitiesById({ ids: [query] })
+          : await communityApi.getCommunityList({
+            offset: 0,
+            limit: 20,
+            sort: 'popular',
+            tags: [],
+            search: query,
+          });
+        if (!cancelled) setCommunityResults(communities);
+      } catch {
+        if (!cancelled) setCommunityResults([]);
+      } finally {
+        if (!cancelled) setSearchingCommunities(false);
+      }
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [communityQuery, isPlatform, platformMode]);
 
   const existingImageUrl = useSignedUrl(imageId);
   const previewUrl = useMemo(
@@ -150,7 +202,6 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, setPage }) => {
     if (imageFile && previewUrl) URL.revokeObjectURL(previewUrl);
   }, [imageFile, previewUrl]);
 
-  const isPlatform = owner.ownerType === 'platform';
   const nameError = displayName.trim().length === 0 && displayName.length > 0 ? 'Name cannot be blank' : undefined;
   const canSave = displayName.trim().length > 0 && !saving;
 
@@ -172,7 +223,10 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, setPage }) => {
           description: description.trim() || null,
           imageId: uploadedImageId,
           ...(isPlatform && bot.platformPresence
-            ? { platformPresence: { mode: platformMode, communityIds: bot.platformPresence.communityIds } }
+            ? { platformPresence: {
+              mode: platformMode,
+              communityIds: platformMode === 'all' ? [] : platformCommunityIds,
+            } }
             : {}),
         });
       } else {
@@ -182,7 +236,10 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, setPage }) => {
           displayName: displayName.trim(),
           description: description.trim() || null,
           imageId: uploadedImageId,
-          ...(isPlatform ? { platformPresence: { mode: platformMode, communityIds: [] } } : {}),
+          ...(isPlatform ? { platformPresence: {
+            mode: platformMode,
+            communityIds: platformMode === 'all' ? [] : platformCommunityIds,
+          } } : {}),
         });
       }
       showSnackbar({ type: 'info', text: isEdit ? 'Bot updated' : 'Bot created' });
@@ -192,7 +249,7 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, setPage }) => {
     } finally {
       setSaving(false);
     }
-  }, [imageId, imageFile, isEdit, bot, displayName, description, isPlatform, platformMode, owner, onSaved, showSnackbar]);
+  }, [imageId, imageFile, isEdit, bot, displayName, description, isPlatform, platformMode, platformCommunityIds, owner, onSaved, showSnackbar]);
 
   const disable = useCallback(async () => {
     if (!bot) return;
@@ -203,11 +260,12 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, setPage }) => {
     try {
       await botApi.disableBot({ botUserId: bot.userId });
       showSnackbar({ type: 'info', text: 'Bot disabled' });
-      setPage('bots');
+      if (onDisabled) onDisabled();
+      else setPage('bots');
     } catch (e) {
       showSnackbar({ type: 'warning', text: (e as Error).message || 'Could not disable bot' });
     }
-  }, [bot, showSnackbar, setPage]);
+  }, [bot, showSnackbar, setPage, onDisabled]);
 
   return <div className='flex flex-col px-4 gap-4 cg-text-main'>
     <ImageUploadField
@@ -243,8 +301,48 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, setPage }) => {
         label='Present in all communities'
       />
       {platformMode === 'selected' && <span className='cg-text-sm-400 cg-text-secondary'>
-        Add this bot to specific communities from each community's Bots settings.
+        Choose which communities may install this bot. Their managers still decide whether to add it.
       </span>}
+      {platformMode === 'selected' && <div className='flex flex-col gap-2'>
+        {platformCommunityIds.length > 0 && <div className='flex flex-col gap-1'>
+          {platformCommunityIds.map(communityId => <div
+            key={communityId}
+            className='flex items-center justify-between gap-2 p-2 cg-border-m cg-bg-subtle'
+          >
+            <span className='cg-text-md-500 cg-text-main overflow-hidden text-ellipsis'>
+              {selectedCommunities[communityId]?.title || communityId}
+            </span>
+            <Button
+              role='secondary'
+              text='Remove'
+              onClick={() => setPlatformCommunityIds(ids => ids.filter(id => id !== communityId))}
+            />
+          </div>)}
+        </div>}
+        <TextInputField
+          value={communityQuery}
+          onChange={setCommunityQuery}
+          label='Add a community'
+          placeholder='Search communities'
+        />
+        {searchingCommunities && <SkeletonLine minWidth={180} maxWidth={280} />}
+        {!searchingCommunities && communityQuery.trim() && communityResults.length === 0 &&
+          <span className='cg-text-sm-400 cg-text-secondary'>No matching communities.</span>}
+        {!searchingCommunities && communityResults
+          .filter(community => !platformCommunityIds.includes(community.id))
+          .map(community => <div key={community.id} className='flex items-center justify-between gap-2 py-1'>
+            <span className='cg-text-md-500 cg-text-main overflow-hidden text-ellipsis'>{community.title}</span>
+            <Button
+              role='secondary'
+              text='Add'
+              onClick={() => {
+                setPlatformCommunityIds(ids => [...ids, community.id]);
+                setCommunityQuery('');
+                setCommunityResults([]);
+              }}
+            />
+          </div>)}
+      </div>}
     </div>}
 
     <Button

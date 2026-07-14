@@ -43,6 +43,7 @@ All management routes are `POST /api/v2/Bot/...` with JSON bodies:
 | Route | Body | Result |
 |---|---|---|
 | `/list` | `{ownerType, ownerId}` | bots for that owner |
+| `/listCommunityBots` | `{communityId}` | active bots installed in a managed community, including custom role IDs |
 | `/create` | `{ownerType, ownerId, displayName, imageId, description, platformPresence?}` | new bot |
 | `/update` | `{botUserId, displayName?, imageId?, description?, platformPresence?}` | updated bot |
 | `/disable` | `{botUserId}` | permanently disables the bot |

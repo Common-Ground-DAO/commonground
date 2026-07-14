@@ -10,7 +10,7 @@ import SkeletonLine from 'components/atoms/SkeletonLine/SkeletonLine';
 import { useOwnUser } from 'context/OwnDataProvider';
 import { useSignedUrl } from 'hooks/useSignedUrl';
 import botApi from 'data/api/bot';
-import { PageType } from '../UserSettingsModalContent';
+import type { PageType } from '../UserSettingsModalContent';
 
 type Props = {
   setPage: (pageType: PageType) => void;
@@ -19,13 +19,15 @@ type Props = {
 
 const BotRow: React.FC<{ bot: API.Bot.BotView; onClick: () => void }> = ({ bot, onClick }) => {
   const imageUrl = useSignedUrl(bot.imageId);
+  const disabled = !!bot.disabledAt;
   return <UserSettingsButton
     leftElement={imageUrl
       ? <img src={imageUrl} alt='' className='w-6 h-6 rounded-full object-cover' />
       : <Robot weight='duotone' className='w-6 h-6 cg-text-secondary' />}
-    text={bot.displayName}
+    text={disabled ? `${bot.displayName} (disabled)` : bot.displayName}
     rightElement={<ChevronRightIcon className='w-5 h-5' />}
     onClick={onClick}
+    disabled={disabled}
   />;
 };
 

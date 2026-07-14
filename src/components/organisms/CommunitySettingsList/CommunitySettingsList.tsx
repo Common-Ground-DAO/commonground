@@ -12,7 +12,7 @@ import { ShareListItem } from "components/atoms/ShareButton/ShareButton";
 
 import './CommunitySettingsList.css';
 
-export type CommunitySettingsListItem = 'community' | 'areas' | 'members' | 'roles' | 'upgrades' | 'token' | 'onboarding' | 'plugins' | 'ban-management';
+export type CommunitySettingsListItem = 'community' | 'areas' | 'members' | 'roles' | 'upgrades' | 'token' | 'onboarding' | 'plugins' | 'bots' | 'ban-management';
 
 type Props = {
   onClick?: () => void;

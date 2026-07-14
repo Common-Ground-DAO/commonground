@@ -149,7 +149,7 @@ io.use(async (socket, next) => {
   }
   try {
     const requestedVersion = socket.handshake.auth?.protocolVersion;
-    if (requestedVersion !== undefined && requestedVersion !== BOT_PROTOCOL_VERSION) {
+    if (requestedVersion !== BOT_PROTOCOL_VERSION) {
       next(new Error('unsupported_bot_protocol'));
       return;
     }

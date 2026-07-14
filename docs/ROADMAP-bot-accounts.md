@@ -209,7 +209,7 @@ Every PR includes code/migrations as applicable and a **verification section** w
 - Add `bot_tokens` entity/migration with constraints, indexes, and runtime grants.
 - Implement raw-token generation, hashing, one-time return, list/revoke, owner authorization, active-token limit, and throttled `lastUsedAt`.
 - Add the separate bot request principal and make bot bearer requests bypass Express sessions. Reject mixed cookie+bearer credentials.
-- Add a bot-capable route mechanism plus a minimal session-free `/Bot/whoami`-style endpoint; all other routes remain denied to bot principals until explicitly enabled.
+- Add a bot-capable route mechanism plus a minimal session-free, versioned `whoami` endpoint; all other routes remain denied to bot principals until explicitly enabled.
 - Verification: no Redis session/cookie is created for a bearer request; bearer identity works on the identity endpoint; revoked/disabled/malformed token is HTTP 401; valid token on a non-allowlisted route is 403; mixed auth is rejected; ordinary cookie and cookieless/no-header behavior remains unchanged.
 
 ### Slice 4 — Restricted community-channel messaging (`feature/bot-accounts-messaging`)

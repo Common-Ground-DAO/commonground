@@ -10,10 +10,6 @@ Bot API v1 changes are additive: existing fields and behavior will not be
 removed or renamed without a new protocol version. Unknown response and event
 fields must be ignored by clients.
 
-The original bearer aliases under `/api/v2/Bot` and `/api/v2/Message` remain
-available for transition compatibility, but new bot clients should use only
-the versioned public surface.
-
 Examples below assume:
 
 ```sh
@@ -241,8 +237,8 @@ multi-bot mention or reply loops.
 `update` carries `id`, `channelId`,
 `updatedAt`, and the changed message fields. `delete` carries `channelId` and
 `deletedIds`. Only `cliMessageEvent` is the supported public v1 event contract.
-The handshake accepts an omitted version temporarily for legacy clients but
-rejects any explicitly unsupported version with `unsupported_bot_protocol`.
+The handshake requires `protocolVersion: "1"`. A missing or unsupported version
+is rejected with `unsupported_bot_protocol`.
 
 The server joins a bot only to rooms allowed by its current policy,
 installation, roles, and channel permissions. Removing a role, installation,

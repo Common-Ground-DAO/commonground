@@ -41,6 +41,7 @@ import userHelper from "./users";
 import emailHelper from "./emails";
 import { investmentTargets } from "../common/investmentTargets";
 import { parseUnits } from "ethers/utils";
+import botHelper from "./bots";
 
 /* Community Retrieval */
 
@@ -99,6 +100,7 @@ async function _getCommunityListView(
       c."shortDescription",
       c."tags",
       c."official",
+      c."allowUserBots",
       c."updatedAt",
       c."createdAt",
       c."memberCount",
@@ -132,6 +134,7 @@ async function _getCommunityListView(
     shortDescription: string;
     tags: string[];
     official: boolean;
+    allowUserBots: boolean;
     updatedAt: string;
     createdAt: string;
     memberCount: number;
@@ -161,6 +164,7 @@ async function _getCommunityDetailView<Ext>(
       c."shortDescription",
       c."tags",
       c."official",
+      c."allowUserBots",
       c."updatedAt",
       c."description",
       c."links",
@@ -429,6 +433,7 @@ async function _getCommunityDetailView<Ext>(
     shortDescription: string;
     tags: string[];
     official: boolean;
+    allowUserBots: boolean;
     updatedAt: string;
 
     description: string;
@@ -1722,6 +1727,7 @@ class CommunityHelper {
       communityIds: [communityId],
       roleIds,
     });
+    await botHelper.reconcileUserBotsForOwner(userId, communityId);
     return data;
   }
 
@@ -2052,6 +2058,7 @@ class CommunityHelper {
     } finally {
       client.release();
     }
+    await botHelper.reconcilePlatformBotsForCommunity(communityId);
     return await this.getCommunityDetailView({ id: communityId }, userId);
   }
 
@@ -2196,6 +2203,7 @@ class CommunityHelper {
       roleIds: Array.from(eventRoleIds),
       communityIds: Array.from(eventCommunityIds),
     });
+    await botHelper.reconcileAllUserBotsInCommunity(data.communityId);
   }
 
   public async updateChannel(data: API.Community.updateChannel.Request): Promise<void> {
@@ -2374,6 +2382,7 @@ class CommunityHelper {
           : undefined,
       );
     }
+    await botHelper.reconcileAllUserBotsInCommunity(data.communityId);
   }
 
   public async deleteChannel(data: API.Community.deleteChannel.Request): Promise<void> {
@@ -2524,6 +2533,7 @@ class CommunityHelper {
     await eventHelper.emit(event, {
       communityIds: [data.communityId],
     });
+    await botHelper.reconcileAllUserBotsInCommunity(data.communityId);
   }
 
   public async deleteRole(data: API.Community.deleteRole.Request): Promise<void> {
@@ -2539,6 +2549,7 @@ class CommunityHelper {
   }
 
   public async addUserToRoles(data: API.Community.addUserToRoles.Request): Promise<void> {
+    await botHelper.guardGenericRoleAssignment(data.userId, data.communityId, data.roleIds);
     const client = await pool.connect();
     let success = false;
     let result: Awaited<ReturnType<typeof _addUserToRoles>>;
@@ -2581,6 +2592,7 @@ class CommunityHelper {
       await eventHelper.emit(event, {
         userIds: [data.userId],
       });
+      await botHelper.reconcileUserBotsForOwner(data.userId, data.communityId);
     }
   }
 
@@ -2642,6 +2654,7 @@ class CommunityHelper {
   }
 
   public async removeUserFromRoles(data: API.Community.removeUserFromRoles.Request): Promise<void> {
+    await botHelper.guardGenericRoleRemoval(data.userId, data.communityId);
     const client = await pool.connect();
     let success = false;
     let result: Awaited<ReturnType<typeof _removeUserFromRoles>>;
@@ -2684,6 +2697,7 @@ class CommunityHelper {
       await eventHelper.emit(event, {
         userIds: [data.userId],
       });
+      await botHelper.reconcileUserBotsForOwner(data.userId, data.communityId);
     }
   }
 
@@ -4145,6 +4159,7 @@ class CommunityHelper {
           'shortDescription', c."shortDescription",
           'tags', c."tags",
           'official', c."official",
+          'allowUserBots', c."allowUserBots",
           'updatedAt', c."updatedAt",
           'createdAt', c."createdAt",
           'memberCount', c."memberCount",
@@ -4198,6 +4213,7 @@ class CommunityHelper {
         shortDescription: string;
         tags: string[];
         official: boolean;
+        allowUserBots: boolean;
         updatedAt: string;
         createdAt: string;
         memberCount: number;

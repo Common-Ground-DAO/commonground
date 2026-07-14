@@ -8,6 +8,7 @@ declare namespace Models {
     type TutorialName = 'onboarding';
     type ProfileItemType = 'twitter' | 'lukso' | 'cg' | 'farcaster' | 'bot';
     type BotOwnerType = 'community' | 'user' | 'platform';
+    type BotPlatformPresenceMode = 'all' | 'selected';
 
     type PremiumFeatureName =
       'SUPPORTER_1' |

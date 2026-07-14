@@ -156,6 +156,11 @@ export enum BotOwnerType {
   PLATFORM = 'platform',
 }
 
+export enum BotPlatformPresenceMode {
+  ALL = 'all',
+  SELECTED = 'selected',
+}
+
 export enum CallType {
   DEFAULT = 'default',
   BROADCAST = 'broadcast',

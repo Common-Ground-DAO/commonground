@@ -4,7 +4,7 @@
 
 import { User } from "../entities/users";
 import errors from "../common/errors";
-import { BotOwnerType, UserProfileTypeEnum, PredefinedRole, PremiumRenewal, RoleType, UserPremiumFeatureName, WalletType, WalletVisibility } from "../common/enums";
+import { BotOwnerType, BotPlatformPresenceMode, UserProfileTypeEnum, PredefinedRole, PremiumRenewal, RoleType, UserPremiumFeatureName, WalletType, WalletVisibility } from "../common/enums";
 import format from "pg-format";
 import * as bcrypt from "bcrypt";
 import { webcrypto } from "node:crypto";
@@ -69,17 +69,26 @@ type InternalCreateUserData = Omit<CreateUserData, "displayAccount" | "accounts"
   bot?: {
     ownerType: Models.User.BotOwnerType;
     ownerId: string | null;
+    platformPresenceMode: Models.User.BotPlatformPresenceMode | null;
     description: string | null;
   };
 };
 
-export type CreateBotUserData = {
-  ownerType: Models.User.BotOwnerType;
-  ownerId: string | null;
+type CreateBotUserProfileData = {
   displayName: string;
   imageId: string | null;
   description: string | null;
 };
+
+export type CreateBotUserData = CreateBotUserProfileData & ({
+  ownerType: 'community' | 'user';
+  ownerId: string;
+  platformPresenceMode?: never;
+} | {
+  ownerType: 'platform';
+  ownerId: null;
+  platformPresenceMode: Models.User.BotPlatformPresenceMode;
+});
 
 async function _hashPassword(password: string) {
   const generatedSalt = await bcrypt.genSalt(8);
@@ -624,7 +633,7 @@ async function _createUser(
     )
   `;
   if (data.isBot && data.bot) {
-    params.push(data.bot.ownerType, data.bot.ownerId, data.bot.description);
+    params.push(data.bot.ownerType, data.bot.ownerId, data.bot.platformPresenceMode, data.bot.description);
     const ownerTypeParam = devicePublicKeyParam + 1;
     query += `,
       create_bot AS (
@@ -633,6 +642,7 @@ async function _createUser(
           "deviceId",
           "ownerType",
           "ownerId",
+          "platformPresenceMode",
           "description"
         )
         VALUES (
@@ -640,7 +650,8 @@ async function _createUser(
           (SELECT "deviceId" FROM create_device),
           $${ownerTypeParam},
           $${ownerTypeParam + 1},
-          $${ownerTypeParam + 2}
+          $${ownerTypeParam + 2},
+          $${ownerTypeParam + 3}
         )
         RETURNING "userId"
       )
@@ -1197,39 +1208,50 @@ class UserHelper {
     }
   }
 
-  public async createBotUser(data: CreateBotUserData) {
+  private async _createBotUserInTransaction(client: PoolClient, data: CreateBotUserData) {
     if (
       data.displayName.trim().length === 0 ||
       data.displayName.length > 255 ||
-      (data.description !== null && data.description.length > 2000)
+      (data.description !== null && data.description.length > 2000) ||
+      (data.ownerType === BotOwnerType.PLATFORM
+        && !Object.values(BotPlatformPresenceMode).includes(data.platformPresenceMode as BotPlatformPresenceMode))
     ) {
       throw new Error(errors.server.INVALID_REQUEST);
     }
     const devicePublicKey = await _createBotDevicePublicKey();
+    await _validateBotOwner(client, data.ownerType, data.ownerId);
+    return await _createUser(client, {
+      devicePublicKey,
+      email: null,
+      activateNewsletter: false,
+      password: null,
+      displayAccount: UserProfileTypeEnum.BOT,
+      accounts: [{
+        type: UserProfileTypeEnum.BOT,
+        displayName: data.displayName,
+        imageId: data.imageId,
+        data: null,
+        extraData: null,
+      }],
+      isBot: true,
+      bot: {
+        ownerType: data.ownerType,
+        ownerId: data.ownerId,
+        platformPresenceMode: data.ownerType === BotOwnerType.PLATFORM ? data.platformPresenceMode : null,
+        description: data.description,
+      },
+    });
+  }
+
+  public async createBotUserInTransaction(client: PoolClient, data: CreateBotUserData) {
+    return await this._createBotUserInTransaction(client, data);
+  }
+
+  public async createBotUser(data: CreateBotUserData) {
     const client = await pool.connect();
     await client.query("BEGIN");
     try {
-      await _validateBotOwner(client, data.ownerType, data.ownerId);
-      const result = await _createUser(client, {
-        devicePublicKey,
-        email: null,
-        activateNewsletter: false,
-        password: null,
-        displayAccount: UserProfileTypeEnum.BOT,
-        accounts: [{
-          type: UserProfileTypeEnum.BOT,
-          displayName: data.displayName,
-          imageId: data.imageId,
-          data: null,
-          extraData: null,
-        }],
-        isBot: true,
-        bot: {
-          ownerType: data.ownerType,
-          ownerId: data.ownerId,
-          description: data.description,
-        },
-      });
+      const result = await this._createBotUserInTransaction(client, data);
       await client.query("COMMIT");
       return result;
     }

@@ -117,6 +117,9 @@ export class Community {
     @Column({ type: 'boolean', nullable: false, default: false })
     enablePersonalNewsletter!: boolean;
 
+    @Column({ type: 'boolean', nullable: false, default: false })
+    allowUserBots!: boolean;
+
     @CreateDateColumn({ type: 'timestamptz', precision: 3, select: false })
     createdAt!: Date;
 

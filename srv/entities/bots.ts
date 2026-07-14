@@ -14,7 +14,7 @@ import {
   PrimaryColumn,
   UpdateDateColumn,
 } from "typeorm";
-import { BotOwnerType } from "../common/enums";
+import { BotOwnerType, BotPlatformPresenceMode } from "../common/enums";
 import { Device } from "./device";
 import { User } from "./users";
 
@@ -46,6 +46,9 @@ export class Bot {
 
   @Column({ type: 'uuid', nullable: true })
   ownerId!: string | null;
+
+  @Column({ type: 'enum', enum: BotPlatformPresenceMode, enumName: 'bots_platformpresencemode_enum', nullable: true })
+  platformPresenceMode!: Models.User.BotPlatformPresenceMode | null;
 
   @Column({ type: 'text', nullable: true })
   description!: string | null;

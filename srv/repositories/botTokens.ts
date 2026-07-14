@@ -131,6 +131,29 @@ class BotTokenHelper {
         AND d."deletedAt" IS NULL
       WHERE bt."tokenHash" = $1
         AND bt."revokedAt" IS NULL
+        AND (
+          b."ownerType" = 'platform'
+          OR (
+            b."ownerType" = 'user'
+            AND EXISTS (
+              SELECT 1
+              FROM users owner_user
+              WHERE owner_user.id = b."ownerId"
+                AND owner_user.is_bot = FALSE
+                AND owner_user."deletedAt" IS NULL
+                AND owner_user."platformBan" IS NULL
+            )
+          )
+          OR (
+            b."ownerType" = 'community'
+            AND EXISTS (
+              SELECT 1
+              FROM communities owner_community
+              WHERE owner_community.id = b."ownerId"
+                AND owner_community."deletedAt" IS NULL
+            )
+          )
+        )
     `, [tokenHash]);
     if (result.rowCount !== 1) return null;
     const row = result.rows[0];

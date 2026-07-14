@@ -89,6 +89,13 @@ token-gated roles, balance checks and premium payments work out of the box.
 Public endpoints are rate-limited; for larger instances put your own paid
 endpoints (QuikNode, Alchemy, Infura, ...) there.
 
+When picking an endpoint yourself, note that the event listener performs
+**unfiltered ranged `eth_getLogs`** calls (up to 40 blocks on Arbitrum-family
+chains). Many free endpoints restrict that method — all `*.publicnode.com`
+endpoints started rejecting it in July 2026, which is why the defaults use
+drpc.org and official chain RPCs. Test a candidate endpoint with an
+unfiltered `eth_getLogs` over a few blocks before swapping it in.
+
 `CG_ACTIVE_CHAINS` (comma-separated chain keys, e.g.
 `eth,arbitrum,xdai,base,matic,lukso`) controls which chains the instance
 offers — it drives both the backend chain workers and the chain lists in the

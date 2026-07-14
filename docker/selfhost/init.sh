@@ -77,21 +77,24 @@ GOOGLE_RECAPTCHA_SECRET_KEY=
 # The QUIKNODE_* names are historical — any JSON-RPC URL works. Defaults are
 # free public endpoints (rate-limited but fine for small instances); swap in
 # paid endpoints (QuikNode, Alchemy, Infura, ...) for heavier use.
+# NOTE: the event listener needs unfiltered ranged eth_getLogs; many public
+# endpoints restrict that method (e.g. all *.publicnode.com since 2026-07),
+# so test with an unfiltered eth_getLogs call before swapping one in.
 # CG_ACTIVE_CHAINS controls which chains the instance offers (backend workers
 # AND the chain lists in the UI) — keep it in sync with the endpoints you set.
 CG_ACTIVE_CHAINS=eth,arbitrum,xdai,base,matic,lukso
-QUIKNODE_ETH=https://ethereum-rpc.publicnode.com
-QUIKNODE_BSC=https://bsc-rpc.publicnode.com
-QUIKNODE_MATIC=https://polygon-bor-rpc.publicnode.com
+QUIKNODE_ETH=https://eth.drpc.org
+QUIKNODE_BSC=https://bsc.blockrazor.xyz
+QUIKNODE_MATIC=https://polygon.drpc.org
 QUIKNODE_XDAI=https://rpc.gnosischain.com
 QUIKNODE_FANTOM=https://rpc.fantom.network
-QUIKNODE_AVAX=https://avalanche-c-chain-rpc.publicnode.com
-QUIKNODE_ARBITRUM=https://arbitrum-one-rpc.publicnode.com
-QUIKNODE_OPTIMISM=https://optimism-rpc.publicnode.com
+QUIKNODE_AVAX=https://avalanche.drpc.org
+QUIKNODE_ARBITRUM=https://arb1.arbitrum.io/rpc
+QUIKNODE_OPTIMISM=https://optimism.drpc.org
 QUIKNODE_BASE=https://mainnet.base.org
-INFURA_LINEA=https://linea-rpc.publicnode.com
-QUIKNODE_ARBITRUM_NOVA=https://arbitrum-nova.publicnode.com
-QUIKNODE_CELO=https://celo-rpc.publicnode.com
+INFURA_LINEA=https://linea.drpc.org
+QUIKNODE_ARBITRUM_NOVA=https://nova.arbitrum.io/rpc
+QUIKNODE_CELO=https://celo.drpc.org
 QUIKNODE_POLYGON_ZKEVM=https://zkevm-rpc.com
 QUIKNODE_SCROLL=https://rpc.scroll.io
 QUIKNODE_ZKSYNC=https://mainnet.era.zksync.io

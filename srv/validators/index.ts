@@ -20,6 +20,7 @@ import SumsubApi from "./api/sumsub";
 import PluginApi from "./api/plugin";
 import SearchApi from "./api/search";
 import ReportApi from "./api/report";
+import BotApi from "./api/bot";
 
 const validators = {
   Common,
@@ -41,6 +42,7 @@ const validators = {
     Plugin: PluginApi,
     Search: SearchApi,
     Report: ReportApi,
+    Bot: BotApi,
   }
 }
 

@@ -115,6 +115,7 @@ declare global {
                     "official" |
                     "tokens" |
                     "premium" |
+                    "allowUserBots" |
                     "enablePersonalNewsletter" |
                     "pointBalance" |
                     "plugins">;
@@ -131,6 +132,7 @@ declare global {
                         "url" |
                         "memberCount" |
                         "blockState" |
+                        "allowUserBots" |
                         "official">>
                     & Pick<Models.Community.DetailView, "id">;
                 type Response = void;

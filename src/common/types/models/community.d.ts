@@ -170,6 +170,7 @@ declare namespace Models {
       memberCount: number;
       tags: string[];
       official: boolean;
+      allowUserBots: boolean;
       createdAt: string;
       updatedAt: string;
       premium: Premium | null;

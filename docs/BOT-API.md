@@ -41,15 +41,19 @@ There are three ownership models:
   `COMMUNITY_MANAGE_ROLES` there. The bot is installed into that community when
   it is created and cannot be installed elsewhere.
 - `platform`: `ownerId` must be `null`, and the caller's user UUID must be in
-  the instance's `PLATFORM_OPERATOR_USER_IDS`. Presence is either `all` or a
-  `selected` list of communities.
+  the instance's `PLATFORM_OPERATOR_USER_IDS`. `selected` presence is the exact
+  set of communities where the bot is installed; updating the selection adds
+  and removes memberships automatically. `all` automatically installs it in
+  every current and future community and should only be used when instance
+  policy permits universal presence. Community managers can assign a platform
+  bot's custom roles but cannot remove the platform-managed membership.
 
 All management routes are `POST /api/v2/Bot/...` with JSON bodies:
 
 | Route | Body | Result |
 |---|---|---|
 | `/list` | `{ownerType, ownerId}` | bots for that owner |
-| `/listCommunityBots` | `{communityId}` | active bots installed in a managed community, including custom role IDs |
+| `/listCommunityBots` | `{communityId}` | active bots installed in a managed community, including ownership metadata and custom role IDs |
 | `/create` | `{ownerType, ownerId, username, imageId, description, platformPresence?}` | new bot |
 | `/update` | `{botUserId, username?, imageId?, description?, platformPresence?}` | updated bot |
 | `/disable` | `{botUserId}` | permanently disables the bot |

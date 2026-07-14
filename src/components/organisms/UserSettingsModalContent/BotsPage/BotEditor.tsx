@@ -314,8 +314,13 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, onDisabled, setPage }
         onChange={on => setPlatformMode(on ? 'all' : 'selected')}
         label='Present in all communities'
       />
+      {platformMode === 'all' && <span className='cg-text-sm-400 cg-text-secondary'>
+        This automatically installs the bot in every current and future community. Use it only
+        when instance policy permits universal presence.
+      </span>}
       {platformMode === 'selected' && <span className='cg-text-sm-400 cg-text-secondary'>
-        Choose which communities may install this bot. Their managers still decide whether to add it.
+        Choose the exact communities where this bot is present. Saving installs it in added
+        communities and removes it from communities no longer selected.
       </span>}
       {platformMode === 'selected' && <div className='flex flex-col gap-2'>
         {platformCommunityIds.length > 0 && <div className='flex flex-col gap-1'>

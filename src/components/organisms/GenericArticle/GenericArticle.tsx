@@ -12,6 +12,7 @@ import useLocalStorage, { ReadArticlesState } from '../../../hooks/useLocalStora
 import dayjs from 'dayjs';
 import ShareButton from '../../../components/atoms/ShareButton/ShareButton';
 import { AllContentRenderer } from '../../../components/molecules/MesssageBodyRenderer/MessageBodyRenderer';
+import MarkdownContent, { toMarkdownSource } from '../../../components/molecules/MesssageBodyRenderer/MarkdownContent';
 import ContentSlider from '../../../components/molecules/ContentSlider/ContentSlider';
 
 import { ArrowLeftCircleIcon, ArrowLeftIcon, PencilIcon } from '@heroicons/react/20/solid';
@@ -171,7 +172,7 @@ const GenericArticle: React.FC<Props> = ({ article, itemArticle, url, isLoading,
           <div className='articleViewDivider' />
         </div>
         <div className='articleViewText'>
-          {article?.content.version === '1' && article?.content.text}
+          {article?.content.version === '1' && <MarkdownContent source={toMarkdownSource(article.content.text.split('\n'))} />}
           {article?.content.version === '2' && <AllContentRenderer content={article?.content.content} showMidwayLoginBanner renderInternalLinks />}
         </div>
         <div className='articleViewDivider long' />

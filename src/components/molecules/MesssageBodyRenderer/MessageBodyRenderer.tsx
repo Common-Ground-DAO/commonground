@@ -24,6 +24,88 @@ import { useCommunityWizardContext } from 'context/CommunityWizardProvider';
 import urlConfig from '../../../data/util/urls';
 import Button from 'components/atoms/Button/Button';
 import YoutubeIframe from 'components/atoms/YoutubeIframe/YoutubeIframe';
+import MarkdownContent, { toMarkdownSource } from './MarkdownContent';
+
+type RenderableElement = Models.BaseArticle.ContentElementV2 | Models.Message.BodyContentV1 | Common.Content.ModerationSpecial | Models.Wizard.WizardElement;
+
+/** Synthetic element produced by groupMarkdownRuns, never part of stored content. */
+type MarkdownRun = { type: 'markdownRun'; value: string };
+
+function isPlainText(element: RenderableElement): element is Common.Content.Text {
+  if (element.type !== 'text') return false;
+  const text = element as Common.Content.Text;
+  return !text.bold && !text.italic && !text.className && !text.divClassname;
+}
+
+function isPlainLink(element: RenderableElement): element is Common.Content.Link {
+  return element.type === 'link' && !element.bold && !element.italic;
+}
+
+function elementToMarkdown(element: RenderableElement): string {
+  if (isPlainLink(element)) {
+    // The composer turns bare URLs into link elements; emit them as markdown
+    // links so the rest of the line keeps its markdown formatting. The
+    // angle-bracket destination tolerates parentheses in URLs.
+    const url = element.value.startsWith('http') ? element.value : 'https://' + element.value;
+    const label = element.value.replace(/([\\[\]])/g, '\\$1');
+    return `[${label}](<${url.replace(/([<>\\])/g, '\\$1')}>)`;
+  }
+  return (element as Common.Content.Text).value;
+}
+
+/**
+ * Collapses maximal runs of lines that consist only of plain text elements
+ * into single markdown elements, so their content renders as markdown.
+ * Lines containing mentions, parsed links/tags/tickers, toolbar formatting
+ * (bold/italic/className) or media keep the classic element rendering.
+ */
+function groupMarkdownRuns(content: RenderableElement[]): (RenderableElement | MarkdownRun)[] {
+  type Line = { elements: RenderableElement[]; hasNewline: boolean };
+  const lines: Line[] = [];
+  let currentLine: RenderableElement[] = [];
+  for (const element of content) {
+    if (element.type === 'newline') {
+      lines.push({ elements: currentLine, hasNewline: true });
+      currentLine = [];
+    } else {
+      currentLine.push(element);
+    }
+  }
+  lines.push({ elements: currentLine, hasNewline: false });
+
+  const isMarkdownLine = (line: Line) => line.elements.every(element => isPlainText(element) || isPlainLink(element));
+
+  const result: (RenderableElement | MarkdownRun)[] = [];
+  const pushRaw = (line: Line) => {
+    result.push(...line.elements);
+    if (line.hasNewline) result.push({ type: 'newline' });
+  };
+
+  let i = 0;
+  while (i < lines.length) {
+    if (!isMarkdownLine(lines[i])) {
+      pushRaw(lines[i]);
+      i++;
+      continue;
+    }
+    const textLines: string[] = [];
+    let j = i;
+    while (j < lines.length && isMarkdownLine(lines[j])) {
+      textLines.push(lines[j].elements.map(elementToMarkdown).join(''));
+      j++;
+    }
+    const source = toMarkdownSource(textLines);
+    if (source.trim().length === 0) {
+      // A run of only blank lines: keep the classic empty-line rendering.
+      for (let k = i; k < j; k++) pushRaw(lines[k]);
+    } else {
+      result.push({ type: 'markdownRun', value: source });
+      if (lines[j - 1].hasNewline) result.push({ type: 'newline' });
+    }
+    i = j;
+  }
+  return result;
+}
 
 const MediaImageRenderer: React.FC<Common.Content.ArticleImage> = (props) => {
   const [showModal, setShowModal] = React.useState(false);
@@ -137,7 +219,9 @@ export function AllContentRenderer(props: {
 
   let links: string[] = [];
 
-  content.forEach((c, index) => {
+  const processedContent = groupMarkdownRuns(content);
+
+  processedContent.forEach((c, index) => {
     const messageKey = `${messageKeyBase}${c.type}-${index}`;
     let currentElement: JSX.Element | undefined = undefined;
     switch (c.type) {
@@ -231,6 +315,11 @@ export function AllContentRenderer(props: {
       case 'text': {
         currentElement = (<span key={messageKey} className={c.className}>{c.value}</span>);
         if (!!c.divClassname) nextClassName.push(c.divClassname);
+        break;
+      }
+      case 'markdownRun': {
+        currentElement = <MarkdownContent key={messageKey} source={c.value} />;
+        skipNextDivEncasing = true;
         break;
       }
       case 'newline': {

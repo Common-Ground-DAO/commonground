@@ -50,9 +50,10 @@ All management routes are `POST /api/v2/Bot/...` with JSON bodies:
 |---|---|---|
 | `/list` | `{ownerType, ownerId}` | bots for that owner |
 | `/listCommunityBots` | `{communityId}` | active bots installed in a managed community, including custom role IDs |
-| `/create` | `{ownerType, ownerId, displayName, imageId, description, platformPresence?}` | new bot |
-| `/update` | `{botUserId, displayName?, imageId?, description?, platformPresence?}` | updated bot |
+| `/create` | `{ownerType, ownerId, username, imageId, description, platformPresence?}` | new bot |
+| `/update` | `{botUserId, username?, imageId?, description?, platformPresence?}` | updated bot |
 | `/disable` | `{botUserId}` | permanently disables the bot |
+| `/listInstallableUserBots` | `{communityId, query, cursor, limit}` | paginated user bots eligible for installation |
 | `/install` | `{botUserId, communityId, roleIds}` | installs and assigns roles |
 | `/remove` | `{botUserId, communityId}` | removes the installation |
 | `/setRoles` | `{botUserId, communityId, roleIds}` | replaces assigned custom roles |
@@ -61,7 +62,9 @@ All management routes are `POST /api/v2/Bot/...` with JSON bodies:
 | `/tokens/list` | `{botUserId}` | token metadata, never raw tokens |
 | `/tokens/revoke` | `{botUserId, tokenId}` | revokes one token |
 
-`imageId`, `description`, and token `name` may be `null`. Descriptions are at
+Bot usernames share the human username namespace, are case-insensitively
+unique, and use 3–30 letters, numbers, hyphens, or underscores. `imageId`,
+`description`, and token `name` may be `null`. Descriptions are at
 most 2,000 characters and token names at most 100. `roleIds` contains custom
 role UUIDs from the target community; the predefined member role is managed
 automatically. A user-owned bot cannot be granted channel permissions its owner
@@ -76,7 +79,7 @@ curl --fail-with-body -sS \
   -d '{
     "ownerType":"user",
     "ownerId":"YOUR-HUMAN-USER-UUID",
-    "displayName":"Release Bot",
+    "username":"release-bot",
     "imageId":null,
     "description":"Posts release notifications."
   }' \

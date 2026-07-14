@@ -9,6 +9,7 @@ import Jdenticon from '../../../atoms/Jdenticon/Jdenticon';
 import { insertMention } from '../EditField.helpers';
 import { useSlate } from 'slate-react';
 import { BaseRange } from 'slate';
+import BotBadge from '../../../atoms/BotBadge/BotBadge';
 
 type Props = {
   currentInput?: string;
@@ -25,6 +26,13 @@ const MentionSuggestion: React.FC<Props> = ({ currentInput = '', userData, menti
   const boldDisplayName = displayName.startsWith('0x') ? '' : displayName.substring(0, currentInput.length);
   const remainingDisplayName = displayName.substring(boldDisplayName.length);
   const onlineStatus = userData.onlineStatus || 'offline';
+  const ownerLabel = userData.botOwner?.type === 'user'
+    ? `Owned by @${userData.botOwner.username}`
+    : userData.botOwner?.type === 'community'
+      ? `Owned by ${userData.botOwner.title}`
+      : userData.botOwner?.type === 'platform'
+        ? 'Platform bot'
+        : undefined;
 
   const onClick = () => {
     // Delay to also allow for focusing on EditField
@@ -35,9 +43,14 @@ const MentionSuggestion: React.FC<Props> = ({ currentInput = '', userData, menti
       <div title={displayName}>
         <Jdenticon userId={userData.id} onlineStatus={onlineStatus} />
       </div>
-      <div className="flex-grow">
-        <span className='mentionSuggestion-bold'>{boldDisplayName}</span>
-        <span>{remainingDisplayName}</span>
+      <div className="flex-grow min-w-0">
+        <div className='mentionSuggestion-username'>
+          <span>@</span>
+          <span className='mentionSuggestion-bold'>{boldDisplayName}</span>
+          <span>{remainingDisplayName}</span>
+          {userData.isBot && <BotBadge />}
+        </div>
+        {userData.isBot && ownerLabel && <div className='mentionSuggestion-owner'>{ownerLabel}</div>}
       </div>
     </div>)
 }

@@ -9,6 +9,10 @@ declare namespace Models {
     type ProfileItemType = 'twitter' | 'lukso' | 'cg' | 'farcaster' | 'bot';
     type BotOwnerType = 'community' | 'user' | 'platform';
     type BotPlatformPresenceMode = 'all' | 'selected';
+    type BotOwnerSummary =
+      | { type: 'user'; id: string; username: string }
+      | { type: 'community'; id: string; title: string }
+      | { type: 'platform' };
 
     type PremiumFeatureName =
       'SUPPORTER_1' |
@@ -81,6 +85,7 @@ declare namespace Models {
     type Data = {
       id: string;
       isBot: boolean;
+      botOwner?: BotOwnerSummary | null;
       onlineStatus: OnlineStatus;
       isFollowed: boolean;
       isFollower: boolean;

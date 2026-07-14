@@ -17,9 +17,11 @@ import fileApi from 'data/api/file';
 import communityApi from 'data/api/community';
 import { useMultipleCommunityListViews } from 'context/CommunityListViewProvider';
 import type { PageType } from '../UserSettingsModalContent';
+import errors from 'common/errors';
 
-const MAX_NAME = 255;
+const MAX_USERNAME = 30;
 const MAX_DESCRIPTION = 2000;
+const USERNAME_PATTERN = /^[a-z0-9_-]+$/i;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type Props = {
@@ -132,7 +134,7 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, onDisabled, setPage }
   const isEdit = !!bot;
   const isPlatform = owner.ownerType === 'platform';
 
-  const [displayName, setDisplayName] = useState(bot?.displayName ?? '');
+  const [username, setUsername] = useState(bot?.username ?? '');
   const [description, setDescription] = useState(bot?.description ?? '');
   const [imageId, setImageId] = useState<string | null>(bot?.imageId ?? null);
   const [imageFile, setImageFile] = useState<File | undefined>(undefined);
@@ -150,7 +152,7 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, onDisabled, setPage }
 
   // Reset local state whenever the selected bot changes (create <-> edit, or switching bots).
   useEffect(() => {
-    setDisplayName(bot?.displayName ?? '');
+    setUsername(bot?.username ?? '');
     setDescription(bot?.description ?? '');
     setImageId(bot?.imageId ?? null);
     setImageFile(undefined);
@@ -202,8 +204,16 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, onDisabled, setPage }
     if (imageFile && previewUrl) URL.revokeObjectURL(previewUrl);
   }, [imageFile, previewUrl]);
 
-  const nameError = displayName.trim().length === 0 && displayName.length > 0 ? 'Name cannot be blank' : undefined;
-  const canSave = displayName.trim().length > 0 && !saving;
+  const usernameError = username.length > 0
+    ? username.length < 3
+      ? 'Username must be at least 3 characters'
+      : username.length > MAX_USERNAME
+        ? `Username must be at most ${MAX_USERNAME} characters`
+        : !USERNAME_PATTERN.test(username)
+          ? 'Use only letters, numbers, hyphens, and underscores'
+          : undefined
+    : undefined;
+  const canSave = username.length >= 3 && !usernameError && !saving;
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -219,7 +229,7 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, onDisabled, setPage }
       if (isEdit && bot) {
         saved = await botApi.updateBot({
           botUserId: bot.userId,
-          displayName: displayName.trim(),
+          username,
           description: description.trim() || null,
           imageId: uploadedImageId,
           ...(isPlatform && bot.platformPresence
@@ -233,7 +243,7 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, onDisabled, setPage }
         saved = await botApi.createBot({
           ownerType: owner.ownerType,
           ownerId: owner.ownerId,
-          displayName: displayName.trim(),
+          username,
           description: description.trim() || null,
           imageId: uploadedImageId,
           ...(isPlatform ? { platformPresence: {
@@ -245,11 +255,15 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, onDisabled, setPage }
       showSnackbar({ type: 'info', text: isEdit ? 'Bot updated' : 'Bot created' });
       onSaved(saved);
     } catch (e) {
-      showSnackbar({ type: 'warning', text: (e as Error).message || 'Could not save bot' });
+      const message = (e as Error).message;
+      showSnackbar({
+        type: 'warning',
+        text: message === errors.server.EXISTS_ALREADY ? 'Username is already taken' : message || 'Could not save bot',
+      });
     } finally {
       setSaving(false);
     }
-  }, [imageId, imageFile, isEdit, bot, displayName, description, isPlatform, platformMode, platformCommunityIds, owner, onSaved, showSnackbar]);
+  }, [imageId, imageFile, isEdit, bot, username, description, isPlatform, platformMode, platformCommunityIds, owner, onSaved, showSnackbar]);
 
   const disable = useCallback(async () => {
     if (!bot) return;
@@ -276,12 +290,12 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, onDisabled, setPage }
     />
 
     <TextInputField
-      value={displayName}
-      onChange={setDisplayName}
-      label='Display name'
-      placeholder='My helpful bot'
-      maxLetters={MAX_NAME}
-      error={nameError}
+      value={username}
+      onChange={setUsername}
+      label='Username'
+      placeholder='my-helpful-bot'
+      maxLetters={MAX_USERNAME}
+      error={usernameError}
     />
 
     <TextAreaField

@@ -191,7 +191,7 @@ const UserSettingsModalContent: React.FC<Props> = (props) => {
         case 'give-spark': return 'Give Spark to Community';
         case 'passkey-settings': return 'Passkeys';
         case 'bots': return 'Bots';
-        case 'bot-editor': return currentBot ? currentBot.displayName : 'New Bot';
+        case 'bot-editor': return currentBot ? `@${currentBot.username}` : 'New Bot';
         default: return 'Settings';
       }
     }

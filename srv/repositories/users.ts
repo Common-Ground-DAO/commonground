@@ -174,6 +174,30 @@ async function _getUserData(
       u."followingCount",
       u."followerCount",
       u."tags",
+      CASE WHEN u.is_bot THEN (
+        SELECT CASE
+          WHEN b."ownerType" = 'user' THEN json_build_object(
+            'type', 'user',
+            'id', b."ownerId",
+            'username', owner_account."displayName"
+          )
+          WHEN b."ownerType" = 'community' THEN json_build_object(
+            'type', 'community',
+            'id', b."ownerId",
+            'title', owner_community.title
+          )
+          ELSE json_build_object('type', 'platform')
+        END
+        FROM bots b
+        LEFT JOIN user_accounts owner_account
+          ON owner_account."userId" = b."ownerId"
+          AND owner_account.type = 'cg'
+          AND owner_account."deletedAt" IS NULL
+        LEFT JOIN communities owner_community
+          ON owner_community.id = b."ownerId"
+          AND owner_community."deletedAt" IS NULL
+        WHERE b."userId" = u.id
+      ) ELSE NULL END AS "botOwner",
       coalesce((SELECT json_agg(
         json_build_object(
           'type', ua."type",
@@ -214,6 +238,7 @@ async function _getUserData(
   return result.rows as {
     id: string;
     isBot: boolean;
+    botOwner: Models.User.BotOwnerSummary | null;
     verified: boolean;
     isFollower: boolean;
     isFollowed: boolean;
@@ -1039,7 +1064,7 @@ async function _isCgProfileNameAvailable(
 ): Promise<boolean> {
   const query = `
     SELECT 1 FROM user_accounts
-    WHERE "type" = 'cg'
+    WHERE "type" = ANY(ARRAY['cg', 'bot']::public.user_accounts_type_enum[])
       AND LOWER("displayName") = LOWER($1)
   `;
   const result = await db.query(query, [displayName]);

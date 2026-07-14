@@ -7,7 +7,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Robot } from '@phosphor-icons/react';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';
 import { useSnackbarContext } from 'context/SnackbarContext';
-import { useMultipleUserData } from 'context/UserDataProvider';
 import { useSignedUrl } from 'hooks/useSignedUrl';
 import { RoleType } from 'common/enums';
 import Button from 'components/atoms/Button/Button';
@@ -18,11 +17,23 @@ import TextInputField from 'components/molecules/inputs/TextInputField/TextInput
 import TextAreaField from 'components/molecules/inputs/TextAreaField/TextAreaField';
 import ImageUploadField from 'components/molecules/inputs/ImageUploadField/ImageUploadField';
 import SkeletonLine from 'components/atoms/SkeletonLine/SkeletonLine';
-import { getDisplayNameString } from 'util/index';
 import botApi from 'data/api/bot';
-import searchApi from 'data/api/search';
 import fileApi from 'data/api/file';
 import BotEditor from 'components/organisms/UserSettingsModalContent/BotsPage/BotEditor';
+import BotBadge from 'components/atoms/BotBadge/BotBadge';
+import Jdenticon from 'components/atoms/Jdenticon/Jdenticon';
+import errors from 'common/errors';
+
+const BOT_USERNAME_MAX_LENGTH = 30;
+const INSTALLABLE_PAGE_SIZE = 25;
+const BOT_USERNAME_PATTERN = /^[a-z0-9_-]+$/i;
+
+function validateBotUsername(username: string) {
+  if (username.length < 3) return 'Username must be at least 3 characters';
+  if (username.length > BOT_USERNAME_MAX_LENGTH) return `Username must be at most ${BOT_USERNAME_MAX_LENGTH} characters`;
+  if (!BOT_USERNAME_PATTERN.test(username)) return 'Use only letters, numbers, hyphens, and underscores';
+  return undefined;
+}
 
 // Roles a manager can assign to a bot: the community's custom roles (Member/Public/Admin
 // predefined roles are managed by the platform, not hand-assigned here).
@@ -111,7 +122,7 @@ const CreateCommunityBotModal: React.FC<{
   onCreated: (bot: API.Bot.BotView) => void;
 }> = ({ isOpen, communityId, onClose, onCreated }) => {
   const { showSnackbar } = useSnackbarContext();
-  const [displayName, setDisplayName] = useState('');
+  const [username, setUsername] = useState('');
   const [description, setDescription] = useState('');
   const [imageFile, setImageFile] = useState<File | undefined>(undefined);
   const [saving, setSaving] = useState(false);
@@ -119,7 +130,7 @@ const CreateCommunityBotModal: React.FC<{
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
   useEffect(() => {
-    if (isOpen) { setDisplayName(''); setDescription(''); setImageFile(undefined); }
+    if (isOpen) { setUsername(''); setDescription(''); setImageFile(undefined); }
   }, [isOpen]);
 
   const create = useCallback(async () => {
@@ -130,7 +141,7 @@ const CreateCommunityBotModal: React.FC<{
       const bot = await botApi.createBot({
         ownerType: 'community',
         ownerId: communityId,
-        displayName: displayName.trim(),
+        username,
         description: description.trim() || null,
         imageId,
       });
@@ -138,11 +149,18 @@ const CreateCommunityBotModal: React.FC<{
       onCreated(bot);
       onClose();
     } catch (e) {
-      showSnackbar({ type: 'warning', text: (e as Error).message || 'Could not create bot' });
+      const message = (e as Error).message;
+      showSnackbar({
+        type: 'warning',
+        text: message === errors.server.EXISTS_ALREADY ? 'Username is already taken' : message || 'Could not create bot',
+      });
     } finally {
       setSaving(false);
     }
-  }, [imageFile, communityId, displayName, description, showSnackbar, onCreated, onClose]);
+  }, [imageFile, communityId, username, description, showSnackbar, onCreated, onClose]);
+
+  const usernameError = username.length > 0 ? validateBotUsername(username) : undefined;
+  const canCreate = username.length >= 3 && !usernameError && !saving;
 
   return <ScreenAwareModal
     isOpen={isOpen}
@@ -150,12 +168,19 @@ const CreateCommunityBotModal: React.FC<{
     title='Create community bot'
     footerActions={<div className='flex gap-2 justify-end'>
       <Button role='secondary' text='Cancel' onClick={onClose} />
-      <Button role='primary' text='Create' loading={saving} disabled={saving || displayName.trim().length === 0} onClick={create} />
+      <Button role='primary' text='Create' loading={saving} disabled={!canCreate} onClick={create} />
     </div>}
   >
     <div className='flex flex-col gap-4 p-4'>
       <ImageUploadField label='Bot avatar' subLabels={['PNG or JPEG']} imageURL={previewUrl} onChange={setImageFile} />
-      <TextInputField value={displayName} onChange={setDisplayName} label='Display name' placeholder='Community helper' maxLetters={255} />
+      <TextInputField
+        value={username}
+        onChange={setUsername}
+        label='Username'
+        placeholder='community-helper'
+        maxLetters={BOT_USERNAME_MAX_LENGTH}
+        error={usernameError}
+      />
       <TextAreaField value={description} onChange={setDescription} label='Description' placeholder='What does this bot do?' maxLetters={2000} autoGrow />
       <span className='cg-text-sm-400 cg-text-secondary'>
         The bot joins this community immediately. After creation you can issue its first API
@@ -165,43 +190,86 @@ const CreateCommunityBotModal: React.FC<{
   </ScreenAwareModal>;
 };
 
-const AddExistingBotModal: React.FC<{
+const InstallableUserBotRow: React.FC<{
+  bot: API.Bot.InstallableUserBotView;
+  installing: boolean;
+  disabled: boolean;
+  onInstall: () => void;
+}> = ({ bot, installing, disabled, onInstall }) => <div className='flex items-center justify-between gap-3 py-2'>
+  <div className='flex items-center gap-2 min-w-0'>
+    <Jdenticon userId={bot.userId} defaultImageId={bot.imageId} predefinedSize='32' hideStatus />
+    <div className='flex flex-col min-w-0'>
+      <div className='flex items-center gap-1 min-w-0'>
+        <span className='cg-text-md-500 cg-text-main overflow-hidden text-ellipsis'>@{bot.username}</span>
+        <BotBadge />
+      </div>
+      <span className='cg-text-sm-400 cg-text-secondary overflow-hidden text-ellipsis'>
+        Owned by @{bot.ownerUsername}
+      </span>
+      {bot.description && <span className='cg-text-sm-400 cg-text-secondary overflow-hidden text-ellipsis'>
+        {bot.description}
+      </span>}
+    </div>
+  </div>
+  <Button role='primary' text='Add' loading={installing} disabled={disabled} onClick={onInstall} />
+</div>;
+
+const AddUserBotModal: React.FC<{
   isOpen: boolean;
   communityId: string;
-  installedIds: Set<string>;
   onClose: () => void;
   onInstalled: () => void;
-}> = ({ isOpen, communityId, installedIds, onClose, onInstalled }) => {
+}> = ({ isOpen, communityId, onClose, onInstalled }) => {
   const { showSnackbar } = useSnackbarContext();
   const [query, setQuery] = useState('');
-  const [resultIds, setResultIds] = useState<string[]>([]);
-  const [searching, setSearching] = useState(false);
+  const [results, setResults] = useState<API.Bot.InstallableUserBotView[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [installingId, setInstallingId] = useState<string | null>(null);
-  const results = useMultipleUserData(resultIds);
 
-  useEffect(() => { if (isOpen) { setQuery(''); setResultIds([]); } }, [isOpen]);
+  useEffect(() => { if (isOpen) setQuery(''); }, [isOpen]);
 
   useEffect(() => {
-    if (!query.trim()) { setResultIds([]); return; }
+    if (!isOpen) return;
     let cancelled = false;
-    setSearching(true);
+    setLoading(true);
     const handle = setTimeout(async () => {
       try {
-        const res = await searchApi.searchUsers({ query: query.trim(), limit: 20 });
-        if (!cancelled) {
-          setResultIds(res
-            .filter(r => r.matchedAccountTypes?.includes('bot'))
-            .map(r => r.id)
-            .filter(id => !installedIds.has(id)));
-        }
+        const response = await botApi.listInstallableUserBots({
+          communityId,
+          query: query.trim() || null,
+          cursor: null,
+          limit: INSTALLABLE_PAGE_SIZE,
+        });
+        if (!cancelled) { setResults(response.items); setNextCursor(response.nextCursor); }
       } catch {
-        if (!cancelled) setResultIds([]);
+        if (!cancelled) { setResults([]); setNextCursor(null); }
       } finally {
-        if (!cancelled) setSearching(false);
+        if (!cancelled) setLoading(false);
       }
     }, 300);
     return () => { cancelled = true; clearTimeout(handle); };
-  }, [query, installedIds]);
+  }, [isOpen, query, communityId]);
+
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const response = await botApi.listInstallableUserBots({
+        communityId,
+        query: query.trim() || null,
+        cursor: nextCursor,
+        limit: INSTALLABLE_PAGE_SIZE,
+      });
+      setResults(current => [...current, ...response.items]);
+      setNextCursor(response.nextCursor);
+    } catch (e) {
+      showSnackbar({ type: 'warning', text: (e as Error).message || 'Could not load more bots' });
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [communityId, query, nextCursor, loadingMore, showSnackbar]);
 
   const install = useCallback(async (botUserId: string) => {
     setInstallingId(botUserId);
@@ -217,33 +285,25 @@ const AddExistingBotModal: React.FC<{
     }
   }, [communityId, showSnackbar, onInstalled, onClose]);
 
-  return <ScreenAwareModal isOpen={isOpen} onClose={onClose} title='Add a bot'>
+  return <ScreenAwareModal isOpen={isOpen} onClose={onClose} title='Add a user bot'>
     <div className='flex flex-col gap-3 p-4'>
       <span className='cg-text-md-400 cg-text-secondary'>
-        Search for a bot by name to add it to this community. User-owned bots can only be added
-        if this community allows them.
+        Browse bots owned by members of this community. Search filters the eligible catalog.
       </span>
-      <TextInputField value={query} onChange={setQuery} placeholder='Search bots by name' />
-      {searching && <SkeletonLine minWidth={180} maxWidth={280} />}
-      {!searching && query.trim() && resultIds.length === 0 &&
-        <span className='cg-text-md-400 cg-text-secondary'>No matching bots found.</span>}
+      <TextInputField value={query} onChange={setQuery} placeholder='Filter by username' maxLetters={30} />
+      {loading && <SkeletonLine minWidth={180} maxWidth={280} />}
+      {!loading && results.length === 0 &&
+        <span className='cg-text-md-400 cg-text-secondary'>No eligible user bots found.</span>}
       <div className='flex flex-col gap-1'>
-        {resultIds.map(id => {
-          const bot = results[id];
-          return <div key={id} className='flex items-center justify-between gap-2 py-1'>
-            <span className='cg-text-md-500 cg-text-main overflow-hidden text-ellipsis'>
-              {bot ? getDisplayNameString(bot) : id}
-            </span>
-            <Button
-              role='primary'
-              text='Add'
-              loading={installingId === id}
-              disabled={installingId !== null}
-              onClick={() => install(id)}
-            />
-          </div>;
-        })}
+        {results.map(bot => <InstallableUserBotRow
+          key={bot.userId}
+          bot={bot}
+          installing={installingId === bot.userId}
+          disabled={installingId !== null}
+          onInstall={() => install(bot.userId)}
+        />)}
       </div>
+      {nextCursor && <Button role='secondary' text='Load more' loading={loadingMore} disabled={loadingMore} onClick={loadMore} />}
     </div>
   </ScreenAwareModal>;
 };
@@ -277,7 +337,7 @@ const InstalledBotRow: React.FC<{
         : <Robot weight='duotone' className='w-7 h-7 cg-text-secondary' />}
       <div className='flex flex-col overflow-hidden'>
         <span className='cg-text-md-500 cg-text-main overflow-hidden text-ellipsis'>
-          {bot.displayName}
+          @{bot.username}
         </span>
         <span className='cg-text-sm-400 cg-text-secondary'>
           {isCommunityOwned ? 'Community bot' : 'External bot'}
@@ -328,8 +388,6 @@ const BotManagement: React.FC<Props> = ({ showHeading = true }) => {
 
   useEffect(() => { load(); }, [load]);
 
-  const installedIdSet = useMemo(() => new Set((installedBots ?? []).map(b => b.userId)), [installedBots]);
-
   const toggleAllowUserBots = useCallback(async (value: boolean) => {
     setSavingToggle(true);
     setAllowUserBots(value);
@@ -365,7 +423,7 @@ const BotManagement: React.FC<Props> = ({ showHeading = true }) => {
       <div className='flex items-center justify-between'>
         <span className='cg-text-lg-500 cg-text-main'>Installed bots</span>
         <div className='flex gap-1'>
-          <Button role='secondary' text='Add existing' onClick={() => setAddOpen(true)} />
+          <Button role='secondary' text='Add user bot' disabled={!allowUserBots} onClick={() => setAddOpen(true)} />
           <Button role='primary' text='Create bot' onClick={() => setCreateOpen(true)} />
         </div>
       </div>
@@ -395,17 +453,16 @@ const BotManagement: React.FC<Props> = ({ showHeading = true }) => {
         load();
       }}
     />
-    <AddExistingBotModal
+    <AddUserBotModal
       isOpen={addOpen}
       communityId={communityId}
-      installedIds={installedIdSet}
       onClose={() => setAddOpen(false)}
       onInstalled={load}
     />
     {roleModalBot && <RoleAssignmentModal
       isOpen={!!roleModalBot}
       botUserId={roleModalBot.userId}
-      botName={roleModalBot.displayName}
+      botName={`@${roleModalBot.username}`}
       communityId={communityId}
       initialRoleIds={roleModalBot.roleIds}
       onClose={() => setRoleModalBot(null)}
@@ -414,7 +471,7 @@ const BotManagement: React.FC<Props> = ({ showHeading = true }) => {
     {managedBot && <ScreenAwareModal
       isOpen={!!managedBot}
       onClose={() => setManagedBot(null)}
-      title={`Manage ${managedBot.displayName}`}
+      title={`Manage @${managedBot.username}`}
     >
       <div className='py-4'>
         <BotEditor

@@ -28,10 +28,17 @@ const botApi = {
     communityId: common.Uuid.required(),
   }).strict(true).required(),
 
+  listInstallableUserBots: Joi.object<API.Bot.listInstallableUserBots.Request>({
+    communityId: common.Uuid.required(),
+    query: Joi.string().trim().max(30).allow('', null).required(),
+    cursor: Joi.string().max(500).allow(null).required(),
+    limit: Joi.number().integer().min(1).max(50).required(),
+  }).strict(true).required(),
+
   createBot: Joi.object<API.Bot.createBot.Request>({
     ownerType,
     ownerId,
-    displayName: Joi.string().trim().min(1).max(255).required(),
+    username: common.CgProfileDisplayName.required(),
     imageId: Joi.alternatives().try(common.ImageId, Joi.equal(null)).required(),
     description: Joi.string().allow('', null).max(2000).required(),
     platformPresence: Joi.when('ownerType', {
@@ -43,7 +50,7 @@ const botApi = {
 
   updateBot: Joi.object<API.Bot.updateBot.Request>({
     botUserId: common.Uuid.required(),
-    displayName: Joi.string().trim().min(1).max(255),
+    username: common.CgProfileDisplayName,
     imageId: Joi.alternatives().try(common.ImageId, Joi.equal(null)),
     description: Joi.string().allow('', null).max(2000),
     platformPresence,

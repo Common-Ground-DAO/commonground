@@ -12,6 +12,7 @@ import { convertContentToPlainText } from '../../../common/converters';
 
 import "./EditFieldReplyPreview.css";
 import { useUserData } from 'context/UserDataProvider';
+import BotBadge from 'components/atoms/BotBadge/BotBadge';
 
 export default function EditFieldReplyPreview(props: {
   replyingTo: {
@@ -53,7 +54,10 @@ export default function EditFieldReplyPreview(props: {
     <div className="replying-to-content" onClick={() => scrollToLocation()}>
       <ReplyIcon />
       <Jdenticon userId={replyingTo.senderId} />
-      <div className="sender-display-name">{userData ? getDisplayName(userData) : replyingTo.senderId}</div>
+      <div className="sender-display-name flex items-center gap-1">
+        {userData ? getDisplayName(userData) : replyingTo.senderId}
+        {userData?.isBot && <BotBadge />}
+      </div>
       <div className="reply-preview-message">
         {convertContentToPlainText(replyingTo.body.content as any)}
       </div>

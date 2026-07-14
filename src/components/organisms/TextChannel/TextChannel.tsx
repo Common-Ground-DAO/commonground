@@ -35,6 +35,7 @@ import Jdenticon from 'components/atoms/Jdenticon/Jdenticon';
 import { getDisplayName } from '../../../util';
 import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal';
 import Button from 'components/atoms/Button/Button';
+import BotBadge from 'components/atoms/BotBadge/BotBadge';
 
 type Props = {
   community: Models.Community.DetailView;
@@ -444,6 +445,7 @@ const PinnedMessage: React.FC<{
           predefinedSize='20'
         />
         {getDisplayName(creator)}
+        {creator.isBot && <BotBadge />}
       </div>}
       {!!message && <span
         className='cg-text-lg-400 cg-text-main overflow-hidden whitespace-nowrap text-ellipsis'

@@ -50,6 +50,11 @@ declare namespace Models {
       url?: string;
     }
 
+    type UserAccountExtraData_Bot = {
+      type: "bot";
+      description: string | null;
+    }
+
     type UserAccountData_Lukso = {
       type: "lukso";
       id: string;
@@ -71,10 +76,11 @@ declare namespace Models {
     };
 
     type UserAccountData = UserAccountData_Twitter | UserAccountData_Lukso | UserAccountData_Farcaster;
-    type UserAccountExtraData = UserAccountExtraData_CG | UserAccountExtraData_Lukso | UserAccountExtraData_Farcaster;
+    type UserAccountExtraData = UserAccountExtraData_CG | UserAccountExtraData_Lukso | UserAccountExtraData_Farcaster | UserAccountExtraData_Bot;
 
     type Data = {
       id: string;
+      isBot: boolean;
       onlineStatus: OnlineStatus;
       isFollowed: boolean;
       isFollower: boolean;

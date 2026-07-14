@@ -40,6 +40,7 @@ import communityApi from 'data/api/community';
 import { PredefinedRole } from 'common/enums';
 import TagInputField, { tagStringToPredefinedTag } from '../inputs/TagInputField/TagInputField';
 import Tag, { TagIcon } from 'components/atoms/Tag/Tag';
+import BotBadge from 'components/atoms/BotBadge/BotBadge';
 
 type Props = {
   user: Omit<Models.User.Data, 'isFollowed' | 'isFollower'>;
@@ -254,6 +255,7 @@ const UserProfileV2: React.FC<Props> = (props) => {
     switch (account?.extraData?.type) {
       case 'farcaster': return account.extraData.bio;
       case 'cg': return account.extraData.description;
+      case 'bot': return account.extraData.description || '';
       default: return '';
     }
   }, [detailedData?.detailledProfiles, user.displayAccount]);
@@ -271,7 +273,7 @@ const UserProfileV2: React.FC<Props> = (props) => {
 
   const chipActions = useMemo(() => {
     const result: JSX.Element[] = [];
-    if (!isEditMode && isSelf && showEditControls && selectedAccount !== user.displayAccount) {
+    if (!user.isBot && !isEditMode && isSelf && showEditControls && selectedAccount !== user.displayAccount) {
       result.push(<Button
         key='setAsMain'
         role='chip'
@@ -279,7 +281,7 @@ const UserProfileV2: React.FC<Props> = (props) => {
         onClick={updateDisplayAccount}
       />);
     }
-    if (!isEditMode && isSelf && showEditControls && selectedAccount === 'cg') {
+    if (!user.isBot && !isEditMode && isSelf && showEditControls && selectedAccount === 'cg') {
       result.push(<Button
         key='edit'
         role='chip'
@@ -306,7 +308,7 @@ const UserProfileV2: React.FC<Props> = (props) => {
     }
 
     return result;
-  }, [isEditMode, isSelf, selectedAccount, showEditControls, updateCgData, updateDisplayAccount, user.displayAccount]);
+  }, [isEditMode, isSelf, selectedAccount, showEditControls, updateCgData, updateDisplayAccount, user.displayAccount, user.isBot]);
 
   const addAccountOptions = useMemo(() => {
     const result: JSX.Element[] = [];
@@ -392,7 +394,7 @@ const UserProfileV2: React.FC<Props> = (props) => {
         >
           <ExternalIcon type={acc.type === 'lukso' ? 'universalProfile' : acc.type} className='w-4 h-4 cg-text-brand' />
         </div>)}
-        {isSelf && addAccountOptions.length > 0 && <ScreenAwareDropdown
+        {isSelf && !user.isBot && addAccountOptions.length > 0 && <ScreenAwareDropdown
           ref={addAccountsDropdownRef}
           triggerContent={<div
             className={`user-profile-acc-btn cursor-pointer p-2 cg-border-xl flex items-center justify-center h-9 w-9`}
@@ -440,7 +442,7 @@ const UserProfileV2: React.FC<Props> = (props) => {
             name='username'
             autoComplete='username'
             onBlur={checkUsernameUniqueness}
-          /> : <h3 className='cg-text-main'>{getDisplayName(user, false, selectedAccount)}</h3>
+          /> : <h3 className='cg-text-main flex items-center gap-1'>{getDisplayName(user, false, selectedAccount)}{user.isBot && <BotBadge />}</h3>
         }
         <div className='flex gap-4 cg-text-secondary'>
           <div className='flex items-center gap-1'>
@@ -458,7 +460,7 @@ const UserProfileV2: React.FC<Props> = (props) => {
         </div>
       </div>
     </div>
-    {!isSelf && <FollowButtons {...props} toggleFollow={toggleFollow} />}
+    {!isSelf && !user.isBot && <FollowButtons {...props} toggleFollow={toggleFollow} />}
     {(isEditMode || !!bioText?.length) && <div className='cg-text-md-400 cg-text-secondary'>
       {isEditMode ? <TextAreaField
         value={cgBio}

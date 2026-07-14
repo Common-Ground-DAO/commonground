@@ -3,16 +3,17 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React from "react";
-import { getDisplayName, getRoleDisplayName } from "../../../util";
+import { getDisplayName } from "../../../util";
 import { ReactComponent as DisabledMicrophone } from '../../../components/atoms/icons/20/MicrofonDisabled.svg';
 
 import Jdenticon from "../Jdenticon/Jdenticon";
 import UserTooltip from "../../organisms/UserTooltip/UserTooltip";
 
 import './UserTag.css';
+import BotBadge from "../BotBadge/BotBadge";
 
 type Props = {
-  userData: Pick<Models.User.Data, "id" | "onlineStatus" | 'accounts' | 'displayAccount'>;
+  userData: Pick<Models.User.Data, "id" | "onlineStatus" | 'accounts' | 'displayAccount' | 'isBot'>;
   isMuted?: boolean;
   noOfflineDimming?: boolean;
   listId?: string;
@@ -40,6 +41,7 @@ function UserTag(props: Props) {
       <Jdenticon userId={userId} onlineStatus={onlineStatus} hideStatus={hideStatus} predefinedSize={jdenticonSize || '40'} />
       <span className={`flex items-center gap-1 overflow-hidden ${!!nameClassname ? nameClassname : largeNameFont ? 'cg-text-main cg-text-lg-500' : 'cg-text-main cg-text-sm-500'}`}>
         {props.hideName ? '' : displayName}
+        {!props.hideName && userData.isBot && <BotBadge />}
         {props.isMuted && <DisabledMicrophone className="w-4 h-4" />}
       </span>
     </div>

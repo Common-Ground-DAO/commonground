@@ -22,6 +22,7 @@ import PluginCard from '../PluginAppstore/PluginCard';
 import ArticleCard from 'components/molecules/ArticleCardV2/ArticleCardV2';
 import { PredefinedTag } from 'components/molecules/inputs/TagInputField/predefinedTags';
 import Tag, { TagIcon } from 'components/atoms/Tag/Tag';
+import BotBadge from 'components/atoms/BotBadge/BotBadge';
 
 type Props = {
   search: string;
@@ -175,7 +176,10 @@ const Search: React.FC<Props> = (props) => {
               predefinedSize="80"
               floatingBorder
             />
-            {userData[user.id] && getDisplayName(userData[user.id])}
+            {userData[user.id] && <div className='flex items-center gap-1'>
+              {getDisplayName(userData[user.id])}
+              {userData[user.id].isBot && <BotBadge />}
+            </div>}
             {userData[user.id] && <div className="flex flex-col gap-1 cg-bg-subtle p-2 cg-border-l">
               {user.matchedAccountTypes && user.matchedAccountTypes.map((accountType, index) => {
                 return <div key={index} className={`flex gap-1 cg-text-sm-500`}>

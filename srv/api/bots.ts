@@ -28,6 +28,13 @@ registerPostRoute<API.Bot.listBots.Request, API.Bot.listBots.Response>(
   (request, response, data) => botHelper.listBots(sessionUserId(request), data),
 );
 
+registerPostRoute<API.Bot.listCommunityBots.Request, API.Bot.listCommunityBots.Response>(
+  botRouter,
+  '/listCommunityBots',
+  validators.API.Bot.listCommunityBots,
+  (request, response, data) => botHelper.listCommunityBots(sessionUserId(request), data.communityId),
+);
+
 registerPostRoute<API.Bot.createBot.Request, API.Bot.createBot.Response>(
   botRouter,
   '/create',

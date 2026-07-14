@@ -54,6 +54,7 @@ type GetUrlOptions = {
   'community-settings-onboarding' |
   'community-settings-verify' |
   'community-settings-plugins' |
+  'community-settings-bots' |
   'community-create-article';
   community: Pick<Models.Community.ListView, "url"> & Partial<Models.Community.ListView>;
 } | {
@@ -192,6 +193,9 @@ const Helper: Record<GetUrlOptions['type'], (options: any) => string> = {
   },
   'community-settings-plugins': (options: GetUrlOptions & { type: 'community-settings-plugins' }) => {
     return `/${config.URL_COMMUNITY}/${options.community.url}/settings/plugins/`;
+  },
+  'community-settings-bots': (options: GetUrlOptions & { type: 'community-settings-bots' }) => {
+    return `/${config.URL_COMMUNITY}/${options.community.url}/settings/bots/`;
   },
   'community-settings-verify': (options: GetUrlOptions & { type: 'community-settings-verify' }) => {
     return `/${config.URL_COMMUNITY}/${options.community.url}/settings/verify/`;

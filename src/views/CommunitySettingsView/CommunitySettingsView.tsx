@@ -16,7 +16,7 @@ import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.s
 
 import "./CommunitySettingsView.css";
 import { PredefinedRole, RoleType } from "common/enums";
-import { ChatsTeardrop, HandWaving, HouseSimple, Plug, PokerChip, UserCircle, Users, Prohibit } from "@phosphor-icons/react";
+import { ChatsTeardrop, HandWaving, HouseSimple, Plug, PokerChip, Robot, UserCircle, Users, Prohibit } from "@phosphor-icons/react";
 import ManagementHeader2 from "components/molecules/ManagementHeader2/ManagementHeader2";
 import SettingsButton from "components/molecules/SettingsButton/SettingsButton";
 
@@ -71,6 +71,10 @@ export default function CommunitySettingsView(props: Props) {
       }
       case 'plugins': {
         navigate(getUrl({ type: 'community-settings-plugins', community }));
+        break;
+      }
+      case 'bots': {
+        navigate(getUrl({ type: 'community-settings-bots', community }));
         break;
       }
     }
@@ -138,6 +142,12 @@ export default function CommunitySettingsView(props: Props) {
               text="Token"
               leftElement={<PokerChip weight="duotone" className="w-5 h-5"/>}
               onClick={() => navigateToManagementPage('token')}
+            />}
+            {communityPermissions.has('COMMUNITY_MANAGE_ROLES') && <SettingsButton
+              className="max-w-full w-full justify-between"
+              text="Bots"
+              leftElement={<Robot weight="duotone" className="w-5 h-5"/>}
+              onClick={() => navigateToManagementPage('bots')}
             />}
             {ownRoles.some(role => role.title === PredefinedRole.Admin && role.type === RoleType.PREDEFINED) && <SettingsButton
               className="max-w-full w-full justify-between"

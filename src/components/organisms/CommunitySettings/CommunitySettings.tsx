@@ -15,6 +15,7 @@ import OnboardingManagement from "components/templates/CommunityLobby/Onboarding
 import NewslettersManagement from "components/templates/CommunityLobby/NewslettersManagement/NewslettersManagement";
 import PluginsManagement from "components/templates/CommunityLobby/PluginsManagement/PluginsManagement";
 import BanManagement from "components/templates/CommunityLobby/BanManagement/BanManagement";
+import BotManagement from "components/templates/CommunityLobby/BotManagement/BotManagement";
 type Props = {
 
 }
@@ -36,6 +37,7 @@ export default function CommunitySettings(props: Props) {
                 {activeModalContent === 'newsletters' && <NewslettersManagement />}
                 {activeModalContent === "premium-management" && <PremiumManagement />}
                 {activeModalContent === "plugins" && <PluginsManagement />}
+                {activeModalContent === "bot-management" && <BotManagement />}
                 {activeModalContent === "notifications" && <>Notifications</>}
             </div>
         );

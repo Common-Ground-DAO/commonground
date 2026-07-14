@@ -24,6 +24,10 @@ const botApi = {
     ownerId,
   }).strict(true).required(),
 
+  listCommunityBots: Joi.object<API.Bot.listCommunityBots.Request>({
+    communityId: common.Uuid.required(),
+  }).strict(true).required(),
+
   createBot: Joi.object<API.Bot.createBot.Request>({
     ownerType,
     ownerId,

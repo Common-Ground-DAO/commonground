@@ -17,7 +17,7 @@ declare global {
                 deviceId: string;
                 ownerType: Models.User.BotOwnerType;
                 ownerId: string | null;
-                displayName: string;
+                username: string;
                 imageId: string | null;
                 description: string | null;
                 platformPresence: PlatformPresence | null;
@@ -36,9 +36,14 @@ declare global {
                 revokedAt: string | null;
             };
 
-            type CommunityBotView = Pick<BotView, 'userId' | 'displayName' | 'imageId' | 'description'> & {
+            type CommunityBotView = Pick<BotView, 'userId' | 'username' | 'imageId' | 'description'> & {
                 roleIds: string[];
                 communityOwned: boolean;
+            };
+
+            type InstallableUserBotView = Pick<BotView, 'userId' | 'username' | 'imageId' | 'description'> & {
+                ownerUserId: string;
+                ownerUsername: string;
             };
 
             type Owner = {
@@ -56,9 +61,22 @@ declare global {
                 type Response = CommunityBotView[];
             }
 
+            namespace listInstallableUserBots {
+                type Request = {
+                    communityId: string;
+                    query: string | null;
+                    cursor: string | null;
+                    limit: number;
+                };
+                type Response = {
+                    items: InstallableUserBotView[];
+                    nextCursor: string | null;
+                };
+            }
+
             namespace createBot {
                 type Request = Owner & {
-                    displayName: string;
+                    username: string;
                     imageId: string | null;
                     description: string | null;
                     platformPresence?: PlatformPresence;
@@ -69,7 +87,7 @@ declare global {
             namespace updateBot {
                 type Request = {
                     botUserId: string;
-                    displayName?: string;
+                    username?: string;
                     imageId?: string | null;
                     description?: string | null;
                     platformPresence?: PlatformPresence;

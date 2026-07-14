@@ -25,6 +25,14 @@ class BotApiConnector extends BaseApiConnector {
     );
   }
 
+  public async listInstallableUserBots(data: API.Bot.listInstallableUserBots.Request): Promise<API.Bot.listInstallableUserBots.Response> {
+    return await this.ajax<API.Bot.listInstallableUserBots.Response>(
+      "POST",
+      "/listInstallableUserBots",
+      data,
+    );
+  }
+
   public async createBot(data: API.Bot.createBot.Request): Promise<API.Bot.createBot.Response> {
     return await this.ajax<API.Bot.createBot.Response>(
       "POST",

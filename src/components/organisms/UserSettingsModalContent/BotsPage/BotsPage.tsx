@@ -24,7 +24,7 @@ const BotRow: React.FC<{ bot: API.Bot.BotView; onClick: () => void }> = ({ bot, 
     leftElement={imageUrl
       ? <img src={imageUrl} alt='' className='w-6 h-6 rounded-full object-cover' />
       : <Robot weight='duotone' className='w-6 h-6 cg-text-secondary' />}
-    text={disabled ? `${bot.displayName} (disabled)` : bot.displayName}
+    text={disabled ? `@${bot.username} (disabled)` : `@${bot.username}`}
     rightElement={<ChevronRightIcon className='w-5 h-5' />}
     onClick={onClick}
     disabled={disabled}

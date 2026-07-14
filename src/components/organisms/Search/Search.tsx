@@ -39,6 +39,13 @@ const userFetcher = async (search: string, tags: string[], offset: number, limit
   });
 }
 
+function getBotOwnerLabel(owner: Models.User.BotOwnerSummary | null | undefined) {
+  if (owner?.type === 'user') return `Owned by @${owner.username}`;
+  if (owner?.type === 'community') return `Owned by ${owner.title}`;
+  if (owner?.type === 'platform') return 'Platform bot';
+  return undefined;
+}
+
 const communityFetcher = async (search: string, tags: string[], offset: number, limit: number = 10): Promise<API.Community.getCommunityList.Response> => {
   return await communityApi.getCommunityList({
     search: search || undefined,
@@ -176,10 +183,16 @@ const Search: React.FC<Props> = (props) => {
               predefinedSize="80"
               floatingBorder
             />
-            {userData[user.id] && <div className='flex items-center gap-1'>
-              {getDisplayName(userData[user.id])}
-              {userData[user.id].isBot && <BotBadge />}
-            </div>}
+            {userData[user.id] && <>
+              <div className='flex items-center gap-1'>
+                {userData[user.id].isBot ? '@' : ''}{getDisplayName(userData[user.id])}
+                {userData[user.id].isBot && <BotBadge />}
+              </div>
+              {userData[user.id].isBot && getBotOwnerLabel(userData[user.id].botOwner) &&
+                <span className='cg-text-sm-400 cg-text-secondary'>
+                  {getBotOwnerLabel(userData[user.id].botOwner)}
+                </span>}
+            </>}
             {userData[user.id] && <div className="flex flex-col gap-1 cg-bg-subtle p-2 cg-border-l">
               {user.matchedAccountTypes && user.matchedAccountTypes.map((accountType, index) => {
                 return <div key={index} className={`flex gap-1 cg-text-sm-500`}>

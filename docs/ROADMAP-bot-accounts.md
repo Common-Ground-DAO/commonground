@@ -83,7 +83,7 @@ users
 
 user_accounts
   type enum gains 'bot'
-  displayName + imageId remain the bot's ordinary display profile
+  username + imageId remain the bot's ordinary profile; bot and human usernames share one case-insensitive namespace
 
 bots
   userId       uuid PK, FK -> users(id) ON DELETE CASCADE
@@ -115,7 +115,7 @@ Schema invariants and indexes:
 - Because `ownerId` is polymorphic, repository operations must validate the referenced active owner in the correct table. If implemented with a DB trigger, keep the repository validation too for useful errors.
 - Token authentication joins active `bot_tokens`, active `bots`, non-deleted `users`, `users.is_bot = true`, and the stored active bot device.
 - `users.is_bot`, the `'bot'` display account, the `user_accounts` bot row, and the active/disabled `bots` row are created or changed atomically. Human users may never acquire a bot account type.
-- Bot display names are case-insensitively unique among bot profiles, including disabled bots (names remain reserved with the historical identity). Add an index equivalent to the CG-name index for `type = 'bot'`.
+- Bot usernames share the case-insensitive CG username namespace, including disabled bots (usernames remain reserved with the historical identity).
 - Add lookup indexes for active owner bot counts, active tokens, and presence reconciliation.
 - Apply runtime DB grants for both new tables.
 
@@ -201,7 +201,7 @@ Every PR includes code/migrations as applicable and a **verification section** w
 - Add complete bot install/remove/role-update operations with §5 rules and guard the generic role-assignment path against bypass.
 - Add persisted platform presence mode/subset configuration and idempotent reconciliation for existing/new communities.
 - Implement owner bot limits, owner deletion/disable behavior, and the disable lifecycle while preserving users/profile/message history.
-- Bot update supports display name, image ID, and public description without allowing ownership flavor/owner changes.
+- Bot update supports username, image ID, and public description without allowing ownership flavor/owner changes.
 - Verification: create/update/disable every flavor; authorization failures; limits under concurrent attempts; community membership bookkeeping; user-bot gate off/on; owner-access loss; platform reconciliation; historical identity remains fetchable after disable.
 
 ### Slice 3 — Bot tokens and stateless bearer auth (`feature/bot-accounts-auth`)
@@ -233,7 +233,7 @@ Every PR includes code/migrations as applicable and a **verification section** w
 ### Slice 6 — Frontend polish + bot-author documentation (`feature/bot-accounts-frontend`)
 
 - Include `isBot` in public user payloads and frontend cache models/placeholders.
-- Add a Bot badge wherever display names render, following existing supporter/verified badge patterns.
+- Add a Bot badge wherever usernames render, following existing supporter/verified badge patterns.
 - Hide follow and DM controls on bot profiles; backend bot-token restrictions remain authoritative.
 - Render bot account types safely in profile/search/account-type branches. Bot profiles do not show human account-add/edit/security controls.
 - Return and render the public bot description from the bots satellite table.

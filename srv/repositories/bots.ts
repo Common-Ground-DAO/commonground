@@ -135,7 +135,7 @@ async function _getBotView(db: PoolClient, botUserId: string): Promise<API.Bot.B
       b."deviceId",
       b."ownerType",
       b."ownerId",
-      ua."displayName",
+      ua."displayName" AS username,
       ua."imageId",
       b.description,
       CASE WHEN b."ownerType" = 'platform' THEN json_build_object(
@@ -184,6 +184,50 @@ function _ownerLimit(ownerType: Models.User.BotOwnerType) {
   if (ownerType === BotOwnerType.USER) return serverconfig.BOT_USER_OWNER_LIMIT;
   if (ownerType === BotOwnerType.COMMUNITY) return serverconfig.BOT_COMMUNITY_OWNER_LIMIT;
   return serverconfig.BOT_PLATFORM_OWNER_LIMIT;
+}
+
+const SHARED_USERNAME_CONSTRAINT = 'idx_user_accounts_principal_unique_username';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function _isSharedUsernameConflict(error: unknown) {
+  const databaseError = error as { code?: string; constraint?: string };
+  return databaseError?.code === '23505' && databaseError.constraint === SHARED_USERNAME_CONSTRAINT;
+}
+
+async function _assertUsernameAvailable(db: PoolClient, username: string, excludedUserId?: string) {
+  const result = await db.query(`
+    SELECT 1
+    FROM user_accounts
+    WHERE type = ANY(ARRAY['cg', 'bot']::public.user_accounts_type_enum[])
+      AND LOWER("displayName") = LOWER($1)
+      AND ($2::uuid IS NULL OR "userId" <> $2)
+    LIMIT 1
+  `, [username, excludedUserId ?? null]);
+  if (result.rowCount !== 0) throw new Error(errors.server.EXISTS_ALREADY);
+}
+
+type InstallableCursor = { username: string; userId: string };
+
+function _encodeInstallableCursor(cursor: InstallableCursor) {
+  return Buffer.from(JSON.stringify(cursor), 'utf8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+function _decodeInstallableCursor(value: string | null): InstallableCursor | null {
+  if (value === null) return null;
+  try {
+    const padded = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
+    const parsed = JSON.parse(Buffer.from(padded, 'base64').toString('utf8')) as Partial<InstallableCursor>;
+    if (typeof parsed.username !== 'string' || typeof parsed.userId !== 'string' || !UUID_PATTERN.test(parsed.userId)) {
+      throw new Error('invalid cursor');
+    }
+    return { username: parsed.username, userId: parsed.userId };
+  } catch {
+    throw new Error(errors.server.INVALID_REQUEST);
+  }
 }
 
 async function _assertOwnerLimit(db: PoolClient, ownerType: Models.User.BotOwnerType, ownerId: string | null) {
@@ -594,7 +638,7 @@ class BotHelper {
         const bot = await _getBotView(client, userId);
         return {
           userId: bot.userId,
-          displayName: bot.displayName,
+          username: bot.username,
           imageId: bot.imageId,
           description: bot.description,
           roleIds,
@@ -611,6 +655,103 @@ class BotHelper {
     }
   }
 
+  public async listInstallableUserBots(
+    actorUserId: string,
+    data: API.Bot.listInstallableUserBots.Request,
+  ): Promise<API.Bot.listInstallableUserBots.Response> {
+    const cursor = _decodeInstallableCursor(data.cursor);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await _assertCommunityManager(client, actorUserId, data.communityId);
+      const result = await client.query<API.Bot.InstallableUserBotView>(`
+        SELECT
+          b."userId",
+          bot_account."displayName" AS username,
+          bot_account."imageId",
+          b.description,
+          b."ownerId" AS "ownerUserId",
+          owner_account."displayName" AS "ownerUsername"
+        FROM bots b
+        INNER JOIN users bot_user
+          ON bot_user.id = b."userId"
+          AND bot_user.is_bot = TRUE
+          AND bot_user."deletedAt" IS NULL
+        INNER JOIN user_accounts bot_account
+          ON bot_account."userId" = b."userId"
+          AND bot_account.type = 'bot'
+          AND bot_account."deletedAt" IS NULL
+        INNER JOIN users owner_user
+          ON owner_user.id = b."ownerId"
+          AND owner_user.is_bot = FALSE
+          AND owner_user."deletedAt" IS NULL
+          AND owner_user."platformBan" IS NULL
+        INNER JOIN user_accounts owner_account
+          ON owner_account."userId" = owner_user.id
+          AND owner_account.type = 'cg'
+          AND owner_account."deletedAt" IS NULL
+        INNER JOIN communities community
+          ON community.id = $1
+          AND community."deletedAt" IS NULL
+          AND community."allowUserBots" = TRUE
+        WHERE b."ownerType" = 'user'
+          AND b."deletedAt" IS NULL
+          AND EXISTS (
+            SELECT 1
+            FROM roles_users_users owner_membership
+            INNER JOIN roles owner_role ON owner_role.id = owner_membership."roleId"
+            WHERE owner_membership."userId" = b."ownerId"
+              AND owner_membership.claimed = TRUE
+              AND owner_role."communityId" = $1
+              AND owner_role.title = $2
+              AND owner_role.type = $3
+              AND owner_role."deletedAt" IS NULL
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM roles_users_users bot_membership
+            INNER JOIN roles bot_role ON bot_role.id = bot_membership."roleId"
+            WHERE bot_membership."userId" = b."userId"
+              AND bot_membership.claimed = TRUE
+              AND bot_role."communityId" = $1
+              AND bot_role.title = $2
+              AND bot_role.type = $3
+              AND bot_role."deletedAt" IS NULL
+          )
+          AND ($4::text = '' OR LOWER(bot_account."displayName") LIKE '%' || LOWER($4) || '%')
+          AND (
+            $5::text IS NULL
+            OR (LOWER(bot_account."displayName"), b."userId") > ($5, $6::uuid)
+          )
+        ORDER BY LOWER(bot_account."displayName"), b."userId"
+        LIMIT $7
+      `, [
+        data.communityId,
+        PredefinedRole.Member,
+        RoleType.PREDEFINED,
+        data.query?.trim() ?? '',
+        cursor?.username ?? null,
+        cursor?.userId ?? null,
+        data.limit + 1,
+      ]);
+      const hasMore = result.rows.length > data.limit;
+      const items = result.rows.slice(0, data.limit);
+      const last = items[items.length - 1];
+      await client.query('COMMIT');
+      return {
+        items,
+        nextCursor: hasMore && last
+          ? _encodeInstallableCursor({ username: last.username.toLowerCase(), userId: last.userId })
+          : null,
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   public async createBot(actorUserId: string, data: API.Bot.createBot.Request): Promise<API.Bot.BotView> {
     const client = await pool.connect();
     const joined: MembershipChange[] = [];
@@ -619,6 +760,7 @@ class BotHelper {
       await client.query('BEGIN');
       await _assertOwnerAuthorization(client, actorUserId, data.ownerType, data.ownerId);
       await _assertOwnerLimit(client, data.ownerType, data.ownerId);
+      await _assertUsernameAvailable(client, data.username);
       if (data.ownerType === BotOwnerType.PLATFORM) {
         if (!data.platformPresence) throw new Error(errors.server.INVALID_REQUEST);
         if (data.platformPresence.mode === BotPlatformPresenceMode.ALL && data.platformPresence.communityIds.length > 0) {
@@ -632,13 +774,13 @@ class BotHelper {
         ownerType: BotOwnerType.PLATFORM,
         ownerId: null,
         platformPresenceMode: data.platformPresence!.mode,
-        displayName: data.displayName,
+        displayName: data.username,
         imageId: data.imageId,
         description: data.description,
       } : {
         ownerType: data.ownerType,
         ownerId: data.ownerId!,
-        displayName: data.displayName,
+        displayName: data.username,
         imageId: data.imageId,
         description: data.description,
       };
@@ -653,6 +795,7 @@ class BotHelper {
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
+      if (_isSharedUsernameConflict(error)) throw new Error(errors.server.EXISTS_ALREADY);
       throw error;
     } finally {
       client.release();
@@ -781,6 +924,9 @@ class BotHelper {
       await client.query('BEGIN');
       const bot = await _getBot(client, data.botUserId);
       await _assertOwnerAuthorization(client, actorUserId, bot.ownerType, bot.ownerId);
+      if (data.username !== undefined) {
+        await _assertUsernameAvailable(client, data.username, bot.userId);
+      }
       if (data.platformPresence) {
         if (bot.ownerType !== BotOwnerType.PLATFORM) throw new Error(errors.server.INVALID_REQUEST);
         if (data.platformPresence.mode === BotPlatformPresenceMode.ALL && data.platformPresence.communityIds.length > 0) {
@@ -793,7 +939,7 @@ class BotHelper {
       if (data.description !== undefined) {
         await client.query(`UPDATE bots SET description = $2, "updatedAt" = now() WHERE "userId" = $1`, [bot.userId, data.description]);
       }
-      if (data.displayName !== undefined || data.imageId !== undefined) {
+      if (data.username !== undefined || data.imageId !== undefined) {
         await client.query(`
           UPDATE user_accounts
           SET
@@ -801,13 +947,14 @@ class BotHelper {
             "imageId" = CASE WHEN $3::boolean THEN $4 ELSE "imageId" END,
             "updatedAt" = now()
           WHERE "userId" = $1 AND type = 'bot' AND "deletedAt" IS NULL
-        `, [bot.userId, data.displayName ?? null, data.imageId !== undefined, data.imageId ?? null]);
+        `, [bot.userId, data.username ?? null, data.imageId !== undefined, data.imageId ?? null]);
         await client.query(`UPDATE users SET "updatedAt" = now() WHERE id = $1`, [bot.userId]);
         await client.query(`UPDATE bots SET "updatedAt" = now() WHERE "userId" = $1`, [bot.userId]);
       }
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
+      if (_isSharedUsernameConflict(error)) throw new Error(errors.server.EXISTS_ALREADY);
       throw error;
     } finally {
       client.release();

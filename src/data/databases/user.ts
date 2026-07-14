@@ -440,6 +440,7 @@ class UserDatabase extends AbstractDatabase<{
       for (const missing of missingIds) {
         users.push({
           id: missing,
+          isBot: false,
           premiumFeatures: [],
           isFollowed: false,
           isFollower: false,

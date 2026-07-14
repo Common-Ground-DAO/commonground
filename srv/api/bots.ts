@@ -9,6 +9,7 @@ import validators from "../validators";
 import { registerPostRoute } from "./util";
 import botTokenHelper from "../repositories/botTokens";
 import { allowBotRoute } from "../util/botPrincipal";
+import { enforceBotRateLimit } from "../util/botRateLimit";
 
 const botRouter = express.Router();
 
@@ -101,9 +102,10 @@ registerPostRoute<API.Bot.whoami.Request, API.Bot.whoami.Response>(
   botRouter,
   '/whoami',
   undefined,
-  (request) => {
+  async (request) => {
     const principal = request.botPrincipal;
     if (!principal) throw new Error(errors.server.NOT_ALLOWED);
+    await enforceBotRateLimit(principal.tokenId, 'api');
     return {
       userId: principal.user.id,
       deviceId: principal.user.deviceId,

@@ -652,6 +652,7 @@ registerPostRoute<
     const result: API.User.createUser.Response = {
       ownData: {
         id: insertedIds.userId,
+        isBot: false,
         onlineStatus: "online",
         communityOrder: [],
         finishedTutorials: [],

@@ -22,6 +22,7 @@ import Button from "components/atoms/Button/Button";
 import { getDisplayName } from "../../../../util";
 import communityApi from "data/api/community";
 import ManagementHeader2 from "components/molecules/ManagementHeader2/ManagementHeader2";
+import BotBadge from "components/atoms/BotBadge/BotBadge";
 
 const WINDOW_SIZE = 80;
 const MEMBER_ITEM_HEIGHT = 81;
@@ -350,7 +351,10 @@ const MemberItem: React.FC<MemberItemProps> = ({ data, index }) => {
         <div className="flex gap-2">
           <Jdenticon userId={data.user.id} />
           <div className='member-item-text'>
-            <span className="member-display-name">{getDisplayName(data.user)}</span>
+            <span className="member-display-name flex items-center gap-1">
+              {getDisplayName(data.user)}
+              {data.user.isBot && <BotBadge />}
+            </span>
             {roleElement}
           </div>
         </div>

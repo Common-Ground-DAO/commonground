@@ -165,6 +165,7 @@ async function _getUserData(
   const query = `
     SELECT
       u."id",
+      u.is_bot AS "isBot",
       u."createdAt",
       u."updatedAt",
       u."onlineStatus",
@@ -212,6 +213,7 @@ async function _getUserData(
   const result = await db.query(query, data.params);
   return result.rows as {
     id: string;
+    isBot: boolean;
     verified: boolean;
     isFollower: boolean;
     isFollowed: boolean;
@@ -259,13 +261,20 @@ async function _getUserProfileDetails(
   const query = `
     WITH ${callerCte}, select_profiles AS (
       SELECT
-        "type",
-        "displayName",
-        "imageId",
-        "extraData"
-      FROM user_accounts
-      WHERE "userId" = $1
-        AND "deletedAt" IS NULL
+        ua."type",
+        ua."displayName",
+        ua."imageId",
+        CASE
+          WHEN ua."type" = 'bot' THEN jsonb_build_object(
+            'type', 'bot',
+            'description', b.description
+          )
+          ELSE ua."extraData"
+        END AS "extraData"
+      FROM user_accounts ua
+      LEFT JOIN bots b ON b."userId" = ua."userId" AND ua."type" = 'bot'
+      WHERE ua."userId" = $1
+        AND ua."deletedAt" IS NULL
     ), select_wallets AS (
       SELECT
         "type",
@@ -329,6 +338,7 @@ async function _getOwnData(
     ${data.CTE ? data.CTE : ''}
     SELECT
       u."id",
+      u.is_bot AS "isBot",
       u."communityOrder",
       u."finishedTutorials",
       u."newsletter",
@@ -387,6 +397,7 @@ async function _getOwnData(
   if (result.rows.length > 0) {
     return result.rows[0] as {
       id: string;
+      isBot: boolean;
       communityOrder: string[];
       finishedTutorials: Models.User.TutorialName[];
       newsletter: boolean;

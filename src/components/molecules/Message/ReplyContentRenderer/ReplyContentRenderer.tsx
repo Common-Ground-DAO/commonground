@@ -9,6 +9,7 @@ import { useOwnUser } from "context/OwnDataProvider";
 
 import "./ReplyContentRenderer.css";
 import { useUserData } from "context/UserDataProvider";
+import BotBadge from "components/atoms/BotBadge/BotBadge";
 
 export default function ReplyContentRenderer(props: {
   id: string;
@@ -53,6 +54,7 @@ export default function ReplyContentRenderer(props: {
       <div className="replied-to-message-display-name">
         <ReplyIcon />
         {isSelf ? getDisplayName(ownData) : user ? getDisplayName(user) : senderId}
+        {!isSelf && user?.isBot && <BotBadge />}
       </div>
       <div className="replied-to-message-message">
         {replyMessage}

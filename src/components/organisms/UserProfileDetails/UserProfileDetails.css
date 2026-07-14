@@ -24,9 +24,9 @@
     }
 
     > .user-display-name {
-      @apply flex flex-col items-start p-0 gap-1 self-stretch flex-none order-none flex-grow-0;
+      @apply flex items-center justify-center p-0 gap-2 self-stretch flex-none order-none flex-grow-0;
       > .user-alias {
-        @apply flex p-0 overflow-hidden w-full text-ellipsis cg-heading-2 text-center justify-center;
+        @apply flex p-0 overflow-hidden text-ellipsis cg-heading-2 text-center;
       }
     }
 

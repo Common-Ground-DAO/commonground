@@ -11,10 +11,11 @@ import SkeletonLine from "components/atoms/SkeletonLine/SkeletonLine";
 import { useMemo } from "react";
 import { UserPremiumFeatureName } from "common/enums";
 import SupporterIcon from "components/atoms/SupporterIcon/SupporterIcon";
+import BotBadge from "components/atoms/BotBadge/BotBadge";
 
 type Properties = {
     userId?: string;
-    userData?: Pick<Models.User.Data, 'premiumFeatures' | 'accounts' | 'displayAccount' | 'id'>;
+    userData?: Pick<Models.User.Data, 'premiumFeatures' | 'accounts' | 'displayAccount' | 'id' | 'isBot'>;
     disableTooltip?: boolean;
 }
 
@@ -60,6 +61,7 @@ export default function UsernameWithVerifiedIcon(props: Properties) {
     else {
         content = (<>
             <span className="overflow-hidden text-ellipsis">{userName}</span>
+            {userData?.isBot && <BotBadge disableTooltip={disableTooltip} />}
             {verifiedIcon}
         </>);
     }

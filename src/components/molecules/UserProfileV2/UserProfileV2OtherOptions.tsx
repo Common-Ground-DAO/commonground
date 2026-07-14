@@ -168,7 +168,7 @@ const UserProfileV2OtherOptions: React.FC<Props> = (props) => {
       />);
     }
 
-    if (!isSelf) {
+    if (!isSelf && !user.isBot) {
       result.push(
         <ListItem
           key='follow'

@@ -28,6 +28,7 @@ import { useChats, useOwnUser } from "context/OwnDataProvider";
 import useLocalStorage from "hooks/useLocalStorage";
 import { useSnackbarContext } from "context/SnackbarContext";
 import { useDetailledUserData } from "context/UserDataProvider";
+import BotBadge from "components/atoms/BotBadge/BotBadge";
 
 type Props = {
 };
@@ -48,6 +49,8 @@ export default function UserProfileDetails(props: Props) {
   const detailledData = useDetailledUserData(userId);
   const cgProfile = detailledData?.detailledProfiles.find(a => a.type === 'cg');
   const extraData = cgProfile?.extraData as Models.User.UserAccountExtraData_CG | null | undefined;
+  const botProfile = detailledData?.detailledProfiles.find(a => a.type === 'bot');
+  const botExtraData = botProfile?.extraData?.type === 'bot' ? botProfile.extraData : undefined;
 
   const toggleFollow = async () => {
     if (user.isFollowed) {
@@ -104,7 +107,7 @@ export default function UserProfileDetails(props: Props) {
           <UserProfilePhoto userId={userId} />
         </div>
         <div className="user-profile-content">
-          {userId !== ownUser?.id && (
+          {userId !== ownUser?.id && !user.isBot && (
             <div className="interfaction-buttons-container">
               {user.isFollower && user.isFollowed ? <span className="follows-me"><HandshakeIcon /></span> : user.isFollower && <span className="follows-me">follows you</span>}
               <Button
@@ -124,14 +127,15 @@ export default function UserProfileDetails(props: Props) {
           )}
           <div className="user-display-name cg-text-main">
             <span className="user-alias">{userDisplayName}</span>
+            {user.isBot && <BotBadge />}
           </div>
           <div className="user-description">
             <Scrollable>
               <div className="user-about-box">
                 <label>About me</label>
-                <span onClick={toggleExperimentalUi}>{extraData?.description}</span>
+                <span onClick={toggleExperimentalUi}>{user.isBot ? botExtraData?.description : extraData?.description}</span>
               </div>
-              <div className="user-socials">
+              {!user.isBot && <div className="user-socials">
                 {twitter && (
                   <SimpleLink key="link-twitter" href={normalizeTwitterLink(twitter.displayName)}>
                     <div className={`user-socials-row ${!twitter ? "invalid" : ""}`}>
@@ -156,7 +160,7 @@ export default function UserProfileDetails(props: Props) {
                     </div>
                   </SimpleLink>
                 )}
-              </div>
+              </div>}
             </Scrollable>
           </div>
         </div>

@@ -22,6 +22,7 @@ import NotificationDot from 'components/atoms/NotificationDot/NotificationDot';
 import { useUserData } from 'context/UserDataProvider';
 import { UserTooltipHandle } from 'components/atoms/Tooltip/UserProfilePopover';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
+import BotBadge from 'components/atoms/BotBadge/BotBadge';
 
 type Props = {
   notification: Models.Notification.Notification;
@@ -109,7 +110,10 @@ const NotificationMessage: React.FC<Props> = ({ notification, selected, onClick 
           >
             <div className='notificationMessageSubject'>
               <Jdenticon userId={user.id} onlineStatus={user.onlineStatus} iconStyle={iconStyle} />
-              <span className='notificationMessageSubjectName'>{getDisplayName(user)}</span>
+              <span className='notificationMessageSubjectName flex items-center gap-1'>
+                {getDisplayName(user)}
+                {user.isBot && <BotBadge />}
+              </span>
             </div>
           </UserTooltip>
         );
@@ -118,7 +122,10 @@ const NotificationMessage: React.FC<Props> = ({ notification, selected, onClick 
         return (
           <div className='notificationMessageSubject'>
             <Jdenticon userId={user.id} onlineStatus={user.onlineStatus} iconStyle={iconStyle} />
-            <span className='notificationMessageSubjectName'>{getDisplayName(user)}</span>
+            <span className='notificationMessageSubjectName flex items-center gap-1'>
+              {getDisplayName(user)}
+              {user.isBot && <BotBadge />}
+            </span>
           </div>
         );
       }

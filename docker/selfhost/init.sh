@@ -62,6 +62,15 @@ MEDIASOUP_DISABLE_LIBURING=true
 BUILDER_UID=$(id -u)
 BUILDER_GID=$(id -g)
 
+# bot accounts (all limits are per active owner/token; comma-separate platform operator user UUIDs)
+PLATFORM_OPERATOR_USER_IDS=
+BOT_USER_OWNER_LIMIT=5
+BOT_COMMUNITY_OWNER_LIMIT=10
+BOT_PLATFORM_OWNER_LIMIT=10
+BOT_ACTIVE_TOKEN_LIMIT=10
+BOT_API_RATE_LIMIT_PER_MINUTE=120
+BOT_MESSAGE_RATE_LIMIT_PER_MINUTE=30
+
 ### Optional third-party integrations — leave empty to disable the feature.
 
 # email delivery (SendGrid). Without it, email login/notifications are unavailable.

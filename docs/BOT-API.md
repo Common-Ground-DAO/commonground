@@ -1,8 +1,18 @@
-# Bot accounts API (v1)
+# Bot API v1
 
-Bot management in v1 is API/CLI only. There is no management screen in the
-web app. A human session creates and manages a bot; the bot then uses its own
-bearer token for the deliberately small messaging API and Socket.IO contract.
+A human session creates and manages a bot through the web app or management
+API. The bot then uses its own bearer token for the deliberately small,
+versioned messaging and Socket.IO contract.
+
+The stable public bot surface lives under `/api/bot/v1`. The web application
+continues to use `/api/v2`; those routes are not the bot protocol version.
+Bot API v1 changes are additive: existing fields and behavior will not be
+removed or renamed without a new protocol version. Unknown response and event
+fields must be ignored by clients.
+
+The original bearer aliases under `/api/v2/Bot` and `/api/v2/Message` remain
+available for transition compatibility, but new bot clients should use only
+the versioned public surface.
 
 Examples below assume:
 
@@ -126,8 +136,11 @@ curl --fail-with-body -sS \
   -H "Authorization: Bearer $BOT_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{}' \
-  "$CG_URL/api/v2/Bot/whoami"
+  "$CG_URL/api/bot/v1/whoami"
 ```
+
+The response includes `protocolVersion: "1"` in addition to the bot, device,
+and token IDs.
 
 ## Bearer messaging API
 
@@ -143,12 +156,12 @@ rechecked for every request. v1 allows only these six `POST` routes:
 
 | Route | Additional body fields |
 |---|---|
-| `/api/v2/Message/loadMessages` | `order?`, `createdBefore?`, `createdAfter?` |
-| `/api/v2/Message/messagesById` | `messageIds` |
-| `/api/v2/Message/loadUpdates` | `createdStart`, `createdEnd`, `updatedAfter` |
-| `/api/v2/Message/createMessage` | `id`, `body`, `parentMessageId`, `attachments` |
-| `/api/v2/Message/setReaction` | `messageId`, `reaction` |
-| `/api/v2/Message/unsetReaction` | `messageId` |
+| `/api/bot/v1/messages/loadMessages` | `order?`, `createdBefore?`, `createdAfter?` |
+| `/api/bot/v1/messages/messagesById` | `messageIds` |
+| `/api/bot/v1/messages/loadUpdates` | `createdStart`, `createdEnd`, `updatedAfter` |
+| `/api/bot/v1/messages/createMessage` | `id`, `body`, `parentMessageId`, `attachments` |
+| `/api/bot/v1/messages/setReaction` | `messageId`, `reaction` |
+| `/api/bot/v1/messages/unsetReaction` | `messageId` |
 
 Create a text message. The client must supply a fresh UUID as `id`:
 
@@ -164,7 +177,7 @@ curl --fail-with-body -sS \
     \"parentMessageId\":null,
     \"attachments\":[]
   }" \
-  "$CG_URL/api/v2/Message/createMessage"
+  "$CG_URL/api/bot/v1/messages/createMessage"
 ```
 
 Load recent messages:
@@ -174,7 +187,7 @@ curl --fail-with-body -sS \
   -H "Authorization: Bearer $BOT_TOKEN" \
   -H 'Content-Type: application/json' \
   -d "{\"access\":{\"communityId\":\"$COMMUNITY_ID\",\"channelId\":\"$CHANNEL_ID\"},\"order\":\"DESC\"}" \
-  "$CG_URL/api/v2/Message/loadMessages"
+  "$CG_URL/api/bot/v1/messages/loadMessages"
 ```
 
 ## Rate limits
@@ -198,7 +211,7 @@ import { io } from "socket.io-client";
 
 const socket = io(process.env.CG_URL, {
   path: "/api/ws/",
-  auth: { token: process.env.BOT_TOKEN },
+  auth: { token: process.env.BOT_TOKEN, protocolVersion: "1" },
 });
 
 socket.on("cliMessageEvent", (event) => {
@@ -218,9 +231,18 @@ socket.on("cliMessageEvent", (event) => {
 socket.on("connect_error", (error) => console.error(error.message));
 ```
 
-`new` carries a complete API message. `update` carries `id`, `channelId`,
+`new` carries a complete API message plus `creatorIsBot`. A selected `@mention`
+is a body element with `{type: "mention", userId, alias}`; compare `userId`
+with the ID from `/whoami`, never with the editable alias. Replies carry
+`parentMessageId`; use `messagesById` to load the parent and compare its
+`creatorId` with the bot's ID. Ignore `creatorIsBot: true` by default to prevent
+multi-bot mention or reply loops.
+
+`update` carries `id`, `channelId`,
 `updatedAt`, and the changed message fields. `delete` carries `channelId` and
 `deletedIds`. Only `cliMessageEvent` is the supported public v1 event contract.
+The handshake accepts an omitted version temporarily for legacy clients but
+rejects any explicitly unsupported version with `unsupported_bot_protocol`.
 
 The server joins a bot only to rooms allowed by its current policy,
 installation, roles, and channel permissions. Removing a role, installation,

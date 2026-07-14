@@ -21,6 +21,7 @@ import pluginRouter from './api/plugins';
 import searchRouter from './api/search';
 import reportRouter from './api/report';
 import botRouter from './api/bots';
+import botV1Router from './api/botV1';
 
 app.use('/Chat', chatRouter);
 app.use('/Community', communityRouter);
@@ -38,6 +39,7 @@ app.use('/Plugins', pluginRouter);
 app.use('/Search', searchRouter);
 app.use('/Report', reportRouter);
 app.use('/Bot', botRouter);
+app.use('/BotV1', botV1Router);
 app.use('/', getRoutes);
 
 const shutdown = async (code = 0) => {

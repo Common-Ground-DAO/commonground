@@ -26,6 +26,7 @@ declare {
                 userId?: string;
                 deviceId?: string;
                 botTokenId?: string;
+                botProtocolVersion?: API.Bot.ProtocolVersion;
                 signableSecret?: string;
                 temporaryCommunityId?: string;
                 walletRequestId?: string;

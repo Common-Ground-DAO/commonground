@@ -5,6 +5,8 @@
 declare global {
     namespace API {
         namespace Bot {
+            type ProtocolVersion = '1';
+
             type PlatformPresence = {
                 mode: Models.User.BotPlatformPresenceMode;
                 communityIds: string[];
@@ -131,7 +133,12 @@ declare global {
 
             namespace whoami {
                 type Request = undefined;
-                type Response = { userId: string; deviceId: string; tokenId: string };
+                type Response = {
+                    protocolVersion: ProtocolVersion;
+                    userId: string;
+                    deviceId: string;
+                    tokenId: string;
+                };
             }
         }
     }

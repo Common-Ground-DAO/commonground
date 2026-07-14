@@ -56,6 +56,7 @@ type Props = {
 };
 
 const accountOrder: Record<Models.User.ProfileItemType, number> = {
+  bot: 0,
   cg: 1,
   farcaster: 2,
   twitter: 3,

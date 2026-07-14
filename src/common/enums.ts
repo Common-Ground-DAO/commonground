@@ -147,6 +147,13 @@ export enum UserProfileTypeEnum {
   LUKSO = 'lukso',
   CG = 'cg',
   FARCASTER = 'farcaster',
+  BOT = 'bot',
+}
+
+export enum BotOwnerType {
+  COMMUNITY = 'community',
+  USER = 'user',
+  PLATFORM = 'platform',
 }
 
 export enum CallType {

@@ -6,7 +6,8 @@ declare namespace Models {
   namespace User {
     type OnlineStatus = 'online' | 'away' | 'dnd' | 'invisible' | 'offline';
     type TutorialName = 'onboarding';
-    type ProfileItemType = 'twitter' | 'lukso' | 'cg' | 'farcaster';
+    type ProfileItemType = 'twitter' | 'lukso' | 'cg' | 'farcaster' | 'bot';
+    type BotOwnerType = 'community' | 'user' | 'platform';
 
     type PremiumFeatureName =
       'SUPPORTER_1' |

@@ -16,11 +16,18 @@ import { ReactComponent as EthereumIcon } from '../../../atoms/icons/24/Ethereum
 import { ReactComponent as LuksoIcon } from '../../../atoms/icons/24/Lukso.svg';
 import { ReactComponent as FarcasterIcon } from '../../../atoms/icons/24/Farcaster.svg';
 
+export type ExternalAccountType = Exclude<Models.User.ProfileItemType, 'cg' | 'bot'>;
+
 type Props = {
   setPage: (pageType: PageType) => void;
   setCurrentWallet: (walletId: string) => void;
-  setCurrentAccount: (account: Models.User.ProfileItemType) => void;
+  setCurrentAccount: (account: ExternalAccountType) => void;
 };
+
+const isExternalAccount = (
+  account: Models.User.ProfileItemWithDetails,
+): account is Models.User.ProfileItemWithDetails & { type: ExternalAccountType } =>
+  account.type !== 'cg' && account.type !== 'bot';
 
 export const getAccountIcon = (accountType: Models.User.ProfileItemType) => {
   switch(accountType) {
@@ -66,7 +73,7 @@ const AccountsPage: React.FC<Props> = (props) => {
       rightElement={<ChevronRightIcon className='w-5 h-5' />}
       onClick={() => setPage('email-account-accounts')}
     />}
-    {ownUser?.accounts.filter(acc => acc.type !== "cg").map(acc => <UserSettingsButton
+    {ownUser?.accounts.filter(isExternalAccount).map(acc => <UserSettingsButton
       key={acc.type}
       leftElement={getAccountIcon(acc.type)}
       text={acc.displayName}

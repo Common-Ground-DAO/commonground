@@ -4,9 +4,10 @@
 
 import { User } from "../entities/users";
 import errors from "../common/errors";
-import { UserProfileTypeEnum, PredefinedRole, PremiumRenewal, RoleType, UserPremiumFeatureName, WalletType, WalletVisibility } from "../common/enums";
+import { BotOwnerType, UserProfileTypeEnum, PredefinedRole, PremiumRenewal, RoleType, UserPremiumFeatureName, WalletType, WalletVisibility } from "../common/enums";
 import format from "pg-format";
 import * as bcrypt from "bcrypt";
+import { webcrypto } from "node:crypto";
 import mailchimpClient from '@mailchimp/mailchimp_marketing';
 import serverconfig from "../serverconfig";
 import eventHelper from "./event";
@@ -38,7 +39,13 @@ export type CreateUserAccountData = {
   type: Extract<Models.User.ProfileItemType, "farcaster">;
   data: Models.User.UserAccountData_Farcaster;
   extraData: Models.User.UserAccountExtraData_Farcaster;
+} | {
+  type: Extract<Models.User.ProfileItemType, "bot">;
+  data: null;
+  extraData: null;
 });
+
+type CreateHumanUserAccountData = Exclude<CreateUserAccountData, { type: "bot" }>;
 
 type CreateUserData = {
   devicePublicKey: any;
@@ -46,13 +53,32 @@ type CreateUserData = {
   activateNewsletter: boolean;
   password: string | null;
   passkeyId?: string;
-  displayAccount: Models.User.ProfileItemType;
+  displayAccount: Exclude<Models.User.ProfileItemType, "bot">;
   wallet?: {
     walletIdentifier: Models.Wallet.Wallet['walletIdentifier'];
     type: Models.Wallet.Wallet["type"];
     signatureData: Models.Wallet.Wallet["signatureData"];
   };
+  accounts: CreateHumanUserAccountData[];
+};
+
+type InternalCreateUserData = Omit<CreateUserData, "displayAccount" | "accounts"> & {
+  displayAccount: Models.User.ProfileItemType;
   accounts: CreateUserAccountData[];
+  isBot: boolean;
+  bot?: {
+    ownerType: Models.User.BotOwnerType;
+    ownerId: string | null;
+    description: string | null;
+  };
+};
+
+export type CreateBotUserData = {
+  ownerType: Models.User.BotOwnerType;
+  ownerId: string | null;
+  displayName: string;
+  imageId: string | null;
+  description: string | null;
 };
 
 async function _hashPassword(password: string) {
@@ -392,8 +418,30 @@ async function _getOwnData(
 
 async function _createUser(
   db: PoolClient,
-  data: CreateUserData,
+  data: InternalCreateUserData,
 ) {
+  const botAccounts = data.accounts.filter(account => account.type === 'bot');
+  if (data.isBot) {
+    if (
+      !data.bot ||
+      data.displayAccount !== 'bot' ||
+      botAccounts.length !== 1 ||
+      data.accounts.length !== 1 ||
+      data.email !== null ||
+      data.password !== null ||
+      data.activateNewsletter ||
+      data.passkeyId !== undefined ||
+      data.wallet !== undefined
+    ) {
+      console.error("Error creating bot user, bot invariants not satisfied");
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
+  }
+  else if (data.bot || data.displayAccount === 'bot' || botAccounts.length > 0) {
+    console.error("Error creating human user with bot-only data");
+    throw new Error(errors.server.INVALID_REQUEST);
+  }
+
   const { password, wallet, accounts, passkeyId } = data;
   let passwordHash: string | null = null;
   if (password !== null) {
@@ -404,6 +452,7 @@ async function _createUser(
     data.activateNewsletter,
     passwordHash,
     data.displayAccount,
+    data.isBot,
   ];
   let query = `
     WITH create_user AS (
@@ -411,9 +460,10 @@ async function _createUser(
         "email",
         "newsletter",
         "password",
-        "displayAccount"
+        "displayAccount",
+        "is_bot"
       )
-      VALUES ($1, $2, $3, $4)
+      VALUES ($1, $2, $3, $4, $5)
       RETURNING "id", "updatedAt"
     )
   `;
@@ -553,6 +603,7 @@ async function _createUser(
     }
   }
   if (
+    !data.isBot &&
     !("wallet" in data) &&
     !data.password &&
     !data.accounts.find(a => a.type !== 'cg') &&
@@ -564,14 +615,44 @@ async function _createUser(
   }
 
   params.push(data.devicePublicKey);
+  const devicePublicKeyParam = params.length;
   query += `
-    INSERT INTO devices ("userId", "publicKey")
-    VALUES ((SELECT "id" FROM create_user), $${params.length})
-    RETURNING
-      "id" AS "deviceId",
+    , create_device AS (
+      INSERT INTO devices ("userId", "publicKey")
+      VALUES ((SELECT "id" FROM create_user), $${devicePublicKeyParam})
+      RETURNING "id" AS "deviceId"
+    )
+  `;
+  if (data.isBot && data.bot) {
+    params.push(data.bot.ownerType, data.bot.ownerId, data.bot.description);
+    const ownerTypeParam = devicePublicKeyParam + 1;
+    query += `,
+      create_bot AS (
+        INSERT INTO bots (
+          "userId",
+          "deviceId",
+          "ownerType",
+          "ownerId",
+          "description"
+        )
+        VALUES (
+          (SELECT "id" FROM create_user),
+          (SELECT "deviceId" FROM create_device),
+          $${ownerTypeParam},
+          $${ownerTypeParam + 1},
+          $${ownerTypeParam + 2}
+        )
+        RETURNING "userId"
+      )
+    `;
+  }
+  query += `
+    SELECT
+      (SELECT "deviceId" FROM create_device) AS "deviceId",
       (SELECT "id" FROM create_user) AS "userId",
       (SELECT "updatedAt" FROM create_user) AS "updatedAt",
       (SELECT "passkeyData" FROM update_passkey) AS "passkeyData"
+    ${data.isBot ? 'WHERE EXISTS (SELECT 1 FROM create_bot)' : ''}
   `;
   const result = await db.query<{
     deviceId: string;
@@ -697,7 +778,7 @@ async function _updateUser(
 async function _addUserAccount(
   db: Pool | PoolClient,
   userId: string,
-  account: CreateUserAccountData,
+  account: CreateHumanUserAccountData,
 ): Promise<Pick<UserAccount, "type" | "displayName" | "imageId" | "extraData">[]> {
   const query = `
     WITH insert_account AS (
@@ -1023,6 +1104,55 @@ async function _unfollowUser(
   throw new Error(errors.server.NOT_FOUND);
 }
 
+async function _validateBotOwner(
+  db: PoolClient,
+  ownerType: Models.User.BotOwnerType,
+  ownerId: string | null,
+) {
+  if (!Object.values(BotOwnerType).includes(ownerType as BotOwnerType)) {
+    throw new Error(errors.server.INVALID_REQUEST);
+  }
+  if (ownerType === BotOwnerType.PLATFORM) {
+    if (ownerId !== null) {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
+    return;
+  }
+  if (ownerId === null) {
+    throw new Error(errors.server.INVALID_REQUEST);
+  }
+
+  const result = ownerType === BotOwnerType.COMMUNITY
+    ? await db.query(`
+        SELECT 1
+        FROM communities
+        WHERE "id" = $1
+          AND "deletedAt" IS NULL
+      `, [ownerId])
+    : await db.query(`
+        SELECT 1
+        FROM users
+        WHERE "id" = $1
+          AND "is_bot" = FALSE
+          AND "deletedAt" IS NULL
+      `, [ownerId]);
+  if (result.rowCount !== 1) {
+    throw new Error(errors.server.INVALID_REQUEST);
+  }
+}
+
+async function _createBotDevicePublicKey(): Promise<JsonWebKey> {
+  const keyPair = await webcrypto.subtle.generateKey(
+    {
+      name: 'ECDSA',
+      namedCurve: 'P-384',
+    },
+    true,
+    ['sign', 'verify'],
+  );
+  return await webcrypto.subtle.exportKey('jwk', keyPair.publicKey);
+}
+
 class UserHelper {
   public async createUser(data: CreateUserData, awaitBeforeCommit?: () => Promise<void>) {
     if (data.accounts) {
@@ -1048,10 +1178,58 @@ class UserHelper {
     const client = await pool.connect();
     await client.query("BEGIN");
     try {
-      const result = await _createUser(client, data);
+      const result = await _createUser(client, {
+        ...data,
+        isBot: false,
+      });
       if (awaitBeforeCommit) {
         await awaitBeforeCommit();
       }
+      await client.query("COMMIT");
+      return result;
+    }
+    catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    }
+    finally {
+      client.release();
+    }
+  }
+
+  public async createBotUser(data: CreateBotUserData) {
+    if (
+      data.displayName.trim().length === 0 ||
+      data.displayName.length > 255 ||
+      (data.description !== null && data.description.length > 2000)
+    ) {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
+    const devicePublicKey = await _createBotDevicePublicKey();
+    const client = await pool.connect();
+    await client.query("BEGIN");
+    try {
+      await _validateBotOwner(client, data.ownerType, data.ownerId);
+      const result = await _createUser(client, {
+        devicePublicKey,
+        email: null,
+        activateNewsletter: false,
+        password: null,
+        displayAccount: UserProfileTypeEnum.BOT,
+        accounts: [{
+          type: UserProfileTypeEnum.BOT,
+          displayName: data.displayName,
+          imageId: data.imageId,
+          data: null,
+          extraData: null,
+        }],
+        isBot: true,
+        bot: {
+          ownerType: data.ownerType,
+          ownerId: data.ownerId,
+          description: data.description,
+        },
+      });
       await client.query("COMMIT");
       return result;
     }
@@ -1106,7 +1284,7 @@ class UserHelper {
     return result;
   }
 
-  public async getUserByAccount(accountType: Exclude<Models.User.ProfileItemType, "cg">, accountId: string): Promise<Models.User.OwnData> {
+  public async getUserByAccount(accountType: Exclude<Models.User.ProfileItemType, "cg" | "bot">, accountId: string): Promise<Models.User.OwnData> {
     const query = `
       SELECT "userId"
       FROM user_accounts ua WHERE
@@ -1144,7 +1322,7 @@ class UserHelper {
     return user;
   }
 
-  public async getUserAccount(accountType: Exclude<Models.User.ProfileItemType, "cg">, accountId: string) {
+  public async getUserAccount(accountType: Exclude<Models.User.ProfileItemType, "cg" | "bot">, accountId: string) {
     const query = `
       SELECT "type", "userId", "displayName", "imageId", "data", "extraData"
       FROM user_accounts ua WHERE
@@ -1201,6 +1379,9 @@ class UserHelper {
       bannerImageId?: string | null
     }>
   ): Promise<void> {
+    if (data.displayAccount === UserProfileTypeEnum.BOT) {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
     if (data.email) {
       data.emailVerified = false;
     }
@@ -1336,8 +1517,11 @@ class UserHelper {
 
   public async addUserAccount(
     userId: string,
-    data: CreateUserAccountData
+    data: CreateHumanUserAccountData
   ): Promise<void> {
+    if ((data as CreateUserAccountData).type === UserProfileTypeEnum.BOT) {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
     if (data.type === 'twitter') {
       if (!data.data?.id) throw new Error(errors.server.INVALID_REQUEST);
       await this._checkUniqueTwitter(pool, data.data.id);
@@ -1383,6 +1567,9 @@ class UserHelper {
     userId: string,
     type: UserProfileTypeEnum
   ): Promise<void> {
+    if (type === UserProfileTypeEnum.BOT) {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
     let deletedWalletId: string | undefined;
 
     const client = await pool.connect();

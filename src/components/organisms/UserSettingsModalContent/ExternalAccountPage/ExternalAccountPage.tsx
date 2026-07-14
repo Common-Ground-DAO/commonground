@@ -7,12 +7,12 @@ import Button from 'components/atoms/Button/Button';
 import React, { useCallback, useState } from 'react'
 import userApi from 'data/api/user';
 import { useSnackbarContext } from 'context/SnackbarContext';
-import { getAccountIcon } from '../AccountsPage/AccountsPage';
+import { ExternalAccountType, getAccountIcon } from '../AccountsPage/AccountsPage';
 import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal';
 import { useOwnUser, useOwnWallets } from 'context/OwnDataProvider';
 
 type Props = {
-  currentAccountType: Models.User.ProfileItemType;
+  currentAccountType: ExternalAccountType;
   goBack: () => void;
   lockModal: (lock: boolean) => void;
 }

@@ -30,7 +30,7 @@ import { ReactComponent as FarcasterIcon } from 'components/atoms/icons/24/Farca
 import { ReactComponent as CircleLogo } from "components/atoms/icons/misc/Logo/logo.svg";
 import Si3Icon from 'components/atoms/icons/externals/si3.webp';
 import PowershiftIcon from 'components/atoms/icons/externals/powershift.png';
-import { Hash } from '@phosphor-icons/react';
+import { Hash, Robot } from '@phosphor-icons/react';
 
 export type ExternalIconType =
   'dai' |
@@ -62,6 +62,7 @@ export type ExternalIconType =
   'twitter' |
   'cg' |
   'farcaster' |
+  'bot' |
   'universalProfile' |
   'tag';
 
@@ -128,6 +129,8 @@ const ExternalIcon: React.FC<Props> = (props) => {
       return <CircleLogo className={className}/>;
     case 'farcaster':
       return <FarcasterIcon className={className} />;
+    case 'bot':
+      return <Robot weight='duotone' className={className} />;
     case 'universalProfile':
       return <UniversalProfileIcon className={className} />;
     case 'tag':

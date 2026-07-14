@@ -112,7 +112,7 @@ declare global {
                         wizardId: string;
                     };
                     useCgProfile?: Models.User.ProfileItemWithDetails & { type: 'cg', extraData: Models.User.UserAccountExtraData_CG };
-                    displayAccount: Models.User.ProfileItemType;
+                    displayAccount: Exclude<Models.User.ProfileItemType, 'bot'>;
                     recaptchaToken: string;
                     device: {
                         publicKey: any;
@@ -160,7 +160,7 @@ declare global {
                     links?: Common.Link[];
                     homepage?: string;
                 } | {
-                    type: Exclude<Models.User.ProfileItemType, "cg">;
+                    type: Exclude<Models.User.ProfileItemType, "cg" | "bot">;
                 };
                 type Response = void;
             }
@@ -179,7 +179,7 @@ declare global {
 
             namespace removeUserAccount {
                 type Request = {
-                    type: Models.User.ProfileItemType;
+                    type: Exclude<Models.User.ProfileItemType, "bot">;
                 }
                 type Response = void;
             }

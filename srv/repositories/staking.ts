@@ -3,6 +3,31 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import pool from "../util/postgres";
+import { getStakingConfig, type StakingConfig } from "../util/stakingConfig";
+
+const YEAR_SECONDS = 365 * 86400;
+
+/**
+ * Pro-rata Spark target for a position at time t (docs/ROADMAP-staking.md §3):
+ *   total(A, d)  = A_tokens × rate × (d/Y) × (1 + d/Y)
+ *   target(t)    = floor(total × min(t - stakedAt, d) / d)
+ * expressed as a SQL fragment over a staking_positions row `sp` with
+ * parameters $rate (numeric) and Postgres exact numeric arithmetic. Token
+ * amounts are 18-decimal base units.
+ */
+function targetSparkSql(spAlias: string, rateParam: string): string {
+  const dsec = `extract(epoch from ${spAlias}."unlockAt" - ${spAlias}."stakedAt")::numeric`;
+  const elapsed = `LEAST(extract(epoch from now() - ${spAlias}."stakedAt")::numeric, ${dsec})`;
+  const total =
+    `(${spAlias}."amount" / 1e18) * ${rateParam}::numeric` +
+    ` * (${dsec} * (${YEAR_SECONDS}::numeric + ${dsec}) / (${YEAR_SECONDS}::numeric * ${YEAR_SECONDS}::numeric))`;
+  // matured positions get the exact total: the pro-rata ratio can floor one
+  // Spark short of it through sub-millisecond timestamp residue otherwise
+  return `(CASE
+    WHEN now() >= ${spAlias}."unlockAt" THEN floor(GREATEST(${total}, 0))
+    ELSE floor(GREATEST(${total} * ${elapsed} / ${dsec}, 0))
+  END)::bigint`;
+}
 
 /**
  * Staking positions indexed from CgStaking contract events
@@ -98,25 +123,28 @@ class StakingHelper {
   /**
    * Recompute position ownership from the user's current wallets. Called
    * after a wallet is linked or deleted. Newly claimed positions start
-   * accruing from today (never retroactively): accruedThroughDay is bumped
-   * to yesterday so pre-link days are skipped without being credited.
+   * accruing from claim time, never retroactively: accruedSpark is raised
+   * to the position's current pro-rata target without crediting it, so the
+   * accrual job only pays out growth from here on.
    */
   public async syncClaimsForUser(userId: string): Promise<void> {
+    const config = getStakingConfig();
+    const baseline = config
+      ? `GREATEST(sp."accruedSpark", ${targetSparkSql('sp', '$2')})`
+      : `sp."accruedSpark"`;
+    const params: unknown[] = config ? [userId, config.baseRate.toString()] : [userId];
     await pool.query(`
       UPDATE staking_positions sp
       SET
         "userId" = $1,
-        "accruedThroughDay" = GREATEST(
-          COALESCE(sp."accruedThroughDay", '-infinity'::date),
-          (now() AT TIME ZONE 'utc')::date - 1
-        ),
+        "accruedSpark" = ${baseline},
         "updatedAt" = now()
       FROM wallets w
       WHERE sp."userId" IS NULL
         AND w."userId" = $1
         AND w."deletedAt" IS NULL
         AND lower(w."walletIdentifier") = sp."walletAddress"
-    `, [userId]);
+    `, params);
     await pool.query(`
       UPDATE staking_positions sp
       SET "userId" = NULL, "updatedAt" = now()
@@ -128,6 +156,85 @@ class StakingHelper {
             AND lower(w."walletIdentifier") = sp."walletAddress"
         )
     `, [userId]);
+  }
+  /**
+   * Credit every claimed position up to its current pro-rata target
+   * (docs/ROADMAP-staking.md §5.2). Runs as one atomic statement: position
+   * rows are locked (SKIP LOCKED makes concurrent runs no-ops), the delta
+   * vs. accruedSpark is written to the point_transactions ledger, and user
+   * balances are bumped. Absolutely idempotent — a rerun computes delta 0 —
+   * and self-catching-up after downtime, since the target is a function of
+   * elapsed time, not of job executions.
+   *
+   * @returns updated users for client event emission
+   */
+  public async runAccrual(config: StakingConfig): Promise<{
+    userId: string;
+    pointBalance: number;
+    updatedAt: Date;
+    creditedSpark: number;
+  }[]> {
+    const result = await pool.query(`
+      WITH due AS (
+        SELECT
+          sp."id",
+          sp."userId",
+          sp."chain",
+          sp."contractAddress",
+          sp."positionId",
+          sp."accruedSpark",
+          ${targetSparkSql('sp', '$1')} AS "targetSpark"
+        FROM staking_positions sp
+        WHERE sp."userId" IS NOT NULL
+        FOR UPDATE OF sp SKIP LOCKED
+      ),
+      deltas AS (
+        SELECT *, "targetSpark" - "accruedSpark" AS "delta"
+        FROM due
+        WHERE "targetSpark" > "accruedSpark"
+      ),
+      upd_positions AS (
+        UPDATE staking_positions sp
+        SET
+          "accruedSpark" = d."targetSpark",
+          "accruedThroughDay" = (now() AT TIME ZONE 'utc')::date,
+          "updatedAt" = now()
+        FROM deltas d
+        WHERE sp."id" = d."id"
+      ),
+      ins_ledger AS (
+        INSERT INTO point_transactions ("userId", "amount", "data")
+        SELECT
+          d."userId",
+          d."delta",
+          jsonb_build_object(
+            'type', 'staking-accrual',
+            'chain', d."chain",
+            'contractAddress', d."contractAddress",
+            'positionId', d."positionId"::text,
+            'periodEnd', to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+          )
+        FROM deltas d
+      ),
+      user_totals AS (
+        SELECT "userId", sum("delta")::bigint AS "creditedSpark"
+        FROM deltas
+        GROUP BY "userId"
+      )
+      UPDATE users u
+      SET
+        "pointBalance" = u."pointBalance" + t."creditedSpark",
+        "updatedAt" = now()
+      FROM user_totals t
+      WHERE u.id = t."userId"
+      RETURNING u.id AS "userId", u."pointBalance", u."updatedAt", t."creditedSpark"
+    `, [config.baseRate.toString()]);
+    return result.rows.map(row => ({
+      userId: row.userId as string,
+      pointBalance: Number(row.pointBalance),
+      updatedAt: row.updatedAt as Date,
+      creditedSpark: Number(row.creditedSpark),
+    }));
   }
 }
 

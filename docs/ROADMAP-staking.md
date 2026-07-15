@@ -108,16 +108,24 @@ project/tooling.
 
 ### 5.2 Accrual job (Slice 3)
 
-- New job-runner job (daily, like `onlineStatusCheck` patterns): for each
-  active position (`unstakedAt IS NULL`, `userId IS NOT NULL`, day within
-  `[stakedAt, min(unlockAt, now))`), credit the daily drip.
-- Ledger: `point_transactions` with a new `Models.Premium.TransactionData`
+- Implemented as a **continuous pro-rata target** rather than a per-day loop
+  (refinement over the original per-day design — equal totals, strictly
+  simpler failure modes): each claimed position's credited Spark must equal
+  `target(t) = floor(total × min(t − stakedAt, lock) / lock)` at any time
+  `t`. The job (every 6h; cadence is cosmetic since the target is a function
+  of elapsed time, not of executions) credits `target − accruedSpark` when
+  positive, in one atomic SQL statement with `FOR UPDATE SKIP LOCKED`
+  (concurrent runs no-op) and exact `numeric` arithmetic.
+- **Idempotency is absolute**: a rerun computes delta 0; downtime catches up
+  automatically; crashes are safe because ledger insert, position update and
+  balance bump happen in one statement.
+- Ledger: `point_transactions` with the `Models.Premium.TransactionData`
   variant `type: 'staking-accrual'` carrying `{ chain, contractAddress,
-  positionId, day }`. **Idempotent per (position, day)** — enforce with a
-  `staking_accruals` bookkeeping table or a unique expression index on the
-  ledger data; a rerun or crashed run must never double-credit.
-- Catch-up semantics: the job processes all missed days since the last
-  credited day (bounded by position start), so downtime never loses accrual.
+  positionId, periodEnd }`.
+- Non-retroactivity on wallet link is enforced by baseline: claiming raises
+  `accruedSpark` to the current target without crediting it.
+- Rate changes apply prospectively: the target trajectory shifts, already
+  credited Spark is never clawed back (negative deltas are no-ops).
 - Emits the existing `cliUserOwnData` pointBalance event so open clients see
   the balance move.
 

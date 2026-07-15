@@ -145,6 +145,27 @@ curl --fail-with-body -sS \
 The response includes `protocolVersion: "1"` in addition to the bot, device,
 and token IDs.
 
+## Scope discovery
+
+The server is the source of truth for where a bot may operate. Enumerate the
+community channels currently reachable by the bot principal with:
+
+```sh
+curl --fail-with-body -sS \
+  -H "Authorization: Bearer $BOT_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"cursor":null,"limit":100}' \
+  "$CG_URL/api/bot/v1/scopes/list"
+```
+
+The response contains `items` with `communityId`, `communityTitle`,
+`channelId`, and `channelTitle`, plus a nullable `nextCursor`. Pass a non-null
+cursor unchanged to load the next page. Titles are informational; clients must
+route and authorize using the IDs. The endpoint includes only channels where
+the active bot, token, installation, policy, and roles currently grant both
+`CHANNEL_EXISTS` and `CHANNEL_READ`. Every message request is still checked
+again, so a cached scope never extends access.
+
 ## Bearer messaging API
 
 Every request must use `Authorization: Bearer $BOT_TOKEN`, must not include a
@@ -155,7 +176,8 @@ session cookie, and must identify exactly one community/channel with:
 ```
 
 The bot, token, owner policy, installation, roles, and channel permissions are
-rechecked for every request. v1 allows only these six `POST` routes:
+rechecked for every request. v1 allows the scope route above and these six
+message `POST` routes:
 
 | Route | Additional body fields |
 |---|---|
@@ -231,19 +253,29 @@ socket.on("cliMessageEvent", (event) => {
   }
 });
 
+socket.on("cliBotScopesEvent", async (event) => {
+  if (event.action === "refresh") {
+    // Re-enumerate /api/bot/v1/scopes/list.
+  }
+});
+
 socket.on("connect_error", (error) => console.error(error.message));
 ```
 
-`new` carries a complete API message plus `creatorIsBot`. A selected `@mention`
+Community message event data includes `communityId`. `new` carries a complete
+API message plus `creatorIsBot`. A selected `@mention`
 is a body element with `{type: "mention", userId, alias}`; compare `userId`
 with the ID from `/whoami`, never with the editable alias. Replies carry
 `parentMessageId`; use `messagesById` to load the parent and compare its
 `creatorId` with the bot's ID. Ignore `creatorIsBot: true` by default to prevent
 multi-bot mention or reply loops.
 
-`update` carries `id`, `channelId`,
+`update` carries `id`, `communityId`, `channelId`,
 `updatedAt`, and the changed message fields. `delete` carries `channelId` and
-`deletedIds`. Only `cliMessageEvent` is the supported public v1 event contract.
+`communityId` plus `deletedIds`. `cliBotScopesEvent` with action `refresh`
+instructs the client to replace its cached scope list after an installation,
+removal, or role assignment change. These two events are the supported public
+v1 event contract.
 The handshake requires `protocolVersion: "1"`. A missing or unsupported version
 is rejected with `unsupported_bot_protocol`.
 

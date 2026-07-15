@@ -5,6 +5,7 @@
 declare {
     namespace Events {
         type ClientEvent = (
+            Events.Bot.Event |
             Events.Community.Event |
             Events.Message.Event |
             Events.Notification.Event |

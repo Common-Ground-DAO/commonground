@@ -95,6 +95,11 @@ const botApi = {
     botUserId: common.Uuid.required(),
     tokenId: common.Uuid.required(),
   }).strict(true).required(),
+
+  listScopes: Joi.object<API.Bot.listScopes.Request>({
+    cursor: Joi.string().max(500).allow(null).required(),
+    limit: Joi.number().integer().min(1).max(100).required(),
+  }).strict(true).required(),
 };
 
 export default botApi;

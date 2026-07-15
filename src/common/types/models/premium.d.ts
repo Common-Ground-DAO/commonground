@@ -26,6 +26,14 @@ declare namespace Models {
             type: 'platform-donation';
             emoji: string;
             text: string;
+        } | {
+            type: 'staking-accrual';
+            chain: Models.Contract.ChainIdentifier;
+            contractAddress: string;
+            /** Onchain per-owner position id. */
+            positionId: string;
+            /** Timestamp the pro-rata accrual target was computed at. */
+            periodEnd: string;
         };
 
         type Transaction = {

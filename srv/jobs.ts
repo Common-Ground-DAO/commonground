@@ -95,6 +95,9 @@ if (config.DEPLOYMENT === 'prod') {
 fakeHealthcheck();
 
 createCronOrIntervalWorker('onlineStatusCheck', { interval: 30000 });
+// staking Spark drip: the pro-rata target math makes cadence cosmetic —
+// totals are exact regardless — 6-hourly keeps balances feeling alive
+createCronOrIntervalWorker('stakingAccrual', { cronExpression: '17 */6 * * *' });
 createCronOrIntervalWorker('activityScore', { cronExpression: '*/10 * * * *' });
 createCronOrIntervalWorker('newsletterDelivery', { cronExpression: '0 12 * * 6' });
 createCronOrIntervalWorker('emailNotifications', { cronExpression: '*/1 * * * *' });

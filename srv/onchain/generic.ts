@@ -7,6 +7,8 @@ import { OnchainPriority } from './scheduler';
 import settings from './settings';
 import errors from '../common/errors';
 import { getBeneficiary, getPayableTokens, getSparkBonusPercentByAmount } from '../common/premiumConfig';
+import { getStakingConfig } from '../util/stakingConfig';
+import stakingHelper, { type StakedEvent, type UnstakedEvent } from '../repositories/staking';
 import LogHelper from './loghelper';
 import detectContractType from "./detectContract";
 import {
@@ -30,6 +32,11 @@ import contractHelper from '../repositories/contracts';
 import { addressRegex } from '../common/util';
 
 const banError = `This query has created an error and cannot be repeated for ${settings.BAN_TIME / 1000} seconds`;
+const stakingIface = new ethers.Interface([
+  'event Staked(address indexed owner, uint256 indexed positionId, uint256 amount, uint64 stakedAt, uint64 unlockAt)',
+  'event Unstaked(address indexed owner, uint256 indexed positionId, uint256 amount)',
+]);
+
 const erc20iface = new ethers.Interface(IERC20Metadata_abi_with_events);
 const erc721iface = new ethers.Interface(IERC721Metadata_abi_with_events);
 const erc1155iface = new ethers.Interface(IERC1155MetadataURI_abi_with_events);
@@ -57,6 +64,11 @@ export default class GenericConnector implements Models.Server.OnchainConnector 
     sender: Common.Address;
     amount: bigint;
   }[];
+  private stakingAddress?: Common.Address;
+  private stakingEvents = [] as (
+    | { kind: 'staked'; event: StakedEvent }
+    | { kind: 'unstaked'; event: UnstakedEvent }
+  )[];
 
   constructor(chain: Models.Contract.ChainIdentifier) {
     this.chain = chain;
@@ -128,6 +140,12 @@ export default class GenericConnector implements Models.Server.OnchainConnector 
           }
         }
 
+        const stakingConfig = getStakingConfig();
+        if (!!stakingConfig && stakingConfig.chain === this.chain) {
+          this.stakingAddress = stakingConfig.contractAddress;
+          console.log(`GenericConnector[${this.chain}]: watching staking contract ${this.stakingAddress}`);
+        }
+
         const contractWallets = await walletHelper._getAllContractWalletsByChain(this.chain);
         if (this.chain === 'lukso') {
           for (const contractWallet of contractWallets) {
@@ -179,11 +197,22 @@ export default class GenericConnector implements Models.Server.OnchainConnector 
             });
             i = toBlock + 1;
             for (const log of logs) {
-              const listener = this.contractListeners.get(log.address.toLowerCase());
+              const addressLower = log.address.toLowerCase();
+              // deliberately outside contractListeners: the map can be
+              // rebound by contract-type detection, the staking watch must
+              // never be displaced
+              if (addressLower === this.stakingAddress) {
+                this.handleStakingLog(log);
+              }
+              const listener = this.contractListeners.get(addressLower);
               if (!!listener) {
                 listener(log);
               }
             }
+            // must complete before lastBlock advances: a failure here breaks
+            // the loop and the batch is retried next interval (repository
+            // writes are idempotent, so re-delivery is safe)
+            await this.flushStakingEvents();
             await onchainHelper.setChainData(chain, {
               lastBlock: toBlock
             });
@@ -300,6 +329,67 @@ export default class GenericConnector implements Models.Server.OnchainConnector 
       console.error(`${this.chain}: Error in getLogsInterval`, e);
     } finally {
       this.nextGetLogsTimer = setTimeout(this._getLogsInterval, settings[this.chain].UPDATE_INTERVAL);
+    }
+  }
+
+  private handleStakingLog(log: ethers.Log) {
+    try {
+      const event = stakingIface.parseLog(log as any);
+      if (!event) return;
+      if (event.name === 'Staked') {
+        const [owner, positionId, amount, stakedAt, unlockAt] = event.args;
+        this.stakingEvents.push({
+          kind: 'staked',
+          event: {
+            chain: this.chain,
+            contractAddress: log.address.toLowerCase() as Common.Address,
+            ownerAddress: (owner as string).toLowerCase() as Common.Address,
+            positionId: positionId as bigint,
+            amount: amount as bigint,
+            stakedAt: new Date(Number(stakedAt) * 1000),
+            unlockAt: new Date(Number(unlockAt) * 1000),
+            txHash: log.transactionHash,
+            logIndex: log.index,
+          },
+        });
+      }
+      else if (event.name === 'Unstaked') {
+        const [owner, positionId] = event.args;
+        this.stakingEvents.push({
+          kind: 'unstaked',
+          event: {
+            chain: this.chain,
+            contractAddress: log.address.toLowerCase() as Common.Address,
+            ownerAddress: (owner as string).toLowerCase() as Common.Address,
+            positionId: positionId as bigint,
+            txHash: log.transactionHash,
+          },
+        });
+      }
+    } catch (e) {
+      // logs from the watched address that do not match the ABI are ignored
+    }
+  }
+
+  private async flushStakingEvents() {
+    if (this.stakingEvents.length === 0) return;
+    const events = this.stakingEvents.splice(0);
+    console.log(`GenericConnector[${this.chain}]: Processing ${events.length} staking events`);
+    try {
+      // in log order, so a Staked is recorded before an Unstaked of the
+      // same position within one batch
+      for (const item of events) {
+        if (item.kind === 'staked') {
+          await stakingHelper.recordStaked(item.event);
+        } else {
+          await stakingHelper.recordUnstaked(item.event);
+        }
+      }
+    } catch (e) {
+      // put the events back so the retried batch re-delivers them even if
+      // getLogs succeeds from cache; writes are idempotent
+      this.stakingEvents.unshift(...events);
+      throw e;
     }
   }
 

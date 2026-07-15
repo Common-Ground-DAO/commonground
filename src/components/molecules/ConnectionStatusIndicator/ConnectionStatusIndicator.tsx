@@ -95,6 +95,12 @@ export default function ConnectionStatusIndicator() {
       if (state !== serviceWorkerState) setState("updating");
     } else if (webSocketState === "connected") {
       if (state !== webSocketState) setState("connected");
+    } else if (webSocketState === "version-update") {
+      // The socket is connected when it learns about a new version; the
+      // service-worker update flow (updating/updated above) owns the toast
+      // from here. Without this branch the indicator would freeze on
+      // whatever state rendered last.
+      if (state !== "connected") setState("connected");
     } else if (webSocketState === "connecting") {
       if (state !== webSocketState) setState("connecting");
     } else if (webSocketState === "disconnected") {

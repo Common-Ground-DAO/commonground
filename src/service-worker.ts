@@ -37,6 +37,7 @@ export type ServiceWorkerMessage = {
 
 const webSocketStateBroadcast = new BroadcastChannel('CG_WEBSOCKET_STATE');
 let socketState: Common.WebSocketState = 'disconnected';
+let socketStateSince = Date.now();
 let lastEventTime: number | undefined;
 let lastDisconnect: number | undefined;
 const alive = new Map<string, number>();
@@ -285,6 +286,29 @@ setInterval(async () => {
     }
   }
 
+  // If the active tab's connection has been stuck in 'connecting' well beyond
+  // socket.io's retry backoff (a throttled background tab can stall there
+  // indefinitely), hand the active role to a fresh, non-throttled passive tab.
+  if (socketState === 'connecting' && socketStateSince < Date.now() - 45000) {
+    const activeIndex = tabs.findIndex(t => t.tabState === 'active' || t.tabState === 'active-throttled');
+    const freshPassive = tabs.find(t =>
+      t.tabState === 'passive' &&
+      (alive.get(t.tabId) ?? 0) > Date.now() - 8000
+    );
+    if (activeIndex > -1 && !!freshPassive) {
+      const demoted = tabs[activeIndex];
+      demoted.tabState = 'passive-throttled';
+      sendTabMessage({
+        type: 'WorkerToTab',
+        tabId: demoted.tabId,
+        tabState: 'passive-throttled',
+      });
+      socketState = 'disconnected';
+      socketStateSince = Date.now();
+      selectNewActiveTabIfAppropriate();
+    }
+  }
+
   selectNewActiveTabIfAppropriate();
 }, 4000);
 
@@ -332,6 +356,9 @@ webSocketStateBroadcast.onmessage = async (event: MessageEvent<TabToWorkerMessag
   alive.set(data.tabId, Date.now());
 
   if (data.socketState !== undefined) {
+    if (data.socketState !== socketState) {
+      socketStateSince = Date.now();
+    }
     socketState = data.socketState;
   }
 

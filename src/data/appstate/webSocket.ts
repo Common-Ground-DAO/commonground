@@ -101,6 +101,20 @@ class WebSocketManager {
             this.disconnect();
             this.connect();
           }
+          if (this.tabState === 'passive' || this.tabState === 'passive-throttled') {
+            // The live connection should follow the tab the user is looking at:
+            // background tabs are timer-throttled and their socket can stall
+            // without recovering. Claiming the active role broadcasts our
+            // 'active' state, which makes the previous active tab demote
+            // itself through the existing collision handling.
+            this.tabState = 'active';
+            this.sendBroadcast({
+              type: 'TabToWorker',
+              tabId: this.tabId,
+              tabState: this.tabState,
+            });
+            this.connect();
+          }
         }
       });
 
@@ -176,7 +190,14 @@ class WebSocketManager {
       this._lastEventTime = data.lastEventTime;
     }
 
-    if (data.socketState !== undefined) {
+    if (
+      data.socketState !== undefined &&
+      this.tabState !== 'active' &&
+      this.tabState !== 'active-throttled'
+    ) {
+      // Passive tabs mirror the active tab's connection state. An active tab
+      // must never adopt it: a throttled zombie tab re-broadcasting a stale
+      // 'connecting' would otherwise overwrite this tab's healthy state.
       this.state = data.socketState;
     }
 
@@ -296,6 +317,7 @@ class WebSocketManager {
   private pingInterval: any;
   private lastPong = 0;
   private lastPongLocalTimeDelta = 0;
+  private consecutiveConnectErrors = 0;
 
   private pingIntervalHandler() {
     if (this.state === "connected" && (this.tabState === 'active' || this.tabState === 'active-throttled')) {
@@ -338,6 +360,7 @@ class WebSocketManager {
       this.sendStateUpdate();
 
       socket.on("connect", () => {
+        this.consecutiveConnectErrors = 0;
         if (this.tabState === 'active' || this.tabState === 'active-throttled') {
           if (!!this._socket) {
             this._socket.cg_loggedin = 0;
@@ -365,6 +388,18 @@ class WebSocketManager {
         else {
           this.skipNextDisconnectHandler = false;
           socket.disconnect();
+        }
+      });
+
+      socket.on("connect_error", (error) => {
+        // socket.io keeps retrying (reconnection: true), but the displayed
+        // state must not claim "connecting" forever when the handshake keeps
+        // failing — surface it as disconnected after a few attempts.
+        this.consecutiveConnectErrors++;
+        debugLog(`Socket.io connect_error (${this.consecutiveConnectErrors})`, error?.message);
+        if (this.consecutiveConnectErrors >= 5 && this.state === "connecting") {
+          this.state = "disconnected";
+          this.sendStateUpdate();
         }
       });
 

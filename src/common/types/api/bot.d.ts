@@ -23,6 +23,9 @@ declare global {
                 description: string | null;
                 platformPresence: PlatformPresence | null;
                 communityIds: string[];
+                connectionStatus: 'connected' | 'offline';
+                connectedSocketCount: number;
+                lastConnectedAt: string | null;
                 createdAt: string;
                 updatedAt: string;
                 disabledAt: string | null;
@@ -38,7 +41,8 @@ declare global {
             };
 
             type CommunityBotView = Pick<BotView,
-                'userId' | 'ownerType' | 'ownerId' | 'owner' | 'username' | 'imageId' | 'description'
+                'userId' | 'ownerType' | 'ownerId' | 'owner' | 'username' | 'imageId' | 'description' |
+                'connectionStatus'
             > & {
                 roleIds: string[];
             };

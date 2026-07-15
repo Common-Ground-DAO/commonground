@@ -251,8 +251,23 @@ The server joins a bot only to rooms allowed by its current policy,
 installation, roles, and channel permissions. Removing a role, installation,
 owner access, community gate, or selected platform presence removes live room
 access. Token revocation or bot disable disconnects the socket immediately;
-automatic reconnect then fails with `connect_error`. Bots do not affect human
-online-presence counts.
+automatic reconnect then fails with `connect_error`.
+
+An authenticated bot socket also drives the bot account's visible connection
+presence. The bot appears connected in member lists while at least one valid
+Bot API socket is active, and offline after the last socket disconnects. This
+is server-derived transport state: REST activity cannot make a bot appear
+connected, and the bot cannot self-report it. Multiple tokens or runtime
+instances keep the bot connected until every socket is gone. The management UI
+shows the authenticated connection count and last connection time to the bot's
+owner. "Connected" does not assert that the bot's application, tools, or model
+are healthy enough to answer.
+
+Bots still do not participate in human `away`, `busy`, or `invisible` presence
+semantics. Socket.IO's ping/pong detects dead transports, and the normal stale
+presence cleanup is a fallback for crashed websocket servers. Per-server Redis
+leases keep connection counts consistent when more than one websocket server
+is running.
 
 ## Explicit v1 exclusions
 

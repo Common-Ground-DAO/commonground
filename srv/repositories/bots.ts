@@ -135,6 +135,16 @@ async function _getBotView(db: PoolClient, botUserId: string): Promise<API.Bot.B
       b."deviceId",
       b."ownerType",
       b."ownerId",
+      CASE WHEN
+        b."deletedAt" IS NULL
+        AND bot_user."onlineStatus" = 'online'
+        AND b."connectedSocketCount" > 0
+      THEN 'connected' ELSE 'offline' END AS "connectionStatus",
+      CASE WHEN
+        b."deletedAt" IS NULL
+        AND bot_user."onlineStatus" = 'online'
+      THEN b."connectedSocketCount" ELSE 0 END AS "connectedSocketCount",
+      b."lastConnectedAt",
       CASE b."ownerType"
         WHEN 'user' THEN json_build_object(
           'type', 'user',
@@ -177,6 +187,10 @@ async function _getBotView(db: PoolClient, botUserId: string): Promise<API.Bot.B
       b."updatedAt",
       b."deletedAt" AS "disabledAt"
     FROM bots b
+    INNER JOIN users bot_user
+      ON bot_user.id = b."userId"
+      AND bot_user.is_bot = TRUE
+      AND bot_user."deletedAt" IS NULL
     INNER JOIN user_accounts ua
       ON ua."userId" = b."userId"
       AND ua.type = 'bot'
@@ -588,6 +602,27 @@ async function _emitRoleChange(change: RoleChange) {
 }
 
 class BotHelper {
+  public async setConnectionPresence(
+    botUserId: string,
+    connectedSocketCount: number,
+    markConnectedAt = false,
+  ): Promise<void> {
+    if (!Number.isSafeInteger(connectedSocketCount) || connectedSocketCount < 0) {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
+    await pool.query(`
+      UPDATE bots
+      SET
+        "connectedSocketCount" = $2,
+        "lastConnectedAt" = CASE
+          WHEN $3::boolean AND $2::integer > 0 THEN now()
+          ELSE "lastConnectedAt"
+        END
+      WHERE "userId" = $1
+        AND "deletedAt" IS NULL
+    `, [botUserId, connectedSocketCount, markConnectedAt]);
+  }
+
   public async listBots(actorUserId: string, owner: API.Bot.Owner): Promise<API.Bot.BotView[]> {
     const client = await pool.connect();
     try {
@@ -662,6 +697,7 @@ class BotHelper {
           username: bot.username,
           imageId: bot.imageId,
           description: bot.description,
+          connectionStatus: bot.connectionStatus,
           roleIds,
         };
       }));

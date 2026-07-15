@@ -11,14 +11,24 @@ if (isMainThread) {
 
 async function setStaleUsersToOffline() {
   const result = await pool.query(`
-    UPDATE users
-    SET
-      "onlineStatus" = 'offline',
-      "updatedAt" = now(),
-      "onlineStatusUpdatedAt" = now()
-    WHERE "onlineStatusUpdatedAt" < now() - interval '90s'
-      AND "onlineStatus" <> 'offline'
-    RETURNING id
+    WITH stale_users AS (
+      UPDATE users
+      SET
+        "onlineStatus" = 'offline',
+        "updatedAt" = now(),
+        "onlineStatusUpdatedAt" = now()
+      WHERE "onlineStatusUpdatedAt" < now() - interval '90s'
+        AND "onlineStatus" <> 'offline'
+      RETURNING id
+    ), reset_bot_presence AS (
+      UPDATE bots b
+      SET "connectedSocketCount" = 0
+      FROM stale_users stale
+      WHERE b."userId" = stale.id
+        AND b."connectedSocketCount" <> 0
+      RETURNING b."userId"
+    )
+    SELECT id FROM stale_users
   `);
   const updatedUserIds = (result.rows as {
     id: string;

@@ -157,6 +157,46 @@ class StakingHelper {
         )
     `, [userId]);
   }
+  /** All positions belonging to the user's linked wallets, newest first. */
+  public async getPositionsByUser(userId: string): Promise<API.Staking.PositionView[]> {
+    const config = getStakingConfig();
+    const dsec = `extract(epoch from sp."unlockAt" - sp."stakedAt")::numeric`;
+    const totalExpr = config
+      ? `floor(GREATEST((sp."amount" / 1e18) * $2::numeric * (${dsec} * (${YEAR_SECONDS}::numeric + ${dsec}) / (${YEAR_SECONDS}::numeric * ${YEAR_SECONDS}::numeric)), 0))::bigint`
+      : `0::bigint`;
+    const params: unknown[] = config ? [userId, config.baseRate.toString()] : [userId];
+    const result = await pool.query(`
+      SELECT
+        sp."id",
+        sp."chain",
+        sp."contractAddress",
+        sp."walletAddress",
+        sp."positionId"::text AS "positionId",
+        sp."amount"::text AS "amount",
+        sp."stakedAt",
+        sp."unlockAt",
+        sp."unstakedAt",
+        sp."accruedSpark"::bigint AS "accruedSpark",
+        ${totalExpr} AS "totalSpark"
+      FROM staking_positions sp
+      WHERE sp."userId" = $1
+      ORDER BY sp."stakedAt" DESC
+    `, params);
+    return result.rows.map(row => ({
+      id: row.id,
+      chain: row.chain,
+      contractAddress: row.contractAddress,
+      walletAddress: row.walletAddress,
+      positionId: row.positionId,
+      amount: row.amount,
+      stakedAt: (row.stakedAt as Date).toISOString(),
+      unlockAt: (row.unlockAt as Date).toISOString(),
+      unstakedAt: row.unstakedAt ? (row.unstakedAt as Date).toISOString() : null,
+      accruedSpark: Number(row.accruedSpark),
+      totalSpark: Number(row.totalSpark),
+    }));
+  }
+
   /**
    * Credit every claimed position up to its current pro-rata target
    * (docs/ROADMAP-staking.md §5.2). Runs as one atomic statement: position

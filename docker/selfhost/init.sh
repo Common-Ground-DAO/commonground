@@ -109,6 +109,18 @@ QUIKNODE_SCROLL=https://rpc.scroll.io
 QUIKNODE_ZKSYNC=https://mainnet.era.zksync.io
 QUIKNODE_LUKSO=https://rpc.mainnet.lukso.network/
 
+# Token staking (docs/ROADMAP-staking.md): users time-lock an ERC-20 onchain
+# and earn Spark while it is locked. Off until STAKING_CHAIN,
+# STAKING_TOKEN_ADDRESS and STAKING_CONTRACT_ADDRESS are all set (deploy your
+# own CgStaking instance — see contracts/staking/README.md). The chain must be
+# in CG_ACTIVE_CHAINS. STAKING_BASE_RATE is Spark per token per 365 days.
+#STAKING_CHAIN=eth
+#STAKING_TOKEN_ADDRESS=
+#STAKING_CONTRACT_ADDRESS=
+#STAKING_BASE_RATE=0.012
+#STAKING_MIN_LOCK_DAYS=7
+#STAKING_MAX_LOCK_DAYS=730
+
 # Twitter/X login (v1 consumer keys drive the login feature; without them
 # the X buttons are hidden)
 TWITTER_CALLBACK_URL=https://${CG_DOMAIN}/twitter-callback

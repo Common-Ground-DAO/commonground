@@ -51,6 +51,7 @@ import FinishedAirdrops from './TokenAirdrops/FinishedAirdrops';
 import communityApi from 'data/api/community';
 import BuyTokenHeader from 'components/molecules/BuyTokenHeader/BuyTokenHeader';
 import SparkFireBg from 'components/organisms/UserSettingsModalContent/HowSparkWorks/SparkFireBg';
+import StakeTab from './StakeTab/StakeTab';
 import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
 import ExternalIcon from 'components/atoms/ExternalIcon/ExternalIcon';
 import SimpleLink from 'components/atoms/SimpleLink/SimpleLink';
@@ -1331,7 +1332,7 @@ const TokenSale: React.FC = () => {
 
                     {currentTab === 'buy' && renderBuyTab()}
                     {currentTab === 'claim' && renderClaimTab()}
-                    {currentTab === 'stake' && renderStakeTab()}
+                    {currentTab === 'stake' && <StakeTab comingSoon={renderStakeTab()} />}
                 </div>
                 <div />
             </div>

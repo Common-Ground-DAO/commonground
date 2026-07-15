@@ -126,6 +126,39 @@ services whose configuration changed. In particular,
 `PLATFORM_OPERATOR_USER_IDS` is a comma-separated allowlist of human user UUIDs
 that may create and manage platform-owned bots; it is empty by default.
 
+## Token staking (Spark)
+
+Users can time-lock an ERC-20 token onchain and earn Spark (the platform
+currency) while it is locked — see
+[`docs/ROADMAP-staking.md`](../docs/ROADMAP-staking.md) for the design. The
+feature is **off by default**; the token page's Stake tab shows an
+informational placeholder until it is configured.
+
+To enable it on your instance:
+
+1. Deploy your own `CgStaking` contract for your token
+   ([`contracts/staking/README.md`](../contracts/staking/README.md) — a
+   self-contained Foundry project with a deployment script). The contract is
+   non-custodial and admin-less; constructor lock bounds are immutable.
+2. Add to `.env.selfhost` (the chain must be part of `CG_ACTIVE_CHAINS`, since
+   the onchain listener indexes the contract's events):
+
+   ```sh
+   STAKING_CHAIN=eth
+   STAKING_TOKEN_ADDRESS=0x...   # the ERC-20 being staked
+   STAKING_CONTRACT_ADDRESS=0x...
+   STAKING_BASE_RATE=0.012       # Spark per token per 365 days
+   STAKING_MIN_LOCK_DAYS=7      # informational; enforced by the contract
+   STAKING_MAX_LOCK_DAYS=730
+   ```
+
+3. `./selfhost/selfhost.sh up` to recreate the api, job-runner and onchain
+   services with the new configuration.
+
+Spark accrues only for positions staked from wallets linked to a user account,
+never retroactively; the accrual job credits balances every few hours. Rate
+changes apply prospectively and never claw back credited Spark.
+
 ## Backups
 
 All state lives in three named Docker volumes:

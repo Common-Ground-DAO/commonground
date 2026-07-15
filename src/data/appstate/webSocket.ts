@@ -138,6 +138,7 @@ class WebSocketManager {
 
   private sendBroadcast(message: TabToWorkerMessage) {
     if (this.sendStateBroadcastUpdates) {
+      message.visible = document.visibilityState === 'visible';
       this.webSocketStateBroadcast.postMessage(message);
     }
   }
@@ -206,7 +207,25 @@ class WebSocketManager {
         (this.tabState === 'active' || this.tabState === 'active-throttled') &&
         (data.tabState === 'active' || data.tabState === 'active-throttled')
       ) {
-        // if another tab is active, disconnect here
+        // Two tabs claim the active role. Resolve deterministically: the
+        // visible tab wins; with equal visibility the higher tabId wins, so
+        // exactly one side yields. Without this, a stale in-flight 'active'
+        // broadcast from the tab being replaced could demote the tab the
+        // user just switched to, bouncing the socket back to a hidden tab.
+        const thisTabVisible = document.visibilityState === 'visible';
+        const otherTabVisible = data.visible === true;
+        const thisTabWins =
+          (thisTabVisible && !otherTabVisible) ||
+          (thisTabVisible === otherTabVisible && this.tabId > data.tabId);
+
+        if (thisTabWins) {
+          // Keep the active role and re-assert it; the other tab applies
+          // the mirrored rule and demotes itself.
+          this.sendStateUpdate();
+          return;
+        }
+
+        // the other tab keeps the active role, disconnect here
         this.tabState =
           this.tabState === 'active' ? 'passive' : 'passive-throttled';
 

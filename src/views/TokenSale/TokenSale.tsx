@@ -104,7 +104,10 @@ export const SALE_END_DATE = '2024-12-30T18:00:00+01:00';
 
 const TokenSale: React.FC = () => {
     const ownUser = useOwnUser();
-    const [currentTab, setCurrentTab] = useState<'buy' | 'claim' | 'stake'>('buy');
+    // Get (buy) and Earn (claim) are hidden for now — staking is the current
+    // focus. Flip this to bring them back; their code paths stay intact.
+    const SHOW_GET_EARN_TABS = false;
+    const [currentTab, setCurrentTab] = useState<'buy' | 'claim' | 'stake'>(SHOW_GET_EARN_TABS ? 'buy' : 'stake');
     const [error, setError] = useState<string>('');
     const [amount, _setAmount] = useState<string>('1');
     const { address: walletAddress } = useAccount();
@@ -1296,23 +1299,23 @@ const TokenSale: React.FC = () => {
 
                 <div className="tokensale-content tokensale-content-card tokensale-content-card-top cg-content-stack z-10">
                     <div className={`flex cg-text-brand items-center flex-wrap sticky top-4 z-20 cg-border-xl cg-bg-2nd py-4 px-6 ${isMobile ? 'gap-4' : 'gap-8'}`}>
-                        <Button
+                        {SHOW_GET_EARN_TABS && <Button
                             role='textual'
                             className='token-section-btn'
                             iconLeft={<TipJar weight='duotone' className='w-6 h-6' />}
                             text='Get'
                             active={currentTab === 'buy'}
                             onClick={() => setCurrentTab('buy')}
-                        />
+                        />}
 
-                        <Button
+                        {SHOW_GET_EARN_TABS && <Button
                             role='textual'
                             className='token-section-btn'
                             iconLeft={<HandCoins weight='duotone' className='w-6 h-6' />}
                             text='Earn'
                             active={currentTab === 'claim'}
                             onClick={() => setCurrentTab('claim')}
-                        />
+                        />}
 
                         <Button
                             role='textual'

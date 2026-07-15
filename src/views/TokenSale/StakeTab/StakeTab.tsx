@@ -1,0 +1,321 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// Additional terms: see LICENSE-ADDITIONAL-TERMS.md
+
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useAccount, useContractRead, useContractWrite, useNetwork, useSwitchNetwork, useWaitForTransaction } from 'wagmi';
+import { useConnectModal } from '@rainbow-me/rainbowkit';
+import { parseUnits, formatUnits } from 'viem';
+
+import Button from 'components/atoms/Button/Button';
+import TextInputField from 'components/molecules/inputs/TextInputField/TextInputField';
+import SkeletonLine from 'components/atoms/SkeletonLine/SkeletonLine';
+import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
+import { useOwnUser } from 'context/OwnDataProvider';
+import { useSnackbarContext } from 'context/SnackbarContext';
+import stakingApi from 'data/api/staking';
+import { chainIds } from 'common/chainIds';
+import { previewTotalSpark, stakingContractAbi, erc20MinimalAbi } from 'common/staking';
+
+const chainNames: Partial<Record<Models.Contract.ChainIdentifier, string>> = {
+  eth: 'Ethereum',
+  base: 'Base',
+  xdai: 'Gnosis',
+  matic: 'Polygon',
+  arbitrum: 'Arbitrum',
+  lukso: 'LUKSO',
+};
+
+function formatTokens(baseUnits: string | bigint): string {
+  const whole = formatUnits(BigInt(baseUnits), 18);
+  const num = Number(whole);
+  return num.toLocaleString('en-US', { maximumFractionDigits: num < 1000 ? 2 : 0 });
+}
+
+function daysUntil(iso: string): number {
+  return Math.max(0, Math.ceil((Date.parse(iso) - Date.now()) / 86400000));
+}
+
+const PositionRow: React.FC<{
+  position: API.Staking.PositionView;
+  connectedAddress?: string;
+  onUnstake: (positionId: string) => void;
+  unstakePending: boolean;
+}> = ({ position, connectedAddress, onUnstake, unstakePending }) => {
+  const matured = Date.parse(position.unlockAt) <= Date.now();
+  const unstaked = !!position.unstakedAt;
+  const remaining = daysUntil(position.unlockAt);
+  const rightWallet = !!connectedAddress && connectedAddress.toLowerCase() === position.walletAddress;
+
+  return <div className='flex flex-col gap-1 p-3 cg-border-m cg-bg-subtle'>
+    <div className='flex items-center justify-between gap-2 flex-wrap'>
+      <span className='cg-text-lg-500 cg-text-main'>{formatTokens(position.amount)} CG</span>
+      <span className={`cg-text-sm-500 ${unstaked ? 'cg-text-secondary' : matured ? 'cg-text-success' : 'cg-text-brand'}`}>
+        {unstaked ? 'Withdrawn' : matured ? 'Unlocked' : `Locked · ${remaining} day${remaining === 1 ? '' : 's'} left`}
+      </span>
+    </div>
+    <span className='cg-text-sm-400 cg-text-secondary'>
+      {new Date(position.stakedAt).toLocaleDateString()} → {new Date(position.unlockAt).toLocaleDateString()}
+      {' · '}wallet {position.walletAddress.slice(0, 6)}…{position.walletAddress.slice(-4)}
+    </span>
+    <span className='flex items-center gap-1 cg-text-md-500 cg-text-main'>
+      <SparkIcon className='w-4 h-4' />
+      {position.accruedSpark.toLocaleString('en-US')} / {position.totalSpark.toLocaleString('en-US')} Spark earned
+    </span>
+    {matured && !unstaked && <Button
+      role='primary'
+      text={rightWallet ? 'Unstake' : `Connect ${position.walletAddress.slice(0, 6)}… to unstake`}
+      disabled={!rightWallet || unstakePending}
+      loading={unstakePending && rightWallet}
+      onClick={() => onUnstake(position.positionId)}
+    />}
+  </div>;
+};
+
+const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
+  const ownUser = useOwnUser();
+  const { showSnackbar } = useSnackbarContext();
+
+  const [config, setConfig] = useState<API.Staking.Config | null | undefined>(undefined);
+  const [positions, setPositions] = useState<API.Staking.PositionView[] | undefined>(undefined);
+  const [amount, setAmount] = useState('');
+  const [lockDays, setLockDays] = useState('');
+  const [pendingTx, setPendingTx] = useState<{ hash: `0x${string}`; kind: 'approve' | 'stake' | 'unstake' } | null>(null);
+  const [unstakingId, setUnstakingId] = useState<string | null>(null);
+
+  const loadServerState = useCallback(async () => {
+    try {
+      const [{ config: cfg }, pos] = await Promise.all([
+        stakingApi.getConfig(),
+        stakingApi.getPositions(),
+      ]);
+      setConfig(cfg);
+      setPositions(pos);
+    } catch (e) {
+      console.error('Error loading staking state', e);
+      setConfig(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (ownUser?.id) loadServerState();
+  }, [ownUser?.id, loadServerState]);
+
+  const chainId = config ? chainIds[config.chain] : undefined;
+  const { address, isConnected } = useAccount();
+  const { chain: connectedChain } = useNetwork();
+  const { switchNetworkAsync } = useSwitchNetwork();
+  const { openConnectModal } = useConnectModal();
+  const onCorrectChain = !!chainId && connectedChain?.id === chainId;
+
+  const amountValid = /^\d+(\.\d+)?$/.test(amount) && Number(amount) > 0;
+  const amountWei = useMemo(() => {
+    try { return amountValid ? parseUnits(amount as `${number}`, 18) : BigInt(0); } catch { return BigInt(0); }
+  }, [amount, amountValid]);
+  const lockDaysNumber = Number(lockDays);
+  const lockValid = !!config && Number.isInteger(lockDaysNumber) &&
+    lockDaysNumber >= config.minLockDays && lockDaysNumber <= config.maxLockDays;
+
+  const { data: balance } = useContractRead({
+    address: config?.tokenAddress as `0x${string}` | undefined,
+    abi: erc20MinimalAbi,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    enabled: !!config && !!address,
+    chainId,
+    watch: true,
+  });
+  const { data: allowance, refetch: refetchAllowance } = useContractRead({
+    address: config?.tokenAddress as `0x${string}` | undefined,
+    abi: erc20MinimalAbi,
+    functionName: 'allowance',
+    args: address && config ? [address, config.contractAddress as `0x${string}`] : undefined,
+    enabled: !!config && !!address,
+    chainId,
+    watch: true,
+  });
+
+  const needsApproval = amountWei > BigInt(0) && allowance !== undefined && (allowance as bigint) < amountWei;
+  const insufficientBalance = amountWei > BigInt(0) && balance !== undefined && (balance as bigint) < amountWei;
+
+  const approveWrite = useContractWrite({
+    address: config?.tokenAddress as `0x${string}`,
+    abi: erc20MinimalAbi,
+    functionName: 'approve',
+  });
+  const stakeWrite = useContractWrite({
+    address: config?.contractAddress as `0x${string}`,
+    abi: stakingContractAbi,
+    functionName: 'stake',
+  });
+  const unstakeWrite = useContractWrite({
+    address: config?.contractAddress as `0x${string}`,
+    abi: stakingContractAbi,
+    functionName: 'unstake',
+  });
+
+  useWaitForTransaction({
+    hash: pendingTx?.hash,
+    enabled: !!pendingTx,
+    onSettled: (receipt, error) => {
+      const kind = pendingTx?.kind;
+      setPendingTx(null);
+      setUnstakingId(null);
+      if (error || receipt?.status !== 'success') {
+        showSnackbar({ type: 'warning', text: 'Transaction failed.' });
+        return;
+      }
+      if (kind === 'approve') {
+        refetchAllowance();
+        showSnackbar({ type: 'success', text: 'Approval confirmed — you can stake now.' });
+      }
+      else if (kind === 'stake') {
+        setAmount('');
+        showSnackbar({ type: 'success', text: 'Staked! Your position appears below once the chain is indexed (a minute or two).' });
+        setTimeout(loadServerState, 45_000);
+      }
+      else if (kind === 'unstake') {
+        showSnackbar({ type: 'success', text: 'Unstaked — tokens are back in your wallet.' });
+        setTimeout(loadServerState, 45_000);
+      }
+    },
+  });
+
+  const submit = useCallback(async (kind: 'approve' | 'stake') => {
+    if (!config || !chainId) return;
+    if (!isConnected) {
+      openConnectModal?.();
+      return;
+    }
+    if (!onCorrectChain) {
+      await switchNetworkAsync?.(chainId).catch(() => undefined);
+      return;
+    }
+    try {
+      if (kind === 'approve') {
+        const result = await approveWrite.writeAsync({
+          args: [config.contractAddress as `0x${string}`, amountWei],
+        });
+        setPendingTx({ hash: result.hash, kind: 'approve' });
+      } else {
+        const result = await stakeWrite.writeAsync({
+          args: [amountWei, BigInt(lockDaysNumber * 86400)],
+        });
+        setPendingTx({ hash: result.hash, kind: 'stake' });
+      }
+    } catch (e) {
+      console.error(`Error sending ${kind} transaction`, e);
+    }
+  }, [config, chainId, isConnected, onCorrectChain, openConnectModal, switchNetworkAsync, approveWrite, stakeWrite, amountWei, lockDaysNumber]);
+
+  const unstake = useCallback(async (positionId: string) => {
+    if (!chainId) return;
+    if (!onCorrectChain) {
+      await switchNetworkAsync?.(chainId).catch(() => undefined);
+      return;
+    }
+    try {
+      setUnstakingId(positionId);
+      const result = await unstakeWrite.writeAsync({ args: [BigInt(positionId)] });
+      setPendingTx({ hash: result.hash, kind: 'unstake' });
+    } catch (e) {
+      setUnstakingId(null);
+      console.error('Error sending unstake transaction', e);
+    }
+  }, [chainId, onCorrectChain, switchNetworkAsync, unstakeWrite]);
+
+  // anonymous visitors and unconfigured instances keep the informational page
+  if (!ownUser?.id || config === null) return comingSoon;
+  if (config === undefined) {
+    return <div className='flex flex-col gap-3 p-4 cg-content-stack cg-border-xl'>
+      <SkeletonLine minWidth={180} maxWidth={280} />
+      <SkeletonLine minWidth={120} maxWidth={220} />
+    </div>;
+  }
+
+  const preview = amountValid && lockValid
+    ? previewTotalSpark(Number(amount), lockDaysNumber, config.baseRate)
+    : 0;
+  const txPending = !!pendingTx;
+  const primaryAction = !isConnected ? 'connect' : !onCorrectChain ? 'switch' : needsApproval ? 'approve' : 'stake';
+  const primaryLabel = {
+    connect: 'Connect wallet',
+    switch: `Switch to ${chainNames[config.chain] ?? config.chain}`,
+    approve: 'Approve CG',
+    stake: 'Stake for Spark',
+  }[primaryAction];
+
+  return <div className='flex flex-col gap-6 cg-content-stack cg-border-xl p-4'>
+    <div className='flex flex-col gap-1'>
+      <div className='flex gap-1 items-center'>
+        <SparkIcon className='w-6 h-6' />
+        <h2 className='cg-heading-2'>Stake CG, earn Spark</h2>
+      </div>
+      <span className='cg-text-md-400 cg-text-secondary'>
+        Lock CG tokens on {chainNames[config.chain] ?? config.chain} for {config.minLockDays}–{config.maxLockDays} days.
+        While they are locked you earn Spark daily — longer locks earn a higher rate.
+      </span>
+    </div>
+
+    <div className='flex flex-col gap-3'>
+      <TextInputField
+        value={amount}
+        onChange={setAmount}
+        label='Amount (CG)'
+        placeholder='1000000'
+      />
+      {insufficientBalance && <span className='cg-text-sm-400 text-red-500'>
+        Not enough CG in this wallet (balance: {balance !== undefined ? formatTokens(balance as bigint) : '…'}).
+      </span>}
+      <TextInputField
+        value={lockDays}
+        onChange={setLockDays}
+        label={`Lock duration (days, ${config.minLockDays}–${config.maxLockDays})`}
+        placeholder='365'
+      />
+      {amountValid && lockValid && <span className='flex items-center gap-1 cg-text-md-500 cg-text-main'>
+        <SparkIcon className='w-4 h-4' />
+        Earns {preview.toLocaleString('en-US')} Spark over {lockDaysNumber} days
+      </span>}
+      <span className='cg-text-sm-500 text-red-500'>
+        Staked tokens are locked until the unlock date. There is no early withdrawal — not for support,
+        not for anyone.
+      </span>
+      <Button
+        role='primary'
+        className='max-w-full w-full'
+        iconLeft={<SparkIcon className='w-5 h-5' />}
+        text={primaryLabel}
+        loading={txPending && pendingTx?.kind !== 'unstake'}
+        disabled={txPending || (primaryAction === 'approve' || primaryAction === 'stake'
+          ? !amountValid || !lockValid || insufficientBalance
+          : false)}
+        onClick={() => {
+          if (primaryAction === 'connect') openConnectModal?.();
+          else if (primaryAction === 'switch') switchNetworkAsync?.(chainId!).catch(() => undefined);
+          else submit(primaryAction);
+        }}
+      />
+      <span className='cg-text-sm-400 cg-text-secondary'>
+        Stake from a wallet that is linked to your Common Ground account — positions from unlinked
+        wallets do not earn Spark until the wallet is linked (and never retroactively).
+      </span>
+    </div>
+
+    <div className='flex flex-col gap-2'>
+      <h3 className='cg-heading-3'>Your positions</h3>
+      {positions === undefined && <SkeletonLine minWidth={180} maxWidth={280} />}
+      {positions !== undefined && positions.length === 0 &&
+        <span className='cg-text-md-400 cg-text-secondary'>No staking positions yet.</span>}
+      {positions?.map(position => <PositionRow
+        key={position.id}
+        position={position}
+        connectedAddress={address}
+        onUnstake={unstake}
+        unstakePending={unstakingId === position.positionId && txPending}
+      />)}
+    </div>
+  </div>;
+};
+
+export default StakeTab;

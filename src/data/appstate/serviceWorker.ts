@@ -89,6 +89,14 @@ class ServiceWorkerManager {
           webSocketManager.sendStateBroadcastUpdates = false;
           loginManager.triggerSafeWindowReload();
         }
+        else if (ev.data.action === 'reload') {
+          // Initial installation: the page will not reload, but the
+          // activating worker has already banned our tabId (it assumes every
+          // pre-activation tab reloads). Without re-registering under a fresh
+          // id this tab becomes a permanent ghost the worker is deaf to — it
+          // can hold a socket and fight every arbitration decision.
+          webSocketManager.reRegister();
+        }
         else if (ev.data.action === 'navigate') {
           console.log("NAVIGATE EVENT", ev.data);
           const url = ev.data.url;

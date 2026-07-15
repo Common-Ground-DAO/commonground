@@ -501,6 +501,27 @@ class WebSocketManager {
     }
   }
 
+  /**
+   * Abandon the current tabId and negotiate a fresh one with the service
+   * worker. Needed when the worker has banned our tabId (it bans all tabs
+   * known at activation, expecting them to reload) but the page keeps
+   * running — e.g. on the worker's initial installation.
+   */
+  public reRegister() {
+    if (!!this._socket) {
+      this.skipNextDisconnectHandler = true;
+      this._socket.disconnect();
+      this.skipNextDisconnectHandler = false;
+      delete this._socket;
+    }
+    this.tabId = randomString(20);
+    this.state = 'disconnected';
+    this.tabState = 'unknown';
+    this.sendStateUpdate();
+    clearInterval(this.__fastInterval);
+    this.__fastInterval = setInterval(this.sendStateUpdate.bind(this), 500);
+  }
+
   public disconnect() {
     this.lastPong = 0;
     if (!!this._socket) {

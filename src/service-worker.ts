@@ -44,7 +44,13 @@ const alive = new Map<string, number>();
 const tabs: {
   tabId: string;
   tabState: 'active' | 'active-throttled' | 'passive' | 'passive-throttled';
+  visible?: boolean;
 }[] = [];
+// The browser terminates idle service workers; on restart all of the state
+// above is empty until tab heartbeats repopulate it. Autonomous role
+// reassignment must wait for that, or a half-informed referee promotes the
+// wrong tab and fights the tabs' own collision handling.
+const workerStartedAt = Date.now();
 
 const svgIconDataUrl = "data:image/svg+xml," + encodeURIComponent(`<?xml version="1.0" encoding="UTF-8"?>
   <svg width="40" height="40" fill="none" version="1.1" viewBox="0 0 40 30" xmlns="http://www.w3.org/2000/svg">
@@ -316,10 +322,20 @@ setInterval(async () => {
 }, 4000);
 
 function selectNewActiveTabIfAppropriate() {
+  if (Date.now() - workerStartedAt < 2500) {
+    // Freshly (re)started worker: the tab registry is still repopulating
+    // from heartbeats — do not reassign roles based on a partial picture.
+    return;
+  }
   if (tabs.length > 0) {
     const activeTabs = tabs.filter(t => t.tabState === 'active' || t.tabState === 'active-throttled');
     if (activeTabs.length === 0) {
-      let theChosenTab = tabs.find(t => t.tabState === 'passive');
+      // Prefer a visible tab: it is never timer-throttled, and the tabs'
+      // own collision handling awards the active role to visible tabs.
+      let theChosenTab = tabs.find(t => t.tabState === 'passive' && t.visible === true);
+      if (!theChosenTab) {
+        theChosenTab = tabs.find(t => t.tabState === 'passive');
+      }
       if (!theChosenTab) {
         theChosenTab = tabs[0];
       }
@@ -388,11 +404,13 @@ webSocketStateBroadcast.onmessage = async (event: MessageEvent<TabToWorkerMessag
       const newTabState = data.tabState === 'unknown' ? 'passive' : data.tabState;
       if (tabIndex > -1) {
         tabs[tabIndex].tabState = newTabState;
+        tabs[tabIndex].visible = data.visible;
       }
       else {
         tabs.push({
           tabId: data.tabId,
           tabState: newTabState,
+          visible: data.visible,
         });
       }
     }
@@ -423,6 +441,7 @@ webSocketStateBroadcast.onmessage = async (event: MessageEvent<TabToWorkerMessag
     if (tabIndex > -1) {
       const existing = tabs[tabIndex];
       existing.tabState = newTabState;
+      existing.visible = data.visible;
       if (newTabState === 'active') {
         activeTabs.push(existing);
       }
@@ -431,6 +450,7 @@ webSocketStateBroadcast.onmessage = async (event: MessageEvent<TabToWorkerMessag
       const tab = {
         tabId: data.tabId,
         tabState: newTabState,
+        visible: data.visible,
       };
       tabs.push(tab);
       tabIndex = tabs.length - 1;
@@ -451,11 +471,13 @@ webSocketStateBroadcast.onmessage = async (event: MessageEvent<TabToWorkerMessag
     if (tabIndex > -1) {
       const existing = tabs[tabIndex];
       existing.tabState = data.tabState;
+      existing.visible = data.visible;
     }
     else {
       tabs.push({
         tabId: data.tabId,
         tabState: data.tabState,
+        visible: data.visible,
       });
     }
   }
@@ -465,7 +487,10 @@ webSocketStateBroadcast.onmessage = async (event: MessageEvent<TabToWorkerMessag
     lastEventTime = undefined;
     socketState = 'disconnected';
   }
-  else if (activeTabs.length === 0) {
+  else if (tabs.filter(t => t.tabState === 'active' || t.tabState === 'active-throttled').length === 0) {
+    // Recompute after applying this message: the activeTabs snapshot above
+    // predates the update, and deciding on stale data here caused the
+    // referee to fight the tabs' own collision handling.
     selectNewActiveTabIfAppropriate();
   }
 

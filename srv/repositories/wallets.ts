@@ -11,6 +11,7 @@ import { ethers } from "ethers";
 import { Signer, hashMessage } from "fuels";
 import { decode, verifyMessage } from "@aeternity/aepp-sdk";
 import onchainHelper from "./onchain";
+import stakingHelper from "./staking";
 import { OnchainPriority } from "../onchain/scheduler";
 
 type TypeMapping = {
@@ -358,6 +359,9 @@ class WalletHelper {
 
   public async createWallet(userId: string, preWallet: Omit<Models.Wallet.Wallet, "id" | "userId">): Promise<Models.Wallet.Wallet> {
     const { id } = await _createWallet(pool, { ...preWallet, userId });
+    await stakingHelper.syncClaimsForUser(userId).catch(e => {
+      console.error("Error claiming staking positions after wallet link", e);
+    });
     return {
       ...preWallet,
       userId,
@@ -385,6 +389,9 @@ class WalletHelper {
     finally {
       client.release();
     }
+    await stakingHelper.syncClaimsForUser(userId).catch(e => {
+      console.error("Error unclaiming staking positions after wallet delete", e);
+    });
     if (roleData !== undefined && roleData.length > 0) {
       await onchainHelper.checkMultiRoleClaimability({ userId, roleData, priority: OnchainPriority.HIGH });
     }

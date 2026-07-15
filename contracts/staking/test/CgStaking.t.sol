@@ -96,7 +96,7 @@ contract CgStakingTest is Test {
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
 
-    event Staked(address indexed owner, uint256 indexed positionId, uint256 amount, uint64 unlockAt);
+    event Staked(address indexed owner, uint256 indexed positionId, uint256 amount, uint64 stakedAt, uint64 unlockAt);
     event Unstaked(address indexed owner, uint256 indexed positionId, uint256 amount);
 
     function setUp() public {
@@ -125,7 +125,7 @@ contract CgStakingTest is Test {
 
     function test_stakeHappyPath() public {
         vm.expectEmit(true, true, false, true);
-        emit Staked(alice, 0, 1_000_000 ether, uint64(block.timestamp) + 30 days);
+        emit Staked(alice, 0, 1_000_000 ether, uint64(block.timestamp), uint64(block.timestamp) + 30 days);
         vm.prank(alice);
         uint256 id = staking.stake(1_000_000 ether, 30 days);
 

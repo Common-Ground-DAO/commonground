@@ -38,6 +38,7 @@ contract CgStaking is ReentrancyGuard {
         address indexed owner,
         uint256 indexed positionId,
         uint256 amount,
+        uint64 stakedAt,
         uint64 unlockAt
     );
     event Unstaked(
@@ -99,7 +100,7 @@ contract CgStaking is ReentrancyGuard {
             })
         );
 
-        emit Staked(msg.sender, positionId, amount, unlockAt);
+        emit Staked(msg.sender, positionId, amount, uint64(block.timestamp), unlockAt);
     }
 
     /// @notice Withdraw a matured position in full.

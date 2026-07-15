@@ -259,7 +259,29 @@ class WebSocketManager {
         });
       }
 
+      const wasUnknown = this.tabState === 'unknown';
       this.tabState = data.tabState;
+
+      if (
+        wasUnknown &&
+        (this.tabState === 'passive' || this.tabState === 'passive-throttled') &&
+        document.visibilityState === 'visible'
+      ) {
+        // A tab born in the foreground never fires visibilitychange, so the
+        // visibility handoff cannot trigger — claim the active role on the
+        // initial assignment instead. Passive tabs do not process live
+        // events, and the live connection should follow the tab the user is
+        // looking at. Later demotions (wasUnknown false) are respected.
+        this.tabState = 'active';
+        this.sendBroadcast({
+          type: 'TabToWorker',
+          tabId: this.tabId,
+          tabState: this.tabState,
+        });
+        this.connect();
+        return;
+      }
+
       if (
         (this.tabState === 'active' || this.tabState === 'active-throttled') &&
         (!this._socket || this._socket.disconnected)

@@ -192,12 +192,16 @@ async function emitMessageEvents(events: Events.Message.Message[], access: API.M
     ));
     const publicRole = notifyRoles.find(d => d.roleTitle === PredefinedRole.Public);
     for (const event of events) {
+      const scopedEvent: Events.Message.Message = {
+        ...event,
+        data: { ...event.data, communityId: access.communityId },
+      } as Events.Message.Message;
       if (!!publicRole) {
-        eventHelper.emit(event, {
+        eventHelper.emit(scopedEvent, {
           communityIds: [access.communityId],
         }, excludeObject);
       } else {
-        eventHelper.emit(event, {
+        eventHelper.emit(scopedEvent, {
           roleIds: notifyRoles.map(d => d.roleId),
         }, excludeObject);
       }

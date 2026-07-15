@@ -239,6 +239,7 @@ async function _assertUsernameAvailable(db: PoolClient, username: string, exclud
 }
 
 type InstallableCursor = { username: string; userId: string };
+type ScopeCursor = { communityId: string; channelId: string };
 
 function _encodeInstallableCursor(cursor: InstallableCursor) {
   return Buffer.from(JSON.stringify(cursor), 'utf8')
@@ -257,6 +258,33 @@ function _decodeInstallableCursor(value: string | null): InstallableCursor | nul
       throw new Error('invalid cursor');
     }
     return { username: parsed.username, userId: parsed.userId };
+  } catch {
+    throw new Error(errors.server.INVALID_REQUEST);
+  }
+}
+
+function _encodeScopeCursor(cursor: ScopeCursor) {
+  return Buffer.from(JSON.stringify(cursor), 'utf8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+function _decodeScopeCursor(value: string | null): ScopeCursor | null {
+  if (value === null) return null;
+  try {
+    const padded = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
+    const parsed = JSON.parse(Buffer.from(padded, 'base64').toString('utf8')) as Partial<ScopeCursor>;
+    if (
+      typeof parsed.communityId !== 'string'
+      || typeof parsed.channelId !== 'string'
+      || !UUID_PATTERN.test(parsed.communityId)
+      || !UUID_PATTERN.test(parsed.channelId)
+    ) {
+      throw new Error('invalid cursor');
+    }
+    return { communityId: parsed.communityId, channelId: parsed.channelId };
   } catch {
     throw new Error(errors.server.INVALID_REQUEST);
   }
@@ -556,6 +584,9 @@ async function _emitJoin(change: MembershipChange) {
       roleIds: [change.memberRoleId],
     }
   }, { communityIds: [change.communityId] });
+  await eventHelper.emit({
+    type: 'cliBotScopesEvent', action: 'refresh', data: {},
+  }, { userIds: [change.userId] });
 }
 
 async function _emitLeave(change: MembershipChange) {
@@ -576,6 +607,9 @@ async function _emitLeave(change: MembershipChange) {
       userId: change.userId,
     }
   }, { communityIds: [change.communityId] });
+  await eventHelper.emit({
+    type: 'cliBotScopesEvent', action: 'refresh', data: {},
+  }, { userIds: [change.userId] });
 }
 
 async function _emitRoleChange(change: RoleChange) {
@@ -598,6 +632,11 @@ async function _emitRoleChange(change: RoleChange) {
         roleIds: change.addedRoleIds,
       }
     }, { communityIds: [change.communityId] });
+  }
+  if (change.addedRoleIds.length > 0 || change.removedRoleIds.length > 0) {
+    await eventHelper.emit({
+      type: 'cliBotScopesEvent', action: 'refresh', data: {},
+    }, { userIds: [change.userId] });
   }
 }
 
@@ -971,6 +1010,64 @@ class BotHelper {
     } finally {
       client.release();
     }
+  }
+
+  public async listScopes(
+    botUserId: string,
+    tokenId: string,
+    data: API.Bot.listScopes.Request,
+  ): Promise<API.Bot.listScopes.Response> {
+    const cursor = _decodeScopeCursor(data.cursor);
+    const { communityIds, roleIds } = await this.getActiveSocketRoomIds(botUserId, tokenId);
+    if (communityIds.length === 0) return { items: [], nextCursor: null };
+
+    const result = await pool.query<API.Bot.Scope>(`
+      SELECT DISTINCT
+        c.id AS "communityId",
+        c.title AS "communityTitle",
+        cc."channelId",
+        cc.title AS "channelTitle"
+      FROM communities c
+      INNER JOIN communities_channels cc
+        ON cc."communityId" = c.id
+        AND cc."deletedAt" IS NULL
+      INNER JOIN communities_channels_roles_permissions ccrp
+        ON ccrp."communityId" = cc."communityId"
+        AND ccrp."channelId" = cc."channelId"
+      INNER JOIN roles r
+        ON r.id = ccrp."roleId"
+        AND r."communityId" = c.id
+        AND r."deletedAt" IS NULL
+      WHERE c.id = ANY($1::uuid[])
+        AND c."deletedAt" IS NULL
+        AND ccrp.permissions @> ARRAY[$2, $3]::public.communities_channels_roles_permissions_permissions_enum[]
+        AND (
+          r.id = ANY($4::uuid[])
+          OR (r.title = $5 AND r.type = $6)
+        )
+        AND ($7::uuid IS NULL OR (c.id, cc."channelId") > ($7::uuid, $8::uuid))
+      ORDER BY c.id, cc."channelId"
+      LIMIT $9
+    `, [
+      communityIds,
+      'CHANNEL_EXISTS',
+      'CHANNEL_READ',
+      roleIds,
+      PredefinedRole.Public,
+      RoleType.PREDEFINED,
+      cursor?.communityId ?? null,
+      cursor?.channelId ?? null,
+      data.limit + 1,
+    ]);
+    const hasMore = result.rows.length > data.limit;
+    const items = result.rows.slice(0, data.limit);
+    const last = items.at(-1);
+    return {
+      items,
+      nextCursor: hasMore && last
+        ? _encodeScopeCursor({ communityId: last.communityId, channelId: last.channelId })
+        : null,
+    };
   }
 
   public async updateBot(actorUserId: string, data: API.Bot.updateBot.Request): Promise<API.Bot.BotView> {

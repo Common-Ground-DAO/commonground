@@ -40,6 +40,13 @@ declare global {
                 revokedAt: string | null;
             };
 
+            type Scope = {
+                communityId: string;
+                communityTitle: string;
+                channelId: string;
+                channelTitle: string;
+            };
+
             type CommunityBotView = Pick<BotView,
                 'userId' | 'ownerType' | 'ownerId' | 'owner' | 'username' | 'imageId' | 'description' |
                 'connectionStatus'
@@ -162,6 +169,17 @@ declare global {
                     userId: string;
                     deviceId: string;
                     tokenId: string;
+                };
+            }
+
+            namespace listScopes {
+                type Request = {
+                    cursor: string | null;
+                    limit: number;
+                };
+                type Response = {
+                    items: Scope[];
+                    nextCursor: string | null;
                 };
             }
         }

@@ -9,6 +9,9 @@ declare namespace Events {
     } & ({
       action: 'new';
       data: Models.Message.ApiMessage & {
+        // Present when the message belongs to a community channel. Bot API
+        // clients use it to route one connection across all installations.
+        communityId?: string;
         // Stable Bot API v1 signal used to prevent accidental bot-to-bot loops.
         creatorIsBot: boolean;
       };
@@ -16,10 +19,12 @@ declare namespace Events {
       action: 'update';
       data:
         Pick<Models.Message.ApiMessage, "id" | "channelId" | "updatedAt">
+        & { communityId?: string }
         & Partial<Pick<Models.Message.ApiMessage, "body" | "attachments" | "parentMessageId" | "reactions">>;
     } | {
       action: 'delete';
       data: {
+        communityId?: string;
         channelId: string;
         deletedIds: string[];
       };

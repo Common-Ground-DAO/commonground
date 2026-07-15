@@ -54,7 +54,37 @@ function decodeSessionId(cookieHeader: string) {
 }
 
 const localOnlineUsers = new Set<string>();
+const localOnlineBotUsers = new Set<string>();
 let shuttingDown = false;
+
+const BOT_PRESENCE_LEASE_MS = 90_000;
+const BOT_PRESENCE_SCRIPT = `
+  local instance_id = ARGV[1]
+  local local_count = tonumber(ARGV[2])
+  local redis_time = redis.call('TIME')
+  local now_ms = tonumber(redis_time[1]) * 1000 + math.floor(tonumber(redis_time[2]) / 1000)
+
+  if local_count > 0 then
+    redis.call('HSET', KEYS[1], instance_id, local_count)
+    redis.call('ZADD', KEYS[2], now_ms + tonumber(ARGV[3]), instance_id)
+  else
+    redis.call('HDEL', KEYS[1], instance_id)
+    redis.call('ZREM', KEYS[2], instance_id)
+  end
+
+  local expired = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', now_ms)
+  if #expired > 0 then
+    redis.call('HDEL', KEYS[1], unpack(expired))
+    redis.call('ZREM', KEYS[2], unpack(expired))
+  end
+
+  local total = 0
+  local counts = redis.call('HVALS', KEYS[1])
+  for _, count in ipairs(counts) do
+    total = total + tonumber(count)
+  end
+  return total
+`;
 
 const allowedOrigins = [ process.env.BASE_URL ];
 if (config.DEPLOYMENT === 'dev') {
@@ -111,6 +141,47 @@ type AppSocket = Socket<
   API.Server.InterServerEvents,
   API.Server.SocketData
 >;
+
+async function setBotConnectionPresence(
+  userId: string,
+  localConnectedSocketCount: number,
+  markConnectedAt = false,
+) {
+  const presenceKey = `bot-presence:${userId}`;
+  const connectedSocketCount = await redisManager.getClient('data').eval(BOT_PRESENCE_SCRIPT, {
+    keys: [`${presenceKey}:counts`, `${presenceKey}:expirations`],
+    arguments: [
+      redisManager.instanceId,
+      localConnectedSocketCount.toString(),
+      BOT_PRESENCE_LEASE_MS.toString(),
+    ],
+  }) as number;
+
+  // Keep the shared user presence compatible with the existing member-list
+  // pipeline, but store bot-only transport details separately. Ordering
+  // prevents the stale-presence worker from resetting a newly connected bot
+  // between the two writes.
+  if (connectedSocketCount > 0) {
+    await userHelper.touchUserOnlineStatus([userId]);
+    await botHelper.setConnectionPresence(userId, connectedSocketCount, markConnectedAt);
+  }
+  else {
+    await botHelper.setConnectionPresence(userId, 0);
+    await userHelper.setUserOnlineStatus(userId, 'offline');
+  }
+}
+
+async function syncBotConnectionPresence(userId: string, markConnectedAt = false) {
+  const localSocketIds = io.sockets.adapter.rooms.get(userRoomKey(userId)) || new Set<string>();
+  let localConnectedSocketCount = 0;
+  for (const socketId of localSocketIds) {
+    const connectedSocket = io.sockets.sockets.get(socketId);
+    if (connectedSocket?.data.userId === userId && connectedSocket.data.botTokenId) {
+      localConnectedSocketCount++;
+    }
+  }
+  await setBotConnectionPresence(userId, localConnectedSocketCount, markConnectedAt);
+}
 
 async function joinAuthenticatedRooms(
   socket: AppSocket,
@@ -189,6 +260,12 @@ redisManager.isReady.then(async () => {
     socket.emit("buildId", buildId, Date.now());
 
     if (socket.data.botTokenId) {
+      const { userId } = socket.data;
+      if (!userId) {
+        socket.disconnect(true);
+        return;
+      }
+      localOnlineBotUsers.add(userId);
       socket.on("cgPing", (callback) => {
         try {
           callback(Date.now());
@@ -196,6 +273,25 @@ redisManager.isReady.then(async () => {
           socket.disconnect(true);
         }
       });
+      socket.on("disconnect", async () => {
+        if (!io.sockets.adapter.rooms.get(userRoomKey(userId))?.size) {
+          localOnlineBotUsers.delete(userId);
+        }
+        if (!shuttingDown) {
+          try {
+            await syncBotConnectionPresence(userId);
+          }
+          catch (error) {
+            console.error("Error updating disconnected bot presence", { userId, error });
+          }
+        }
+      });
+      try {
+        await syncBotConnectionPresence(userId, true);
+      }
+      catch (error) {
+        console.error("Error updating connected bot presence", { userId, error });
+      }
       return;
     }
 
@@ -349,9 +445,11 @@ setInterval(async () => {
   if (!shuttingDown) {
     try {
       const userIds = Array.from(localOnlineUsers);
+      const botUserIds = Array.from(localOnlineBotUsers);
       if (userIds.length > 0) {
         await userHelper.touchUserOnlineStatus(userIds);
       }
+      await Promise.all(botUserIds.map(userId => syncBotConnectionPresence(userId)));
     }
     catch (e) {
       console.error("Error touching own connected users onlineStatus", e);
@@ -363,9 +461,13 @@ const shutdown = async (code = 0) => {
   shuttingDown = true;
   try {
     const sockets = await io.local.fetchSockets();
+    const botUserIds = new Set<string>();
     const offlineUserIds = sockets.reduce<string[]>((agg, socket) => {
       const { userId } = socket.data;
-      if (!!userId && !socket.data.botTokenId) {
+      if (!!userId && socket.data.botTokenId) {
+        botUserIds.add(userId);
+      }
+      else if (!!userId) {
         const ownRoomSize = io.sockets.adapter.rooms.get(userRoomKey(userId))?.size;
         if (ownRoomSize === 1) {
           console.log(`User ${userId} will disconnect the last socket and then be offline`);
@@ -378,6 +480,7 @@ const shutdown = async (code = 0) => {
     if (offlineUserIds.length > 0) {
       await userHelper.setUsersToOffline(offlineUserIds);
     }
+    await Promise.all(Array.from(botUserIds).map(userId => setBotConnectionPresence(userId, 0)));
     io.close();
   } catch (e) {
     console.error("Error while shutting down", e);

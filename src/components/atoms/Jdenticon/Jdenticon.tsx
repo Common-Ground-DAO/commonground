@@ -9,6 +9,7 @@ import { useSignedUrl } from "../../../hooks/useSignedUrl";
 
 import './Jdenticon.css';
 import { useUserData } from "context/UserDataProvider";
+import { getOnlineStatusName } from "../../../util";
 
 type Props = {
   userId: string;
@@ -36,8 +37,16 @@ export default function Jdenticon(props: Props) {
   let statusIndicator: JSX.Element | undefined = undefined;
   const status = onlineStatus || user?.onlineStatus;
   if (!hideStatus && status !== undefined && status !== 'offline') {
+    const statusLabel = user?.isBot
+      ? 'Bot runtime connected to Common Ground'
+      : getOnlineStatusName(status);
     statusIndicator = (
-      <div style={statusStyle} className="status-container">
+      <div
+        style={statusStyle}
+        className="status-container"
+        title={statusLabel}
+        aria-label={statusLabel}
+      >
         <svg width="100%" viewBox="0 0 42 42">
           <circle fill={config.STATUS_COLORS[status]} r={18} cx={21} cy={21} strokeWidth='1px' className='jdenticon-status-circle' vectorEffect='non-scaling-stroke' />
         </svg>

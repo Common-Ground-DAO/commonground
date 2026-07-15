@@ -4,7 +4,7 @@
 
 import './BotManagement.css';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Robot } from '@phosphor-icons/react';
+import { Circle, Robot } from '@phosphor-icons/react';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import { useSignedUrl } from 'hooks/useSignedUrl';
@@ -346,6 +346,15 @@ const InstalledBotRow: React.FC<{
         </span>
         <span className='cg-text-sm-400 cg-text-secondary'>
           {ownershipLabel}
+        </span>
+        <span
+          className={`flex items-center gap-1 cg-text-sm-400 ${bot.connectionStatus === 'connected' ? 'cg-text-success' : 'cg-text-secondary'}`}
+          title={bot.connectionStatus === 'connected'
+            ? 'At least one authenticated Bot API connection'
+            : 'No authenticated Bot API connection'}
+        >
+          <Circle weight='fill' className='w-2 h-2' />
+          {bot.connectionStatus === 'connected' ? 'Connected' : 'Offline'}
         </span>
       </div>
     </div>

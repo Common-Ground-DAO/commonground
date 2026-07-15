@@ -53,6 +53,12 @@ export class Bot {
   @Column({ type: 'text', nullable: true })
   description!: string | null;
 
+  @Column({ type: 'integer', nullable: false, default: 0 })
+  connectedSocketCount!: number;
+
+  @Column({ type: 'timestamptz', precision: 3, nullable: true })
+  lastConnectedAt!: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz', precision: 3, select: false })
   createdAt!: Date;
 

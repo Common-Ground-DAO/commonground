@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Copy as CopyIcon, Trash as TrashIcon } from '@phosphor-icons/react';
+import { Circle, Copy as CopyIcon, Trash as TrashIcon } from '@phosphor-icons/react';
 import Button from 'components/atoms/Button/Button';
 import TextInputField from 'components/molecules/inputs/TextInputField/TextInputField';
 import TextAreaField from 'components/molecules/inputs/TextAreaField/TextAreaField';
@@ -214,6 +214,7 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, onDisabled, setPage }
           : undefined
     : undefined;
   const canSave = username.length >= 3 && !usernameError && !saving;
+  const connected = bot?.connectionStatus === 'connected';
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -306,6 +307,22 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, onDisabled, setPage }
       maxLetters={MAX_DESCRIPTION}
       autoGrow
     />
+
+    {isEdit && bot && <div className='flex flex-col gap-1 p-3 cg-border-m cg-bg-subtle'>
+      <span className='cg-text-lg-500 cg-text-main'>Runtime connection</span>
+      <span className={`flex items-center gap-1 cg-text-md-500 ${connected ? 'cg-text-success' : 'cg-text-secondary'}`}>
+        <Circle weight='fill' className='w-2 h-2' />
+        {connected
+          ? `Connected — ${bot.connectedSocketCount} authenticated connection${bot.connectedSocketCount === 1 ? '' : 's'}`
+          : 'Offline'}
+      </span>
+      <span className='cg-text-sm-400 cg-text-secondary'>
+        This confirms a live Bot API socket, not that the bot's application or model is healthy.
+      </span>
+      {bot.lastConnectedAt && <span className='cg-text-sm-400 cg-text-secondary'>
+        Last connected {new Date(bot.lastConnectedAt).toLocaleString()}
+      </span>}
+    </div>}
 
     {isPlatform && <div className='flex flex-col gap-2'>
       <span className='cg-text-lg-500 cg-text-main'>Presence</span>

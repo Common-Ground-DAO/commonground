@@ -4,7 +4,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { ChevronRightIcon, PlusIcon } from '@heroicons/react/20/solid';
-import { Robot } from '@phosphor-icons/react';
+import { Circle, Robot } from '@phosphor-icons/react';
 import UserSettingsButton from 'components/molecules/UserSettingsButton/UserSettingsButton';
 import SkeletonLine from 'components/atoms/SkeletonLine/SkeletonLine';
 import { useOwnUser } from 'context/OwnDataProvider';
@@ -20,12 +20,29 @@ type Props = {
 const BotRow: React.FC<{ bot: API.Bot.BotView; onClick: () => void }> = ({ bot, onClick }) => {
   const imageUrl = useSignedUrl(bot.imageId);
   const disabled = !!bot.disabledAt;
+  const connected = bot.connectionStatus === 'connected';
+  const connectionLabel = connected
+    ? bot.connectedSocketCount > 1
+      ? `Connected · ${bot.connectedSocketCount}`
+      : 'Connected'
+    : 'Offline';
   return <UserSettingsButton
     leftElement={imageUrl
       ? <img src={imageUrl} alt='' className='w-6 h-6 rounded-full object-cover' />
       : <Robot weight='duotone' className='w-6 h-6 cg-text-secondary' />}
     text={disabled ? `@${bot.username} (disabled)` : `@${bot.username}`}
-    rightElement={<ChevronRightIcon className='w-5 h-5' />}
+    rightElement={<>
+      <span
+        className={`flex items-center gap-1 cg-text-sm-500 ${connected ? 'cg-text-success' : 'cg-text-secondary'}`}
+        title={connected
+          ? `${bot.connectedSocketCount} authenticated Bot API connection${bot.connectedSocketCount === 1 ? '' : 's'}`
+          : 'No authenticated Bot API connection'}
+      >
+        <Circle weight='fill' className='w-2 h-2' />
+        {connectionLabel}
+      </span>
+      <ChevronRightIcon className='w-5 h-5' />
+    </>}
     onClick={onClick}
     disabled={disabled}
   />;

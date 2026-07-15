@@ -221,6 +221,9 @@ export type TabToWorkerMessage = {
   type: 'TabToWorker';
   tabId: string;
   tabState: Common.TabState | 'tabClosed';
+  // Whether the sending tab's document was visible; used by other tabs to
+  // break active-role collisions deterministically (visible tab wins).
+  visible?: boolean;
   socketState?: Common.WebSocketState;
   lastEventTime?: number;
   lastDisconnect?: number;

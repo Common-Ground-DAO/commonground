@@ -107,6 +107,7 @@ QUIKNODE_CELO=https://celo.drpc.org
 QUIKNODE_POLYGON_ZKEVM=https://zkevm-rpc.com
 QUIKNODE_SCROLL=https://rpc.scroll.io
 QUIKNODE_ZKSYNC=https://mainnet.era.zksync.io
+QUIKNODE_LUKSO=https://rpc.mainnet.lukso.network/
 
 # Twitter/X login (v1 consumer keys drive the login feature; without them
 # the X buttons are hidden)

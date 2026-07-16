@@ -19,7 +19,7 @@ import { useUserSettingsContext } from 'context/UserSettingsProvider';
 import LockDurationSlider from './LockDurationSlider';
 import WalletOverview from './WalletOverview';
 import { chainIds } from 'common/chainIds';
-import { stakingContractAbi, erc20MinimalAbi } from 'common/staking';
+import { previewTotalSpark, stakingContractAbi, erc20MinimalAbi } from 'common/staking';
 
 const chainNames: Partial<Record<Models.Contract.ChainIdentifier, string>> = {
   eth: 'Ethereum',
@@ -258,6 +258,15 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
     wallets !== undefined && !linkedEvmAddresses.has(address.toLowerCase());
 
   const txPending = !!pendingTx;
+  const previewSpark = amountValid && lockValid
+    ? previewTotalSpark(Number(amount), lockDaysNumber, config.baseRate)
+    : null;
+  const earnsNothing = previewSpark === 0;
+  // smallest amount that earns at least 1 Spark at the selected duration
+  const minViableAmount = lockValid
+    ? Math.ceil(1 / (config.baseRate * (lockDaysNumber / 365) * (1 + lockDaysNumber / 365)))
+    : null;
+
   const allowanceUnknown = isConnected && onCorrectChain && amountValid && allowance === undefined;
   const primaryAction = !isConnected ? 'connect'
     : !onCorrectChain ? 'switch'
@@ -309,6 +318,11 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
         tokenAmount={amountValid ? Number(amount) : 0}
         onChange={days => setLockDays(String(days))}
       />
+      {earnsNothing && <span className='cg-text-sm-500 text-red-500'>
+        This amount is too small to earn any Spark over {lockDaysNumber} days
+        {minViableAmount !== null ? ` — stake at least ${minViableAmount.toLocaleString('en-US')} CG at this duration to earn Spark` : ''}.
+        Staking is disabled so you don't lock tokens for nothing.
+      </span>}
       <span className='cg-text-sm-500 text-red-500'>
         Staked tokens are locked until the unlock date. There is no early withdrawal — not for support,
         not for anyone.
@@ -320,7 +334,7 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
         text={primaryLabel}
         loading={txPending && pendingTx?.kind !== 'unstake'}
         disabled={txPending || primaryAction === 'checking' || (primaryAction === 'approve' || primaryAction === 'stake'
-          ? !amountValid || !lockValid || insufficientBalance
+          ? !amountValid || !lockValid || insufficientBalance || earnsNothing
           : false)}
         onClick={() => {
           if (primaryAction === 'connect') openConnectModal?.();

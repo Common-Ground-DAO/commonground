@@ -52,6 +52,7 @@ import {
 } from 'wagmi/chains';
 // import { createPublicClient, http } from 'viem';
 import { publicProvider } from 'wagmi/providers/public';
+import { jsonRpcProvider } from 'wagmi/providers/jsonRpc';
 import { alchemyProvider } from 'wagmi/providers/alchemy';
 import config from 'common/config';
 import CommunityRouter from 'views/CommunityRouter/CommunityRouter';
@@ -137,10 +138,31 @@ if (config.DEPLOYMENT === 'dev') {;
 // chain's default public RPC instead; operators can front their own RPCs.
 const isSelfHosted = !!(window as any).__CG_INSTANCE__;
 
+// Keyless RPCs matching the backend defaults (docker/selfhost/init.sh, keyed
+// by numeric chain id). viem's built-in public RPCs (e.g. cloudflare-eth.com
+// for mainnet) are too flaky for balance reads and transaction simulation —
+// they intermittently answer "Internal error", which made wallet actions
+// fail silently on self-hosted instances.
+const selfhostRpcByChainId: Record<number, string> = {
+  1: 'https://eth.drpc.org',
+  137: 'https://polygon.drpc.org',
+  100: 'https://rpc.gnosischain.com',
+  42161: 'https://arb1.arbitrum.io/rpc',
+  8453: 'https://mainnet.base.org',
+  42: 'https://rpc.mainnet.lukso.network',
+};
+
 const { chains, publicClient, webSocketPublicClient } = configureChains(
   activeChains,
   isSelfHosted
-    ? [publicProvider()]
+    ? [
+        jsonRpcProvider({
+          rpc: (chain) => selfhostRpcByChainId[chain.id]
+            ? { http: selfhostRpcByChainId[chain.id] }
+            : null,
+        }),
+        publicProvider(),
+      ]
     : [alchemyProvider({ apiKey: '_sIiYKLDy9V9dQChacf2G5Nz7mxxghqZ' }), publicProvider()],
 );
 

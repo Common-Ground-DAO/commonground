@@ -213,6 +213,10 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
       }
     } catch (e) {
       console.error(`Error sending ${kind} transaction`, e);
+      const message = (e as any)?.shortMessage || (e as Error)?.message || '';
+      if (!/user rejected|user denied/i.test(message)) {
+        showSnackbar({ type: 'warning', text: `Could not send the ${kind} transaction: ${message.slice(0, 140) || 'unknown error'}` });
+      }
     }
   }, [config, chainId, isConnected, onCorrectChain, openConnectModal, switchNetworkAsync, approveWrite, stakeWrite, amountWei, lockDaysNumber]);
 
@@ -229,6 +233,10 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
     } catch (e) {
       setUnstakingId(null);
       console.error('Error sending unstake transaction', e);
+      const message = (e as any)?.shortMessage || (e as Error)?.message || '';
+      if (!/user rejected|user denied/i.test(message)) {
+        showSnackbar({ type: 'warning', text: `Could not send the unstake transaction: ${message.slice(0, 140) || 'unknown error'}` });
+      }
     }
   }, [chainId, onCorrectChain, switchNetworkAsync, unstakeWrite]);
 
@@ -250,10 +258,16 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
     wallets !== undefined && !linkedEvmAddresses.has(address.toLowerCase());
 
   const txPending = !!pendingTx;
-  const primaryAction = !isConnected ? 'connect' : !onCorrectChain ? 'switch' : needsApproval ? 'approve' : 'stake';
+  const allowanceUnknown = isConnected && onCorrectChain && amountValid && allowance === undefined;
+  const primaryAction = !isConnected ? 'connect'
+    : !onCorrectChain ? 'switch'
+    : allowanceUnknown ? 'checking'
+    : needsApproval ? 'approve'
+    : 'stake';
   const primaryLabel = {
     connect: 'Connect wallet',
     switch: `Switch to ${chainNames[config.chain] ?? config.chain}`,
+    checking: 'Checking allowance…',
     approve: 'Approve CG',
     stake: 'Stake for Spark',
   }[primaryAction];
@@ -305,13 +319,13 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
         iconLeft={<SparkIcon className='w-5 h-5' />}
         text={primaryLabel}
         loading={txPending && pendingTx?.kind !== 'unstake'}
-        disabled={txPending || (primaryAction === 'approve' || primaryAction === 'stake'
+        disabled={txPending || primaryAction === 'checking' || (primaryAction === 'approve' || primaryAction === 'stake'
           ? !amountValid || !lockValid || insufficientBalance
           : false)}
         onClick={() => {
           if (primaryAction === 'connect') openConnectModal?.();
           else if (primaryAction === 'switch') switchNetworkAsync?.(chainId!).catch(() => undefined);
-          else submit(primaryAction);
+          else if (primaryAction === 'approve' || primaryAction === 'stake') submit(primaryAction);
         }}
       />
       {connectedNotLinked && <div className='flex flex-col gap-2 p-3 cg-border-m' style={{ border: '1px solid rgb(239 68 68)' }}>

@@ -386,9 +386,8 @@ export default class GenericConnector implements Models.Server.OnchainConnector 
         }
       }
     } catch (e) {
-      // put the events back so the retried batch re-delivers them even if
-      // getLogs succeeds from cache; writes are idempotent
-      this.stakingEvents.unshift(...events);
+      // no re-buffering: the batch retry re-fetches the same logs and
+      // re-delivers the events; unshifting here would double-buffer them
       throw e;
     }
   }

@@ -76,10 +76,10 @@ class StakingHelper {
         "stakeLogIndex"
       )
       VALUES (
-        $1, $2, $3, $4,
+        $1, $2, $3::varchar, $4,
         (
           SELECT "userId" FROM wallets
-          WHERE "walletIdentifier" = $3 AND "deletedAt" IS NULL AND "userId" IS NOT NULL
+          WHERE "walletIdentifier" = $3::text AND "deletedAt" IS NULL AND "userId" IS NOT NULL
           LIMIT 1
         ),
         $5, $6, $7, $8, $9

@@ -168,7 +168,7 @@ export default function OwnCommunitiesBrowser(props: Properties) {
               />
               <MobileMenuOption
                 icon={<CoinVertical weight='duotone' className='h-6 w-6' />}
-                text='Token Sale'
+                text='Stake'
                 active={isActiveButton(window.location.pathname, getUrl({type: 'token'}))}
                 onClick={() => {
                   setCommunitySidebarIsOpen(false);

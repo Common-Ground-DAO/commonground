@@ -78,7 +78,7 @@ const ExpandedMenu: React.FC<Props> = ({ expanded }) => {
                 onClick={onHomeClick}
               />
               {(config.TOKEN_SALE_ENABLED || config.DEPLOYMENT !== 'prod') && <ExpandedMenuButton
-                text={expanded ? 'Token' : undefined}
+                text={expanded ? 'Stake' : undefined}
                 icon={<CoinVertical weight='duotone' className='h-6 w-6' />}
                 isActive={isActiveButton(location.pathname, getUrl({type: 'token'}))}
                 onClick={() => navigate(getUrl({type: 'token'}))}

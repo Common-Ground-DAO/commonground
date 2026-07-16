@@ -122,7 +122,7 @@ const TokenSaleBanner: React.FC<Props> = () => {
 
   return <div className='flex flex-col gap-2'>
     <div className='flex items-center cursor-pointer cg-text-secondary' onClick={() => setExpanded(old => !old)}>
-      <p>Token Sale</p>
+      <p>Stake</p>
       <ChevronUpIcon className={`w-5 h-5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
     </div>
     {expanded && <div className='login-banner-container'>

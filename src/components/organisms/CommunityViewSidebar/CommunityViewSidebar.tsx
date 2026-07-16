@@ -338,7 +338,7 @@ export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
                   <div className="text-xs flex items-center justify-center bg-blue-600 text-white rounded-md px-1 py-0.5 ml-1">NEW</div>
                 </div>}
                 onClick={navigateToToken}
-                text="Token"
+                text="Stake"
                 className={isTokenActive ? ' active' : ''}
               />
             )}

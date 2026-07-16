@@ -14,8 +14,12 @@ import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.s
 import { useOwnUser } from 'context/OwnDataProvider';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import stakingApi from 'data/api/staking';
+import userApi from 'data/api/user';
+import { useUserSettingsContext } from 'context/UserSettingsProvider';
+import LockDurationSlider from './LockDurationSlider';
+import WalletOverview from './WalletOverview';
 import { chainIds } from 'common/chainIds';
-import { previewTotalSpark, stakingContractAbi, erc20MinimalAbi } from 'common/staking';
+import { stakingContractAbi, erc20MinimalAbi } from 'common/staking';
 
 const chainNames: Partial<Record<Models.Contract.ChainIdentifier, string>> = {
   eth: 'Ethereum',
@@ -79,18 +83,21 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
   const [config, setConfig] = useState<API.Staking.Config | null | undefined>(undefined);
   const [positions, setPositions] = useState<API.Staking.PositionView[] | undefined>(undefined);
   const [amount, setAmount] = useState('');
-  const [lockDays, setLockDays] = useState('');
+  const [lockDays, setLockDays] = useState('365');
+  const [wallets, setWallets] = useState<Models.Wallet.Wallet[] | undefined>(undefined);
   const [pendingTx, setPendingTx] = useState<{ hash: `0x${string}`; kind: 'approve' | 'stake' | 'unstake' } | null>(null);
   const [unstakingId, setUnstakingId] = useState<string | null>(null);
 
   const loadServerState = useCallback(async () => {
     try {
-      const [{ config: cfg }, pos] = await Promise.all([
+      const [{ config: cfg }, pos, ownWallets] = await Promise.all([
         stakingApi.getConfig(),
         stakingApi.getPositions(),
+        userApi.getWallets({}),
       ]);
       setConfig(cfg);
       setPositions(pos);
+      setWallets(ownWallets);
     } catch (e) {
       console.error('Error loading staking state', e);
       setConfig(null);
@@ -106,6 +113,7 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
   const { chain: connectedChain } = useNetwork();
   const { switchNetworkAsync } = useSwitchNetwork();
   const { openConnectModal } = useConnectModal();
+  const { setIsOpen: setSettingsOpen, setCurrentPage: setSettingsPage } = useUserSettingsContext();
   const onCorrectChain = !!chainId && connectedChain?.id === chainId;
 
   const amountValid = /^\d+(\.\d+)?$/.test(amount) && Number(amount) > 0;
@@ -233,9 +241,14 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
     </div>;
   }
 
-  const preview = amountValid && lockValid
-    ? previewTotalSpark(Number(amount), lockDaysNumber, config.baseRate)
-    : 0;
+  const linkedEvmAddresses = new Set(
+    (wallets ?? [])
+      .filter(w => w.type === 'evm' || w.type === 'cg_evm')
+      .map(w => w.walletIdentifier.toLowerCase()),
+  );
+  const connectedNotLinked = isConnected && !!address &&
+    wallets !== undefined && !linkedEvmAddresses.has(address.toLowerCase());
+
   const txPending = !!pendingTx;
   const primaryAction = !isConnected ? 'connect' : !onCorrectChain ? 'switch' : needsApproval ? 'approve' : 'stake';
   const primaryLabel = {
@@ -257,6 +270,13 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
       </span>
     </div>
 
+    <WalletOverview
+      wallets={wallets}
+      tokenAddress={config.tokenAddress}
+      chainId={chainId!}
+      connectedAddress={address}
+    />
+
     <div className='flex flex-col gap-3'>
       <TextInputField
         value={amount}
@@ -267,16 +287,14 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
       {insufficientBalance && <span className='cg-text-sm-400 text-red-500'>
         Not enough CG in this wallet (balance: {balance !== undefined ? formatTokens(balance as bigint) : '…'}).
       </span>}
-      <TextInputField
-        value={lockDays}
-        onChange={setLockDays}
-        label={`Lock duration (days, ${config.minLockDays}–${config.maxLockDays})`}
-        placeholder='365'
+      <LockDurationSlider
+        lockDays={lockDaysNumber}
+        minLockDays={config.minLockDays}
+        maxLockDays={config.maxLockDays}
+        baseRate={config.baseRate}
+        tokenAmount={amountValid ? Number(amount) : 0}
+        onChange={days => setLockDays(String(days))}
       />
-      {amountValid && lockValid && <span className='flex items-center gap-1 cg-text-md-500 cg-text-main'>
-        <SparkIcon className='w-4 h-4' />
-        Earns {preview.toLocaleString('en-US')} Spark over {lockDaysNumber} days
-      </span>}
       <span className='cg-text-sm-500 text-red-500'>
         Staked tokens are locked until the unlock date. There is no early withdrawal — not for support,
         not for anyone.
@@ -296,10 +314,18 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
           else submit(primaryAction);
         }}
       />
-      <span className='cg-text-sm-400 cg-text-secondary'>
+      {connectedNotLinked && <div className='flex flex-col gap-2 p-3 cg-border-m' style={{ border: '1px solid rgb(239 68 68)' }}>
+        <span className='cg-text-md-500 text-red-500'>
+          The connected wallet {address ? `${address.slice(0, 6)}…${address.slice(-4)}` : ''} is not linked
+          to your Common Ground account. Staking from it earns no Spark until you link it — and linking is
+          never retroactive.
+        </span>
+        <Button role='secondary' text='Link this wallet' onClick={() => { setSettingsPage('wallet'); setSettingsOpen(true); }} />
+      </div>}
+      {!connectedNotLinked && <span className='cg-text-sm-400 cg-text-secondary'>
         Stake from a wallet that is linked to your Common Ground account — positions from unlinked
         wallets do not earn Spark until the wallet is linked (and never retroactively).
-      </span>
+      </span>}
     </div>
 
     <div className='flex flex-col gap-2'>

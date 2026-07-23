@@ -4013,6 +4013,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"altcha-lib@npm:1.4.1":
+  version: 1.4.1
+  resolution: "altcha-lib@npm:1.4.1"
+  checksum: 10c0/3c55b39ee0448d82a3215abbf499a1563e0155cb1ae1bff745f75b2d8ef4db2cbdea324b9ff0a3ebb235531edfe6cca196d7ed060bab318b73a9918585d9cf90
+  languageName: node
+  linkType: hard
+
 "ansi-escapes@npm:^4.2.1":
   version: 4.3.2
   resolution: "ansi-escapes@npm:4.3.2"
@@ -5318,6 +5325,7 @@ __metadata:
     "@types/ua-parser-js": "npm:^0.7.39"
     "@types/web-push": "npm:^3.6.0"
     "@types/xml": "npm:^1.0.8"
+    altcha-lib: "npm:1.4.1"
     awaitqueue: "npm:^3.0.1"
     axios: "npm:^1.6.7"
     bcrypt: "npm:^5.1.0"

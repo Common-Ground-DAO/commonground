@@ -293,6 +293,12 @@ const config = {
 
   // Google reCAPTCHA v2 (self-hosted instances provide their own key via instance config)
   GOOGLE_RECAPTCHA_SITE_KEY: instance?.recaptchaSiteKey ?? '6Lc_EBspAAAAAAPbsmkudhzCyuBoDFgxAar9wWtW',
+  // Which captcha widget to render. The backend declares the provider it
+  // verifies against via instance config; when absent (official app.cg / local
+  // dev) fall back to reCAPTCHA if a site key is present, otherwise ALTCHA.
+  CAPTCHA_PROVIDER: (instance?.captchaProvider
+    ?? ((instance?.recaptchaSiteKey ?? '6Lc_EBspAAAAAAPbsmkudhzCyuBoDFgxAar9wWtW') ? 'recaptcha' : 'altcha')
+  ) as 'altcha' | 'recaptcha' | 'off',
 
   // capability flags: self-hosted instances disable features whose backing
   // service isn't configured (see src/common/instance.ts); official

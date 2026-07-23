@@ -6,6 +6,7 @@ import config from "../common/config";
 import type { InstanceConfig } from "../common/instance";
 import urls from "./urls";
 import { dockerSecret } from ".";
+import { CAPTCHA_PROVIDER } from "./captcha";
 
 // Builds the <script> tag that declares this instance's identity to the
 // frontend (window.__CG_INSTANCE__). Injected into every index.html the
@@ -27,6 +28,10 @@ function buildInstanceConfig(): InstanceConfig {
   if (typeof process.env.CG_RECAPTCHA_SITE_KEY === "string") {
     instance.recaptchaSiteKey = process.env.CG_RECAPTCHA_SITE_KEY;
   }
+  // Tell the frontend which captcha provider this server actually verifies
+  // against, so it renders the matching widget (and fails closed with ALTCHA
+  // instead of silently skipping captcha).
+  instance.captchaProvider = CAPTCHA_PROVIDER;
   // config.ACTIVE_CHAINS already resolves CG_ACTIVE_CHAINS on the backend;
   // forward the resolved list so the frontend agrees with the server
   if (process.env.CG_ACTIVE_CHAINS) {

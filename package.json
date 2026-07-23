@@ -23,6 +23,7 @@
     "@sumsub/websdk": "2.3.4",
     "@sumsub/websdk-react": "2.3.4",
     "@types/protoo-client": "^4.0.1",
+    "altcha": "2.3.0",
     "assert": "^2.0.0",
     "axios": "^1.6.7",
     "boring-avatars": "^1.7.0",

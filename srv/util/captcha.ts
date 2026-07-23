@@ -20,7 +20,10 @@ type VerifySolutionFn = (payload: string, hmacKey: string, checkExpires?: boolea
 let altchaLibPromise: Promise<any> | undefined;
 function loadAltchaLib(): Promise<{ createChallenge: CreateChallengeFn; verifySolution: VerifySolutionFn }> {
   if (!altchaLibPromise) {
-    altchaLibPromise = import("altcha-lib");
+    altchaLibPromise = import("altcha-lib").catch((e) => {
+      altchaLibPromise = undefined;
+      throw e;
+    });
   }
   return altchaLibPromise;
 }
@@ -60,11 +63,12 @@ if (CAPTCHA_PROVIDER === "off") {
 }
 
 // PoW difficulty. maxNumber caps how many hashes a client may need to try.
-// 150000 keeps the solve well under a second on desktops and a few seconds on
-// low-end mobile devices, while still making bulk registration meaningfully
-// expensive. Tune via ALTCHA_MAX_NUMBER if needed.
+// The widget solves in parallel workers, so 500000 stays around a second on
+// desktops and a few seconds on low-end mobile devices. Replay protection only
+// blocks reusing a solved challenge — this cost is the sole brake on bulk
+// registration, so don't lower it without reason. Tune via ALTCHA_MAX_NUMBER.
 export const ALTCHA_MAX_NUMBER =
-  Number.parseInt(process.env.ALTCHA_MAX_NUMBER || "", 10) || 150000;
+  Number.parseInt(process.env.ALTCHA_MAX_NUMBER || "", 10) || 500000;
 
 // Challenges (and therefore their single-use replay markers) live for 10
 // minutes — long enough for a user to fill in the registration form, short

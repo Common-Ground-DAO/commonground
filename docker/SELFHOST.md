@@ -97,7 +97,11 @@ with spam accounts. Unlike before, captcha is **never silently disabled** —
   fill in both `CG_RECAPTCHA_SITE_KEY` (public, injected into the frontend) and
   `GOOGLE_RECAPTCHA_SECRET_KEY` (server-side verification). When
   `CAPTCHA_PROVIDER` is unset but a reCAPTCHA secret is present, reCAPTCHA is
-  used automatically (matches the official app.cg setup).
+  used automatically (matches the official app.cg setup). Always set the
+  provider explicitly and fill in **both** keys: with only one of them, the
+  backend (which auto-detects from the secret key) and the frontend injection
+  (which auto-detects from the site key) resolve different providers and users
+  cannot pass the captcha at all.
 - **`off`** — no captcha. The server logs a loud warning on startup. Only use
   this for local development or fully trusted/private instances.
 

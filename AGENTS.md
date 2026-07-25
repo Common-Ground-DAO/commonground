@@ -4,81 +4,32 @@
 
 ## Project Overview
 
-Common Ground is a full-stack TypeScript application consisting of:
+Common Ground is a full-stack TypeScript application:
 
-- **Frontend**: React 18 SPA (Create React App + craco) with Tailwind CSS, Slate rich-text editor, and styled-components
+- **Frontend**: React 18 SPA (Create React App + craco) with Tailwind CSS, Slate rich-text editor, markdown rendering, and styled-components
 - **Backend**: Express.js REST API + Socket.IO real-time layer with TypeORM (PostgreSQL) and Redis
-- **WebRTC**: MediaSoup-based voice/video calling (1080p, group calls, broadcasts)
-- **Smart Contracts**: Solidity contracts (Hardhat) for token sales and blockchain integration
-- **Infrastructure**: Docker Compose stack with nginx reverse proxy, PostgreSQL, Redis, and S3-compatible storage
-- **PWA**: Installable progressive web app with push notifications and offline support
+- **WebRTC**: MediaSoup-based voice/video calling (group calls, broadcasts)
+- **Bots**: first-class bot accounts with a bearer-token Bot API v1 (`/api/bot/v1`)
+- **Staking**: CgStaking contract + event indexing + Spark accrual
+- **Smart Contracts**: Solidity (Hardhat; Foundry for staking)
+- **Infrastructure**: Docker Compose stack (nginx, PostgreSQL, Redis, SeaweedFS/S3); single-server selfhost profile with Caddy TLS
+- **PWA**: installable, push notifications, multi-tab coordination via service worker
 
 ## Repository Structure
 
 ```
 /
-├── src/                    # React frontend source
-│   ├── components/         # UI components (atoms/molecules/organisms/templates)
-│   ├── views/              # Page-level view components (~51 views)
-│   ├── data/               # Data layer (API connectors, app state, databases)
-│   ├── hooks/              # Custom React hooks
-│   ├── context/            # React context providers
-│   ├── common/             # Shared utilities, types, assistant logic
-│   ├── cgid/               # Common Ground ID (identity system)
-│   ├── types/              # TypeScript type definitions
-│   ├── util/               # Frontend utility functions
-│   └── static/             # Static assets (ecosystem configs)
-├── srv/                    # Backend server source
-│   ├── api/                # Express route handlers (REST endpoints)
-│   ├── entities/           # TypeORM entity definitions (~43 entities)
-│   ├── migrations/         # Database migrations (~149 migrations)
-│   ├── repositories/       # Data access layer
-│   ├── validators/         # Input validation (Joi)
-│   ├── jobs/               # Scheduled background jobs (node-cron)
-│   ├── assistant/          # AI assistant integration (OpenAI)
-│   ├── mediasoup/          # WebRTC media server configuration
-│   ├── redis/              # Redis pub/sub and caching
-│   ├── onchain/            # Blockchain interaction layer
-│   ├── types/              # Backend type definitions
-│   ├── util/               # Backend utilities
-│   └── tests/              # Backend tests (Jest)
-├── contracts/              # Solidity smart contracts (Hardhat)
-├── docker/                 # Docker Compose setup, build scripts, nginx config
-├── pipelines/              # CI/CD pipeline definitions (Azure DevOps)
+├── src/                    # React frontend (components in atoms/molecules/organisms/templates, views, data layer, hooks, context)
+├── srv/                    # Backend (api/, entities/, migrations/, repositories/, validators/, jobs/, onchain/, mediasoup/, redis/)
+├── contracts/              # Solidity contracts (Hardhat; contracts/staking = Foundry)
+├── docker/                 # Compose stacks (dev + selfhost), build scripts, nginx/Caddy config
+├── pipelines/              # LEGACY: Azure DevOps pipelines (replacement: GitHub Actions, planned)
 ├── tools/                  # Developer utility scripts
-├── public/                 # Static public assets (PWA manifest, icons)
+├── public/                 # Static assets (PWA manifest, icons)
+├── docs/                   # Living documentation (see below) + docs/todo/ working documents
 ├── run.sh                  # Main CLI entry point for dev workflows
-└── docs/                   # Project documentation (see below)
+└── AGENTS.md               # This file
 ```
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Frontend framework | React 18 + TypeScript |
-| Build tool | Create React App + craco |
-| Styling | Tailwind CSS + styled-components |
-| Rich text editor | Slate |
-| State management | React Context + custom hooks + Dexie (IndexedDB) |
-| Routing | React Router v6 |
-| Real-time (client) | Socket.IO client + protoo-client (WebRTC signaling) |
-| Backend framework | Express.js + TypeScript |
-| ORM | TypeORM |
-| Database | PostgreSQL |
-| Cache/Pub-Sub | Redis |
-| Real-time (server) | Socket.IO + Redis adapter |
-| WebRTC | MediaSoup |
-| File storage | AWS S3 |
-| Auth | Session-based (express-session + Redis), passkeys (WebAuthn), wallet-based |
-| Email | SendGrid |
-| Identity verification | SumSub |
-| Blockchain | ethers.js/viem (EVM), @aeternity/aepp-sdk, fuels (Fuel Network) |
-| Smart contracts | Solidity + Hardhat |
-| AI | OpenAI API |
-| Containerization | Docker Compose |
-| Reverse proxy | nginx |
-| CI/CD | Azure DevOps Pipelines |
-| Package manager | Yarn 4 (Berry) |
 
 ## Key Commands
 
@@ -88,74 +39,92 @@ Common Ground is a full-stack TypeScript application consisting of:
 ./run.sh start_https       # Dev frontend with HTTPS (needed for voice calls)
 ./run.sh update_backend    # Rebuild and restart backend only
 ./run.sh update_frontend   # Rebuild and restart frontend only
-./run.sh up                # Start Docker stack
-./run.sh down              # Stop Docker stack
+./run.sh up | down         # Start/stop Docker stack
 ./run.sh compose <args>    # Pass-through to docker compose
-./run.sh shell             # Open bash in the builder container
+./run.sh shell             # Bash in the builder container
 ./run.sh make_migration <name>       # Generate a TypeORM migration
 ./run.sh make_empty_migration <name> # Generate an empty migration file
 ```
 
-## Architecture Patterns
+## Module Status
 
-### Frontend
-- **Atomic Design**: Components organized as atoms → molecules → organisms → templates → views
-- **API Layer**: Centralized API connectors in `src/data/api/` using axios with a shared `baseConnector`
-- **Local Database**: Dexie (IndexedDB) for offline-capable local data storage
-- **Real-time Updates**: Socket.IO for live message/notification delivery
-- **Plugin Host**: `@common-ground-dao/cg-plugin-lib-host` for embedding third-party plugins via iframes
+This list is normative. **Never build new functionality on top of a module marked
+`removal-pending`**, and do not migrate such modules to new libraries or patterns —
+they are deleted via dedicated cleanup PRs tracked in
+[docs/todo/ROADMAP_CORE_SLIMMING.md](docs/todo/ROADMAP_CORE_SLIMMING.md).
 
-### Backend
-- **Modular API Routes**: Each domain (accounts, chats, community, messages, etc.) has its own route file in `srv/api/`
-- **Entity-per-file**: TypeORM entities in `srv/entities/`, one per domain concept
-- **WebSocket API**: `srv/wsapi.ts` handles real-time Socket.IO events alongside the REST API
-- **Background Jobs**: Cron-scheduled jobs in `srv/jobs/` for activity scoring, cleanup, etc.
-- **On-chain Integration**: `srv/onchain/` for reading blockchain state (token balances, NFT ownership) used for role gating
-
-### Data Flow
-1. Frontend calls REST API (`src/data/api/` → `srv/api/`)
-2. Backend validates with Joi (`srv/validators/`), queries PostgreSQL via TypeORM (`srv/entities/`)
-3. Real-time events broadcast via Socket.IO (Redis adapter for multi-instance)
-4. WebRTC signaling via protoo (WebSocket), media via MediaSoup
-
-## Domain Concepts
-
-- **Community**: The top-level organizational unit (like a Discord server). Has areas, channels, roles, plugins.
-- **Area**: A grouping of channels within a community (like a Discord category).
-- **Channel**: A communication space within an area — can be text chat, voice, or other types.
-- **Chat**: Direct messages between users (1:1 or group DMs).
-- **Role**: Permission groups within a community. Can be token-gated (ERC20/721/1155).
-- **Plugin**: Embedded web applications within a community (games, tools, etc.).
-- **Article**: Long-form content published by communities.
-- **Feed**: Content aggregation within communities.
-- **Event**: Scheduled community events with registration.
-- **CGID**: Common Ground Identity — the user identity system.
-- **Assistant**: AI-powered community assistant using OpenAI.
+| Module / area | Status | Notes |
+|---|---|---|
+| Communities, areas, channels, messaging, DMs | **core** | |
+| Articles / blogs, events, search, notifications | **core** | |
+| Voice/video calls (MediaSoup) | **core** | optional at deploy time (service toggle) |
+| Plugin system (iframe host, appstore) | **core** | designated target for extracted non-core features |
+| Bot accounts + Bot API v1 | **core** | |
+| Staking (contract, indexing, accrual, Stake UI) | **core** | |
+| Premium / Spark economy (supporter tiers, community upgrades) | **core** | active product feature |
+| Auth: device, passkey/CGID, email+password, email code, wallet/SIWE (EVM), Lukso UP, Twitter, Farcaster | **core** | consolidation planned, see docs/auth-identity |
+| AI assistant | **core (opt-in)** | disabled by default; needs LLM backend |
+| Selfhost deployment profile | **core** | see docs/deployment |
+| Token sale: buy/claim UI, charts, investor wizard (`FullscreenWizard`), Sumsub KYC, NDA/US gates, `trackTokenSales`/`tokenSaleNotifications` jobs | **removal-pending** | decided 2026-07-25; DB tables are kept for auditability |
+| Aeternity wallet login, Fuel wallet login | **removal-pending** | decided 2026-07-25; existing wallet DB rows remain |
+| Hardcoded ecosystem partner list + dead ecosystem theming | **removal-pending** | reduce to active partnerships; EVM + Lukso stay |
+| Feeds domain (entities + 4 tables) | **removal-pending** | fully unreferenced; drop via migration |
+| Dead views/widgets (`AppsView`, `GroupBrowser`, `SwapAccountView`, `BlogBrowser`, `WhatsNewModal`, `EarlyAdopterBanner`), 8 no-op one-shot jobs, commented-out routes | **removal-pending** | verified dead 2026-07-25 |
 
 ## Documentation
 
-Detailed documentation is available in the `docs/` directory:
+Living documentation lives in `docs/`, one section per topic area:
 
-- [docs/architecture/](docs/architecture/) — System architecture and data flow
-- [docs/frontend/](docs/frontend/) — Frontend components, views, state management
-- [docs/backend/](docs/backend/) — Backend API, entities, real-time layer
-- [docs/database/](docs/database/) — Database schema and migrations
-- [docs/infrastructure/](docs/infrastructure/) — Docker, nginx, deployment
-- [docs/blockchain/](docs/blockchain/) — Smart contracts and on-chain integration
-- [docs/plugins/](docs/plugins/) — Plugin system and development
-- [docs/realtime/](docs/realtime/) — WebSocket, WebRTC, and MediaSoup
+| Section | Content |
+|---|---|
+| [docs/architecture/](docs/architecture/) | System architecture, request flows, service topology |
+| [docs/auth-identity/](docs/auth-identity/) | All login methods, sessions, device keys, account linking |
+| [docs/backend/](docs/backend/) | API routes, entities, repositories, validators, jobs |
+| [docs/frontend/](docs/frontend/) | Components, views, state management, data layer, routing |
+| [docs/database/](docs/database/) | Schema, migrations, patterns |
+| [docs/realtime/](docs/realtime/) | Socket.IO, MediaSoup/protoo, push, Redis |
+| [docs/blockchain/](docs/blockchain/) | Contracts, onchain service, token gating, wallets |
+| [docs/staking/](docs/staking/) | Staking feature end-to-end |
+| [docs/bots/](docs/bots/) | Bot accounts architecture ([docs/BOT-API.md](docs/BOT-API.md) = wire protocol) |
+| [docs/plugins/](docs/plugins/) | Plugin system |
+| [docs/infrastructure/](docs/infrastructure/) | Docker stack, build, nginx, env vars |
+| [docs/deployment/](docs/deployment/) | Deployment matrix, selfhost profile, CI/CD |
+| [docs/email-notifications/](docs/email-notifications/) | Email, newsletters, notification preferences |
+
+Documentation rules:
+
+1. Every section README starts with a status line
+   (`> Status: verified against commit <hash>, <date>`). If your change makes a
+   documented statement wrong, update the doc (and its status line) in the same PR.
+2. Claims in docs must be verified against code — mark anything unverified with
+   `TODO(verify): ...` instead of guessing.
+3. **Never document unfixed security issues in `docs/`.** Report them privately to
+   the maintainers; public docs describe behavior neutrally.
+
+## TODO Convention (living work documents)
+
+Ongoing and planned work lives in `docs/todo/`, one markdown file per workstream:
+
+- `ROADMAP_<topic>.md` — goal, decisions made, checklist of steps (living document,
+  updated as work progresses).
+- `INVENTORY_<topic>.md` — evidence bases for decisions.
+- **Lifecycle**: when a workstream is finished, its lasting insights are folded into
+  the affected `docs/` sections and the TODO file is **deleted** in the same PR.
+  TODO files are working state, not documentation of record.
 
 ## Agent Guidelines
 
-When working on this codebase:
-
 1. **Always use `./run.sh`** for build/dev commands — do not invoke docker compose directly.
-2. **Respect the atomic design hierarchy** in frontend components. New UI goes into the appropriate level (atom/molecule/organism/template).
-3. **TypeORM migrations are required** for any database schema change. Use `./run.sh make_migration <name>`.
-4. **Joi validation is mandatory** for all API endpoints. See `srv/validators/` for patterns.
-5. **Socket.IO events** must be emitted via the Redis adapter for multi-instance compatibility.
-6. **Never commit secrets.** `docker/.env` is tracked in the repo as a placeholder template (with `your-key`/`your-listid` defaults). Keep real values local and never stage changes that replace the placeholders with real credentials.
-7. **Test with `./run.sh start`** for frontend dev, but the full stack (`build_full`) must be running for backend connectivity.
-8. **Blockchain features** are optional — the app works without any blockchain configuration.
-9. **Plugin development** uses `@common-ground-dao/cg-plugin-lib-host` on the platform side and a corresponding client lib in the plugin iframe.
-10. **The backend has two entry points**: REST API (`srv/api.ts`) and WebSocket API (`srv/wsapi.ts`). Both share entities and utilities.
+2. **Respect the atomic design hierarchy** in frontend components (atom/molecule/organism/template).
+3. **TypeORM migrations are required** for any database schema change (`./run.sh make_migration <name>`; new tables must GRANT to the `writer`/`reader` roles).
+4. **Joi validation is mandatory** for all API endpoints (`srv/validators/`).
+5. **Socket.IO events** must be emitted via the Redis adapter/emitter for multi-instance compatibility.
+6. **Never commit secrets.** `docker/.env` is tracked as a placeholder template — keep real values local, never stage them.
+7. **Check the Module Status table** before touching anything — no new code on `removal-pending` modules.
+8. **Blockchain features are optional** — the app must keep working without any blockchain configuration (graceful degradation applies to all optional third-party integrations).
+9. **The backend has multiple entry points** (api, wsapi, memberlist, onchain, mediasoup, jobs, migrateDb, assistant) sharing entities and utilities — check which process your code runs in.
+10. **Keep docs truthful** (see Documentation rules above).
+11. **Delete branches after merge.** Once a branch is merged — into `main` or into a
+    persistent integration branch such as `develop` — delete it on the remote (and
+    locally). Only `main`, `develop`, and explicitly designated long-lived branches
+    persist; everything else is working state and gets cleaned up with its PR.

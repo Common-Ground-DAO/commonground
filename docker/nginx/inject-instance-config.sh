@@ -8,7 +8,9 @@
 #   CG_APP_URL            required to activate, e.g. https://chat.example.org
 #   CG_DEPLOYMENT         prod (default) | staging | dev
 #   CG_CGID_URL           e.g. https://id.chat.example.org/#
-#   CG_RECAPTCHA_SITE_KEY reCAPTCHA v2 site key; empty disables captcha
+#   CG_RECAPTCHA_SITE_KEY reCAPTCHA v2 site key (only used when the provider is reCAPTCHA)
+#   CG_CAPTCHA_PROVIDER   altcha (default) | recaptcha | off; auto-detected from
+#                         CG_RECAPTCHA_SITE_KEY when unset
 #   CG_ACTIVE_CHAINS      comma-separated chain keys this instance supports
 #   CG_FEATURE_EMAIL      "true" if email delivery is configured
 #   CG_FEATURE_TWITTER    "true" if Twitter/X auth is configured
@@ -36,7 +38,15 @@ cfg="$cfg,\"giphyApiKey\":\"$CG_GIPHY_API_KEY\""
 if [ -n "$CG_WALLETCONNECT_PROJECT_ID" ]; then
   cfg="$cfg,\"walletConnectProjectId\":\"$CG_WALLETCONNECT_PROJECT_ID\""
 fi
-cfg="$cfg,\"recaptchaSiteKey\":\"$CG_RECAPTCHA_SITE_KEY\"}"
+cfg="$cfg,\"recaptchaSiteKey\":\"$CG_RECAPTCHA_SITE_KEY\""
+# Mirror the backend's provider resolution (see srv/util/captcha.ts): explicit
+# CG_CAPTCHA_PROVIDER wins, otherwise reCAPTCHA when a site key is present, else
+# the fail-closed ALTCHA default.
+captcha_provider="$CG_CAPTCHA_PROVIDER"
+if [ -z "$captcha_provider" ]; then
+  if [ -n "$CG_RECAPTCHA_SITE_KEY" ]; then captcha_provider="recaptcha"; else captcha_provider="altcha"; fi
+fi
+cfg="$cfg,\"captchaProvider\":\"$captcha_provider\"}"
 snippet="<script>window.__CG_INSTANCE__ = $cfg;</script>"
 
 for f in /www/index.html /www/index_cgid.html; do

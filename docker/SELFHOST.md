@@ -74,12 +74,40 @@ honest message instead of breaking.
 | Env keys | Feature | Without it |
 |---|---|---|
 | `SENDGRID_API_KEY`, `EMAIL_FROM` | email verification, one-time-code login, event mails, newsletters | password/passkey/wallet login still work; OTP login and newsletter UI hidden; event RSVP works without verified email |
-| `CG_RECAPTCHA_SITE_KEY`, `GOOGLE_RECAPTCHA_SECRET_KEY` | signup captcha | registration is open (fine for private instances) |
+| `CAPTCHA_PROVIDER`, `ALTCHA_HMAC_KEY`, `CG_RECAPTCHA_SITE_KEY`, `GOOGLE_RECAPTCHA_SECRET_KEY` | signup captcha (see [Captcha](#captcha)) | defaults to ALTCHA; captcha is never silently skipped |
 | `TWITTER_API_KEY`, `TWITTER_API_SECRET` | Twitter/X login and account linking | X buttons hidden |
 | `SUMSUB_APP_TOKEN`, `SUMSUB_SECRET_KEY` | KYC verification | KYC steps show "not available on this instance" |
 | `MAILCHIMP_API_KEY`, `MAILCHIMP_LIST_ID` | CG-updates newsletter list sync | subscription preference stored locally only |
 | `CG_GIPHY_API_KEY` | GIF picker in the composer | GIF picker hidden |
 | `CG_WALLETCONNECT_PROJECT_ID` | WalletConnect wallets (QR / mobile deep-link) | injected wallets (MetaMask etc.) still work |
+
+## Captcha
+
+Registration is protected by a captcha so open instances don't get flooded
+with spam accounts. Unlike before, captcha is **never silently disabled** —
+`CAPTCHA_PROVIDER` selects one of three modes:
+
+- **`altcha`** (default) — [ALTCHA](https://altcha.org), a self-hosted,
+  privacy-friendly proof-of-work captcha. No third-party keys, no external
+  calls, GDPR-friendly. `init.sh` generates an `ALTCHA_HMAC_KEY` for you so
+  challenges stay valid across restarts; if you clear it, the backend generates
+  one and shares it across instances via Redis. This is the recommended default
+  for public instances.
+- **`recaptcha`** — Google reCAPTCHA v2. Set `CAPTCHA_PROVIDER=recaptcha` and
+  fill in both `CG_RECAPTCHA_SITE_KEY` (public, injected into the frontend) and
+  `GOOGLE_RECAPTCHA_SECRET_KEY` (server-side verification). When
+  `CAPTCHA_PROVIDER` is unset but a reCAPTCHA secret is present, reCAPTCHA is
+  used automatically (matches the official app.cg setup). Always set the
+  provider explicitly and fill in **both** keys: with only one of them, the
+  backend (which auto-detects from the secret key) and the frontend injection
+  (which auto-detects from the site key) resolve different providers and users
+  cannot pass the captcha at all.
+- **`off`** — no captcha. The server logs a loud warning on startup. Only use
+  this for local development or fully trusted/private instances.
+
+The frontend automatically renders the matching widget based on the provider
+the backend reports through the instance config, so you only set it in one
+place.
 
 ## Blockchain RPC endpoints and chains
 

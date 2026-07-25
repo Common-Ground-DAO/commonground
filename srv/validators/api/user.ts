@@ -54,7 +54,7 @@ const walletValidator = Joi.object({
 
 const userApi = {
   verifyCaptcha: Joi.object<API.User.verifyCaptcha.Request>({
-    token: Joi.string().required(),
+    token: Joi.string().max(4096).required(),
   }).required().strict(true),
 
   login: Joi.alternatives().try(

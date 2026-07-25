@@ -77,8 +77,17 @@ BOT_MESSAGE_RATE_LIMIT_PER_MINUTE=30
 SENDGRID_API_KEY=
 EMAIL_FROM=no-reply@${CG_DOMAIN}
 
-# reCAPTCHA v2. Without it, registration runs without captcha — fine for
-# small/private instances, risky for open ones.
+# Captcha (registration spam protection). The default provider is ALTCHA, a
+# self-hosted proof-of-work captcha that needs no third-party keys — leave this
+# as-is and it works out of the box. Set CAPTCHA_PROVIDER=recaptcha to use
+# Google reCAPTCHA instead (fill in both keys below), or CAPTCHA_PROVIDER=off to
+# disable captcha entirely (development / trusted private instances only).
+CAPTCHA_PROVIDER=altcha
+# HMAC secret ALTCHA signs its challenges with. Generated once here so it stays
+# stable across restarts and across multiple backend instances. If left empty,
+# the backend generates one and shares it via Redis.
+ALTCHA_HMAC_KEY=$(rand 32)
+# reCAPTCHA v2 keys (only used when CAPTCHA_PROVIDER=recaptcha).
 CG_RECAPTCHA_SITE_KEY=
 GOOGLE_RECAPTCHA_SECRET_KEY=
 

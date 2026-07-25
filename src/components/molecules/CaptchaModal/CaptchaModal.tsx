@@ -8,21 +8,27 @@ import ReCAPTCHA from 'react-google-recaptcha';
 import config from 'common/config';
 import { useDarkModeContext } from 'context/DarkModeProvider';
 import userApi from 'data/api/user';
+import AltchaWidget from '../AltchaWidget/AltchaWidget';
 import { ReactComponent as CircleLogo } from "components/atoms/icons/misc/Logo/logo.svg";
 import './CaptchaModal.css';
 
 const CaptchaModal = () => {
   const mode = useDarkModeContext();
+  const provider = config.CAPTCHA_PROVIDER;
 
-  // instances without a reCAPTCHA site key (self-hosted) verify with a stub
-  // token; the backend skips captcha checks when it has no secret key either
+  // Provider "off" is an explicit opt-out (dev/private instances): auto-clear
+  // the trust-score gate instead of showing a widget the backend won't check.
   React.useEffect(() => {
-    if (!config.GOOGLE_RECAPTCHA_SITE_KEY) {
-      userApi.verifyCaptcha({ token: 'stub' });
+    if (provider === 'off') {
+      userApi.verifyCaptcha({ token: 'off' });
     }
-  }, []);
+  }, [provider]);
 
-  if (!config.GOOGLE_RECAPTCHA_SITE_KEY) {
+  if (provider === 'off') {
+    return null;
+  }
+
+  if (provider === 'recaptcha' && !config.GOOGLE_RECAPTCHA_SITE_KEY) {
     return null;
   }
 
@@ -35,18 +41,23 @@ const CaptchaModal = () => {
         <h1 className='text-center cg-heading-3'>Help keep Common Ground safe</h1>
         <p className='text-center cg-text-lg-500'>We may ask again in the future, thanks for your understanding! 🙏</p>
       </div>
-      <ReCAPTCHA
-        sitekey={config.GOOGLE_RECAPTCHA_SITE_KEY || ''}
-        theme={mode.isDarkMode ? 'dark' : 'light'}
-        className='captcha-modal-inner mb-2'
-        onChange={async (token) => {
-          if (!!token) {
-            const verifyResult = await userApi.verifyCaptcha({
-              token,
-            });
-          }
-        }}
-      />
+      {provider === 'altcha' ? (
+        <AltchaWidget
+          className='captcha-modal-inner mb-2'
+          onVerified={(token) => { userApi.verifyCaptcha({ token }); }}
+        />
+      ) : (
+        <ReCAPTCHA
+          sitekey={config.GOOGLE_RECAPTCHA_SITE_KEY || ''}
+          theme={mode.isDarkMode ? 'dark' : 'light'}
+          className='captcha-modal-inner mb-2'
+          onChange={async (token) => {
+            if (!!token) {
+              await userApi.verifyCaptcha({ token });
+            }
+          }}
+        />
+      )}
     </Modal>
   );
 }

@@ -14,6 +14,7 @@ import { ReactComponent as XIcon } from '../../../atoms/icons/24/X.svg';
 import { ReactComponent as LuksoIcon } from '../../../atoms/icons/24/Lukso.svg';
 import { useTwitterAuth } from 'hooks/useTwitterAuth';
 import ReCAPTCHA from 'react-google-recaptcha';
+import AltchaWidget from 'components/molecules/AltchaWidget/AltchaWidget';
 import config from 'common/config';
 import { useDarkModeContext } from 'context/DarkModeProvider';
 import errors from 'common/errors';
@@ -45,7 +46,10 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
   const [usernameError, setUsernameError] = useState('');
   const [userPhoto, setUserPhoto] = useState<File | undefined>();
   const [genericError, setGenericError] = useState<string>('');
-  const [recaptchaToken, setRecaptchaToken] = useState<string>(config.DEPLOYMENT === 'dev' || !config.GOOGLE_RECAPTCHA_SITE_KEY ? 'stub' : '');
+  const captchaProvider = config.CAPTCHA_PROVIDER;
+  // dev skips captcha server-side, "off" is an explicit opt-out; both pre-fill
+  // a placeholder token so the create button is not blocked.
+  const [recaptchaToken, setRecaptchaToken] = useState<string>(config.DEPLOYMENT === 'dev' || captchaProvider === 'off' ? 'stub' : '');
   const [selectedProfile, setSelectedProfile] = useState<Models.User.ProfileItemType>(createUserData.displayAccount);
   const { connectToUniversalProfile, hasExtension: hasUniversalProfileExtension, isConnected: isUniversalProfileConnected } = useUniversalProfile();
   const mode = useDarkModeContext();
@@ -299,19 +303,26 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
         <span className='cg-heading-2 p-4 text-center'>Looks great!</span>
         <div className='grid grid-flow-row grid-cols-1 gap-4 justify-center items-center w-full'></div>
         {profile}
-        {config.DEPLOYMENT !== 'dev' && !!config.GOOGLE_RECAPTCHA_SITE_KEY && <div className='grid justify-items-center items-center pt-4'>
-          <ReCAPTCHA
-            sitekey={config.GOOGLE_RECAPTCHA_SITE_KEY || ''}
-            theme={mode.isDarkMode ? 'dark' : 'light'}
-            onChange={async (token) => {
-              if (!!token) {
-                setRecaptchaToken(token);
-              }
-              else {
-                setRecaptchaToken('');
-              }
-            }}
-          />
+        {config.DEPLOYMENT !== 'dev' && captchaProvider !== 'off' && <div className='grid justify-items-center items-center pt-4'>
+          {captchaProvider === 'altcha' ? (
+            <AltchaWidget
+              onVerified={(token) => setRecaptchaToken(token)}
+              onReset={() => setRecaptchaToken('')}
+            />
+          ) : !!config.GOOGLE_RECAPTCHA_SITE_KEY && (
+            <ReCAPTCHA
+              sitekey={config.GOOGLE_RECAPTCHA_SITE_KEY || ''}
+              theme={mode.isDarkMode ? 'dark' : 'light'}
+              onChange={async (token) => {
+                if (!!token) {
+                  setRecaptchaToken(token);
+                }
+                else {
+                  setRecaptchaToken('');
+                }
+              }}
+            />
+          )}
         </div>}
       </div>
     );

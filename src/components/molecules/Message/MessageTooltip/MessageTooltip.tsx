@@ -17,7 +17,9 @@ import { ReactComponent as EditIcon } from '../../../../components/atoms/icons/2
 import "./MessageTooltip.css";
 import { useOwnUser } from "context/OwnDataProvider";
 import { useCommunityModerationContext } from "context/CommunityModerationContext";
-import { PushPin } from "@phosphor-icons/react";
+import { useReportModalContext } from "context/ReportModalProvider";
+import { ReportType } from "common/enums";
+import { Flag, PushPin } from "@phosphor-icons/react";
 import { useSnackbarContext } from "context/SnackbarContext";
 import data from "data";
 
@@ -90,6 +92,7 @@ export default function MessageToolTip(props: {
     }
   }, [commContext, messageId, props.channelId, showSnackbar]);
 
+  const { showReportModal } = useReportModalContext();
   const ownUser = useOwnUser();
 
   const isSelf = !!ownUser && senderId === ownUser.id;
@@ -124,6 +127,14 @@ export default function MessageToolTip(props: {
           iconLeft={<PushPin weight="duotone" className="w-5 h-5 cg-text-warning" />}
           role="borderless"
           onClick={onPinMessage}
+        />
+      </>}
+      {!!ownUser && !isSelf && <>
+        <div className="cg-separator-vertical h-10" />
+        <Button
+          iconLeft={<Flag weight="duotone" className="w-5 h-5" />}
+          role="borderless"
+          onClick={() => showReportModal({ type: ReportType.MESSAGE, targetId: messageId })}
         />
       </>}
     </div>

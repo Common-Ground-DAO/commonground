@@ -290,8 +290,8 @@ function Inner() {
       <CommunityListViewProvider>
       <UserSettingsProvider>
       <CommunityModerationProvider>
-      <SidebarDataDisplayProvider>
       <ReportModalProvider>
+      <SidebarDataDisplayProvider>
       <PluginDetailsModalProvider>
       <AeternityWalletProvider>
       <UniversalProfileProvider>
@@ -317,8 +317,8 @@ function Inner() {
       </UniversalProfileProvider>
       </AeternityWalletProvider>
       </PluginDetailsModalProvider>
-      </ReportModalProvider>
       </SidebarDataDisplayProvider>
+      </ReportModalProvider>
       </CommunityModerationProvider>
       </UserSettingsProvider>
       </CommunityListViewProvider>

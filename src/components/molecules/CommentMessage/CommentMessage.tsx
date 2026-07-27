@@ -19,6 +19,9 @@ import data from 'data';
 import ReplyContentRenderer from '../Message/ReplyContentRenderer/ReplyContentRenderer';
 import MessageAttachments from '../Message/MessageAttachments/MessageAttachments';
 import { useSidebarDataDisplayContext } from 'context/SidebarDataDisplayProvider';
+import { useReportModalContext } from 'context/ReportModalProvider';
+import { ReportType } from 'common/enums';
+import { Flag } from '@phosphor-icons/react';
 
 type Props = {
   message: Models.Message.Message;
@@ -33,6 +36,7 @@ const CommentMessage: React.FC<Props> = (props) => {
   const ownUser = useOwnUser();
   const creator = useUserData(message.creatorId);
   const { showTooltip } = useSidebarDataDisplayContext();
+  const { showReportModal } = useReportModalContext();
   const { isMobile } = useWindowSizeContext();
   const isOwnMessage = ownUser && ownUser.id === message.creatorId;
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -97,6 +101,11 @@ const CommentMessage: React.FC<Props> = (props) => {
           iconLeft={<ReplyIcon />}
           onClick={() => replyClick(message.id, message.creatorId, message.body)}
         />
+        {ownUser && !isOwnMessage && <Button
+          role='secondary'
+          iconLeft={<Flag weight='duotone' className='w-5 h-5' />}
+          onClick={() => showReportModal({ type: ReportType.MESSAGE, targetId: message.id })}
+        />}
         {isOwnMessage && <>
           <Button
             role='secondary'

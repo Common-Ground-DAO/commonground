@@ -21,8 +21,11 @@ const SidebarContainer: React.FC<React.PropsWithChildren<Props>> = (props) => {
     const handleClickOutside = (ev: MouseEvent) => {
       const target = ev.target as Element;
       
-      // Don't close if clicking inside fullscreen image modal
+      // Don't close if clicking inside fullscreen image modal or other modals
       if (document.querySelector('.fullscreen-image-modal')?.contains(target)) {
+        return;
+      }
+      if (target.closest('.modal-root')) {
         return;
       }
       

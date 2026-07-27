@@ -28,28 +28,15 @@ import { dockerSecret } from "../util";
 import permissionHelper from "../repositories/permissions";
 import ipRateLimitHandler from "../util/rateLimit";
 import config from "../common/config";
+import { verifyCaptchaToken } from "../util/captcha";
 import emailUtils, { emailEnabled } from "./emails";
 import emailHelper from "../repositories/emails";
 import { uniqueNamesGenerator, adjectives, colors, animals } from 'unique-names-generator';
 import { ethers } from "ethers";
 
-const GOOGLE_RECAPTCHA_SECRET_KEY = dockerSecret("google_recaptcha_secret_key") || process.env.GOOGLE_RECAPTCHA_SECRET_KEY || "";
 export const SIGNABLE_SECRET_LENGTH = 20;
 
 const userRouter = express.Router();
-
-async function verifyRecaptchaToken(token: string): Promise<boolean> {
-  if (!GOOGLE_RECAPTCHA_SECRET_KEY) {
-    // self-hosted instances without reCAPTCHA keys run without captcha checks
-    console.warn("No reCAPTCHA secret key configured, skipping captcha verification");
-    return true;
-  }
-  // Sending secret key and response token to Google Recaptcha API for authentication.
-  const googleResponse = await axios.post(
-    `https://www.google.com/recaptcha/api/siteverify?secret=${GOOGLE_RECAPTCHA_SECRET_KEY}&response=${token}`
-  );
-  return googleResponse.data.success as boolean;
-}
 
 async function getAndStoreUniversalProfileImage(profileImageUrl: string): Promise<string | null> {
   try {
@@ -114,7 +101,7 @@ registerPostRoute<
       throw new Error(errors.server.NOT_ALLOWED);
     }
 
-    const verifySuccess = await verifyRecaptchaToken(token);
+    const verifySuccess = await verifyCaptchaToken(token);
     // Check response status and send back to the client-side
     if (verifySuccess) {
       await verifyCaptchaRateLimiter(request, response);
@@ -405,9 +392,9 @@ registerPostRoute<
     } = data;
 
     if (config.DEPLOYMENT !== 'dev' && !useWizardCode) {
-      const verifyResult = await verifyRecaptchaToken(recaptchaToken);
+      const verifyResult = await verifyCaptchaToken(recaptchaToken);
       if (!verifyResult) {
-        console.error("Error creating user with recaptcha, captcha failed", recaptchaToken, data);
+        console.error("Error creating user, captcha verification failed", recaptchaToken, data);
         throw new Error(errors.server.CAPTCHA_FAILED);
       }
     }

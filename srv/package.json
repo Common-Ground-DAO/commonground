@@ -19,6 +19,7 @@
     "@types/isomorphic-fetch": "^0.0.38",
     "@types/protoo-server": "^4.0.2",
     "@types/xml": "^1.0.8",
+    "altcha-lib": "1.4.1",
     "awaitqueue": "^3.0.1",
     "axios": "^1.6.7",
     "bcrypt": "^5.1.0",

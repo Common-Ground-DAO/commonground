@@ -264,7 +264,7 @@ The `{NGINX_EXPOSED_ON}` placeholder is replaced at Docker build time with `LOCA
 |---|---|---|
 | `/files/<id>/<sig>/<date>/<expires>` | `http://s3.local:8333` | File/media downloads. Rewrites to an S3 presigned request (AWS4-HMAC-SHA256). Cached 7 days, immutable. |
 | `/api/bot/v1/...` | `http://api:4000` | **Bot API v1.** Rewrites to `/BotV1/...`. Stable, bearer-token-only namespace kept separate from the web-app API. |
-| `/api/v2/(Chat\|Community\|File\|Message\|User\|Contract\|Notification\|Twitter\|Lukso\|CgId\|Accounts\|Sumsub\|Plugins\|Search\|Report\|Bot\|Staking)/` | `http://api:4000` | REST API. Strips `/api/v2/`. No caching. (`Report`, `Bot`, `Staking` are the newer groups.) |
+| `/api/v2/(Captcha\|Chat\|Community\|File\|Message\|User\|Contract\|Notification\|Twitter\|Lukso\|CgId\|Accounts\|Sumsub\|Plugins\|Search\|Report\|Bot\|Staking)/` | `http://api:4000` | REST API. Strips `/api/v2/`. No caching. (`Captcha`, `Report`, `Bot`, `Staking` are the newer groups.) |
 | `/api/ws/` | `http://wsapi:4000` | WebSocket upgrade (HTTP/1.1, `Upgrade: websocket`). |
 | `/(c\|u\|gated-videos\|gated-files)/` | `http://api:4000` | Community pages, profiles, gated content. Cached 24h. |
 | `/(sitemap.xml\|twitter-callback\|twitter-login\|verify-email\|push-icon\|token-sale\|token\|store)` | `http://api:4000` | Misc server-rendered endpoints. Cached 24h. |

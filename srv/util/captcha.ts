@@ -55,6 +55,15 @@ function resolveProvider(): CaptchaProvider {
 
 export const CAPTCHA_PROVIDER: CaptchaProvider = resolveProvider();
 
+if (CAPTCHA_PROVIDER === "recaptcha" && !RECAPTCHA_SECRET_KEY) {
+  console.error(
+    "ERROR! CAPTCHA_PROVIDER=recaptcha but no reCAPTCHA secret key is configured — " +
+    "every captcha verification will be rejected and nobody can register. " +
+    "Set GOOGLE_RECAPTCHA_SECRET_KEY (or the google_recaptcha_secret_key docker " +
+    "secret), or set CAPTCHA_PROVIDER=altcha to use the self-hosted captcha."
+  );
+}
+
 if (CAPTCHA_PROVIDER === "off") {
   console.warn(
     "WARNING! CAPTCHA_PROVIDER=off — captcha verification is DISABLED. " +

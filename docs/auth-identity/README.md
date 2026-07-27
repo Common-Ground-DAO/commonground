@@ -1,4 +1,4 @@
-> Status: verified against commit 523fceccd, 2026-07-25
+> Status: verified against commit bd09cbf3d, 2026-07-27
 
 # Authentication & Identity
 
@@ -337,9 +337,18 @@ Signup is protected by a **captcha provider abstraction** (`srv/util/captcha.ts`
 - **`off`**: explicit opt-out only; the server logs a loud warning at startup. There is no
   silent skip-when-unconfigured anymore.
 
-The active provider is advertised to the frontend via the instance config
-(`captchaProvider` in `window.__CG_INSTANCE__`); `CaptchaModal` renders the matching widget
-(`AltchaWidget` or reCAPTCHA). `createUser` verifies the token when `DEPLOYMENT !== 'dev'` and
+The **backend is the runtime authority** for the provider: `GET /Captcha/config`
+(`srv/api/captcha.ts`, public, `Cache-Control: no-store`) returns `{ provider }` — the value
+`verifyCaptchaToken` actually uses — for every provider. The frontend fetches it once per page
+load (`useCaptchaProvider` in `src/context/CaptchaContext.tsx`) and renders the matching widget
+in `CaptchaModal` / `SetupProfile`; the instance config (`captchaProvider` in
+`window.__CG_INSTANCE__`) is only the initial hint and the fallback when the fetch fails. If the
+resolved provider is `recaptcha` but no site key is configured, both surfaces show an explicit
+"captcha is misconfigured" message instead of rendering nothing (which used to leave a dead
+signup button). The server logs an error at startup for the mirror case (`recaptcha` without a
+secret key).
+
+`createUser` verifies the token when `DEPLOYMENT !== 'dev'` and
 no wizard code is used; a separate authenticated endpoint `POST /User/verifyCaptcha`
 (`srv/api/user.ts`) lets a logged-in user raise their `trustScore` to `1.0` by solving a
 captcha.

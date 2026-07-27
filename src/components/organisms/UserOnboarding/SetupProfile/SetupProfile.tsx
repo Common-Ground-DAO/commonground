@@ -23,6 +23,7 @@ import fileApi from 'data/api/file';
 import { UniversalProfileStatus, UniversalProfileSignButton } from '../UniversalProfileSign/UniversalProfileSign';
 import { useUniversalProfile } from 'context/UniversalProfileProvider';
 import { useUserOnboardingContext } from 'context/UserOnboarding';
+import { CAPTCHA_MISCONFIGURED_TEXT, useCaptchaProvider } from 'context/CaptchaContext';
 
 type ButtonProps = {
   buttonState: { loading: boolean; disabled: boolean; clicked: boolean; };
@@ -46,10 +47,10 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
   const [usernameError, setUsernameError] = useState('');
   const [userPhoto, setUserPhoto] = useState<File | undefined>();
   const [genericError, setGenericError] = useState<string>('');
-  const captchaProvider = config.CAPTCHA_PROVIDER;
+  const { provider: captchaProvider, resolved: captchaResolved, misconfigured: captchaMisconfigured } = useCaptchaProvider();
   // dev skips captcha server-side, "off" is an explicit opt-out; both pre-fill
   // a placeholder token so the create button is not blocked.
-  const [recaptchaToken, setRecaptchaToken] = useState<string>(config.DEPLOYMENT === 'dev' || captchaProvider === 'off' ? 'stub' : '');
+  const [recaptchaToken, setRecaptchaToken] = useState<string>(config.DEPLOYMENT === 'dev' || config.CAPTCHA_PROVIDER === 'off' ? 'stub' : '');
   const [selectedProfile, setSelectedProfile] = useState<Models.User.ProfileItemType>(createUserData.displayAccount);
   const { connectToUniversalProfile, hasExtension: hasUniversalProfileExtension, isConnected: isUniversalProfileConnected } = useUniversalProfile();
   const mode = useDarkModeContext();
@@ -63,6 +64,14 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
   } = useUserOnboardingContext();
   const { attemptConnectTwitter, buttonDisabled: twitterButtonDisabled } = useTwitterAuth(attemptTwitterLogin);
   const [farcasterImageUrl, setFarcasterImageUrl] = useState<string | undefined>();
+
+  // the backend's provider may differ from the initial hint: adopt or drop the
+  // placeholder token accordingly once it answered
+  useEffect(() => {
+    if (config.DEPLOYMENT === 'dev' || !captchaResolved) return;
+    if (captchaProvider === 'off') setRecaptchaToken('stub');
+    else setRecaptchaToken(token => token === 'stub' ? '' : token);
+  }, [captchaProvider, captchaResolved]);
 
   useEffect(() => {
     if (!!farcasterData && !!farcasterData.imageId) {
@@ -303,13 +312,15 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
         <span className='cg-heading-2 p-4 text-center'>Looks great!</span>
         <div className='grid grid-flow-row grid-cols-1 gap-4 justify-center items-center w-full'></div>
         {profile}
-        {config.DEPLOYMENT !== 'dev' && captchaProvider !== 'off' && <div className='grid justify-items-center items-center pt-4'>
-          {captchaProvider === 'altcha' ? (
+        {config.DEPLOYMENT !== 'dev' && captchaResolved && captchaProvider !== 'off' && <div className='grid justify-items-center items-center pt-4'>
+          {captchaMisconfigured ? (
+            <span className='cg-text-error text-center'>{CAPTCHA_MISCONFIGURED_TEXT}</span>
+          ) : captchaProvider === 'altcha' ? (
             <AltchaWidget
               onVerified={(token) => setRecaptchaToken(token)}
               onReset={() => setRecaptchaToken('')}
             />
-          ) : !!config.GOOGLE_RECAPTCHA_SITE_KEY && (
+          ) : (
             <ReCAPTCHA
               sitekey={config.GOOGLE_RECAPTCHA_SITE_KEY || ''}
               theme={mode.isDarkMode ? 'dark' : 'light'}
@@ -324,6 +335,7 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
             />
           )}
         </div>}
+        {genericError && <span className='cg-text-error text-center'>{genericError}</span>}
       </div>
     );
   } else {

@@ -1,6 +1,6 @@
 # Common Ground Backend Documentation
 
-> Status: verified against commit 523fceccd, 2026-07-25.
+> Status: verified against commit bd09cbf3d, 2026-07-27.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -210,7 +210,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 
 **Authentication:**
 - `/getSignableSecret` -- Get a nonce for signing
-- `/verifyCaptcha` -- Verify a captcha token (provider abstraction in `srv/util/captcha.ts`: ALTCHA default / reCAPTCHA / off; ALTCHA challenges via `GET /Captcha/challenge`, `srv/api/captcha.ts`)
+- `/verifyCaptcha` -- Verify a captcha token (provider abstraction in `srv/util/captcha.ts`: ALTCHA default / reCAPTCHA / off; ALTCHA challenges via `GET /Captcha/challenge`, the effective provider via `GET /Captcha/config` — both public, `srv/api/captcha.ts`)
 - `/clearLoginSession` -- Clear session
 - `/checkLoginStatus` -- Check if logged in
 - `/logout` -- Log out

@@ -43,6 +43,9 @@ Instanz automatisch aktiv sein.
       Härtungspunkte, alle gefixt in `475925239`; Fail-closed-Logik, Replay-Schutz und
       HMAC-Handling vom Review als korrekt verifiziert
 - [x] In `develop-merge` gemergt (2026-07-25, Merge-Commit `09e8cc3c1`)
+- [x] PR-#38-Review-Blocker: Backend als Provider-Autorität (`GET /Captcha/config`),
+      Misconfigured-Fehlerzustand in `SetupProfile`/`CaptchaModal`, Startup-Error-Log
+      bei `recaptcha` ohne Secret-Key
 - [ ] Laufzeit-Test im Browser beim nächsten lokalen Build (Solve→Verify→Replay; CSP-Fix
       verifizieren; PoW-Dauer auf schwachen Geräten — Default jetzt 500k Hashes)
 - [ ] Klein (aus Review, optional): AltchaWidget-Listener wird bei jedem Render neu

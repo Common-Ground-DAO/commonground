@@ -97,17 +97,20 @@ with spam accounts. Unlike before, captcha is **never silently disabled** —
   fill in both `CG_RECAPTCHA_SITE_KEY` (public, injected into the frontend) and
   `GOOGLE_RECAPTCHA_SECRET_KEY` (server-side verification). When
   `CAPTCHA_PROVIDER` is unset but a reCAPTCHA secret is present, reCAPTCHA is
-  used automatically (matches the official app.cg setup). Always set the
-  provider explicitly and fill in **both** keys: with only one of them, the
-  backend (which auto-detects from the secret key) and the frontend injection
-  (which auto-detects from the site key) resolve different providers and users
-  cannot pass the captcha at all.
+  used automatically (matches the official app.cg setup). Set the provider
+  explicitly and fill in **both** keys.
 - **`off`** — no captcha. The server logs a loud warning on startup. Only use
   this for local development or fully trusted/private instances.
 
-The frontend automatically renders the matching widget based on the provider
-the backend reports through the instance config, so you only set it in one
-place.
+The backend is the authority: the frontend asks `GET /Captcha/config` at runtime
+and renders the widget for whichever provider the server verifies against, so
+you only configure the provider in one place. A half-configured reCAPTCHA setup
+therefore fails loudly instead of silently: with a secret key but no site key
+the registration form shows "Captcha is misconfigured on this instance — please
+contact the operator." instead of an unexplained dead signup button, and with
+`CAPTCHA_PROVIDER=recaptcha` but no secret key the server logs an error at
+startup and rejects every token. When `CAPTCHA_PROVIDER` is unset, a site key
+alone no longer flips the frontend to reCAPTCHA — both sides stay on ALTCHA.
 
 ## Blockchain RPC endpoints and chains
 

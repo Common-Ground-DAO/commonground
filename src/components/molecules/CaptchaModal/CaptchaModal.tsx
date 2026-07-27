@@ -9,27 +9,39 @@ import config from 'common/config';
 import { useDarkModeContext } from 'context/DarkModeProvider';
 import userApi from 'data/api/user';
 import AltchaWidget from '../AltchaWidget/AltchaWidget';
+import { CAPTCHA_MISCONFIGURED_TEXT, useCaptchaProvider } from 'context/CaptchaContext';
 import { ReactComponent as CircleLogo } from "components/atoms/icons/misc/Logo/logo.svg";
 import './CaptchaModal.css';
 
 const CaptchaModal = () => {
   const mode = useDarkModeContext();
-  const provider = config.CAPTCHA_PROVIDER;
+  const { provider, resolved, misconfigured } = useCaptchaProvider();
 
   // Provider "off" is an explicit opt-out (dev/private instances): auto-clear
   // the trust-score gate instead of showing a widget the backend won't check.
   React.useEffect(() => {
-    if (provider === 'off') {
+    if (resolved && provider === 'off') {
       userApi.verifyCaptcha({ token: 'off' });
     }
-  }, [provider]);
+  }, [provider, resolved]);
 
-  if (provider === 'off') {
+  // wait for the backend's answer instead of mounting a widget it might not verify
+  if (!resolved || provider === 'off') {
     return null;
   }
 
-  if (provider === 'recaptcha' && !config.GOOGLE_RECAPTCHA_SITE_KEY) {
-    return null;
+  if (misconfigured) {
+    return (
+      <Modal hideHeader modalInnerClassName={`captcha-modal-outer`}>
+        <div className='captcha-modal-content mt-2'>
+          <CircleLogo style={{ width: '100px', height: '100px' }} />
+        </div>
+        <div className='my-6'>
+          <h1 className='text-center cg-heading-3'>Help keep Common Ground safe</h1>
+          <p className='text-center cg-text-error'>{CAPTCHA_MISCONFIGURED_TEXT}</p>
+        </div>
+      </Modal>
+    );
   }
 
   return (

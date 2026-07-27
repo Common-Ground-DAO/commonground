@@ -25,4 +25,14 @@ captchaRouter.get("/challenge", async (request, response) => {
   }
 });
 
+// The effective provider, so the frontend can render the widget the backend
+// actually verifies against instead of guessing from serve-time config (which
+// used to drift apart when only one of site key / secret key was configured).
+// Public and always available — it is needed before an account exists, and for
+// every provider (unlike /challenge, which is ALTCHA-only).
+captchaRouter.get("/config", (request, response) => {
+  response.setHeader("Cache-Control", "no-store");
+  response.json({ provider: CAPTCHA_PROVIDER });
+});
+
 export default captchaRouter;

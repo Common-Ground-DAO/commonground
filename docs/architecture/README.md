@@ -1,4 +1,4 @@
-> Status: verified against commit 523fceccd, 2026-07-25
+> Status: verified against commit bd09cbf3d, 2026-07-27
 
 # Common Ground - Architecture Documentation
 
@@ -260,7 +260,7 @@ The login endpoint at `POST /User/login` (in `srv/api/user.ts`) supports multipl
 
 ### Captcha Verification
 
-Human-facing endpoints (`/User/verifyCaptcha`, user creation) verify a captcha token server-side against the configured provider (`verifyCaptchaToken` in `srv/util/captcha.ts`). The provider is selected via `CAPTCHA_PROVIDER = altcha | recaptcha | off`: **ALTCHA** (self-hosted proof-of-work, challenges from `GET /Captcha/challenge`, HMAC-signed, single-use via Redis) is the fail-closed default; **reCAPTCHA v2** is auto-selected when a reCAPTCHA secret is configured (official instances); **off** must be set explicitly and logs a startup warning. The active provider and any site key are shipped to the frontend through the instance config (`captchaProvider` / `recaptchaSiteKey` in `window.__CG_INSTANCE__`, rendered by `src/components/molecules/CaptchaModal/`). See [docs/auth-identity/](../auth-identity/README.md) §6 for details.
+Human-facing endpoints (`/User/verifyCaptcha`, user creation) verify a captcha token server-side against the configured provider (`verifyCaptchaToken` in `srv/util/captcha.ts`). The provider is selected via `CAPTCHA_PROVIDER = altcha | recaptcha | off`: **ALTCHA** (self-hosted proof-of-work, challenges from `GET /Captcha/challenge`, HMAC-signed, single-use via Redis) is the fail-closed default; **reCAPTCHA v2** is auto-selected when a reCAPTCHA secret is configured (official instances); **off** must be set explicitly and logs a startup warning. The frontend resolves the provider at runtime from `GET /Captcha/config` (public, returns the provider the server verifies against) and only falls back to the instance config hint (`captchaProvider` / `recaptchaSiteKey` in `window.__CG_INSTANCE__`) when that request fails; widgets are rendered by `src/components/molecules/CaptchaModal/` and the signup form. See [docs/auth-identity/](../auth-identity/README.md) §6 for details.
 
 ### Bot Token Authentication
 

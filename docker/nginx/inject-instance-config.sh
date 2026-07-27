@@ -39,13 +39,11 @@ if [ -n "$CG_WALLETCONNECT_PROJECT_ID" ]; then
   cfg="$cfg,\"walletConnectProjectId\":\"$CG_WALLETCONNECT_PROJECT_ID\""
 fi
 cfg="$cfg,\"recaptchaSiteKey\":\"$CG_RECAPTCHA_SITE_KEY\""
-# Mirror the backend's provider resolution (see srv/util/captcha.ts): explicit
-# CG_CAPTCHA_PROVIDER wins, otherwise reCAPTCHA when a site key is present, else
-# the fail-closed ALTCHA default.
-captcha_provider="$CG_CAPTCHA_PROVIDER"
-if [ -z "$captcha_provider" ]; then
-  if [ -n "$CG_RECAPTCHA_SITE_KEY" ]; then captcha_provider="recaptcha"; else captcha_provider="altcha"; fi
-fi
+# The backend (GET /Captcha/config) is the runtime authority for the captcha
+# provider; this injected value is only the initial hint. Default to the
+# fail-closed ALTCHA so a site key alone never flips the hint away from what an
+# unconfigured backend resolves.
+captcha_provider="${CG_CAPTCHA_PROVIDER:-altcha}"
 cfg="$cfg,\"captchaProvider\":\"$captcha_provider\"}"
 snippet="<script>window.__CG_INSTANCE__ = $cfg;</script>"
 

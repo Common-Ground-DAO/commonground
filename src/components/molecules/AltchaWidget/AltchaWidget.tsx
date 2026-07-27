@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useEffect, useRef } from 'react';
-import 'altcha';
+import 'altcha-widget-element';
 import urlConfig from 'data/util/urls';
 
 // Thin React wrapper around the ALTCHA web component (<altcha-widget>). The

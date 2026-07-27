@@ -37,6 +37,14 @@ module.exports = {
         buffer: require.resolve("buffer"),
         assert: require.resolve("assert")
       };
+      // Load the ALTCHA web component bundle under a stub module name so its
+      // type declarations never enter the TS program: altcha's d.ts augments
+      // react/jsx-runtime with a JSX namespace, which with @types/react 18.0.x
+      // shadows the real one and breaks JSX children inference project-wide.
+      webpackConfig.resolve.alias = {
+        ...webpackConfig.resolve.alias,
+        "altcha-widget-element$": "altcha",
+      };
       webpackConfig.plugins.push(
         new webpack.ProvidePlugin({
           Buffer: ["buffer", "Buffer"]

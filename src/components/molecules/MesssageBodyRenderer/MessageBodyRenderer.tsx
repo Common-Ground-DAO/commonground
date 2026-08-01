@@ -18,8 +18,6 @@ import { useMultipleUserData } from 'context/UserDataProvider';
 import MessageTimestamp from '../Message/MessageTimestamp/MessageTimestamp';
 import MiniLoginBanner from '../LoginBanner/MiniLoginBanner';
 import LinkPreviewLoader from '../LinkPreview/LinkPreviewLoader';
-import urlConfig from '../../../data/util/urls';
-import Button from 'components/atoms/Button/Button';
 import YoutubeIframe from 'components/atoms/YoutubeIframe/YoutubeIframe';
 import MarkdownContent, { toMarkdownSource } from './MarkdownContent';
 

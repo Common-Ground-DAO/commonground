@@ -64,7 +64,11 @@ Maintainer decisions taken on 2026-08-01, all final:
    LUKSO *compatibility* (UP wallet login, LSP7/LSP8, chain config, `READ_LUKSO`
    plugin permission, `universalProfileEnabled`) is untouched — it was never an
    ecosystem question.
-2. `/e/*` gets a wildcard redirect to `/` so old partner links keep working.
+2. `/e/:ecosystem` URLs redirect to `/` so old partner links no longer 404. They land on the
+   unfiltered Home — the tag pre-filter is intentionally gone. Only one segment deep: nginx's
+   SPA fallback matches `e/[^/]+` (`docker/nginx/nginx*.conf`), so `/e/x/y` 404s at nginx and
+   never reaches React. Deliberately left as is — no evidence deeper legacy links exist, and
+   the `e/[^/]+` clause is what makes the redirect reachable at all.
 3. Partner icons are deleted; chain icons used by ordinary web3 tags stay (incl. lukso).
 4. No data cleanup: old partner tag strings on communities live on as ordinary tags.
 5. Fuel and Aeternity are eradicated completely — no code, no icons, no enum values,

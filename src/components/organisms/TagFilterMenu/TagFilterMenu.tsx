@@ -123,7 +123,7 @@ const TagFilterMenu: React.FC<Props> = (props) => {
     closeOn='toggle'
     placement='bottom-end'
     noDefaultScrollable={!isMobile}
-    tooltipClassName={`tag-filter-menu${showMoreGeneralTags || showMoreWeb3Tags ? ' desktop-expanded' : ''}${!isMobile ? ' desktop cg-content-stack' : ''}`}
+    tooltipClassName={`tag-filter-menu${!isMobile ? ' desktop cg-content-stack' : ''}`}
     offset={8}
     onClose={() => {
       setShowMoreGeneralTags(false);

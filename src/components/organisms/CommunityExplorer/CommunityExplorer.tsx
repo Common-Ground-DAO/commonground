@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useMemo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
 import community from '../../../data/api/community';
 import { dataStateReducer, Filters, initialState } from './CommunityExplorer.reducer';
@@ -40,7 +40,6 @@ const CommunityExplorer: React.FC<Props> = ({ mode, loadingAmount, search, useLa
   const isLimitedMode = mode === 'limited';
   const [dataState, dispatch] = React.useReducer(dataStateReducer, initialState);
   const [activeTab, setActiveTab] = React.useState<Filters>("popular");
-  const [searchParams, setSearchParams] = useSearchParams();
   const [activeTags, setActiveTags] = React.useState<PredefinedTag[]>([]);
 
   // const globalTagData = useLiveQuery(async () => {

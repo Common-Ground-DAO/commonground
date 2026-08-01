@@ -216,7 +216,7 @@ The `WalletType` enum (`srv/common/enums.ts`) includes:
 - `EVM` -- Standard EVM wallet (MetaMask, etc.)
 - `CONTRACT_EVM` -- Contract-based wallet (e.g., Lukso Universal Profile, Gnosis Safe)
 
-Every wallet type is EVM-based. The Aeternity and Fuel integrations were removed in two steps: Phase 3 of the slimming roadmap took the frontend providers, sign/connect components, SDK dependencies and backend verification branches (2026-08-01), Phase 3.5 finished the job the same day by deleting the `wallets` rows and dropping both values from `wallets_type_enum` (`1785632400000-dropFuelAeternityWallets`). Nothing in the codebase refers to them anymore. Only `evm` and `contract_evm` wallet types participate in on-chain balance checks for token-gated roles.
+Every wallet type is EVM-based. The Aeternity and Fuel integrations were removed in two steps: Phase 3 of the slimming roadmap took the frontend providers, sign/connect components, SDK dependencies and backend verification branches (2026-08-01), Phase 3.5 finished the job the same day by deleting the `wallets` rows and dropping both values from `wallets_type_enum` (`1785632400000-dropFuelAeternityWallets`). No runtime code refers to them anymore (only the migration history does). Only `evm` and `contract_evm` wallet types participate in on-chain balance checks for token-gated roles.
 
 ---
 

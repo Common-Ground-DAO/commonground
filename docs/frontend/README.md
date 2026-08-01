@@ -654,7 +654,8 @@ Key route structure (paths are derived from `getUrl(...)` / `config.URL_*`):
 ```
 /token-sale                   -> TokenSaleRedirect
 /token/                       -> TokenSale
-/e/*                          -> redirect to / (legacy ecosystem URLs)
+/e/*                          -> redirect to / (legacy ecosystem URLs; nginx's SPA fallback
+                                 only matches one segment, so /e/x/y 404s before React)
 /feed/                        -> ContentBrowser
 /c/:communityUrl/*            -> CommunityRouter
 /u/:idOrUrl/*                 -> ProfileProvider > ProfileRouter

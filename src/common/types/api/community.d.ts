@@ -646,15 +646,6 @@ declare global {
                 type Response = Models.Premium.TransactionFromApi[];
             }
 
-            namespace getCommunityCount {
-                type Request = {
-                    channel: string;
-                }
-                type Response = {
-                    count: number;
-                };
-            }
-
             namespace updateNotificationState {
                 type Request = {
                     data: {

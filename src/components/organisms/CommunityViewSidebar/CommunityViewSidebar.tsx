@@ -55,7 +55,7 @@ const memberApplicationsPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/
 const membersPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/members/?$`);
 const rolesPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/roles/?$`);
 const eventsPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/events/?$`);
-const pluginPathRegex =new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/plugin/([^/]+)/?$`);
+const pluginPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/plugin/([^/]+)/?$`);
 const tokenPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/token/?$`);
 
 export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {

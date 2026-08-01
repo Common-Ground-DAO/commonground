@@ -166,9 +166,11 @@ UI would 500 on every assistant route:
   `srv/validators/common.ts:71-73`. Drop `openai` from `srv/package.json`. nginx needs NO
   change: the `Chat` router whitelist entry stays for DMs, and there is no assistant CSP
   entry. The realtime emitter (`srv/repositories/event.ts`) is core and stays — only the
-  `cliAssistantEvent` payload type goes. **Confirmed:** `srv/api/chats.ts` shrinks 346 → 88
-  LOC / 12 → 3 routes, and no bot file was touched (`srv/api/bots.ts`, `srv/api/botV1.ts`
-  and the bot repositories are byte-identical).
+  `cliAssistantEvent` payload type goes. **Confirmed:** `srv/api/chats.ts` shrinks 313 → 88
+  LOC / 10 → 3 routes in this range (346/12 at the `523fceccd` inventory baseline — the
+  duplicate `/getChats` registration and `/cancelAssistantQueueItem` were already gone by
+  Phase 1), and no bot file was touched (`srv/api/bots.ts`, `srv/api/botV1.ts` and the bot
+  repositories are byte-identical).
 - [x] Schema: one drop migration for `assistant_dialogs` (FKs to `users`/`communities`
   ON DELETE CASCADE + 2 indexes; created `1738856821267-addAssistantDialog`, `model`
   column added `1742985062426`) and `assistant_availability`
@@ -206,7 +208,10 @@ UI would 500 on every assistant route:
    with it.
 4. **`docker/llama/data/` survives on disk.** Only the tracked files (`Dockerfile`,
    `dist/*.py`, `data/.gitignore`) were `git rm`'d; the directory still holds ~11 GB of
-   locally downloaded GGUF model blobs, which are the maintainer's to delete.
+   locally downloaded GGUF model blobs, which are the maintainer's to delete. Deleting
+   `data/.gitignore` (`*` / `!.gitignore`) also removed the only rule that kept those blobs
+   out of `git status`, so `docker/.gitignore` gains a `llama/` entry — otherwise one
+   `git add -A` would stage 11 GB.
 5. **Docs mentioned the assistant in more places than the checklist listed** — the
    `chatApi` connector row and the `BroadcastChannel` list in `docs/frontend`, the deletedAt
    and non-UUID-PK lists in `docs/database`, and the ToC entries in `docs/backend` /

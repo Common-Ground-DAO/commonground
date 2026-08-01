@@ -198,7 +198,7 @@ Two-step, using a **prepared credential** held in the session:
 1. `POST /User/prepareWalletAction` (`srv/api/user.ts:904-922`): the client submits a signed
    challenge. The endpoint requires `data.data.secret === session.signSecret`, then calls
    `walletHelper.prepareWalletAction()`.
-2. `prepareWalletAction` (`srv/repositories/wallets.ts:268+`) verifies the signature: the SIWE
+2. `prepareWalletAction` (`srv/repositories/wallets.ts:247+`) verifies the signature: the SIWE
    message is parsed and `ethers.verifyMessage` recovers the signer; the SIWE `Nonce` must equal
    the challenge and the recovered address must equal the claimed address
    (`parseAndVerifySiweWalletData`). Only `evm` and `cg_evm` are accepted — the Fuel and Aeternity

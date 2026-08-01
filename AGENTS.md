@@ -67,7 +67,7 @@ they are deleted via dedicated cleanup PRs tracked in
 | Selfhost deployment profile | **core** | see docs/deployment |
 | Token sale: buy/claim UI, charts, investor wizard (`FullscreenWizard`), Sumsub KYC, NDA/US gates, `trackTokenSales`/`tokenSaleNotifications` jobs | **removed 2026-08-01** | Phase 2 of the slimming roadmap. The `tokensales`/`tokensale_*` tables + entities stay for auditability (no reader, no writer); the five `wizard*` tables were dropped incl. data (`1785628800000-dropWizardDomain`). Do not reintroduce. |
 | Aeternity wallet login, Fuel wallet login (providers, sign/connect components, `@aeternity/aepp-sdk`/`fuels` deps, backend verification) | **removed 2026-08-01** | Phase 3 of the slimming roadmap. The `wallets` rows and the `fuel`/`aeternity` `WalletType` enum values **stay** (no data migration, no enum change) — such wallets are still listed and deletable, they just cannot be signed/linked/logged in with. Do not reintroduce. |
-| Hardcoded ecosystem partner list + dead ecosystem theming | **removal-pending** | reduce to active partnerships; EVM + Lukso stay |
+| Hardcoded ecosystem partner list | **removal-pending** | reduce to active partnerships; EVM + Lukso stay (the dead ecosystem theming was already removed in Phase 1) |
 
 ## Documentation
 

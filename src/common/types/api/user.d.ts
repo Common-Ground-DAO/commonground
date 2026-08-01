@@ -177,7 +177,7 @@ declare global {
                 type Request = {
                     type: Extract<Models.Wallet.Type, "evm" | "cg_evm">;
                     signature: string;
-                    data: SignableWalletData;
+                    data: Extract<SignableWalletData, { type: "evm" }>;
                 };
                 type Response = {
                     walletValid: boolean;

@@ -1,4 +1,4 @@
-> Status: verified against commit 8133e43fe, 2026-08-01
+> Status: verified against commit 5ec4952e6, 2026-08-01
 
 # Authentication & Identity
 
@@ -201,10 +201,10 @@ Two-step, using a **prepared credential** held in the session:
 2. `prepareWalletAction` (`srv/repositories/wallets.ts:247+`) verifies the signature: the SIWE
    message is parsed and `ethers.verifyMessage` recovers the signer; the SIWE `Nonce` must equal
    the challenge and the recovered address must equal the claimed address
-   (`parseAndVerifySiweWalletData`). Only `evm` and `cg_evm` are accepted — the Fuel and Aeternity
-   verification branches were **removed 2026-08-01** (Phase 3 of the slimming roadmap), so those
-   wallet types can no longer be linked or used to log in. Existing `wallets` rows of those types
-   are kept and still listed by `/User/getWallets`.
+   (`parseAndVerifySiweWalletData`). Only `evm` and `cg_evm` are accepted. Fuel and Aeternity are
+   gone entirely (Phase 3/3.5 of the slimming roadmap, 2026-08-01): verification branches, enum
+   values, address types and the stored rows themselves
+   (`1785632400000-dropFuelAeternityWallets`).
    `prepareWalletAction` then determines `readyForLogin` (wallet exists, `loginEnabled`, not
    deleted) vs `readyForCreation`, and stores the result as `session.preparedCredential`.
 3. `POST /User/login` with `type: "wallet"` reads `preparedCredential`, requires

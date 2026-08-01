@@ -129,10 +129,10 @@ live routes in `CommunityView.tsx`, so `CommunityContentList` itself stays.
 
 ### Ecosystem feature — `EcosystemProvider` / `EcosystemPicker` / `EcosystemMenu`
 
-- **Files**: `src/context/EcosystemProvider.tsx` (125), `EcosystemMenu` (331+27), `EcosystemHomeHeader` (194+78+`.data.ts` 262), `EcosystemPicker` (162+62), `EcosystemPickerField` (65), `EcosystemChip` (36+24). Total ≈ 1366 LoC.
+- **Files**: `src/context/EcosystemProvider.tsx` (125), `EcosystemMenu` (331+27, now `TagFilterMenu`), `EcosystemHomeHeader` (194+78+`.data.ts` 262), `EcosystemPicker` (162+62), `EcosystemPickerField` (65), `EcosystemChip` (36+24). Total ≈ 1366 LoC.
 - **Routing**: `/e/:ecosystem` (via `EcosystemParamSetter` → `Home`). Ecosystems enumerated in-code: `fuel, lukso, si3, cannabis-social-clubs, powershift` (prod & staging identical). `EcosystemMenu`/picker are consumed by `Home`, `ExpandedMenu`, `CommunityExplorer`, `TagHeader`, `LoginBanner`, tag inputs — so ecosystem **filtering is live**.
 - **Notable**: The per-ecosystem **theming** in `EcosystemProvider` (all the CSS-variable overrides for fuel/lukso/powershift) was **entirely commented out** (lines 36–100) and was **removed 2026-08-01**; the provider only ever *removes* the eco variables. So the provider is effectively a no-op wrapper around ecosystem-scoped routing/filtering.
-- **Legacy assessment**: Untouched since baseline. Filtering paths are wired and reachable (**core-ish**), but the theming engine is dead code and the ecosystem list is hardcoded partner branding. Candidate for **slim-in-place** (drop commented theming, re-evaluate the hardcoded partner ecosystems) rather than full removal.
+- **Legacy assessment**: **REMOVED 2026-08-01** (Phase 3.5). The maintainer's answer to the open question below was "none": the whole feature goes and **tags replace it**. Provider, param setter, picker, chip, picker field and home header are deleted; `/e/*` redirects to `/`; `ecosystemTagList` and the partner icons (si3, powershift, cannabis-social-clubs, fuel, aeternity) are gone. `EcosystemMenu` survives — it was the tag-filter dropdown all along — renamed to `TagFilterMenu`. Existing partner tag strings on communities are left in place as ordinary tags.
 
 ### Sumsub KYC — `SumsubContext` / `SumsubKyc`
 
@@ -144,7 +144,7 @@ live routes in `CommunityView.tsx`, so `CommunityContentList` itself stays.
 
 - **Aeternity**: `src/context/AeternityWalletProvider.tsx` (203) was mounted app-wide in `App.tsx`. Consumers: `ConnectAeternityWalletButton` (113), `AeternitySign` (106), `SignWalletPageAeternity` (98), plus onboarding `CreateAccount`/`Login`/`Splash` and `AvailableProvidersPage`. **Correction (2026-08-01): it was not actually reachable** — `aeternity` was missing from both `loginButtons`/`createButtons`, the `AvailableProvidersPage` entry was commented out, and the two `ConnectAeternityWalletButton` call sites were commented out inside unrouted forms.
 - **Fuel**: `src/context/FuelWalletProvider.tsx` (138) is **not** mounted as a top-level provider in `App.tsx` (unlike Aeternity). It is imported/consumed by `SplashLoginActions`, `AvailableProvidersPage`, `ConnectFuelWalletButton` (128), `FuelSign` (104), `SignWalletPageFuel` (98) — i.e. the provider is used locally where Fuel login is offered. **Answered 2026-08-01: yes, Fuel login was live.** `useFuel` is a plain hook, not a context provider, so it worked from `SplashLoginActions` (the `fuel` entry was in both button lists) and from the settings `AvailableProvidersPage` without ever being in the `App.tsx` tree.
-- **Legacy assessment**: **REMOVED 2026-08-01** (Phase 3). Both providers, both sign/status components, both connect buttons, both `sign-wallet-*` settings pages, `Fuelet.svg` and the `@aeternity/aepp-sdk` / `fuels` / `@fuel-wallet/sdk` / `@fuels/connectors` dependencies are gone, as are the backend verification branches. The `wallets` rows and the `fuel`/`aeternity` enum values stay (no data migration) — `AccountsPage` still lists such wallets with their icon. The `fuel`/`aeternity` **ecosystem** entries are a separate concern and were not touched.
+- **Legacy assessment**: **REMOVED 2026-08-01** (Phases 3 + 3.5). Phase 3 took both providers, both sign/status components, both connect buttons, both `sign-wallet-*` settings pages, `Fuelet.svg` and the `@aeternity/aepp-sdk` / `fuels` / `@fuel-wallet/sdk` / `@fuels/connectors` dependencies, plus the backend verification branches. Phase 3.5 finished it: `WalletType` values, address types, `SignableWalletData` variants, `AccountsPage` icons, `Fuel.svg`/`Aeternity.svg`, the `--*-fuel*`/`--*-aeternity` CSS variables **and the stored `wallets` rows** (`1785632400000-dropFuelAeternityWallets`). Repo-wide, the words no longer appear in any tracked file.
 
 ### Browsers: Group / Blog / Content
 
@@ -180,7 +180,7 @@ live routes in `CommunityView.tsx`, so `CommunityContentList` itself stays.
 | Aeternity wallet | ~520 LoC | Partner-chain login; app-wide provider but no reachable entry point | **removed 2026-08-01** |
 | Fuel wallet | ~600 LoC | Partner-chain login; provider not in global tree, but reachable (hook, not context) | **removed 2026-08-01** |
 | Ecosystem theming (in `EcosystemProvider`) | ~65 LoC commented | Entire theming block commented out | **removed 2026-08-01** |
-| Ecosystem filtering/menu/picker | ~1300 LoC | Wired & reachable across Home/menu/explorer | **core** (slim-in-place) |
+| Ecosystem filtering/menu/picker | ~1300 LoC | Wired & reachable across Home/menu/explorer | **removed 2026-08-01** (tags replace it; `EcosystemMenu` kept as `TagFilterMenu`) |
 | `AppsView` | 13 | Imported, never routed | **removed 2026-08-01** |
 | `GroupBrowser` | 27 | Imported, never routed | **removed 2026-08-01** |
 | `SwapAccountView` | 36 | Import commented, never routed | **removed 2026-08-01** |
@@ -196,6 +196,6 @@ live routes in `CommunityView.tsx`, so `CommunityContentList` itself stays.
 1. ~~Is the public **token sale** returning?~~ — answered 2026-07-25 (no) and executed 2026-08-01: buy/claim subtree, wizard funnel, Sumsub KYC and the American/NDA gates are removed.
 2. ~~Is the standalone `/id-verification/` route still surfaced anywhere in the UI?~~ — it was a `DEPLOYMENT === 'dev'`-only menu entry; removed 2026-08-01 with the rest of KYC.
 3. ~~Is the **Fuel** login option actually shown to users?~~ **Answered 2026-08-01: yes.** `useFuel` is a hook, so the missing `App.tsx` mount meant nothing; the option was in `loginButtons`/`createButtons` and in the settings provider list. (Aeternity, despite its app-wide provider, had no reachable entry point at all.) Both are now removed.
-4. Are the hardcoded partner **ecosystems** (`fuel, lukso, si3, cannabis-social-clubs, powershift`) all still active partnerships? The list is compiled into `EcosystemProvider`.
+4. ~~Are the hardcoded partner **ecosystems** (`fuel, lukso, si3, cannabis-social-clubs, powershift`) all still active partnerships?~~ **Answered 2026-08-01: none of them.** The maintainer removed the ecosystem concept entirely; tags are the slimmer replacement. LUKSO *compatibility* is unaffected — it was never an ecosystem question.
 5. ~~Confirm the four **dead views** (`AppsView`, `GroupBrowser`, `SwapAccountView`, `BlogBrowser`) and two **dead widgets** (`WhatsNewModal`, `EarlyAdopterBanner`) can be removed~~ — confirmed by the maintainer and removed 2026-08-01.
 6. Is **Supporter/premium** purchasing live? It is wired into the current Spark UI, so it is assumed core, but the billing flow was not runtime-verified here.

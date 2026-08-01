@@ -1,6 +1,6 @@
 # Blockchain Integration
 
-> Status: verified against commit 8133e43fe, 2026-08-01
+> Status: verified against commit 5ec4952e6, 2026-08-01
 
 This document covers all blockchain-related subsystems in Common Ground: smart contracts, on-chain data reading, token-gated roles, wallet management, token staking, and the API surface connecting them. The token sale itself was removed in the Phase-2 slimming (2026-08-01) — only its contract source and its database tables remain, for auditability.
 
@@ -208,17 +208,15 @@ The system supports five token types for role-gating, defined as the `Models.Con
 | LSP7 | `"LSP7"` | name, symbol, decimals, tokenType | Lukso fungible digital assets |
 | LSP8 | `"LSP8"` | name, symbol, tokenType | Lukso identifiable digital assets (NFT-like) |
 
-### Non-EVM Wallet Types
+### Wallet Types
 
 The `WalletType` enum (`srv/common/enums.ts`) includes:
 
 - `CG_EVM` -- Common Ground custodial EVM wallet
 - `EVM` -- Standard EVM wallet (MetaMask, etc.)
-- `FUEL` -- Fuel Network wallet (**retired**, see below)
-- `AETERNITY` -- Aeternity blockchain wallet (**retired**, see below)
 - `CONTRACT_EVM` -- Contract-based wallet (e.g., Lukso Universal Profile, Gnosis Safe)
 
-The Aeternity and Fuel wallet integrations were **removed 2026-08-01** (Phase 3 of the slimming roadmap): their frontend providers, sign/connect components, SDK dependencies and backend signature-verification branches are gone, so no new wallet of those types can be linked or used to log in. The two enum values and all existing `wallets` rows are kept — such wallets are still listed in the account settings (`AccountsPage` still renders their icon) and can still be updated or deleted through `/User/updateWallet` / `/User/deleteWallet`; they simply offer no sign/verify action anymore. Only `evm` and `contract_evm` wallet types participate in on-chain balance checks for token-gated roles.
+Every wallet type is EVM-based. The Aeternity and Fuel integrations were removed in two steps: Phase 3 of the slimming roadmap took the frontend providers, sign/connect components, SDK dependencies and backend verification branches (2026-08-01), Phase 3.5 finished the job the same day by deleting the `wallets` rows and dropping both values from `wallets_type_enum` (`1785632400000-dropFuelAeternityWallets`). Nothing in the codebase refers to them anymore. Only `evm` and `contract_evm` wallet types participate in on-chain balance checks for token-gated roles.
 
 ---
 
@@ -410,7 +408,7 @@ All entities use TypeORM. Database is PostgreSQL.
 |---|---|---|
 | `id` | UUID (PK) | Auto-generated |
 | `userId` | UUID (FK) | References `users.id`, nullable, SET NULL on delete |
-| `type` | enum | `WalletType`: `cg_evm`, `evm`, `fuel`, `aeternity`, `contract_evm` (the latter two are retired legacy values, see [Non-EVM Wallet Types](#non-evm-wallet-types)) |
+| `type` | enum | `WalletType`: `cg_evm`, `evm`, `contract_evm` (see [Wallet Types](#wallet-types)) |
 | `walletIdentifier` | text | The wallet address or identifier |
 | `loginEnabled` | boolean | Whether this wallet can be used for login |
 | `visibility` | enum | `WalletVisibility`: `private` or `public` |

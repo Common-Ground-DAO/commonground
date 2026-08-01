@@ -19,7 +19,7 @@ import './../Menu.css';
 import './ExpandedMenu.css';
 import { getUrl } from 'common/util';
 import { ReactComponent as CircleLogo } from "components/atoms/icons/misc/Logo/logo.svg";
-import { Bell, ChatsTeardrop, Compass, Plus, CoinVertical, HouseSimple, Brain, Storefront } from '@phosphor-icons/react';
+import { Bell, ChatsTeardrop, Compass, Plus, CoinVertical, HouseSimple, Storefront } from '@phosphor-icons/react';
 import { useCreateCommunityModalContext } from 'context/CreateCommunityModalProvider';
 
 type Props = {
@@ -87,12 +87,6 @@ const ExpandedMenu: React.FC<Props> = ({ expanded }) => {
                 isActive={isActiveButton(location.pathname, getUrl({ type: 'chats' }))}
                 onClick={() => navigate(getUrl({ type: 'chats' }))}
                 notificationCount={unreadChats}
-              />}
-              {!!ownUser && config.PERSONAL_ASSISTANT_ENABLED && <ExpandedMenuButton
-                text={expanded ? 'Assistant' : undefined}
-                icon={<Brain weight='duotone' className='h-6 w-6' />}
-                isActive={isActiveButton(location.pathname, getUrl({ type: 'assistant' }))}
-                onClick={() => navigate(getUrl({ type: 'assistant' }))}
               />}
               {!!ownUser && <ExpandedMenuButton
                 text={expanded ? 'Notifications' : undefined}

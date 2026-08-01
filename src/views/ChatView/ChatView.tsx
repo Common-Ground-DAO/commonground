@@ -13,7 +13,6 @@ import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import short from "short-uuid";
 import { useChats, useOwnUser } from 'context/OwnDataProvider';
 import MessageViewInner from 'views/MessageViewInner/MessageViewInner';
-import AssistantView from 'views/AssistantView/AssistantView';
 
 const t = short();
 

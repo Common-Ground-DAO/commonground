@@ -33,7 +33,6 @@ import SafeAndUpgradesView from "views/SafeAndUpgradesView/SafeAndUpgradesView";
 import TokenSettingsView from "views/TokenSettingsView/TokenSettingsView";
 import OnboardingManagementView from "views/OnboardingManagementView/OnboardingManagementView";
 import MemberApplicationView from "views/MemberApplicationView/MemberApplicationView";
-import AssistantView from "views/AssistantView/AssistantView";
 import { CommunityPluginProvider } from "context/CommunityPluginProvider";
 import PluginView from "views/PluginView/PluginView";
 import CommunityTokenView from "views/CommunityTokenView/CommunityToken";
@@ -105,7 +104,6 @@ function CommunityRouter(props: Props) {
           <Route path='members/' element={<MemberManagementView />} />
           <Route path='member-applications/' element={<MemberApplicationView />} />
           <Route path='events/' element={<EventsView />} />
-          <Route path='assistant/' element={<AssistantView community={safeCtx.community} />} />
           <Route path='token/' element={<CommunityTokenView />} />
           <Route path={`${config.URL_CALL}/:callId/`} element={<CallPageView />} />
           <Route path={`${config.URL_ARTICLE}/:articleUri/`} element={<ArticleView />} />

@@ -24,7 +24,7 @@ import { StartCallModal } from "../StartCallModal/StartCallModal";
 import config from "common/config";
 import { CallList } from "components/molecules/CallList/CallList";
 import JoinCommunityButton from "components/atoms/JoinCommunityButton/JoinCommunityButton";
-import { Calendar, HouseSimple, IdentificationBadge, Users, Brain, Plug, CoinVertical, Gear, ArrowsOut, X, Storefront, Graph, ShareNetwork, Warning, Spinner } from "@phosphor-icons/react";
+import { Calendar, HouseSimple, IdentificationBadge, Users, Plug, CoinVertical, Gear, ArrowsOut, X, Storefront, Graph, ShareNetwork, Warning, Spinner } from "@phosphor-icons/react";
 import NotificationDot from "components/atoms/NotificationDot/NotificationDot";
 import JoinNewsletterBanner from "components/molecules/JoinNewsletterBanner/JoinNewsletterBanner";
 import ScreenAwarePopover from "components/atoms/ScreenAwarePopover/ScreenAwarePopover";
@@ -55,8 +55,7 @@ const memberApplicationsPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/
 const membersPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/members/?$`);
 const rolesPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/roles/?$`);
 const eventsPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/events/?$`);
-const assistantPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/assistant/?$`);
-const pluginPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/plugin/([^/]+)/?$`);
+const pluginPathRegex =new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/plugin/([^/]+)/?$`);
 const tokenPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/token/?$`);
 
 export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
@@ -247,13 +246,6 @@ export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
     }
   }, [community?.url]);
 
-  const navigateToAssistant = useCallback(() => {
-    if (!!community?.url) {
-      closeSideBar?.();
-      navigate(getUrl({ type: 'community-assistant', community }));
-    }
-  }, [community?.url]);
-
   const navigateToPlugin = useCallback((plugin: Models.Plugin.Plugin) => {
     if (!!community?.url) {
       closeSideBar?.();
@@ -275,7 +267,6 @@ export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
     isMembersActive,
     isRolesActive,
     isEventsActive,
-    isAssistantActive,
     isPluginsActive,
     activePluginId,
     isTokenActive,
@@ -290,7 +281,6 @@ export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
       isMembersActive: !!pathname.match(membersPathRegex),
       isRolesActive: !!pathname.match(rolesPathRegex),
       isEventsActive: !!pathname.match(eventsPathRegex),
-      isAssistantActive: !!pathname.match(assistantPathRegex),
       isPluginsActive,
       activePluginId,
       isTokenActive: !!pathname.match(tokenPathRegex),
@@ -323,14 +313,6 @@ export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
               rightElement={!!community.membersPendingApproval ? <div className="absolute top-0 bottom-0 right-2 flex items-center"></div> : undefined}
             />
             <SidebarButton icon={<IdentificationBadge weight="duotone" className="w-5 h-5" />} onClick={navigateToRoles} text="Roles" className={isRolesActive ? ' active' : ''} />
-            {(config.COMMUNITY_ASSISTANT_ENABLED) && (
-              <SidebarButton
-                icon={<Brain weight="duotone" className="w-5 h-5" />}
-                onClick={navigateToAssistant}
-                text="Assistant"
-                className={isAssistantActive ? ' active' : ''}
-              />
-            )}
             {(config.TOKEN_CREATION_ENABLED || config.DEPLOYMENT !== 'prod') && (
               <SidebarButton
                 icon={<div className="flex">
@@ -358,7 +340,7 @@ export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
       );
     }
     return null;
-  }, [isJoinedCommunity, community?.id, community?.membersPendingApproval, community?.plugins, isMemberApplicationsActive, isMembersActive, isRolesActive, isEventsActive, isLobbyActive, isAssistantActive, isPluginsActive, activePluginId, navigateToEvents, navigateToFeed, navigateToMemberApplications, navigateToMembers, navigateToRoles, navigateToAssistant, navigateToPlugin]);
+  }, [isJoinedCommunity, community?.id, community?.membersPendingApproval, community?.plugins, isMemberApplicationsActive, isMembersActive, isRolesActive, isEventsActive, isLobbyActive, isPluginsActive, activePluginId, navigateToEvents, navigateToFeed, navigateToMemberApplications, navigateToMembers, navigateToRoles, navigateToPlugin]);
 
   const innerUnjoinedContent = useMemo(() => {
     if (!isJoinedCommunity && !!community) {

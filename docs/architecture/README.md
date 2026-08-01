@@ -393,7 +393,7 @@ The job runner (`srv/jobs.ts`) spawns Node.js `worker_threads` in three modes:
    - `newsletterDelivery` — weekly (Saturday noon)
    - `emailNotifications` — every minute
 
-3. **One-shot workers** (run once ~30 s after startup, then exit, guarded against re-running by the `oneshot_jobs` table):
+3. **One-shot workers** (run once ~30 s after startup, then exit; each job checks the `oneshot_jobs` table itself to guard against re-running):
    - none currently — the mechanism (`createOneshotWorker` + `oneshot_jobs`) is kept for future backfills
 
 **Healthcheck.** All backend services currently invoke `fakeHealthcheck()`, which writes `'0'` to `./healthcheck.txt` every 10 seconds unconditionally. A real connectivity-checking `startHealthcheck` exists in `srv/healthcheck.ts` but is not the active code path.

@@ -67,7 +67,6 @@ async function createPermanentWorker(filename: string, restart = true, sleepBefo
 // Kept for future one-shot migrations/backfills (together with the `oneshot_jobs`
 // table that such jobs use to guard against re-running). Currently no one-shot job
 // is scheduled — the historical backfills were removed after they had run everywhere.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function createOneshotWorker(filename: string, sleepBefore?: number) {
   if (sleepBefore !== undefined)
     await new Promise<void>(resolve => setTimeout(resolve, sleepBefore));

@@ -18,7 +18,7 @@ target build system in mind while cleaning (no new craco-/CRA-specific construct
 | Token-sale complex (buy/claim UI, charts/investors/airdrops subtrees, investor wizard, Sumsub KYC, NDA/US gates, `trackTokenSales` + `tokenSaleNotifications` jobs) | **Remove.** DB tables (`tokensales`, `tokensale_*`, `wizard_*`) are KEPT for auditability. Staking is untouched (core). |
 | Aeternity + Fuel wallet logins | **Remove.** Existing `wallets` DB rows remain (type enum values stay). |
 | Hardcoded ecosystem partner list + commented-out ecosystem theming | **Reduce/remove.** Ecosystem *filtering* mechanics stay; hardcoded partner list to be reduced to active partnerships; dead theming code removed. EVM + Lukso remain. |
-| Verified-dead inventory (4 unrouted views, `WhatsNewModal`, `EarlyAdopterBanner`, feeds domain incl. table drops, 8 no-op one-shot jobs, commented-out routes/blocks) | **Remove, all of it.** Feeds tables dropped via migration (down-migration restores schema). |
+| Verified-dead inventory (4 unrouted views, `WhatsNewModal`, `EarlyAdopterBanner`, feeds domain incl. table drops, 8 no-op one-shot jobs, commented-out routes/blocks) | **Remove, all of it.** Feeds tables dropped via defensive migration (`DROP IF EXISTS`; no-op down — Phase 1 found the tables were never created by any migration, so there is no original schema to restore). |
 | Premium / Spark economy | **Keep — core.** Not part of this roadmap. |
 
 ## Execution phases

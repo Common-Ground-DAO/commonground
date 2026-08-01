@@ -1,6 +1,6 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit 8c3a529da, 2026-08-01
+> Status: verified against commit a3c3f7608, 2026-08-01
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -77,7 +77,7 @@ Composed of atoms; represent small, functional UI units.
 | Component | Purpose |
 |---|---|
 | `Message` | Single chat message display (text, attachments, reactions). Its `MessageTooltip` sub-component hosts the per-message actions incl. the **Report** action. |
-| `MesssageBodyRenderer` | Renders message/article/wizard body content into React elements. Note the triple-`s` directory name. See §6 for the markdown pipeline. Exports `MessageBodyRenderer`, `AllContentRenderer`, and (in `MarkdownContent.tsx`) `MarkdownContent` + `toMarkdownSource`. |
+| `MesssageBodyRenderer` | Renders message/article body content into React elements. Note the triple-`s` directory name. See §6 for the markdown pipeline. Exports `MessageBodyRenderer`, `AllContentRenderer`, and (in `MarkdownContent.tsx`) `MarkdownContent` + `toMarkdownSource`. |
 | `CommentMessage` | Article/post comment display |
 | `CommentList` | List of comments |
 | `Dialog` | Confirmation/action dialog |
@@ -122,7 +122,6 @@ Composed of atoms; represent small, functional UI units.
 | `WalletConnector` | Wallet connect UI (uses RainbowKit) |
 | `WalletRow` / `WalletManagerRow` | Wallet list items |
 | `TokenGatedTag` | Tag indicating token-gated access |
-| `SumsubKyc` | Sumsub KYC verification widget |
 | `PremiumBox` | Premium tier upsell box |
 | `ContractDetails` | Smart contract details display |
 | `BuyTokenHeader` | Token purchase header |
@@ -207,7 +206,6 @@ Complex, self-contained UI sections that combine molecules and atoms with signif
 | `UserSettings` / `UserSettingsList` / `UserSettingsModalContent` | User settings panels. `UserSettingsModalContent` mounts the personal **Bots** page (`BotsPage` + `BotEditor`). |
 | `UserSettingsModalContent/BotsPage` | Personal bot management: `BotsPage` lists the user's bots; `BotEditor` creates/edits a bot, issues/revokes tokens, and configures scopes. |
 | `UserOnboarding` | New user onboarding wizard overlay |
-| `FullscreenWizard` | Fullscreen wizard framework (used for community wizards) |
 | `SwapAccount` | Account switching UI |
 | `WalletsEditor` / `WalletsManagement` | Wallet management UI |
 | `ConnectedWalletsModal` | Modal showing connected wallets |
@@ -234,7 +232,6 @@ Complex, self-contained UI sections that combine molecules and atoms with signif
 | `PluginAppstore` | Plugin marketplace |
 | `IframePluginPortal` | Renders plugin iframes |
 | `TagHeader` | Tag/category header |
-| `TokenSaleProcess` | Token sale flow |
 
 ### Templates (`src/components/templates/`)
 
@@ -343,13 +340,12 @@ Views are full pages composed of templates/organisms. They live in `src/views/` 
 |---|---|---|
 | `TwitterCallbackView` | `/twitter-login` | Twitter OAuth callback handler (rendered outside main layout) |
 | `VerifyEmailView` | `/verify-email` | Email verification handler (rendered outside main layout) |
-| `IdVerificationView` | `/id-verification/` | Identity verification (Sumsub KYC) |
 
 ### Token and Commerce
 
 | View | Route | Purpose |
 |---|---|---|
-| `TokenSale` | `/token/` | Token / Spark page. Tabs: **Get** (buy), **Earn** (claim), **Stake**. Get/Earn are currently hidden behind a `SHOW_GET_EARN_TABS` constant (default `false`), so the page opens on the **Stake** tab. |
+| `TokenSale` | `/token/` | Token / Spark page. Since the Phase-2 slimming (2026-08-01) it is a thin header plus `StakeTab`; the buy/claim tabs, the charts and the investor/airdrop sections are gone. |
 | `TokenSale/StakeTab` | (embedded) | Staking UI: connect wallet, choose amount + lock duration, preview Spark reward, submit the on-chain stake. |
 
 ### System
@@ -374,7 +370,7 @@ Providers are composed across three levels:
 2. `src/App.tsx` `App()` wraps the app in `DarkModeProvider`.
 3. `src/App.tsx` `Inner()` composes the large provider stack. Nesting order matters -- outer providers are available to inner ones.
 
-The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `WagmiConfig`, `RainbowKitProvider`, `SumsubContextProvider`, `AuthKitProvider` (Farcaster), `WindowSizeProvider`, `SnackbarContextProvider`, `OwnDataProvider`, `PasskeyProvider`, `MobileLayoutProvider`, `NotificationProvider`, `CommunitySidebarProvider`, `ExternalModalProvider`, `UserOnboardingProvider`, `CreateCommunityModalProvider`, `LoginWithKeyphraseProvider`, `CopiedToClipboardDialogProvider`, `CallDevicesProvider`, `CallProvider`, `EcosystemProvider`, `CommunityProvider`, `CommunityListViewProvider`, `UserSettingsProvider`, `CommunityModerationProvider`, `ReportModalProvider`, `SidebarDataDisplayProvider`, `PluginDetailsModalProvider`, `AeternityWalletProvider`, `UniversalProfileProvider`, `TwitterLoginProvider`, `RoleClaimedProvider`, `EmailConfirmationProvider`, `CommunityJoinedProvider`, `CommunityOnboardingProvider`, `CaptchaContextProvider`, `UserOnchainProvider`, `PluginIframeProvider` (innermost), which renders `UserInfoManager`, `ConnectionStatusIndicator`, and `RoutedContent`.
+The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `WagmiConfig`, `RainbowKitProvider`, `AuthKitProvider` (Farcaster), `WindowSizeProvider`, `SnackbarContextProvider`, `OwnDataProvider`, `PasskeyProvider`, `MobileLayoutProvider`, `NotificationProvider`, `CommunitySidebarProvider`, `ExternalModalProvider`, `UserOnboardingProvider`, `CreateCommunityModalProvider`, `LoginWithKeyphraseProvider`, `CopiedToClipboardDialogProvider`, `CallDevicesProvider`, `CallProvider`, `EcosystemProvider`, `CommunityProvider`, `CommunityListViewProvider`, `UserSettingsProvider`, `CommunityModerationProvider`, `ReportModalProvider`, `SidebarDataDisplayProvider`, `PluginDetailsModalProvider`, `AeternityWalletProvider`, `UniversalProfileProvider`, `TwitterLoginProvider`, `RoleClaimedProvider`, `EmailConfirmationProvider`, `CommunityJoinedProvider`, `CommunityOnboardingProvider`, `CaptchaContextProvider`, `UserOnchainProvider`, `PluginIframeProvider` (innermost), which renders `UserInfoManager`, `ConnectionStatusIndicator`, and `RoutedContent`.
 
 #### Core Infrastructure Providers
 
@@ -410,7 +406,6 @@ The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `Wa
 | `CommunityModerationProvider` | Moderation actions and state (ban, mute, etc.). |
 | `CommunityOnboardingProvider` | Community join onboarding flow state. |
 | `CommunityJoinedProvider` | Post-join celebration/modal state. |
-| `CommunityWizardProvider` | Multi-step community wizard state (used for custom join flows). Exposes `useCommunityWizardContext`. |
 | `CommunityPluginProvider` | Plugin data for the currently viewed plugin within a community. |
 | `CommunitySidebarProvider` | Sidebar (community view) shared state. |
 
@@ -462,7 +457,6 @@ The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `Wa
 
 | Provider | Purpose |
 |---|---|
-| `SumsubContextProvider` | Sumsub KYC/identity verification state. |
 | `PluginIframeProvider` | Manages plugin iframe communication. Renders `IframePluginPortal` and `AddPermissionModal` globally. Uses `useIframePlugin` hook for message handling. |
 
 ### Custom Hooks (`src/hooks/`)
@@ -548,7 +542,7 @@ All API communication goes through connector classes that extend `BaseApiConnect
 
 | Connector | File | Domain | Key Methods |
 |---|---|---|---|
-| `communityApi` | `community.ts` | Community | `getCommunityList`, `getCommunityDetailView`, `joinCommunity`, `leaveCommunity`, `createCommunity`, `updateCommunity`, CRUD for areas/channels/roles, article CRUD, event CRUD, call management, newsletter management, wizard APIs, token management |
+| `communityApi` | `community.ts` | Community | `getCommunityList`, `getCommunityDetailView`, `joinCommunity`, `leaveCommunity`, `createCommunity`, `updateCommunity`, CRUD for areas/channels/roles, article CRUD, event CRUD, call management, newsletter management, token management |
 | `messageApi` | `messages.ts` | Messages | `createMessage`, `editMessage`, `deleteMessage`, `loadMessages`, `loadUpdates`, `setReaction`, `unsetReaction`, `setChannelLastRead`, `getUrlPreview` |
 | `userApi` | `user.ts` | User | Login, logout, user CRUD, wallet operations, profile management |
 | `chatApi` | `chat.ts` | Chat/DM | Chat creation, message sending, assistant interactions |
@@ -563,7 +557,6 @@ All API communication goes through connector classes that extend `BaseApiConnect
 | `reportApi` | `report.ts` | Reports | `createReport` (content reporting) |
 | `luksoApi` | `lukso.ts` | LUKSO | LUKSO blockchain operations |
 | `twitterApi` | `twitter.ts` | Twitter | Twitter OAuth operations |
-| `sumsubApi` | `sumsub.ts` | Sumsub | KYC verification |
 | `cgidApi` | `cgid.ts` | CG Identity | Session management (`ensureSession`) |
 
 ### App State Managers (`src/data/appstate/`)
@@ -667,8 +660,7 @@ The `RoutedContent` component defines all top-level routes inside a responsive l
 Key route structure (paths are derived from `getUrl(...)` / `config.URL_*`):
 ```
 /token-sale                   -> TokenSaleRedirect
-/token/                       -> TokenSale        (guarded: TOKEN_SALE_ENABLED or non-prod)
-/id-verification/             -> IdVerificationView
+/token/                       -> TokenSale
 /e/:ecosystem                 -> Home (with EcosystemParamSetter)
 /feed/                        -> ContentBrowser
 /c/:communityUrl/*            -> CommunityRouter
@@ -718,7 +710,6 @@ article/:articleUri/edit/     -> EditArticleView
 event/:eventIdOrUrl/          -> EventView
 plugin/:pluginId/             -> CommunityPluginProvider > PluginView
 channel/:channelIdOrUrl/*     -> CommunityChannelIdProvider > CommunityView
-wizard/:wizardId/*            -> CommunityWizardProvider > CommunityView
 * (default)                   -> CommunityView (lobby)
 ```
 
@@ -797,7 +788,7 @@ Blockchain wallet integration:
 - **RainbowKit**: Pre-built wallet connection modal UI.
 - Configured chains are derived from the active-chain set (`activeChains`), which can be narrowed by the runtime instance config for self-hosted deployments (§9).
 - RPC providers: on official instances an Alchemy provider with a public fallback; on self-hosted instances keyless public RPC endpoints (per chain id) with a public fallback.
-- Used for: wallet-based login (SIWE), token-gated roles, community tokens, token sale, and **staking** (`StakeTab` reads/writes the staking contract via wagmi hooks).
+- Used for: wallet-based login (SIWE), token-gated roles, community tokens, and **staking** (`StakeTab` reads/writes the staking contract via wagmi hooks).
 
 ### Farcaster AuthKit
 
@@ -809,7 +800,7 @@ Farcaster decentralized social protocol integration:
 
 ### recharts (Charts)
 
-**Used in:** `src/views/TokenSale/StakeTab/LockDurationSlider.tsx` (and other TokenSale charts)
+**Used in:** `src/views/TokenSale/StakeTab/LockDurationSlider.tsx`
 
 Used to draw the reward-curve preview in the staking UI (`AreaChart` of previewed Spark vs. lock duration, with a reference dot for the selected duration).
 
@@ -827,7 +818,7 @@ Used across the codebase for animations and transitions:
 |---|---|
 | `dexie` + `dexie-react-hooks` | IndexedDB wrapper + React reactive queries (`useLiveQuery`) |
 | `react-markdown` | Markdown rendering for chat messages and articles |
-| `recharts` | Charts (staking reward curve, token sale visuals) |
+| `recharts` | Charts (staking reward curve) |
 | `react-router-dom` + `history` | Client-side routing |
 | `dayjs` | Date formatting/manipulation (with plugins: isToday, isYesterday, isTomorrow, advancedFormat, utc, timezone) |
 | `lodash` | Utility functions (debounce, isEqual, etc.) |
@@ -895,7 +886,7 @@ Recognized fields include:
 | `cgidUrl` | Base URL of the CG ID app (including hash-router prefix) |
 | `recaptchaSiteKey` | reCAPTCHA v2 site key for this instance |
 | `activeChains` | Chains the instance supports (keys of the available-chain set) |
-| `features` | Capability flags (`email`, `twitterAuth`, `kyc`) derived from which server secrets are configured; an absent flag means the feature is available |
+| `features` | Capability flags (`email`, `twitterAuth`) derived from which server secrets are configured; an absent flag means the feature is available |
 | `giphyApiKey` | Giphy key for the GIF picker (empty disables it) |
 | `walletConnectProjectId` | WalletConnect Cloud project id for this instance |
 

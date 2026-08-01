@@ -1,6 +1,6 @@
 # Common Ground Deployment
 
-> Status: verified against commit 523fceccd, 2026-07-25.
+> Status: verified against commit a3c3f7608, 2026-08-01.
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -84,7 +84,7 @@ Defined and validated in `src/common/instance.ts` (`InstanceConfig`). Fields:
 | `recaptchaSiteKey` | reCAPTCHA v2 site key (empty disables the default key) |
 | `captchaProvider` | active captcha provider (`altcha` / `recaptcha` / `off`) |
 | `activeChains` | chain keys this instance offers (subset of `AVAILABLE_CHAINS`) |
-| `features` | capability flags `{ email, twitterAuth, kyc }` derived from configured secrets |
+| `features` | capability flags `{ email, twitterAuth }` derived from configured secrets |
 | `giphyApiKey` | Giphy key (empty hides the GIF picker) |
 | `walletConnectProjectId` | WalletConnect Cloud project id |
 
@@ -235,7 +235,7 @@ Every third-party integration is optional. Leaving its key(s) empty in
 capability flags from which secrets are configured and ships them to the
 frontend via the instance config, so unavailable features are hidden or replaced
 with an honest message rather than breaking. The `features` flags
-(`email`, `twitterAuth`, `kyc`) are computed in `srv/util/instanceConfig.ts`;
+(`email`, `twitterAuth`) are computed in `srv/util/instanceConfig.ts`;
 the nginx path computes the equivalent `CG_FEATURE_*` booleans from
 `docker-compose.selfhost.yml` (`${SENDGRID_API_KEY:+true}` etc.).
 
@@ -244,7 +244,6 @@ the nginx path computes the equivalent `CG_FEATURE_*` booleans from
 | `SENDGRID_API_KEY`, `EMAIL_FROM` | email verification, one-time-code login, event & newsletter mails | password/passkey/wallet login still work; OTP login and newsletter UI hidden |
 | `CAPTCHA_PROVIDER`, `ALTCHA_HMAC_KEY` / `CG_RECAPTCHA_SITE_KEY`, `GOOGLE_RECAPTCHA_SECRET_KEY` | signup captcha | fail-closed default: self-hosted ALTCHA (no external keys needed); reCAPTCHA auto-selected when its secret is set; `off` only explicit (see `docker/SELFHOST.md`) |
 | `TWITTER_API_KEY`, `TWITTER_API_SECRET` (+ OAuth2 vars) | Twitter/X login and account linking | X buttons hidden |
-| `SUMSUB_APP_TOKEN`, `SUMSUB_SECRET_KEY` | KYC verification | KYC steps show "not available on this instance" |
 | `MAILCHIMP_API_KEY`, `MAILCHIMP_LIST_ID` | CG-updates newsletter list sync | subscription preference stored locally only |
 | `CG_GIPHY_API_KEY` | GIF picker in the composer | GIF picker hidden |
 | `CG_WALLETCONNECT_PROJECT_ID` | WalletConnect wallets (QR / mobile deep-link) | injected wallets (MetaMask etc.) still work |

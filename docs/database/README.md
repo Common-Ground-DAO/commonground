@@ -1,6 +1,6 @@
 # Database Documentation
 
-> Status: verified against commit 8c3a529da, 2026-08-01
+> Status: verified against commit a3c3f7608, 2026-08-01
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -556,7 +556,9 @@ Tracks airdrop eligibility/status per user per community role.
 | `airdropEndDate` | `timestamptz(3)` | |
 
 #### `tokensales`
-Token sale definitions.
+Token sale definitions. The token-sale feature was removed in the Phase-2 slimming
+(2026-08-01); the four `tokensale*` tables and their entities are kept for
+auditability and no longer have any reader or writer in the codebase.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -879,16 +881,6 @@ Tracks one-time migration/maintenance jobs to prevent re-execution.
 | `id` | `varchar(256)` PK | Job identifier |
 | `createdAt` | `timestamptz(3)` | Auto |
 
-#### Wizard tables
-
-The wizard system supports configurable onboarding/referral flows for communities.
-
-- **`wizards`**: Main wizard definition. PK `id` (uuid). Belongs to a community. Has `data` (jsonb) for configuration. Soft-deletable.
-- **`wizard_role_permission`**: Links wizards to roles. Composite PK `(wizardId, roleId)`.
-- **`wizard_claimable_codes`**: Invitation/referral codes. Composite PK `(wizardId, code)`. Tracks `claimedBy` and `createdBy` users.
-- **`wizard_user_data`**: Per-user wizard progress. Composite PK `(userId, wizardId)`. Has `data` (jsonb).
-- **`wizard_investment_data`**: Tracks blockchain investments made through wizards. Composite PK `(target, txHash)`. Records chain, addresses, and amounts.
-
 ---
 
 ## Entity Relationships
@@ -1118,6 +1110,7 @@ export class AddPluginsTable1738852388814 implements MigrationInterface {
 - Migrations frequently create PostgreSQL functions and triggers (e.g., for circular referral prevention, access checks, update notifications). The `notify_call_change` trigger, for example, was patched in `1784030000000-fixCallChangeTriggerNullCallServer` to skip the per-call-server notification when a scheduled call has no assigned call server yet.
 - Enum type changes normally use `ALTER TYPE ... ADD VALUE` rather than drop/recreate, as noted in the enums file header comment. The exception is when the new value must be usable in the same transaction (e.g. inside an index predicate): `1784037142000-addBotAccountsFoundation` adds `bot` to `user_accounts_type_enum` / `users_displayaccount_enum` by renaming the old enum, creating a new one, re-casting the column, and dropping the old type — because `ADD VALUE` cannot be used before commit.
 - Granting `writer`/`reader` on every new table is mandatory: `staking_positions` was created without grants in `1784170800000` and every runtime query failed until the follow-up `1784180000000-grantStakingPositions` added them.
+- Removals get a drop migration too. `1785542400000-dropFeedsDomain` drops the never-created feeds tables with `IF EXISTS` and a no-op `down()`; `1785628800000-dropWizardDomain` drops the five `wizard*` tables **including their rows** (maintainer decision 2026-08-01, backups exist) and its `down()` recreates the schema — constraint names, indexes and grants included — from the four creating migrations, without data. `communities` is untouched by the wizard drop: the only FK runs `wizards."communityId" -> communities(id)`.
 
 ---
 
@@ -1157,7 +1150,6 @@ deletedAt!: Date | null;
 - `user_channel_settings` - Settings record
 - `user_plugin_state` - No deletedAt
 - `user_newsletter_status` - No deletedAt
-- `wizard_role_permission`, `wizard_claimable_codes`, `wizard_investment_data` - No deletedAt
 - `assistant_dialogs`, `assistant_availability` - No deletedAt
 - `users_premium`, `communities_premium` - Expire via `activeUntil`, not deleted
 - `bot_tokens` - Retired via `revokedAt`, not deletedAt
@@ -1214,7 +1206,6 @@ Exceptions where PK is not a UUID:
 - `role_gated_files.filename` - `varchar(255)`
 - `assistant_availability.modelName` - `varchar(255)`
 - `tokensale_investments.investmentId` - `bigint` (on-chain ID)
-- `wizard_investment_data.(target, txHash)` - varchar composite
 
 ### Enum Patterns
 

@@ -1,12 +1,12 @@
 # Common Ground Backend Documentation
 
-> Status: verified against commit 8c3a529da, 2026-08-01.
+> Status: verified against commit a3c3f7608, 2026-08-01.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
 Common Ground is a web3 community platform (similar to Discord but with blockchain integrations). The backend is a Node.js/TypeScript application using Express, PostgreSQL (via both raw `pg` queries and TypeORM entities), Redis, and Socket.IO for real-time events.
 
-Optional third-party services (email, Twitter auth, KYC, blockchain, staking) degrade gracefully: when their credentials are absent the affected feature simply switches off instead of crashing the server. Captcha is the exception — it stays fail-closed via a built-in self-hosted ALTCHA default (`srv/util/captcha.ts`) and only uses reCAPTCHA when that secret is configured. This makes single-server self-hosting viable. The set of enabled capabilities is advertised to the frontend via `srv/util/instanceConfig.ts` (see §7).
+Optional third-party services (email, Twitter auth, blockchain, staking) degrade gracefully: when their credentials are absent the affected feature simply switches off instead of crashing the server. Captcha is the exception — it stays fail-closed via a built-in self-hosted ALTCHA default (`srv/util/captcha.ts`) and only uses reCAPTCHA when that secret is configured. This makes single-server self-hosting viable. The set of enabled capabilities is advertised to the frontend via `srv/util/instanceConfig.ts` (see §7).
 
 ---
 
@@ -53,7 +53,7 @@ Shared between frontend and backend. Contains **no secrets**. Key settings:
 - `PREMIUM` -- Pricing tiers for community and user premium features (Free, Basic, Pro, Enterprise for communities; Supporter 1/2 for users)
 - URL path segments (`URL_COMMUNITY = 'c'`, `URL_USER = 'u'`, `URL_ARTICLE = 'article'`, etc.)
 - Various limits: `MESSAGE_MAX_CHARS = 2000`, `MAX_LINKED_ADDRESSES = 5`, `IMAGE_UPLOAD_SIZE_LIMIT = 8MB`, etc.
-- Feature flags: `TOKEN_SALE_ENABLED`, `COMMUNITY_ASSISTANT_ENABLED`, `PERSONAL_ASSISTANT_ENABLED`, etc.
+- Feature flags: `COMMUNITY_ASSISTANT_ENABLED`, `PERSONAL_ASSISTANT_ENABLED`, etc.
 - `COMMUNITY_CONTRACT` -- Address of the on-chain community NFT contract (differs per deployment)
 
 ---
@@ -90,7 +90,6 @@ How it works:
 - `handleError(response, error)` -- Centralized error handling
 - `registerPostRoute(...)` -- The route registration helper
 - `farcasterApi(type, data)` -- Wrapper for Farcaster Hub API calls (`onChainIdRegistryEventByAddress`, `userDataByFid`)
-- `getSumsubAccessToken(...)` -- Generate Sumsub KYC verification tokens
 - `isSignatureValid(...)` -- Verify Ethereum personal signatures using `@metamask/eth-sig-util`
 - `convertEventPermissionToCallPermission(...)` -- Map event permissions to call permissions
 - `htmlToImage(...)` -- Use Puppeteer to render HTML to image (for social previews)
@@ -110,14 +109,13 @@ An Express router that handles GET requests for social media previews (Open Grap
 - `GET /<URL_COMMUNITY>/:url/<URL_PLUGIN>/:id` -- Plugin HTML with OG tags
 - `GET /<URL_APPSTORE>/:id/image.jpeg` -- Appstore plugin preview image
 - `GET /<URL_APPSTORE>/:id` -- Appstore plugin HTML
-- `GET /<URL_COMMUNITY>/:url/<URL_WIZARD>/:id` -- Wizard HTML with OG tags
 - `GET /<URL_COMMUNITY>/:url/image.jpeg` -- Community preview image (rendered via Puppeteer)
 - `GET /<URL_COMMUNITY>/:url` -- Community HTML with OG tags
 - `GET /sitemap.xml` -- Dynamic sitemap
 - `GET /twitter-callback` -- Twitter OAuth callback (Passport)
 - `GET /twitter-login` -- Post-auth Twitter redirect
 - `GET /verify-email` -- Email verification redirect
-- `GET /token-sale`, `/token` -- Token sale page redirects
+- `GET /token-sale`, `/token` -- Token/Spark page (redirect + OG tags)
 - `GET /store` -- App store redirect
 - `GET /push-icon` -- Push notification icon
 - `GET /gated-videos/:filename` -- Role-gated video streaming
@@ -199,13 +197,6 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 **Airdrops:**
 - `/getAirdropClaimHistory`, `/getAirdropCommunities`
 
-**Wizard (onboarding flows):**
-- `/Wizard/getWizardData`, `/Wizard/consumeReferralCode`
-- `/Wizard/wizardVerifyCode`, `/Wizard/wizardVerifyWallet`
-- `/Wizard/wizardFinished`, `/Wizard/claimInvestmentTransaction`
-- `/Wizard/getMyReferralCodes`, `/Wizard/setWizardStepData`
-- `/Wizard/getInvestmentTargetBeneficiaryBalance`, `/Wizard/getInvestmentTargetPersonalContribution`
-
 ### `srv/api/user.ts` -- User Routes
 
 **Authentication:**
@@ -252,10 +243,6 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/getTransactionData` -- Get point transaction history
 - `/requestEmailVerification`, `/verifyEmail`
 - `/sendOneTimePasswordForLogin` -- OTP login
-- `/redeemWizardCode`
-- `/getTokenSaleAllowance`, `/getConnectionCountry`
-- `/setReferredBy`, `/getOwnTokenSaleData`, `/getTokenSaleEvents`
-- `/claimTokenSaleReward`, `/saveTokenSaleTargetAddress`
 
 ### `srv/api/messages.ts` -- Messaging Routes
 
@@ -321,7 +308,6 @@ A subset of message routes is also reachable over the Bot API v1 surface (see be
 ### `srv/api/accounts.ts` -- External Account Routes
 
 - `/Farcaster/verifyLogin` -- Verify a Farcaster SIWE login
-- `/TokenSale/registerForSale` -- Register for a token sale
 
 ### `srv/api/contracts.ts` -- Smart Contract Routes
 
@@ -389,11 +375,6 @@ Session-authenticated read-only views over on-chain staking positions. Neither r
 ### `srv/api/luksoUniversalProfile.ts` -- Lukso Routes
 
 - `/PrepareLuksoAction` -- Prepare a Lukso Universal Profile action
-
-### `srv/api/sumsub.ts` -- KYC Verification Routes
-
-- `/getAccessToken` -- Get a Sumsub access token for KYC
-- `POST /webhook` -- Sumsub webhook receiver (raw body)
 
 ### `srv/api/emails.ts`
 
@@ -691,7 +672,11 @@ All entities use TypeORM decorators and live in `srv/entities/`. The database is
 - `key` (varchar 255, PK) -- arbitrary key
 - `value` (json) -- cached on-chain data
 
-### Token Sale Domain
+### Token Sale Domain (retired, kept for auditability)
+
+The token-sale feature was removed in the Phase-2 slimming (2026-08-01). The four
+tables and their entities are deliberately **kept**: they hold the historical sale
+records. No code writes them any more, and no route reads them.
 
 **`TokenSale`** (`srv/entities/tokensale.ts`, table: `tokensales`)
 - Configuration for a token sale event (contract addresses, chains, dates, pricing).
@@ -727,29 +712,6 @@ All entities use TypeORM decorators and live in `srv/entities/`. The database is
 **`UserPluginState`** (`srv/entities/user-plugin-state.ts`, table: `user_plugin_state`)
 - Composite PK: `userId` + `pluginId`
 - `data` (jsonb, nullable) -- per-user plugin state
-
-### Wizard Domain
-
-**`Wizard`** (`srv/entities/wizard.ts`, table: `wizards`)
-- `id` (UUID, PK)
-- `communityId` -> Community
-- `data` (jsonb) -- wizard step configuration
-- Relations: `rolePermissions`, `userData`
-
-**`WizardRolePermission`** (table: `wizard_role_permission`)
-- Composite PK: `wizardId` + `roleId`
-
-**`WizardClaimableCode`** (table: `wizard_claimable_codes`)
-- Composite PK: `wizardId` + `code` (varchar 32)
-- `claimedByUserId`, `referredByUserId` -> User (nullable)
-
-**`WizardUserData`** (table: `wizard_user_data`)
-- Composite PK: `userId` + `wizardId`
-- `data` (jsonb) -- wizard progress data
-
-**`WizardInvestmentData`** (table: `wizard_investment_data`)
-- Composite PK: `code` + `txHash`
-- `userId`, `wizardId`, `claimableCode`, `chain`, `address`, `txHash`
 
 ### Misc Entities
 
@@ -895,8 +857,7 @@ The `db: Pool | PoolClient` parameter pattern enables functions to work both sta
 - Community CRUD, member management, area/channel/role management
 - Token-gated role claim checks (delegates to onchain service)
 - Permission checking, community premium features
-- Wizard data management, newsletter operations
-- Airdrop handling, social preview generation
+- Newsletter operations, airdrop handling, social preview generation
 
 **`srv/repositories/messages.ts`** -- `messageHelper`
 - Message CRUD with structured body (jsonb)
@@ -957,7 +918,7 @@ The `db: Pool | PoolClient` parameter pattern enables functions to work both sta
 
 **`srv/repositories/onchain.ts`** -- `onchainHelper`
 - Proxy to the separate `onchain` microservice (HTTP at `http://onchain:4000`)
-- Contract data retrieval, role claimability checks, token sale tracking
+- Contract data retrieval, role claimability checks
 - RPC provider management
 
 **`srv/repositories/plugins.ts`** -- `pluginHelper`
@@ -1016,7 +977,7 @@ validators = {
   API: {
     BaseArticle, User, Community, Chat, Message,
     Files, Contract, Notification, Socket, Twitter,
-    Lukso, Accounts, CgId, Sumsub, Plugin, Search,
+    Lukso, Accounts, CgId, Plugin, Search,
     Report, Bot
   }
 }
@@ -1062,7 +1023,7 @@ Validates structured message/article content. Content is an array of typed items
 ### API Validator Modules (`srv/validators/api/`)
 
 Each module exports Joi schemas matching their domain's API request types. Files:
-- `accounts.ts` -- Farcaster login, token sale registration
+- `accounts.ts` -- Farcaster login
 - `basearticle.ts` -- Shared article validation
 - `bot.ts` -- Bot management and Bot API v1 operations
 - `cgid.ts` -- Passkey authentication
@@ -1077,7 +1038,6 @@ Each module exports Joi schemas matching their domain's API request types. Files
 - `report.ts` -- Reports
 - `search.ts` -- Search queries
 - `socket.ts` -- WebSocket event validation
-- `sumsub.ts` -- KYC operations
 - `twitter.ts` -- Twitter operations
 - `user.ts` -- User operations
 
@@ -1090,7 +1050,7 @@ Located in `srv/jobs/`. All jobs are designed to run as **worker threads** (they
 ### Scheduling (`srv/jobs.ts`)
 
 `srv/jobs.ts` spawns each job as a worker thread and manages three kinds:
-- **Permanent workers** (long-running, auto-restart on exit): `premiumRenewal`, `callUpdateEmitter`, `trackTokenSales`, `handleCommunityAirdrops`, and (prod only) `tokenSaleNotifications`.
+- **Permanent workers** (long-running, auto-restart on exit): `premiumRenewal`, `callUpdateEmitter`, `handleCommunityAirdrops`.
 - **Cron / interval workers** (re-spawned on a schedule, skipped if the previous run is still alive): `onlineStatusCheck` (every 30 s), `stakingAccrual` (`17 */6 * * *`, every 6 h), `activityScore` (`*/10 * * * *`), `newsletterDelivery` (`0 12 * * 6`, weekly Saturday noon), `emailNotifications` (every minute).
 - **One-shot workers** (run once at startup, guarded by the `oneshot_jobs` table): none currently. The `createOneshotWorker` helper and the `oneshot_jobs` table are kept for future backfills; the eight historical backfill jobs were removed in 2026-08 after they had run everywhere (their code is in git history).
 
@@ -1120,17 +1080,9 @@ Located in `srv/jobs/`. All jobs are designed to run as **worker threads** (they
 - **Purpose:** Credits Spark for on-chain staking positions.
 - **Logic:** No-op if staking is unconfigured on the instance. Otherwise calls `stakingHelper.runAccrual`, which advances every claimed position to its current time-based pro-rata target in one atomic statement and ledgers the delta. Because the target is a function of elapsed time (not of job executions), the job is idempotent and self-catching-up after downtime. Emits `cliUserOwnData` events so credited users see their balance update live.
 
-### `trackTokenSales.ts`
-- **Purpose:** Monitors blockchain events for token sale contracts.
-- **Logic:** Queries active token sales, then monitors on-chain events by scanning block ranges. Uses `ethers` for blockchain interaction. Tracks contributions and updates user balances.
-
 ### `handleCommunityAirdrops.ts`
 - **Purpose:** Executes finished role-based airdrops.
 - **Logic:** Finds roles with airdrop configurations past their end date that haven't been executed. For each, finds eligible members (those who claimed the role), calculates distribution using configurable price functions, and records airdrop entries.
-
-### `tokenSaleNotifications.ts`
-- **Purpose:** Sends email and push notifications about token sale events (1-day-before and starting-now).
-- **Logic:** Runs on a 5-minute interval. Queries upcoming token sales and sends notifications to registered users.
 
 ### `callUpdateEmitter.ts`
 - **Purpose:** Monitors call server status and emits real-time updates about active calls.
@@ -1238,7 +1190,7 @@ Parses the staking feature configuration from env vars (`STAKING_CHAIN`, `STAKIN
 
 ### `srv/util/instanceConfig.ts` -- Instance Identity / Capability Flags
 
-Builds the `window.__CG_INSTANCE__` script tag injected into served `index.html` pages (share links / social previews). Declares the deployment, app/CGID URLs, active chains, and a `features` map derived from which credentials this server actually has (email, twitterAuth, kyc) so the frontend can hide features that would only fail. Optional keys (reCAPTCHA site key, Giphy key, WalletConnect project id) are included when configured.
+Builds the `window.__CG_INSTANCE__` script tag injected into served `index.html` pages (share links / social previews). Declares the deployment, app/CGID URLs, active chains, and a `features` map derived from which credentials this server actually has (email, twitterAuth) so the frontend can hide features that would only fail. Optional keys (reCAPTCHA site key, Giphy key, WalletConnect project id) are included when configured.
 
 ---
 

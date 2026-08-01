@@ -1,8 +1,8 @@
 # Blockchain Integration
 
-> Status: verified against commit 523fceccd, 2026-07-25
+> Status: verified against commit a3c3f7608, 2026-08-01
 
-This document covers all blockchain-related subsystems in Common Ground: smart contracts, on-chain data reading, token-gated roles, wallet management, the token sale, token staking, and the API surface connecting them.
+This document covers all blockchain-related subsystems in Common Ground: smart contracts, on-chain data reading, token-gated roles, wallet management, token staking, and the API surface connecting them. The token sale itself was removed in the Phase-2 slimming (2026-08-01) — only its contract source and its database tables remain, for auditability.
 
 ---
 
@@ -58,14 +58,14 @@ The entire blockchain layer is optional. Chains for which no working RPC endpoin
 
 Two contract projects live in the repository:
 
-- `contracts/contracts/` — the Hardhat project (token sale + test tokens).
+- `contracts/contracts/` — the Hardhat project (the retired token-sale contract + test tokens).
 - `contracts/staking/` — a self-contained **Foundry** project for `CgStaking`.
 
-### TokenSale.sol
+### TokenSale.sol (retired)
 
 **File:** `contracts/contracts/TokenSale.sol`
 
-A Solidity ^0.8.24 contract for conducting a native-currency token sale with signature-based allowlisting.
+A Solidity ^0.8.24 contract for conducting a native-currency token sale with signature-based allowlisting. The app no longer talks to it: the buy/claim UI, the `/User/getTokenSaleAllowance` allowance signer and the `trackTokenSales` indexer were removed on 2026-08-01. The source is kept as the record of the sale that ran.
 
 **Inheritance:** `Ownable` (OpenZeppelin), `ReentrancyGuard` (OpenZeppelin)
 
@@ -313,7 +313,6 @@ This file runs as **both** main thread and worker thread code, gated by `isMainT
 - `LSP_8_contract.balanceOf`
 - `ERC_165_contract.supportsInterface`
 - Proxy detection: `EIP_897_contract.implementation`, `EIP_1167_beaconContract.{implementation,childImplementation}`, `GNOSIS_SAFE_PROXY_contract.masterCopy`
-- `investmentContract_getEvents` -- Queries `Investment` events from the TokenSale contract
 
 ### Contract Type Detection
 
@@ -497,9 +496,12 @@ This is the cursor for the event listener loop. Each chain tracks its own `lastB
 
 Used for distributing token-based rewards to community members based on role membership.
 
-### TokenSale Entities
+### TokenSale Entities (retired, kept for auditability)
 
 **File:** `srv/entities/tokensale.ts`
+
+These four tables are no longer read or written by any code path; they retain the
+records of the sale that ran.
 
 **`tokensale_registrations` table (TokenSaleRegistration):**
 
@@ -720,16 +722,12 @@ Exports `useEthersProvider()` hook for components that need an ethers.js provide
 
 A mobile-only view that renders the `WalletsManagement` component. On desktop, wallet management is accessed via a modal dialog on the profile view.
 
-### Token Sale / Staking View
+### Token / Staking View
 
-**File:** `src/views/TokenSale/TokenSale.tsx` (with sub-tabs under `src/views/TokenSale/`)
+**File:** `src/views/TokenSale/TokenSale.tsx`
 
-The token sale UI uses:
-
-- `useAccount`, `useNetwork`, `useSwitchNetwork` from wagmi for wallet state
-- `useConnectModal` from RainbowKit to prompt wallet connection
-- `usePrepareContractWrite` + `useContractWrite` from wagmi to call `TokenSale.invest()`
-- The `cgTokensale_v1_abi` (shared between frontend and backend)
+Since the Phase-2 slimming the `/token/` page is a header plus the stake tab; the
+buy/claim flow, the charts and the `cgTokensale_v1_abi` are gone.
 
 The **StakeTab** (`src/views/TokenSale/StakeTab/StakeTab.tsx`) handles staking: it reads/writes via wagmi (`useContractRead`, `useContractWrite`, `useWaitForTransaction`), using the `stakingContractAbi` and `erc20MinimalAbi` from `src/common/staking.ts`. The flow is ERC-20 `approve` then `stake(amount, lockSeconds)`, plus `unstake(positionId)` for matured positions. Positions and config are fetched from the backend (`src/data/api/staking.ts`).
 
@@ -749,7 +747,6 @@ Renders the `PremiumManagement` component, which handles premium feature purchas
 | `src/components/organisms/UserOnboarding/ConnectWalletButton/ConnectAeternityWalletButton.tsx` | Aeternity-specific connection |
 | `src/components/organisms/UserSettingsModalContent/SignWalletPage/SignWalletPage.tsx` | Wallet signing flow in settings |
 | `src/components/organisms/UserSettingsModalContent/PaySpark/PaySpark.tsx` | On-chain spark purchases |
-| `src/components/organisms/FullscreenWizard/WizardInvest.tsx` | Investment wizard |
 | `src/components/molecules/WalletManagerRow/WalletManagerRow.tsx` | Individual wallet display/management |
 
 ---
@@ -772,7 +769,6 @@ These endpoints are called by the main API server, not by the frontend directly.
 | POST | `/luksoGetUniversalProfileData` | `{ address }` | `{ username, profileImageUrl, description }` | Fetches LSP3 profile data. |
 | POST | `/getSingleTransactionData` | `{ chain, txHash }` | `{ found, initiatorAddress?, transfers[] }` | Gets transaction details including ERC-20 and native transfers. |
 | POST | `/getErc20Balance` | `{ chain, contractAddress, walletAddress }` | `{ balance }` | Direct ERC-20 balance query. |
-| POST | `/getTokensaleEvents` | `{ chain, contractAddress, contractType, fromBlock, toBlock }` | `SaleInvestmentEventJson[]` | Fetches Investment events from a token sale contract. |
 | POST | `/getBlockNumber` | `{ chain }` | `{ blockNumber }` | Gets the current block number for a chain. |
 
 ### Main API Server (User-Facing)

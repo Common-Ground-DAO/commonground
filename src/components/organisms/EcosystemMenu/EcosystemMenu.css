@@ -1,27 +1,9 @@
-.ecosystem-active-header {
-    border-bottom: 1px solid var(--surface-subtleactive, rgba(24, 78, 126, 0.15));
-    background: var(--surface-subtleactive, rgba(24, 78, 126, 0.15));
-    color: var(--surface-brand, #0076CA);
-}
-
-.ecosystem-header {
-    border-bottom: 1px solid var(--border-subtle, rgba(25, 27, 38, 0.03));
-}
-
-.ecosystem-menu {
+.tag-filter-menu {
     width: 100%;
     padding: 0 !important;
     height: min(calc(var(--visualHeight) - 50px), 600px);
 
-    .ecosystem-description {
-        max-width: 260px;
-    }
-
     &.desktop {
         max-width: 400px !important;
     }
-}
-
-.ecosystem-menu-all-channels {
-    border-left: 1px solid var(--border-secondary, #DCDCDC);
 }

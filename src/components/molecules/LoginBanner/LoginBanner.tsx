@@ -9,8 +9,6 @@ import { useUserOnboardingContext } from 'context/UserOnboarding';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import bannerBg from './bannerbg.webp';
 
-import { ecosystems, useEcosystemContext } from 'context/EcosystemProvider';
-import { getEcosystemIcon } from '../EcosystemPicker/EcosystemPicker';
 import { ArrowRightIcon } from '@heroicons/react/20/solid';
 
 type Props = {
@@ -49,7 +47,6 @@ const useHalfHidden = () => {
 
 const LoginBanner: React.FC<Props> = ({ stickyMode }) => {
   const { isMobile } = useWindowSizeContext();
-  const { ecosystem } = useEcosystemContext();
   const { setUserOnboardingVisibility } = useUserOnboardingContext();
   const [isStickyPosition, ref] = useHalfHidden();
   const isSticky = isStickyPosition && stickyMode;
@@ -80,7 +77,6 @@ const LoginBanner: React.FC<Props> = ({ stickyMode }) => {
     if (isSticky) return null;
 
     return <div className='flex flex-col justify-center items-center py-2 gap-2 flex-1 z-10'>
-      {getEcosystemIcon(ecosystem, 8)}
       <h2 className='text-center'>Common Ground</h2>
       <h3 className='text-center'>the onchain social network where you matter.</h3>
     </div>
@@ -96,7 +92,6 @@ const LoginBanner: React.FC<Props> = ({ stickyMode }) => {
       <div className='absolute inset-0 bg-center bg-cover bg-no-repeat opacity-50' style={{ backgroundImage: `url(${bannerBg})` }} />
       <div className='flex gap-2 w-full items-center justify-center z-10'>
         <Button className={!isSticky ? 'w-60' : ''} role='primary' text={getButtonText()} iconRight={<ArrowRightIcon className='w-5 h-5 cg-text-secondary' />} onClick={onLogin} />
-        {isSticky && <div className='ml-auto'>{getEcosystemIcon(ecosystem, 10)}</div>}
       </div>
     </div>
   </div>);

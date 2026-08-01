@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { PredefinedTag } from './predefinedTags'; // Assuming PredefinedTag is exported
 import { tagStringToPredefinedTag } from './TagInputField';
 import { TagIcon } from 'components/atoms/Tag/Tag';
@@ -11,7 +11,6 @@ const MAX_SUGGESTION_LENGTH = 12;
 
 interface TagSuggestionsDropdownProps {
   inputValue: string;
-  ecosystemTags: PredefinedTag[];
   generalTags: PredefinedTag[];
   onSelectTag: (tagName: string) => void;
   showDropdown: boolean;
@@ -23,7 +22,6 @@ interface TagSuggestionsDropdownProps {
 
 const TagSuggestionsDropdown: React.FC<TagSuggestionsDropdownProps> = ({
   inputValue,
-  ecosystemTags,
   generalTags,
   onSelectTag,
   showDropdown,
@@ -34,8 +32,6 @@ const TagSuggestionsDropdown: React.FC<TagSuggestionsDropdownProps> = ({
 }) => {
   const [activeIndex, setActiveIndex] = useState<number>(-1);
   const dropdownRef = useRef<HTMLUListElement>(null);
-
-  const usedEcosystems = useMemo(() => new Set(ecosystemTags.map(tag => tag.name.toLowerCase())), [ecosystemTags]);
 
   useEffect(() => {
     if (!showDropdown) {
@@ -48,21 +44,12 @@ const TagSuggestionsDropdown: React.FC<TagSuggestionsDropdownProps> = ({
     let hasExactMatch = false;
 
     const lowerInputValue = inputValue.toLowerCase().trim();
-    const filteredEcosystems = ecosystemTags.filter(tag => {
+    const combined = generalTags.filter(tag => {
       hasExactMatch = hasExactMatch || tag.name.toLowerCase() === lowerInputValue;
 
       return tag.name.toLowerCase().includes(lowerInputValue) &&
       !used.has(tag.name.toLowerCase())
-    });
-    const filteredGeneral = generalTags.filter(tag => {
-      hasExactMatch = hasExactMatch || tag.name.toLowerCase() === lowerInputValue;
-
-      return tag.name.toLowerCase().includes(lowerInputValue) &&
-      !used.has(tag.name.toLowerCase()) &&
-      !usedEcosystems.has(tag.name.toLowerCase()) // Avoid duplicates if a general tag is also an ecosystem
-    });
-
-    const combined = [...filteredEcosystems, ...filteredGeneral].slice(0, MAX_SUGGESTION_LENGTH);
+    }).slice(0, MAX_SUGGESTION_LENGTH);
 
     // If no exact match, suggest new tag
     if (!hasExactMatch) {
@@ -72,7 +59,7 @@ const TagSuggestionsDropdown: React.FC<TagSuggestionsDropdownProps> = ({
 
     setFilteredSuggestions(combined);
     setActiveIndex(-1); // Reset active index when suggestions change
-  }, [inputValue, ecosystemTags, generalTags, showDropdown, selectedTags, usedEcosystems, setFilteredSuggestions]);
+  }, [inputValue, generalTags, showDropdown, selectedTags, setFilteredSuggestions]);
 
   const handleSelect = useCallback((tag: PredefinedTag) => {
     onSelectTag(tag.name);
@@ -155,7 +142,6 @@ const TagSuggestionsDropdown: React.FC<TagSuggestionsDropdownProps> = ({
       // aria-activedescendant={activeDescendantId}
     >
       {filteredSuggestions.map((tag, index) => {
-        const isEcosystem = ecosystemTags.some(et => et.name.toLowerCase() === tag.name.toLowerCase());
         // const itemId = `suggestion-${index}`;
         return (
           <li 
@@ -164,7 +150,7 @@ const TagSuggestionsDropdown: React.FC<TagSuggestionsDropdownProps> = ({
             className={`p-0 ${index === activeIndex ? 'tag-suggestion-active rounded-md' : 'tag-suggestion-hoverable rounded-md'}`}
           >
             {/* DaisyUI recommends <a> tags inside <li> for proper styling and focus */}
-            <a className={`flex items-center gap-2 p-2 ${isEcosystem ? 'font-bold' : ''}`}> 
+            <a className='flex items-center gap-2 p-2'>
               <TagIcon tag={tag} />
               <span className="cg-text-main">{tag.name}</span>
             </a>

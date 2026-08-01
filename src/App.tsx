@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useMemo } from 'react';
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import ConnectionStatusIndicator from './components/molecules/ConnectionStatusIndicator/ConnectionStatusIndicator';
 import { CommunityProvider } from './context/CommunityProvider';
 import { ProfileProvider } from './context/ProfileProvider';
@@ -64,7 +64,6 @@ import TabletLayout from 'views/Layout/TabletLayout';
 import { SnackbarContextProvider } from 'context/SnackbarContext';
 import { getUrl } from 'common/util';
 import { SidebarDataDisplayProvider } from 'context/SidebarDataDisplayProvider';
-import { EcosystemParamSetter, EcosystemProvider } from 'context/EcosystemProvider';
 import { UniversalProfileProvider } from 'context/UniversalProfileProvider';
 import { TwitterLoginProvider } from 'context/TwitterLoginProvider';
 import { CommunityModerationProvider } from 'context/CommunityModerationContext';
@@ -196,9 +195,8 @@ const RoutedContent = () => {
     const routes = <Routes>
       <Route path={'/token-sale'} element={<TokenSaleRedirect />} />
       <Route path={removeInitialSlash(getUrl({ type: 'token' }))} element={<TokenSale />} />
-      <Route path="e/:ecosystem" element={<EcosystemParamSetter>
-        <Home />
-      </EcosystemParamSetter>} />
+      {/* Legacy ecosystem URLs (removed 2026-08-01) — send them home */}
+      <Route path="e/*" element={<Navigate to="/" replace />} />
       <Route path={removeInitialSlash(getUrl({ type: 'feed' }))} element={<ContentBrowser />} />
       <Route path={`${config.URL_COMMUNITY}/:communityUrl/*`} element={
         <CommunityRouter />
@@ -274,7 +272,6 @@ function Inner() {
       <CopiedToClipboardDialogProvider>
       <CallDevicesProvider>
       <CallProvider>
-      <EcosystemProvider>
       <CommunityProvider>
       <CommunityListViewProvider>
       <UserSettingsProvider>
@@ -310,7 +307,6 @@ function Inner() {
       </UserSettingsProvider>
       </CommunityListViewProvider>
       </CommunityProvider>
-      </EcosystemProvider>
       </CallProvider>
       </CallDevicesProvider>
       </CopiedToClipboardDialogProvider>

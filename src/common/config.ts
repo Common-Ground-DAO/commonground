@@ -196,7 +196,6 @@ const config = {
   CALLSERVER_STALE_AFTER_MILLISECONDS: 10000 as const, // period in which a callserver must have updated it's entry to not be stale
 
   // url settings
-  URL_ECOSYSTEM: 'e' as const,
   URL_USER: 'u' as const,
   URL_ARTICLE: 'article' as const,
   URL_COMMUNITY: 'c' as const,

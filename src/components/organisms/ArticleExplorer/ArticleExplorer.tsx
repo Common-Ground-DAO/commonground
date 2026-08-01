@@ -25,7 +25,6 @@ import { getUrl } from 'common/util';
 import { useConnectionContext } from 'context/ConnectionProvider';
 import { RectangleStackIcon } from '@heroicons/react/20/solid';
 import { Spinner } from '@phosphor-icons/react';
-import { HomeChannelTypes } from 'views/Home/Home';
 import _ from 'lodash';
 
 type Props = {
@@ -277,9 +276,6 @@ const ArticleExplorer: React.FC<Props> = (props) => {
       />
       <div ref={endOfListRef} />
       {dataStateState === 'LOADING' && <Spinner className="spinner" />}
-      {/* {!isLimitedMode && !hideEndButton && (activeContentFilter === 'all' || dataStateState === 'DONE') && <div className='cta-buttons'>
-        <Button role='secondary' text='Home' onClick={() => navigate(getUrl({ type: 'home', ecosystem }))} />
-      </div>} */}
     </div>
   );
 }

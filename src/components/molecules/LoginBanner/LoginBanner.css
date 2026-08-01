@@ -52,10 +52,3 @@
         @apply mx-2;
     }
 }
-
-.si3-text {
-    background: linear-gradient(180deg, #CBBAFF 0%, #431FFD 100%);
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-}

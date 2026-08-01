@@ -19,10 +19,6 @@ import CreateCommunityBanner from 'components/molecules/CreateCommunityBanner/Cr
 
 import './CommunityExplorer.css'
 import { getUrl } from 'common/util';
-import useLocalStorage from 'hooks/useLocalStorage';
-import EcosystemMenu, { SELECTED_CHANNELS_LOCAL_STORAGE } from '../EcosystemMenu/EcosystemMenu';
-import EcosystemChip from 'components/atoms/EcosystemChip/EcosystemChip';
-import { Shapes } from '@phosphor-icons/react';
 import TagHeader from '../TagHeader/TagHeader';
 import { PredefinedTag } from 'components/molecules/inputs/TagInputField/predefinedTags';
 
@@ -46,8 +42,6 @@ const CommunityExplorer: React.FC<Props> = ({ mode, loadingAmount, search, useLa
   const [activeTab, setActiveTab] = React.useState<Filters>("popular");
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTags, setActiveTags] = React.useState<PredefinedTag[]>([]);
-
-  const [availableChannels] = useLocalStorage([], SELECTED_CHANNELS_LOCAL_STORAGE);
 
   // const globalTagData = useLiveQuery(async () => {
   //   return await data.community.getGlobalCommunityTagData();

@@ -10,6 +10,10 @@
 #   - postgres actually loads the tuned postgresql.conf
 #   - redis maxmemory tuned for a small single machine (total budget of the
 #     single redis instance; override via REDIS_MAXMEMORY)
+#   - the mediasoup (calls) and onchain (blockchain) services sit behind the
+#     compose profiles "calls" and "blockchain"; selfhost.sh derives
+#     COMPOSE_PROFILES from CG_ENABLE_CALLS / CG_ENABLE_BLOCKCHAIN, both of
+#     which default to true
 #
 # Usage: see docker/SELFHOST.md. Never run this with the committed dev .env —
 # use docker/selfhost/init.sh to generate .env.selfhost with fresh secrets.
@@ -55,6 +59,7 @@ services:
       - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
       - CG_FEATURE_EMAIL=${SENDGRID_API_KEY:+true}
       - CG_FEATURE_TWITTER=${TWITTER_API_KEY:+true}
+      - CG_ENABLE_CALLS=${CG_ENABLE_CALLS:-true}
       - CG_GIPHY_API_KEY=${CG_GIPHY_API_KEY}
       - CG_WALLETCONNECT_PROJECT_ID=${CG_WALLETCONNECT_PROJECT_ID}
     depends_on:
@@ -204,6 +209,8 @@ services:
       - EMAIL_FROM=${EMAIL_FROM}
       - CG_RECAPTCHA_SITE_KEY=${CG_RECAPTCHA_SITE_KEY}
       - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
+      - CG_ENABLE_CALLS=${CG_ENABLE_CALLS:-true}
+      - CG_ENABLE_BLOCKCHAIN=${CG_ENABLE_BLOCKCHAIN:-true}
       - GOOGLE_RECAPTCHA_SECRET_KEY=${GOOGLE_RECAPTCHA_SECRET_KEY}
       - CAPTCHA_PROVIDER=${CAPTCHA_PROVIDER:-}
       - ALTCHA_HMAC_KEY=${ALTCHA_HMAC_KEY:-}
@@ -284,8 +291,10 @@ services:
     stop_grace_period: 1m
     restart: unless-stopped
 
+  # voice/video calls — disable with CG_ENABLE_CALLS=false in .env.selfhost
   mediasoup:
     image: cryptogram/backend
+    profiles: ["calls"]
     environment:
       - DB_TYPE=mediasoup
       - PG_PASSWORD=${PG_MEDIASOUP_PASSWORD}
@@ -306,8 +315,10 @@ services:
     stop_grace_period: 30s
     restart: unless-stopped
 
+  # blockchain indexing/token gating — disable with CG_ENABLE_BLOCKCHAIN=false
   onchain:
     image: cryptogram/backend
+    profiles: ["blockchain"]
     environment:
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}

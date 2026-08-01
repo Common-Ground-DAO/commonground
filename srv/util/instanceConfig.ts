@@ -41,6 +41,9 @@ function buildInstanceConfig(): InstanceConfig {
   // so the frontend can hide features that would only fail
   const configured = (v: string | undefined) => !!v && v !== "placeholder" && v !== "your-key";
   instance.features = {
+    // opt-out: only an explicit "false" (no mediasoup service deployed) hides
+    // the call UI, so instances that never set the variable keep calls
+    calls: process.env.CG_ENABLE_CALLS !== "false",
     email: configured(dockerSecret("sendgrid_api") || process.env.SENDGRID_API_KEY),
     twitterAuth:
       configured(dockerSecret("twitter_api_v1_key") || process.env.TWITTER_API_KEY) &&

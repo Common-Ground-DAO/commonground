@@ -10,11 +10,26 @@ if [ ! -f .env.selfhost ]; then
 fi
 source .env.selfhost
 
+# Optional services live behind compose profiles. Both default to ON, so an
+# .env.selfhost written before these switches existed keeps every service.
+compose_profiles() {
+  local profiles=""
+  if [ "${CG_ENABLE_CALLS:-true}" != "false" ]; then
+    profiles="calls"
+  fi
+  if [ "${CG_ENABLE_BLOCKCHAIN:-true}" != "false" ]; then
+    profiles="${profiles:+$profiles,}blockchain"
+  fi
+  echo "$profiles"
+}
+
 docker_compose() {
+  local profiles
+  profiles="$(compose_profiles)"
   if docker compose version >/dev/null 2>&1; then
-    docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml "$@"
+    COMPOSE_PROFILES="$profiles" docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml "$@"
   elif docker-compose version >/dev/null 2>&1; then
-    docker-compose --env-file .env.selfhost -f docker-compose.selfhost.yml "$@"
+    COMPOSE_PROFILES="$profiles" docker-compose --env-file .env.selfhost -f docker-compose.selfhost.yml "$@"
   else
     echo "Neither docker compose nor docker-compose is available."
     exit 1
@@ -103,11 +118,14 @@ case "${1:-}" in
     build
     ;;
   up)
-    docker_compose up -d
+    # --remove-orphans cleans up containers of services that are no longer
+    # part of the stack — e.g. after switching a profile off, or after the
+    # three redis instances were merged into one
+    docker_compose up -d --remove-orphans
     docker_compose ps
     ;;
   down)
-    docker_compose down
+    docker_compose down --remove-orphans
     ;;
   logs)
     docker_compose logs -f "${@:2}"
@@ -124,7 +142,7 @@ case "${1:-}" in
   update)
     git pull
     build
-    docker_compose up -d
+    docker_compose up -d --remove-orphans
     ;;
   *)
     printf "Usage: ./selfhost.sh <command>\n\n"
@@ -135,7 +153,10 @@ case "${1:-}" in
     printf "  ps       Show container status\n"
     printf "  stats    Show container resource usage\n"
     printf "  compose  Pass arguments to docker compose\n"
-    printf "  update   git pull + rebuild + restart\n"
+    printf "  update   git pull + rebuild + restart\n\n"
+    printf "Optional services (set in .env.selfhost, both default to true):\n"
+    printf "  CG_ENABLE_CALLS=false       do not run mediasoup (no voice/video calls)\n"
+    printf "  CG_ENABLE_BLOCKCHAIN=false  do not run onchain (no token gating/indexing)\n"
     exit 1
     ;;
 esac

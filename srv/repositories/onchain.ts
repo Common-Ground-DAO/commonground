@@ -3,14 +3,23 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import axios from "../util/axios";
+import errors from "../common/errors";
 import pool from "../util/postgres";
 import { OnchainPriority } from "../onchain/scheduler";
+
+// Deployments can leave the onchain service out entirely (selfhost:
+// CG_ENABLE_BLOCKCHAIN=false). Fail fast instead of making every caller wait
+// out the 10s axios timeout for a host that is not there.
+const blockchainEnabled = process.env.CG_ENABLE_BLOCKCHAIN !== 'false';
 
 class OnchainHelper {
   async #request(
     path: `/${string}`,
     data: any,
   ) {
+    if (!blockchainEnabled) {
+      throw new Error(errors.server.SERVICE_UNAVAILABLE);
+    }
     // Using axios
     const url = `http://onchain:4000${path}`;
     const response = await axios.post(url, data, {

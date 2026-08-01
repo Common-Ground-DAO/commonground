@@ -63,6 +63,18 @@ MEDIASOUP_DISABLE_LIBURING=true
 BUILDER_UID=$(id -u)
 BUILDER_GID=$(id -g)
 
+# Optional services. Set to false to leave the service out of the stack
+# entirely (selfhost.sh translates these into compose profiles):
+#   CG_ENABLE_CALLS=false      no mediasoup container -> no voice/video calls.
+#     The call UI is hidden via the instance config, ports 4443/tcp and
+#     40000-40099/udp are not needed. Everything else is unaffected.
+#   CG_ENABLE_BLOCKCHAIN=false no onchain container -> no token-gated roles,
+#     no balance/staking indexing, no Spark purchases, no LUKSO UP login.
+#     Wallet login (EVM/SIWE) keeps working; the affected API calls fail fast
+#     instead of hanging. Leave the QUIKNODE_*/CG_ACTIVE_CHAINS values alone.
+CG_ENABLE_CALLS=true
+CG_ENABLE_BLOCKCHAIN=true
+
 # bot accounts (all limits are per active owner/token; comma-separate platform operator user UUIDs)
 PLATFORM_OPERATOR_USER_IDS=
 BOT_USER_OWNER_LIMIT=5

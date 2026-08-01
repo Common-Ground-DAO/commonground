@@ -12,7 +12,9 @@ and no dev-chain/test-contract services.
 ## Prerequisites
 
 - A Linux server with Docker + Docker Compose v2, ports **80, 443, 4443
-  (tcp)** and **40000–40099 (udp)** reachable from the internet
+  (tcp)** and **40000–40099 (udp)** reachable from the internet (the last two
+  only if you run voice/video calls — see
+  [Optional services](#optional-services-calls-blockchain))
 - A domain with two DNS records pointing at the server:
   - `chat.example.org` — the app itself
   - `id.chat.example.org` — the CG ID passkey app (**must** be a separate
@@ -80,6 +82,37 @@ honest message instead of breaking.
 | `CG_GIPHY_API_KEY` | GIF picker in the composer | GIF picker hidden |
 | `CG_WALLETCONNECT_PROJECT_ID` | WalletConnect wallets (QR / mobile deep-link) | injected wallets (MetaMask etc.) still work |
 
+## Optional services (calls, blockchain)
+
+Two of the backend services can be left out of the deployment entirely. Set
+either switch to `false` in `.env.selfhost` and run `./selfhost/selfhost.sh up`
+— the wrapper turns them into Docker Compose profiles, so the container is
+never created (and `up` removes it if it was running before).
+
+| Switch | Off means | What still works |
+|---|---|---|
+| `CG_ENABLE_CALLS=false` | no `mediasoup` container | everything except voice/video calls. The call UI (start-call button, call list) is hidden through the instance config, so nobody is offered a call that cannot happen. Ports 4443/tcp and 40000–40099/udp are then unused. |
+| `CG_ENABLE_BLOCKCHAIN=false` | no `onchain` container | wallet login (EVM/SIWE), communities, messaging, events, bots, premium/Spark balances that already exist. |
+
+Both default to `true`; leaving them out of `.env.selfhost` keeps the full
+stack, so existing instances are unaffected by an update.
+
+**What `CG_ENABLE_BLOCKCHAIN=false` costs in detail** — the `onchain` service
+is the only component that talks to a chain, so without it:
+
+- token-gated roles are never re-evaluated (existing assignments stay as they
+  are — nobody is stripped of a role, but nobody gains one either),
+- wallet token balances are never refreshed,
+- staking positions are never indexed and no Spark accrues from them,
+- Spark purchases are never credited (the payment is detected on-chain),
+- LUKSO Universal Profile login stops working,
+- adding a new token contract to a community fails with a clean "not found".
+
+Those API calls now fail immediately with `SERVICE_UNAVAILABLE` instead of
+waiting out a 10-second timeout. Everything else — including connecting and
+logging in with an EVM wallet, which is verified by signature in the API
+process — is unaffected.
+
 ## Captcha
 
 Registration is protected by a captcha so open instances don't get flooded
@@ -112,6 +145,8 @@ startup and rejects every token. When `CAPTCHA_PROVIDER` is unset, a site key
 alone no longer flips the frontend to reCAPTCHA — both sides stay on ALTCHA.
 
 ## Blockchain RPC endpoints and chains
+
+(Skip this section entirely if you run with `CG_ENABLE_BLOCKCHAIN=false`.)
 
 `init.sh` prefills the `QUIKNODE_*`/`INFURA_LINEA` variables with **free public
 RPC endpoints** (the names are historical — any JSON-RPC URL works), so
@@ -151,9 +186,9 @@ for larger instances.
 > `redis-socketio`, `redis-data`): they are replaced by a single `redis`
 > service. Set `REDIS_MAXMEMORY` in `.env.selfhost` to the *total* budget
 > (the old per-instance `512mb` becomes `1536mb`), then
-> `./selfhost/selfhost.sh up`. Everyone is logged out once — Redis is
-> unpersisted, so this is the same effect any Redis restart has. Remove the
-> three old containers with `./selfhost/selfhost.sh compose up -d --remove-orphans`.
+> `./selfhost/selfhost.sh up` — it runs with `--remove-orphans` and cleans up
+> the three old containers. Everyone is logged out once: Redis is unpersisted,
+> so this is the same effect any Redis restart has.
 
 ## Bot accounts
 
@@ -220,5 +255,5 @@ users just log in again after a restart.
 |---|---|---|
 | 80 | tcp | HTTP → HTTPS redirect, ACME |
 | 443 | tcp+udp | app + CG ID (HTTPS/HTTP3) |
-| 4443 | tcp | call signalling (wss) |
-| 40000–40099 | udp | WebRTC media (voice/video) |
+| 4443 | tcp | call signalling (wss) — only with `CG_ENABLE_CALLS=true` |
+| 40000–40099 | udp | WebRTC media (voice/video) — only with `CG_ENABLE_CALLS=true` |

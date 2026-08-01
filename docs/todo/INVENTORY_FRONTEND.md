@@ -142,9 +142,9 @@ live routes in `CommunityView.tsx`, so `CommunityContentList` itself stays.
 
 ### Aeternity & Fuel wallet providers
 
-- **Aeternity**: `src/context/AeternityWalletProvider.tsx` (203) is mounted app-wide in `App.tsx`. Consumers: `ConnectAeternityWalletButton` (113), `AeternitySign` (106), `SignWalletPageAeternity` (98), plus onboarding `CreateAccount`/`Login`/`Splash` and `AvailableProvidersPage`. Reachable as a login/sign option.
-- **Fuel**: `src/context/FuelWalletProvider.tsx` (138) is **not** mounted as a top-level provider in `App.tsx` (unlike Aeternity). It is imported/consumed by `SplashLoginActions`, `AvailableProvidersPage`, `ConnectFuelWalletButton` (128), `FuelSign` (104), `SignWalletPageFuel` (98) — i.e. the provider is used locally where Fuel login is offered. **TODO(verify): confirm whether the Fuel login path is actually presented to end users, since the provider is not in the global tree.**
-- **Legacy assessment**: Both untouched since baseline; both are niche chain integrations (partner ecosystems). **Plugin-candidate / legacy-freeze** — good candidates to gate behind a build flag or extract, especially Fuel given its non-global wiring.
+- **Aeternity**: `src/context/AeternityWalletProvider.tsx` (203) was mounted app-wide in `App.tsx`. Consumers: `ConnectAeternityWalletButton` (113), `AeternitySign` (106), `SignWalletPageAeternity` (98), plus onboarding `CreateAccount`/`Login`/`Splash` and `AvailableProvidersPage`. **Correction (2026-08-01): it was not actually reachable** — `aeternity` was missing from both `loginButtons`/`createButtons`, the `AvailableProvidersPage` entry was commented out, and the two `ConnectAeternityWalletButton` call sites were commented out inside unrouted forms.
+- **Fuel**: `src/context/FuelWalletProvider.tsx` (138) is **not** mounted as a top-level provider in `App.tsx` (unlike Aeternity). It is imported/consumed by `SplashLoginActions`, `AvailableProvidersPage`, `ConnectFuelWalletButton` (128), `FuelSign` (104), `SignWalletPageFuel` (98) — i.e. the provider is used locally where Fuel login is offered. **Answered 2026-08-01: yes, Fuel login was live.** `useFuel` is a plain hook, not a context provider, so it worked from `SplashLoginActions` (the `fuel` entry was in both button lists) and from the settings `AvailableProvidersPage` without ever being in the `App.tsx` tree.
+- **Legacy assessment**: **REMOVED 2026-08-01** (Phase 3). Both providers, both sign/status components, both connect buttons, both `sign-wallet-*` settings pages, `Fuelet.svg` and the `@aeternity/aepp-sdk` / `fuels` / `@fuel-wallet/sdk` / `@fuels/connectors` dependencies are gone, as are the backend verification branches. The `wallets` rows and the `fuel`/`aeternity` enum values stay (no data migration) — `AccountsPage` still lists such wallets with their icon. The `fuel`/`aeternity` **ecosystem** entries are a separate concern and were not touched.
 
 ### Browsers: Group / Blog / Content
 
@@ -177,8 +177,8 @@ live routes in `CommunityView.tsx`, so `CommunityContentList` itself stays.
 | TokenSale `Info/` + `Charts/` + `TokenAirdrops/` + buy/claim tabs | ~2500 LoC | Behind hardcoded `SHOW_GET_EARN_TABS=false`; no commits since baseline | **removed 2026-08-01** |
 | Wizard (`FullscreenWizard` + `CommunityWizardProvider`) | ~1900 LoC | Token-sale/investor funnel; untouched since baseline; isolated route | **removed 2026-08-01** (tables dropped too) |
 | Sumsub KYC | ~270 LoC | Entry points = wizard + `/id-verification/`; untouched | **removed 2026-08-01** |
-| Aeternity wallet | ~520 LoC | Partner-chain login; untouched; app-wide provider | **plugin-candidate / legacy-freeze** |
-| Fuel wallet | ~600 LoC | Partner-chain login; untouched; provider not in global tree | **plugin-candidate / legacy-freeze** (verify user reachability) |
+| Aeternity wallet | ~520 LoC | Partner-chain login; app-wide provider but no reachable entry point | **removed 2026-08-01** |
+| Fuel wallet | ~600 LoC | Partner-chain login; provider not in global tree, but reachable (hook, not context) | **removed 2026-08-01** |
 | Ecosystem theming (in `EcosystemProvider`) | ~65 LoC commented | Entire theming block commented out | **removed 2026-08-01** |
 | Ecosystem filtering/menu/picker | ~1300 LoC | Wired & reachable across Home/menu/explorer | **core** (slim-in-place) |
 | `AppsView` | 13 | Imported, never routed | **removed 2026-08-01** |
@@ -195,7 +195,7 @@ live routes in `CommunityView.tsx`, so `CommunityContentList` itself stays.
 
 1. ~~Is the public **token sale** returning?~~ — answered 2026-07-25 (no) and executed 2026-08-01: buy/claim subtree, wizard funnel, Sumsub KYC and the American/NDA gates are removed.
 2. ~~Is the standalone `/id-verification/` route still surfaced anywhere in the UI?~~ — it was a `DEPLOYMENT === 'dev'`-only menu entry; removed 2026-08-01 with the rest of KYC.
-3. Is the **Fuel** login option actually shown to users? Its provider is not mounted in the global App tree (Aeternity's is), which suggests a partial/gated integration.
+3. ~~Is the **Fuel** login option actually shown to users?~~ **Answered 2026-08-01: yes.** `useFuel` is a hook, so the missing `App.tsx` mount meant nothing; the option was in `loginButtons`/`createButtons` and in the settings provider list. (Aeternity, despite its app-wide provider, had no reachable entry point at all.) Both are now removed.
 4. Are the hardcoded partner **ecosystems** (`fuel, lukso, si3, cannabis-social-clubs, powershift`) all still active partnerships? The list is compiled into `EcosystemProvider`.
 5. ~~Confirm the four **dead views** (`AppsView`, `GroupBrowser`, `SwapAccountView`, `BlogBrowser`) and two **dead widgets** (`WhatsNewModal`, `EarlyAdopterBanner`) can be removed~~ — confirmed by the maintainer and removed 2026-08-01.
 6. Is **Supporter/premium** purchasing live? It is wired into the current Spark UI, so it is assumed core, but the billing flow was not runtime-verified here.

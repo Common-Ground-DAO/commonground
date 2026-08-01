@@ -1,6 +1,6 @@
 # Common Ground Backend Documentation
 
-> Status: verified against commit a3c3f7608, 2026-08-01.
+> Status: verified against commit 8133e43fe, 2026-08-01.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -656,7 +656,7 @@ All entities use TypeORM decorators and live in `srv/entities/`. The database is
 **`Wallet`** (`srv/entities/wallets.ts`, table: `wallets`)
 - `id` (UUID, PK)
 - `userId` -> User (nullable, SET NULL on delete)
-- `type` (enum: WalletType -- EVM, FUEL, AETERNITY)
+- `type` (enum: WalletType -- CG_EVM, EVM, CONTRACT_EVM, plus the retired FUEL / AETERNITY values kept for existing rows)
 - `walletIdentifier` (text) -- address
 - `isLoginWallet` (boolean)
 - `visibility` (enum: WalletVisibility -- PUBLIC, FOLLOWED, PRIVATE)
@@ -914,7 +914,7 @@ The `db: Pool | PoolClient` parameter pattern enables functions to work both sta
 **`srv/repositories/wallets.ts`** -- `walletHelper`
 - Wallet CRUD, SIWE (Sign-In With Ethereum) data parsing and verification
 - Wallet balance tracking, login wallet management
-- Multi-wallet-type support (EVM, Fuel, Aeternity)
+- EVM only: the Fuel and Aeternity signature-verification branches were removed 2026-08-01, existing rows of those types are still read
 
 **`srv/repositories/onchain.ts`** -- `onchainHelper`
 - Proxy to the separate `onchain` microservice (HTTP at `http://onchain:4000`)
@@ -995,8 +995,6 @@ Reusable Joi schemas:
 - `ItemUrl` -- URL slug (`/^[a-z0-9-]{3,50}$/i`)
 - `ChainIdentifier` -- Whitelisted blockchain identifiers (eth, optimism, arbitrum, base, matic, lukso, etc.)
 - `Address` -- Ethereum address (`/^0x[a-fA-F0-9]{40}$/`)
-- `FuelAddress` -- Fuel chain address
-- `AeternityAddress` -- Aeternity address
 - `JsonWebKey` -- WebAuthn public key (P-384 curve)
 - `Base64DeviceSignature` -- Device signature
 - `CgProfileDisplayName` -- `/^[a-z0-9_-]{3,30}$/i`

@@ -1,6 +1,6 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit a3c3f7608, 2026-08-01
+> Status: verified against commit 8133e43fe, 2026-08-01
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -369,7 +369,7 @@ Providers are composed across three levels:
 2. `src/App.tsx` `App()` wraps the app in `DarkModeProvider`.
 3. `src/App.tsx` `Inner()` composes the large provider stack. Nesting order matters -- outer providers are available to inner ones.
 
-The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `WagmiConfig`, `RainbowKitProvider`, `AuthKitProvider` (Farcaster), `WindowSizeProvider`, `SnackbarContextProvider`, `OwnDataProvider`, `PasskeyProvider`, `MobileLayoutProvider`, `NotificationProvider`, `CommunitySidebarProvider`, `ExternalModalProvider`, `UserOnboardingProvider`, `CreateCommunityModalProvider`, `LoginWithKeyphraseProvider`, `CopiedToClipboardDialogProvider`, `CallDevicesProvider`, `CallProvider`, `EcosystemProvider`, `CommunityProvider`, `CommunityListViewProvider`, `UserSettingsProvider`, `CommunityModerationProvider`, `ReportModalProvider`, `SidebarDataDisplayProvider`, `PluginDetailsModalProvider`, `AeternityWalletProvider`, `UniversalProfileProvider`, `TwitterLoginProvider`, `RoleClaimedProvider`, `EmailConfirmationProvider`, `CommunityJoinedProvider`, `CommunityOnboardingProvider`, `CaptchaContextProvider`, `UserOnchainProvider`, `PluginIframeProvider` (innermost), which renders `UserInfoManager`, `ConnectionStatusIndicator`, and `RoutedContent`.
+The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `WagmiConfig`, `RainbowKitProvider`, `AuthKitProvider` (Farcaster), `WindowSizeProvider`, `SnackbarContextProvider`, `OwnDataProvider`, `PasskeyProvider`, `MobileLayoutProvider`, `NotificationProvider`, `CommunitySidebarProvider`, `ExternalModalProvider`, `UserOnboardingProvider`, `CreateCommunityModalProvider`, `LoginWithKeyphraseProvider`, `CopiedToClipboardDialogProvider`, `CallDevicesProvider`, `CallProvider`, `EcosystemProvider`, `CommunityProvider`, `CommunityListViewProvider`, `UserSettingsProvider`, `CommunityModerationProvider`, `ReportModalProvider`, `SidebarDataDisplayProvider`, `PluginDetailsModalProvider`, `UniversalProfileProvider`, `TwitterLoginProvider`, `RoleClaimedProvider`, `EmailConfirmationProvider`, `CommunityJoinedProvider`, `CommunityOnboardingProvider`, `CaptchaContextProvider`, `UserOnchainProvider`, `PluginIframeProvider` (innermost), which renders `UserInfoManager`, `ConnectionStatusIndicator`, and `RoutedContent`.
 
 #### Core Infrastructure Providers
 
@@ -442,9 +442,7 @@ The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `Wa
 | Provider | Purpose |
 |---|---|
 | `EcosystemProvider` | Multi-ecosystem support (Ethereum, LUKSO, etc.). Also provides `EcosystemParamSetter` for URL-based ecosystem selection. |
-| `AeternityWalletProvider` | Aeternity blockchain wallet integration. |
 | `UniversalProfileProvider` | LUKSO Universal Profile integration. |
-| `FuelWalletProvider` | Fuel blockchain wallet integration. **Note:** Despite its name, this is a custom hook (`useFuel`) rather than a mounted React Context provider; it is not part of the `App.tsx` provider tree. |
 
 #### Generic Data Provider
 

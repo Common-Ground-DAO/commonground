@@ -1,6 +1,6 @@
 # Blockchain Integration
 
-> Status: verified against commit a3c3f7608, 2026-08-01
+> Status: verified against commit 8133e43fe, 2026-08-01
 
 This document covers all blockchain-related subsystems in Common Ground: smart contracts, on-chain data reading, token-gated roles, wallet management, token staking, and the API surface connecting them. The token sale itself was removed in the Phase-2 slimming (2026-08-01) — only its contract source and its database tables remain, for auditability.
 
@@ -32,7 +32,7 @@ Common Ground runs a dedicated **onchain microservice** (`srv/onchain.ts`) that 
 
 The main API server (`srv/api/`) exposes user-facing endpoints for contract lookup, Lukso Universal Profile operations, and staking data, delegating heavy on-chain reads to the onchain microservice.
 
-The frontend uses **wagmi v1 + RainbowKit** for wallet connection and transaction signing. It also has dedicated providers for **Aeternity** and **Lukso Universal Profile** wallets.
+The frontend uses **wagmi v1 + RainbowKit** for wallet connection and transaction signing. It also has a dedicated provider for **Lukso Universal Profile** wallets.
 
 ```
 Frontend (wagmi/RainbowKit)  --->  Main API Server (srv/api/)
@@ -214,11 +214,11 @@ The `WalletType` enum (`srv/common/enums.ts`) includes:
 
 - `CG_EVM` -- Common Ground custodial EVM wallet
 - `EVM` -- Standard EVM wallet (MetaMask, etc.)
-- `FUEL` -- Fuel Network wallet
-- `AETERNITY` -- Aeternity blockchain wallet
+- `FUEL` -- Fuel Network wallet (**retired**, see below)
+- `AETERNITY` -- Aeternity blockchain wallet (**retired**, see below)
 - `CONTRACT_EVM` -- Contract-based wallet (e.g., Lukso Universal Profile, Gnosis Safe)
 
-Aeternity and Fuel wallets can be linked to user accounts for identity purposes. The frontend has dedicated providers: `src/context/AeternityWalletProvider.tsx` and `src/context/FuelWalletProvider.tsx`. Only `evm` and `contract_evm` wallet types participate in on-chain balance checks for token-gated roles.
+The Aeternity and Fuel wallet integrations were **removed 2026-08-01** (Phase 3 of the slimming roadmap): their frontend providers, sign/connect components, SDK dependencies and backend signature-verification branches are gone, so no new wallet of those types can be linked or used to log in. The two enum values and all existing `wallets` rows are kept — such wallets are still listed in the account settings (`AccountsPage` still renders their icon) and can still be updated or deleted through `/User/updateWallet` / `/User/deleteWallet`; they simply offer no sign/verify action anymore. Only `evm` and `contract_evm` wallet types participate in on-chain balance checks for token-gated roles.
 
 ---
 
@@ -410,7 +410,7 @@ All entities use TypeORM. Database is PostgreSQL.
 |---|---|---|
 | `id` | UUID (PK) | Auto-generated |
 | `userId` | UUID (FK) | References `users.id`, nullable, SET NULL on delete |
-| `type` | enum | `WalletType`: `cg_evm`, `evm`, `fuel`, `aeternity`, `contract_evm` |
+| `type` | enum | `WalletType`: `cg_evm`, `evm`, `fuel`, `aeternity`, `contract_evm` (the latter two are retired legacy values, see [Non-EVM Wallet Types](#non-evm-wallet-types)) |
 | `walletIdentifier` | text | The wallet address or identifier |
 | `loginEnabled` | boolean | Whether this wallet can be used for login |
 | `visibility` | enum | `WalletVisibility`: `private` or `public` |
@@ -704,9 +704,7 @@ The app is wrapped in:
 
 ### Additional Wallet Providers
 
-- **`AeternityWalletProvider`** (`src/context/AeternityWalletProvider.tsx`) -- Manages Aeternity wallet connection.
 - **`UniversalProfileProvider`** (`src/context/UniversalProfileProvider.tsx`) -- Manages Lukso Universal Profile connection.
-- **`FuelWalletProvider`** (`src/context/FuelWalletProvider.tsx`) -- Manages Fuel Network wallet connection.
 
 ### UserOnchainProvider
 
@@ -744,7 +742,6 @@ Renders the `PremiumManagement` component, which handles premium feature purchas
 | `src/components/organisms/WalletsEditor/WalletsEditor.tsx` | Add/remove wallets from user account |
 | `src/components/organisms/UserOnboarding/RainbowSign/RainbowSign.tsx` | Sign-in with EVM wallet |
 | `src/components/organisms/UserOnboarding/ConnectWalletButton/ConnectWalletButton.tsx` | Wallet connection button |
-| `src/components/organisms/UserOnboarding/ConnectWalletButton/ConnectAeternityWalletButton.tsx` | Aeternity-specific connection |
 | `src/components/organisms/UserSettingsModalContent/SignWalletPage/SignWalletPage.tsx` | Wallet signing flow in settings |
 | `src/components/organisms/UserSettingsModalContent/PaySpark/PaySpark.tsx` | On-chain spark purchases |
 | `src/components/molecules/WalletManagerRow/WalletManagerRow.tsx` | Individual wallet display/management |

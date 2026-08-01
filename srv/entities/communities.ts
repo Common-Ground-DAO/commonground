@@ -17,7 +17,6 @@ import {
 } from "typeorm";
 import { Area } from "./areas";
 import { CommunityChannel } from "./communities-channels";
-// import { CommunityFeed } from "./communities-feeds";
 import { Role } from "./roles";
 import { User } from "./users";
 import { CommunityPremium } from "./communities-premium";
@@ -103,9 +102,6 @@ export class Community {
 
     @ManyToMany(() => CommunityChannel, (communityChannel) => communityChannel.community)
     communityChannels!: CommunityChannel[];
-
-    // @ManyToMany(() => CommunityFeed, (communityFeed) => communityFeed.community)
-    // communityFeeds!: CommunityFeed[];
 
     @Index('idx_groups_tsv_description', { fulltext: true })
     @Column({ type: 'tsvector', nullable: true, select: false, default: () => `to_tsvector('simple', '')` })

@@ -12,14 +12,7 @@ import onchainHelper from "./onchain";
 import stakingHelper from "./staking";
 import { OnchainPriority } from "../onchain/scheduler";
 
-type TypeMapping = {
-  fuel: Models.Wallet.Wallet & { type: "fuel" };
-  evm: Models.Wallet.Wallet & { type: "evm" };
-  cg_evm: Models.Wallet.Wallet & { type: "cg_evm" };
-  contract_evm: Models.Wallet.Wallet & { type: "contract_evm" };
-}
-
-type ToObjectType<T> = T extends keyof TypeMapping ? TypeMapping[T] : never;
+type ToObjectType<T extends Models.Wallet.Type> = Models.Wallet.Wallet & { type: T };
 
 export async function getExistingWalletData(dataSource: Pool | PoolClient, walletIdentifier: Models.Wallet.Wallet['walletIdentifier'], type: Models.Wallet.Wallet['type']) {
   const query = `
@@ -177,19 +170,8 @@ async function _getAllWalletsByUserId<T extends Models.Wallet.Type>(
       AND "deletedAt" IS NULL
       AND "type" = ANY(${format('ARRAY[%L]::"public"."wallets_type_enum"[]', walletTypes)})
   `;
-  const result = await dataSource.query(query, [userId]);
-  return result.rows as any[];
-  // Todo: Fixme later
-
-  // return result.rows as {
-  //   id: string;
-  //   userId: string;
-  //   type: WalletType;
-  //   walletIdentifier: Common.Address;
-  //   loginEnabled: boolean;
-  //   visibility: Models.Wallet.Visibility,
-  //   signatureData: Models.Wallet.Wallet["signatureData"]
-  // }[];
+  const result: { rows: ToObjectType<T>[] } = await dataSource.query(query, [userId]);
+  return result.rows;
 }
 
 class WalletHelper {

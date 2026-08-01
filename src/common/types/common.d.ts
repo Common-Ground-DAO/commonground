@@ -5,12 +5,6 @@
 declare namespace Common {
   type Address = `0x${string}`;
 
-  // Fuel/Aeternity wallet login was removed (2026-08-01); these address types stay
-  // because existing `wallets` rows keep their stored addresses/signatureData.
-  type FuelAddress = `fuel${string}`;
-
-  type AeternityAddress = `ak_${string}`;
-
   type PremiumRenewal = 'MONTH' | 'YEAR';
 
   type Link = {

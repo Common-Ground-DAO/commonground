@@ -112,10 +112,6 @@ declare namespace Models {
       // these fields cannot be set through setOwnExtraDataField
       usesMobileDevice?: boolean;
       usesDesktopDevice?: boolean;
-      kycLivenessSuccess?: boolean;
-      kycFullSuccess?: boolean;
-      kycCgTokensaleSuccess?: boolean;
-      kycRejectReason?: string;
       desktopPushWorking?: boolean;
       mobilePushWorking?: boolean;
     };

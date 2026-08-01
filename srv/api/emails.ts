@@ -83,26 +83,6 @@ class EmailUtils {
         await this.sendEmail(to, subject, text, htmlTemplate);
     }
 
-    public async sendKycResultEmail(to: string, result: boolean, kycLevel:string, kycRejectReason?: string) {
-        let subject: string;
-        let text: string;
-        if (result) {
-            subject = 'KYC Verification Success';
-            text = `Your KYC verification was successful.`
-        } else {
-            subject = 'KYC Verification Failed';
-            text = `Your KYC verification was unsuccessful. Reason: ${kycRejectReason}`
-        }
-        const html = `
-        <tr>
-            <td style="background-color:#f8f8f8;padding:20px;text-align:center;">
-                <span>${text} </span>
-            </td>
-        </tr>`;
-        const htmlTemplate = this.getHTMLTemplate(html, false)
-        await this.sendEmail(to, subject, text, htmlTemplate);
-    }
-
     public async sendNewsletter(to: string, posts: EmailPost[], generalPosts: EmailPost[]) {
         if (posts.length === 0 && generalPosts.length === 0) {
             console.log('No posts to send to user: ', to);

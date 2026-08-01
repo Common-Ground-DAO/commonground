@@ -16,7 +16,6 @@ import TwitterApi from "./api/twitter";
 import LuksoApi from "./api/lukso";
 import CgIdApi from "./api/cgid";
 import AccountsApi from "./api/accounts";
-import SumsubApi from "./api/sumsub";
 import PluginApi from "./api/plugin";
 import SearchApi from "./api/search";
 import ReportApi from "./api/report";
@@ -38,7 +37,6 @@ const validators = {
     Lukso: LuksoApi,
     Accounts: AccountsApi,
     CgId: CgIdApi,
-    Sumsub: SumsubApi,
     Plugin: PluginApi,
     Search: SearchApi,
     Report: ReportApi,

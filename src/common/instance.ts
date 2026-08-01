@@ -33,7 +33,6 @@ export type InstanceConfig = {
   features?: {
     email?: boolean;
     twitterAuth?: boolean;
-    kyc?: boolean;
   };
   /** Giphy API key for this instance; empty disables the GIF picker. */
   giphyApiKey?: string;
@@ -77,7 +76,7 @@ export function getInstanceConfig(): InstanceConfig | undefined {
   }
   if (raw.features && typeof raw.features === 'object') {
     cfg.features = {};
-    for (const key of ['email', 'twitterAuth', 'kyc'] as const) {
+    for (const key of ['email', 'twitterAuth'] as const) {
       if (typeof raw.features[key] === 'boolean') {
         cfg.features[key] = raw.features[key];
       }

@@ -19,7 +19,7 @@ import './../Menu.css';
 import './ExpandedMenu.css';
 import { getUrl } from 'common/util';
 import { ReactComponent as CircleLogo } from "components/atoms/icons/misc/Logo/logo.svg";
-import { Bell, ChatsTeardrop, Compass, Plus, CoinVertical, HouseSimple, IdentificationCard, Brain, Storefront } from '@phosphor-icons/react';
+import { Bell, ChatsTeardrop, Compass, Plus, CoinVertical, HouseSimple, Brain, Storefront } from '@phosphor-icons/react';
 import { useCreateCommunityModalContext } from 'context/CreateCommunityModalProvider';
 
 type Props = {
@@ -103,12 +103,6 @@ const ExpandedMenu: React.FC<Props> = ({ expanded }) => {
                   if (config.NOTIFICATIONS_PAGE_ENABLED) { navigate(getUrl({ type: 'notifications' })) }
                 }}
                 notificationCount={unreadCount}
-              />}
-              {!!ownUser && config.DEPLOYMENT === 'dev' && <ExpandedMenuButton
-                text={expanded ? 'ID Verification' : undefined}
-                icon={<IdentificationCard weight='duotone' className='h-6 w-6' />}
-                isActive={isActiveButton(location.pathname, getUrl({ type: 'id-verification' }))}
-                onClick={() => navigate(getUrl({ type: 'id-verification' }))}
               />}
               <ExpandedMenuButton
                 text={expanded ? 'Apps' : undefined}

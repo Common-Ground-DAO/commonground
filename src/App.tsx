@@ -62,7 +62,6 @@ import { CallDevicesProvider } from 'context/CallDevicesProvider';
 import DesktopLayout from 'views/Layout/DesktopLayout';
 import TabletLayout from 'views/Layout/TabletLayout';
 import { SnackbarContextProvider } from 'context/SnackbarContext';
-import { SumsubContextProvider } from 'context/SumsubContext';
 import { getUrl } from 'common/util';
 import { SidebarDataDisplayProvider } from 'context/SidebarDataDisplayProvider';
 import AeternityWalletProvider from 'context/AeternityWalletProvider';
@@ -111,7 +110,6 @@ const CreateUserPostView = React.lazy(() => import('views/CreateUserPostView/Cre
 const Home = React.lazy(() => import('./views/Home/Home'));
 const TokenSale = React.lazy(() => import('./views/TokenSale/TokenSale'));
 const TokenSaleRedirect = React.lazy(() => import('./views/TokenSale/TokenSaleRedirect'));
-const IdVerification = React.lazy(() => import('./views/IdVerificationView/IdVerificationView'));
 const LearnMore = React.lazy(() => import('./views/LearnMore/LearnMore'));
 // const MemberManagementView = React.lazy(() => import('views/MemberManagementView/MemberManagementView'));
 const ChatView = React.lazy(() => import('./views/ChatView/ChatView'));
@@ -199,7 +197,6 @@ const RoutedContent = () => {
     const routes = <Routes>
       <Route path={'/token-sale'} element={<TokenSaleRedirect />} />
       <Route path={removeInitialSlash(getUrl({ type: 'token' }))} element={<TokenSale />} />
-      {<Route path={removeInitialSlash(getUrl({ type: 'id-verification' }))} element={<IdVerification />} />}
       <Route path="e/:ecosystem" element={<EcosystemParamSetter>
         <Home />
       </EcosystemParamSetter>} />
@@ -263,7 +260,6 @@ function Inner() {
         modalSize='compact'
         // appInfo={{learnMoreUrl: 'https://app.cg'}} // define our own learn more url
       >
-      <SumsubContextProvider>
       <AuthKitProvider config={farcasterConfig}>
       <WindowSizeProvider>
       <SnackbarContextProvider>
@@ -333,7 +329,6 @@ function Inner() {
       </SnackbarContextProvider>
       </WindowSizeProvider>
       </AuthKitProvider>
-      </SumsubContextProvider>
       </RainbowKitProvider>
       </WagmiConfig>
       </IsolationModeProvider>

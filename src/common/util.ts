@@ -101,8 +101,6 @@ type GetUrlOptions = {
 } | {
   type: 'token';
 } | {
-  type: 'id-verification';
-} | {
   type: 'appstore';
 } | {
   type: 'search';
@@ -247,9 +245,6 @@ const Helper: Record<GetUrlOptions['type'], (options: any) => string> = {
   },
   'token': (options: GetUrlOptions & { type: 'token' }) => {
     return `/token/`;
-  },
-  'id-verification': (options: GetUrlOptions & { type: 'id-verification' }) => {
-    return `/id-verification/`;
   },
   'appstore': (options: GetUrlOptions & { type: 'appstore' }) => {
     return `/store/`;

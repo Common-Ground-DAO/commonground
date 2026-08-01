@@ -29,6 +29,5 @@
     "common/types/models/*.d.ts",
     "onchain/ethereumApi.ts",
     "types/*.d.ts",
-    "assistant.ts",
   ]
 }

@@ -68,9 +68,6 @@ const common = {
   Base64DeviceSignature: Base64.max(200),
   Address: Joi.string().regex(/^0x[a-fA-F0-9]{40}$/),
   TutorialName: Joi.string().valid('onboarding'),
-  Assistant: {
-    ModelName: Joi.string().valid('gemma3_1-27b-it', 'qwen2_5-32b-instruct', 'mistral-small-3.1-24b-instruct', 'qwen3_14b-instruct'),
-  },
 };
 
 export default common;

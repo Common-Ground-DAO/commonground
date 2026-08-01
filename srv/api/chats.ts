@@ -94,22 +94,6 @@ registerPostRoute<
 );
 
 registerPostRoute<
-  API.Chat.getChats.Request,
-  API.Chat.getChats.Response
->(
-  chatRouter,
-  '/getChats',
-  undefined,
-  async (request, response, requestData) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-    return await chatHelper.getChats(user.id);
-  }
-);
-
-registerPostRoute<
   API.Chat.getOwnAssistantChats.Request,
   API.Chat.getOwnAssistantChats.Response
 >(
@@ -270,23 +254,6 @@ registerPostRoute<
       dialogId,
       queueData,
     };
-  }
-);
-
-registerPostRoute<
-  API.Chat.cancelAssistantQueueItem.Request,
-  API.Chat.cancelAssistantQueueItem.Response
->(
-  chatRouter,
-  '/cancelAssistantQueueItem',
-  validators.API.Chat.cancelAssistantQueueItem,
-  async (request, response, requestData) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-    // Todo: Implement
-    return {} as any;
   }
 );
 

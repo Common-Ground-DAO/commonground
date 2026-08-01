@@ -63,7 +63,7 @@ they are deleted via dedicated cleanup PRs tracked in
 | Staking (contract, indexing, accrual, Stake UI) | **core** | |
 | Premium / Spark economy (supporter tiers, community upgrades) | **core** | active product feature |
 | Auth: device, passkey/CGID, email+password, email code, wallet/SIWE (EVM), Lukso UP, Twitter, Farcaster | **core** | consolidation planned, see docs/auth-identity |
-| AI assistant | **core (opt-in)** | disabled by default; needs LLM backend |
+| AI assistant | **removal-pending** | decided 2026-08-01: remove entirely (Phase 4 of the slimming roadmap); a future bot integration takes its place. Disabled by default today. |
 | Selfhost deployment profile | **core** | see docs/deployment |
 | Token sale: buy/claim UI, charts, investor wizard (`FullscreenWizard`), Sumsub KYC, NDA/US gates, `trackTokenSales`/`tokenSaleNotifications` jobs | **removed 2026-08-01** | Phase 2 of the slimming roadmap. The `tokensales`/`tokensale_*` tables + entities stay for auditability (no reader, no writer); the five `wizard*` tables were dropped incl. data (`1785628800000-dropWizardDomain`). Do not reintroduce. |
 | Aeternity wallet login, Fuel wallet login (providers, sign/connect components, `@aeternity/aepp-sdk`/`fuels` deps, backend verification, `WalletType` enum values, `wallets` rows) | **removed 2026-08-01** | Phases 3 + 3.5 of the slimming roadmap. Total eradication: no code, no icons, no enum values, and the stored rows are deleted by `1785632400000-dropFuelAeternityWallets` (`down()` restores the enum, not the rows). Every remaining wallet type is EVM-based. Do not reintroduce. |

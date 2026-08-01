@@ -70,10 +70,6 @@ type GetUrlOptions = {
   community: Pick<Models.Community.ListView, "url">;
   call: Pick<Models.Calls.Call, "id"> & Partial<Models.Calls.Call>;
 } | {
-  type: 'community-wizard';
-  community: Pick<Models.Community.ListView, "url">;
-  wizardId: string;
-} | {
   type: 'community-plugin';
   community: Pick<Models.Community.ListView, "url">;
   plugin: Pick<Models.Plugin.Plugin, "id">;
@@ -216,9 +212,6 @@ const Helper: Record<GetUrlOptions['type'], (options: any) => string> = {
   },
   'community-call': (options: GetUrlOptions & { type: 'community-call' }) => {
     return `/${config.URL_COMMUNITY}/${options.community.url}/${config.URL_CALL}/${t.fromUUID(options.call.id)}/`;
-  },
-  'community-wizard': (options: GetUrlOptions & { type: 'community-wizard' }) => {
-    return `/${config.URL_COMMUNITY}/${options.community.url}/${config.URL_WIZARD}/${options.wizardId}/`;
   },
   'community-plugin': (options: GetUrlOptions & { type: 'community-plugin' }) => {
     return `/${config.URL_COMMUNITY}/${options.community.url}/plugin/${options.plugin.id}/`;

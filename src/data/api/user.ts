@@ -417,14 +417,6 @@ class UserApiConnector extends BaseApiConnector {
       data,
     );
   }
-
-  public async redeemWizardCode(data: API.User.redeemWizardCodeForExistingUser.Request): Promise<void> {
-    await this.ajax<API.User.redeemWizardCodeForExistingUser.Response>(
-      "POST",
-      "/redeemWizardCode",
-      data,
-    );
-  }
 }
 
 const userApi = new UserApiConnector();

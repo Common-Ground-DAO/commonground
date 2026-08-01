@@ -31,7 +31,6 @@ import config from "../common/config";
 import { verifyCaptchaToken } from "../util/captcha";
 import emailUtils, { emailEnabled } from "./emails";
 import emailHelper from "../repositories/emails";
-import { uniqueNamesGenerator, adjectives, colors, animals } from 'unique-names-generator';
 import { ethers } from "ethers";
 
 export const SIGNABLE_SECRET_LENGTH = 20;
@@ -385,13 +384,12 @@ registerPostRoute<
       usePreparedWallet,
       usePreparedPasskey,
       usePreparedFarcaster,
-      useWizardCode,
       useCgProfile,
       useEmailAndPassword,
       recaptchaToken,
     } = data;
 
-    if (config.DEPLOYMENT !== 'dev' && !useWizardCode) {
+    if (config.DEPLOYMENT !== 'dev') {
       const verifyResult = await verifyCaptchaToken(recaptchaToken);
       if (!verifyResult) {
         console.error("Error creating user, captcha verification failed", recaptchaToken, data);
@@ -417,13 +415,11 @@ registerPostRoute<
     };
 
     if (
-      !useWizardCode && (
-        (displayAccount === "lukso" && !useLuksoCredentials) ||
-        (displayAccount === "twitter" && !useTwitterCredentials) ||
-        (displayAccount === "cg" && !useCgProfile)
-      )
+      (displayAccount === "lukso" && !useLuksoCredentials) ||
+      (displayAccount === "twitter" && !useTwitterCredentials) ||
+      (displayAccount === "cg" && !useCgProfile)
     ) {
-      console.error("Error creating user, wizard code not used and display account " + displayAccount + " not provided", data);
+      console.error("Error creating user, display account " + displayAccount + " not provided", data);
       throw new Error(errors.server.INVALID_REQUEST);
     }
     
@@ -574,38 +570,6 @@ registerPostRoute<
       delete request.session.lukso;
     }
 
-    if (useWizardCode) {
-      const isAvailable = await communityHelper.isWizardCodeAvailable({ wizardId: useWizardCode.wizardId, code: useWizardCode.code });
-      if (!isAvailable) {
-        throw new Error(errors.server.INVALID_SECRET);
-      }
-
-      let displayName: string = "";
-      let displayNameValid = false;
-      let i = 0;
-      while (!displayNameValid && i < 30) {
-        displayName = uniqueNamesGenerator({ dictionaries: [adjectives, colors, animals] });
-        displayNameValid = await userHelper.isCgProfileNameAvailable(displayName);
-        i++;
-      }
-
-      loginMethodAdded = true;
-      newUserData.email = useWizardCode.email;
-      newUserData.displayAccount = "cg";
-      newUserData.accounts.push({
-        type: "cg",
-        data: null,
-        displayName,
-        imageId: null,
-        extraData: { 
-          type: "cg",
-          description: '',
-          homepage: '',
-          links: [],
-        },
-      });
-    }
-
     if (!loginMethodAdded) {
       console.error("Error creating user, no login method added", data);
       throw new Error(errors.server.INVALID_REQUEST);
@@ -613,13 +577,10 @@ registerPostRoute<
 
     const insertedIds = await userHelper.createUser(newUserData, async () => {
       // make sure rate limits are respected
-      if (config.DEPLOYMENT !== 'dev' && !useWizardCode) {
+      if (config.DEPLOYMENT !== 'dev') {
         await createUserRateLimiter(request, response);
       }
     });
-    if (useWizardCode) {
-      await communityHelper.redeemAndInvalidateWizardCode({ wizardId: useWizardCode.wizardId, code: useWizardCode.code, userId: insertedIds.userId });
-    }
 
     delete request.session.passkeyData;
     delete request.session.preparedCredential;
@@ -1501,28 +1462,6 @@ registerPostRoute<
       await emailUtils.sendOneTimePasswordEmail(email, otp);
     } catch (error) {
       console.error(error);
-    }
-  }
-);
-
-registerPostRoute<
-  API.User.redeemWizardCodeForExistingUser.Request,
-  API.User.redeemWizardCodeForExistingUser.Response
->(
-  userRouter,
-  '/redeemWizardCode',
-  validators.API.User.redeemWizardCode,
-  async (request, response, data) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-    const { wizardId, code } = data;
-    const isAvailable = await communityHelper.isWizardCodeAvailable({ wizardId, code });
-    if (!isAvailable) {
-      throw new Error("Invalid code");
-    } else {
-      await communityHelper.redeemAndInvalidateWizardCode({ wizardId, code, userId: user.id });
     }
   }
 );

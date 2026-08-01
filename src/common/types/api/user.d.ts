@@ -106,11 +106,6 @@ declare global {
                         email: string;
                         password: string;
                     };
-                    useWizardCode?: {
-                        email: string;
-                        code: string;
-                        wizardId: string;
-                    };
                     useCgProfile?: Models.User.ProfileItemWithDetails & { type: 'cg', extraData: Models.User.UserAccountExtraData_CG };
                     displayAccount: Exclude<Models.User.ProfileItemType, 'bot'>;
                     recaptchaToken: string;
@@ -436,14 +431,6 @@ declare global {
             namespace sendOneTimePasswordForLogin {
                 type Request = {
                     email: string;
-                };
-                type Response = void;
-            }
-
-            namespace redeemWizardCodeForExistingUser {
-                type Request = {
-                    wizardId: string;
-                    code: string;
                 };
                 type Response = void;
             }

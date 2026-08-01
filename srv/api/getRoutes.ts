@@ -536,50 +536,6 @@ getRoutesRouter.get(new RegExp(`/${config.URL_APPSTORE}/([^/]+)(/?.*)?`), async 
   } catch (e) { handleError(res, e) }
 });
 
-// Community wizard
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_WIZARD}/([^/]+)(/?.*)?`), async (req, res) => {
-  try {
-    const communityUrl = req.params[0];
-    const wizardIdParam = req.params[1];
-    let wizardId: string | undefined;
-    if (wizardIdParam.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)) {
-      wizardId = wizardIdParam;
-    }
-    else if (wizardIdParam.match(/^[0-9a-z]{22}$/i)) {
-      wizardId = translator.toUUID(wizardIdParam);
-    }
-    if (!wizardId) {
-      res.sendStatus(404);
-    } else {
-      const communityData = await communityHelper.getCommunitySocialPreview({ communityUrl });
-      const wizardData = await communityHelper.getWizardDataForSocialPreview(wizardId);
-      if (!communityData || !wizardData) {
-        res.sendStatus(404);
-      } else if (!wizardData.isPublic) {
-        // show error page
-        res.sendStatus(404);
-      } else {
-        const baseUrl = [
-          getWorkingHost(req.hostname),
-          config.URL_COMMUNITY,
-          communityUrl,
-        ].join('/');
-
-        res.setHeader('Content-Type', 'text/html');
-        res.setHeader('Cache-Control', 'public, max-age=30, must-revalidate');
-        const indexHtml = makeIndexHtml(
-          communityData.title || '',
-          wizardData.socialPreviewDescription,
-          "website",
-          `${baseUrl}/${config.URL_WIZARD}/${wizardIdParam}`,
-          `${baseUrl}/wizardImage.jpeg`,
-        );
-        res.send(indexHtml);
-      }
-    }
-  } catch (e) { handleError(res, e) }
-});
-
 // Community
 getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/image.jpeg`), async (req, res) => {
   try {
@@ -658,39 +614,6 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/image.jpeg`), a
             </div>
 
             <span class="cg-text-lg-400 bg-full-white cg-text-full-black" style="padding: 8px 16px; border-radius: 12px; width: fit-content;">Join community</span>
-          </div>
-        </div>`,
-        height: 268,
-        width: 512
-      });
-
-      if (!!imageBuffer) {
-        const outputBuffer = await fileHelper.convertToJpg(imageBuffer, 512, 268);
-        res.setHeader('Content-Type', 'image/jpeg');
-        res.setHeader('Cache-Control', 'public, max-age=30, must-revalidate');
-        res.status(200).send(outputBuffer);
-        return;
-      }
-    }
-    res.sendStatus(404);
-  } catch (e) { handleError(res, e) }
-});
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/wizardImage.jpeg`), async (req, res) => {
-  try {
-    const communityUrl = req.params[0];
-    const data = await communityHelper.getCommunitySocialPreview({ communityUrl });
-    if (data) {
-      const loglogo = await fileHelper.getFile(data.logoLargeId || data.logoSmallId);
-
-      const imageBuffer = await htmlToImage({
-        body: `<div class="flex flex-col" style="padding:24px;gap:13px;height: 100%; width: 100%;">
-          <div class="flex" style="justify-content: space-between; gap: 23px; flex: 1; align-items: center; justify-content: center;">
-            <div class="flex flex-col" style="gap: 8px; align-items: center; justify-content: center;">
-              <div
-                style="z-index:1; border-radius: 16px; height: 160px; width: 160px; background-position: center; background-repeat: no-repeat; background-size: cover; background-image: url('data:image/jpg;base64,${loglogo?.toString('base64')}')">
-              </div>
-              <span class="cg-heading-2 cg-text-main" style="padding-top: 8px; display: block;">${data.title}</span>
-            </div>
           </div>
         </div>`,
         height: 268,

@@ -106,11 +106,6 @@ const userApi = {
       imageId: common.ImageId.allow(null).required(),
       extraData: cgProfileExtraDataValidator.required(),
     }).strict(true),
-    useWizardCode: Joi.object<API.User.createUser.Request["useWizardCode"]>({
-      code: Joi.string().required(),
-      email: TldSafeEmailValidator.required(),
-      wizardId: common.Uuid.required(),
-    }).strict(true),
     displayAccount: Joi.string().valid(...humanAccountTypes).required(),
     recaptchaToken: Joi.string().required(),
     device: newDeviceValidator.required(),
@@ -322,11 +317,6 @@ const userApi = {
 
   sendOneTimePasswordForLogin: Joi.object<API.User.sendOneTimePasswordForLogin.Request>({
     email: TldSafeEmailValidator.required(),
-  }).strict(true).required(),
-
-  redeemWizardCode: Joi.object<API.User.redeemWizardCodeForExistingUser.Request>({
-    code: Joi.string().required(),
-    wizardId: common.Uuid.required(),
   }).strict(true).required(),
 }
 

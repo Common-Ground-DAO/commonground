@@ -208,7 +208,6 @@ const config = {
   URL_FEED: 'feed' as const,
   URL_CALL: 'call' as const,
   URL_EVENT: 'event' as const,
-  URL_WIZARD: 'wizard' as const,
   URL_PLUGIN: 'plugin' as const,
   URL_APPSTORE: 'store' as const,
 

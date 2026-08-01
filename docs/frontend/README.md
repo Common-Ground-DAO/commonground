@@ -1,6 +1,6 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit a3ab0dcc4, 2026-08-01
+> Status: verified against commit 5777032d4, 2026-08-01
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -869,7 +869,7 @@ Recognized fields include:
 | `cgidUrl` | Base URL of the CG ID app (including hash-router prefix) |
 | `recaptchaSiteKey` | reCAPTCHA v2 site key for this instance |
 | `activeChains` | Chains the instance supports (keys of the available-chain set) |
-| `features` | Capability flags (`email`, `twitterAuth`) derived from which server secrets are configured; an absent flag means the feature is available |
+| `features` | Capability flags (`email`, `twitterAuth`, `calls`) derived from which server secrets/services are configured; an absent flag means the feature is available. `calls: false` (no mediasoup service) hides the call section in `CallList` / `StartCallButton` |
 | `giphyApiKey` | Giphy key for the GIF picker (empty disables it) |
 | `walletConnectProjectId` | WalletConnect Cloud project id for this instance |
 

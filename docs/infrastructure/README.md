@@ -1,4 +1,4 @@
-> Status: verified against commit 6c0befd39, 2026-08-01
+> Status: verified against commit 5777032d4, 2026-08-01
 
 # Common Ground Infrastructure Documentation
 
@@ -47,14 +47,16 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Stop behavior:** SIGINT with 1-minute grace period
 - **Restart:** `unless-stopped`
 
-#### `redis-sessions`, `redis-socketio`, `redis-data`
-- **Image:** `redis:6.2.7-alpine` (all three)
-- **Command:** `redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 2GB --save ""`
-- **No persistence** (`--save ""`): all three are ephemeral.
-- **Purpose:**
-  - `redis-sessions` — user session store (`express-session`)
-  - `redis-socketio` — pub/sub adapter for Socket.IO, distributing real-time events across backend instances
-  - `redis-data` — general-purpose cache (rate limiting, temporary data)
+#### `redis`
+- **Image:** `redis:6.2.7-alpine`
+- **Command:** `redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 6GB --save ""`
+- **No persistence** (`--save ""`) and **no eviction policy** (the default `noeviction`): sessions and the captcha HMAC key are not cache entries and must never be evicted. Nothing survives a restart — a restart logs everyone out.
+- **Purpose:** one instance serves all three historical roles, with pairwise disjoint key prefixes:
+  - user session store (`express-session` / `connect-redis`, `sess:`)
+  - pub/sub adapter for Socket.IO (`v2:`), distributing real-time events across backend instances
+  - general-purpose cache (rate limiting, bot presence, captcha, user data)
+- Until 2026-08-01 this was three identically configured instances (`redis-sessions`, `redis-socketio`, `redis-data`); the split was mechanical, never load-bearing. `maxmemory` is now the shared budget for all of it.
+- **Backend connection:** `srv/redis/index.ts` (the only file that creates clients) resolves `process.env.REDIS_URL || 'redis://redis:6379'`, password from the Docker secret `redis_password` or `REDIS_PASSWORD`. Neither compose file sets `REDIS_URL`; it exists for deployments that run Redis somewhere else.
 
 > The former `redis-blockscout` service is now fully commented out in the compose file (it only existed for the optional Blockscout explorer).
 
@@ -63,7 +65,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Purpose:** Main HTTP REST API server. Handles all `/api/v2/*` requests plus the Bot API v1 (`/BotV1/*`): authentication, community management, file uploads, messaging, contracts, notifications, Twitter/Lukso integrations, search, reporting, bots, and staking.
 - **Command:** `node /dist/api.js`
 - **Port:** Internal only (reached by nginx on port 4000 over the Docker network)
-- **Depends on:** `db`, `redis-sessions`, `redis-socketio`, `redis-data`, `seaweedmaster`, `s3`, `memberlist`
+- **Depends on:** `db`, `redis`, `seaweedmaster`, `s3`, `memberlist`
 - **Volumes:**
   - `./vapid_keys.json:/run/secrets/vapid_keys_json:ro` — VAPID keys for web push notifications
   - `./api_data:/api_data:ro` — static API data
@@ -73,7 +75,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Image:** `cryptogram/backend`
 - **Purpose:** WebSocket API server. Handles real-time communication at `/api/ws/` — message delivery, presence updates, typing indicators, etc.
 - **Command:** `node /dist/wsapi.js`
-- **Depends on:** `db`, `redis-sessions`, `redis-socketio`, `redis-data`
+- **Depends on:** `db`, `redis`
 - **Key environment variables:** `DB_TYPE=writer`, `PG_PASSWORD`, `REDIS_PASSWORD`, `REDIS_SECRET`, `DEPLOYMENT`, `BASE_URL`, `CGID_URL`
 
 #### `memberlist`
@@ -86,7 +88,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Image:** `cryptogram/backend`
 - **Purpose:** Background job processor. Runs scheduled and queued tasks: activity-score calculation, email sending, cleanup jobs, and the Spark staking-accrual job.
 - **Command:** `node /dist/jobs.js`
-- **Depends on:** `db`, `redis-sessions`, `redis-socketio`, `redis-data`, `seaweedmaster`, `s3`
+- **Depends on:** `db`, `redis`, `seaweedmaster`, `s3`
 - **Key environment variables:** the writer DB/Redis set, `S3_SECRET`, `SENDGRID_API_KEY`, and the `STAKING_*` set.
 
 #### `mediasoup`
@@ -104,7 +106,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Image:** `cryptogram/backend`
 - **Purpose:** Blockchain event listener and token-gating engine. Monitors ERC-20/721/1155 balances across multiple chains, assigns roles based on token holdings, indexes staking events, and syncs on-chain data.
 - **Command:** `node /dist/onchain.js`
-- **Depends on:** `db`, `redis-sessions`, `redis-socketio`, `redis-data`
+- **Depends on:** `db`, `redis`
 - **Key environment variables:** all `QUIKNODE_*` and `INFURA_LINEA` RPC endpoint URLs (ETH, BSC, Polygon/Matic, Gnosis/xDai, Fantom, Avalanche, Arbitrum, Optimism, Base, Linea, Arbitrum Nova, Celo, Polygon zkEVM, Scroll, zkSync, **and LUKSO — `QUIKNODE_LUKSO`, now a configurable endpoint like the others**), the `STAKING_*` set, and `RECALCULATE_BALANCES_AND_ROLES`.
 
 #### `migrate-db`
@@ -300,7 +302,7 @@ Per `AGENTS.md`, `docker/.env` is tracked in the repo **as a placeholder templat
 | `PG_WRITER_PASSWORD` / `PG_READER_PASSWORD` | Passwords for the `writer` / `reader` DB roles |
 | `PG_SU_PASSWORD` | PostgreSQL superuser password |
 | `PG_MEDIASOUP_PASSWORD` | Password for mediasoup's dedicated DB role |
-| `REDIS_PASSWORD` | Password for all Redis instances |
+| `REDIS_PASSWORD` | Password for the Redis instance |
 | `REDIS_SECRET` | Secret for Redis-backed session signing |
 | `PGADMIN_SECRET` / `PGADMIN_EMAIL` | pgAdmin login (only if pgAdmin is enabled) |
 | `DEPLOYMENT` | `dev` \| `staging` \| `prod`. Controls feature flags, chain config, CSP, session cookie names. |
@@ -417,7 +419,8 @@ This profile runs the **entire stack on one server** with real production semant
 - **`DEPLOYMENT=prod`** on any domain — full production behaviour without hardcoding `app.cg`.
 - **No `hardhat` dev chain, no `redis-blockscout`, no test-contract deployment.**
 - **Postgres loads the tuned `postgresql.conf`** (same `config_file` command as dev).
-- **Redis `maxmemory` is tuned small** (`${REDIS_MAXMEMORY:-512mb}` per instance) instead of the dev 2 GB.
+- **Redis `maxmemory` is tuned small** (`${REDIS_MAXMEMORY:-1536mb}` total) instead of the dev 6 GB.
+- **`mediasoup` and `onchain` are optional**: they carry the Compose profiles `calls` and `blockchain`, which `selfhost.sh` enables from `CG_ENABLE_CALLS` / `CG_ENABLE_BLOCKCHAIN` in `.env.selfhost` (both default to `true`). See [docs/deployment §3.8](../deployment/README.md#38-optional-services-calls-and-blockchain) and `docker/SELFHOST.md`.
 - **SeaweedFS master** uses `-volumeSizeLimitMB=${SEAWEED_VOLUME_LIMIT_MB:-1024}`.
 
 ### Operation scripts
@@ -428,7 +431,7 @@ This profile runs the **entire stack on one server** with real production semant
   - Generates `docker/s3_config/s3.selfhost.json` with an S3 secret matching the generated `S3_SECRET` (`chmod 600`).
   - Generates a self-signed cert in `docker/selfhost/certs/` for the internal caddy→mediasoup hop only (clients only ever see the Let's Encrypt cert).
   - The generated `.env.selfhost` prefills the RPC endpoints with **free public JSON-RPC URLs** and `CG_ACTIVE_CHAINS=eth,arbitrum,xdai,base,matic,lukso`, so token-gating works out of the box.
-- **`docker/selfhost/selfhost.sh <cmd>`** — build/operate wrapper. Requires `.env.selfhost`; runs Compose with `--env-file .env.selfhost -f docker-compose.selfhost.yml`. Commands: `build`, `up`, `down`, `logs [service]`, `ps`, `stats`, `compose <args>`, `update` (git pull + rebuild + restart). The `build` command mirrors `build.sh` but uses `NODE_OPTIONS=--max-old-space-size=4096` and `GENERATE_SOURCEMAP=false`, and builds the nginx image from `Dockerfile_selfhost`.
+- **`docker/selfhost/selfhost.sh <cmd>`** — build/operate wrapper. Requires `.env.selfhost`; runs Compose with `--env-file .env.selfhost -f docker-compose.selfhost.yml`. Commands: `build`, `up`, `down`, `logs [service]`, `ps`, `stats`, `compose <args>`, `update` (git pull + rebuild + restart). It sets `COMPOSE_PROFILES` from the `CG_ENABLE_CALLS` / `CG_ENABLE_BLOCKCHAIN` switches and runs `up`/`down`/`update` with `--remove-orphans`, so a service whose switch was flipped off is actually removed. The `build` command mirrors `build.sh` but uses `NODE_OPTIONS=--max-old-space-size=4096` and `GENERATE_SOURCEMAP=false`, and builds the nginx image from `Dockerfile_selfhost`.
 
 ### Caddy (`docker/selfhost/Caddyfile`)
 
@@ -445,7 +448,7 @@ The same build artifacts serve any domain: identity is configuration, not code. 
 <script>window.__CG_INSTANCE__ = {"deployment":"prod","appUrl":"https://chat.example.org", ...}</script>
 ```
 
-into `/www/index.html` and `/www/index_cgid.html` (skipping files already configured). The object carries `deployment`, `appUrl`, `cgidUrl`, `activeChains`, a `features` map (`email`, `twitterAuth`), `giphyApiKey`, `walletConnectProjectId`, and `recaptchaSiteKey`. Compose derives the boolean feature flags from whether the corresponding key is set (e.g. `CG_FEATURE_EMAIL=${SENDGRID_API_KEY:+true}`), so the frontend hides or honestly labels features that aren't configured. The backend performs the equivalent injection for share links. See `src/common/instance.ts`.
+into `/www/index.html` and `/www/index_cgid.html` (skipping files already configured). The object carries `deployment`, `appUrl`, `cgidUrl`, `activeChains`, a `features` map (`email`, `twitterAuth`, `calls`), `giphyApiKey`, `walletConnectProjectId`, and `recaptchaSiteKey`. Compose derives the boolean feature flags from whether the corresponding key is set (e.g. `CG_FEATURE_EMAIL=${SENDGRID_API_KEY:+true}`), so the frontend hides or honestly labels features that aren't configured. The backend performs the equivalent injection for share links. See `src/common/instance.ts`.
 
 ### `nginx_selfhost.conf` specifics
 

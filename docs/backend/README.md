@@ -1,6 +1,6 @@
 # Common Ground Backend Documentation
 
-> Status: verified against commit a3ab0dcc4, 2026-08-01.
+> Status: verified against commit 5777032d4, 2026-08-01.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -1160,4 +1160,4 @@ Parses the staking feature configuration from env vars (`STAKING_CHAIN`, `STAKIN
 
 ### `srv/util/instanceConfig.ts` -- Instance Identity / Capability Flags
 
-Builds the `window.__CG_INSTANCE__` script tag injected into served `index.html` pages (share links / social previews). Declares the deployment, app/CGID URLs, active chains, and a `features` map derived from which credentials this server actually has (email, twitterAuth) so the frontend can hide features that would only fail. Optional keys (reCAPTCHA site key, Giphy key, WalletConnect project id) are included when configured.
+Builds the `window.__CG_INSTANCE__` script tag injected into served `index.html` pages (share links / social previews). Declares the deployment, app/CGID URLs, active chains, and a `features` map derived from which credentials and services this server actually has (`email`, `twitterAuth`, and `calls` from `CG_ENABLE_CALLS`) so the frontend can hide features that would only fail. Optional keys (reCAPTCHA site key, Giphy key, WalletConnect project id) are included when configured.

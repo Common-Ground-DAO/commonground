@@ -1,4 +1,4 @@
-> Status: verified against commit a3c3f7608, 2026-08-01
+> Status: verified against commit 5777032d4, 2026-08-01
 
 # Common Ground - Architecture Documentation
 
@@ -39,14 +39,12 @@ The reference (cloud) deployment terminates TLS at Cloudflare and routes everyth
                               |           port 5432              |
                               +--------+------------------------+
                                        |
-                    +------------------+-------------------+
-                    |                  |                    |
-          +---------v----+  +----------v-----+  +----------v-----+
-          | redis-sessions|  | redis-socketio |  |   redis-data   |
-          | (session store|  | (Socket.IO     |  | (caching /     |
-          |  for Express) |  |  pub/sub       |  |  user data)    |
-          +--------------+  |  adapter)       |  +----------------+
-                            +----------------+
+                                       |
+                              +--------v-----------------------+
+                              |             redis              |
+                              | sessions + Socket.IO pub/sub   |
+                              | + cache (one instance)         |
+                              +--------------------------------+
 
    +----------------+  +----------------+  +----------------+  +----------------+
    |   mediasoup    |  |   onchain      |  |   job-runner   |  |   memberlist   |
@@ -67,9 +65,7 @@ A single-server self-hosting profile is also supported; it places **Caddy** (aut
 | **API Server** | Express.js (TypeScript) | `api` | REST API for all CRUD operations, session management, authentication, bot protocol |
 | **WebSocket Server** | Socket.IO (TypeScript) | `wsapi` | Real-time event broadcasting (messages, presence, notifications), bot socket streams |
 | **Database** | PostgreSQL | `db` | Primary persistent data store; uses LISTEN/NOTIFY for some inter-service signaling |
-| **Session Cache** | Redis 6.2 | `redis-sessions` | Express session storage via `connect-redis` |
-| **Socket.IO Adapter** | Redis 6.2 | `redis-socketio` | Pub/sub adapter for Socket.IO to enable multi-instance broadcasting |
-| **Data Cache** | Redis 6.2 | `redis-data` | General-purpose caching (user data, rate limiting, bot presence) |
+| **Redis** | Redis 6.2 | `redis` | One instance for everything: Express session storage via `connect-redis`, the Socket.IO pub/sub adapter for multi-instance broadcasting, and general-purpose caching (user data, rate limiting, bot presence) |
 | **File Storage** | SeaweedFS (S3-compatible) | `seaweedmaster`, `seaweedvolume`, `s3` | S3-compatible object storage for uploaded files and images |
 | **Reverse Proxy** | nginx | `nginx` | TLS termination (cloud), routing, static file serving, S3 file proxying, instance-config injection (self-host) |
 | **WebRTC SFU** | MediaSoup | `mediasoup` | Selective Forwarding Unit for voice/video calls |
@@ -144,7 +140,7 @@ A single-server self-hosting profile is also supported; it places **Caddy** (aut
            |
            v
  Socket.IO broadcast (wsapi)
-   - API server emits event via redis-socketio pub/sub
+   - API server emits event via the Redis pub/sub adapter
    - wsapi server(s) pick up event and broadcast to relevant rooms
    - Rooms are keyed by: user ID, community ID, role ID, device ID
            |
@@ -206,7 +202,7 @@ Every `index.html` the backend serves for share links / previews is stamped with
 
 Sessions are managed by `express-session` with a Redis-backed store. Key configuration from `srv/util/express.ts` and `srv/serverconfig.ts`:
 
-- **Store**: `connect-redis` backed by the `redis-sessions` instance
+- **Store**: `connect-redis` backed by the `redis` instance (`sess:` key prefix)
 - **Cookie name**: `connect.sid` when `DEPLOYMENT === 'prod'`; otherwise `cg_{deployment}.sid` (`SESSION_COOKIE_NAME` in `srv/serverconfig.ts`)
 - **Cookie settings**: `httpOnly`, `secure` (except in dev), `sameSite: lax`, 12-hour max age, `rolling: true` (refreshed on every request)
 - **Cookie domain**: for non-dev deployments the cookie domain is set to `.{APP_HOSTNAME}` (derived from `BASE_URL`), so the app and the CG ID app (`id.<domain>`) share a session. Self-hosted instances get their own domain automatically.
@@ -296,8 +292,8 @@ The system runs as multiple independent Node.js processes (Docker containers), e
 
 | Service | Entry Point | Listens On | Communicates With |
 |---------|------------|------------|-------------------|
-| `api` | `srv/api.ts` | HTTP :4000 | PostgreSQL, all 3 Redis instances, S3, onchain |
-| `wsapi` | `srv/wsapi.ts` | Socket.IO :4000 | PostgreSQL, redis-sessions (cookie decode), redis-socketio (pub/sub adapter), redis-data (bot presence) |
+| `api` | `srv/api.ts` | HTTP :4000 | PostgreSQL, Redis, S3, onchain |
+| `wsapi` | `srv/wsapi.ts` | Socket.IO :4000 | PostgreSQL, Redis (session cookie decode, pub/sub adapter, bot presence) |
 | `mediasoup` | `srv/mediasoup.ts` | HTTPS :4443 + UDP 40000-40099 | PostgreSQL (LISTEN/NOTIFY) |
 | `onchain` | `srv/onchain.ts` | HTTP :4000 (internal) | PostgreSQL, Redis, blockchain RPC nodes |
 | `job-runner` | `srv/jobs.ts` | None (worker threads) | PostgreSQL, Redis, S3 |
@@ -330,7 +326,7 @@ The API server (`srv/api.ts`) mounts the following Express routers:
 
 ### Socket.IO Redis Adapter
 
-The Socket.IO server uses `@socket.io/redis-adapter` with the dedicated `redis-socketio` instance for cross-instance pub/sub:
+The Socket.IO server uses `@socket.io/redis-adapter` with a dedicated publisher/subscriber connection pair for cross-instance pub/sub:
 
 ```
 srv/wsapi.ts:
@@ -343,15 +339,17 @@ srv/wsapi.ts:
 
 This allows the API server to emit events (via the shared Redis pub/sub channel) that are broadcast by any connected `wsapi` instance. The `v2:` key prefix namespaces the adapter messages.
 
-### Redis Instance Separation
+### Redis Clients
 
-Three separate Redis instances isolate concerns (configured in `srv/redis/index.ts`):
+One Redis instance (`redis`, default URL `redis://redis:6379`, override with `REDIS_URL`) serves every purpose. `srv/redis/index.ts` is the only file that creates clients and still keeps four of them — for protocol reasons, not because they address different servers:
 
-| Redis Instance | Docker Service | Purpose |
-|----------------|---------------|---------|
-| `session` | `redis-sessions` | Express session storage (connect-redis). Written by `api`, read by `wsapi` for cookie verification. |
-| `socketIOPub` / `socketIOSub` | `redis-socketio` | Socket.IO adapter pub/sub for broadcasting across `wsapi` instances. |
-| `data` | `redis-data` | General-purpose caching, `UserDataManager`, rate limiting, bot connection-presence leases. |
+| Client | Purpose | Why it is separate |
+|--------|---------|--------------------|
+| `session` | Express session storage (connect-redis, `sess:`). Written by `api`, read by `wsapi` for cookie verification. | needs `legacyMode` — connect-redis v6 speaks the node-redis v3 API |
+| `socketIOPub` / `socketIOSub` | Socket.IO adapter pub/sub (`v2:`) for broadcasting across `wsapi` instances. | a subscribing connection cannot issue normal commands |
+| `data` | General-purpose caching, `UserDataManager`, rate limiting, bot connection-presence leases. | plain command connection |
+
+Key prefixes are pairwise disjoint (`sess:`, `ratelimit:`, `bot-ratelimit:`, `bot-presence:`, `captcha:`, `pluginRequest:`, `ud:`/`us:`, `tmp:`, `online-user-addresses`, and the adapter's `v2:`). Until 2026-08-01 these clients pointed at three identically configured instances; the split was mechanical and never load-bearing.
 
 ### PostgreSQL LISTEN/NOTIFY
 
@@ -441,8 +439,8 @@ Socket.IO is used primarily for server-to-client event broadcasting. Events are 
 ```
 API Server (handles POST /Message/sendMessage)
   -> Writes to PostgreSQL
-  -> Emits event to redis-socketio (Socket.IO server-side emit)
-  -> redis-socketio pub/sub distributes to all wsapi instances
+  -> Emits event to Redis (Socket.IO server-side emit)
+  -> Redis pub/sub distributes to all wsapi instances
   -> Each wsapi instance broadcasts to matching rooms
   -> Connected clients in those rooms receive the event
 ```
@@ -528,6 +526,7 @@ All third-party integrations are optional. The server derives **capability flags
 |------|-------------------------|
 | `email` | SendGrid API key |
 | `twitterAuth` | Twitter API v1 key + secret |
+| `calls` | the `mediasoup` service is deployed (opt-out flag: only an explicit `CG_ENABLE_CALLS=false` turns it off) |
 
 An **absent** flag means "feature available" (the behaviour on official instances that always have the keys); an explicit `false` lets a self-hosted frontend hide features that would only fail. Related optional values shipped the same way: `captchaProvider` / `recaptchaSiteKey` (captcha), `giphyApiKey` (GIF picker), `walletConnectProjectId` (wallet connect), and `activeChains` (the chains with working RPC endpoints for this instance). Backend endpoints for unconfigured integrations degrade to no-ops rather than erroring — with the exception of captcha, which stays fail-closed via the built-in ALTCHA default (no external service needed).
 

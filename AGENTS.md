@@ -57,7 +57,7 @@ they are deleted via dedicated cleanup PRs tracked in
 |---|---|---|
 | Communities, areas, channels, messaging, DMs | **core** | |
 | Articles / blogs, events, search, notifications | **core** | |
-| Voice/video calls (MediaSoup) | **core** | optional at deploy time (service toggle) |
+| Voice/video calls (MediaSoup) | **core** | optional at deploy time: selfhost `CG_ENABLE_CALLS=false` drops the `mediasoup` service (compose profile `calls`) and the instance config hides the call UI |
 | Plugin system (iframe host, appstore) | **core** | designated target for extracted non-core features |
 | Bot accounts + Bot API v1 | **core** | |
 | Staking (contract, indexing, accrual, Stake UI) | **core** | |
@@ -119,7 +119,7 @@ Ongoing and planned work lives in `docs/todo/`, one markdown file per workstream
 5. **Socket.IO events** must be emitted via the Redis adapter/emitter for multi-instance compatibility.
 6. **Never commit secrets.** `docker/.env` is tracked as a placeholder template — keep real values local, never stage them.
 7. **Check the Module Status table** before touching anything — no new code on `removal-pending` modules.
-8. **Blockchain features are optional** — the app must keep working without any blockchain configuration (graceful degradation applies to all optional third-party integrations).
+8. **Blockchain features are optional** — the app must keep working without any blockchain configuration (graceful degradation applies to all optional third-party integrations). The selfhost profile can drop the `onchain` service entirely (`CG_ENABLE_BLOCKCHAIN=false`, compose profile `blockchain`).
 9. **The backend has multiple entry points** (api, wsapi, memberlist, onchain, mediasoup, jobs, migrateDb) sharing entities and utilities — check which process your code runs in.
 10. **Keep docs truthful** (see Documentation rules above).
 11. **Delete branches after merge.** Once a branch is merged — into `main` or into a

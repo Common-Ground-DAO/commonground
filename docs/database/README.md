@@ -1,6 +1,6 @@
 # Database Documentation
 
-> Status: verified against commit 523fceccd, 2026-07-25
+> Status: verified against commit 8c3a529da, 2026-08-01
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -516,9 +516,6 @@ Links articles to user profiles (personal blog). Composite PK: `(userId, article
 | `url` | `varchar(30)` | Nullable |
 | `published` | `timestamptz(3)` | Nullable |
 | `createdAt/updatedAt/deletedAt` | `timestamptz(3)` | Standard timestamps |
-
-#### `feeds` / `communities_feeds` (COMMENTED OUT)
-These entities exist in the codebase but are entirely commented out. They were intended for RSS-style feed aggregation within communities. Not active in the current schema.
 
 ---
 

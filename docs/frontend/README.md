@@ -1,6 +1,6 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit 523fceccd, 2026-07-25
+> Status: verified against commit 8c3a529da, 2026-08-01
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -227,9 +227,7 @@ Complex, self-contained UI sections that combine molecules and atoms with signif
 | `PostPublishedModal` | Article published confirmation |
 | `SchedulePostModal` | Schedule article publication |
 | `ManagementContentModal` | Generic management modal |
-| `WhatsNewModal` | Release notes / changelog |
 | `SupporterScreen` | Supporter/premium purchase screen |
-| `EarlyAdopterBanner` | Early adopter promotion |
 | `EcosystemHomeHeader` | Ecosystem-specific home header |
 | `EcosystemMenu` | Ecosystem navigation menu |
 | `MyCommunitiesExplorer` | Browse own communities |
@@ -269,8 +267,6 @@ Views are full pages composed of templates/organisms. They live in `src/views/` 
 | `ContentBrowser` | `/feed/` | Content feed browser |
 | `LearnMore` | `/learn-more` | Informational page |
 | `OwnCommunitiesBrowser` | (embedded) | Browse own communities |
-
-> **Note:** `GroupBrowser` and `BlogBrowser` views exist in the codebase but their routes are currently commented out in `App.tsx`.
 
 ### Community Views
 
@@ -348,7 +344,6 @@ Views are full pages composed of templates/organisms. They live in `src/views/` 
 | `TwitterCallbackView` | `/twitter-login` | Twitter OAuth callback handler (rendered outside main layout) |
 | `VerifyEmailView` | `/verify-email` | Email verification handler (rendered outside main layout) |
 | `IdVerificationView` | `/id-verification/` | Identity verification (Sumsub KYC) |
-| `SwapAccountView` | (embedded) | Account switching |
 
 ### Token and Commerce
 
@@ -356,7 +351,6 @@ Views are full pages composed of templates/organisms. They live in `src/views/` 
 |---|---|---|
 | `TokenSale` | `/token/` | Token / Spark page. Tabs: **Get** (buy), **Earn** (claim), **Stake**. Get/Earn are currently hidden behind a `SHOW_GET_EARN_TABS` constant (default `false`), so the page opens on the **Stake** tab. |
 | `TokenSale/StakeTab` | (embedded) | Staking UI: connect wallet, choose amount + lock duration, preview Spark reward, submit the on-chain stake. |
-| `AppsView` | `/apps/` | Plugin/app marketplace |
 
 ### System
 

@@ -1,6 +1,6 @@
 # Common Ground Backend Documentation
 
-> Status: verified against commit bd09cbf3d, 2026-07-27.
+> Status: verified against commit 8c3a529da, 2026-08-01.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -283,7 +283,6 @@ A subset of message routes is also reachable over the Bot API v1 surface (see be
 - `/loadAssistantChat` -- Load an AI assistant chat conversation
 - `/startAssistantChat` -- Start a new AI assistant conversation
 - `/continueAssistantChat` -- Send a follow-up message to the AI assistant
-- `/cancelAssistantQueueItem` -- Cancel a queued AI request
 - `/deleteAssistantChat` -- Delete an AI chat
 - `/getAssistantQueueData` -- Get current queue position/status
 - `/getAssistantAvailability` -- Get which AI models are available
@@ -602,22 +601,6 @@ All entities use TypeORM decorators and live in `srv/entities/`. The database is
 - Composite PK: `userId` + `articleId`
 - `url` (varchar 30, nullable)
 - `publishedAt` (timestamptz, nullable)
-
-### Feeds Domain
-
-**`Feed`** (`srv/entities/feeds.ts`, table: `feeds`)
-- `id` (UUID, PK)
-- OneToMany -> FeedItem
-
-**`FeedItem`** (table: `feeditems`)
-- `id` (UUID, PK)
-- `feedId` -> Feed
-- `data` (jsonb, nullable)
-
-**`CommunityFeed`** (`srv/entities/communities-feeds.ts`, table: `communities_feeds`)
-- Composite PK: `communityId` + `feedId`
-- `url` (varchar 30), `title` (varchar 100), `description` (varchar 256), `emoji` (varchar 16)
-- OneToMany -> CommunityFeedRolePermissions
 
 ### Calls Domain
 
@@ -1109,7 +1092,7 @@ Located in `srv/jobs/`. All jobs are designed to run as **worker threads** (they
 `srv/jobs.ts` spawns each job as a worker thread and manages three kinds:
 - **Permanent workers** (long-running, auto-restart on exit): `premiumRenewal`, `callUpdateEmitter`, `trackTokenSales`, `handleCommunityAirdrops`, and (prod only) `tokenSaleNotifications`.
 - **Cron / interval workers** (re-spawned on a schedule, skipped if the previous run is still alive): `onlineStatusCheck` (every 30 s), `stakingAccrual` (`17 */6 * * *`, every 6 h), `activityScore` (`*/10 * * * *`), `newsletterDelivery` (`0 12 * * 6`, weekly Saturday noon), `emailNotifications` (every minute).
-- **One-shot workers** (run once at startup, guarded by the `oneshot_jobs` table): `previewImageUpdate`, `erc20decimalFix`, `fileMetadataFix`, `luksoProfileImageFix`, `calculateTokenRewardProgram`, `calculateTokenRewardProgramSecond`, `calculateTokenRewardProgramSecondFix`, `erc1155nameAndMetadataFix`.
+- **One-shot workers** (run once at startup, guarded by the `oneshot_jobs` table): none currently. The `createOneshotWorker` helper and the `oneshot_jobs` table are kept for future backfills; the eight historical backfill jobs were removed in 2026-08 after they had run everywhere (their code is in git history).
 
 ### `activityScore.ts`
 - **Purpose:** Recalculates community activity scores based on recent messages and articles.
@@ -1149,31 +1132,9 @@ Located in `srv/jobs/`. All jobs are designed to run as **worker threads** (they
 - **Purpose:** Sends email and push notifications about token sale events (1-day-before and starting-now).
 - **Logic:** Runs on a 5-minute interval. Queries upcoming token sales and sends notifications to registered users.
 
-### `calculateTokenRewardProgram.ts`
-- **Purpose:** One-shot job to calculate token reward distributions based on user activity.
-- **Logic:** Allocates reward pools across categories: messages written, calls joined, Lukso accounts, recent logins, sparks bought, communities joined, articles written, followers, event participation. Uses ranked distribution with configurable first-to-last ratios.
-
-### `calculateTokenRewardProgramSecond.ts` / `calculateTokenRewardProgramSecondFix.ts`
-- **Purpose:** Additional phases of the token reward program calculation with different parameters.
-
 ### `callUpdateEmitter.ts`
 - **Purpose:** Monitors call server status and emits real-time updates about active calls.
 - **Logic:** Tracks call servers, their online status, and ongoing calls. Ends empty/stale calls. Emits updates to relevant community rooms.
-
-### `previewImageUpdate.ts`
-- **Purpose:** One-shot migration job to generate preview images for communities and users that lack them.
-
-### `luksoProfileImageFix.ts`
-- **Purpose:** One-shot fix to download and store profile images for Lukso accounts.
-
-### `erc1155nameAndMetadataFix.ts`
-- **Purpose:** One-shot fix for ERC-1155 token name and metadata.
-
-### `erc20decimalFix.ts`
-- **Purpose:** One-shot fix for ERC-20 token decimal data.
-
-### `fileMetadataFix.ts`
-- **Purpose:** One-shot fix to add metadata to files missing it.
 
 ---
 

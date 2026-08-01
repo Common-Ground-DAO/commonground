@@ -1,6 +1,9 @@
 # Frontend Inventory — Slimming Decision Basis
 
 > Status: verified against commit 523fceccd, 2026-07-25.
+> Update 2026-08-01: the Phase-1 items of ROADMAP_CORE_SLIMMING have been executed —
+> the four dead views, `WhatsNewModal`, `EarlyAdopterBanner` and the commented-out
+> route/theming blocks are **removed** (see the per-row notes below).
 
 Working document for the upcoming frontend slimming initiative. It inventories every
 view in `src/views/` plus the major feature areas, with route(s), approximate size
@@ -30,13 +33,13 @@ has had **zero** commits in that window.
 
 | View | Route path | ~LoC | Reachability | Notes / key deps |
 |------|-----------|------|--------------|------------------|
-| `Home` | `*` (catch-all) and `e/:ecosystem` | 422 | reachable (default) | Landing/explorer; `EcosystemMenu`, `CommunityExplorer`, `WhatsNewModal` (mobile). |
+| `Home` | `*` (catch-all) and `e/:ecosystem` | 422 | reachable (default) | Landing/explorer; `EcosystemMenu`, `CommunityExplorer` (the mobile `WhatsNewModal` was removed 2026-08-01). |
 | `TokenSale` | `/token/` (gated by `TOKEN_SALE_ENABLED` / non-prod) | 3518 | reachable | See §3. Largest single view. |
 | `TokenSaleRedirect` | `/token-sale` | 17 | reachable | Redirect shim to `/token/`. |
 | `IdVerificationView` | `/id-verification/` | 56 | reachable | Wraps `SumsubKyc` (§5). |
 | `ContentBrowser` | `/feed/` | 28 | reachable | Wraps `ArticleExplorer` (global article feed). |
 | `ConversationsBrowser` | `/chats/` | 45 | reachable | DM list. |
-| `NotificationsBrowser` | `/notifications/`, `/notifications/:shortUuid/` | 542 | reachable | `EarlyAdopterBanner` import present but usage commented (line 477). |
+| `NotificationsBrowser` | `/notifications/`, `/notifications/:shortUuid/` | 542 | reachable | The commented `EarlyAdopterBanner` usage (line 477) was removed 2026-08-01. |
 | `ChatView` | `/chats/:chatShortUuid/` | 55 | reachable | Uses `MessageViewInner`. |
 | `AssistantView` | `/assistant/` | 144 | reachable | Also mounted inside communities (§CommunityRouter). |
 | `LearnMore` | `/learn-more` | 42 | reachable | Static "What is CG?" marketing page. |
@@ -49,10 +52,10 @@ has had **zero** commits in that window.
 | `VerifyEmailView` | `/verify-email` (outside layout) | 79 | reachable | |
 | `CgUpdate` | not a `<Route>` — rendered by `App` when `showReleaseNotes`, and for PWA reload | 431 | reachable (conditional) | Release-notes / update-reload screen. |
 | `ProfileView` | via `ProfileRouter` (`/u/:idOrUrl/*`) | 40 | reachable | |
-| **`AppsView`** | — | 13 | **orphaned/dead** | `React.lazy` at `App.tsx:102`, **never** placed in a `<Route>`. Wraps `PluginAppstore` (reachable elsewhere via modal). |
-| **`GroupBrowser`** | — | 27 | **orphaned/dead** | `React.lazy` at `App.tsx:113`, never routed. Wraps `CommunityExplorer mode="unlimited"`. |
-| **`BlogBrowser`** | `blog-browser` | 40 | **dead (route commented)** | Route commented at `App.tsx:211`. Wraps `BlogExplorer`. |
-| **`SwapAccountView`** | — | 36 | **orphaned/dead** | Import commented at `App.tsx:125`; no route. |
+| **`AppsView`** | — | 13 | **REMOVED 2026-08-01** | `React.lazy` at `App.tsx:102`, **never** placed in a `<Route>`. Wraps `PluginAppstore` (reachable elsewhere via modal). |
+| **`GroupBrowser`** | — | 27 | **REMOVED 2026-08-01** | `React.lazy` at `App.tsx:113`, never routed. Wraps `CommunityExplorer mode="unlimited"`. |
+| **`BlogBrowser`** | `blog-browser` | 40 | **REMOVED 2026-08-01** | Route commented at `App.tsx:211`. Wraps `BlogExplorer`. |
+| **`SwapAccountView`** | — | 36 | **REMOVED 2026-08-01** | Import commented at `App.tsx:125`; no route. |
 
 Layout wrappers (not routed views, but live in `src/views/Layout/`): `DesktopLayout`,
 `TabletLayout`, `MobileLayout` selected by `useWindowSizeContext` — total `src/views/Layout` ≈ 207 LoC. Core.
@@ -92,7 +95,8 @@ All views below are imported **non-lazily** and mounted by live routes (reachabl
 | `PluginView` | `plugin/:pluginId/` | 568 | Plugin iframe host. |
 
 Dead code inside `CommunityRouter`: a block of `announcements/articles/guides/drafts`
-routes is commented out (lines 131–134) — legacy content-list navigation, superseded.
+routes was commented out (lines 131–134) — **removed 2026-08-01**. It was a duplicate of the
+live routes in `CommunityView.tsx`, so `CommunityContentList` itself stays.
 
 ## 3. ProfileRouter (`/u/:idOrUrl/*`)
 
@@ -126,7 +130,7 @@ routes is commented out (lines 131–134) — legacy content-list navigation, su
 
 - **Files**: `src/context/EcosystemProvider.tsx` (125), `EcosystemMenu` (331+27), `EcosystemHomeHeader` (194+78+`.data.ts` 262), `EcosystemPicker` (162+62), `EcosystemPickerField` (65), `EcosystemChip` (36+24). Total ≈ 1366 LoC.
 - **Routing**: `/e/:ecosystem` (via `EcosystemParamSetter` → `Home`). Ecosystems enumerated in-code: `fuel, lukso, si3, cannabis-social-clubs, powershift` (prod & staging identical). `EcosystemMenu`/picker are consumed by `Home`, `ExpandedMenu`, `CommunityExplorer`, `TagHeader`, `LoginBanner`, tag inputs — so ecosystem **filtering is live**.
-- **Notable**: The per-ecosystem **theming** in `EcosystemProvider` (all the CSS-variable overrides for fuel/lukso/powershift) is **entirely commented out** (lines 36–100); the provider now only ever *removes* the eco variables. So the provider is effectively a no-op wrapper around ecosystem-scoped routing/filtering.
+- **Notable**: The per-ecosystem **theming** in `EcosystemProvider` (all the CSS-variable overrides for fuel/lukso/powershift) was **entirely commented out** (lines 36–100) and was **removed 2026-08-01**; the provider only ever *removes* the eco variables. So the provider is effectively a no-op wrapper around ecosystem-scoped routing/filtering.
 - **Legacy assessment**: Untouched since baseline. Filtering paths are wired and reachable (**core-ish**), but the theming engine is dead code and the ecosystem list is hardcoded partner branding. Candidate for **slim-in-place** (drop commented theming, re-evaluate the hardcoded partner ecosystems) rather than full removal.
 
 ### Sumsub KYC — `SumsubContext` / `SumsubKyc`
@@ -143,8 +147,8 @@ routes is commented out (lines 131–134) — legacy content-list navigation, su
 
 ### Browsers: Group / Blog / Content
 
-- `GroupBrowser` (27) — **orphaned/dead** (imported, never routed).
-- `BlogBrowser` (40) — **dead**, route commented (`App.tsx:211`).
+- `GroupBrowser` (27) — **removed 2026-08-01** (was imported, never routed).
+- `BlogBrowser` (40) — **removed 2026-08-01** (route was commented, `App.tsx:211`).
 - `ContentBrowser` (28) — **live** at `/feed/`.
 - All three are thin wrappers around explorers (`CommunityExplorer` / `BlogExplorer` / `ArticleExplorer`); the explorers themselves are reused elsewhere, so removing the dead wrapper views is low-risk.
 
@@ -154,8 +158,8 @@ routes is commented out (lines 131–134) — legacy content-list navigation, su
 
 ### WhatsNewModal / EarlyAdopterBanner
 
-- `WhatsNewModal` (85) — wired into `Home` (mobile) and `ExpandedMenu`, **but the component early-returns `null`** (`WhatsNewModal.tsx`, `return null;` with a `// FIXME: uncomment if you want it to work`). Effectively **disabled dead code**; also contains a hardcoded promo URL/date. **Dead**.
-- `EarlyAdopterBanner` (68) — only usage is **commented out** in `NotificationsBrowser.tsx:477`. **Dead**.
+- `WhatsNewModal` (85) — **removed 2026-08-01**; was wired into `Home` (mobile) and `ExpandedMenu`, **but the component early-returned `null`** (`WhatsNewModal.tsx`, `return null;` with a `// FIXME: uncomment if you want it to work`). Effectively **disabled dead code**; also contains a hardcoded promo URL/date. **Dead**.
+- `EarlyAdopterBanner` (68) — **removed 2026-08-01**; its only usage was **commented out** in `NotificationsBrowser.tsx:477`.
 
 ### Supporter / premium UI
 
@@ -174,15 +178,15 @@ routes is commented out (lines 131–134) — legacy content-list navigation, su
 | Sumsub KYC | ~270 LoC | Entry points = wizard + `/id-verification/`; untouched | **legacy-freeze / verify** |
 | Aeternity wallet | ~520 LoC | Partner-chain login; untouched; app-wide provider | **plugin-candidate / legacy-freeze** |
 | Fuel wallet | ~600 LoC | Partner-chain login; untouched; provider not in global tree | **plugin-candidate / legacy-freeze** (verify user reachability) |
-| Ecosystem theming (in `EcosystemProvider`) | ~65 LoC commented | Entire theming block commented out | **dead (in-place cleanup)** |
+| Ecosystem theming (in `EcosystemProvider`) | ~65 LoC commented | Entire theming block commented out | **removed 2026-08-01** |
 | Ecosystem filtering/menu/picker | ~1300 LoC | Wired & reachable across Home/menu/explorer | **core** (slim-in-place) |
-| `AppsView` | 13 | Imported, never routed | **dead** |
-| `GroupBrowser` | 27 | Imported, never routed | **dead** |
-| `SwapAccountView` | 36 | Import commented, never routed | **dead** |
-| `BlogBrowser` | 40 | Route commented (`App.tsx:211`) | **dead** |
-| `WhatsNewModal` | 85 | Component hardcoded `return null` | **dead** |
-| `EarlyAdopterBanner` | 68 | Only usage commented (`NotificationsBrowser:477`) | **dead** |
-| `CommunityRouter` announcements/articles/guides/drafts routes | ~4 lines | Commented out (lines 131–134) | **dead** |
+| `AppsView` | 13 | Imported, never routed | **removed 2026-08-01** |
+| `GroupBrowser` | 27 | Imported, never routed | **removed 2026-08-01** |
+| `SwapAccountView` | 36 | Import commented, never routed | **removed 2026-08-01** |
+| `BlogBrowser` | 40 | Route commented (`App.tsx:211`) | **removed 2026-08-01** |
+| `WhatsNewModal` | 85 | Component hardcoded `return null` | **removed 2026-08-01** |
+| `EarlyAdopterBanner` | 68 | Only usage commented (`NotificationsBrowser:477`) | **removed 2026-08-01** |
+| `CommunityRouter` announcements/articles/guides/drafts routes | ~4 lines | Commented out (lines 131–134) | **removed 2026-08-01** |
 | Supporter / premium UI | ~1000 LoC | Wired into active Spark UI; billing state not confirmed | **verify** (likely core) |
 | Everything else in §1–3 not listed | — | Reachable, standard app surfaces | **core** |
 
@@ -192,5 +196,5 @@ routes is commented out (lines 131–134) — legacy content-list navigation, su
 2. Is the standalone `/id-verification/` route still surfaced anywhere in the UI? It is the only KYC entry point independent of the token-sale wizard.
 3. Is the **Fuel** login option actually shown to users? Its provider is not mounted in the global App tree (Aeternity's is), which suggests a partial/gated integration.
 4. Are the hardcoded partner **ecosystems** (`fuel, lukso, si3, cannabis-social-clubs, powershift`) all still active partnerships? The list is compiled into `EcosystemProvider`.
-5. Confirm the four **dead views** (`AppsView`, `GroupBrowser`, `SwapAccountView`, `BlogBrowser`) and two **dead widgets** (`WhatsNewModal`, `EarlyAdopterBanner`) can be removed — no evidence any are reachable, but a product cross-check avoids surprises for planned re-enablement.
+5. ~~Confirm the four **dead views** (`AppsView`, `GroupBrowser`, `SwapAccountView`, `BlogBrowser`) and two **dead widgets** (`WhatsNewModal`, `EarlyAdopterBanner`) can be removed~~ — confirmed by the maintainer and removed 2026-08-01.
 6. Is **Supporter/premium** purchasing live? It is wired into the current Spark UI, so it is assumed core, but the billing flow was not runtime-verified here.

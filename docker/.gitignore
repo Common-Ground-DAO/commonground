@@ -3,4 +3,3 @@ vapid_keys.json
 **/s3_data
 nginx/certs/nginx_certs
 nginx/certs/root_ca
-!llama/dist

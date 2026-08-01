@@ -1,6 +1,6 @@
 # Database Documentation
 
-> Status: verified against commit 5ec4952e6, 2026-08-01
+> Status: verified against commit a3ab0dcc4, 2026-08-01
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -800,35 +800,6 @@ Media server instances for call routing.
 
 ---
 
-### AI Assistant
-
-#### `assistant_dialogs`
-AI assistant conversation sessions.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `id` | `uuid` PK | Auto-generated |
-| `request` | `jsonb` | Full conversation request/history |
-| `userId` | `uuid` | FK -> `users.id` (CASCADE), indexed |
-| `communityId` | `uuid` | Nullable, FK -> `communities.id` (CASCADE), indexed |
-| `title` | `varchar(255)` | Nullable |
-| `model` | `varchar(255)` | Model name used |
-| `createdAt/updatedAt` | `timestamptz(3)` | Auto |
-
-#### `assistant_availability`
-Available AI model configurations. PK: `modelName`.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `modelName` | `varchar(255)` PK | |
-| `title` | `varchar(255)` | Display name |
-| `isAvailable` | `boolean` | Default `false` |
-| `domain` | `varchar(255)` | |
-| `order` | `integer` | Default `0` |
-| `extraData` | `jsonb` | Nullable |
-
----
-
 ### Other
 
 #### `notifications`
@@ -1151,7 +1122,6 @@ deletedAt!: Date | null;
 - `user_channel_settings` - Settings record
 - `user_plugin_state` - No deletedAt
 - `user_newsletter_status` - No deletedAt
-- `assistant_dialogs`, `assistant_availability` - No deletedAt
 - `users_premium`, `communities_premium` - Expire via `activeUntil`, not deleted
 - `bot_tokens` - Retired via `revokedAt`, not deletedAt
 - `bots_platform_communities` - No timestamps at all
@@ -1205,7 +1175,6 @@ Exceptions where PK is not a UUID:
 - `chaindata.id` - `varchar(255)`, chain identifier string
 - `oneshot_jobs.id` - `varchar(256)`, job name string
 - `role_gated_files.filename` - `varchar(255)`
-- `assistant_availability.modelName` - `varchar(255)`
 - `tokensale_investments.investmentId` - `bigint` (on-chain ID)
 
 ### Enum Patterns

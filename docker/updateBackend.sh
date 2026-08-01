@@ -4,17 +4,9 @@ source .env
 
 docker_compose() {
   if docker compose version >/dev/null 2>&1; then
-    if [ "$AI_USE_GPU" = "true" ]; then
-      docker compose -f docker-compose.yml -f docker-compose.gpu.yml "$@"
-    else
-      docker compose -f docker-compose.yml "$@"
-    fi
+    docker compose -f docker-compose.yml "$@"
   elif docker-compose version >/dev/null 2>&1; then
-    if [ "$AI_USE_GPU" = "true" ]; then
-      docker-compose -f docker-compose.yml -f docker-compose.gpu.yml "$@"
-    else
-      docker-compose -f docker-compose.yml "$@"
-    fi
+    docker-compose -f docker-compose.yml "$@"
   else
     echo "Neither docker compose nor docker-compose is available."
     exit 1
@@ -30,7 +22,6 @@ function checkError {
 }
 
 printf "\n---\n--- Stopping containers & cleaning build environment\n---\n"
-# docker_compose stop wsapi api onchain nginx mediasoup memberlist hardhat job-runner assistant llama
 docker_compose stop wsapi api onchain nginx mediasoup memberlist hardhat job-runner
 docker_compose rm -f
 docker_compose build cg-builder
@@ -87,9 +78,6 @@ fi
 docker build --tag commonground/backend_stage_0 -f backend/Dockerfile_dev_stage_0 ./backend/ && \
 docker_compose build --no-cache api
 checkError
-
-# docker_compose build llama
-# checkError
 
 printf "\n---\n--- Build finished, starting server\n---\n"
 docker_compose up -d

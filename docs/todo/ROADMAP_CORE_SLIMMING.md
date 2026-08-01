@@ -118,7 +118,7 @@ Maintainer decisions taken on 2026-08-01, all final:
 for chain display names. They do not — nothing in the surviving tag UI reads them, so both maps
 and `HomeChannelTypes` are gone.
 
-### Phase 4 — assistant removal
+### Phase 4 — assistant removal — DONE 2026-08-01
 
 Decision (2026-08-01, maintainer): the AI assistant is removed **entirely** — everything
 that provides the assistant functionality. It was built in a much earlier phase of AI;
@@ -131,7 +131,7 @@ code** (`srv/api/bots.ts`, `srv/api/botV1.ts`, bot repositories untouched). One 
 commits in this order — the frontend commit must not land after the backend one, or the
 UI would 500 on every assistant route:
 
-- [ ] Frontend (~1,140 LOC): delete `views/AssistantView/` (+css),
+- [x] Frontend (~1,140 LOC): delete `views/AssistantView/` (+css),
   `templates/CommunityLobby/Assistant/` (+css; note `CommunityLobby.tsx` itself does not
   import it), `data/managers/assistantManager.ts` (incl. the `cliAssistantEvent` handler
   and the `BroadcastChannel('cg_assistant')` cross-tab sync),
@@ -149,7 +149,14 @@ UI would 500 on every assistant route:
   `common/types/events/chat.d.ts` (`Events.Chat.Chat` stays). Deps: drop `openai`
   (type-only in the frontend) and `react-syntax-highlighter` + `@types/…` from the root
   manifest. `react-markdown` and `react-icons` STAY (shared with core rendering).
-- [ ] Backend (~1,070 LOC): delete `srv/assistant.ts` (dedicated process entry point —
+  **Findings:** the `AssistantView` import in `ChatView.tsx` was already flagged dead by
+  eslint before the change; removing the menu entries left `config` unused in
+  `OwnCommunitiesBrowser` and the `Brain` phosphor icon unused in all four menu files, so
+  those imports went too. `Events.Chat.Event` collapses to `= Chat` (the union had exactly
+  two members). Both lockfiles are yarn v4, not npm — regenerated with
+  `yarn install --mode=update-lockfile` (root only here; `srv/` follows in the backend
+  commit), which works offline from the yarn cache.
+- [x] Backend (~1,070 LOC): delete `srv/assistant.ts` (dedicated process entry point —
   also remove it from the `include` list in `srv/tsconfig.json:32`), the whole
   `srv/assistant/` tree (queue with OpenAI client + Redis sorted-set scheduling, `data/`,
   `templates/`), `srv/entities/assistant.ts` (glob-registered via
@@ -159,15 +166,22 @@ UI would 500 on every assistant route:
   `srv/validators/common.ts:71-73`. Drop `openai` from `srv/package.json`. nginx needs NO
   change: the `Chat` router whitelist entry stays for DMs, and there is no assistant CSP
   entry. The realtime emitter (`srv/repositories/event.ts`) is core and stays — only the
-  `cliAssistantEvent` payload type goes.
-- [ ] Schema: one drop migration for `assistant_dialogs` (FKs to `users`/`communities`
+  `cliAssistantEvent` payload type goes. **Confirmed:** `srv/api/chats.ts` shrinks 346 → 88
+  LOC / 12 → 3 routes, and no bot file was touched (`srv/api/bots.ts`, `srv/api/botV1.ts`
+  and the bot repositories are byte-identical).
+- [x] Schema: one drop migration for `assistant_dialogs` (FKs to `users`/`communities`
   ON DELETE CASCADE + 2 indexes; created `1738856821267-addAssistantDialog`, `model`
   column added `1742985062426`) and `assistant_availability`
   (`1743775203719`). Phase-2/3.5 precedent: `IF EXISTS`-guarded, `down()` restores schema
   incl. writer/reader GRANTs but not rows. The assistant only *read* core tables — no
   cleanup beyond its own two tables. Optional: one-off `DEL` of stale `Assistant_*` Redis
-  keys (harmless if skipped).
-- [ ] Infra + docs: remove the commented-out `llama` + `assistant` services
+  keys (harmless if skipped). **Done as `1785636000000-dropAssistantDomain`**; migrations are
+  glob-registered (`srv/util/datasource.ts:25`), so no import list to touch. Verified up,
+  up-twice (idempotence) and down against a throwaway PostgreSQL 15 — the restored `pg_dump`
+  is byte-identical to the schema the three creating migrations produce. The `Assistant_*`
+  Redis keys were **skipped** as allowed: all three Redis instances run `--save ""`, so the
+  keys do not survive a restart anyway.
+- [x] Infra + docs: remove the commented-out `llama` + `assistant` services
   (`docker/docker-compose.yml:337-380`), `docker/docker-compose.gpu.yml`,
   `docker/llama/`, the `AI_USE_GPU` compose-merge branches in `run.sh`,
   `docker/build.sh` and `docker/updateBackend.sh`, the `AI_API_KEY`/`AI_USE_GPU` lines
@@ -176,6 +190,27 @@ UI would 500 on every assistant route:
   section + two lists), `docs/frontend` (view/manager/route mentions),
   `docs/infrastructure` (§7 GPU support + service-table rows + env rows), AGENTS.md
   (Module Status row → removed; drop `assistant` from the entry-point list), inventories.
+
+**Deviations from the checklist (code won):**
+
+1. **There is no `ai_api_key` docker secret.** The checklist inherited that phrasing from
+   `INVENTORY_BACKEND.md`, but neither compose file has a `secrets:` block for it — the key
+   was only ever passed as the plain `AI_API_KEY` env var. Nothing to unplumb.
+2. **`docker/.env` is deliberately untouched.** It is the tracked placeholder that is locally
+   modified with real credentials; its now-dead `AI_API_KEY` / `AI_USE_GPU` lines are for the
+   maintainer to drop in a separate, deliberate commit — same call as the Phase-2 `SUMSUB_*`
+   lines. No other tracked env template (`docker/envs/*`, `docker/selfhost/init.sh`,
+   `docker/SELFHOST.md`, the selfhost compose) mentions either variable.
+3. **Removing §7 renumbered `docs/infrastructure`.** "Self-Hosted Single-Server Deployment"
+   moves 8 → 7; the four `#8-self-hosted-single-server-deployment` cross-links were updated
+   with it.
+4. **`docker/llama/data/` survives on disk.** Only the tracked files (`Dockerfile`,
+   `dist/*.py`, `data/.gitignore`) were `git rm`'d; the directory still holds ~11 GB of
+   locally downloaded GGUF model blobs, which are the maintainer's to delete.
+5. **Docs mentioned the assistant in more places than the checklist listed** — the
+   `chatApi` connector row and the `BroadcastChannel` list in `docs/frontend`, the deletedAt
+   and non-UUID-PK lists in `docs/database`, and the ToC entries in `docs/backend` /
+   `docs/infrastructure`. All cleaned.
 
 ### Phase 5 — footprint (bridges into small-footprint roadmap)
 
@@ -194,7 +229,7 @@ disjoint (`sess:`, `ratelimit:`, `bot-ratelimit:`, `bot-presence:`, `captcha:`,
 keys at all (pure `v2:`-prefixed pub/sub shared deliberately by adapter + emitter); no
 `FLUSHALL`/`FLUSHDB`/`SCAN`/`KEYS` in any live application path. mediasoup and push
 notifications don't use Redis. The assistant queue — the only blocking-connection
-consumer (`BZPOPMIN`) — is gone after Phase 4, which is why Phase 4 runs first.
+consumer (`BZPOPMIN`) — is why Phase 4 ran first; it is gone as of 2026-08-01.
 
 - [ ] `srv/redis/index.ts`: three literal URLs → one resolved URL (default
   `redis://redis:6379`). **Keep all four client objects** — `session` needs `legacyMode`

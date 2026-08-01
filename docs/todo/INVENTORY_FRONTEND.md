@@ -1,10 +1,10 @@
 # Frontend Inventory — Slimming Decision Basis
 
 > Status: verified against commit 523fceccd, 2026-07-25.
-> Update 2026-08-01: Phases 1 and 2 of ROADMAP_CORE_SLIMMING have been executed —
+> Update 2026-08-01: Phases 1, 2 and 4 of ROADMAP_CORE_SLIMMING have been executed —
 > the four dead views, `WhatsNewModal`, `EarlyAdopterBanner` and the commented-out
-> route/theming blocks, and the whole token-sale complex (buy/claim UI, wizard,
-> Sumsub KYC) are **removed** (see the per-row notes below).
+> route/theming blocks, the whole token-sale complex (buy/claim UI, wizard,
+> Sumsub KYC), and the AI assistant are **removed** (see the per-row notes below).
 
 Working document for the upcoming frontend slimming initiative. It inventories every
 view in `src/views/` plus the major feature areas, with route(s), approximate size
@@ -42,7 +42,7 @@ has had **zero** commits in that window.
 | `ConversationsBrowser` | `/chats/` | 45 | reachable | DM list. |
 | `NotificationsBrowser` | `/notifications/`, `/notifications/:shortUuid/` | 542 | reachable | The commented `EarlyAdopterBanner` usage (line 477) was removed 2026-08-01. |
 | `ChatView` | `/chats/:chatShortUuid/` | 55 | reachable | Uses `MessageViewInner`. |
-| `AssistantView` | `/assistant/` | 144 | reachable | Also mounted inside communities (§CommunityRouter). |
+| ~~`AssistantView`~~ | ~~`/assistant/`~~ | 144 | **REMOVED 2026-08-01** | Phase 4 — the AI assistant is gone entirely (view, manager, connectors, flags, routes). |
 | `LearnMore` | `/learn-more` | 42 | reachable | Static "What is CG?" marketing page. |
 | `ProfileManagementView` | `/settings/` (profile settings) | 42 | reachable | |
 | `WalletManagementView` | profile settings → account & wallets | 33 | reachable | |
@@ -87,7 +87,7 @@ All views below are imported **non-lazily** and mounted by live routes (reachabl
 | `MemberApplicationView` | `member-applications/` | 21 | |
 | `EventsView` | `events/` | 139 | |
 | `EventView` | `event/:eventIdOrUrl/` | 674 | |
-| `AssistantView` | `assistant/` | 144 | |
+| ~~`AssistantView`~~ | ~~`assistant/`~~ | 144 | **REMOVED 2026-08-01** (Phase 4). |
 | `CommunityTokenView` | `token/` | 17 | Thin wrapper (`CommunityToken`). |
 | `CreateArticleView` | `create/article/` | 42 | |
 | `ArticleView` | `article/:articleUri/` | 82 | |

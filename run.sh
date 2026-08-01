@@ -7,17 +7,9 @@ source ./docker/.env
 
 docker_compose() {
   if docker compose version >/dev/null 2>&1; then
-    if [ "$AI_USE_GPU" = "true" ]; then
-      docker compose -f docker-compose.yml -f docker-compose.gpu.yml "$@"
-    else
-      docker compose -f docker-compose.yml "$@"
-    fi
+    docker compose -f docker-compose.yml "$@"
   elif docker-compose version >/dev/null 2>&1; then
-    if [ "$AI_USE_GPU" = "true" ]; then
-      docker-compose -f docker-compose.yml -f docker-compose.gpu.yml "$@"
-    else
-      docker-compose -f docker-compose.yml "$@"
-    fi
+    docker-compose -f docker-compose.yml "$@"
   else
     echo "Neither docker compose nor docker-compose is available."
     exit 1

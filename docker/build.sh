@@ -4,17 +4,9 @@ source .env
 
 docker_compose() {
   if docker compose version >/dev/null 2>&1; then
-    if [ "$AI_USE_GPU" = "true" ]; then
-      docker compose -f docker-compose.yml -f docker-compose.gpu.yml "$@"
-    else
-      docker compose -f docker-compose.yml "$@"
-    fi
+    docker compose -f docker-compose.yml "$@"
   elif docker-compose version >/dev/null 2>&1; then
-    if [ "$AI_USE_GPU" = "true" ]; then
-      docker-compose -f docker-compose.yml -f docker-compose.gpu.yml "$@"
-    else
-      docker-compose -f docker-compose.yml "$@"
-    fi
+    docker-compose -f docker-compose.yml "$@"
   else
     echo "Neither docker compose nor docker-compose is available."
     exit 1
@@ -117,10 +109,6 @@ cp ../build/index.html backend/dist/ && \
 docker build --tag commonground/backend_stage_0 -f backend/Dockerfile_dev_stage_0 ./backend/ && \
 docker_compose build --no-cache api
 checkError
-
-# printf "\n---\n--- Building llama\n---\n"
-# docker_compose build llama
-# checkError
 
 printf "\n---\n--- Setting up database\n---\n"
 docker_compose build --no-cache db && \

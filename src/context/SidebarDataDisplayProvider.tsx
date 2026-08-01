@@ -10,7 +10,6 @@ import { useWindowSizeContext } from "./WindowSizeProvider";
 import SidebarContainer from "components/atoms/SidebarContainer/SidebarContainer";
 import UserProfileInner from "components/organisms/UserProfile/UserProfileInner/UserProfileInner";
 import Article from "components/organisms/Article/Article";
-import TokenSaleProcess from "components/organisms/TokenSaleProcess/TokenSaleProcess";
 import Event from "views/EventView/Event";
 import Blog from "components/organisms/Blog/Blog";
 type SidebarContentProps = ({
@@ -27,8 +26,6 @@ type SidebarContentProps = ({
   type: 'event';
   eventId: string;
   communityId: string;
-} | {
-  type: 'tokenSaleProcess';
 };
 
 type SidebarDataDisplayState = {
@@ -93,8 +90,6 @@ export function SidebarDataDisplayProvider(props: React.PropsWithChildren<{}>) {
         goBack={popDataStack}
         sidebarMode
       />;
-    } else if (item.type === 'tokenSaleProcess') {
-      return <TokenSaleProcess />;
     } else if (item.type === 'event') {
       return <Event
         key={item.eventId}
@@ -132,7 +127,6 @@ export function SidebarDataDisplayProvider(props: React.PropsWithChildren<{}>) {
             key={index}
             isOpen={currentIndex === index}
             onClose={!trayLockedOpen ? closeSlider : () => { }}
-            sidebarClassName={item.type === 'tokenSaleProcess' ? 'sidebar-max-600-width' : ''}
           >
             {renderItemAtIndex(item)}
           </SidebarContainer>

@@ -76,12 +76,12 @@ const ExpandedMenu: React.FC<Props> = ({ expanded }) => {
                 isActive={homeActive}
                 onClick={onHomeClick}
               />
-              {(config.TOKEN_SALE_ENABLED || config.DEPLOYMENT !== 'prod') && <ExpandedMenuButton
+              <ExpandedMenuButton
                 text={expanded ? 'Stake' : undefined}
                 icon={<CoinVertical weight='duotone' className='h-6 w-6' />}
                 isActive={isActiveButton(location.pathname, getUrl({type: 'token'}))}
                 onClick={() => navigate(getUrl({type: 'token'}))}
-              />}
+              />
               {!!ownUser && <ExpandedMenuButton
                 text={expanded ? 'Chats' : undefined}
                 icon={<ChatsTeardrop weight='duotone' className='h-6 w-6' />}

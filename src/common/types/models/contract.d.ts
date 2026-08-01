@@ -139,15 +139,6 @@ declare namespace Models {
     };
 
     type SaleContractType = 'cg_tokensale_v1';
-    type SaleContract = {
-      id: string;
-      chain: ChainIdentifier;
-      address: Common.Address;
-      contractType: SaleContractType;
-      startDate: Date;
-      endDate: Date;
-      createdAt: Date;
-    };
     type SaleInvestmentEventJson = {
       type: Extract<SaleContractType, 'cg_tokensale_v1'>;
       userId: string;
@@ -156,16 +147,6 @@ declare namespace Models {
       investmentId: number;
       blockNumber: number;
       dateIsoString_timestamp: string;
-      txHash: string;
-    };
-    type SaleInvestmentEvent = {
-      type: Extract<SaleContractType, 'cg_tokensale_v1'>;
-      userId: string;
-      investedAmount: bigint;
-      saleProgressBefore: bigint;
-      investmentId: number;
-      blockNumber: number;
-      timestamp: Date;
       txHash: string;
     };
   }

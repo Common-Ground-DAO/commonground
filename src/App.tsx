@@ -198,7 +198,7 @@ const RoutedContent = () => {
   const routesWithLayout = useMemo(() => {
     const routes = <Routes>
       <Route path={'/token-sale'} element={<TokenSaleRedirect />} />
-      {(config.TOKEN_SALE_ENABLED || config.DEPLOYMENT !== 'prod') && <Route path={removeInitialSlash(getUrl({ type: 'token' }))} element={<TokenSale />} />}
+      <Route path={removeInitialSlash(getUrl({ type: 'token' }))} element={<TokenSale />} />
       {<Route path={removeInitialSlash(getUrl({ type: 'id-verification' }))} element={<IdVerification />} />}
       <Route path="e/:ecosystem" element={<EcosystemParamSetter>
         <Home />

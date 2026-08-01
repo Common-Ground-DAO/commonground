@@ -58,9 +58,6 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
     profileLockedIn,
     setProfileLockedIn,
     farcasterData,
-    emailFromTokenSaleRegistration,
-    setEmailFromTokenSaleRegistration, 
-    setNewsletterState,
   } = useUserOnboardingContext();
   const { attemptConnectTwitter, buttonDisabled: twitterButtonDisabled } = useTwitterAuth(attemptTwitterLogin);
   const [farcasterImageUrl, setFarcasterImageUrl] = useState<string | undefined>();
@@ -199,12 +196,7 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
     }
     else {
       try {
-        const createResult = await data.user.createUser({ ...createUserData, recaptchaToken });
-        if (!createResult.ownData.email && !!emailFromTokenSaleRegistration) {
-          setNewsletterState({ email: emailFromTokenSaleRegistration, error: '', valid: true, loading: false });
-          await userApi.updateOwnData({ email: emailFromTokenSaleRegistration });
-          setEmailFromTokenSaleRegistration(undefined);
-        }
+        await data.user.createUser({ ...createUserData, recaptchaToken });
         if (userPhoto && createUserData.useCgProfile) {
           await fileApi.uploadImage({ type: 'userProfileImage' }, userPhoto).catch(e => console.error("Error uploading user image", e));
         }
@@ -218,7 +210,7 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
       }
     }
     setButtonState(oldState => ({ ...oldState, loading: false }));
-  }, [createUserData, profileLockedIn, setButtonState, luksoData, twitterData, farcasterData, setProfileLockedIn, recaptchaToken, emailFromTokenSaleRegistration, userPhoto, createFinished, setNewsletterState, setEmailFromTokenSaleRegistration]);
+  }, [createUserData, profileLockedIn, setButtonState, luksoData, twitterData, farcasterData, setProfileLockedIn, recaptchaToken, userPhoto, createFinished]);
 
   useEffect(() => {
     if (buttonState.clicked) {

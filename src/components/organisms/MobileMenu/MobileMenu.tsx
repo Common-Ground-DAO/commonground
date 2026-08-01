@@ -22,7 +22,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import data from "data";
 import { getUrl } from 'common/util';
 import { Bars3Icon } from "@heroicons/react/24/solid";
-import { Bell, Brain, ChatsTeardrop, CoinVertical, Compass, Storefront } from "@phosphor-icons/react";
+import { Bell, Brain, ChatsTeardrop, Compass, Storefront } from "@phosphor-icons/react";
 
 export default function MobileMenu() {
   const navigate = useNavigate();
@@ -168,13 +168,6 @@ export default function MobileMenu() {
       showDot={areNews}
     />
   ), [homeActive, areNews, onHomeClick]);
-  // const tokenSaleBtn = useMemo(() => (
-  //   <MenuButton
-  //     icon={<CoinVertical weight='duotone' className='h-6 w-6' />}
-  //     isActive={isActiveButton(getUrl({type: 'token'}))}
-  //     onClick={() => navigate(getUrl({type: 'token'}))}
-  //   />
-  // ), [isActiveButton]);
   const appStoreBtn = useMemo(() => (
       <MenuButton
         icon={<Storefront weight='duotone' className='h-6 w-6' />}
@@ -219,7 +212,6 @@ export default function MobileMenu() {
     <div className={`mobile-menu ${operatingSystem === "Android" ? "mobile-menu-android" : pwaStatus === "InMobilePWA" ? "mobile-menu-ios-pwa" : 'mobile-menu-ios-web'}`}>
       {homeBtn}
       {browseBtn}
-      {/* {tokenSaleBtn} */}
       {appStoreBtn}
       {chatBtn}
       {config.PERSONAL_ASSISTANT_ENABLED && assistantBtn}

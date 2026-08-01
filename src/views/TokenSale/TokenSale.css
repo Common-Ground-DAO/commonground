@@ -1,26 +1,6 @@
 .tokensale-root {
     @apply w-full grid grid-cols-1 grid-flow-row pb-4;
 
-    .input-container {
-        @apply relative;
-
-        &:has(.sub-label) {
-            .tokensale-input {
-                @apply pb-10 !important;
-            }
-        }
-
-        .sub-label {
-            @apply absolute bottom-4 left-4 cg-caption-md-400-no-transform;
-            font-style: italic;
-            color: var(--text-secondary) !important;
-        }
-    }
-
-    .input-container-inner {
-        height: unset !important;
-    }
-
     .tokensale-header {
         @apply grid grid-cols-1 w-full justify-items-center items-center;
 
@@ -58,112 +38,6 @@
         &.tokensale-content-card {
             @apply cg-border-xxl;
         }
-
-        > .tokensale-content-row {
-            @apply grid w-full max-w-full justify-items-center items-center;
-
-            &.tokensale-content-caption-primary {
-                @apply justify-center grid-flow-col gap-3 mt-2;
-                color: var(--text-primary);
-                font-weight: 700;
-            }
-    
-            &.tokensale-content-caption-secondary {
-                @apply pt-2;
-                color: var(--text-secondary);
-                font-weight: 500;
-            }
-
-            .tokensale-content-caption-medium {
-                @apply pt-4 text-center;
-                color: var(--text-primary);
-                font-weight: 500;
-            }
-
-            .tokensale-content-registration-success {
-                @apply text-center my-4;
-                color: var(--surface-brand);
-                font-weight: 600;
-                width: min(100%, 400px);
-            }
-
-            &.tokensale-content-table-row {
-                @apply pt-2;
-                width: 100%;
-                color: var(--text-primary);
-
-                table {
-                    @apply cg-border-xl w-full;
-                    border: 1px solid var(--border-secondary);
-                    border-collapse: separate;
-                    
-                    tr {
-                        td:first-child {
-                            @apply text-left font-bold pl-3 pr-2 py-2;
-                        }
-
-                        td:last-child {
-                            @apply text-right pr-3 py-2;
-                        }
-                    }
-
-                    tr:not(:first-child) {
-                        td {
-                            border-top: 1px solid var(--border-secondary);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    .tokensale-cta-input {
-        @apply flex flex-col max-w-[160px] gap-2 flex-shrink-0;
-        color: var(--surface-brand);
-        font-weight: 500;
-    }
-
-    .tokensale-tokens-bought {
-        @apply text-2xl;
-        color: var(--surface-brand);
-        font-weight: 500;
-    }
-
-    .tokensale-tokens-bought-caption {
-        @apply text-xl;
-        color: var(--surface-brand);
-        font-weight: 500;
-    }
-
-    .tokensale-tokens-bought-caption-secondary {
-        @apply text-sm;
-    }
-
-    .tokensale-cta-container {
-        @apply flex flex-row gap-4 items-center px-4 py-4 rounded-2xl w-full;
-        background-color: var(--surface-subtleoverlay);
-    }
-
-    svg.tokensale-bucket-graph {
-        color: var(--text-primary);
-        
-        path.tokensale-line {
-            stroke-width: 1px;
-            stroke-linecap: rounded;
-        }
-    }
-    
-    .tokensale-investments-list-item-user {
-        @apply flex items-center gap-2 cursor-pointer;
-    }
-
-    .tokensale-timer{
-        font-family: "Geist Mono";
-        font-size: min(10vw, 85px);
-        font-style: normal;
-        font-weight: 600;
-        line-height: 130%;
-        letter-spacing: -2.735px;
     }
 }
 
@@ -178,12 +52,6 @@
 
         .tokensale-header {
             margin-top: 1rem;
-
-            .tokensale-header-text {
-                .tokensale-header-text-top {
-                    @apply text-3xl;
-                }
-            }
         }
 
         .tokensale-content {
@@ -195,18 +63,6 @@
             &.tokensale-content-card {
                 @apply cg-border-xxl;
                 outline: 0.5rem solid var(--surface-dark-overlay);
-            }
-
-            .tokensale-content-caption-primary {
-                @apply text-2xl;
-            }
-
-            .tokensale-content-caption-secondary, .tokensale-content-caption-medium {
-                @apply text-xl;
-            }
-
-            .tokensale-content-registration-success {
-                @apply text-xl;
             }
 
             &.tokensale-content-card-top {
@@ -230,10 +86,6 @@
 
         .tokensale-header {
             .tokensale-header-text {
-                .tokensale-header-text-top {
-                    @apply text-sm;
-                }
-
                 .tokensale-header-text-bottom {
                     @apply cg-heading-3;
                 }
@@ -242,18 +94,6 @@
 
         .tokensale-content {
             margin: 0.5rem 0 0;
-
-            .tokensale-content-caption-primary, .tokensale-content-caption-secondary {
-                @apply text-lg;
-            }
-
-            .tokensale-content-caption-medium {
-                @apply text-base;
-            }
-
-            .tokensale-content-registration-success {
-                @apply text-lg;
-            }
 
             &.tokensale-content-card-top {
                 @apply -mt-32;
@@ -272,57 +112,4 @@
             }
         }
     }
-}
-
-.tokensale-bucket-tooltip {
-    @apply absolute top-0 left-0 invisible text-xs p-2 cg-border-xl shadow-md;
-
-    table {
-        @apply text-left;
-
-        td:first-child {
-            @apply pr-2 whitespace-nowrap;
-        }
-
-        td:last-child {
-            @apply text-right whitespace-nowrap;
-        }
-    }
-}
-
-.tokensale-input {
-    @apply p-4 cg-heading-2 !important;
-}
-
-
-.tokensale-what-is-this {
-    transition: all 200ms ease-in-out;
-    max-height: 100vh;
-
-    &.collapsed {
-        cursor: pointer;
-        max-height: 140px;
-        overflow: hidden;
-    }
-
-    &.desc-grad {
-        -webkit-mask-image: linear-gradient(to bottom, black 50%, transparent 100%);
-        mask-image: linear-gradient(to bottom, black 50%, transparent 100%);
-    }
-}
-
-.tokensale-grid-2 {
-    grid-template-columns: repeat(2, minmax(0, auto));
-}
-
-.token-section-btn {
-  @apply cg-heading-3;
-
-  &.active {
-    color: var(--surface-brand);
-    border-color: var(--surface-brand) !important;
-    .btnText {
-      color: var(--surface-brand) !important;
-    }
-  }
 }

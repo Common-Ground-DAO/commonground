@@ -16,14 +16,6 @@ class AccountsApiConnector extends BaseApiConnector {
       data,
     );
   }
-
-  public async tokenSaleRegisterForSale(data: API.Accounts.TokenSale.registerForSale.Request): Promise<API.Accounts.TokenSale.registerForSale.Response> {
-    return await this.ajax<API.Accounts.TokenSale.registerForSale.Response>(
-      "POST",
-      '/TokenSale/registerForSale',
-      data,
-    );
-  }
 }
 
 const accountsApi = new AccountsApiConnector();

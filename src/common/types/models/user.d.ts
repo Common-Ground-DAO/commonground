@@ -107,13 +107,7 @@ declare namespace Models {
 
     type ExtraData = {
       // these fields can be set through setOwnExtraDataField
-      registeredForTokenSale?: boolean;
       installedPWA?: boolean;
-      agreedToTokenSaleTermsTimestamp?: string; // ISO date string, set by server
-      investsFromSwitzerland?: {
-        value: boolean;
-        serverTimestamp: string; // ISO date string, set by server
-      };
 
       // these fields cannot be set through setOwnExtraDataField
       usesMobileDevice?: boolean;

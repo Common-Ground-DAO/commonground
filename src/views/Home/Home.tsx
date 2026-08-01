@@ -29,7 +29,6 @@ import { getUrl } from 'common/util';
 import { useEmailConfirmationContext } from 'context/EmailConfirmationProvider';
 import userApi from 'data/api/user';
 import { useUserOnboardingContext } from 'context/UserOnboarding';
-import TokenSaleBanner from 'components/molecules/LoginBanner/TokenSaleBanner';
 import { removeInitialSlash } from 'App';
 import CommunityExplorer from 'components/organisms/CommunityExplorer/CommunityExplorer';
 import PluginAppstore from 'components/organisms/PluginAppstore/PluginAppstore';
@@ -140,7 +139,6 @@ export default function Home() {
     >
       <div className="inner-content">
         {!ownUser && <LoginBanner stickyMode />}
-        {!!ownUser && <TokenSaleBanner />}
         {/* {isMobile && !!ownUser && <div className='flex flex-col px-4 gap-4 self-stretch cg-text-main items-center relative'>
           <MobileUserPhotoBg />
           <div className='self-start'>

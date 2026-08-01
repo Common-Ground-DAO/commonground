@@ -11,7 +11,6 @@ import { useWindowSizeContext } from '../../context/WindowSizeProvider';
 import Button from '../../components/atoms/Button/Button';
 import { isLocalUrl } from '../../components/atoms/SimpleLink/SimpleLink';
 
-import WhatsNewModal from 'components/organisms/WhatsNewModal/WhatsNewModal';
 import LoginBanner from 'components/molecules/LoginBanner/LoginBanner';
 import { useOwnUser } from 'context/OwnDataProvider';
 import NotificationBanner from 'components/molecules/NotificationBanner/NotificationBanner';
@@ -255,7 +254,6 @@ const tabOptions: { text: string, value: 'all' | 'following' }[] = [
 ];
 
 const Feed: React.FC<{}> = (props) => {
-  const { isMobile } = useWindowSizeContext();
   const ownUser = useOwnUser();
   // const [availableChannels] = useLocalStorage<HomeChannelTypes[]>([], SELECTED_CHANNELS_LOCAL_STORAGE);
   const { ecosystem } = useParams<'ecosystem'>();
@@ -287,7 +285,6 @@ const Feed: React.FC<{}> = (props) => {
 
     <EcosystemHomeHeader channel={currentChannel || ''} />
     {!!ownUser && <NotificationBanner />}
-    {isMobile && <WhatsNewModal />}
     <div className="home-main-content">
       <LiveCallExplorer mode="limited" />
       {/* <MyCommunitiesExplorer /> */}

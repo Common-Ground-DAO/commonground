@@ -474,7 +474,6 @@ export default function NotificationsBrowser() {
         <SearchField value={search} onChange={setSearch} />
       </div>
       {!!ownUser && <NotificationBanner />}
-      {/* <EarlyAdopterBanner /> */}
       <Scrollable
         hideOnNoScroll={true}
         hideOnNoScrollDelay={600}

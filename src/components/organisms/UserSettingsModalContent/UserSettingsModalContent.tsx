@@ -19,8 +19,6 @@ import EmailPage from './EmailPage/EmailPage';
 import WalletPage from './WalletPage/WalletPage';
 import { UserWidgetContent } from 'components/molecules/UserWidget/UserWidget';
 import SignWalletPage from './SignWalletPage/SignWalletPage';
-import SignWalletPageFuel from './SignWalletPage/SignWalletPageFuel';
-import SignWalletPageAeternity from './SignWalletPage/SignWalletPageAeternity';
 import ExternalAccountPage from './ExternalAccountPage/ExternalAccountPage';
 import { ExternalAccountType } from './AccountsPage/AccountsPage';
 import SignWithUniversalProfile from './SignWalletPage/SignWithUniversalProfile';
@@ -68,8 +66,6 @@ export const allPageTypes = [
   'sign-with-universal-profile',
   'sign-with-farcaster',
   'sign-wallet',
-  'sign-wallet-fuel',
-  'sign-wallet-aeternity',
   'passkey-settings',
   'bots',
   'bot-editor'
@@ -112,8 +108,6 @@ const screenOrder: Record<PageType, number> = {
   wallet: 3,
   "external-account": 3,
   "sign-wallet": 4,
-  "sign-wallet-fuel": 4,
-  "sign-wallet-aeternity": 4,
   "sign-with-universal-profile": 4,
   "sign-with-farcaster": 4,
   "give-spark": 1,
@@ -184,8 +178,6 @@ const UserSettingsModalContent: React.FC<Props> = (props) => {
         case 'how-spark-works': return 'Spark';
         case 'profile': return 'Profile';
         case 'sign-wallet': return 'Wallet';
-        case 'sign-wallet-fuel': return 'Fuel Wallet';
-        case 'sign-wallet-aeternity': return 'Aeternity Wallet';
         case 'sign-with-universal-profile': return 'Universal Profile';
         case 'sign-with-farcaster': return 'Farcaster';
         case 'give-spark': return 'Give Spark to Community';
@@ -234,8 +226,6 @@ const UserSettingsModalContent: React.FC<Props> = (props) => {
           break;
         case 'email-account-available-providers':
         case 'sign-wallet':
-        case 'sign-wallet-fuel':
-        case 'sign-wallet-aeternity':
         case 'sign-with-farcaster':
           setCurrentPage('available-providers');
           break;
@@ -303,12 +293,6 @@ const UserSettingsModalContent: React.FC<Props> = (props) => {
       </AnimatedTabPage>
       <AnimatedTabPage visible={currentPage === 'sign-wallet'} className='' >
         <SignWalletPage setCurrentWallet={setCurrentWallet} setPage={setCurrentPage} lockModal={lockModal} />
-      </AnimatedTabPage>
-      <AnimatedTabPage visible={currentPage === 'sign-wallet-fuel'} className='' >
-        <SignWalletPageFuel setCurrentWallet={setCurrentWallet} setPage={setCurrentPage} lockModal={lockModal} />
-      </AnimatedTabPage>
-      <AnimatedTabPage visible={currentPage === 'sign-wallet-aeternity'} className='' >
-        <SignWalletPageAeternity setCurrentWallet={setCurrentWallet} setPage={setCurrentPage} lockModal={lockModal} />
       </AnimatedTabPage>
       <AnimatedTabPage visible={currentPage === 'sign-with-universal-profile'} className='' >
         <SignWithUniversalProfile setPage={setCurrentPage}/>

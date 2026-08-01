@@ -1,8 +1,0 @@
-.connect-wallet-connected-container {
-    @apply flex items-center justify-between p-2 cg-border-xl;
-    border: solid 1px var(--cardBorder);
-}
-
-.error {
-    color: var(--errorColor);
-}

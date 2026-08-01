@@ -5,6 +5,8 @@
 declare namespace Models {
   namespace Wallet {
     type Visibility = "public" | "followed" | "private";
+    // `fuel` and `aeternity` are legacy stored types: their login/connect flows were
+    // removed (2026-08-01), but existing `wallets` rows keep the type and are still listed.
     type Type = "cg_evm" | "evm" | "fuel" | "aeternity" | "contract_evm";
     type WalletIdentifier = Common.Address | Common.FuelAddress | Common.AeternityAddress;
     type ContractWalletType = 'universal_profile';

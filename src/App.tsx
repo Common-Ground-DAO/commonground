@@ -64,7 +64,6 @@ import TabletLayout from 'views/Layout/TabletLayout';
 import { SnackbarContextProvider } from 'context/SnackbarContext';
 import { getUrl } from 'common/util';
 import { SidebarDataDisplayProvider } from 'context/SidebarDataDisplayProvider';
-import AeternityWalletProvider from 'context/AeternityWalletProvider';
 import { EcosystemParamSetter, EcosystemProvider } from 'context/EcosystemProvider';
 import { UniversalProfileProvider } from 'context/UniversalProfileProvider';
 import { TwitterLoginProvider } from 'context/TwitterLoginProvider';
@@ -283,7 +282,6 @@ function Inner() {
       <ReportModalProvider>
       <SidebarDataDisplayProvider>
       <PluginDetailsModalProvider>
-      <AeternityWalletProvider>
       <UniversalProfileProvider>
       <TwitterLoginProvider>
       <RoleClaimedProvider>
@@ -305,7 +303,6 @@ function Inner() {
       </RoleClaimedProvider>
       </TwitterLoginProvider>
       </UniversalProfileProvider>
-      </AeternityWalletProvider>
       </PluginDetailsModalProvider>
       </SidebarDataDisplayProvider>
       </ReportModalProvider>

@@ -8,17 +8,13 @@ import UserSettingsButton from '../../../molecules/UserSettingsButton/UserSettin
 import { EnvelopeIcon } from '@heroicons/react/24/solid';
 import { ChevronRightIcon } from '@heroicons/react/20/solid';
 import { PageType } from '../UserSettingsModalContent';
-import { ReactComponent as FuelIcon } from '../../../atoms/icons/24/Fuel.svg';
-import { ReactComponent as AeternityIcon } from '../../../atoms/icons/24/Aeternity.svg';
 import { ReactComponent as EthereumIcon } from '../../../atoms/icons/24/Ethereum.svg';
 import { ReactComponent as XIcon } from '../../../atoms/icons/24/X.svg';
 import { ReactComponent as LuksoIcon } from '../../../atoms/icons/24/Lukso.svg';
 import { ReactComponent as FarcasterIcon } from '../../../atoms/icons/24/Farcaster.svg';
 import { useOwnUser } from 'context/OwnDataProvider';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { useFuel } from 'context/FuelWalletProvider';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
-import { useAeternityWallet } from 'context/AeternityWalletProvider';
 import { useTwitterAuth } from 'hooks/useTwitterAuth';
 import userApi from 'data/api/user';
 import { useSnackbarContext } from 'context/SnackbarContext';
@@ -32,14 +28,10 @@ type Props = {
 const AvailableProvidersPage: React.FC<Props> = (props) => {
   const ownUser = useOwnUser();
   const { isMobile } = useWindowSizeContext();
-  const { connectToFuel, isConnected: isFuelConnected, hasWallet: hasFuelExtension } = useFuel();
-  const { connectToWallet: connectToAeternity, isConnected: isAeternityConnected, hasWallet: hasAerternityExtension } = useAeternityWallet();
   const { connectToUniversalProfile, isConnected: isLuksoConnected, hasExtension: hasUniversalProfileExtension } = useUniversalProfile();
   const { showSnackbar } = useSnackbarContext();
   const { setPage, lockModal } = props;
   const enableRainbowRedirect = useRef<boolean>(false);
-  const enableFuelRedirect = useRef<boolean>(false);
-  const enableAeternityRedirect = useRef<boolean>(false);
   const enableLuksoRedirect = useRef<boolean>(false);
 
   const onTwitterLogin = useCallback(async () => {
@@ -53,17 +45,6 @@ const AvailableProvidersPage: React.FC<Props> = (props) => {
   }, [setPage, showSnackbar]);
 
   const { attemptConnectTwitter, buttonDisabled } = useTwitterAuth(onTwitterLogin);
-
-  // Move pages if fuel has connected
-  if (enableFuelRedirect.current && isFuelConnected) {
-    enableFuelRedirect.current = false;
-    setPage('sign-wallet-fuel');
-  }
-
-  if (enableAeternityRedirect.current && isAeternityConnected) {
-    enableAeternityRedirect.current = false;
-    setPage('sign-wallet-aeternity');
-  }
 
   if (enableLuksoRedirect.current && isLuksoConnected) {
     enableLuksoRedirect.current = false;
@@ -106,52 +87,6 @@ const AvailableProvidersPage: React.FC<Props> = (props) => {
   const onConnectFarcasterClick = useCallback(() => {
     setPage('sign-with-farcaster');
   }, []);
-
-  const attemptConnectFuel = useCallback(async () => {
-    if (!hasFuelExtension) {
-      showSnackbar({
-        type: "warning",
-        text: "Please install Fuel Wallet extension first",
-      });
-      window.open("https://wallet.fuel.network/docs/install/", "_blank", "noreferrer");
-      return;
-    } else {
-      if (!isFuelConnected) {
-        enableFuelRedirect.current = true;
-        connectToFuel();
-      } else {
-        setPage("sign-wallet-fuel");
-      }
-    }
-  }, [connectToFuel, hasFuelExtension, isFuelConnected, setPage, showSnackbar]);
-
-  const attemptConnectAeternity = useCallback(async () => {
-    if (!hasAerternityExtension) {
-      showSnackbar({
-        type: "warning",
-        text: "Please install Superhero extension first",
-      });
-      window.open(
-        "https://chrome.google.com/webstore/detail/superhero/mnhmmkepfddpifjkamaligfeemcbhdne",
-        "_blank",
-        "noreferrer",
-      );
-      return;
-    } else {
-      if (!isAeternityConnected) {
-        enableAeternityRedirect.current = true;
-        connectToAeternity();
-      } else {
-        setPage("sign-wallet-aeternity");
-      }
-    }
-  }, [
-    connectToAeternity,
-    hasAerternityExtension,
-    isAeternityConnected,
-    setPage,
-    showSnackbar,
-  ]);
 
   return (<div className='flex flex-col gap-4 px-4'>
     {showIdentitiesSection && <div className='flex flex-col items-start gap-2 self-stretch'>
@@ -241,30 +176,6 @@ const AvailableProvidersPage: React.FC<Props> = (props) => {
           />);
         }}
       </ConnectButton.Custom>
-      <UserSettingsButton
-        className={`w-full ${isMobile ? 'opacity-50' : ''}`}
-        text={<div className='flex flex-col cg-text-main overflow-hidden'>
-          <span className='cg-text-lg-500'>Fuel Wallet</span>
-          {isMobile && <span className='cg-text-md-400 cg-text-secondary whitespace-nowrap text-ellipsis overflow-hidden'>Desktop only</span>}
-          {!isMobile && <span className='cg-text-md-400 cg-text-secondary whitespace-nowrap text-ellipsis overflow-hidden'>Supports Fuel and Fuelet</span>}
-        </div>}
-        disabled={isMobile}
-        leftElement={<FuelIcon className='w-5 h-5' />}
-        rightElement={<ChevronRightIcon className='w-5 h-5' />}
-        onClick={attemptConnectFuel}
-      />
-      {/* <UserSettingsButton
-        className={`w-full ${isMobile ? 'opacity-50' : ''}`}
-        text={<div className='flex flex-col cg-text-main'>
-          <span className='cg-text-lg-500'>Aeternity Wallet</span>
-          {isMobile && <span className='cg-text-md-400 cg-text-secondary whitespace-nowrap text-ellipsis overflow-hidden'>Desktop only</span>}
-          {!isMobile && <span className='cg-text-md-400 cg-text-secondary whitespace-nowrap text-ellipsis overflow-hidden'>Supports Superhero</span>}
-        </div>}
-        disabled={isMobile}
-        leftElement={<AeternityIcon className='w-5 h-5' />}
-        rightElement={<ChevronRightIcon className='w-5 h-5' />}
-        onClick={attemptConnectAeternity}
-      /> */}
     </div>
   </div>);
 }

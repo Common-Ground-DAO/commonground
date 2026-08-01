@@ -64,6 +64,10 @@ async function createPermanentWorker(filename: string, restart = true, sleepBefo
   });
 }
 
+// Kept for future one-shot migrations/backfills (together with the `oneshot_jobs`
+// table that such jobs use to guard against re-running). Currently no one-shot job
+// is scheduled — the historical backfills were removed after they had run everywhere.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function createOneshotWorker(filename: string, sleepBefore?: number) {
   if (sleepBefore !== undefined)
     await new Promise<void>(resolve => setTimeout(resolve, sleepBefore));
@@ -101,15 +105,6 @@ createCronOrIntervalWorker('stakingAccrual', { cronExpression: '17 */6 * * *' })
 createCronOrIntervalWorker('activityScore', { cronExpression: '*/10 * * * *' });
 createCronOrIntervalWorker('newsletterDelivery', { cronExpression: '0 12 * * 6' });
 createCronOrIntervalWorker('emailNotifications', { cronExpression: '*/1 * * * *' });
-
-createOneshotWorker('previewImageUpdate', 30000);
-createOneshotWorker('erc20decimalFix', 30000);
-createOneshotWorker('fileMetadataFix', 30000);
-createOneshotWorker('luksoProfileImageFix', 30000);
-createOneshotWorker('calculateTokenRewardProgram', 30000);
-createOneshotWorker('calculateTokenRewardProgramSecond', 30000);
-createOneshotWorker('calculateTokenRewardProgramSecondFix', 30000);
-createOneshotWorker('erc1155nameAndMetadataFix', 30000);
 
 process.on('SIGTERM', async () => {
   processIsExiting = true;

@@ -148,6 +148,8 @@ const AttendEventButton: React.FC<Props> = (props) => {
     ev.stopPropagation();
     if (event?.type === 'external' && event.externalUrl) {
       showModal(event.externalUrl);
+    } else if (!config.CALLS_ENABLED) {
+      showSnackbar({ type: 'warning', text: 'Calls are disabled on this instance' });
     } else if (call && community) {
       if (call.slots >= call.callMembers) {
         showSnackbar({type: 'warning', text: 'This call is full'});
@@ -173,9 +175,12 @@ const AttendEventButton: React.FC<Props> = (props) => {
       joinCall(scheduledCall);
       navigate(getUrl({ type: 'community-call', community, call: scheduledCall }));
     } catch (error) {
+      // the backend rejects with SERVICE_UNAVAILABLE when no call server is
+      // reachable — say so instead of leaving a button that does nothing
       console.error('Error starting event:', error);
+      showSnackbar({ type: 'warning', text: 'The event could not be started because no call server is available' });
     }
-  }, [community, event, joinCall, navigate]);
+  }, [community, event, joinCall, navigate, showSnackbar]);
 
   const attendEvent = useCallback(async (ev?: React.MouseEvent) => {
     ev?.stopPropagation();
@@ -238,7 +243,7 @@ const AttendEventButton: React.FC<Props> = (props) => {
     </>;
   }
 
-  if (isLive || (event?.type === 'external' && externalIsLive)) {
+  if ((isLive && config.CALLS_ENABLED) || (event?.type === 'external' && externalIsLive)) {
     return <Button
       role='primary'
       text='Join now'
@@ -246,7 +251,7 @@ const AttendEventButton: React.FC<Props> = (props) => {
       onClick={onJoinCall}
       disabled={event?.type !== 'external' && (call?.slots || 0) >= (call?.callMembers || 0)}
     />;
-  } else if (isOnTime && hasPermission && event?.type !== 'external') {
+  } else if (isOnTime && hasPermission && event?.type !== 'external' && config.CALLS_ENABLED) {
     return <Button
       role='primary'
       text='Start Event'

@@ -1668,7 +1668,12 @@ class UserHelper {
     }
 
     if (deletedWalletId) {
-      await walletHelper.fixRolesAndBalancesAfterWalletDelete(userId, deletedWalletId);
+      // best-effort: the account removal is already committed, and the
+      // cliUserOwnData emit below must happen even if the onchain service is
+      // unavailable (or not deployed at all)
+      await walletHelper.fixRolesAndBalancesAfterWalletDelete(userId, deletedWalletId).catch(e => {
+        console.error("Error re-checking role claimability after lukso account removal", e);
+      });
     }
 
     const accounts = await _getUserDetailledAccounts(pool, userId);

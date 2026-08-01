@@ -263,6 +263,22 @@ consumer (`BZPOPMIN`) — is why Phase 4 ran first; it is gone as of 2026-08-01.
   restart causes today, since nothing persists). Documented in `docker/SELFHOST.md`
   including the `REDIS_MAXMEMORY` retuning; `selfhost.sh up` now runs with
   `--remove-orphans`, which retires the three old containers.
+- [ ] **Cutover for the hosted (Swarm) deployment — NOT done here, outside this repo.**
+  Staging/prod roll out via Azure DevOps → Ansible → Docker Swarm, and the stack files
+  live in a *separate infrastructure repository* (see `docs/deployment` §6). They still
+  publish `redis-sessions`/`redis-socketio`/`redis-data`, which the new image no longer
+  looks for — rolling the image onto an unchanged stack takes down sessions, rate
+  limiting, captcha, bot presence and the Socket.IO adapter at once. The infra repo must
+  either merge the three services into one named `redis` or set `REDIS_URL` on `api`,
+  `wsapi`, `job-runner` and `onchain`, **before or with** the image rollout.
+  `docs/deployment` §6 carries the same item for operators.
+- [ ] Existing `.env.selfhost` installs keep `REDIS_MAXMEMORY=512mb` (now a total, not a
+  per-instance value) until the operator bumps it manually — deliberately not automated;
+  `docker/SELFHOST.md` documents the bump in its upgrade note. Not a correctness problem:
+  the merged instance simply has a third of the intended ceiling.
+- [ ] `selfhost.sh` still falls back to `docker-compose` (v1), which ignores
+  `COMPOSE_PROFILES` and would silently start neither `mediasoup` nor `onchain`. Left as
+  is — Compose v1 is EOL and the fallback predates this phase.
 - [x] Docs: `docs/infrastructure`, `docs/architecture`, `docs/realtime`, `docs/deployment`,
   `docs/auth-identity`, `docker/SELFHOST.md`, `INVENTORY_BACKEND.md`.
 
@@ -310,8 +326,14 @@ no implementation behind it. What was added:
   `CALLS_ENABLED`, `srv/util/instanceConfig.ts`, `docker/nginx/inject-instance-config.sh`,
   the nginx + api service env in the selfhost compose) as an **opt-out** flag: only an
   explicit `CG_ENABLE_CALLS=false` disables it, absent means on (matching the "absent flag
-  = feature available" convention for official instances). `CallList` and `StartCallButton`
-  — the only call entry points, both in the community sidebar — hide when it is off.
+  = feature available" convention for official instances). Gated on it: `CallList` and
+  `StartCallButton` (community sidebar) plus — **found in review** — the *event* path,
+  which is a second call entry point: `ScheduleEventModal` defaulted to the `call` event
+  type and offered `call`/`broadcast` chips, and `AttendEventButton` rendered "Start
+  Event"/"Join now" whose `startScheduledCall` failure was swallowed by a bare
+  `console.error`. With calls off the modal now defaults to (and only offers) `external`
+  events, the call buttons are hidden, and the remaining catch shows a snackbar instead of
+  failing silently.
 - [x] **Blockchain already degraded acceptably**, so only the switch plus one fast-fail was
   needed: `srv/repositories/onchain.ts` rejects with `SERVICE_UNAVAILABLE` when
   `CG_ENABLE_BLOCKCHAIN=false` instead of letting every caller wait out the 10 s axios
@@ -351,3 +373,7 @@ no implementation behind it. What was added:
 - [x] Confirm no live community depends on a seeded `wizards` row before Phase 2 — checked 2026-08-01: exactly one community has a seeded wizard; maintainer decision: drop the wizard domain (tables incl. data), **keep the community** (DB backups exist)
 - [x] Confirm no external tooling reads the feeds tables before the drop migration (Phase 1) — moot: the tables were never created by any migration, and the drop is `IF EXISTS`-guarded
 - [x] Maintainer: name the ecosystems that remain in the reduced list (Phase 3) — answered 2026-08-01: **none**. The concept is removed and tags replace it (Phase 3.5).
+- [ ] **Maintainer: cut the hosted Swarm stack over to a single `redis` service** (or set
+  `REDIS_URL` on every backend service) in the separate infrastructure repository, before
+  or together with the next staging/prod image rollout. Nothing in this repo can verify or
+  perform that change — see Phase 5 and `docs/deployment` §6.

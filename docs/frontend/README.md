@@ -869,7 +869,7 @@ Recognized fields include:
 | `cgidUrl` | Base URL of the CG ID app (including hash-router prefix) |
 | `recaptchaSiteKey` | reCAPTCHA v2 site key for this instance |
 | `activeChains` | Chains the instance supports (keys of the available-chain set) |
-| `features` | Capability flags (`email`, `twitterAuth`, `calls`) derived from which server secrets/services are configured; an absent flag means the feature is available. `calls: false` (no mediasoup service) hides the call section in `CallList` / `StartCallButton` |
+| `features` | Capability flags (`email`, `twitterAuth`, `calls`) derived from which server secrets/services are configured; an absent flag means the feature is available. `calls: false` (no mediasoup service) hides the call section in `CallList` / `StartCallButton` and the call-typed event paths in `ScheduleEventModal` / `AttendEventButton` |
 | `giphyApiKey` | Giphy key for the GIF picker (empty disables it) |
 | `walletConnectProjectId` | WalletConnect Cloud project id for this instance |
 

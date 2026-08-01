@@ -10,6 +10,11 @@ import { OnchainPriority } from "../onchain/scheduler";
 // Deployments can leave the onchain service out entirely (selfhost:
 // CG_ENABLE_BLOCKCHAIN=false). Fail fast instead of making every caller wait
 // out the 10s axios timeout for a host that is not there.
+// NOTE: the compose files inject CG_ENABLE_BLOCKCHAIN into the `api` service
+// only — that is where every current caller lives. A caller added to wsapi,
+// job-runner or memberlist would read "enabled" here even on an instance that
+// runs without the service, so add the variable to that service's environment
+// when it gets its first onchain call.
 const blockchainEnabled = process.env.CG_ENABLE_BLOCKCHAIN !== 'false';
 
 class OnchainHelper {

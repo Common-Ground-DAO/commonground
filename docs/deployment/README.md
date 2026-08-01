@@ -236,7 +236,7 @@ example `pg_dump` command.
 
 | Switch | Default | Effect when `false` |
 |---|---|---|
-| `CG_ENABLE_CALLS` | `true` | no `mediasoup` container; the instance config ships `features.calls: false`, so `CallList` / `StartCallButton` hide the call section instead of offering calls that cannot start; ports 4443/tcp and 40000–40099/udp are unused |
+| `CG_ENABLE_CALLS` | `true` | no `mediasoup` container; the instance config ships `features.calls: false`, so both call entry points hide: the community sidebar (`CallList` / `StartCallButton`) and the event path (`ScheduleEventModal` offers only `external` events, `AttendEventButton` drops "Start Event" / "Join now"). Ports 4443/tcp and 40000–40099/udp are unused |
 | `CG_ENABLE_BLOCKCHAIN` | `true` | no `onchain` container; `CG_ENABLE_BLOCKCHAIN=false` also reaches the `api` process, where `OnchainHelper` fails fast with `SERVICE_UNAVAILABLE` instead of waiting out the 10 s HTTP timeout per request |
 
 Both default to on, so an `.env.selfhost` generated before these switches
@@ -345,6 +345,32 @@ exist under `pipelines/`, plus a shared clean-up template.
 
 Shared template that removes the build work directory; runs
 `condition: always()`.
+
+### Required infra-repo cutover: one Redis instead of three
+
+> **Action item for the hosted (Swarm) deployment — must land before or with the
+> next image rollout.**
+
+As of 2026-08-01 the backend connects to a **single** Redis instance: every
+client in `srv/redis/index.ts` resolves `process.env.REDIS_URL ||
+'redis://redis:6379'`. The Swarm stack files in the separate infrastructure
+repository still publish three services (`redis-sessions`, `redis-socketio`,
+`redis-data`), which the new image no longer looks for. Rolling out the image
+against an unchanged stack makes **every** backend process fail to reach Redis
+at once — sessions, rate limiting, captcha, bot presence and the Socket.IO
+adapter all go down together.
+
+Either fix works:
+
+1. **Merge the three Swarm Redis services into one named `redis`** (same
+   `--requirepass`/`--save ""`/no-eviction config; size `maxmemory` to roughly
+   the sum of the three), or
+2. **Set `REDIS_URL` on every backend service** (`api`, `wsapi`, `job-runner`,
+   `onchain`) to whichever instance is kept, and retire the other two.
+
+Option 1 matches both compose files in this repo. Either way the cutover logs
+everyone out once — Redis is unpersisted, so this is the same effect any Redis
+restart has.
 
 ### Hosted deployment topology
 

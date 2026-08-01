@@ -91,7 +91,7 @@ never created (and `up` removes it if it was running before).
 
 | Switch | Off means | What still works |
 |---|---|---|
-| `CG_ENABLE_CALLS=false` | no `mediasoup` container | everything except voice/video calls. The call UI (start-call button, call list) is hidden through the instance config, so nobody is offered a call that cannot happen. Ports 4443/tcp and 40000–40099/udp are then unused. |
+| `CG_ENABLE_CALLS=false` | no `mediasoup` container | everything except voice/video calls. The call UI is hidden through the instance config — the sidebar start-call button and call list, and in the events UI the Group Call / Broadcast event types and the "Start Event" / "Join now" buttons (events themselves stay, as external-link events). Nobody is offered a call that cannot happen. Ports 4443/tcp and 40000–40099/udp are then unused. |
 | `CG_ENABLE_BLOCKCHAIN=false` | no `onchain` container | wallet login (EVM/SIWE), communities, messaging, events, bots, premium/Spark balances that already exist. |
 
 Both default to `true`; leaving them out of `.env.selfhost` keeps the full

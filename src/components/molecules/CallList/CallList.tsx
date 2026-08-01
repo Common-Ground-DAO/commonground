@@ -34,7 +34,9 @@ export const CallList: React.FC<CallListProps> = (props: CallListProps) => {
   // Show nothing if there's nothing to show. Without the mediasoup service no
   // call can be started, so the whole section goes.
   const canCreateCalls = config.CALLS_ENABLED && communityPermissions.has('WEBRTC_CREATE');
-  if (activeCalls?.length === 0 && !canCreateCalls) return null;
+  // useCalls is a live query: undefined on the first render, so check for
+  // "no calls" rather than "exactly zero calls"
+  if (!activeCalls?.length && !canCreateCalls) return null;
 
   return (<div className='call-list-container'>
     <div className="call-list">

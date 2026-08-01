@@ -124,7 +124,6 @@ Composed of atoms; represent small, functional UI units.
 | `TokenGatedTag` | Tag indicating token-gated access |
 | `PremiumBox` | Premium tier upsell box |
 | `ContractDetails` | Smart contract details display |
-| `BuyTokenHeader` | Token purchase header |
 | `AccessRulesEditor` | Editor for role access rules |
 | `RoleAccessEditor` | Editor for role-based access |
 | `OptionToggle` | Toggle switch |

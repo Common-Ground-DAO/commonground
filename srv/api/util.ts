@@ -8,11 +8,7 @@ import errors from "../common/errors";
 import { MEMBER_PERMISSIONS, MODERATOR_PERMISSIONS } from "../repositories/calls";
 import puppeteer from 'puppeteer';
 import axios from "../util/axios";
-import * as crypto from "crypto";
-import userHelper from "../repositories/users";
-import { dockerSecret } from "../util";
 import emailHelper from "../repositories/emails";
-import emailUtils from "./emails";
 import { recoverPersonalSignature } from '@metamask/eth-sig-util';
 
 export const OK: API.AjaxResponse<void> = { status: 'OK' };

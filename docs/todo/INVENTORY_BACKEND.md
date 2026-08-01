@@ -48,7 +48,7 @@ the separate `wsapi` container and is out of scope for this table.
 | `report.ts` | `/Report` | 48 | 2 | 0 | session (`createReport`); `getReportReasons` static list |
 | `staking.ts` | `/Staking` | 46 | 2 | 0 | session (`getConfig`, `getPositions`) |
 | `contracts.ts` | `/Contract` | 40 | 2 | 0 | public read (session-independent) |
-| `util.ts` | (none — shared helpers) | 415 | 0 | 1 | n/a (`registerPostRoute`, error handling, Farcaster/Sumsub/signature helpers) |
+| `util.ts` | (none — shared helpers) | 279 | 0 | 1 | n/a (`registerPostRoute`, error handling, Farcaster helpers; Sumsub/signature helpers removed 2026-08-01) |
 
 Approx. totals: **~211 `registerPostRoute` handlers + 24 GET handlers**, spread over 19 route
 files (plus `util.ts`/`emails.ts` which register nothing). `community.ts` + `user.ts` +

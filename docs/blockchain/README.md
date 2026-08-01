@@ -102,7 +102,7 @@ event Investment(
 );
 ```
 
-The `userId` is a UUID encoded as `bytes16`. The `saleProgressBefore` field reports `totalInvested` **before** the current investment is added. The backend decodes the `bytes16` userId from hex back to a UUID string when reading events (see `ethereumApi.ts` worker handler `investmentContract_getEvents`).
+The `userId` is a UUID encoded as `bytes16`. The `saleProgressBefore` field reports `totalInvested` **before** the current investment is added. The backend no longer reads these events — the `investmentContract_getEvents` worker handler was removed with the token-sale code paths (2026-08-01); the contract remains on-chain as the record of the completed sale.
 
 **Security:** Direct ETH transfers via `receive()` and `fallback()` revert with `NoDirectDepositsAllowed`. The `invest` function is protected by `nonReentrant`.
 

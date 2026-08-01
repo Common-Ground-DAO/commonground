@@ -24,14 +24,12 @@ import eventHelper from "../repositories/event";
 import notificationHelper from "../repositories/notifications";
 import axios from "../util/axios";
 import onchainHelper from "../repositories/onchain";
-import { dockerSecret } from "../util";
 import permissionHelper from "../repositories/permissions";
 import ipRateLimitHandler from "../util/rateLimit";
 import config from "../common/config";
 import { verifyCaptchaToken } from "../util/captcha";
 import emailUtils, { emailEnabled } from "./emails";
 import emailHelper from "../repositories/emails";
-import { ethers } from "ethers";
 
 export const SIGNABLE_SECRET_LENGTH = 20;
 

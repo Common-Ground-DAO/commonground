@@ -122,7 +122,7 @@ live routes in `CommunityView.tsx`, so `CommunityContentList` itself stays.
 ### TokenSale flow — `src/views/TokenSale/`
 
 - **Size**: ≈ 3518 LoC (`*.tsx`/`*.ts`), the single largest view. Sub-areas: root `TokenSale.tsx` (1342), `StakeTab/` (`StakeTab` 375, `LockDurationSlider` 140, `WalletOverview` 96), `Info/` (`TokenSaleInfo` 312, `TokenSaleInvestors` 263, `TokenSaleFeaturePreviews` 87, `InfoArticleBox` 78), `Charts/` (`SaleGraph` 227, `DistributionPie` 218, `TokenDistributionGraph` 217), `TokenAirdrops/` (~119), `TokenSaleRedirect` (17), `TokenSale.helper` (27), plus `icons/` and `Info/*Imgs/` assets.
-- **Route**: `/token/`, gated by `config.TOKEN_SALE_ENABLED` (currently `true`) or non-prod deployment.
+- **Route**: `/token/`, was gated by `config.TOKEN_SALE_ENABLED`; the flag was removed 2026-08-01 and the route is now unconditional.
 - **State of the tabs**: `TokenSale.tsx` has three tabs `buy | claim | stake`. The Get/Earn (buy/claim) tabs are hardcoded off — `const SHOW_GET_EARN_TABS = false;` (line 110) — and the page defaults to `stake`. So the **buy/claim marketing + charts + investors + airdrops UI is present but not shown**, while `StakeTab` is the active, actively-maintained surface (all post-baseline commits are staking: reward curve, duration slider, wallet overview, RPC fixes, zero-Spark guard).
 - **Dependencies**: `wagmi`/`viem`/`rainbowkit`, `stakingApi`, `common/staking` (contract ABIs), `common/chainIds`.
 - **Legacy assessment**: **Split, executed 2026-08-01.** `StakeTab/` (+ its API) is **core / active** and is now the whole page. The `Info/`, `Charts/`, `TokenAirdrops/` subtrees and the `buy`/`claim` branches of `TokenSale.tsx` are **removed**.

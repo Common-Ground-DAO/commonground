@@ -115,21 +115,6 @@ declare {
                 deletedAt: string | null;
                 action: 'INSERT' | 'UPDATE';
             };
-            type TokensaleChange = {
-                type: 'tokensalechange';
-                id: string;
-                saleContractChain: Models.Contract.ChainIdentifier;
-                saleContractAddress: Common.Address;
-                saleContractType: Models.Contract.SaleContractType;
-                targetTokenChain: Models.Contract.ChainIdentifier;
-                targetTokenAddress: Common.Address;
-                targetTokenDecimals: number;
-                recentUpdateBlockNumber: string;
-                startDate: string;
-                endDate: string;
-                createdAt: string;
-                action: 'INSERT' | 'UPDATE';
-            };
         }
     }
 }

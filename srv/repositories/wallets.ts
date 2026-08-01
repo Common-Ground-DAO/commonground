@@ -8,8 +8,6 @@ import format from "pg-format";
 import pool from "../util/postgres";
 import { type Pool, type PoolClient } from "pg";
 import { ethers } from "ethers";
-import { Signer, hashMessage } from "fuels";
-import { decode, verifyMessage } from "@aeternity/aepp-sdk";
 import onchainHelper from "./onchain";
 import stakingHelper from "./staking";
 import { OnchainPriority } from "../onchain/scheduler";
@@ -41,7 +39,7 @@ export async function getExistingWalletData(dataSource: Pool | PoolClient, walle
   `;
 
   const result = await dataSource.query(query, [
-    type === 'aeternity' ? walletIdentifier : walletIdentifier.toLowerCase(),
+    walletIdentifier.toLowerCase(),
     type,
   ]);
   return (result.rows[0] as {
@@ -64,7 +62,7 @@ async function _createWallet(
   const params: any[] = [
     data.userId,
     data.type,
-    data.type === 'aeternity' ? data.walletIdentifier : data.walletIdentifier.toLowerCase(),
+    data.walletIdentifier.toLowerCase(),
     data.signatureData,
     data.chain,
   ];
@@ -157,25 +155,6 @@ async function _deleteWallet(
     // wrong userId or walletId
     throw new Error(errors.server.NOT_ALLOWED);
   }
-}
-
-async function _getLoginWalletByIdentifier(
-  dataSource: Pool | PoolClient,
-  walletIdentifier: string
-): Promise<{ userId: string }> {
-  const query = `
-    SELECT "userId", "loginEnabled" FROM wallets
-    WHERE "walletIdentifier" = $1 AND "deletedAt" IS NULL
-  `;
-  const result = await dataSource.query(query, [walletIdentifier]);
-  if (result.rows.length === 1) {
-    const resultWallet = result.rows[0] as { userId: string, loginEnabled: boolean };
-    if (!resultWallet.loginEnabled) {
-      throw new Error(errors.server.WALLET_NOT_ALLOWED_FOR_LOGIN);
-    }
-    return { userId: resultWallet.userId };
-  }
-  throw new Error(errors.server.NOT_FOUND);
 }
 
 async function _getAllWalletsByUserId<T extends Models.Wallet.Type>(
@@ -284,24 +263,6 @@ class WalletHelper {
         parsedSiweData = this.parseAndVerifySiweWalletData({ data: data.data, signature: data.signature });
         walletValid = true;
         walletIdentifier = parsedSiweData.address;
-
-      } else if (data.data.type === WalletType.FUEL) {
-        const signer = Signer.recoverAddress(hashMessage(data.data.secret), data.signature).toString();
-        if (signer !== data.data.address) {
-          throw new Error(errors.server.INVALID_SIGNATURE);
-        }
-        walletValid = true;
-        walletIdentifier = data.data.address;
-
-      } else if (data.data.type === WalletType.AETERNITY) {
-        const signer = decode(data.signature as any);
-        const uint8Array = Uint8Array.from(signer);
-        const verifiedSignature = verifyMessage(data.data.secret, uint8Array , data.data.address);
-        if (!verifiedSignature) {
-          throw new Error(errors.server.INVALID_SIGNATURE);
-        }
-        walletValid = true;
-        walletIdentifier = data.data.address;
 
       } else {
         requestValid = false;
@@ -434,34 +395,6 @@ class WalletHelper {
       id: row.roleId,
       assignmentRules: row.assignmentRules as Models.Community.AssignmentRules & { type: "token" },
     }));
-  }
-
-  public async getLoginWalletUserId(
-    data: API.User.SignableWalletData,
-    signature: string
-  ): Promise<{ userId: string }> {
-    if(data.type === "fuel"){
-      const signer = Signer.recoverAddress(hashMessage(data.secret), signature).toString();
-      if (signer !== data.address) {
-        throw new Error(errors.server.INVALID_SIGNATURE);
-      }
-      return await _getLoginWalletByIdentifier(pool, signer);
-    } else if (data.type === "aeternity"){
-      const signer = decode(signature as any);
-      const uint8Array = Uint8Array.from(signer);
-      const verifiedSignature = verifyMessage(data.secret, uint8Array , data.address);
-      if (!verifiedSignature) {
-        throw new Error(errors.server.INVALID_SIGNATURE);
-      }
-      return await _getLoginWalletByIdentifier(pool, data.address);
-    }
-    else {
-      const parsedSiweData = this.parseAndVerifySiweWalletData({ data, signature });
-      if (parsedSiweData.address.toLowerCase() !== data.address.toLowerCase()) {
-        throw new Error(errors.server.INVALID_SIGNATURE);
-      }
-      return await _getLoginWalletByIdentifier(pool, parsedSiweData.address);
-    }
   }
 
   public async getWalletOwnerId(walletIdentifier: string) {

@@ -544,7 +544,7 @@ async function _createUser(
     params.push(
       wallet.type,
       true,
-      wallet.type === 'aeternity' ? wallet.walletIdentifier : wallet.walletIdentifier.toLowerCase(),
+      wallet.walletIdentifier.toLowerCase(),
       JSON.stringify(wallet.signatureData),
     );
     query += `,

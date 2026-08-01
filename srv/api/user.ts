@@ -984,6 +984,8 @@ registerPostRoute<
 
       throw new Error(errors.server.NOT_ALLOWED);
     }
+    // `fuel` / `aeternity` cannot be linked anymore (login flows removed 2026-08-01),
+    // but existing rows of those types must still be listed for their owners.
     return await walletHelper.getAllWalletsByUserId(data.userId || user.id, ["evm", "cg_evm", "fuel", "aeternity"]);
   }
 );

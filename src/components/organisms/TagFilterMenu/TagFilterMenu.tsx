@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import './EcosystemMenu.css';
+import './TagFilterMenu.css';
 import Button from 'components/atoms/Button/Button';
 import ScreenAwarePopover from 'components/atoms/ScreenAwarePopover/ScreenAwarePopover';
 import { PopoverHandle } from 'components/atoms/Tooltip/Tooltip';
@@ -24,7 +24,7 @@ type Props = {
 const COLLAPSED_COUNT = 5;
 const RECENT_COUNT = 10;
 
-const EcosystemMenu: React.FC<Props> = (props) => {
+const TagFilterMenu: React.FC<Props> = (props) => {
   const { activeTags, setActiveTags } = props;
   const { isMobile } = useWindowSizeContext();
   const [recentTags, setRecentTags] = useLocalStorage<PredefinedTag[]>([], 'tag-header-recent-tags');
@@ -216,4 +216,4 @@ const EcosystemMenu: React.FC<Props> = (props) => {
   />);
 }
 
-export default React.memo(EcosystemMenu);
+export default React.memo(TagFilterMenu);

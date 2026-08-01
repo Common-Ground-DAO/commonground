@@ -139,12 +139,21 @@ not used when an instance config is present).
 
 Defaults in `.env.selfhost` are sized for a 16 GB machine:
 
-- `REDIS_MAXMEMORY=512mb` — per Redis instance (3 instances)
+- `REDIS_MAXMEMORY=1536mb` — total budget of the single Redis instance
+  (sessions, Socket.IO pub/sub and app data share it)
 - `SEAWEED_VOLUME_LIMIT_MB=1024` — SeaweedFS volume chunk size
 - mediasoup spawns one media worker per CPU core
 
 Postgres loads `docker/db/postgresql.conf`; tune `shared_buffers` etc. there
 for larger instances.
+
+> **Upgrading from a release that ran three Redis instances** (`redis-sessions`,
+> `redis-socketio`, `redis-data`): they are replaced by a single `redis`
+> service. Set `REDIS_MAXMEMORY` in `.env.selfhost` to the *total* budget
+> (the old per-instance `512mb` becomes `1536mb`), then
+> `./selfhost/selfhost.sh up`. Everyone is logged out once — Redis is
+> unpersisted, so this is the same effect any Redis restart has. Remove the
+> three old containers with `./selfhost/selfhost.sh compose up -d --remove-orphans`.
 
 ## Bot accounts
 

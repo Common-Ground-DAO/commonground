@@ -25,37 +25,13 @@ async function queryDb() {
 	return dbResult;
 }
 
-async function checkRedis() {
-	let status = true;
-	const legacyMode = process.env.REDIS_LEGACY_MODE === 'true';
-	const dataClient = redisManager.getClient("data");
-	const socketIOClient = redisManager.getClient("socketIOPub");
-	const sessionClient = redisManager.getClient("session");
-	await pingRedisClient(dataClient);
-	await pingRedisClient(socketIOClient);
-	await pingRedisClient(sessionClient, legacyMode);
-	return status;
-}
-
-async function pingRedisClient(client: any, legacyMode?: boolean): Promise<boolean> {
-	if (legacyMode) {
-		return new Promise((resolve, reject) => {
-			client.ping((err: unknown, value: string | null) => {
-				if (err) {
-					reject(err);
-				} else {
-					const result = value === 'PONG';
-					resolve(result);
-				}
-			});
-		});
-	} else {
-		const response = await client.ping();
-		if (response === 'PONG') {
-			return true;
-		} else {
-			return false;
-		}
+// All four clients talk to the same Redis instance, so one PING on the
+// non-legacy data client is enough to know Redis is reachable.
+async function checkRedis(): Promise<boolean> {
+	try {
+		return (await redisManager.getClient("data").ping()) === 'PONG';
+	} catch (e) {
+		return false;
 	}
 }
 

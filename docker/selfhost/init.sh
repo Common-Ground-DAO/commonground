@@ -56,7 +56,8 @@ REDIS_SECRET=$(rand 24)
 S3_SECRET=${S3_SECRET_GEN}
 
 # resource tuning (defaults are sized for a 16 GB machine)
-REDIS_MAXMEMORY=512mb
+# REDIS_MAXMEMORY is the total budget of the single redis instance
+REDIS_MAXMEMORY=1536mb
 SEAWEED_VOLUME_LIMIT_MB=1024
 MEDIASOUP_DISABLE_LIBURING=true
 BUILDER_UID=$(id -u)

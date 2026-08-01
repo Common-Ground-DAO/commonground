@@ -66,7 +66,9 @@ export default class UserDataManager {
   public async intersectWithOnlineUsers(userIds: string[]): Promise<string[]> {
     await this.isReady;
     if (userIds.length > 0) {
-      const randomKey = randomString(6);
+      // namespaced so the throwaway intersection set can never collide with
+      // one of the real key prefixes on the shared instance
+      const randomKey = `tmp:${randomString(6)}`;
       const [ , result ] = (await this.client.multi()
         .sAdd(randomKey, userIds)
         .sInter([randomKey, onlineUsersKey])

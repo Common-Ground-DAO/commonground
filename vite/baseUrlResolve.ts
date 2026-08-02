@@ -64,7 +64,7 @@ function resolveInBaseUrl(baseDir: string, specifier: string): string | undefine
 
 export function baseUrlResolve(baseUrl = 'src'): Plugin {
   let baseDir = '';
-  const cache = new Map<string, string | undefined>();
+  const cache = new Map<string, string>();
 
   return {
     name: 'cg:base-url-resolve',
@@ -95,12 +95,11 @@ export function baseUrlResolve(baseUrl = 'src'): Plugin {
       const specifier = queryIndex === -1 ? source : source.slice(0, queryIndex);
       const suffix = queryIndex === -1 ? '' : source.slice(queryIndex);
 
-      let resolved = cache.get(specifier);
-      if (resolved === undefined && !cache.has(specifier)) {
-        resolved = resolveInBaseUrl(baseDir, specifier);
-        cache.set(specifier, resolved);
-      }
+      // Only hits are cached: a miss usually means "not a baseUrl specifier at
+      // all", and caching it would hide a file created later in a dev session.
+      const resolved = cache.get(specifier) ?? resolveInBaseUrl(baseDir, specifier);
       if (!resolved) return null;
+      cache.set(specifier, resolved);
 
       // Hand the absolute path back through the container so `?react` &co keep
       // reaching the plugins that care about them.

@@ -59,7 +59,9 @@ export function serviceWorker(options: ServiceWorkerPluginOptions): Plugin {
       try {
         await buildWorker(config, options, tmpDir);
         await injectPrecacheManifest(config, tmpDir, outDir);
+        fs.rmSync(tmpDir, { recursive: true, force: true });
       } catch (error) {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
         // eslint-disable-next-line no-console
         console.error('\x1b[31m%s\x1b[0m', '[cg:service-worker]');
         // eslint-disable-next-line no-console
@@ -67,8 +69,6 @@ export function serviceWorker(options: ServiceWorkerPluginOptions): Plugin {
         if (process.env.DEPLOYMENT !== 'dev') {
           process.exit(1);
         }
-      } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
       }
 
       if (!fs.existsSync(path.join(outDir, SW_FILENAME)) && process.env.DEPLOYMENT !== 'dev') {
@@ -188,12 +188,14 @@ async function injectPrecacheManifest(
     // ever *is* emitted, it stays out of the precache (the shipped SVG-prune
     // loops in docker/build.sh would otherwise delete a precached URL and stop
     // the worker from ever activating, §10.1).
+    // Runs before `modifyURLPrefix`, so the URLs here are still relative to
+    // globDirectory.
     manifestTransforms: [
       (entries) => ({
         manifest: entries.filter((entry) => {
-          if (!/^static\/media\/.+\.svg$/.test(entry.url)) return true;
-          const size = fs.statSync(path.join(outDir, entry.url)).size;
-          return size >= 5000;
+          const url = entry.url.replace(/^\//, '');
+          if (!/^static\/media\/.+\.svg$/.test(url)) return true;
+          return fs.statSync(path.join(outDir, url)).size >= 5000;
         }),
         warnings: [],
       }),

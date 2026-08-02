@@ -20,15 +20,29 @@ import type { Plugin } from 'vite';
  * tags directly once CRA is gone) — but there is no cost to keeping it.
  */
 export function htmlEntryScripts(entries: Record<string, string>): Plugin {
+  let isBuild = false;
+
   return {
     name: 'cg:html-entry-scripts',
+
+    configResolved(config) {
+      isBuild = config.command === 'build';
+    },
+
     transformIndexHtml: {
       order: 'pre',
       handler(html, ctx) {
         const file = path.basename(ctx.filename);
         const entry = entries[file];
         if (!entry) {
-          throw new Error(`cg:html-entry-scripts: no entry module configured for ${file}`);
+          // At build time this hook only ever sees the configured rollup
+          // inputs, so a miss is a config bug. The dev server runs it for every
+          // served `.html` — `public/` also holds the Google site-verification
+          // file — where the right answer is "leave it alone".
+          if (isBuild) {
+            throw new Error(`cg:html-entry-scripts: no entry module configured for ${file}`);
+          }
+          return html;
         }
         return {
           html,

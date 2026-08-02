@@ -45,9 +45,6 @@ function buildInstanceConfig(): InstanceConfig {
     twitterAuth:
       configured(dockerSecret("twitter_api_v1_key") || process.env.TWITTER_API_KEY) &&
       configured(dockerSecret("twitter_api_v1_secret") || process.env.TWITTER_API_SECRET),
-    kyc:
-      configured(dockerSecret("sumsub_app_token") || process.env.SUMSUB_APP_TOKEN) &&
-      configured(dockerSecret("sumsub_secret_key") || process.env.SUMSUB_SECRET_KEY),
   };
   if (typeof process.env.CG_GIPHY_API_KEY === "string") {
     instance.giphyApiKey = process.env.CG_GIPHY_API_KEY;

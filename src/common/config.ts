@@ -208,7 +208,6 @@ const config = {
   URL_FEED: 'feed' as const,
   URL_CALL: 'call' as const,
   URL_EVENT: 'event' as const,
-  URL_WIZARD: 'wizard' as const,
   URL_PLUGIN: 'plugin' as const,
   URL_APPSTORE: 'store' as const,
 
@@ -218,7 +217,6 @@ const config = {
   NEW_ACCOUNT_REFERRAL_REQUIRED: false,
   COMMUNITY_NFT_REQUIRED: true,
   NOTIFICATIONS_PAGE_ENABLED: true,
-  TOKEN_SALE_ENABLED: true,
   COMMUNITY_ASSISTANT_ENABLED: false,
   PERSONAL_ASSISTANT_ENABLED: false,
   TOKEN_CREATION_ENABLED: false,
@@ -305,7 +303,6 @@ const config = {
   // instances have everything on
   EMAIL_ENABLED: instance?.features?.email ?? true,
   TWITTER_AUTH_ENABLED: instance?.features?.twitterAuth ?? true,
-  KYC_ENABLED: instance?.features?.kyc ?? true,
   // per-instance third-party keys (CG defaults are locked to the official domains)
   GIPHY_API_KEY: instance?.giphyApiKey ?? (instance ? '' : 'ir89rjdyvl6GNuHNHO71QldCPQzSAjI4'),
   WALLETCONNECT_PROJECT_ID: instance?.walletConnectProjectId ?? 'a58ac26ec0960773dad148a0585ef011',

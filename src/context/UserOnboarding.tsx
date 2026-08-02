@@ -71,8 +71,6 @@ type UserOnboardingState = {
     setNewsletterState: React.Dispatch<React.SetStateAction<{ email: string; loading: boolean; valid: boolean; error: string }>>;
     profileLockedIn: boolean;
     setProfileLockedIn: React.Dispatch<React.SetStateAction<boolean>>;
-    emailFromTokenSaleRegistration: string | undefined;
-    setEmailFromTokenSaleRegistration: React.Dispatch<React.SetStateAction<string | undefined>>;
 }
 
 export const UserOnboardingContext = React.createContext<UserOnboardingState>({
@@ -97,8 +95,6 @@ export const UserOnboardingContext = React.createContext<UserOnboardingState>({
     setNewsletterState: () => { },
     profileLockedIn: false,
     setProfileLockedIn: () => { },
-    emailFromTokenSaleRegistration: undefined,
-    setEmailFromTokenSaleRegistration: () => { },
 });
 
 const initiallyLoggedIn = loginManager.currentUser !== null;
@@ -125,7 +121,6 @@ export function UserOnboardingProvider(props: { children: ReactNode }) {
     const [newsletterState, setNewsletterState] = useState(defaultNewsletterState);
     const [profileLockedIn, setProfileLockedIn] = useState<boolean>(false);
     const [farcasterData, setFarcasterData] = useState<FarcasterData | undefined>();
-    const [emailFromTokenSaleRegistration, setEmailFromTokenSaleRegistration] = useState<string | undefined>();
     const [emailConfirmationOpened, setEmailConfirmationOpened] = useLocalStorage('', 'emailConfirmation');
     const { showSnackbar } = useSnackbarContext();
 
@@ -179,8 +174,6 @@ export function UserOnboardingProvider(props: { children: ReactNode }) {
             setNewsletterState,
             profileLockedIn,
             setProfileLockedIn,
-            emailFromTokenSaleRegistration,
-            setEmailFromTokenSaleRegistration,
         }}>
           {props.children}
         </UserOnboardingContext.Provider>

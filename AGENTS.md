@@ -65,7 +65,7 @@ they are deleted via dedicated cleanup PRs tracked in
 | Auth: device, passkey/CGID, email+password, email code, wallet/SIWE (EVM), Lukso UP, Twitter, Farcaster | **core** | consolidation planned, see docs/auth-identity |
 | AI assistant | **core (opt-in)** | disabled by default; needs LLM backend |
 | Selfhost deployment profile | **core** | see docs/deployment |
-| Token sale: buy/claim UI, charts, investor wizard (`FullscreenWizard`), Sumsub KYC, NDA/US gates, `trackTokenSales`/`tokenSaleNotifications` jobs | **removal-pending** | decided 2026-07-25; DB tables are kept for auditability |
+| Token sale: buy/claim UI, charts, investor wizard (`FullscreenWizard`), Sumsub KYC, NDA/US gates, `trackTokenSales`/`tokenSaleNotifications` jobs | **removed 2026-08-01** | Phase 2 of the slimming roadmap. The `tokensales`/`tokensale_*` tables + entities stay for auditability (no reader, no writer); the five `wizard*` tables were dropped incl. data (`1785628800000-dropWizardDomain`). Do not reintroduce. |
 | Aeternity wallet login, Fuel wallet login | **removal-pending** | decided 2026-07-25; existing wallet DB rows remain |
 | Hardcoded ecosystem partner list + dead ecosystem theming | **removal-pending** | reduce to active partnerships; EVM + Lukso stay |
 

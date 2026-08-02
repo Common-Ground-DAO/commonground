@@ -24,15 +24,12 @@ import eventHelper from "../repositories/event";
 import notificationHelper from "../repositories/notifications";
 import axios from "../util/axios";
 import onchainHelper from "../repositories/onchain";
-import { dockerSecret } from "../util";
 import permissionHelper from "../repositories/permissions";
 import ipRateLimitHandler from "../util/rateLimit";
 import config from "../common/config";
 import { verifyCaptchaToken } from "../util/captcha";
 import emailUtils, { emailEnabled } from "./emails";
 import emailHelper from "../repositories/emails";
-import { uniqueNamesGenerator, adjectives, colors, animals } from 'unique-names-generator';
-import { ethers } from "ethers";
 
 export const SIGNABLE_SECRET_LENGTH = 20;
 
@@ -385,13 +382,12 @@ registerPostRoute<
       usePreparedWallet,
       usePreparedPasskey,
       usePreparedFarcaster,
-      useWizardCode,
       useCgProfile,
       useEmailAndPassword,
       recaptchaToken,
     } = data;
 
-    if (config.DEPLOYMENT !== 'dev' && !useWizardCode) {
+    if (config.DEPLOYMENT !== 'dev') {
       const verifyResult = await verifyCaptchaToken(recaptchaToken);
       if (!verifyResult) {
         console.error("Error creating user, captcha verification failed", recaptchaToken, data);
@@ -417,13 +413,11 @@ registerPostRoute<
     };
 
     if (
-      !useWizardCode && (
-        (displayAccount === "lukso" && !useLuksoCredentials) ||
-        (displayAccount === "twitter" && !useTwitterCredentials) ||
-        (displayAccount === "cg" && !useCgProfile)
-      )
+      (displayAccount === "lukso" && !useLuksoCredentials) ||
+      (displayAccount === "twitter" && !useTwitterCredentials) ||
+      (displayAccount === "cg" && !useCgProfile)
     ) {
-      console.error("Error creating user, wizard code not used and display account " + displayAccount + " not provided", data);
+      console.error("Error creating user, display account " + displayAccount + " not provided", data);
       throw new Error(errors.server.INVALID_REQUEST);
     }
     
@@ -574,38 +568,6 @@ registerPostRoute<
       delete request.session.lukso;
     }
 
-    if (useWizardCode) {
-      const isAvailable = await communityHelper.isWizardCodeAvailable({ wizardId: useWizardCode.wizardId, code: useWizardCode.code });
-      if (!isAvailable) {
-        throw new Error(errors.server.INVALID_SECRET);
-      }
-
-      let displayName: string = "";
-      let displayNameValid = false;
-      let i = 0;
-      while (!displayNameValid && i < 30) {
-        displayName = uniqueNamesGenerator({ dictionaries: [adjectives, colors, animals] });
-        displayNameValid = await userHelper.isCgProfileNameAvailable(displayName);
-        i++;
-      }
-
-      loginMethodAdded = true;
-      newUserData.email = useWizardCode.email;
-      newUserData.displayAccount = "cg";
-      newUserData.accounts.push({
-        type: "cg",
-        data: null,
-        displayName,
-        imageId: null,
-        extraData: { 
-          type: "cg",
-          description: '',
-          homepage: '',
-          links: [],
-        },
-      });
-    }
-
     if (!loginMethodAdded) {
       console.error("Error creating user, no login method added", data);
       throw new Error(errors.server.INVALID_REQUEST);
@@ -613,13 +575,10 @@ registerPostRoute<
 
     const insertedIds = await userHelper.createUser(newUserData, async () => {
       // make sure rate limits are respected
-      if (config.DEPLOYMENT !== 'dev' && !useWizardCode) {
+      if (config.DEPLOYMENT !== 'dev') {
         await createUserRateLimiter(request, response);
       }
     });
-    if (useWizardCode) {
-      await communityHelper.redeemAndInvalidateWizardCode({ wizardId: useWizardCode.wizardId, code: useWizardCode.code, userId: insertedIds.userId });
-    }
 
     delete request.session.passkeyData;
     delete request.session.preparedCredential;
@@ -1502,193 +1461,6 @@ registerPostRoute<
     } catch (error) {
       console.error(error);
     }
-  }
-);
-
-registerPostRoute<
-  API.User.redeemWizardCodeForExistingUser.Request,
-  API.User.redeemWizardCodeForExistingUser.Response
->(
-  userRouter,
-  '/redeemWizardCode',
-  validators.API.User.redeemWizardCode,
-  async (request, response, data) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-    const { wizardId, code } = data;
-    const isAvailable = await communityHelper.isWizardCodeAvailable({ wizardId, code });
-    if (!isAvailable) {
-      throw new Error("Invalid code");
-    } else {
-      await communityHelper.redeemAndInvalidateWizardCode({ wizardId, code, userId: user.id });
-    }
-  }
-);
-
-registerPostRoute<
-  API.User.getTokenSaleAllowance.Request,
-  API.User.getTokenSaleAllowance.Response
->(
-  userRouter,
-  '/getTokenSaleAllowance',
-  undefined,
-  async (request, response, data) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-    
-    const extraData = await userHelper.getUserExtraData(user.id);
-    if (!extraData.kycCgTokensaleSuccess && config.DEPLOYMENT !== 'dev') {
-      throw new Error(errors.server.KYC_MISSING);
-    }
-    if (!extraData.agreedToTokenSaleTermsTimestamp && config.DEPLOYMENT !== 'dev') {
-      throw new Error(errors.server.AGREEMENT_TO_TERMS_MISSING);
-    }
-
-    let signerPrivateKey: string | undefined;
-    if (config.DEPLOYMENT === 'dev') {
-      // signer address: 0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199
-      signerPrivateKey = '0xdf57089febbacf7ba0bc227dafbffa9fc08a93fdc68e1e42411a14efcf23656e';
-    }
-    else {
-      // signer address: 0x28f5500291DeB91b3F690ea10dDe48EAd3D15c8a
-      signerPrivateKey = dockerSecret('tokensale_allowance_private_key') || undefined;
-    }
-    if (!signerPrivateKey) {
-      throw new Error('tokensale_allowance_private_key is not set');
-    }
-
-    // Sign with server's private key
-    const serverWallet = new ethers.Wallet(signerPrivateKey);
-    // Convert UUID to hex string with 0x prefix
-    const hexId = '0x' + user.id.toLowerCase().replace(/-/g, '');
-    // Convert hex to Uint8Array 
-    const messageBytes = ethers.getBytes(hexId);
-    const signature = await serverWallet.signMessage(messageBytes);
-    
-    return {
-      allowance: signature,
-    };
-  }
-);
-
-registerPostRoute<
-  API.User.getConnectionCountry.Request,
-  API.User.getConnectionCountry.Response
->(
-  userRouter,
-  '/getConnectionCountry',
-  undefined,
-  async (request, response, data) => {
-    const header = request.headers['cf-ipcountry'];
-    if (!header) {
-      return {
-        country: 'unknown',
-      };
-    }
-    return {
-      country: header as string,
-    };
-  }
-);
-
-registerPostRoute<
-  API.User.setReferredBy.Request,
-  API.User.setReferredBy.Response
->(
-  userRouter,
-  '/setReferredBy',
-  validators.API.User.setReferredBy,
-  async (request, response, data) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-    try {
-      await userHelper.setReferredBy({
-        userId: user.id,
-        referredByUserId: data.referredBy,
-        tokenSaleId: data.tokenSaleId
-      });
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('Cannot change referredByUserId')) {
-        throw new Error(errors.server.CANNOT_CHANGE_REFERRER);
-      } else if (error instanceof Error && error.message.includes('Circular referral detected')) {
-        throw new Error(errors.server.CANNOT_SET_CIRCULAR_REFERRER);
-      } else if (error instanceof Error && error.message.includes('Cannot refer to self')) {
-        throw new Error(errors.server.CANNOT_REFER_SELF);
-      } else if (error instanceof Error && error.message.includes('Cannot refer users who have already bought tokens')) {
-        throw new Error(errors.server.CANNOT_REFER_USER_WHO_BOUGHT_TOKENS);
-      } else {
-        throw error;
-      }
-    }
-  }
-);
-
-registerPostRoute<
-  API.User.getOwnTokenSaleData.Request,
-  API.User.getOwnTokenSaleData.Response
->(
-  userRouter,
-  '/getOwnTokenSaleData',
-  validators.API.User.getOwnTokenSaleData,
-  async (request, response, data) => {
-    const { user } = request.session;
-    if (config.DEPLOYMENT === 'staging') {
-      console.log("HEADERS", request.headers);
-    }
-    return await userHelper.getTokenSaleData(data.tokenSaleId, user?.id);
-  }
-);
-
-registerPostRoute<
-  API.User.getTokenSaleEvents.Request,
-  API.User.getTokenSaleEvents.Response
->(
-  userRouter,
-  '/getTokenSaleEvents',
-  validators.API.User.getTokenSaleEvents,
-  async (request, response, data) => {
-    return await userHelper.getTokenSaleEvents(data.tokenSaleId);
-  }
-);
-
-registerPostRoute<
-  API.User.claimTokenSaleReward.Request,
-  API.User.claimTokenSaleReward.Response
->(
-  userRouter,
-  '/claimTokenSaleReward',
-  validators.API.User.claimTokenSaleReward,
-  async (request, response, data) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-    const rewardClaimedSecurityData = {
-      ...request.headers,
-    };
-    return await userHelper.claimTokenSaleReward(data.tokenSaleId, user.id, rewardClaimedSecurityData);
-  }
-);
-
-registerPostRoute<
-  API.User.saveTokenSaleTargetAddress.Request,
-  API.User.saveTokenSaleTargetAddress.Response
->(
-  userRouter,
-  '/saveTokenSaleTargetAddress',
-  validators.API.User.saveTokenSaleTargetAddress,
-  async (request, response, data) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-    return await userHelper.saveTokenSaleTargetAddress(user.id, data);
   }
 );
 

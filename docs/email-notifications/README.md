@@ -1,8 +1,8 @@
 # Email & Notifications
 
-> Status: verified against commit 523fceccd, 2026-07-25.
+> Status: verified against commit a3c3f7608, 2026-08-01.
 
-This document covers every email path in Common Ground: transactional mail (verification, one-time-password login, KYC, event and article notifications), the weekly digest and per-community article newsletters, the Mailchimp marketing integration, and the user/community preference model that gates them. Web push and in-app notifications are a separate delivery channel — see [docs/realtime](../realtime/README.md) (§ Push Notifications) — and the boundary between the two is described in [Boundary to web push](#boundary-to-web-push).
+This document covers every email path in Common Ground: transactional mail (verification, one-time-password login, event and article notifications), the weekly digest and per-community article newsletters, the Mailchimp marketing integration, and the user/community preference model that gates them. Web push and in-app notifications are a separate delivery channel — see [docs/realtime](../realtime/README.md) (§ Push Notifications) — and the boundary between the two is described in [Boundary to web push](#boundary-to-web-push).
 
 ---
 
@@ -49,8 +49,7 @@ Similarly, Mailchimp calls are skipped when `MAILCHIMP_API_KEY === 'placeholder'
 
 | Source | From address |
 |--------|--------------|
-| Default (most mails) | `process.env.EMAIL_FROM` ‖ `no-reply@app.cg` |
-| Token-sale announcements | `mail@app.cg` (explicit override) |
+| All mails | `process.env.EMAIL_FROM` ‖ `no-reply@app.cg` |
 
 ---
 
@@ -60,7 +59,7 @@ Similarly, Mailchimp calls are skipped when `MAILCHIMP_API_KEY === 'placeholder'
 
 - **`sendEmail(to, subject, text, html, attachments?, from?)`** — the only method that calls SendGrid. Guards on `emailEnabled()`, catches/normalises SendGrid `ResponseError`s.
 - **`sendEmailBulk(to[], …)`** — fan-out loop over `sendEmail` (fire-and-forget; no per-recipient error aggregation).
-- Composers: `sendVerificationEmail`, `sendOneTimePasswordEmail`, `sendKycResultEmail`, `sendNewsletter`, `sendArticleAsEmail`, `sendEventEmail`, `sendTokenSaleEmail`, `sendTokenSaleImmediateEmail`.
+- Composers: `sendVerificationEmail`, `sendOneTimePasswordEmail`, `sendNewsletter`, `sendArticleAsEmail`, `sendEventEmail`.
 
 All HTML is assembled inline (no templating engine) via private helpers:
 
@@ -78,11 +77,9 @@ The logo and post images are referenced as absolute URLs under `urlConfig.APP_UR
 |------|----------|----------------|-------|
 | Email verification | `sendVerificationEmail` | Account creation (`srv/api/user.ts:694`) and resend (`:1464`) | Link to `/verify-email?email=…&token=…`; in dev the link targets `hostname:3000`. |
 | One-time password login | `sendOneTimePasswordEmail` | `POST /user/sendOneTimePasswordForLogin` (`:1514`) | Emails a login code to an existing account (see [Notification preferences](#notification-preferences)). Requires `emailEnabled()`. |
-| KYC result | `sendKycResultEmail` | SumSub webhook handler (`srv/api/util.ts:288`) | Success/failure message; includes reject reason on failure. |
 | Event notifications | `sendEventEmail` | See [Event notification mails](#event-notification-mails) | — |
 | Article notification | `sendArticleAsEmail` | `emailNotifications` job | See [Per-community article newsletter](#per-community-article-newsletter). |
 | Weekly digest | `sendNewsletter` | `newsletterDelivery` job | See [Weekly newsletter](#weekly-newsletter-digest). |
-| Token-sale announcements | `sendTokenSaleEmail`, `sendTokenSaleImmediateEmail` | `tokenSaleNotifications` job (prod only) | One-off campaign mails from `mail@app.cg`. |
 
 ### Verification token lifecycle
 
@@ -195,7 +192,6 @@ Email-relevant workers are spawned from `srv/jobs.ts` (each runs in a worker thr
 |----------|----------|---------|
 | `newsletterDelivery.ts` | `0 12 * * 6` (Sat 12:00) | Weekly digest |
 | `emailNotifications.ts` | `*/1 * * * *` (every minute) | Article newsletters + "event starting soon" mails |
-| `tokenSaleNotifications.ts` | permanent worker, **prod only** | Token-sale campaign mails |
 
 The every-minute `emailNotifications` job runs `articleNotifications()` then `eventNotifications()` in sequence; a thrown error in either exits the worker (it is respawned on the next tick).
 

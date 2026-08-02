@@ -1,4 +1,4 @@
-> Status: verified against commit 8c3a529da, 2026-08-01
+> Status: verified against commit a3c3f7608, 2026-08-01
 
 # Common Ground - Architecture Documentation
 
@@ -320,7 +320,6 @@ The API server (`srv/api.ts`) mounts the following Express routers:
 | `/Lukso` | luksoUniversalProfileRouter | `srv/api/luksoUniversalProfile.ts` |
 | `/CgId` | cgIdRouter | `srv/api/cgid.ts` |
 | `/Accounts` | accountsRouter | `srv/api/accounts.ts` |
-| `/Sumsub` | sumsubRouter | `srv/api/sumsub.ts` |
 | `/Plugins` | pluginRouter | `srv/api/plugins.ts` |
 | `/Search` | searchRouter | `srv/api/search.ts` |
 | `/Report` | reportRouter | `srv/api/report.ts` |
@@ -373,7 +372,6 @@ The `api` service communicates with the internal-only `onchain` service via HTTP
 - `POST /luksoGetUniversalProfileData` — fetch Lukso profile metadata
 - `POST /getSingleTransactionData` — transaction details
 - `POST /getErc20Balance` — ERC-20 balance
-- `POST /getTokensaleEvents` — token-sale contract events
 - `POST /getBlockNumber` — current block number for a chain
 
 The `onchain` process also runs the multi-chain balance watcher and, when staking is configured, an **event indexer** that reads `Staked` / `Unstaked` events from the `CgStaking` contract (`srv/onchain/generic.ts`) and persists positions via the staking repository.
@@ -383,8 +381,7 @@ The `onchain` process also runs the multi-chain balance watcher and, when stakin
 The job runner (`srv/jobs.ts`) spawns Node.js `worker_threads` in three modes:
 
 1. **Permanent workers** (auto-restart on crash):
-   - `premiumRenewal`, `callUpdateEmitter`, `trackTokenSales`, `handleCommunityAirdrops`
-   - `tokenSaleNotifications` (production only)
+   - `premiumRenewal`, `callUpdateEmitter`, `handleCommunityAirdrops`
 
 2. **Cron/interval workers** (spawned on schedule, exit after completion):
    - `onlineStatusCheck` — every 30 s
@@ -531,7 +528,6 @@ All third-party integrations are optional. The server derives **capability flags
 |------|-------------------------|
 | `email` | SendGrid API key |
 | `twitterAuth` | Twitter API v1 key + secret |
-| `kyc` | SumSub app token + secret key |
 
 An **absent** flag means "feature available" (the behaviour on official instances that always have the keys); an explicit `false` lets a self-hosted frontend hide features that would only fail. Related optional values shipped the same way: `captchaProvider` / `recaptchaSiteKey` (captcha), `giphyApiKey` (GIF picker), `walletConnectProjectId` (wallet connect), and `activeChains` (the chains with working RPC endpoints for this instance). Backend endpoints for unconfigured integrations degrade to no-ops rather than erroring — with the exception of captcha, which stays fail-closed via the built-in ALTCHA default (no external service needed).
 
@@ -544,7 +540,7 @@ Based on `docker/nginx/nginx_dev.conf` and `docker/nginx/nginx_selfhost.conf`, r
 | URL Pattern | Destination | Notes |
 |-------------|-------------|-------|
 | `/api/bot/v1/...` | `http://api:4000` | Public bot protocol; rewritten to `/BotV1/...` |
-| `/api/v2/{Router}/...` | `http://api:4000` | REST API; prefix stripped. Router whitelist: `Chat\|Community\|File\|Message\|User\|Contract\|Notification\|Twitter\|Lukso\|CgId\|Accounts\|Sumsub\|Plugins\|Search\|Report\|Bot\|Staking` |
+| `/api/v2/{Router}/...` | `http://api:4000` | REST API; prefix stripped. Router whitelist: `Chat\|Community\|File\|Message\|User\|Contract\|Notification\|Twitter\|Lukso\|CgId\|Accounts\|Plugins\|Search\|Report\|Bot\|Staking` |
 | `/api/ws/` | `http://wsapi:4000` | Socket.IO (WebSocket upgrade) |
 | `/files/{id}/{sig}/{date}/{expires}` | `http://s3.local:8333` | Direct S3 proxy (rewritten to a signed S3 URL) |
 | `/c/`, `/u/`, `/gated-videos/`, `/gated-files/` | `http://api:4000` | Social previews / gated content (SSR + instance-config injection) |

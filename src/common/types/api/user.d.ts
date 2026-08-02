@@ -106,11 +106,6 @@ declare global {
                         email: string;
                         password: string;
                     };
-                    useWizardCode?: {
-                        email: string;
-                        code: string;
-                        wizardId: string;
-                    };
                     useCgProfile?: Models.User.ProfileItemWithDetails & { type: 'cg', extraData: Models.User.UserAccountExtraData_CG };
                     displayAccount: Exclude<Models.User.ProfileItemType, 'bot'>;
                     recaptchaToken: string;
@@ -137,17 +132,8 @@ declare global {
 
             namespace setOwnExtraDataField {
                 type Request = {
-                    key: "registeredForTokenSale" | "installedPWA";
+                    key: "installedPWA";
                     value: boolean;
-                } | {
-                    key: "agreedToTokenSaleTermsTimestamp";
-                    value?: string; // value is replaced with server timestamp
-                } | {
-                    key: "investsFromSwitzerland";
-                    value: {
-                        value: boolean;
-                        serverTimestamp?: string; // is replaced with server timestamp
-                    };
                 };
                 type Response = void;
             }
@@ -445,68 +431,6 @@ declare global {
             namespace sendOneTimePasswordForLogin {
                 type Request = {
                     email: string;
-                };
-                type Response = void;
-            }
-
-            namespace redeemWizardCodeForExistingUser {
-                type Request = {
-                    wizardId: string;
-                    code: string;
-                };
-                type Response = void;
-            }
-
-            namespace getTokenSaleAllowance {
-                type Request = undefined;
-                type Response = {
-                    allowance: string;
-                };
-            }
-
-            namespace getConnectionCountry {
-                type Request = undefined;
-                type Response = {
-                    country: string;
-                };
-            }
-
-            namespace setReferredBy {
-                type Request = {
-                    tokenSaleId: string;
-                    referredBy: string;
-                };
-                type Response = void;
-            }
-
-            namespace getOwnTokenSaleData {
-                type Request = {
-                    tokenSaleId: string;
-                };
-                type Response = {
-                    tokenSaleData: Models.TokenSale.SaleData;
-                    userSaleData?: Models.TokenSale.UserSaleData;
-                };
-            }
-
-            namespace getTokenSaleEvents {
-                type Request = {
-                    tokenSaleId: string;
-                };
-                type Response = Models.Contract.SaleInvestmentEventJson[];
-            }
-
-            namespace claimTokenSaleReward {
-                type Request = {
-                    tokenSaleId: string;
-                };
-                type Response = void;
-            }
-
-            namespace saveTokenSaleTargetAddress {
-                type Request = {
-                    tokenSaleId: string;
-                    targetAddress: Common.Address;
                 };
                 type Response = void;
             }

@@ -106,11 +106,6 @@ const userApi = {
       imageId: common.ImageId.allow(null).required(),
       extraData: cgProfileExtraDataValidator.required(),
     }).strict(true),
-    useWizardCode: Joi.object<API.User.createUser.Request["useWizardCode"]>({
-      code: Joi.string().required(),
-      email: TldSafeEmailValidator.required(),
-      wizardId: common.Uuid.required(),
-    }).strict(true),
     displayAccount: Joi.string().valid(...humanAccountTypes).required(),
     recaptchaToken: Joi.string().required(),
     device: newDeviceValidator.required(),
@@ -129,27 +124,8 @@ const userApi = {
 
   setOwnExtraDataField: Joi.alternatives<any>().try(
     Joi.object<API.User.setOwnExtraDataField.Request>({
-      key: Joi.string().valid("registeredForTokenSale", "installedPWA").required(),
+      key: Joi.string().valid("installedPWA").required(),
       value: Joi.boolean().required(),
-    }).strict(true).required(),
-    Joi.object<API.User.setOwnExtraDataField.Request>({
-      key: Joi.string().valid("agreedToTokenSaleTermsTimestamp").required(),
-      value: Joi.string().allow(''),
-    }).custom((value, helpers) => {
-      /* replace the value with the current server timestamp */
-      value.value = new Date().toISOString();
-      return value;
-    }).strict(true).required(),
-    Joi.object<API.User.setOwnExtraDataField.Request>({
-      key: Joi.string().valid("investsFromSwitzerland").required(),
-      value: Joi.object({
-        value: Joi.boolean().required(),
-        serverTimestamp: Joi.string().allow(''),
-      }).custom((value, helpers) => {
-        /* replace the value with the current server timestamp */
-        value.serverTimestamp = new Date().toISOString();
-        return value;
-      }).strict(true).required(),
     }).strict(true).required(),
     /* Add new non-boolean types here like this:
       Joi.object<API.User.setOwnExtraDataField.Request>({
@@ -341,33 +317,6 @@ const userApi = {
 
   sendOneTimePasswordForLogin: Joi.object<API.User.sendOneTimePasswordForLogin.Request>({
     email: TldSafeEmailValidator.required(),
-  }).strict(true).required(),
-
-  redeemWizardCode: Joi.object<API.User.redeemWizardCodeForExistingUser.Request>({
-    code: Joi.string().required(),
-    wizardId: common.Uuid.required(),
-  }).strict(true).required(),
-
-  setReferredBy: Joi.object<API.User.setReferredBy.Request>({
-    tokenSaleId: common.Uuid.required(),
-    referredBy: common.Uuid.required(),
-  }).strict(true).required(),
-
-  getOwnTokenSaleData: Joi.object<API.User.getOwnTokenSaleData.Request>({
-    tokenSaleId: common.Uuid.required(),
-  }).strict(true).required(),
-
-  getTokenSaleEvents: Joi.object<API.User.getTokenSaleEvents.Request>({
-    tokenSaleId: common.Uuid.required(),
-  }).strict(true).required(),
-
-  claimTokenSaleReward: Joi.object<API.User.claimTokenSaleReward.Request>({
-    tokenSaleId: common.Uuid.required(),
-  }).strict(true).required(),
-
-  saveTokenSaleTargetAddress: Joi.object<API.User.saveTokenSaleTargetAddress.Request>({
-    tokenSaleId: common.Uuid.required(),
-    targetAddress: common.Address.required(),
   }).strict(true).required(),
 }
 

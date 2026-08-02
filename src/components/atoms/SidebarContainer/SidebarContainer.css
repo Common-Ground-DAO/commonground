@@ -24,7 +24,3 @@
         transform: translateX(0);
     }
 }
-
-.sidebar-max-600-width {
-    width: min(100%, 600px);
-}

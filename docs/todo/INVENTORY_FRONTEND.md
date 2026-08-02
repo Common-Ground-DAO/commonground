@@ -1,9 +1,10 @@
 # Frontend Inventory — Slimming Decision Basis
 
 > Status: verified against commit 523fceccd, 2026-07-25.
-> Update 2026-08-01: the Phase-1 items of ROADMAP_CORE_SLIMMING have been executed —
+> Update 2026-08-01: Phases 1 and 2 of ROADMAP_CORE_SLIMMING have been executed —
 > the four dead views, `WhatsNewModal`, `EarlyAdopterBanner` and the commented-out
-> route/theming blocks are **removed** (see the per-row notes below).
+> route/theming blocks, and the whole token-sale complex (buy/claim UI, wizard,
+> Sumsub KYC) are **removed** (see the per-row notes below).
 
 Working document for the upcoming frontend slimming initiative. It inventories every
 view in `src/views/` plus the major feature areas, with route(s), approximate size
@@ -34,9 +35,9 @@ has had **zero** commits in that window.
 | View | Route path | ~LoC | Reachability | Notes / key deps |
 |------|-----------|------|--------------|------------------|
 | `Home` | `*` (catch-all) and `e/:ecosystem` | 422 | reachable (default) | Landing/explorer; `EcosystemMenu`, `CommunityExplorer` (the mobile `WhatsNewModal` was removed 2026-08-01). |
-| `TokenSale` | `/token/` (gated by `TOKEN_SALE_ENABLED` / non-prod) | 3518 | reachable | See §3. Largest single view. |
+| `TokenSale` | `/token/` | 3518 → ~730 | reachable | **Reduced 2026-08-01** to a header + `StakeTab`; `TOKEN_SALE_ENABLED` removed, route unconditional. See §3. |
 | `TokenSaleRedirect` | `/token-sale` | 17 | reachable | Redirect shim to `/token/`. |
-| `IdVerificationView` | `/id-verification/` | 56 | reachable | Wraps `SumsubKyc` (§5). |
+| `IdVerificationView` | — | 56 | **REMOVED 2026-08-01** | Wrapped `SumsubKyc` (§5). |
 | `ContentBrowser` | `/feed/` | 28 | reachable | Wraps `ArticleExplorer` (global article feed). |
 | `ConversationsBrowser` | `/chats/` | 45 | reachable | DM list. |
 | `NotificationsBrowser` | `/notifications/`, `/notifications/:shortUuid/` | 542 | reachable | The commented `EarlyAdopterBanner` usage (line 477) was removed 2026-08-01. |
@@ -70,7 +71,7 @@ All views below are imported **non-lazily** and mounted by live routes (reachabl
 
 | View | Route (relative to `/c/:communityUrl/`) | ~LoC | Notes |
 |------|------------------------------------------|------|-------|
-| `CommunityView` | `*` (catch-all), `channel/:id/*`, `wizard/:wizardId/*` | 85 | Main community surface. |
+| `CommunityView` | `*` (catch-all), `channel/:id/*` | 85 | Main community surface. The `wizard/:wizardId/*` route was removed 2026-08-01. |
 | `CommunitySettingsView` | `settings/` | 164 | Settings hub. |
 | `CommunityManagementView` | `settings/info/` | 39 | |
 | `AreaChannelManagementView` | `settings/areas-and-channels/` | 40 | |
@@ -116,15 +117,15 @@ live routes in `CommunityView.tsx`, so `CommunityContentList` itself stays.
 - **Route**: `/c/:communityUrl/wizard/:wizardId/*` (via `CommunityWizardProvider`, mounted in `CommunityRouter`). Reachable, but only usable if a community has server-side wizard definitions.
 - **Purpose**: This is **not** a generic onboarding wizard — it is the CG **token-sale / investor onboarding flow**. Step types are `startOrLogin`, `invest` (`WizardInvest` → `wizardClaimInvestmentTransaction`, uses `common/investmentTargets`), `dataRoom`, `ndaConfirmCheckboxView`, `americanConfirmCheckboxView` (US-investor gate), `kyc` (Sumsub, `kycLiveness`/`kycFull`/`kycCgTokensale`), `emailView`, `OGView`, `shareLink`, `plainContent`.
 - **Dependencies**: `communityApi` (getWizardData, wizardSetWizardStepData, wizardFinished, wizardClaimInvestmentTransaction), `SumsubKyc`, `investmentTargets`, `ethers`.
-- **Legacy assessment**: Untouched since the March baseline. Tightly coupled to the (now hidden) token-sale investment funnel. **Legacy-freeze** candidate — self-contained under `FullscreenWizard/` + provider, only entered through a dedicated route with server data, so it isolates cleanly.
+- **Legacy assessment**: **REMOVED 2026-08-01** together with the five `wizard*` tables (migration `1785628800000-dropWizardDomain`) and the wizard-only content elements in `MessageBodyRenderer`.
 
 ### TokenSale flow — `src/views/TokenSale/`
 
 - **Size**: ≈ 3518 LoC (`*.tsx`/`*.ts`), the single largest view. Sub-areas: root `TokenSale.tsx` (1342), `StakeTab/` (`StakeTab` 375, `LockDurationSlider` 140, `WalletOverview` 96), `Info/` (`TokenSaleInfo` 312, `TokenSaleInvestors` 263, `TokenSaleFeaturePreviews` 87, `InfoArticleBox` 78), `Charts/` (`SaleGraph` 227, `DistributionPie` 218, `TokenDistributionGraph` 217), `TokenAirdrops/` (~119), `TokenSaleRedirect` (17), `TokenSale.helper` (27), plus `icons/` and `Info/*Imgs/` assets.
-- **Route**: `/token/`, gated by `config.TOKEN_SALE_ENABLED` (currently `true`) or non-prod deployment.
+- **Route**: `/token/`, was gated by `config.TOKEN_SALE_ENABLED`; the flag was removed 2026-08-01 and the route is now unconditional.
 - **State of the tabs**: `TokenSale.tsx` has three tabs `buy | claim | stake`. The Get/Earn (buy/claim) tabs are hardcoded off — `const SHOW_GET_EARN_TABS = false;` (line 110) — and the page defaults to `stake`. So the **buy/claim marketing + charts + investors + airdrops UI is present but not shown**, while `StakeTab` is the active, actively-maintained surface (all post-baseline commits are staking: reward curve, duration slider, wallet overview, RPC fixes, zero-Spark guard).
 - **Dependencies**: `wagmi`/`viem`/`rainbowkit`, `stakingApi`, `common/staking` (contract ABIs), `common/chainIds`.
-- **Legacy assessment**: **Split**. `StakeTab/` (+ its API) is **core / active**. The `Info/`, `Charts/`, `TokenAirdrops/` subtrees and the `buy`/`claim` branches of `TokenSale.tsx` are dormant token-sale material behind `SHOW_GET_EARN_TABS=false` — **legacy-freeze**, and the largest concentrated slimming opportunity if the public sale is not returning.
+- **Legacy assessment**: **Split, executed 2026-08-01.** `StakeTab/` (+ its API) is **core / active** and is now the whole page. The `Info/`, `Charts/`, `TokenAirdrops/` subtrees and the `buy`/`claim` branches of `TokenSale.tsx` are **removed**.
 
 ### Ecosystem feature — `EcosystemProvider` / `EcosystemPicker` / `EcosystemMenu`
 
@@ -137,7 +138,7 @@ live routes in `CommunityView.tsx`, so `CommunityContentList` itself stays.
 
 - **Files**: `src/context/SumsubContext.tsx` (69), `src/components/molecules/SumsubKyc/SumsubKyc.tsx` (154), `src/data/api/sumsub.ts` (21), types (27).
 - **Reachability**: `SumsubContextProvider` wraps the whole app (`App.tsx`). `SumsubKyc` mounts in two live places: the `/id-verification/` route (`IdVerificationView`) and the Wizard `kyc` step.
-- **Legacy assessment**: Untouched since baseline. Only real entry points are ID-verification and the token-sale wizard. If the wizard/token-sale is frozen, KYC's remaining justification is the standalone `/id-verification/` route — **verify with product** whether that route is still offered in the UI. **Legacy-freeze / verify**.
+- **Legacy assessment**: **REMOVED 2026-08-01.** Both entry points (the wizard `kyc` step and the dev-only `/id-verification/` page) are gone, so the integration, the `kyc` capability flag and the `@sumsub/websdk*` dependencies went with them.
 
 ### Aeternity & Fuel wallet providers
 
@@ -173,9 +174,9 @@ live routes in `CommunityView.tsx`, so `CommunityContentList` itself stays.
 | Feature | Approx size | Evidence | Proposal |
 |---------|-------------|----------|----------|
 | `StakeTab` + staking (within TokenSale) | ~600 LoC | Only actively-committed frontend area since baseline | **core** |
-| TokenSale `Info/` + `Charts/` + `TokenAirdrops/` + buy/claim tabs | ~2500 LoC | Behind hardcoded `SHOW_GET_EARN_TABS=false`; no commits since baseline | **legacy-freeze** (largest single opportunity) |
-| Wizard (`FullscreenWizard` + `CommunityWizardProvider`) | ~1900 LoC | Token-sale/investor funnel; untouched since baseline; isolated route | **legacy-freeze** |
-| Sumsub KYC | ~270 LoC | Entry points = wizard + `/id-verification/`; untouched | **legacy-freeze / verify** |
+| TokenSale `Info/` + `Charts/` + `TokenAirdrops/` + buy/claim tabs | ~2500 LoC | Behind hardcoded `SHOW_GET_EARN_TABS=false`; no commits since baseline | **removed 2026-08-01** |
+| Wizard (`FullscreenWizard` + `CommunityWizardProvider`) | ~1900 LoC | Token-sale/investor funnel; untouched since baseline; isolated route | **removed 2026-08-01** (tables dropped too) |
+| Sumsub KYC | ~270 LoC | Entry points = wizard + `/id-verification/`; untouched | **removed 2026-08-01** |
 | Aeternity wallet | ~520 LoC | Partner-chain login; untouched; app-wide provider | **plugin-candidate / legacy-freeze** |
 | Fuel wallet | ~600 LoC | Partner-chain login; untouched; provider not in global tree | **plugin-candidate / legacy-freeze** (verify user reachability) |
 | Ecosystem theming (in `EcosystemProvider`) | ~65 LoC commented | Entire theming block commented out | **removed 2026-08-01** |
@@ -192,8 +193,8 @@ live routes in `CommunityView.tsx`, so `CommunityContentList` itself stays.
 
 ## Open questions for the maintainer
 
-1. Is the public **token sale** returning? If not, the buy/claim TokenSale subtree + the entire Wizard investor funnel + Sumsub KYC + the American/NDA gates are the biggest slimming target (~5k+ LoC combined).
-2. Is the standalone `/id-verification/` route still surfaced anywhere in the UI? It is the only KYC entry point independent of the token-sale wizard.
+1. ~~Is the public **token sale** returning?~~ — answered 2026-07-25 (no) and executed 2026-08-01: buy/claim subtree, wizard funnel, Sumsub KYC and the American/NDA gates are removed.
+2. ~~Is the standalone `/id-verification/` route still surfaced anywhere in the UI?~~ — it was a `DEPLOYMENT === 'dev'`-only menu entry; removed 2026-08-01 with the rest of KYC.
 3. Is the **Fuel** login option actually shown to users? Its provider is not mounted in the global App tree (Aeternity's is), which suggests a partial/gated integration.
 4. Are the hardcoded partner **ecosystems** (`fuel, lukso, si3, cannabis-social-clubs, powershift`) all still active partnerships? The list is compiled into `EcosystemProvider`.
 5. ~~Confirm the four **dead views** (`AppsView`, `GroupBrowser`, `SwapAccountView`, `BlogBrowser`) and two **dead widgets** (`WhatsNewModal`, `EarlyAdopterBanner`) can be removed~~ — confirmed by the maintainer and removed 2026-08-01.

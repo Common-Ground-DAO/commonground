@@ -83,26 +83,6 @@ class EmailUtils {
         await this.sendEmail(to, subject, text, htmlTemplate);
     }
 
-    public async sendKycResultEmail(to: string, result: boolean, kycLevel:string, kycRejectReason?: string) {
-        let subject: string;
-        let text: string;
-        if (result) {
-            subject = 'KYC Verification Success';
-            text = `Your KYC verification was successful.`
-        } else {
-            subject = 'KYC Verification Failed';
-            text = `Your KYC verification was unsuccessful. Reason: ${kycRejectReason}`
-        }
-        const html = `
-        <tr>
-            <td style="background-color:#f8f8f8;padding:20px;text-align:center;">
-                <span>${text} </span>
-            </td>
-        </tr>`;
-        const htmlTemplate = this.getHTMLTemplate(html, false)
-        await this.sendEmail(to, subject, text, htmlTemplate);
-    }
-
     public async sendNewsletter(to: string, posts: EmailPost[], generalPosts: EmailPost[]) {
         if (posts.length === 0 && generalPosts.length === 0) {
             console.log('No posts to send to user: ', to);
@@ -226,88 +206,6 @@ class EmailUtils {
 
         const html = this.getHTMLTemplate(content, false);
         await this.sendEmail(to, emailTitle, 'text', html, attachments);
-    }
-
-    public async sendTokenSaleEmail({
-        email,
-        subject,
-        baseUrl,
-        startsIn,
-    }: {
-        email: string;
-        subject: string;
-        baseUrl: string;
-        startsIn: string;
-    }) {
-        const tokenSaleLink = `${baseUrl}/token/`;
-        const caption = '🚀 Announcing the Common Ground Token Sale 🚀';
-        const paragraph1 = `We are thrilled to announce that the highly-anticipated token sale for the Common Ground project will start in <b>${startsIn}</b>! 🌟 This is your exclusive opportunity to be part of a groundbreaking project that's set to revolutionize the industry. The countdown has begun, and soon you'll have a chance to secure your stake in the future.`
-        const paragraph2 = `More than 3.000 users get millions of tokens as an airdrop -`
-        const html = `
-        <tr>
-            <td style="background-color:#f8f8f8;padding:20px;text-align:center;">
-                <h2> ${caption} </h2>
-            </td>
-        </tr>
-        <tr>
-            <td style="background-color:#fefefe;padding:20px;text-align:center;">
-                <p> ${paragraph1} </p>
-            </td>
-        </tr>
-        <tr>
-            <td style="background-color:#fefefe;padding:20px;text-align:center;">
-                <p> ${paragraph2} <a href="${tokenSaleLink}">check out if you are eligible</a>! </p>
-            </td>
-        </tr>
-        `;
-        const htmlTemplate = this.getHTMLTemplate(html, false)
-        const text = `${caption}\n${paragraph1}\n${paragraph2} check out if you are eligible here:\n${tokenSaleLink}`;
-        await this.sendEmail(email, subject, text, htmlTemplate, undefined, 'mail@app.cg');
-    }
-
-    public async sendTokenSaleImmediateEmail({
-        email,
-        subject,
-        baseUrl,
-    }: {
-        email: string;
-        subject: string;
-        baseUrl: string;
-    }) {
-        const tokenSaleLink = `${baseUrl}/token/`;
-        const caption = '🏁 The Common Ground Token Sale goes LIVE in less than an hour! 🏁';
-        const paragraph1 = `We’re thrilled to announce that the Common Ground Token Sale goes live in less than an hour! 🚀`;
-        const linkText = `👉 Join the sale here:`;
-        const paragraph2 = `As a thank-you to our amazing community, we’ve increased our airdrop for all users who signed up before September 2023. 🎉 Why? Because you’re awesome, and we wanted to show some love! 💚`;
-        const paragraph3 = `We’ve had a few questions about whether this is legit, and the answer is a resounding YES!`;
-        const paragraph4 = `This is your chance to be part of something groundbreaking. Join thousands of early supporters and help make Common Ground a resounding success. 🌟`;
-        const paragraph5 = `Thanks for being part of this journey. You’re not just early—you’re essential.`;
-        const paragraph6 = `Let’s build the future, together.\n— The Common Ground Team`;
-        const html = `
-        <tr>
-            <td style="background-color:#f8f8f8;padding:20px;text-align:center;">
-                <h2> 🏁 The Common Ground Token Sale goes LIVE in less than an hour! 🏁 </h2>
-            </td>
-        </tr>
-        <tr>
-            <td style="background-color:#fefefe;padding:20px;text-align:center;">
-                <p> We’re thrilled to announce that the <b>Common Ground Token Sale</b> goes live in less than an hour! 🚀} </p>
-                <p> 👉 <a href="${tokenSaleLink}">Join the sale here</a> </p>
-                <p> As a thank-you to our amazing community, we’ve increased our airdrop for all users who signed up before September 2023. 🎉 Why? Because you’re awesome, and we wanted to show some love! 💚 </p>
-                <p> We’ve had a few questions about whether this is legit, and the answer is a resounding YES!<br/>
-Check it out for yourself:<br/>
-•  Follow us on <a href="https://x.com/CommonGround_cg">X / Twitter</a><br/>
-•  Visit our <a href="https://commonground.cg">Homepage</a><br/>
-•  Or dive straight into the <a href="${tokenSaleLink}">Common Ground App</a> to see it all happening! </p>
-                <p> This is your chance to <b>be part of something groundbreaking</b>. Join thousands of early supporters and help make Common Ground a resounding success. 🌟 </p>
-                <p> Thanks for being part of this journey. You’re not just early—you’re essential. </p>
-                <p> Let’s build the future, together.<br/>— The Common Ground Team </p>
-            </td>
-        </tr>
-        `;
-        const htmlTemplate = this.getHTMLTemplate(html, false)
-        const text = `${caption}\n${paragraph1}\n${linkText} ${tokenSaleLink}\n${paragraph2}\n${paragraph3}\n${paragraph4}\n${paragraph5}\n${paragraph6}`;
-        await this.sendEmail(email, subject, text, htmlTemplate, undefined, 'mail@app.cg');
     }
 
     private getEventEmailString(type: EventEmailOptions['type'], eventName: string) {

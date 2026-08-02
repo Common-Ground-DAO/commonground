@@ -20,8 +20,6 @@
     "@phosphor-icons/react": "^2.1.4",
     "@rainbow-me/rainbowkit": "^1.0.8",
     "@simplewebauthn/browser": "^10.0.0",
-    "@sumsub/websdk": "2.3.4",
-    "@sumsub/websdk-react": "2.3.4",
     "@types/protoo-client": "^4.0.1",
     "altcha": "2.3.0",
     "assert": "^2.0.0",

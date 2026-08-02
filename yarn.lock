@@ -5027,23 +5027,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@sumsub/websdk-react@npm:2.3.4":
-  version: 2.3.4
-  resolution: "@sumsub/websdk-react@npm:2.3.4"
-  peerDependencies:
-    react: ">=16.8.0"
-    react-dom: ">=16.8.0"
-  checksum: 10c0/e913723e483bc670c55c98cb46addb0d40e610f6d8b7826f7d0be90450b04a61832824c40a76eb064e30eeecfd3aac82c2153956a29797eea0d54de061c0391e
-  languageName: node
-  linkType: hard
-
-"@sumsub/websdk@npm:2.3.4":
-  version: 2.3.4
-  resolution: "@sumsub/websdk@npm:2.3.4"
-  checksum: 10c0/9ecf83071cec122b21fb1d9dbe1427e5283207ff66999ec9568aa6d2a9708614a4d5151cc49d6393a177b52c0f6cb1a5748ae84e828c65d5a9b33f159447bb63
-  languageName: node
-  linkType: hard
-
 "@surma/rollup-plugin-off-main-thread@npm:^2.2.3":
   version: 2.2.3
   resolution: "@surma/rollup-plugin-off-main-thread@npm:2.2.3"
@@ -10207,8 +10190,6 @@ __metadata:
     "@rainbow-me/rainbowkit": "npm:^1.0.8"
     "@simplewebauthn/browser": "npm:^10.0.0"
     "@simplewebauthn/types": "npm:^10.0.0"
-    "@sumsub/websdk": "npm:2.3.4"
-    "@sumsub/websdk-react": "npm:2.3.4"
     "@tailwindcss/aspect-ratio": "npm:^0.4.0"
     "@tailwindcss/forms": "npm:^0.5.2"
     "@tailwindcss/line-clamp": "npm:^0.4.0"

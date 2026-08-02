@@ -5,7 +5,6 @@
 import { Worker } from 'worker_threads';
 import cron from "node-cron";
 import path from 'path';
-import config from './common/config';
 import { fakeHealthcheck } from './healthcheck';
 
 let processIsExiting = false;
@@ -85,12 +84,7 @@ async function createOneshotWorker(filename: string, sleepBefore?: number) {
 
 createPermanentWorker('premiumRenewal', true, 30000);
 createPermanentWorker('callUpdateEmitter', true);
-createPermanentWorker('trackTokenSales', true, 30000);
 createPermanentWorker('handleCommunityAirdrops', true, 30000);
-
-if (config.DEPLOYMENT === 'prod') {
-  createPermanentWorker('tokenSaleNotifications', true, 30000);
-}
 
 // the backend image's HEALTHCHECK reads healthcheck.txt; without this the
 // job-runner container reports permanently unhealthy (every other backend
@@ -115,7 +109,6 @@ process.on('SIGTERM', async () => {
   allWorkers.get('callUpdateEmitter')?.terminate();
   allWorkers.get('newsletterDelivery')?.terminate();
   allWorkers.get('emailNotifications')?.terminate();
-  allWorkers.get('trackTokenSales')?.terminate();
   await new Promise<void>(resolve => setTimeout(resolve, 1000));
   process.exit(allWorkers.get('activityScore') === undefined ? 0 : 1);
 });

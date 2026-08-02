@@ -18,15 +18,10 @@ import { useMultipleUserData } from 'context/UserDataProvider';
 import MessageTimestamp from '../Message/MessageTimestamp/MessageTimestamp';
 import MiniLoginBanner from '../LoginBanner/MiniLoginBanner';
 import LinkPreviewLoader from '../LinkPreview/LinkPreviewLoader';
-import { useAsyncMemo } from 'hooks/useAsyncMemo';
-import WizardImage from './WizardImage/WizardImage';
-import { useCommunityWizardContext } from 'context/CommunityWizardProvider';
-import urlConfig from '../../../data/util/urls';
-import Button from 'components/atoms/Button/Button';
 import YoutubeIframe from 'components/atoms/YoutubeIframe/YoutubeIframe';
 import MarkdownContent, { toMarkdownSource } from './MarkdownContent';
 
-type RenderableElement = Models.BaseArticle.ContentElementV2 | Models.Message.BodyContentV1 | Common.Content.ModerationSpecial | Models.Wizard.WizardElement;
+type RenderableElement = Models.BaseArticle.ContentElementV2 | Models.Message.BodyContentV1 | Common.Content.ModerationSpecial;
 
 /** Synthetic element produced by groupMarkdownRuns, never part of stored content. */
 type MarkdownRun = { type: 'markdownRun'; value: string };
@@ -129,19 +124,7 @@ const MediaEmbedRenderer: React.FC<Common.Content.ArticleEmbed> = (props) => {
   </div>;
 };
 
-const NativeVideoRenderer: React.FC<Common.Content.NativeVideoEmbed> = (props) => {
-  return <div className={`mediaEmbedVideoContainer ${props.size}`}>
-    <div className='mediaEmbedVideo'>
-      <video
-        src={`${urlConfig.API_BASE_URL}/gated-videos/${encodeURIComponent(props.filename)}`}
-        controls
-        style={{ width: '100%', height: 'auto' }}
-      />
-    </div>
-  </div>;
-};
-
-function extractMentionedUserIds(content: (Models.BaseArticle.ContentElementV2 | Models.Message.BodyContentV1 | Common.Content.ModerationSpecial | Models.Wizard.WizardElement)[]) {
+function extractMentionedUserIds(content: (Models.BaseArticle.ContentElementV2 | Models.Message.BodyContentV1 | Common.Content.ModerationSpecial)[]) {
   return Array.from(content.reduce<Set<string>>((agg, val) => {
     if (val.type === "mention") {
       agg.add(val.userId);
@@ -156,7 +139,7 @@ function extractMentionedUserIds(content: (Models.BaseArticle.ContentElementV2 |
 
 
 export function AllContentRenderer(props: {
-  content: (Models.BaseArticle.ContentElementV2 | Models.Message.BodyContentV1 | Common.Content.ModerationSpecial | Models.Wizard.WizardElement)[];
+  content: (Models.BaseArticle.ContentElementV2 | Models.Message.BodyContentV1 | Common.Content.ModerationSpecial)[];
   messageKeyBase?: string;
   messageTimestamp?: string;
   lastUpdateTimestamp?: string;
@@ -285,33 +268,6 @@ export function AllContentRenderer(props: {
         nextClassName.push('mediaElement');
         break;
       }
-      case 'nativeVideoEmbed': {
-        currentElement = <NativeVideoRenderer key={messageKey} {...c} />;
-        nextClassName.push('mediaElement');
-        break;
-      }
-      case 'nativeDownloadEmbed': {
-        if (c.renderType === 'button') {
-          currentElement = <Button
-            key={messageKey}
-            text={c.title || c.filename}
-            role="primary"
-            className={c.className}
-            onClick={() => {
-              window.open(`${urlConfig.API_BASE_URL}/gated-files/${encodeURIComponent(c.filename)}`, '_blank', 'noopener,noreferrer');
-            }}
-          />;
-        } else {
-          currentElement = <a
-            href={`${urlConfig.API_BASE_URL}/gated-files/${encodeURIComponent(c.filename)}`}
-            target="_blank"
-            rel="noopener,noreferrer"
-            className={`text-link ${c.className || ''}`}
-            key={messageKey}
-          >{c.title || c.filename}</a>;
-        }
-        break;
-      }
       case 'text': {
         currentElement = (<span key={messageKey} className={c.className}>{c.value}</span>);
         if (!!c.divClassname) nextClassName.push(c.divClassname);
@@ -363,29 +319,6 @@ export function AllContentRenderer(props: {
           >
             <span key={messageKey} className="message-body-mention">@{user ? getDisplayNameString(user) : c.alias || c.userId}</span>
           </UserTooltip>
-        );
-        break;
-      }
-      case 'dynamicTextFunction': {
-        currentElement = <DynamicTextFunction key={messageKey} {...c} />;
-        break;
-      }
-      case 'dynamicTextRequest': {
-        currentElement = <DynamicTextRequest key={messageKey} {...c} />;
-        break;
-      }
-      case 'wizardImage': {
-        currentElement = <WizardImage key={messageKey} {...c} />;
-        break;  
-      }
-      case 'inlineImage': {
-        currentElement = (
-          <img
-            key={messageKey}
-            src={c.imageDataUri}
-            alt=''
-            className={c.className}
-          />
         );
         break;
       }
@@ -527,41 +460,6 @@ const MessageBodyRenderer = (props: {
       {message.sendStatus === "error-update" && <span className="text-xs text-red-500">error updating</span>}
     </div>
   )
-}
-
-const DynamicTextRequest = (props: Common.Content.DynamicTextRequest) => {
-  const response = useAsyncMemo(async () => {
-    switch (props.requestName) {
-      case 'wizardInvitedBy': {
-        return 'IMPLEMENT ME';
-      }
-      case 'wizardPauseTimeRemaining': {
-        return 'IMPLEMENT ME';
-      }
-      default: return ''; 
-    }
-  }, [props.requestName]);
-
-  return (<span className={props.className}>{response || ''}</span>);
-}
-
-const DynamicTextFunction = (props: Common.Content.DynamicTextFunction) => {
-  const { wizard } = useCommunityWizardContext();
-
-  const response = useAsyncMemo(async () => {
-    switch (props.functionName) {
-      case 'wizardRemainingSlots': {
-        if (wizard?.successLimit === undefined) return 'infinite';
-        const remaining = wizard.successLimit - (wizard.successfulUsers || 0);
-
-        if (remaining > 100) return 'a little over 100';
-        else return `only ${remaining}`;
-      }
-      default: return ''; 
-    }
-  }, [props.functionName]);
-
-  return (<span className={props.className}>{response || ''}</span>);
 }
 
 export default React.memo(MessageBodyRenderer);

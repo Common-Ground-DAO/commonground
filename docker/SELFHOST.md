@@ -76,7 +76,6 @@ honest message instead of breaking.
 | `SENDGRID_API_KEY`, `EMAIL_FROM` | email verification, one-time-code login, event mails, newsletters | password/passkey/wallet login still work; OTP login and newsletter UI hidden; event RSVP works without verified email |
 | `CAPTCHA_PROVIDER`, `ALTCHA_HMAC_KEY`, `CG_RECAPTCHA_SITE_KEY`, `GOOGLE_RECAPTCHA_SECRET_KEY` | signup captcha (see [Captcha](#captcha)) | defaults to ALTCHA; captcha is never silently skipped |
 | `TWITTER_API_KEY`, `TWITTER_API_SECRET` | Twitter/X login and account linking | X buttons hidden |
-| `SUMSUB_APP_TOKEN`, `SUMSUB_SECRET_KEY` | KYC verification | KYC steps show "not available on this instance" |
 | `MAILCHIMP_API_KEY`, `MAILCHIMP_LIST_ID` | CG-updates newsletter list sync | subscription preference stored locally only |
 | `CG_GIPHY_API_KEY` | GIF picker in the composer | GIF picker hidden |
 | `CG_WALLETCONNECT_PROJECT_ID` | WalletConnect wallets (QR / mobile deep-link) | injected wallets (MetaMask etc.) still work |

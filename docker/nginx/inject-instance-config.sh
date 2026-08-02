@@ -14,7 +14,6 @@
 #   CG_ACTIVE_CHAINS      comma-separated chain keys this instance supports
 #   CG_FEATURE_EMAIL      "true" if email delivery is configured
 #   CG_FEATURE_TWITTER    "true" if Twitter/X auth is configured
-#   CG_FEATURE_KYC        "true" if SumSub KYC is configured
 #   CG_GIPHY_API_KEY      Giphy key; empty hides the GIF picker
 #   CG_WALLETCONNECT_PROJECT_ID  WalletConnect Cloud project id
 set -e
@@ -33,7 +32,7 @@ if [ -n "$CG_ACTIVE_CHAINS" ]; then
   cfg="$cfg,\"activeChains\":[$chains_json]"
 fi
 bool() { [ "$1" = "true" ] && echo "true" || echo "false"; }
-cfg="$cfg,\"features\":{\"email\":$(bool "$CG_FEATURE_EMAIL"),\"twitterAuth\":$(bool "$CG_FEATURE_TWITTER"),\"kyc\":$(bool "$CG_FEATURE_KYC")}"
+cfg="$cfg,\"features\":{\"email\":$(bool "$CG_FEATURE_EMAIL"),\"twitterAuth\":$(bool "$CG_FEATURE_TWITTER")}"
 cfg="$cfg,\"giphyApiKey\":\"$CG_GIPHY_API_KEY\""
 if [ -n "$CG_WALLETCONNECT_PROJECT_ID" ]; then
   cfg="$cfg,\"walletConnectProjectId\":\"$CG_WALLETCONNECT_PROJECT_ID\""

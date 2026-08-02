@@ -417,68 +417,6 @@ class UserApiConnector extends BaseApiConnector {
       data,
     );
   }
-
-  public async redeemWizardCode(data: API.User.redeemWizardCodeForExistingUser.Request): Promise<void> {
-    await this.ajax<API.User.redeemWizardCodeForExistingUser.Response>(
-      "POST",
-      "/redeemWizardCode",
-      data,
-    );
-  }
-
-  public async getTokenSaleAllowance(): Promise<API.User.getTokenSaleAllowance.Response> {
-    return await this.ajax<API.User.getTokenSaleAllowance.Response>(
-      "POST",
-      "/getTokenSaleAllowance",
-    );
-  }
-
-  public async getConnectionCountry(): Promise<API.User.getConnectionCountry.Response> {
-    return await this.ajax<API.User.getConnectionCountry.Response>(
-      "POST",
-      "/getConnectionCountry",
-    );
-  }
-
-  public async setReferredBy(data: API.User.setReferredBy.Request): Promise<void> {
-    await this.ajax<API.User.setReferredBy.Response>(
-      "POST",
-      "/setReferredBy",
-      data,
-    );
-  }
-
-  public async getOwnTokenSaleData(data: API.User.getOwnTokenSaleData.Request): Promise<API.User.getOwnTokenSaleData.Response> {
-    return await this.ajax<API.User.getOwnTokenSaleData.Response>(
-      "POST",
-      "/getOwnTokenSaleData",
-      data,
-    );
-  }
-
-  public async getTokenSaleEvents(data: API.User.getTokenSaleEvents.Request): Promise<API.User.getTokenSaleEvents.Response> {
-    return await this.ajax<API.User.getTokenSaleEvents.Response>(
-      "POST",
-      "/getTokenSaleEvents",
-      data,
-    );
-  }
-
-  public async claimTokenSaleReward(data: API.User.claimTokenSaleReward.Request): Promise<API.User.claimTokenSaleReward.Response> {
-    await this.ajax<API.User.claimTokenSaleReward.Response>(
-      "POST",
-      "/claimTokenSaleReward",
-      data,
-    );
-  }
-
-  public async saveTokenSaleTargetAddress(data: API.User.saveTokenSaleTargetAddress.Request): Promise<void> {
-    await this.ajax<API.User.saveTokenSaleTargetAddress.Response>(
-      "POST",
-      "/saveTokenSaleTargetAddress",
-      data,
-    );
-  }
 }
 
 const userApi = new UserApiConnector();

@@ -1,6 +1,6 @@
 # Staking
 
-> Status: verified against commit 523fceccd, 2026-07-25.
+> Status: verified against commit a3c3f7608, 2026-08-01.
 
 CG token **staking** lets users time-lock their CG tokens on-chain for a freely
 chosen duration and earn **Spark** (the platform currency, stored as
@@ -408,7 +408,8 @@ and `totalSpark` (the full-lock total). `totalSpark` is computed live in the
 ## Stake tab (frontend)
 
 `src/views/TokenSale/StakeTab/`. The tab is the product surface of the token page
-(`/token/`); the Get/Earn tabs are hidden and Stake is the default (PR #25).
+(`/token/`) — since the Phase-2 slimming (2026-08-01) it is the *only* content of
+that page; the Get/Earn tabs were removed together with the token sale.
 
 - **`StakeTab.tsx`** — main flow. On mount it loads config, positions, and the
   user's wallets in parallel. Anonymous visitors and unconfigured instances get

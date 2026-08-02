@@ -33,7 +33,6 @@ import SafeAndUpgradesView from "views/SafeAndUpgradesView/SafeAndUpgradesView";
 import TokenSettingsView from "views/TokenSettingsView/TokenSettingsView";
 import OnboardingManagementView from "views/OnboardingManagementView/OnboardingManagementView";
 import MemberApplicationView from "views/MemberApplicationView/MemberApplicationView";
-import { CommunityWizardProvider } from "context/CommunityWizardProvider";
 import AssistantView from "views/AssistantView/AssistantView";
 import { CommunityPluginProvider } from "context/CommunityPluginProvider";
 import PluginView from "views/PluginView/PluginView";
@@ -121,11 +120,6 @@ function CommunityRouter(props: Props) {
             <CommunityChannelIdProvider>
               <CommunityView />
             </CommunityChannelIdProvider>
-          } />
-          <Route path={`${config.URL_WIZARD}/:wizardId/*`} element={
-            <CommunityWizardProvider pageTitle={safeCtx.community.title}>
-              <CommunityView />
-            </CommunityWizardProvider>
           } />
           <Route path='*' element={<CommunityView />} />
         </Routes>

@@ -10,7 +10,6 @@ import {
   checkMultiRoleClaimability,
   getSingleTransactionData,
   getErc20Balance,
-  getTokensaleEvents,
   getBlockNumber,
 } from './onchain/index';
 import express from 'express';
@@ -136,30 +135,6 @@ app.post('/getErc20Balance', express.json(), async (req, res) => {
   } catch (e) {
     res.sendStatus(500);
     console.error("An error occurred getting the ERC20 balance", e);
-  }
-});
-
-app.post('/getTokensaleEvents', express.json(), async (req, res) => {
-  const data: {
-    chain: Models.Contract.ChainIdentifier;
-    contractAddress: Common.Address;
-    contractType: Models.Contract.SaleContractType;
-    fromBlock: number;
-    toBlock: number;
-  } = req.body;
-  try {
-    const result = await getTokensaleEvents(
-      data.chain,
-      data.contractAddress,
-      data.contractType,
-      data.fromBlock,
-      data.toBlock,
-      OnchainPriority.HIGH,
-    );
-    res.json(result);
-  } catch (e) {
-    res.sendStatus(500);
-    console.error("An error occurred getting the tokensale events", e);
   }
 });
 

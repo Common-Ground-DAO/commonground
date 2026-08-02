@@ -1,4 +1,4 @@
-> Status: verified against commit bd09cbf3d, 2026-07-27
+> Status: verified against commit a3c3f7608, 2026-08-01
 
 # Authentication & Identity
 
@@ -310,15 +310,10 @@ resolved against the in-flight session state built by the prepare/verify endpoin
 | `useTwitterCredentials` | `session.passport.user` |
 | `useLuksoCredentials` | `session.lukso` (not `existsAlready`) |
 | `useCgProfile` | request body (display name/image) |
-| `useWizardCode` | one-time community invite/wizard code |
 
 On success the server creates the user + first device, sets `session.user`, clears all in-flight
 provider state, and (for email signups) sends a verification email. The response mirrors the login
 response shape (`srv/api/user.ts:652-700`).
-
-The **wizard-code** path (`useWizardCode`) is a special onboarding route: it validates a community
-wizard code, generates a random unique `cg` display name, creates a `cg` profile, and redeems the code
-against the new user (`srv/api/user.ts:590-635`).
 
 ### Captcha
 
@@ -348,8 +343,8 @@ resolved provider is `recaptcha` but no site key is configured, both surfaces sh
 signup button). The server logs an error at startup for the mirror case (`recaptcha` without a
 secret key).
 
-`createUser` verifies the token when `DEPLOYMENT !== 'dev'` and
-no wizard code is used; a separate authenticated endpoint `POST /User/verifyCaptcha`
+`createUser` verifies the token when `DEPLOYMENT !== 'dev'`;
+a separate authenticated endpoint `POST /User/verifyCaptcha`
 (`srv/api/user.ts`) lets a logged-in user raise their `trustScore` to `1.0` by solving a
 captcha.
 

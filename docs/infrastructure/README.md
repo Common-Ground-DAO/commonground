@@ -1,4 +1,4 @@
-> Status: verified against commit 523fceccd, 2026-07-25
+> Status: verified against commit a3c3f7608, 2026-08-01
 
 # Common Ground Infrastructure Documentation
 
@@ -61,14 +61,14 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 
 #### `api`
 - **Image:** `cryptogram/backend` (built from `docker/backend/Dockerfile_dev_stage_1`)
-- **Purpose:** Main HTTP REST API server. Handles all `/api/v2/*` requests plus the Bot API v1 (`/BotV1/*`): authentication, community management, file uploads, messaging, contracts, notifications, Twitter/Lukso/SumSub integrations, search, reporting, bots, and staking.
+- **Purpose:** Main HTTP REST API server. Handles all `/api/v2/*` requests plus the Bot API v1 (`/BotV1/*`): authentication, community management, file uploads, messaging, contracts, notifications, Twitter/Lukso integrations, search, reporting, bots, and staking.
 - **Command:** `node /dist/api.js`
 - **Port:** Internal only (reached by nginx on port 4000 over the Docker network)
 - **Depends on:** `db`, `redis-sessions`, `redis-socketio`, `redis-data`, `seaweedmaster`, `s3`, `memberlist`
 - **Volumes:**
   - `./vapid_keys.json:/run/secrets/vapid_keys_json:ro` — VAPID keys for web push notifications
   - `./api_data:/api_data:ro` — static API data
-- **Key environment variables:** `DB_TYPE=writer`, `PG_PASSWORD` (writer), `REDIS_PASSWORD`, `REDIS_SECRET`, `REDIS_LEGACY_MODE=true`, `DEPLOYMENT`, `BASE_URL`, `CGID_URL`, `S3_SECRET`, `SENDGRID_API_KEY`, `GOOGLE_RECAPTCHA_SECRET_KEY`, `SUMSUB_SECRET_KEY`, `SUMSUB_APP_TOKEN`, Twitter OAuth credentials, the `STAKING_*` set, and the bot limits (`PLATFORM_OPERATOR_USER_IDS`, `BOT_USER_OWNER_LIMIT`, `BOT_COMMUNITY_OWNER_LIMIT`, `BOT_PLATFORM_OWNER_LIMIT`, `BOT_ACTIVE_TOKEN_LIMIT`, `BOT_API_RATE_LIMIT_PER_MINUTE`, `BOT_MESSAGE_RATE_LIMIT_PER_MINUTE`).
+- **Key environment variables:** `DB_TYPE=writer`, `PG_PASSWORD` (writer), `REDIS_PASSWORD`, `REDIS_SECRET`, `REDIS_LEGACY_MODE=true`, `DEPLOYMENT`, `BASE_URL`, `CGID_URL`, `S3_SECRET`, `SENDGRID_API_KEY`, `GOOGLE_RECAPTCHA_SECRET_KEY`, Twitter OAuth credentials, the `STAKING_*` set, and the bot limits (`PLATFORM_OPERATOR_USER_IDS`, `BOT_USER_OWNER_LIMIT`, `BOT_COMMUNITY_OWNER_LIMIT`, `BOT_PLATFORM_OWNER_LIMIT`, `BOT_ACTIVE_TOKEN_LIMIT`, `BOT_API_RATE_LIMIT_PER_MINUTE`, `BOT_MESSAGE_RATE_LIMIT_PER_MINUTE`).
 
 #### `wsapi`
 - **Image:** `cryptogram/backend`
@@ -264,7 +264,7 @@ The `{NGINX_EXPOSED_ON}` placeholder is replaced at Docker build time with `LOCA
 |---|---|---|
 | `/files/<id>/<sig>/<date>/<expires>` | `http://s3.local:8333` | File/media downloads. Rewrites to an S3 presigned request (AWS4-HMAC-SHA256). Cached 7 days, immutable. |
 | `/api/bot/v1/...` | `http://api:4000` | **Bot API v1.** Rewrites to `/BotV1/...`. Stable, bearer-token-only namespace kept separate from the web-app API. |
-| `/api/v2/(Captcha\|Chat\|Community\|File\|Message\|User\|Contract\|Notification\|Twitter\|Lukso\|CgId\|Accounts\|Sumsub\|Plugins\|Search\|Report\|Bot\|Staking)/` | `http://api:4000` | REST API. Strips `/api/v2/`. No caching. (`Captcha`, `Report`, `Bot`, `Staking` are the newer groups.) |
+| `/api/v2/(Captcha\|Chat\|Community\|File\|Message\|User\|Contract\|Notification\|Twitter\|Lukso\|CgId\|Accounts\|Plugins\|Search\|Report\|Bot\|Staking)/` | `http://api:4000` | REST API. Strips `/api/v2/`. No caching. (`Captcha`, `Report`, `Bot`, `Staking` are the newer groups.) |
 | `/api/ws/` | `http://wsapi:4000` | WebSocket upgrade (HTTP/1.1, `Upgrade: websocket`). |
 | `/(c\|u\|gated-videos\|gated-files)/` | `http://api:4000` | Community pages, profiles, gated content. Cached 24h. |
 | `/(sitemap.xml\|twitter-callback\|twitter-login\|verify-email\|push-icon\|token-sale\|token\|store)` | `http://api:4000` | Misc server-rendered endpoints. Cached 24h. |
@@ -322,7 +322,6 @@ Per `AGENTS.md`, `docker/.env` is tracked in the repo **as a placeholder templat
 | `QUIKNODE_*` | Per-chain RPC endpoint URLs used by `onchain` (name is historical — any JSON-RPC URL works). Now includes `QUIKNODE_LUKSO`. |
 | `INFURA_LINEA` | RPC endpoint for Linea. |
 | `GOOGLE_RECAPTCHA_SECRET_KEY` | Server-side reCAPTCHA v2 secret. |
-| `SUMSUB_APP_TOKEN` / `SUMSUB_SECRET_KEY` / `SUMSUB_WEBHOOK_PRIVATE_KEY` | SumSub KYC credentials. |
 | `TWITTER_CALLBACK_URL` / `TWITTER_OAUTH2_CLIENT_ID` / `TWITTER_OAUTH2_CLIENT_SECRET` / `TWITTER_API_KEY` / `TWITTER_API_SECRET` | Twitter/X login. |
 | `SENDGRID_API_KEY` | SendGrid transactional email. |
 
@@ -493,7 +492,7 @@ The same build artifacts serve any domain: identity is configuration, not code. 
 <script>window.__CG_INSTANCE__ = {"deployment":"prod","appUrl":"https://chat.example.org", ...}</script>
 ```
 
-into `/www/index.html` and `/www/index_cgid.html` (skipping files already configured). The object carries `deployment`, `appUrl`, `cgidUrl`, `activeChains`, a `features` map (`email`, `twitterAuth`, `kyc`), `giphyApiKey`, `walletConnectProjectId`, and `recaptchaSiteKey`. Compose derives the boolean feature flags from whether the corresponding key is set (e.g. `CG_FEATURE_EMAIL=${SENDGRID_API_KEY:+true}`), so the frontend hides or honestly labels features that aren't configured. The backend performs the equivalent injection for share links. See `src/common/instance.ts`.
+into `/www/index.html` and `/www/index_cgid.html` (skipping files already configured). The object carries `deployment`, `appUrl`, `cgidUrl`, `activeChains`, a `features` map (`email`, `twitterAuth`), `giphyApiKey`, `walletConnectProjectId`, and `recaptchaSiteKey`. Compose derives the boolean feature flags from whether the corresponding key is set (e.g. `CG_FEATURE_EMAIL=${SENDGRID_API_KEY:+true}`), so the frontend hides or honestly labels features that aren't configured. The backend performs the equivalent injection for share links. See `src/common/instance.ts`.
 
 ### `nginx_selfhost.conf` specifics
 
@@ -504,7 +503,7 @@ into `/www/index.html` and `/www/index_cgid.html` (skipping files already config
 
 ### Optional integrations & graceful degradation
 
-Every third-party integration is optional; leaving its key empty in `.env.selfhost` disables just that feature (email/OTP login, captcha, Twitter/X auth, SumSub KYC, Mailchimp, Giphy, WalletConnect). The rest of the app keeps working — password/passkey/wallet login, RSVPs, injected wallets, etc. `docker/SELFHOST.md` has the full capability matrix.
+Every third-party integration is optional; leaving its key empty in `.env.selfhost` disables just that feature (email/OTP login, captcha, Twitter/X auth, Mailchimp, Giphy, WalletConnect). The rest of the app keeps working — password/passkey/wallet login, RSVPs, injected wallets, etc. `docker/SELFHOST.md` has the full capability matrix.
 
 ### Blockchain endpoints
 

@@ -10,7 +10,6 @@ import walletHelper from "../repositories/wallets";
 import userHelper from "../repositories/users";
 import axios from "../util/axios";
 import fileHelper from "../repositories/files";
-import ipRateLimitHandler from "../util/rateLimit";
 
 const accountsRouter = express.Router();
 
@@ -126,33 +125,6 @@ registerPostRoute<
       throw new Error(errors.server.INVALID_REQUEST);
     }
   }
-);
-
-const registerForSaleRateLimiter = ipRateLimitHandler({
-  windowMs: 1000 * 60 * 60, // 1h
-  limit_v4_v6_64: 10,
-  limit_v6_56: 30,
-  limit_v6_48: 50,
-});
-
-registerPostRoute<
-  API.Accounts.TokenSale.registerForSale.Request,
-  API.Accounts.TokenSale.registerForSale.Response
->(
-  accountsRouter,
-  '/TokenSale/registerForSale',
-  validators.API.Accounts.TokenSale.registerForSale,
-  async (request, response, data) => {
-    const { user } = request.session;
-
-    await registerForSaleRateLimiter(request, response);
-
-    await userHelper.registerForTokenSale({
-      email: data.email,
-      referredBy: data.referredBy,
-      userId: user?.id,
-    });
-  },
 );
 
 export default accountsRouter;

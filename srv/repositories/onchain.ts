@@ -165,23 +165,6 @@ class OnchainHelper {
     return result.balance;
   }
 
-  public async getTokensaleEvents(
-    chain: Models.Contract.ChainIdentifier,
-    contractAddress: Common.Address,
-    contractType: Models.Contract.SaleContractType,
-    fromBlock: number,
-    toBlock: number,
-  ): Promise<Models.Contract.SaleInvestmentEventJson[]> {
-    const result = await this.#request('/getTokensaleEvents', {
-      chain,
-      contractAddress,
-      contractType,
-      fromBlock,
-      toBlock,
-    });
-    return result;
-  }
-
   public async getBlockNumber(
     chain: Models.Contract.ChainIdentifier,
   ): Promise<{ blockNumber: number }> {

@@ -41,8 +41,10 @@ Maintainer decisions (2026-08-02):
   somewhere to start; the failing CRA boilerplate test is deleted (§9).
 - **Sourcemaps**: **full sourcemaps on every build path**, including selfhost and CI
   (`build.sourcemap: true`). The no-sourcemap policy dated from the closed-source
-  era and is obsolete — the app is AGPL, shipping maps is intentional. The SW keeps
-  excluding `.map` from the precache (§2.5).
+  era and is obsolete — the app is AGPL, shipping maps is intentional. The Vite SW
+  build **excludes `.map` from the precache** — note this fixes a pre-existing bug:
+  today the craco patch short-circuits CRA's default excludes and sourcemaps *are*
+  precached (§2.5).
 - **SVG prune hack**: **dropped, not replaced** — under Vite+svgr, component-imported
   SVGs are bundled as JSX and not emitted as standalone files; Phase 2 verifies that
   in the build output before the prune loops are deleted in Phase 3 (§10.1).
@@ -168,8 +170,9 @@ CRA keeps working in parallel until Phase 3 cuts over.
       `/service-worker.js` at the dist root; manual precache entries +
       `revision: buildId`; excludes = `index_cgid.html`, small SVGs (if any are
       still emitted), `.map`/`asset-manifest.json`/`LICENSE`,
-      `dontCacheBustURLsMatching`, 5 MB cap (§2.5); fail-closed non-dev guard;
-      replace `process.env.PUBLIC_URL` in the SW.
+      `dontCacheBustURLsMatching`, 5 MB cap (§2.5 — the `.map`/`LICENSE` excludes
+      deliberately *fix* today's short-circuit bug, expect the precache to shrink);
+      fail-closed non-dev guard; replace `process.env.PUBLIC_URL` in the SW.
 - [ ] **Verify the SVG-prune assumption** (decided): confirm the Vite build emits no
       standalone `static/`-media SVGs for component-imported icons; record the
       result in this file (gates deleting the prune loops in Phase 3).

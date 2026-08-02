@@ -102,12 +102,18 @@ the precache manifest (`:106-108`); (b) `static/media/*.svg` assets whose source
 build aborts with `process.exit(1)` (`:126-133`). Any Vite SW setup must reproduce
 both the exclusions and this guard.
 
-The patch **prepends** — CRA's default `InjectManifest` settings must survive the
-port: `exclude: [/\.map$/, /asset-manifest\.json$/, /LICENSE/]`,
-`dontCacheBustURLsMatching: /\.[0-9a-f]{8}\./`, `maximumFileSizeToCacheInBytes` 5 MB
-(`node_modules/react-scripts/config/webpack.config.js:709-717`). Dropping the
-`/\.map$/` exclude on the sourcemap-enabled build paths (§1) would put every
-sourcemap into the precache.
+The patch **prepends** to CRA's default `InjectManifest` settings
+(`exclude: [/\.map$/, /asset-manifest\.json$/, /LICENSE/]`,
+`dontCacheBustURLsMatching: /\.[0-9a-f]{8}\./`, `maximumFileSizeToCacheInBytes` 5 MB,
+`node_modules/react-scripts/config/webpack.config.js:709-717`) — **and thereby breaks
+the default excludes**: workbox's condition checker returns on the *first* function
+condition (`node_modules/workbox-webpack-plugin/build/lib/get-manifest-entries-from-compilation.js:26-40`),
+so with the craco function prepended, CRA's `/\.map$/`/`LICENSE` regexes are never
+evaluated. Verified in a real build (2026-08-02, Phase 1): `static/js/main.*.js.map`
+and `main.*.js.LICENSE.txt` **are precache entries** on the sourcemap-enabled build
+paths today. `dontCacheBustURLsMatching` and the 5 MB cap are separate settings and
+unaffected. The Vite port should implement all excludes correctly — for `.map`/
+`LICENSE` that is a deliberate **fix** of this pre-existing bug, not parity.
 
 ### 2.6 Dead-but-kept config
 
@@ -460,3 +466,6 @@ inject script, Yarn 4, Node 20.11, port-3000 dev server. Corrections:
 10. `asset-manifest.json` has no consumers.
 11. `IMAGE_INLINE_SIZE_LIMIT` never applied to SVGs — the prune/precache pairing is a
     two-way coupling, not three-way (§10.1).
+12. CRA's default `InjectManifest` excludes are dead in practice — the craco patch's
+    prepended function short-circuits them, so sourcemaps and LICENSE files are
+    precached today (§2.5; found during Phase 1, 2026-08-02).

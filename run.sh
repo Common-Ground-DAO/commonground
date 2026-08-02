@@ -50,11 +50,14 @@ then
 
 elif [ "$1" = "up" ]
 then
-  docker_compose up -d && docker_compose logs -f
+  # --remove-orphans cleans up containers of services that are no longer part
+  # of the stack — e.g. after the three seaweedfs containers were merged into
+  # the single `seaweed` service
+  docker_compose up -d --remove-orphans && docker_compose logs -f
 
 elif [ "$1" = "down" ]
 then
-  docker_compose down
+  docker_compose down --remove-orphans
 
 elif [ "$1" = "compose" ]
 then

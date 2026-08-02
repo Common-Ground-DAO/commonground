@@ -11,10 +11,13 @@ A 2026-08-02 evaluation compared staying on SeaweedFS against switching the stor
 engine (RustFS, Garage, Versity S3 Gateway; MinIO's community repo was archived
 read-only in April 2026). Outcome, all final:
 
-1. **Stay on SeaweedFS.** The app's coupling is thin — `srv/repositories/files.ts`
-   talks pure S3 API against `http://s3.local:8333` (one bucket `cg-media`, presigned
-   GETs), nginx signs `/files/` URLs itself — so a swap is *possible*, but every
-   candidate loses on some axis we care about:
+1. **Stay on SeaweedFS.** The app's coupling is thin but not zero —
+   `srv/repositories/files.ts` talks pure S3 API (one bucket `cg-media`):
+   uploads/reads go to `http://s3.local:8333`, while presigned GETs are signed **by
+   the backend** (`S3RequestPresigner`) against `APP_HOSTNAME:8333` and only verify
+   because nginx's `/files/` location re-expands the path-embedded signature into
+   SigV4 query params and forwards `Host $host:8333`. A swap is *possible* (any
+   SigV4-correct store), but every candidate loses on some axis we care about:
    - **RustFS**: rejected. Still pre-GA (`1.0.0-beta.12`), ~28 security advisories
      Dec 2025 – Jul 2026 with no downward trend, documented unreviewed/LLM-reviewed
      merges of auth-relevant code, opaque MinIO-style `xl.meta` on-disk format,
@@ -82,9 +85,11 @@ volume heartbeats; after the collapse it persists under `/data` for free.
 1. Stop the stack.
 2. Create `seaweedfs-data`; copy `seaweedfs-volume/*` → its root and
    `seaweedfs-buckets/filerldb2/` → `filerldb2/`.
-3. Start; `--remove-orphans` (wrapper default since Phase 5) retires the three old
-   containers. The old volumes stay on disk until the operator deletes them —
-   document, don't automate the deletion.
+3. Start; `--remove-orphans` retires the three old containers. That flag is the
+   default only in the **selfhost** wrapper (`selfhost.sh`, since Phase 5) —
+   `run.sh` does *not* pass it, so either add it there in the same PR or the dev
+   stack keeps the three old containers running. The old volumes stay on disk until
+   the operator deletes them — document, don't automate the deletion.
 
 Gotchas:
 
@@ -111,7 +116,9 @@ Gotchas:
   second up/down cycle (idempotence) and an upload + presigned download round-trip.
 - [ ] `docker/build.sh` / `run.sh` / nginx configs reference no seaweed hostname
   other than `s3.local` (expected from the Phase-5-style sweep; re-verify at
-  implementation time).
+  implementation time). The compose files themselves DO: unrelated services carry
+  `depends_on: seaweedmaster` / `s3` (four lists per file, like the Redis change) —
+  retarget them to the new single service.
 
 ## Checklist
 

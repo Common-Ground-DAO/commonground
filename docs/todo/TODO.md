@@ -14,6 +14,11 @@
   **before or together with** the next staging/prod image rollout. Details:
   [docs/deployment](../deployment/README.md) §6. Nothing in this repo can perform or verify
   the change.
+- [ ] **Pin the SeaweedFS image in the hosted Swarm stack** — the compose files in this
+  repo pin `chrislusf/seaweedfs:4.40` (2026-08-02; security floor 4.34), but the Swarm
+  stack files in the separate infrastructure repository pin independently and may still
+  ride `:latest`. Same coordination as the Redis item above; see
+  [docs/todo/ROADMAP_SEAWEEDFS_CONSOLIDATION.md](ROADMAP_SEAWEEDFS_CONSOLIDATION.md).
 
 ## Maintainer decisions needed
 

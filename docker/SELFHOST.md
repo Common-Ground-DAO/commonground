@@ -190,6 +190,12 @@ for larger instances.
 > the three old containers. Everyone is logged out once: Redis is unpersisted,
 > so this is the same effect any Redis restart has.
 
+> **SeaweedFS image is pinned** (currently `chrislusf/seaweedfs:4.40`) as of
+> 2026-08-02; releases before that pulled the untagged `:latest`. If your
+> install already runs a *newer* SeaweedFS than the pinned tag, do not let an
+> update pull it back down — keep or raise the tag locally. Treat `4.34` as
+> the security floor (2026 fixes).
+
 ## Bot accounts
 
 Bot management is API/CLI only in v1. Existing instances should add the bot

@@ -1,6 +1,6 @@
 # Real-time & WebRTC Documentation
 
-> Status: verified against commit f2da92ef6, 2026-08-01
+> Status: verified against commit 3c42f772a, 2026-08-02
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -756,7 +756,7 @@ Key prefixes:
 | `srv/mediasoup/utils.ts` | `clone()` deep-copy utility |
 | `srv/mediasoup/logger.ts` | Debug logger wrapper |
 | `srv/mediasoup/mediasoupHealthcheck.ts` | Fake healthcheck (writes file periodically) |
-| `srv/redis/index.ts` | RedisManager with 3 Redis instances |
+| `srv/redis/index.ts` | RedisManager: one Redis instance, four client objects |
 | `srv/redis/userdata.ts` | UserDataManager for online status tracking |
 | `srv/repositories/event.ts` | EventHelper: emit Socket.IO events from any process; `disconnectBotTokenSockets` |
 | `srv/repositories/notifications.ts` | NotificationHelper: CRUD + web push delivery |

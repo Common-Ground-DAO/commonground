@@ -7,9 +7,10 @@
 >
 > Implemented 2026-08-02 — compose collapse in e3e7d4ada, iceberg opt-out in
 > 8eab94e5a; code and docs are done.
-> Three verification items need the maintainer's stack and are still open; see
-> "What still needs the maintainer's stack" at the end. Do not dissolve this file
-> into `docs/` until those are closed.
+> Cutover of the dev stack done 2026-08-02 (volume merge against real data, full
+> rebuild, S3 reads of migrated objects verified). Still open: the nginx `/files/`
+> presigned path end-to-end, and the selfhost/Swarm cutovers. Do not dissolve this
+> file into `docs/` until those are closed.
 
 ## Decision & context
 
@@ -130,12 +131,15 @@ exact compose command, and `--hostname seaweed` to mimic compose DNS.
   Nothing but 8333 is consumed by any other service (sweep below). **8181 is now
   disabled** via `-s3.port.iceberg=0`. The rest **cannot** be confined by weed flags
   — see "code won" note 2.
-- [ ] Existing-data reuse path against a copy of **real** data — **NOT verified**:
-  needs the maintainer's stack. What *was* verified: the merge script against
-  synthetic fixtures (correct target layout, recursive copy incl. nested dirs,
-  refuses a non-empty target, refuses a missing source), and that a container
-  restarted onto an existing populated `/data` keeps its bucket, object and
-  presigned GET working.
+- [x] Existing-data reuse path against **real** data — verified 2026-08-02 on the
+  maintainer's dev stack. `run.sh down` → `migrate_seaweed_volumes.sh docker` →
+  `run.sh build_full`: the merge produced the expected layout (blobs + `filerldb2/`),
+  the entrypoint's one-time `chown` ran, the filer recognized the migrated metadata
+  (`existing filer.store.id` in the log), `fs.ls /buckets/cg-media` listed the
+  pre-migration objects, and both a SigV4 GET (region `global`) and an anonymous
+  GET of a migrated object returned 200 with the full payload through `s3.local:8333`.
+  Previously verified in the sandbox: the merge script against synthetic fixtures
+  and restart persistence on a populated `/data`.
 - [x] `docker/build.sh` / `run.sh` / nginx configs reference no seaweed hostname
   other than `s3.local`. Repo-wide sweep: the only `s3.local` references are
   `srv/repositories/files.ts` (×2), the four nginx configs, and the compose alias.

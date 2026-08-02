@@ -31,6 +31,6 @@
     "src/common/types/api/*.d.ts",
     "src/common/types/events/*.d.ts",
     "src/common/types/models/*.d.ts",
-    "src/types/*.d.ts",
+    "src/types/*.d.ts"
   ]
 }

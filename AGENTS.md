@@ -50,8 +50,9 @@ Common Ground is a full-stack TypeScript application:
 
 This list is normative. **Never build new functionality on top of a module marked
 `removal-pending`**, and do not migrate such modules to new libraries or patterns —
-they are deleted via dedicated cleanup PRs tracked in
-[docs/todo/ROADMAP_CORE_SLIMMING.md](docs/todo/ROADMAP_CORE_SLIMMING.md).
+they are deleted via dedicated cleanup PRs tracked in `docs/todo/` roadmaps. (The
+core-slimming roadmap that drove the 2026-08 removals below is finished and deleted;
+its history lives in git and the removal notes in this table.)
 
 | Module / area | Status | Notes |
 |---|---|---|
@@ -106,9 +107,12 @@ Ongoing and planned work lives in `docs/todo/`, one markdown file per workstream
 - `ROADMAP_<topic>.md` — goal, decisions made, checklist of steps (living document,
   updated as work progresses).
 - `INVENTORY_<topic>.md` — evidence bases for decisions.
+- `TODO.md` — standalone open tasks too small for a workstream of their own; an entry
+  that grows into real multi-step work graduates into its own `ROADMAP_<topic>.md`.
 - **Lifecycle**: when a workstream is finished, its lasting insights are folded into
-  the affected `docs/` sections and the TODO file is **deleted** in the same PR.
-  TODO files are working state, not documentation of record.
+  the affected `docs/` sections and the TODO file is **deleted** in the same PR
+  (leftover one-off items move to `TODO.md`). TODO files are working state, not
+  documentation of record.
 
 ## Agent Guidelines
 

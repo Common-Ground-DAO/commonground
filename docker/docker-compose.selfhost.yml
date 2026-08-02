@@ -107,7 +107,7 @@ services:
     restart: unless-stopped
 
   seaweedmaster:
-    image: chrislusf/seaweedfs
+    image: chrislusf/seaweedfs:4.40
     command: "master -ip=seaweedmaster -volumeSizeLimitMB=${SEAWEED_VOLUME_LIMIT_MB:-1024}"
     restart: unless-stopped
     networks:
@@ -117,7 +117,7 @@ services:
       WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
 
   seaweedvolume:
-    image: chrislusf/seaweedfs
+    image: chrislusf/seaweedfs:4.40
     command: "volume -mserver=seaweedmaster:9333 -port=8080 -ip=seaweedvolume -preStopSeconds=1"
     restart: unless-stopped
     volumes:
@@ -128,7 +128,7 @@ services:
       - seaweedmaster
 
   s3:
-    image: chrislusf/seaweedfs
+    image: chrislusf/seaweedfs:4.40
     command: 'filer -master="seaweedmaster:9333" -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333'
     restart: unless-stopped
     networks:

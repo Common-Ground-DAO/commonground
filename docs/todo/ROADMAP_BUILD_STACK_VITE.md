@@ -1,7 +1,8 @@
 # ROADMAP — Build-stack migration CRA/craco → Vite
 
 > Status: Phase 0 (inventory + roadmap) done 2026-08-02, verified against commit
-> db9f209bd; all maintainer decisions resolved 2026-08-02. Evidence base:
+> db9f209bd; all maintainer decisions resolved 2026-08-02; Phase 1 merged into
+> develop 2026-08-03. Evidence base:
 > [INVENTORY_BUILD_STACK.md](INVENTORY_BUILD_STACK.md) (section references `§n`
 > below point there).
 
@@ -121,26 +122,31 @@ Maintainer decisions (2026-08-02):
 - [x] Inventory (INVENTORY_BUILD_STACK.md), this roadmap, TODO.md entry graduated,
       maintainer decisions collected.
 
-### Phase 1 — Pre-migration cleanup (CRA stays; independently shippable)
+### Phase 1 — Pre-migration cleanup (CRA stays; independently shippable) ✅ merged 2026-08-03
 
 Everything here shrinks migration surface without touching the build stack.
 
-- [ ] Delete dead `src/util/CG_PrecacheController.ts` (removes the workbox
+- [x] Delete dead `src/util/CG_PrecacheController.ts` (removes the workbox
       deep-import risk and 4 of 10 `process.env` sites, §11).
-- [ ] Drop unused deps: the **10** `workbox-*` packages left unused once
+- [x] Drop unused deps: the **10** `workbox-*` packages left unused once
       `CG_PrecacheController.ts` is gone (`workbox-precaching` + `workbox-routing`
       stay), `create-react-app`, `ts-loader`, `postcss-import`, `postcss-nested`
-      (§11). Regenerate lockfile offline (`yarn install --mode=update-lockfile`).
-- [ ] Delete `src/App.test.tsx` + `src/setupTests.ts`, drop the dead `test`/`eject`
+      (§11). Lockfile regenerated (`yarn install --mode=update-lockfile`); diff was
+      pure removals, `yarn install --immutable` green.
+- [x] Delete `src/App.test.tsx` + `src/setupTests.ts`, drop the dead `test`/`eject`
       scripts and the React-17-era `@testing-library/*`/`@types/jest` deps (the
       Vitest successor arrives in Phase 3 with a fresh setup).
-- [ ] Reconcile `postcss.config.js` with the craco chain (single source of truth,
+- [x] Reconcile `postcss.config.js` with the craco chain (single source of truth,
       §2.1).
-- [ ] Tailwind cruft: remove v2 `variants` key; drop `@tailwindcss/line-clamp` plugin
-      usage (in core since 3.3) (§6).
-- [ ] Fix `tsconfig.json` trailing comma (§4).
-- **Done when**: `./run.sh build_full` is green and the dev stack behaves unchanged
-  in the browser (app loads, SW updates, no console regressions).
+- [x] Tailwind cruft: v2 `variants` key removed; `@tailwindcss/line-clamp` dropped —
+      note the reasoning shifted: installed tailwind is 3.1.6 (< 3.3), but the
+      plugin's utilities had **zero** usages (all `line-clamp` hits are hand-written
+      `-webkit-line-clamp` CSS), verified by byte-identical tailwind output (§6).
+- [x] Fix `tsconfig.json` trailing comma (§4).
+- **Done**: production craco build green (node 24, zero src/ errors/warnings; both
+  entries + SW correct in output), full Opus review verdict "ship", maintainer
+  green light 2026-08-03. Phase-1 side find: the precache-exclude short-circuit
+  bug, folded into §2.5.
 
 ### Phase 2 — Vite build core (both entries + SW; pipeline still on CRA)
 

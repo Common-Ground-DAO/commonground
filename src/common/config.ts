@@ -300,6 +300,9 @@ const config = {
   // instances have everything on
   EMAIL_ENABLED: instance?.features?.email ?? true,
   TWITTER_AUTH_ENABLED: instance?.features?.twitterAuth ?? true,
+  // voice/video calls need the mediasoup service; self-hosters can leave it
+  // undeployed, in which case the call UI is hidden instead of failing
+  CALLS_ENABLED: instance?.features?.calls ?? true,
   // per-instance third-party keys (CG defaults are locked to the official domains)
   GIPHY_API_KEY: instance?.giphyApiKey ?? (instance ? '' : 'ir89rjdyvl6GNuHNHO71QldCPQzSAjI4'),
   WALLETCONNECT_PROJECT_ID: instance?.walletConnectProjectId ?? 'a58ac26ec0960773dad148a0585ef011',

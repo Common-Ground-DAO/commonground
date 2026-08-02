@@ -336,7 +336,12 @@ class WalletHelper {
       console.error("Error unclaiming staking positions after wallet delete", e);
     });
     if (roleData !== undefined && roleData.length > 0) {
-      await onchainHelper.checkMultiRoleClaimability({ userId, roleData, priority: OnchainPriority.HIGH });
+      // best-effort: the wallet row is already committed, so a failing
+      // onchain call (service down or deliberately not deployed) must not
+      // turn a successful delete into an error response
+      await onchainHelper.checkMultiRoleClaimability({ userId, roleData, priority: OnchainPriority.HIGH }).catch(e => {
+        console.error("Error re-checking role claimability after wallet delete", e);
+      });
     }
   }
 

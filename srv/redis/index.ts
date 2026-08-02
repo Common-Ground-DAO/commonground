@@ -21,20 +21,21 @@ class RedisManager {
 
   constructor() {
     this.legacyMode = process.env.REDIS_LEGACY_MODE === 'true';
+    // One Redis instance serves every purpose. The four client objects stay:
+    // the session client needs `legacyMode` (connect-redis v6 speaks the
+    // node-redis v3 API) and the Socket.IO adapter needs a dedicated
+    // subscriber connection — both are protocol requirements, not reasons to
+    // run separate servers. Key prefixes are pairwise disjoint.
+    const url = process.env.REDIS_URL || 'redis://redis:6379';
+    const password = dockerSecret('redis_password') || process.env.REDIS_PASSWORD;
     const sessionClient = redis.createClient({
-      url: 'redis://redis-sessions:6379',
-      password: dockerSecret('redis_password') || process.env.REDIS_PASSWORD,
+      url,
+      password,
       legacyMode: this.legacyMode
     });
-    const socketIOPubClient = redis.createClient({
-      url: 'redis://redis-socketio:6379',
-      password: dockerSecret('redis_password') || process.env.REDIS_PASSWORD
-    });
+    const socketIOPubClient = redis.createClient({ url, password });
     const socketIOSubClient = socketIOPubClient.duplicate();
-    const dataClient = redis.createClient({
-      url: 'redis://redis-data:6379',
-      password: dockerSecret('redis_password') || process.env.REDIS_PASSWORD
-    });
+    const dataClient = redis.createClient({ url, password });
     this.clients = {
       session: sessionClient,
       socketIOPub: socketIOPubClient,

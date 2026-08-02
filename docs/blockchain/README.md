@@ -1,6 +1,6 @@
 # Blockchain Integration
 
-> Status: verified against commit 5ec4952e6, 2026-08-01
+> Status: verified against commit 5777032d4, 2026-08-01
 
 This document covers all blockchain-related subsystems in Common Ground: smart contracts, on-chain data reading, token-gated roles, wallet management, token staking, and the API surface connecting them. The token sale itself was removed in the Phase-2 slimming (2026-08-01) — only its contract source and its database tables remain, for auditability.
 
@@ -51,6 +51,8 @@ Reward accrual for staking runs as a scheduled worker job (`srv/jobs/stakingAccr
 ### Optional and Degradable
 
 The entire blockchain layer is optional. Chains for which no working RPC endpoint is configured degrade gracefully: the onchain service's premium-token bootstrap and event-listener setup catch their own failures and log/degrade instead of crashing the process. Staking is off unless explicitly configured (see [Token Staking](#token-staking)).
+
+The service can also be left out of a deployment entirely: in the self-host profile it sits behind the Compose profile `blockchain`, disabled with `CG_ENABLE_BLOCKCHAIN=false` (see [docs/deployment §3.8](../deployment/README.md#38-optional-services-calls-and-blockchain)). The same variable reaches the `api` process, where `OnchainHelper` then rejects immediately with `SERVICE_UNAVAILABLE` instead of waiting out the 10 s HTTP timeout to `http://onchain:4000`. Consequences: token-gated roles are never re-evaluated (existing assignments are left alone), balances are not refreshed, staking positions are not indexed, Spark purchases are not credited and LUKSO Universal Profile login fails. EVM/SIWE wallet login is unaffected — signatures are verified inside the `api` process.
 
 ---
 

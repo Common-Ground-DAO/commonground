@@ -106,7 +106,7 @@ request path or from any other job — they exist only in the `srv/jobs.ts` spaw
 
 ## 3. Long-running service processes ("extra services")
 
-Beyond the datastores (`db`, three Redis instances, SeaweedFS `seaweedmaster`/`seaweedvolume`/`s3`)
+Beyond the datastores (`db`, one Redis instance — three until 2026-08-01, SeaweedFS `seaweedmaster`/`seaweedvolume`/`s3`)
 and the edge (`nginx`, and `caddy` on self-host), the backend image is booted as several
 distinct Node processes. On the single-node self-host compose
 (`docker/docker-compose.selfhost.yml`) these are separate containers from one shared image.
@@ -121,10 +121,11 @@ distinct Node processes. On the single-node self-host compose
 | Job runner | `job-runner` → `node /dist/jobs.js` | `jobs.ts` (126) + `jobs/` | Runs the §2 workers off the request path | Keep (but see one-shot dead weight above) |
 | DB migrate | `migrate-db` → `node /dist/migrateDb.js` | `migrateDb.ts` | Runs TypeORM migrations at deploy, then exits | Short-lived — fine |
 
-Summary for a minimal single node: `db` + 3× Redis + SeaweedFS (3) + `nginx`/`caddy` +
+Summary for a minimal single node: `db` + 1× Redis + SeaweedFS (3) + `nginx`/`caddy` +
 `migrate-db` + `api` + `wsapi` + `memberlist` + `job-runner` are the always-on set. `onchain`
-and `mediasoup` are each only justified by an opt-in feature (blockchain, calls) and are the
-primary candidates for turning off when those features are unused.
+and `mediasoup` are each only justified by an opt-in feature (blockchain, calls); **since
+2026-08-01 both are switchable at deploy time** in the self-host profile
+(`CG_ENABLE_CALLS` / `CG_ENABLE_BLOCKCHAIN` → Compose profiles `calls` / `blockchain`).
 
 ---
 
@@ -162,7 +163,7 @@ erroring.
 | ~~**Sumsub**~~ | KYC / identity verification | **REMOVED 2026-08-01** — router, webhook, helpers, `features.kyc` flag, `SUMSUB_*` env and the `@sumsub/websdk*` packages | — | — |
 | **Twitter / X** | OAuth login + account linking | `srv/api/twitter.ts` (`passport-twitter`), `srv/util/express.ts`, callback in `getRoutes.ts` | secrets `twitter_api_v1_key` + `twitter_api_v1_secret` | Off unless both set (`features.twitterAuth`) |
 | **Farcaster Hub** | Farcaster account verification | `srv/api/util.ts` (`farcasterApi`: `onChainIdRegistryEventByAddress`, `userDataByFid`), `srv/api/accounts.ts` | Hub endpoint (see `util.ts`) | Used by the Farcaster account flow |
-| ~~**OpenAI-compatible LLM**~~ | AI assistant | **REMOVED 2026-08-01** — the assistant process, queue, routes and tables, the `llama`/`assistant` compose services and every `AI_USE_GPU` compose-merge branch are gone. `AI_API_KEY`/`AI_USE_GPU` have no reader left, but the tracked `docker/.env` placeholder still carries both lines until the maintainer drops them in a separate, deliberate commit (same call as the Phase-2 `SUMSUB_*` lines) | — | — |
+| ~~**OpenAI-compatible LLM**~~ | AI assistant | **REMOVED 2026-08-01** — the assistant process, queue, routes and tables, the `llama`/`assistant` compose services and every `AI_USE_GPU` compose-merge branch are gone. `AI_API_KEY`/`AI_USE_GPU` had no reader left; their lines were dropped from the tracked `docker/.env` placeholder by the maintainer on 2026-08-02 (together with the Phase-2 `SUMSUB_*` lines) | — | — |
 | **QuikNode** (per-chain RPC) | EVM chain reads for token-gating/staking/sales | `srv/onchain/settings.ts` (per-chain provider URLs), consumed by `onchain` service | secrets/env `quiknode_<chain>` | Off unless configured; LUKSO falls back to the public RPC `rpc.mainnet.lukso.network` |
 | **Infura** (Linea RPC) | Linea chain reads | `srv/onchain/settings.ts` (`INFURA_LINEA`) | secret/env `infura_linea` | Off unless configured |
 | **Giphy** | GIF picker in the message editor | Frontend (`src/util/giphy.ts`, editor components); backend only forwards the key via `instanceConfig.ts` | `CG_GIPHY_API_KEY` | Off unless key set |
@@ -186,8 +187,8 @@ verification above.
 | 1 | ~~The 8 one-shot backfill jobs in `srv/jobs.ts`~~ **done 2026-08-01** | §2 — all self-guard via `oneshot_jobs` and no-op after first run; no other references | Removes 8 worker spawns + 8 `oneshot_jobs` scans per `job-runner` start; slightly faster/cleaner startup | Low — only affects fresh installs that never ran them; keep them until confident all target instances have run once |
 | 2 | ~~Feeds domain (`Feed`, `FeedItem`, `CommunityFeed` + 4 tables)~~ **done 2026-08-01** (migration `1785542400000-dropFeedsDomain`; the tables turned out to never have been created) | §4 — zero writers **and** zero readers anywhere in `srv/` or the frontend API layer | Removes 3 entities + 4 tables (migration) and dead schema | Low functional (nothing uses it); needs a drop migration and a check that no external tooling reads the tables |
 | 3 | ~~`assistant` service + `assistant/` module~~ **done 2026-08-01** (Phase 4) | §3/§5 — service commented out in prod compose, flags `false`, not in self-host compose | removed entirely: process, queue, routes, validators, entities, the two tables (`1785636000000-dropAssistantDomain`), the `llama`/`assistant` compose services and the GPU override | resolved — its role is handed to a future bot integration |
-| 4 | `mediasoup` service | §3 — only needed for voice/video; heaviest optional process (host UDP + workers) | Big resource saving on nodes that do not use calls | Medium — disabling removes all voice/video; gate behind a "calls enabled" toggle |
-| 5 | `onchain` service (+ per-chain RPC integrations) | §3/§5 — inert with no chains configured; app runs without blockchain | Saving on nodes that do not use token-gating/staking/sales | Medium — token-gated roles, staking, and token sales stop working; only for chain-free deployments |
+| 4 | ~~`mediasoup` service~~ **done 2026-08-01** (Phase 5) | §3 — only needed for voice/video; heaviest optional process (host UDP + workers) | Big resource saving on nodes that do not use calls | resolved — Compose profile `calls`, switch `CG_ENABLE_CALLS`; the `features.calls` instance flag hides the call UI so nothing fails silently |
+| 5 | ~~`onchain` service (+ per-chain RPC integrations)~~ **done 2026-08-01** (Phase 5) | §3/§5 — inert with no chains configured; app runs without blockchain | Saving on nodes that do not use token-gating/staking | resolved — Compose profile `blockchain`, switch `CG_ENABLE_BLOCKCHAIN`; `OnchainHelper` fails fast instead of timing out. Token gating, staking indexing, Spark purchases and LUKSO UP login stop working; EVM/SIWE login does not |
 | 6 | ~~`tokenSaleNotifications` permanent worker~~ **done 2026-08-01** | §2 — already `prod`-only; never spawned on self-host | removed with the whole token-sale complex | None |
 | 7 | ~~Wizard definition surface (`wizards` + `wizard_role_permission`)~~ **done 2026-08-01** | §4 — read/updated but **no create path in code**; appears event-specific | all five `wizard*` tables dropped incl. data; `communities` untouched | resolved — the one affected community stays, backups cover the rows |
 | 8 | Collapse `wsapi` into `api` on a single node | §3 — separate process is a scaling choice, not a hard requirement | One fewer container | Higher — the code + Redis socket.io adapter assume distinct processes; needs real refactoring/testing, not just a compose edit |

@@ -1,6 +1,6 @@
 # Real-time & WebRTC Documentation
 
-> Status: verified against commit 523fceccd, 2026-07-25
+> Status: verified against commit f2da92ef6, 2026-08-01
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -85,7 +85,7 @@ io.adapter(createAdapter(
 ));
 ```
 
-This uses a dedicated Redis instance (`redis-socketio:6379`) with separate pub/sub client pairs. The key prefix `v2:` namespaces all adapter messages. Any event emitted to a room on one server instance is automatically delivered to clients connected to other instances via Redis pub/sub.
+This uses a dedicated publisher/subscriber connection pair on the shared Redis instance (`redis:6379`). The key prefix `v2:` namespaces all adapter messages. Any event emitted to a room on one server instance is automatically delivered to clients connected to other instances via Redis pub/sub.
 
 ### Namespaces
 
@@ -203,6 +203,8 @@ Bot presence is tracked separately from human online status, because a bot may h
 ### Architecture
 
 Common Ground uses **MediaSoup** as an SFU (Selective Forwarding Unit). The media server (`srv/mediasoup.ts`) is a standalone HTTPS process separate from the main API server. Multiple call servers can exist, each registered in the `callservers` database table.
+
+The media server is **optional at deploy time**. In the self-host profile it sits behind the Compose profile `calls` (`CG_ENABLE_CALLS=false` leaves it out — see [docs/deployment §3.8](../deployment/README.md#38-optional-services-calls-and-blockchain)). Without it, no `callservers` row is fresh, so `getCallServerForScheduling` rejects with `SERVICE_UNAVAILABLE`; the instance config then ships `features.calls: false`, and the frontend hides every call entry point: the sidebar (`CallList`, `StartCallButton`) *and* the event path (`ScheduleEventModal` offers only `external` events, `AttendEventButton` drops its "Start Event"/"Join now" actions). `api`, `wsapi` and the job runner are otherwise unaffected — nothing in them talks to the media server directly (the coupling is the `callservers` / `calls` / `callmembers` tables plus `pg_notify`).
 
 ### Startup Sequence
 
@@ -680,15 +682,17 @@ The `sendWsOrWebPushNotificationEvent` method (`srv/repositories/notifications.t
 
 **Source:** `srv/redis/index.ts`, `srv/redis/userdata.ts`
 
-### Redis Instances
+### Redis Instance
 
-The system uses **three separate Redis instances**:
+The system uses **one Redis instance** (`redis:6379`, override with `REDIS_URL`) for everything. It is shared by four clients with disjoint key spaces:
 
-| Instance | Host | Client Type | Purpose |
-|---|---|---|---|
-| `redis-sessions` | `redis-sessions:6379` | `session` | Express session storage |
-| `redis-socketio` | `redis-socketio:6379` | `socketIOPub`, `socketIOSub` | Socket.IO adapter pub/sub |
-| `redis-data` | `redis-data:6379` | `data` | User online status, session tracking |
+| Client Type | Key prefixes | Purpose |
+|---|---|---|
+| `session` | `sess:` | Express session storage |
+| `socketIOPub`, `socketIOSub` | `v2:` (pub/sub only) | Socket.IO adapter pub/sub |
+| `data` | `ud:`, `us:`, `online-user-addresses`, `ratelimit:`, `bot-*`, `captcha:`, `pluginRequest:`, `tmp:` | User online status, session tracking, rate limiting, captcha |
+
+Until 2026-08-01 these were three identically configured instances (`redis-sessions`, `redis-socketio`, `redis-data`). Nothing is persisted (`--save ""`) and no eviction policy is set, so sessions and the captcha HMAC key are never evicted — but a Redis restart logs everyone out.
 
 ### RedisManager
 
@@ -703,7 +707,7 @@ The `RedisManager` class (`srv/redis/index.ts`) manages all Redis connections:
 
 ### Socket.IO Redis Adapter
 
-The `@socket.io/redis-adapter` uses the `socketIOPub`/`socketIOSub` clients on the `redis-socketio` instance:
+The `@socket.io/redis-adapter` uses the `socketIOPub`/`socketIOSub` client pair:
 
 ```typescript
 io.adapter(createAdapter(
@@ -721,7 +725,7 @@ The `@socket.io/redis-emitter` (used in `EventHelper`) can emit events without a
 
 ### UserDataManager
 
-The `UserDataManager` class (`srv/redis/userdata.ts`) manages user online state in the `redis-data` instance:
+The `UserDataManager` class (`srv/redis/userdata.ts`) manages user online state on the `data` client:
 
 | Operation | Redis Commands | Description |
 |---|---|---|
@@ -729,7 +733,7 @@ The `UserDataManager` class (`srv/redis/userdata.ts`) manages user online state 
 | `removeUserSession(userId, sessionId)` | `SREM us:{userId} {sessionId}`, `SCARD us:{userId}`, (if 0) `SREM online-user-addresses {userId}` | Remove session, mark offline if last session |
 | `setUserData(userId, data)` | `HSET ud:{userId} status {status}` | Set user online status |
 | `getUserData(userIds)` | `HGETALL ud:{userId}` (pipelined) | Batch-get user online statuses |
-| `intersectWithOnlineUsers(userIds)` | `SADD {randomKey} {userIds}`, `SINTER {randomKey} online-user-addresses`, `DEL {randomKey}` | Filter a list of user IDs to only those currently online |
+| `intersectWithOnlineUsers(userIds)` | `SADD tmp:{random} {userIds}`, `SINTER tmp:{random} online-user-addresses`, `DEL tmp:{random}` | Filter a list of user IDs to only those currently online |
 
 Key prefixes:
 - `us:{userId}` -- Set of active session IDs for a user

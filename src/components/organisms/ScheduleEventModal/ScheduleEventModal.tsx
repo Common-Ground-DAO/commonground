@@ -27,6 +27,7 @@ import { Globe, Headphones } from "@phosphor-icons/react";
 import { linkRegexGenerator } from 'common/validators';
 import CallConfigurationToggle, { IConfig } from '../StartCallModal/CallConfigurationToggle/CallConfigurationToggle';
 import { useCommunityPremiumTier } from 'hooks/usePremiumTier';
+import config from 'common/config';
 
 const onlyLinkRegex = linkRegexGenerator();
 
@@ -100,7 +101,9 @@ const ScheduleEventModal: React.FC<Props> = (props) => {
   const [showLocationInput, setShowLocationInput] = useState(false);
   const [location, setLocation] = useState('');
   const [banner, setBanner] = useState<File | undefined | null>(null);
-  const [eventType, setEventType] = useState<Models.Community.EventType>('call');
+  // 'call' and 'broadcast' both need the media server; without it an external
+  // event (a plain link) is the only type that can actually happen
+  const [eventType, setEventType] = useState<Models.Community.EventType>(config.CALLS_ENABLED ? 'call' : 'external');
   const [startDatetime, setStartDatetime] = useState<dayjs.Dayjs>(dayjs());
   const [endDatetime, setEndDatetime] = useState<dayjs.Dayjs>(dayjs());
   const [enableCustomRoles, setEnableCustomRoles] = useState(false);
@@ -306,20 +309,20 @@ const ScheduleEventModal: React.FC<Props> = (props) => {
     return <div className='flex flex-col gap-2'>
       <span className='cg-text-main cg-text-lg-500'>Event Type</span>
       <div className='flex flex-wrap gap-2'>
-        <Button
+        {config.CALLS_ENABLED && <Button
           iconLeft={<Headphones weight='fill' className='w-5 h-5' />}
           text='Group Call'
           role='chip'
           className={eventType === 'call' ? 'active' : undefined}
           onClick={() => setEventType('call')}
-        />
-        <Button
+        />}
+        {config.CALLS_ENABLED && <Button
           iconLeft={<MicrophoneIcon className='w-5 h-5' />}
           text='Broadcast'
           role='chip'
           className={eventType === 'broadcast' ? 'active' : undefined}
           onClick={() => setEventType('broadcast')}
-        />
+        />}
         <Button
           iconLeft={<Globe className='w-5 h-5' />}
           text='External'
@@ -338,7 +341,9 @@ const ScheduleEventModal: React.FC<Props> = (props) => {
         <InformationCircleIcon className='w-5 h-5' />
         {eventType === 'call' && <span>In Group Calls, anyone can speak</span>}
         {eventType === 'broadcast' && <span>In Broadcasts, you decide who can speak</span>}
-        {eventType === 'external' && <span>In external events, no call will be created</span>}
+        {eventType === 'external' && <span>{config.CALLS_ENABLED
+          ? 'In external events, no call will be created'
+          : 'Calls are disabled on this instance, so events can only link to an external location'}</span>}
       </div>
     </div>
   }, [eventType]);

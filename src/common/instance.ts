@@ -29,10 +29,12 @@ export type InstanceConfig = {
   captchaProvider?: 'altcha' | 'recaptcha' | 'off';
   /** Chains this instance supports (working RPC endpoints); keys of AVAILABLE_CHAINS. */
   activeChains?: string[];
-  /** Capability flags derived from which secrets the server has configured. Absent flag = feature available (official instances). */
+  /** Capability flags derived from which secrets/services the server has configured. Absent flag = feature available (official instances). */
   features?: {
     email?: boolean;
     twitterAuth?: boolean;
+    /** false when the instance runs without the mediasoup service (voice/video calls). */
+    calls?: boolean;
   };
   /** Giphy API key for this instance; empty disables the GIF picker. */
   giphyApiKey?: string;
@@ -76,7 +78,7 @@ export function getInstanceConfig(): InstanceConfig | undefined {
   }
   if (raw.features && typeof raw.features === 'object') {
     cfg.features = {};
-    for (const key of ['email', 'twitterAuth'] as const) {
+    for (const key of ['email', 'twitterAuth', 'calls'] as const) {
       if (typeof raw.features[key] === 'boolean') {
         cfg.features[key] = raw.features[key];
       }

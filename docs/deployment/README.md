@@ -1,6 +1,6 @@
 # Common Ground Deployment
 
-> Status: verified against commit a3c3f7608, 2026-08-01.
+> Status: verified against commit f2da92ef6, 2026-08-01.
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -68,7 +68,8 @@ There are two injection paths that produce the same shape:
 The nginx hook is driven by `CG_*` env passed to the container in
 `docker-compose.selfhost.yml` (`CG_APP_URL`, `CG_DEPLOYMENT`, `CG_CGID_URL`,
 `CG_RECAPTCHA_SITE_KEY`, `CG_ACTIVE_CHAINS`, the `CG_FEATURE_*` capability
-booleans, `CG_GIPHY_API_KEY`, `CG_WALLETCONNECT_PROJECT_ID`). It skips injection
+booleans, `CG_ENABLE_CALLS`, `CG_GIPHY_API_KEY`,
+`CG_WALLETCONNECT_PROJECT_ID`). It skips injection
 if `CG_APP_URL` is unset, and skips files that already contain
 `__CG_INSTANCE__`.
 
@@ -84,7 +85,7 @@ Defined and validated in `src/common/instance.ts` (`InstanceConfig`). Fields:
 | `recaptchaSiteKey` | reCAPTCHA v2 site key (empty disables the default key) |
 | `captchaProvider` | active captcha provider (`altcha` / `recaptcha` / `off`) |
 | `activeChains` | chain keys this instance offers (subset of `AVAILABLE_CHAINS`) |
-| `features` | capability flags `{ email, twitterAuth }` derived from configured secrets |
+| `features` | capability flags `{ email, twitterAuth, calls }` — the first two derived from configured secrets, `calls` from whether the mediasoup service is deployed |
 | `giphyApiKey` | Giphy key (empty hides the GIF picker) |
 | `walletConnectProjectId` | WalletConnect Cloud project id |
 
@@ -148,13 +149,15 @@ offers, driving both backend chain workers and the UI chain lists.
 ### 3.2 `docker/selfhost/selfhost.sh` — build and operate
 
 Wraps `docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml`
-(falling back to `docker-compose` v1). Commands:
+(falling back to `docker-compose` v1). It also derives `COMPOSE_PROFILES` from
+the two optional-service switches (see [3.8](#38-optional-services-calls-and-blockchain)).
+Commands:
 
 | Command | Action |
 |---|---|
 | `build` | builds the builder image, installs frontend deps, sets a random build id, builds the prod frontend (no sourcemaps), rsyncs it into `nginx/dist`, builds the nginx / backend / db images, and generates `vapid_keys.json` for web push if missing |
-| `up` | `compose up -d` then `ps` |
-| `down` | stop the stack |
+| `up` | `compose up -d --remove-orphans` then `ps` |
+| `down` | stop the stack (`--remove-orphans`) |
 | `logs [service]` | follow logs (all, or one service) |
 | `ps` | container status |
 | `stats` | `docker stats --no-stream` |
@@ -172,15 +175,15 @@ volumes (`pgdata`, `seaweedfs-volume`, `seaweedfs-buckets`, `caddy-data`,
 | `caddy` | `caddy:2-alpine` | TLS terminator; publishes `80`, `443` (tcp+udp), `4443`; obtains/renews Let's Encrypt certs |
 | `nginx` | `cryptogram/nginx-selfhost` (built from `Dockerfile_selfhost`) | static frontend + reverse proxy to API/wsapi/S3; injects instance config; sets CSP |
 | `db` | `cryptogram/db` (Postgres) | primary database; loads tuned `postgresql.conf`; healthcheck; `shm_size 256m` |
-| `redis-sessions` / `redis-socketio` / `redis-data` | `redis:6.2.7-alpine` | three separate Redis instances (sessions, Socket.IO adapter, app data); password-protected, `--save ""` (unpersisted), `maxmemory` tuned |
+| `redis` | `redis:6.2.7-alpine` | one instance for sessions, the Socket.IO adapter and app data; password-protected, `--save ""` (unpersisted), no eviction policy, `maxmemory` tuned |
 | `seaweedmaster` / `seaweedvolume` / `s3` | `chrislusf/seaweedfs` | SeaweedFS object storage: master, volume server, and S3-compatible filer (aliased `s3.local`) |
 | `migrate-db` | `cryptogram/backend` | one-shot DB migration (`migrateDb.js`); `restart on-failure` (Swarm only) |
 | `api` | `cryptogram/backend` | REST API (`api.js`); the image everything else reuses |
 | `wsapi` | `cryptogram/backend` | Socket.IO / real-time server (`wsapi.js`) |
 | `memberlist` | `cryptogram/backend` | member-list worker (`memberlist.js`) |
 | `job-runner` | `cryptogram/backend` | scheduled jobs incl. Spark accrual (`jobs.js`) |
-| `mediasoup` | `cryptogram/backend` | WebRTC media (`mediasoup.js`); publishes UDP `40000-40099`; uses the internal self-signed cert and `MEDIASOUP_ANNOUNCED_IP=CG_PUBLIC_IP` |
-| `onchain` | `cryptogram/backend` | blockchain indexer / balance & role listener (`onchain.js`); receives all `QUIKNODE_*`/RPC and staking env |
+| `mediasoup` | `cryptogram/backend` | WebRTC media (`mediasoup.js`); publishes UDP `40000-40099`; uses the internal self-signed cert and `MEDIASOUP_ANNOUNCED_IP=CG_PUBLIC_IP`. Compose profile `calls` — optional, see [3.8](#38-optional-services-calls-and-blockchain) |
+| `onchain` | `cryptogram/backend` | blockchain indexer / balance & role listener (`onchain.js`); receives all `QUIKNODE_*`/RPC and staking env. Compose profile `blockchain` — optional, see [3.8](#38-optional-services-calls-and-blockchain) |
 | `cg-builder` | `commonground/node20` | build-only helper container (not a runtime service) |
 
 The seven runtime `cryptogram/backend` services are the same image invoked with
@@ -216,8 +219,8 @@ parameterized Content-Security-Policy per server name.
 |---|---|---|
 | 80 | tcp | HTTP → HTTPS redirect, ACME |
 | 443 | tcp+udp | app + CG ID (HTTPS / HTTP3) |
-| 4443 | tcp | call signalling (wss) |
-| 40000–40099 | udp | WebRTC media (voice/video) |
+| 4443 | tcp | call signalling (wss) — only with calls enabled |
+| 40000–40099 | udp | WebRTC media (voice/video) — only with calls enabled |
 
 ### 3.7 Backups
 
@@ -225,6 +228,31 @@ All durable state is in three volumes: `pgdata` (database) and
 `seaweedfs-volume` + `seaweedfs-buckets` (uploaded media). Redis is intentionally
 unpersisted (sessions and ephemeral data only). See `docker/SELFHOST.md` for an
 example `pg_dump` command.
+
+### 3.8 Optional services (calls and blockchain)
+
+`mediasoup` and `onchain` carry the Compose profiles `calls` and `blockchain`.
+`selfhost.sh` computes `COMPOSE_PROFILES` from two switches in `.env.selfhost`:
+
+| Switch | Default | Effect when `false` |
+|---|---|---|
+| `CG_ENABLE_CALLS` | `true` | no `mediasoup` container; the instance config ships `features.calls: false`, so both call entry points hide: the community sidebar (`CallList` / `StartCallButton`) and the event path (`ScheduleEventModal` offers only `external` events, `AttendEventButton` drops "Start Event" / "Join now"). Ports 4443/tcp and 40000–40099/udp are unused |
+| `CG_ENABLE_BLOCKCHAIN` | `true` | no `onchain` container; `CG_ENABLE_BLOCKCHAIN=false` also reaches the `api` process, where `OnchainHelper` fails fast with `SERVICE_UNAVAILABLE` instead of waiting out the 10 s HTTP timeout per request |
+
+Both default to on, so an `.env.selfhost` generated before these switches
+existed keeps the full stack. `up`, `down` and `update` run with
+`--remove-orphans`, which is what actually retires a container after its switch
+is flipped off.
+
+Without the `onchain` service: token-gated roles are no longer re-evaluated
+(existing assignments stay, nobody is stripped), balances are not refreshed,
+staking positions are not indexed, Spark purchases are not credited, LUKSO
+Universal Profile login fails, and adding a new token contract returns a clean
+`NOT_FOUND`. EVM/SIWE wallet login is unaffected — it is verified by signature
+inside the `api` process and never calls the onchain service.
+
+Caddy keeps its `CG_DOMAIN:4443` site block either way; with calls disabled
+nothing connects to it (the block is inert, not an error).
 
 ---
 
@@ -234,8 +262,10 @@ Every third-party integration is optional. Leaving its key(s) empty in
 `.env.selfhost` disables the corresponding feature cleanly: the server derives
 capability flags from which secrets are configured and ships them to the
 frontend via the instance config, so unavailable features are hidden or replaced
-with an honest message rather than breaking. The `features` flags
-(`email`, `twitterAuth`) are computed in `srv/util/instanceConfig.ts`;
+with an honest message rather than breaking. The two backend *services* that can
+be dropped at deploy time are covered separately in
+[3.8](#38-optional-services-calls-and-blockchain). The `features` flags
+(`email`, `twitterAuth`, `calls`) are computed in `srv/util/instanceConfig.ts`;
 the nginx path computes the equivalent `CG_FEATURE_*` booleans from
 `docker-compose.selfhost.yml` (`${SENDGRID_API_KEY:+true}` etc.).
 
@@ -259,8 +289,11 @@ via `.env.selfhost` — see [`docs/ROADMAP-staking.md`](../ROADMAP-staking.md),
 Verifiable defaults seeded by `init.sh` into `.env.selfhost`, sized for a 16 GB
 machine:
 
-- `REDIS_MAXMEMORY=512mb` — applied to each of the three Redis instances
-  (`--maxmemory ${REDIS_MAXMEMORY:-512mb}`).
+- `REDIS_MAXMEMORY=1536mb` — the **total** budget of the single Redis instance
+  (`--maxmemory ${REDIS_MAXMEMORY:-1536mb}`). It used to be a per-instance value
+  applied to three instances; upgrading instances should triple their old value.
+  No eviction policy is configured on purpose (sessions and the captcha HMAC key
+  are not cache entries), so this is a hard ceiling: writes fail once it is hit.
 - `SEAWEED_VOLUME_LIMIT_MB=1024` — SeaweedFS volume chunk size.
 - `MEDIASOUP_DISABLE_LIBURING=true`.
 - `db` runs with `shm_size: 256m`.
@@ -312,6 +345,32 @@ exist under `pipelines/`, plus a shared clean-up template.
 
 Shared template that removes the build work directory; runs
 `condition: always()`.
+
+### Required infra-repo cutover: one Redis instead of three
+
+> **Action item for the hosted (Swarm) deployment — must land before or with the
+> next image rollout.**
+
+As of 2026-08-01 the backend connects to a **single** Redis instance: every
+client in `srv/redis/index.ts` resolves `process.env.REDIS_URL ||
+'redis://redis:6379'`. The Swarm stack files in the separate infrastructure
+repository still publish three services (`redis-sessions`, `redis-socketio`,
+`redis-data`), which the new image no longer looks for. Rolling out the image
+against an unchanged stack makes **every** backend process fail to reach Redis
+at once — sessions, rate limiting, captcha, bot presence and the Socket.IO
+adapter all go down together.
+
+Either fix works:
+
+1. **Merge the three Swarm Redis services into one named `redis`** (same
+   `--requirepass`/`--save ""`/no-eviction config; size `maxmemory` to roughly
+   the sum of the three), or
+2. **Set `REDIS_URL` on every backend service** (`api`, `wsapi`, `job-runner`,
+   `onchain`) to whichever instance is kept, and retire the other two.
+
+Option 1 matches both compose files in this repo. Either way the cutover logs
+everyone out once — Redis is unpersisted, so this is the same effect any Redis
+restart has.
 
 ### Hosted deployment topology
 

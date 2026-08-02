@@ -12,6 +12,7 @@ import StartCallButton from '../StartCallButton/StartCallButton';
 import Scrollable from '../Scrollable/Scrollable';
 import { useCommunitySidebarContext } from 'components/organisms/CommunityViewSidebar/CommunityViewSidebarContext';
 import short from "short-uuid";
+import config from 'common/config';
 
 const t = short();
 
@@ -30,8 +31,12 @@ export const CallList: React.FC<CallListProps> = (props: CallListProps) => {
     navigate(getUrl({ type: 'community-call', community, call }));
   }, [community, navigate, setCommunitySidebarIsOpen]);
 
-  // Show nothing if there's nothing to show
-  if (activeCalls?.length === 0 && !communityPermissions.has('WEBRTC_CREATE')) return null;
+  // Show nothing if there's nothing to show. Without the mediasoup service no
+  // call can be started, so the whole section goes.
+  const canCreateCalls = config.CALLS_ENABLED && communityPermissions.has('WEBRTC_CREATE');
+  // useCalls is a live query: undefined on the first render, so check for
+  // "no calls" rather than "exactly zero calls"
+  if (!activeCalls?.length && !canCreateCalls) return null;
 
   return (<div className='call-list-container'>
     <div className="call-list">

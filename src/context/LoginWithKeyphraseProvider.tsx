@@ -7,7 +7,6 @@ import React, { Dispatch, ReactNode, SetStateAction, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { KeyPhraseInputType } from "../components/organisms/UserOnboarding/KeyPhrase/KeyPhraseConfirmation";
 import { getUrl } from "common/util";
-import { useEcosystemContext } from "./EcosystemProvider";
 
 type LoginWithKeyphraseState = {
     inputKeys: KeyPhraseInputType;

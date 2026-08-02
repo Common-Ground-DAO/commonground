@@ -11,13 +11,11 @@ import { useNavigate } from 'react-router-dom';
 import { ReactComponent as AddIcon } from '../../../components/atoms/icons/16/Add.svg';
 import { ReactComponent as HomeIcon } from '../../../components/atoms/icons/24/HomeIcon.svg';
 import { getUrl } from 'common/util';
-import { useEcosystemContext } from 'context/EcosystemProvider';
 
 import "./SectionEndGroups.css";
 
 const SectionEndGroups: React.FC = () => {
     const navigate = useNavigate();
-    const { ecosystem } = useEcosystemContext();
 
     return (
         <SectionEnd text="You’ve reached the end! New communities are joining daily, or make your own!" footer={

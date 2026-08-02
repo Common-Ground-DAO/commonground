@@ -6,12 +6,12 @@ import React, { useCallback, useState, useRef, useEffect, useMemo } from 'react'
 import "./SearchInputField.css";
 import { validateTagTextInput } from '../../../../common/validators';
 import { InlineToastType } from '../../../atoms/InlineToast/InlineToast';
-import { predefinedTagList, ecosystemTagList, PredefinedTag } from '../TagInputField/predefinedTags';
+import { predefinedTagList, PredefinedTag } from '../TagInputField/predefinedTags';
 import TagSuggestionsDropdown from '../TagInputField/TagSuggestionsDropdown';
 import TextInputField from '../TextInputField/TextInputField';
 import { MagnifyingGlass } from '@phosphor-icons/react';
 
-const allPredefinedTags = new Map([...ecosystemTagList, ...predefinedTagList].map(tag => [tag.name, tag]))
+const allPredefinedTags = new Map(predefinedTagList.map(tag => [tag.name, tag]))
 
 export function tagStringToPredefinedTag(tagsString: string[]): PredefinedTag[] {
   return tagsString.map(tag => {
@@ -73,8 +73,7 @@ export default function SearchInputField(props: Props) {
       return;
     }
 
-    const allPredefinedTags = [...ecosystemTagList, ...predefinedTagList];
-    const predefinedMatch = allPredefinedTags.find(pt => pt.name.toLowerCase() === trimmedValue.toLowerCase());
+    const predefinedMatch = predefinedTagList.find(pt => pt.name.toLowerCase() === trimmedValue.toLowerCase());
     let finalTagValue = predefinedMatch ? predefinedMatch.name : trimmedValue;
 
     const validationError = validateTagTextInput(finalTagValue);
@@ -153,7 +152,6 @@ export default function SearchInputField(props: Props) {
           />
           <TagSuggestionsDropdown
             inputValue={currentTag}
-            ecosystemTags={ecosystemTagList}
             generalTags={predefinedTagList}
             onSelectTag={handleSelectTagFromDropdown}
             showDropdown={showSuggestions}

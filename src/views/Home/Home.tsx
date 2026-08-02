@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import './Home.css';
-import { Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import Scrollable from "../../components/molecules/Scrollable/Scrollable";
 import LiveCallExplorer from '../../components/organisms/LiveCallExplorer/LiveCallExplorer';
 import { useWindowSizeContext } from '../../context/WindowSizeProvider';
@@ -21,10 +21,7 @@ import EventExplorer from 'components/organisms/EventExplorer/EventExplorer';
 import ArticleExplorer from 'components/organisms/ArticleExplorer/ArticleExplorer';
 import Tag from 'components/atoms/Tag/Tag';
 import { Compass, HouseSimple, Storefront } from '@phosphor-icons/react';
-import { SimpleChannel } from 'components/organisms/EcosystemMenu/EcosystemMenu';
 import useLocalStorage from 'hooks/useLocalStorage';
-import { EcosystemType } from 'context/EcosystemProvider';
-import EcosystemHomeHeader from 'components/organisms/EcosystemHomeHeader/EcosystemHomeHeader';
 import { getUrl } from 'common/util';
 import { useEmailConfirmationContext } from 'context/EmailConfirmationProvider';
 import userApi from 'data/api/user';
@@ -34,8 +31,7 @@ import CommunityExplorer from 'components/organisms/CommunityExplorer/CommunityE
 import PluginAppstore from 'components/organisms/PluginAppstore/PluginAppstore';
 import Search from 'components/organisms/Search/Search';
 import TagHeader from 'components/organisms/TagHeader/TagHeader';
-import { ecosystemTagList, PredefinedTag, predefinedTagList } from 'components/molecules/inputs/TagInputField/predefinedTags';
-import { tagStringToPredefinedTag } from 'components/molecules/inputs/TagInputField/TagInputField';
+import { PredefinedTag } from 'components/molecules/inputs/TagInputField/predefinedTags';
 import EmptyState from 'components/molecules/EmptyState/EmptyState';
 import ScreenAwareDropdown from 'components/atoms/ScreenAwareDropdown/ScreenAwareDropdown';
 import ListItem from 'components/atoms/ListItem/ListItem';
@@ -44,8 +40,6 @@ import SearchInputField from 'components/molecules/inputs/SearchInputField/Searc
 const privacyPolicyLink = 'https://app.cg/c/commonground/article/privacy-policy-4vhHTcaUHQnDfmCDdQcNFf/';
 const termsOfUseLink = 'https://app.cg/c/commonground/article/terms-of-use-tuVcsrBtEkM441vv3GdeM8/';
 const helpLink = 'https://app.cg/c/commonground/article/help-13Pqw7xeDHRXnRoQWvwxhg/';
-
-export type HomeChannelTypes = 'following' | SimpleChannel | EcosystemType | '';
 
 export default function Home() {
   const [search, _setSearch] = useState('');
@@ -139,15 +133,6 @@ export default function Home() {
     >
       <div className="inner-content">
         {!ownUser && <LoginBanner stickyMode />}
-        {/* {isMobile && !!ownUser && <div className='flex flex-col px-4 gap-4 self-stretch cg-text-main items-center relative'>
-          <MobileUserPhotoBg />
-          <div className='self-start'>
-            <EcosystemPicker expanded />
-          </div>
-          <div className='home-user-widget-container'>
-            <UserWidget collapsed={false} />
-          </div>
-        </div>} */}
         <div className='flex flex-col gap-4 home-explorer-header'>
           <div className={`flex gap-4 ${isMobile ? 'flex-col px-4' : 'flex-wrap justify-between'}`}>
             {!!isMobile && <SearchInputField
@@ -234,18 +219,6 @@ export default function Home() {
   );
 }
 
-const getTagFromEcosystem = (ecosystem: string): PredefinedTag[] => {
-  const allTags = [...predefinedTagList, ...ecosystemTagList];
-
-  // Try to find ecosystem in allTags ignoring case
-  const tag = allTags.find(tag => tag.name.toLowerCase() === ecosystem.toLowerCase());
-  if (tag) {
-    return [tag];
-  }
-
-  return tagStringToPredefinedTag([ecosystem]);
-}
-
 const tabOptions: { text: string, value: 'all' | 'following' }[] = [
   { text: 'See all content', value: 'all' },
   { text: 'From communities and people you follow', value: 'following' },
@@ -253,10 +226,7 @@ const tabOptions: { text: string, value: 'all' | 'following' }[] = [
 
 const Feed: React.FC<{}> = (props) => {
   const ownUser = useOwnUser();
-  // const [availableChannels] = useLocalStorage<HomeChannelTypes[]>([], SELECTED_CHANNELS_LOCAL_STORAGE);
-  const { ecosystem } = useParams<'ecosystem'>();
-  const currentChannel = ecosystem as HomeChannelTypes;
-  const [activeTags, setActiveTags] = useState<PredefinedTag[]>(!!currentChannel ? getTagFromEcosystem(currentChannel) : []);
+  const [activeTags, setActiveTags] = useState<PredefinedTag[]>([]);
   const [mode, setMode] = useState<'all' | 'following'>('all');
 
   const amounts = {
@@ -281,7 +251,6 @@ const Feed: React.FC<{}> = (props) => {
       setActiveTags={setActiveTags}
     />
 
-    <EcosystemHomeHeader channel={currentChannel || ''} />
     {!!ownUser && <NotificationBanner />}
     <div className="home-main-content">
       <LiveCallExplorer mode="limited" />

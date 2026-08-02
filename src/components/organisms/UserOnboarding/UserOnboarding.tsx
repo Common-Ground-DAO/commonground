@@ -10,12 +10,10 @@ import { useOwnUser } from "context/OwnDataProvider";
 import { XMarkIcon } from "@heroicons/react/24/solid";
 import './UserOnboarding.css';
 import Splash from "./Splash/Splash";
-import { useEcosystemContext } from "context/EcosystemProvider";
 
 const UserOnboarding = () => {
   const { luksoData, isUserOnboardingVisible, setUserOnboardingVisibility, step, createUserData, profileLockedIn } = useUserOnboardingContext();
   const { isMobile } = useWindowSizeContext();
-  const { ecosystem } = useEcosystemContext();
   const ownUser = useOwnUser();
 
   const closeOnboardingModal = () => {
@@ -42,7 +40,6 @@ const UserOnboarding = () => {
     'user-onboarding',
     step,
     extendedHeightClassName,
-    ecosystem !== null ? 'ecosystem-onboarding' : '',
     isMobile ? 'mobile-layout' : ''
   ].join(' ').trim();
 

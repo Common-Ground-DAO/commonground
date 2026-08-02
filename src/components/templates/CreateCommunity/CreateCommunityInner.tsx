@@ -23,7 +23,6 @@ import data from "data";
 import fileApi from "data/api/file";
 import { getUrl } from 'common/util';
 import Tag from "components/atoms/Tag/Tag";
-import EcosystemPickerField from "components/molecules/inputs/EcosystemPickerField/EcosystemPickerField";
 import ImageUploadField from "components/molecules/inputs/ImageUploadField/ImageUploadField";
 
 type Props = {
@@ -261,11 +260,6 @@ const CreateCommunityInner: React.FC<Props> = ({ onCancel, onSuccess }) => {
           onChange={setSelectedLogo}
           imagePreviewStyle={{width: '75px', height: '75px'}}
         />
-
-        {/* <EcosystemPickerField
-          tags={tags}
-          onChange={setTags}
-        /> */}
         {/* <CommunityLinks
           links={links}
           onChange={setLinks}

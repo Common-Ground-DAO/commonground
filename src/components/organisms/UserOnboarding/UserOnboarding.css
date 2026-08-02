@@ -7,15 +7,6 @@
     --errorColor: var(--warningColor);
     width: auto;
 
-    &.ecosystem-onboarding.splash {
-        height: auto;
-
-        .onboarding-x {
-            background: var(--surface-subtleoverlay-eco, var(--surface-subtleoverlay));
-            color: var(--text-primary-eco, var(--text-primary));
-        }
-    }
-
     &.mobile-layout {
         height: var(--visualHeight);
         min-height: var(--visualHeight);

@@ -17,22 +17,11 @@ declare global {
                 type Response = boolean;
             }
 
-            // The `fuel` / `aeternity` variants are legacy-only: those login flows were
-            // removed (2026-08-01), so nothing signs them anymore. They stay because
-            // existing `wallets` rows keep their stored `signatureData.data`.
             type SignableWalletData = {
                 address: Common.Address;
                 secret: string;
                 siweMessage: string;
                 type: "evm";
-            } | {
-                type: "fuel";
-                address: Common.FuelAddress;
-                secret: string;
-            } | {
-                type: "aeternity";
-                address: Common.AeternityAddress;
-                secret: string;
             }
 
             namespace clearLoginSession {

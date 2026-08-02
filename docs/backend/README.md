@@ -1,6 +1,6 @@
 # Common Ground Backend Documentation
 
-> Status: verified against commit 8133e43fe, 2026-08-01.
+> Status: verified against commit 5ec4952e6, 2026-08-01.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -138,7 +138,6 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/getUserCommunityRoleIds` -- Get roles for a user in a community
 - `/createCommunity` -- Create new community
 - `/updateCommunity` -- Update community settings
-- `/getCommunityCount` -- Get total community count
 
 **Areas (channel groups):**
 - `/createArea`, `/updateArea`, `/deleteArea`
@@ -656,7 +655,7 @@ All entities use TypeORM decorators and live in `srv/entities/`. The database is
 **`Wallet`** (`srv/entities/wallets.ts`, table: `wallets`)
 - `id` (UUID, PK)
 - `userId` -> User (nullable, SET NULL on delete)
-- `type` (enum: WalletType -- CG_EVM, EVM, CONTRACT_EVM, plus the retired FUEL / AETERNITY values kept for existing rows)
+- `type` (enum: WalletType -- CG_EVM, EVM, CONTRACT_EVM)
 - `walletIdentifier` (text) -- address
 - `isLoginWallet` (boolean)
 - `visibility` (enum: WalletVisibility -- PUBLIC, FOLLOWED, PRIVATE)
@@ -914,7 +913,7 @@ The `db: Pool | PoolClient` parameter pattern enables functions to work both sta
 **`srv/repositories/wallets.ts`** -- `walletHelper`
 - Wallet CRUD, SIWE (Sign-In With Ethereum) data parsing and verification
 - Wallet balance tracking, login wallet management
-- EVM only: the Fuel and Aeternity signature-verification branches were removed 2026-08-01, existing rows of those types are still read
+- EVM only: Fuel and Aeternity were removed entirely on 2026-08-01, rows included
 
 **`srv/repositories/onchain.ts`** -- `onchainHelper`
 - Proxy to the separate `onchain` microservice (HTTP at `http://onchain:4000`)

@@ -17,7 +17,6 @@ const t = short();
 
 type GetUrlOptions = {
   type: 'home';
-  channel?: string;
 } | {
   type: 'chats';
 } | {
@@ -111,9 +110,6 @@ type GetUrlOptions = {
 
 const Helper: Record<GetUrlOptions['type'], (options: any) => string> = {
   'home': (options: GetUrlOptions & { type: 'home' }) => {
-    if (options.channel) {
-      return `/${config.URL_ECOSYSTEM}/${options.channel}`;
-    }
     return '/';
   },
   'chats': (options: GetUrlOptions & { type: 'chats' }) => {

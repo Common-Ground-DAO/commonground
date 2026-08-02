@@ -67,7 +67,6 @@ const ExpandedMenu: React.FC<Props> = ({ expanded }) => {
       <Scrollable>
         <div className='menu-expanded-top'>
           <CircleLogo className={`w-8 h-8 cg-text-brand ${!expanded ? 'm-auto' : 'ml-1'}`} onClick={onHomeClick}/>
-          {/* <EcosystemPicker expanded={expanded} /> */}
           <div className='menu-content'>
             <div className="menu-buttons">
               <ExpandedMenuButton

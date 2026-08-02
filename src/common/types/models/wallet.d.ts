@@ -5,10 +5,8 @@
 declare namespace Models {
   namespace Wallet {
     type Visibility = "public" | "followed" | "private";
-    // `fuel` and `aeternity` are legacy stored types: their login/connect flows were
-    // removed (2026-08-01), but existing `wallets` rows keep the type and are still listed.
-    type Type = "cg_evm" | "evm" | "fuel" | "aeternity" | "contract_evm";
-    type WalletIdentifier = Common.Address | Common.FuelAddress | Common.AeternityAddress;
+    type Type = "cg_evm" | "evm" | "contract_evm";
+    type WalletIdentifier = Common.Address;
     type ContractWalletType = 'universal_profile';
     type ContractWalletData = {
       type: ContractWalletType;
@@ -17,6 +15,8 @@ declare namespace Models {
     type Wallet = {
       id: string;
       userId: string;
+      type: Type;
+      walletIdentifier: WalletIdentifier;
       loginEnabled: boolean;
       visibility: Visibility;
       chain: Models.Contract.ChainIdentifier | null;
@@ -26,16 +26,7 @@ declare namespace Models {
         contractData?: ContractWalletData;
         signature: string;
       };
-    } & ({
-      type: Extract<Type, "fuel">;
-      walletIdentifier: Common.FuelAddress;
-    } | {
-      type: Extract<Type, "evm" | "cg_evm" | "contract_evm">;
-      walletIdentifier: Common.Address;
-    } | {
-      type: Extract<Type, "aeternity">;
-      walletIdentifier: Common.AeternityAddress;
-    });
+    };
 
     type ProfileWalletData = {
       type: Type;

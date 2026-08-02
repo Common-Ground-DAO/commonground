@@ -23,7 +23,6 @@ import { useNotificationContext } from "../../../context/NotificationProvider";
 import './Menu.css';
 import { useChats } from "context/OwnDataProvider";
 import { getUrl } from 'common/util';
-import { useEcosystemContext } from "context/EcosystemProvider";
 
 export default function Menu() {
   const navigate = useNavigate();

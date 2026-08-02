@@ -1,6 +1,6 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit 8133e43fe, 2026-08-01
+> Status: verified against commit 5ec4952e6, 2026-08-01
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -52,7 +52,6 @@ The smallest, most reusable UI primitives. They have no business logic and accep
 | `BigWalletIcon` | Large wallet icon display |
 | `BotBadge` | "BOT" chip marking bot accounts (with tooltip) |
 | `CommunityPhoto` | Community avatar/photo |
-| `EcosystemChip` | Ecosystem label chip |
 | `ExternalIcon` | External link icon |
 | `ListItem` | Generic list row |
 | `MemberPreview` | Compact member display |
@@ -153,7 +152,6 @@ Composed of atoms; represent small, functional UI units.
 | `LiveCallSlider` | Slider showing active calls |
 | `JoinNewsletterBanner` | Newsletter subscribe banner |
 | `CaptchaModal` | CAPTCHA challenge modal |
-| `EcosystemPicker` | Ecosystem selection dropdown |
 | `RolePermissionList` | List of role permissions |
 | `RolePermissionToggle` | Individual permission toggle |
 
@@ -225,8 +223,7 @@ Complex, self-contained UI sections that combine molecules and atoms with signif
 | `SchedulePostModal` | Schedule article publication |
 | `ManagementContentModal` | Generic management modal |
 | `SupporterScreen` | Supporter/premium purchase screen |
-| `EcosystemHomeHeader` | Ecosystem-specific home header |
-| `EcosystemMenu` | Ecosystem navigation menu |
+| `TagFilterMenu` | Tag-filter dropdown behind `TagHeader`'s "Filter by tags" |
 | `MyCommunitiesExplorer` | Browse own communities |
 | `PluginAppstore` | Plugin marketplace |
 | `IframePluginPortal` | Renders plugin iframes |
@@ -369,7 +366,7 @@ Providers are composed across three levels:
 2. `src/App.tsx` `App()` wraps the app in `DarkModeProvider`.
 3. `src/App.tsx` `Inner()` composes the large provider stack. Nesting order matters -- outer providers are available to inner ones.
 
-The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `WagmiConfig`, `RainbowKitProvider`, `AuthKitProvider` (Farcaster), `WindowSizeProvider`, `SnackbarContextProvider`, `OwnDataProvider`, `PasskeyProvider`, `MobileLayoutProvider`, `NotificationProvider`, `CommunitySidebarProvider`, `ExternalModalProvider`, `UserOnboardingProvider`, `CreateCommunityModalProvider`, `LoginWithKeyphraseProvider`, `CopiedToClipboardDialogProvider`, `CallDevicesProvider`, `CallProvider`, `EcosystemProvider`, `CommunityProvider`, `CommunityListViewProvider`, `UserSettingsProvider`, `CommunityModerationProvider`, `ReportModalProvider`, `SidebarDataDisplayProvider`, `PluginDetailsModalProvider`, `UniversalProfileProvider`, `TwitterLoginProvider`, `RoleClaimedProvider`, `EmailConfirmationProvider`, `CommunityJoinedProvider`, `CommunityOnboardingProvider`, `CaptchaContextProvider`, `UserOnchainProvider`, `PluginIframeProvider` (innermost), which renders `UserInfoManager`, `ConnectionStatusIndicator`, and `RoutedContent`.
+The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `WagmiConfig`, `RainbowKitProvider`, `AuthKitProvider` (Farcaster), `WindowSizeProvider`, `SnackbarContextProvider`, `OwnDataProvider`, `PasskeyProvider`, `MobileLayoutProvider`, `NotificationProvider`, `CommunitySidebarProvider`, `ExternalModalProvider`, `UserOnboardingProvider`, `CreateCommunityModalProvider`, `LoginWithKeyphraseProvider`, `CopiedToClipboardDialogProvider`, `CallDevicesProvider`, `CallProvider`, `CommunityProvider`, `CommunityListViewProvider`, `UserSettingsProvider`, `CommunityModerationProvider`, `ReportModalProvider`, `SidebarDataDisplayProvider`, `PluginDetailsModalProvider`, `UniversalProfileProvider`, `TwitterLoginProvider`, `RoleClaimedProvider`, `EmailConfirmationProvider`, `CommunityJoinedProvider`, `CommunityOnboardingProvider`, `CaptchaContextProvider`, `UserOnchainProvider`, `PluginIframeProvider` (innermost), which renders `UserInfoManager`, `ConnectionStatusIndicator`, and `RoutedContent`.
 
 #### Core Infrastructure Providers
 
@@ -441,7 +438,6 @@ The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `Wa
 
 | Provider | Purpose |
 |---|---|
-| `EcosystemProvider` | Multi-ecosystem support (Ethereum, LUKSO, etc.). Also provides `EcosystemParamSetter` for URL-based ecosystem selection. |
 | `UniversalProfileProvider` | LUKSO Universal Profile integration. |
 
 #### Generic Data Provider
@@ -658,7 +654,8 @@ Key route structure (paths are derived from `getUrl(...)` / `config.URL_*`):
 ```
 /token-sale                   -> TokenSaleRedirect
 /token/                       -> TokenSale
-/e/:ecosystem                 -> Home (with EcosystemParamSetter)
+/e/*                          -> redirect to / (legacy ecosystem URLs; nginx's SPA fallback
+                                 only matches one segment, so /e/x/y 404s before React)
 /feed/                        -> ContentBrowser
 /c/:communityUrl/*            -> CommunityRouter
 /u/:idOrUrl/*                 -> ProfileProvider > ProfileRouter

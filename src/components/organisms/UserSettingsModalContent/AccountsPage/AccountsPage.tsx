@@ -10,8 +10,6 @@ import { Key as PasskeyIcon } from '@phosphor-icons/react';
 import { PageType } from '../UserSettingsModalContent';
 import { getTruncatedId } from '../../../../util';
 import { ReactComponent as XIcon } from '../../../atoms/icons/24/X.svg';
-import { ReactComponent as FuelIcon } from '../../../atoms/icons/24/Fuel.svg';
-import { ReactComponent as AeternityIcon } from '../../../atoms/icons/24/Aeternity.svg';
 import { ReactComponent as EthereumIcon } from '../../../atoms/icons/24/Ethereum.svg';
 import { ReactComponent as LuksoIcon } from '../../../atoms/icons/24/Lukso.svg';
 import { ReactComponent as FarcasterIcon } from '../../../atoms/icons/24/Farcaster.svg';
@@ -52,10 +50,6 @@ const getWalletIcon = (type: Models.Wallet.Type) => {
     case 'cg_evm':
     case 'evm':
       return <EthereumIcon className='w-5 h-5' />;
-    case 'fuel':
-      return <FuelIcon className='w-5 h-5' />;
-    case 'aeternity':
-      return <AeternityIcon className='w-5 h-5' />;
     default:
       return <></>;
   }

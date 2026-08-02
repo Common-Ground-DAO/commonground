@@ -1,6 +1,6 @@
 # Database Documentation
 
-> Status: verified against commit 8133e43fe, 2026-08-01
+> Status: verified against commit 5ec4952e6, 2026-08-01
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -83,7 +83,7 @@ Blockchain wallets linked to users. Unique constraint on `(type, walletIdentifie
 |--------|------|-------|
 | `id` | `uuid` PK | Auto-generated |
 | `userId` | `uuid` | Nullable, FK -> `users.id` (SET NULL) |
-| `type` | `enum(WalletType)` | `cg_evm`, `evm`, `fuel`, `aeternity`, `contract_evm`. Default `evm`. `fuel`/`aeternity` are retired values (login removed 2026-08-01) kept for existing rows |
+| `type` | `enum(WalletType)` | `cg_evm`, `evm`, `contract_evm`. Default `evm`. `fuel`/`aeternity` were dropped from the enum on 2026-08-01 together with their rows (`1785632400000-dropFuelAeternityWallets`) |
 | `walletIdentifier` | `text` | Wallet address |
 | `loginEnabled` | `boolean` | Default `false` |
 | `visibility` | `enum(WalletVisibility)` | PRIVATE, PUBLIC. Default `PRIVATE` |
@@ -1111,6 +1111,7 @@ export class AddPluginsTable1738852388814 implements MigrationInterface {
 - Enum type changes normally use `ALTER TYPE ... ADD VALUE` rather than drop/recreate, as noted in the enums file header comment. The exception is when the new value must be usable in the same transaction (e.g. inside an index predicate): `1784037142000-addBotAccountsFoundation` adds `bot` to `user_accounts_type_enum` / `users_displayaccount_enum` by renaming the old enum, creating a new one, re-casting the column, and dropping the old type — because `ADD VALUE` cannot be used before commit.
 - Granting `writer`/`reader` on every new table is mandatory: `staking_positions` was created without grants in `1784170800000` and every runtime query failed until the follow-up `1784180000000-grantStakingPositions` added them.
 - Removals get a drop migration too. `1785542400000-dropFeedsDomain` drops the never-created feeds tables with `IF EXISTS` and a no-op `down()`; `1785628800000-dropWizardDomain` drops the five `wizard*` tables **including their rows** (maintainer decision 2026-08-01, backups exist) and its `down()` recreates the schema — constraint names, indexes and grants included — from the four creating migrations, without data. `communities` is untouched by the wizard drop: the only FK runs `wizards."communityId" -> communities(id)`.
+  `1785632400000-dropFuelAeternityWallets` is the third variant: it deletes rows *and* shrinks an enum — `DELETE FROM wallets WHERE type IN ('fuel','aeternity')` first (their `wallet_balances` follow via `ON DELETE CASCADE`), then the rename/create/re-cast/drop dance on `wallets_type_enum`, bracketed by dropping and re-adding the two unique constraints on the column. Its `down()` restores the enum but not the rows.
 
 ---
 

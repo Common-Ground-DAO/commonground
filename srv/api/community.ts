@@ -1718,18 +1718,6 @@ registerPostRoute<
 );
 
 registerPostRoute<
-  API.Community.getCommunityCount.Request,
-  API.Community.getCommunityCount.Response
->(
-  communityRouter,
-  '/getCommunityCount',
-  validators.API.Community.getCommunityCount,
-  async (request, response, data) => {
-    return await communityHelper.getCommunityCount(data.channel);
-  }
-);
-
-registerPostRoute<
   API.Community.updateNotificationState.Request,
   API.Community.updateNotificationState.Response
 >(

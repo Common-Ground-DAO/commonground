@@ -20,7 +20,6 @@ import data from "data";
 import fileApi from "data/api/file";
 import Scrollable from "components/molecules/Scrollable/Scrollable";
 import { getUrl } from 'common/util';
-import EcosystemPickerField from "components/molecules/inputs/EcosystemPickerField/EcosystemPickerField";
 
 import './CommunityManagement.css';
 import ImageUploadField from "components/molecules/inputs/ImageUploadField/ImageUploadField";
@@ -222,10 +221,6 @@ const CommunityManagement: React.FC<Props> = (props: Props) => {
         onChange={handleImageChange}
         imagePreviewStyle={{width: '75px', height: '75px'}}
       />
-      {/* <EcosystemPickerField
-        tags={tags || []}
-        onChange={updateTags}
-      /> */}
       <CommunityLinks
         links={links || []}
         onChange={updateLinks}

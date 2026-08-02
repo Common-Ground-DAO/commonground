@@ -3715,22 +3715,6 @@ class CommunityHelper {
     return result.rows;
   }
 
-  public async getCommunityCount(channel: string) {
-    const result = await pool.query<{
-      count: number;
-    }>(`
-    SELECT
-      COUNT(id) as "count"
-    FROM communities c
-    WHERE $1 = ANY(c."tags")
-    `, [channel]);
-
-    if (result.rows.length === 1) {
-      return result.rows[0];
-    }
-    throw new Error(errors.server.NOT_ALLOWED);
-  }
-
   public async getCommunityPassword(communityId: string) {
     const query = `
       SELECT "password"

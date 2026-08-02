@@ -618,14 +618,6 @@ class CommunityApiConnector extends BaseApiConnector {
     );
   }
 
-  public async getCommunityCount(data: API.Community.getCommunityCount.Request): Promise<API.Community.getCommunityCount.Response> {
-    return await this.ajax<API.Community.getCommunityCount.Response>(
-      "POST",
-      '/getCommunityCount',
-      data
-    );
-  }
-
   public async updateNotificationState(
     data: API.Community.updateNotificationState.Request
   ): Promise<API.Community.updateNotificationState.Response> {

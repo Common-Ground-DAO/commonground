@@ -19,17 +19,12 @@ import { ReactComponent as OptimismIcon } from 'components/atoms/icons/externals
 import { ReactComponent as PolygonIcon } from 'components/atoms/icons/externals/polygon.svg';
 import { ReactComponent as ScrollIcon } from 'components/atoms/icons/externals/scroll.svg';
 import { ReactComponent as ZkSyncIcon } from 'components/atoms/icons/externals/zksync.svg';
-import { ReactComponent as FuelIcon } from 'components/atoms/icons/24/Fuel.svg';
 import { ReactComponent as CardanoIcon } from 'components/atoms/icons/externals/cardano.svg';
 import { ReactComponent as SolanaIcon } from 'components/atoms/icons/externals/solana.svg';
-import { ReactComponent as AeternityIcon } from 'components/atoms/icons/24/Aeternity.svg';
 import { ReactComponent as XIcon } from 'components/atoms/icons/24/X.svg';
-import { ReactComponent as CscIcon } from 'components/atoms/icons/externals/csc.svg';
 import { ReactComponent as UniversalProfileIcon } from 'components/atoms/icons/externals/universalProfile.svg';
 import { ReactComponent as FarcasterIcon } from 'components/atoms/icons/24/Farcaster.svg';
 import { ReactComponent as CircleLogo } from "components/atoms/icons/misc/Logo/logo.svg";
-import Si3Icon from 'components/atoms/icons/externals/si3.webp';
-import PowershiftIcon from 'components/atoms/icons/externals/powershift.png';
 import { Hash, Robot } from '@phosphor-icons/react';
 
 export type ExternalIconType =
@@ -51,13 +46,8 @@ export type ExternalIconType =
   'polygon' |
   'scroll' |
   'zksync' |
-  'fuel' |
   'cardano' |
   'solana' |
-  'si3' |
-  'aeternity' |
-  'powershift' |
-  'cannabis-social-clubs' |
   'x' |
   'twitter' |
   'cg' |
@@ -108,20 +98,10 @@ const ExternalIcon: React.FC<Props> = (props) => {
       return <ScrollIcon className={className} />;
     case 'zksync':
       return <ZkSyncIcon className={className} />;
-    case 'fuel':
-      return <FuelIcon className={className} />;
     case 'cardano':
       return <CardanoIcon className={className} />;
     case 'solana':
       return <SolanaIcon className={className} />;
-    case 'si3':
-      return <img src={Si3Icon} className={(className || '') + ' object-contain'} alt='Si3' />;
-    case 'aeternity':
-      return <AeternityIcon className={className} />;
-    case 'powershift':
-      return <img src={PowershiftIcon} className={className + ' p-0.5 ecosystem-icon-dark-bg cg-circular object-contain'} alt='powershift' />;
-    case 'cannabis-social-clubs':
-      return <CscIcon className={className} />;
     case 'x':
     case 'twitter':
       return <XIcon className={className} />;

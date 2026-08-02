@@ -611,10 +611,6 @@ const communityApi = {
     communityId: common.Uuid.required(),
   }).strict(true).required(),
 
-  getCommunityCount: Joi.object<API.Community.getCommunityCount.Request>({
-    channel: Joi.string().required(),
-  }).strict(true).required(),
-
   updateNotificationState: Joi.object<API.Community.updateNotificationState.Request>({
     data: Joi.array().items(Joi.object<API.Community.updateNotificationState.Request['data'][number]>({
       communityId: common.Uuid.required(),

@@ -2,24 +2,18 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import './EcosystemMenu.css';
-import { GlobeSimple } from '@phosphor-icons/react';
+import './TagFilterMenu.css';
 import Button from 'components/atoms/Button/Button';
 import ScreenAwarePopover from 'components/atoms/ScreenAwarePopover/ScreenAwarePopover';
-import { PopoverHandle, Tooltip } from 'components/atoms/Tooltip/Tooltip';
+import { PopoverHandle } from 'components/atoms/Tooltip/Tooltip';
 import Scrollable from 'components/molecules/Scrollable/Scrollable';
-import { EcosystemType } from 'context/EcosystemProvider';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import useLocalStorage from 'hooks/useLocalStorage';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useSnackbarContext } from 'context/SnackbarContext';
-import { ecosystemTagList, PredefinedTag, generalTagList, web3TagList } from 'components/molecules/inputs/TagInputField/predefinedTags';
+import { PredefinedTag, generalTagList, web3TagList } from 'components/molecules/inputs/TagInputField/predefinedTags';
 import Tag, { TagIcon } from 'components/atoms/Tag/Tag';
 import TextInputField from 'components/molecules/inputs/TextInputField/TextInputField';
 import { tagStringToPredefinedTag } from 'components/molecules/inputs/TagInputField/TagInputField';
-
-export const SELECTED_CHANNELS_LOCAL_STORAGE = 'SELECTED_CHANNELS_LOCAL_STORAGE';
 
 type Props = {
   triggerContent: JSX.Element;
@@ -27,85 +21,10 @@ type Props = {
   setActiveTags: (tags: PredefinedTag[]) => void;
 };
 
-export const simpleChannels = [
-  'arbitrum',
-  'avalanche',
-  'aeternity',
-  'base',
-  'binance smart chain',
-  'ethereum',
-  'fantom',
-  'gnosis',
-  'linea',
-  'optimism',
-  'polygon',
-  'scroll',
-  'zksync',
-  'cardano',
-  'solana',
-] as const;
-export type SimpleChannel = typeof simpleChannels[number];
-
-type ChannelFeature = {
-  wallet?: true;
-  chain?: true;
-}
-
-const channelFeatures: Partial<Record<SimpleChannel | EcosystemType, ChannelFeature>> = {
-  ethereum: { chain: true, wallet: true },
-  "binance smart chain": { chain: true },
-  gnosis: { chain: true },
-  polygon: { chain: true },
-  optimism: { chain: true },
-  base: { chain: true },
-  arbitrum: { chain: true },
-  avalanche: { chain: true },
-  fantom: { chain: true },
-  linea: { chain: true },
-  scroll: { chain: true },
-  zksync: { chain: true },
-  lukso: { chain: true, wallet: true },
-  fuel: { chain: true, wallet: true },
-  aeternity: { wallet: true }
-};
-
-export const channelNameMap: Record<SimpleChannel, string> = {
-  arbitrum: 'Arbitrum',
-  aeternity: 'Aeternity',
-  avalanche: 'Avalanche',
-  base: 'Base',
-  'binance smart chain': 'Binance Smart Chain',
-  ethereum: 'Ethereum',
-  fantom: 'Fantom',
-  gnosis: 'Gnosis',
-  linea: 'Linea',
-  optimism: 'Optimism',
-  polygon: 'Polygon',
-  scroll: 'Scroll',
-  zksync: 'zkSync',
-  cardano: 'Cardano',
-  solana: 'Solana'
-};
-
-const ChannelIcons: React.FC<{ features?: ChannelFeature }> = ({ features }) => {
-  if (!features) return null;
-
-  return <>
-    {/* {features.wallet && <Wallet weight='duotone' className='w-4 h-4 cg-text-secondary' />} */}
-    {features.chain && <Tooltip
-      triggerClassName='flex'
-      triggerContent={<GlobeSimple weight='duotone' className='w-4 h-4 cg-text-secondary' />}
-      placement='top'
-      tooltipContent="Chain supported"
-      offset={4}
-    />}
-  </>;
-}
-
 const COLLAPSED_COUNT = 5;
 const RECENT_COUNT = 10;
 
-const EcosystemMenu: React.FC<Props> = (props) => {
+const TagFilterMenu: React.FC<Props> = (props) => {
   const { activeTags, setActiveTags } = props;
   const { isMobile } = useWindowSizeContext();
   const [recentTags, setRecentTags] = useLocalStorage<PredefinedTag[]>([], 'tag-header-recent-tags');
@@ -152,7 +71,7 @@ const EcosystemMenu: React.FC<Props> = (props) => {
   const filteredTags = useMemo(() => {
     if (!inputFilter) return [];
 
-    const allTags = [...ecosystemTagList, ...generalTagList, ...web3TagList];
+    const allTags = [...generalTagList, ...web3TagList];
     return allTags.filter(tag => tag.name.toLowerCase().includes(inputFilter.toLowerCase()));
   }, [inputFilter]);
 
@@ -160,8 +79,7 @@ const EcosystemMenu: React.FC<Props> = (props) => {
     if (!inputFilter) return null;
 
     // Don't show on exact matches
-    if (ecosystemTagList.some(tag => tag.name.toLowerCase() === inputFilter.toLowerCase()) ||
-      generalTagList.some(tag => tag.name.toLowerCase() === inputFilter.toLowerCase()) ||
+    if (generalTagList.some(tag => tag.name.toLowerCase() === inputFilter.toLowerCase()) ||
       web3TagList.some(tag => tag.name.toLowerCase() === inputFilter.toLowerCase())) {
       return null;
     }
@@ -205,7 +123,7 @@ const EcosystemMenu: React.FC<Props> = (props) => {
     closeOn='toggle'
     placement='bottom-end'
     noDefaultScrollable={!isMobile}
-    tooltipClassName={`ecosystem-menu${showMoreGeneralTags || showMoreWeb3Tags ? ' desktop-expanded' : ''}${!isMobile ? ' desktop cg-content-stack' : ''}`}
+    tooltipClassName={`tag-filter-menu${!isMobile ? ' desktop cg-content-stack' : ''}`}
     offset={8}
     onClose={() => {
       setShowMoreGeneralTags(false);
@@ -256,20 +174,6 @@ const EcosystemMenu: React.FC<Props> = (props) => {
           </div>}
 
           <div className='flex flex-col gap-2'>
-            <h4 className='cg-text-secondary'>Partner Tags</h4>
-            <div className='flex flex-wrap gap-2'>
-              {ecosystemTagList.map(tag => <Tag
-                key={tag.name}
-                className='cursor-pointer'
-                variant={props.activeTags.find(activeTag => activeTag.name === tag.name) ? 'tag-active' : 'tag'}
-                label={tag.name}
-                iconLeft={<TagIcon tag={tag} />}
-                onClick={() => onToggleTag(tag)}
-              />)}
-            </div>
-          </div>
-
-          <div className='flex flex-col gap-2'>
             <h4 className='cg-text-secondary'>Tags</h4>
             <div className='flex flex-wrap gap-2'>
               {generalList.map(tag => <Tag
@@ -308,25 +212,8 @@ const EcosystemMenu: React.FC<Props> = (props) => {
         </>}
       </Scrollable>
 
-      {/* <div className='flex flex-col flex-1 h-full overflow-hidden'>
-        <div className='ecosystem-active-header flex items-center justify-center gap-1 p-4'>
-          <ShieldChevron weight='duotone' className='w-4 h-4' />
-          <span className='cg-caption-md-600 uppercase'>Partner channels</span>
-        </div>
-        <Scrollable>
-          {ecosystemList}
-        </Scrollable>
-      </div>
-      <div className='flex flex-col flex-1 cg-bg-subtle ecosystem-menu-all-channels h-full overflow-hidden'>
-        <div className='ecosystem-header flex items-center justify-center gap-1 p-4'>
-          <span className='cg-caption-md-600 uppercase'>All channels</span>
-        </div>
-        <Scrollable>
-          {simpleChannelList}
-        </Scrollable>
-      </div> */}
     </div>}
   />);
 }
 
-export default React.memo(EcosystemMenu);
+export default React.memo(TagFilterMenu);

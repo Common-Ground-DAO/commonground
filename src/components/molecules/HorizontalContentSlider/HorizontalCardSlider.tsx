@@ -10,7 +10,6 @@ import Button from "../../../components/atoms/Button/Button";
 import { ReactComponent as ArrowLeftIcon } from '../../../components/atoms/icons/24/ArrowLeft.svg';
 
 import "./HorizontalCardSlider.css";
-import { useEcosystemContext } from 'context/EcosystemProvider';
 import { getUrl } from 'common/util';
 
 export type PositionData = {
@@ -28,7 +27,6 @@ type Props = {
 export default function HorizontalCardSlider(props: React.PropsWithChildren<Props>) {
   const { mode, title, className, positionCallback, children } = props;
   const navigate = useNavigate();
-  const { ecosystem } = useEcosystemContext();
   const { isMobile, isTablet, isSmallTablet } = useWindowSizeContext();
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [isLeftMost, setIsLeftMost] = React.useState(true);

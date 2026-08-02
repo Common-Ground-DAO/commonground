@@ -1,8 +1,7 @@
 # ROADMAP — Build-stack migration CRA/craco → Vite
 
 > Status: Phase 0 (inventory + roadmap) done 2026-08-02, verified against commit
-> db9f209bd; maintainer decisions resolved 2026-08-02 (one open item: eslint
-> successor, see "Open decisions"). Evidence base:
+> db9f209bd; all maintainer decisions resolved 2026-08-02. Evidence base:
 > [INVENTORY_BUILD_STACK.md](INVENTORY_BUILD_STACK.md) (section references `§n`
 > below point there).
 
@@ -53,6 +52,10 @@ Maintainer decisions (2026-08-02):
   (§10.4).
 - **Phase cut**: four implementation phases sized for 1–2 h autonomous agent runs,
   see "Working mode" and "Phases".
+- **eslint successor**: minimal ESLint flat config — `typescript-eslint` recommended
+  + `eslint-plugin-react` + `eslint-plugin-react-hooks`, mirroring the `react-app`
+  ruleset. Least churn; tightening (type-checked presets) is a possible later
+  follow-up outside this workstream.
 
 ## Working mode (per phase)
 
@@ -199,8 +202,8 @@ CRA keeps working in parallel until Phase 3 cuts over.
       the CRA scripts from `package.json` — in **one commit**: `craco.config.js`
       requires `webpack`/`html-webpack-plugin` only transitively via react-scripts
       (§2.6).
-- [ ] eslint successor per the open decision below; wire it plus `tsc --noEmit`
-      into the build scripts.
+- [ ] eslint flat config per decision (typescript-eslint + react + react-hooks,
+      react-app parity); wire it plus `tsc --noEmit` into the build scripts.
 - [ ] Minimal **Vitest** setup (decided): config, one smoke test, `test` script.
 - [ ] Update docs in the same PR: `docs/infrastructure/` (build pipeline, env
       vars), `docs/frontend/` (tooling), `docs/deployment/` — status-line bumps.
@@ -218,13 +221,3 @@ CRA keeps working in parallel until Phase 3 cuts over.
       file per the docs/todo lifecycle; leftover one-offs → `TODO.md`.
 - **Done when**: Jan has signed off the browser verification and both TODO files
   are gone.
-
-## Open decisions
-
-1. **eslint successor** (needed at the start of Phase 3, options presented
-   2026-08-02): (a) minimal ESLint flat config — `typescript-eslint` recommended +
-   `eslint-plugin-react` + `eslint-plugin-react-hooks`, mirroring the `react-app`
-   ruleset (least churn, recommended default); (b) stricter type-checked preset
-   (`recommended-type-checked` — expect substantial findings across 645 files);
-   (c) Biome as combined linter/formatter (fast single tool, but no `react-app`
-   parity and a bigger workflow change). Default is (a) unless Jan picks otherwise.

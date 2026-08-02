@@ -1,4 +1,4 @@
-> Status: verified against commit bd09cbf3d, 2026-07-27
+> Status: verified against commit 8c3a529da, 2026-08-01
 
 # Common Ground - Architecture Documentation
 
@@ -393,8 +393,8 @@ The job runner (`srv/jobs.ts`) spawns Node.js `worker_threads` in three modes:
    - `newsletterDelivery` — weekly (Saturday noon)
    - `emailNotifications` — every minute
 
-3. **One-shot workers** (run once ~30 s after startup, then exit):
-   - `previewImageUpdate`, `erc20decimalFix`, `fileMetadataFix`, `luksoProfileImageFix`, `calculateTokenRewardProgram`, `calculateTokenRewardProgramSecond`, `calculateTokenRewardProgramSecondFix`, `erc1155nameAndMetadataFix`
+3. **One-shot workers** (run once ~30 s after startup, then exit; each job checks the `oneshot_jobs` table itself to guard against re-running):
+   - none currently — the mechanism (`createOneshotWorker` + `oneshot_jobs`) is kept for future backfills
 
 **Healthcheck.** All backend services currently invoke `fakeHealthcheck()`, which writes `'0'` to `./healthcheck.txt` every 10 seconds unconditionally. A real connectivity-checking `startHealthcheck` exists in `srv/healthcheck.ts` but is not the active code path.
 

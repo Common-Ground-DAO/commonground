@@ -33,71 +33,18 @@ export function EcosystemProvider(props: React.PropsWithChildren) {
   const [ecosystem, setEcosystem] = React.useState<EcosystemType | null>(null);
 
   useEffect(() => {
-    // if (ecosystem === 'fuel') {
-    //   document.body.style.setProperty('--text-highlight', 'var(--colours-integrations-fuel)');
-    //   document.body.style.setProperty('--border-highlight', 'var(--colours-integrations-fuel-shaded)');
-    //   document.body.style.setProperty('--surface-buttons-primary', 'var(--colours-integrations-fuel)');
-    //   document.body.style.setProperty('--surface-buttons-primary-hover', 'var(--colours-integrations-fuel-light)');
-    //   document.body.style.setProperty('--surface-buttons-primary-active', 'var(--colours-integrations-fuel-dark)');
-    //   document.body.style.setProperty('--surface-buttons-text-primary', 'var(--text-full-black)');
-    //   document.body.style.setProperty('--text-button-primary', 'var(--text-full-black)');
-    //   document.body.style.setProperty('--surface-buttons-text-primary-active', 'var(--text-full-white)');
-    //   document.body.style.setProperty('--btnPrimaryBoxShadow', 'var(--colours-integrations-fuel-box-shadow)');
-    //   document.body.style.setProperty('--btnPrimaryActiveBoxShadow', 'var(--colours-integrations-fuel-box-shadow-active)');
-    //   // document.body.style.setProperty('--surface-buttons-primary-checkbox', 'var(--colours-integrations-fuel-shaded)');
-    //   // document.body.style.setProperty('--notificationCountBg', 'var(--colours-integrations-fuel-shaded)');
-    //   // document.body.style.setProperty('--notificationCountText', 'var(--text-full-white)');
-    //   document.body.style.setProperty('--surface-subtleoverlay-eco', 'var(--colours-overlays-white5percent)');
-    //   document.body.style.setProperty('--text-primary-eco', 'var(--colours-dark-50)');
-    // } else if (ecosystem === 'lukso') {
-    //   document.body.style.setProperty('--text-highlight', 'var(--colours-integrations-lukso)');
-    //   document.body.style.setProperty('--border-highlight', 'var(--colours-integrations-lukso-light)');
-    //   document.body.style.setProperty('--surface-buttons-primary', 'var(--colours-integrations-lukso)');
-    //   document.body.style.setProperty('--surface-buttons-primary-hover', 'var(--colours-integrations-lukso-light)');
-    //   document.body.style.setProperty('--surface-buttons-primary-active', 'var(--colours-integrations-lukso-dark)');
-    //   document.body.style.setProperty('--surface-buttons-text-primary', 'var(--text-full-white)');
-    //   document.body.style.setProperty('--text-button-primary', 'var(--text-full-white)');
-    //   document.body.style.removeProperty('--surface-buttons-text-primary-active');
-    //   document.body.style.setProperty('--btnPrimaryBoxShadow', 'var(--colours-integrations-lukso-box-shadow)');
-    //   document.body.style.setProperty('--btnPrimaryActiveBoxShadow', 'var(--colours-integrations-lukso-box-shadow-active)');
-    //   // document.body.style.removeProperty('--surface-buttons-primary-checkbox');
-    //   // document.body.style.setProperty('--notificationCountBg', 'var(--colours-integrations-lukso)');
-    //   // document.body.style.setProperty('--notificationCountText', 'var(--text-full-white)');
-    //   document.body.style.setProperty('--surface-subtleoverlay-eco', 'var(--colours-overlays-black5percent)');
-    //   document.body.style.setProperty('--text-primary-eco', 'var(--colours-light-950)');
-    // } else if (ecosystem === 'powershift') {
-    //   document.body.style.setProperty('--text-highlight', 'var(--text-primary)');
-    //   document.body.style.setProperty('--border-highlight', 'var(--colours-integrations-encode-light)');
-    //   document.body.style.setProperty('--surface-buttons-primary', 'var(--colours-integrations-encode)');
-    //   document.body.style.setProperty('--surface-buttons-primary-hover', 'var(--colours-integrations-encode-light)');
-    //   document.body.style.setProperty('--surface-buttons-primary-active', 'var(--colours-integrations-encode-dark)');
-    //   document.body.style.setProperty('--surface-buttons-text-primary', 'var(--text-full-white)');
-    //   document.body.style.setProperty('--text-button-primary', 'var(--text-full-white)');
-    //   document.body.style.removeProperty('--surface-buttons-text-primary-active');
-    //   document.body.style.setProperty('--btnPrimaryBoxShadow', 'var(--colours-integrations-encode-box-shadow)');
-    //   document.body.style.setProperty('--btnPrimaryActiveBoxShadow', 'var(--colours-integrations-encode-box-shadow-active)');
-    //   // document.body.style.setProperty('--surface-buttons-primary-checkbox', 'var(--colours-integrations-encode-light)');
-    //   // document.body.style.setProperty('--notificationCountBg', 'var(--colours-integrations-encode-light)');
-    //   // document.body.style.setProperty('--notificationCountText', 'var(--text-full-white)');
-    //   document.body.style.setProperty('--surface-subtleoverlay-eco', 'var(--colours-overlays-black5percent)');
-    //   document.body.style.setProperty('--text-primary-eco', 'var(--colours-light-950)');
-    // } else {
-      document.body.style.removeProperty('--text-highlight');
-      document.body.style.removeProperty('--border-highlight');
-      document.body.style.removeProperty('--surface-buttons-primary');
-      document.body.style.removeProperty('--surface-buttons-primary-hover');
-      document.body.style.removeProperty('--surface-buttons-primary-active');
-      document.body.style.removeProperty('--surface-buttons-text-primary');
-      document.body.style.removeProperty('--text-button-primary');
-      document.body.style.removeProperty('--surface-buttons-text-primary-active');
-      document.body.style.removeProperty('--btnPrimaryBoxShadow');
-      document.body.style.removeProperty('--btnPrimaryActiveBoxShadow');
-      // document.body.style.removeProperty('--surface-buttons-primary-checkbox');
-      // document.body.style.removeProperty('--notificationCountBg');
-      // document.body.style.removeProperty('--notificationCountText');
-      document.body.style.removeProperty('--surface-subtleoverlay-eco');
-      document.body.style.removeProperty('--text-primary-eco');
-    // }
+    document.body.style.removeProperty('--text-highlight');
+    document.body.style.removeProperty('--border-highlight');
+    document.body.style.removeProperty('--surface-buttons-primary');
+    document.body.style.removeProperty('--surface-buttons-primary-hover');
+    document.body.style.removeProperty('--surface-buttons-primary-active');
+    document.body.style.removeProperty('--surface-buttons-text-primary');
+    document.body.style.removeProperty('--text-button-primary');
+    document.body.style.removeProperty('--surface-buttons-text-primary-active');
+    document.body.style.removeProperty('--btnPrimaryBoxShadow');
+    document.body.style.removeProperty('--btnPrimaryActiveBoxShadow');
+    document.body.style.removeProperty('--surface-subtleoverlay-eco');
+    document.body.style.removeProperty('--text-primary-eco');
   }, [ecosystem]);
 
   return (

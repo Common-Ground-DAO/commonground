@@ -99,18 +99,15 @@ dayjs.extend(advancedFormat);
 // const AreaChannelManagementView = React.lazy(() => import('views/AreaChannelManagementView/AreaChannelManagementView'));
 // const ArticleView = React.lazy(() => import('views/ArticleView/ArticleView'));
 // const BlogView = React.lazy(() => import('views/BlogView/BlogView'));
-const AppsView = React.lazy(() => import('./views/AppsView/AppsView'));
 const CgUpdate = React.lazy(() => import('./views/CgUpdate/CgUpdate'));
 // const CommunityView = React.lazy(() => import('views/CommunityView/CommunityView'));
 // const CommunityManagementView = React.lazy(() => import('views/CommunityManagementView/CommunityManagementView'));
-const BlogBrowser = React.lazy(() => import('views/BlogBrowser/BlogBrowser'));
 const ContentBrowser = React.lazy(() => import('views/ContentBrowser/ContentBrowser'));
 const ConversationsBrowser = React.lazy(() => import('views/ConversationsBrowser/ConversationsBrowser'));
 // const CreateArticleView = React.lazy(() => import('views/CreateArticleView/CreateArticleView'));
 const CreateUserPostView = React.lazy(() => import('views/CreateUserPostView/CreateUserPostView'));
 // const EditArticleView = React.lazy(() => import('views/EditArticleView/EditArticleView'));
 // const EditBlogView = React.lazy(() => import('views/EditBlogView/EditBlogView'));
-const GroupBrowser = React.lazy(() => import('./views/GroupBrowser/GroupBrowser'));
 const Home = React.lazy(() => import('./views/Home/Home'));
 const TokenSale = React.lazy(() => import('./views/TokenSale/TokenSale'));
 const TokenSaleRedirect = React.lazy(() => import('./views/TokenSale/TokenSaleRedirect'));
@@ -119,10 +116,8 @@ const LearnMore = React.lazy(() => import('./views/LearnMore/LearnMore'));
 // const MemberManagementView = React.lazy(() => import('views/MemberManagementView/MemberManagementView'));
 const ChatView = React.lazy(() => import('./views/ChatView/ChatView'));
 const NotificationsBrowser = React.lazy(() => import('views/NotificationsBrowser/NotificationsBrowser'));
-const ProfileView = React.lazy(() => import('views/ProfileView/ProfileView'));
 const AudioDevicesManagementView = React.lazy(() => import('views/AudioDevicesManagementView/AudioDevicesManagementView'));
 const ProfileManagementView = React.lazy(() => import('views/ProfileManagementView/ProfileManagementView'));
-// const SwapAccountView = React.lazy(() => import('views/SwapAccountView/SwapAccountView'));
 const WalletManagementView = React.lazy(() => import('views/WalletManagementView/WalletManagementView'));
 const TwitterCallbackView = React.lazy(() => import('views/TwitterCallbackView/TwitterCallbackView'));
 const VerifyEmailView = React.lazy(() => import('views/VerifyEmailView/VerifyEmailView'));
@@ -208,7 +203,6 @@ const RoutedContent = () => {
       <Route path="e/:ecosystem" element={<EcosystemParamSetter>
         <Home />
       </EcosystemParamSetter>} />
-      {/*<Route path="blog-browser" element={<BlogBrowser />} />*/}
       <Route path={removeInitialSlash(getUrl({ type: 'feed' }))} element={<ContentBrowser />} />
       <Route path={`${config.URL_COMMUNITY}/:communityUrl/*`} element={
         <CommunityRouter />

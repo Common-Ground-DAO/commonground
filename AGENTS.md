@@ -68,8 +68,6 @@ they are deleted via dedicated cleanup PRs tracked in
 | Token sale: buy/claim UI, charts, investor wizard (`FullscreenWizard`), Sumsub KYC, NDA/US gates, `trackTokenSales`/`tokenSaleNotifications` jobs | **removal-pending** | decided 2026-07-25; DB tables are kept for auditability |
 | Aeternity wallet login, Fuel wallet login | **removal-pending** | decided 2026-07-25; existing wallet DB rows remain |
 | Hardcoded ecosystem partner list + dead ecosystem theming | **removal-pending** | reduce to active partnerships; EVM + Lukso stay |
-| Feeds domain (entities + 4 tables) | **removal-pending** | fully unreferenced; drop via migration |
-| Dead views/widgets (`AppsView`, `GroupBrowser`, `SwapAccountView`, `BlogBrowser`, `WhatsNewModal`, `EarlyAdopterBanner`), 8 no-op one-shot jobs, commented-out routes | **removal-pending** | verified dead 2026-07-25 |
 
 ## Documentation
 

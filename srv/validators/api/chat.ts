@@ -43,10 +43,6 @@ const chatApi = {
     message: Joi.string().required(),
   }).strict(true).required(),
 
-  cancelAssistantQueueItem: Joi.object({
-    dialogId: common.Uuid.required(),
-  }).strict(true).required(),
-
   deleteAssistantChat: Joi.object({
     dialogId: common.Uuid.required(),
   }).strict(true).required(),

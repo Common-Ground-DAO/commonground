@@ -85,13 +85,6 @@ declare global {
                 };
             }
 
-            namespace cancelAssistantQueueItem {
-                type Request = {
-                    dialogId: string;
-                };
-                type Response = void;
-            }
-
             namespace deleteAssistantChat {
                 type Request = {
                     dialogId: string;

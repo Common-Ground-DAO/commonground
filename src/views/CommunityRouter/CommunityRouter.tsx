@@ -128,10 +128,6 @@ function CommunityRouter(props: Props) {
             </CommunityWizardProvider>
           } />
           <Route path='*' element={<CommunityView />} />
-          {/* <Route path='announcements' element={<CommunityContentList positionCallback={positionCallback} communityId={communityId} tags={['announcement']} />} />
-          <Route path='articles' element={<CommunityContentList positionCallback={positionCallback} communityId={communityId} tags={['article']} />} />
-          <Route path='guides' element={<CommunityContentList positionCallback={positionCallback} communityId={communityId} tags={['guide']} />} />
-          <Route path='drafts' element={<CommunityContentList positionCallback={positionCallback} communityId={communityId} tags={[]} />} /> // Todo */}
         </Routes>
       </div>
     </MemberListProvider>

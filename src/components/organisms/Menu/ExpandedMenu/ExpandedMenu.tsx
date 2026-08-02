@@ -18,7 +18,6 @@ import { useChats, useOwnUser } from 'context/OwnDataProvider';
 import './../Menu.css';
 import './ExpandedMenu.css';
 import { getUrl } from 'common/util';
-import WhatsNewModal from 'components/organisms/WhatsNewModal/WhatsNewModal';
 import { ReactComponent as CircleLogo } from "components/atoms/icons/misc/Logo/logo.svg";
 import { Bell, ChatsTeardrop, Compass, Plus, CoinVertical, HouseSimple, IdentificationCard, Brain, Storefront } from '@phosphor-icons/react';
 import { useCreateCommunityModalContext } from 'context/CreateCommunityModalProvider';
@@ -152,7 +151,6 @@ const ExpandedMenu: React.FC<Props> = ({ expanded }) => {
         </div>
       </Scrollable>
       <div className='menu-user-container'>
-        {expanded && <WhatsNewModal />}
         <AudioWidget isActive={isActiveButton(location.pathname, '/profile')} isCollapsed={!expanded} />
       </div>
     </div>

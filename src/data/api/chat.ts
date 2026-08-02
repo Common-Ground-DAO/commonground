@@ -79,16 +79,6 @@ class ChatApiConnector extends BaseApiConnector {
     );
   }
 
-  public async cancelAssistantQueueItem(
-    data: API.Chat.cancelAssistantQueueItem.Request
-  ): Promise<API.Chat.cancelAssistantQueueItem.Response> {
-    return await this.ajax<API.Chat.cancelAssistantQueueItem.Response>(
-      "POST",
-      '/cancelAssistantQueueItem',
-      data
-    );
-  }
-
   public async deleteAssistantChat(
     data: API.Chat.deleteAssistantChat.Request
   ): Promise<API.Chat.deleteAssistantChat.Response> {

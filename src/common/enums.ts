@@ -83,10 +83,6 @@ export enum RoleType {
   CUSTOM_AUTO_ASSIGN = "CUSTOM_AUTO_ASSIGN",
 }
 
-export enum FeedItemType {
-  ARTICLE = 'article'
-}
-
 export enum DurationOption {
   FIFTEENMIN = "15m",
   ONEDAY = "1d",

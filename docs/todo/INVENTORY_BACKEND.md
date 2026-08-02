@@ -1,6 +1,8 @@
 # Backend Inventory (footprint & decommissioning candidates)
 
 > Status: verified against commit 523fceccd, 2026-07-25.
+> Update 2026-08-01: the Phase-1 items of ROADMAP_CORE_SLIMMING have been executed —
+> the 8 one-shot jobs and the feeds domain are **removed** (see the per-row notes below).
 
 This is a reference inventory of the backend surface — every HTTP router, every scheduled
 job, every long-running service process, entities that no longer have a code path writing to
@@ -79,16 +81,16 @@ rejects requests that also carry a session cookie.
 | `activityScore.ts` | cron | `*/10 * * * *` | Recompute community activity scores | Active |
 | `newsletterDelivery.ts` | cron | `0 12 * * 6` (Sat 12:00) | Weekly platform newsletter | Active only if email (SendGrid) configured |
 | `emailNotifications.ts` | cron | `*/1 * * * *` | Article-as-email + event reminders | Active only if email configured |
-| `previewImageUpdate.ts` | one-shot | once per start | Backfill missing preview images | **Dead weight once run** |
-| `erc20decimalFix.ts` | one-shot | once per start | Backfill ERC-20 decimals | **Dead weight once run** |
-| `fileMetadataFix.ts` | one-shot | once per start | Backfill file metadata | **Dead weight once run** |
-| `luksoProfileImageFix.ts` | one-shot | once per start | Backfill Lukso profile images | **Dead weight once run** |
-| `erc1155nameAndMetadataFix.ts` | one-shot | once per start | Backfill ERC-1155 name/metadata | **Dead weight once run** |
-| `calculateTokenRewardProgram.ts` | one-shot | once per start | Compute a past reward-program distribution | **Dead weight once run** |
-| `calculateTokenRewardProgramSecond.ts` | one-shot | once per start | Second phase of the above | **Dead weight once run** |
-| `calculateTokenRewardProgramSecondFix.ts` | one-shot | once per start | Fix pass for the second phase | **Dead weight once run** |
+| `previewImageUpdate.ts` | one-shot | once per start | Backfill missing preview images | **REMOVED 2026-08-01** |
+| `erc20decimalFix.ts` | one-shot | once per start | Backfill ERC-20 decimals | **REMOVED 2026-08-01** |
+| `fileMetadataFix.ts` | one-shot | once per start | Backfill file metadata | **REMOVED 2026-08-01** |
+| `luksoProfileImageFix.ts` | one-shot | once per start | Backfill Lukso profile images | **REMOVED 2026-08-01** |
+| `erc1155nameAndMetadataFix.ts` | one-shot | once per start | Backfill ERC-1155 name/metadata | **REMOVED 2026-08-01** |
+| `calculateTokenRewardProgram.ts` | one-shot | once per start | Compute a past reward-program distribution | **REMOVED 2026-08-01** |
+| `calculateTokenRewardProgramSecond.ts` | one-shot | once per start | Second phase of the above | **REMOVED 2026-08-01** |
+| `calculateTokenRewardProgramSecondFix.ts` | one-shot | once per start | Fix pass for the second phase | **REMOVED 2026-08-01** |
 
-### One-shots are dead weight after their first successful run
+### One-shots are dead weight after their first successful run (removed 2026-08-01)
 
 All 8 one-shot jobs follow the same guard (verified, e.g. `erc20decimalFix.ts:47-68`): on
 start they `SELECT id, "createdAt" FROM oneshot_jobs`, and if their `ONESHOT_ID` row exists
@@ -132,10 +134,10 @@ themselves) for any `INSERT`/`UPDATE`/TypeORM `save` targeting each table.
 
 | Entity / table | Reads? | Writes? | Verdict |
 |---|---|---|---|
-| `Feed` / `feeds` | none | none | **Fully dead.** No repository, no route, no frontend API connector references `feeds` |
-| `FeedItem` / `feeditems` | none | none | **Fully dead** (schema-only) |
-| `CommunityFeed` / `communities_feeds` | none | none | **Fully dead** (schema-only) |
-| `communities_feeds_roles_permissions` | none | none | **Fully dead** (schema-only) |
+| `Feed` / `feeds` | none | none | **REMOVED 2026-08-01.** No repository, no route, no frontend API connector referenced `feeds`; the table was never created by a migration either |
+| `FeedItem` / `feeditems` | none | none | **REMOVED 2026-08-01** (entity-only — no migration ever created the table) |
+| `CommunityFeed` / `communities_feeds` | none | none | **REMOVED 2026-08-01** (entity-only — no migration ever created the table) |
+| `communities_feeds_roles_permissions` | none | none | **REMOVED 2026-08-01** (never existed as a table; the entity referenced an undefined `PermissionType` enum) |
 | `Wizard` / `wizards` | yes (`repositories/communities.ts:3374,4292,4400,4567`) | UPDATE only (`:4499,4617`) | **Frozen.** Rows are read/updated but there is **no create path in code** — wizard definitions are seeded directly in the DB. TODO(verify): confirm wizards were only ever seeded manually for the past token-sale onboarding |
 | `wizard_role_permission` | via joins | none | Frozen (depends on `wizards`) |
 | `wizard_claimable_codes` | yes | INSERT + UPDATE | Active within the wizard flow |
@@ -190,8 +192,8 @@ verification above.
 
 | # | Candidate | Evidence | Effect if removed / disabled | Risk |
 |---|---|---|---|---|
-| 1 | The 8 one-shot backfill jobs in `srv/jobs.ts` | §2 — all self-guard via `oneshot_jobs` and no-op after first run; no other references | Removes 8 worker spawns + 8 `oneshot_jobs` scans per `job-runner` start; slightly faster/cleaner startup | Low — only affects fresh installs that never ran them; keep them until confident all target instances have run once |
-| 2 | Feeds domain (`Feed`, `FeedItem`, `CommunityFeed` + 4 tables) | §4 — zero writers **and** zero readers anywhere in `srv/` or the frontend API layer | Removes 3 entities + 4 tables (migration) and dead schema | Low functional (nothing uses it); needs a drop migration and a check that no external tooling reads the tables |
+| 1 | ~~The 8 one-shot backfill jobs in `srv/jobs.ts`~~ **done 2026-08-01** | §2 — all self-guard via `oneshot_jobs` and no-op after first run; no other references | Removes 8 worker spawns + 8 `oneshot_jobs` scans per `job-runner` start; slightly faster/cleaner startup | Low — only affects fresh installs that never ran them; keep them until confident all target instances have run once |
+| 2 | ~~Feeds domain (`Feed`, `FeedItem`, `CommunityFeed` + 4 tables)~~ **done 2026-08-01** (migration `1785542400000-dropFeedsDomain`; the tables turned out to never have been created) | §4 — zero writers **and** zero readers anywhere in `srv/` or the frontend API layer | Removes 3 entities + 4 tables (migration) and dead schema | Low functional (nothing uses it); needs a drop migration and a check that no external tooling reads the tables |
 | 3 | `assistant` service + `assistant/` module | §3/§5 — service commented out in prod compose, flags `false`, not in self-host compose | No always-on cost today; documents that AI is opt-in and requires an LLM backend | Low — already effectively off; this is a documentation/cleanup decision, not a running cost |
 | 4 | `mediasoup` service | §3 — only needed for voice/video; heaviest optional process (host UDP + workers) | Big resource saving on nodes that do not use calls | Medium — disabling removes all voice/video; gate behind a "calls enabled" toggle |
 | 5 | `onchain` service (+ per-chain RPC integrations) | §3/§5 — inert with no chains configured; app runs without blockchain | Saving on nodes that do not use token-gating/staking/sales | Medium — token-gated roles, staking, and token sales stop working; only for chain-free deployments |
@@ -203,9 +205,11 @@ verification above.
 
 - **Wizards:** confirm the `wizards` table is only ever seeded manually (no create endpoint was
   found). If so, is the onboarding-wizard feature intended to stay, or can it be retired?
-- **Feeds:** is any external/analytics tooling reading `feeds`/`feeditems`/`communities_feeds`
-  outside this repo before we drop them?
-- **One-shots:** are all production/self-host instances known to have completed the 8 backfills,
-  so the spawn list can be trimmed?
-- **Token-reward jobs:** the `calculateTokenRewardProgram*` one-shots contain distribution
-  logic for a past program — keep for auditability, or archive out of the runtime image?
+- ~~**Feeds:** is any external/analytics tooling reading `feeds`/`feeditems`/`communities_feeds`
+  outside this repo before we drop them?~~ Resolved 2026-08-01: no migration ever created the
+  tables, so there is nothing to read; the drop migration is `IF EXISTS`-guarded.
+- ~~**One-shots:** are all production/self-host instances known to have completed the 8 backfills,
+  so the spawn list can be trimmed?~~ Decided 2026-08-01: yes, jobs removed.
+- ~~**Token-reward jobs:** the `calculateTokenRewardProgram*` one-shots contain distribution
+  logic for a past program — keep for auditability, or archive out of the runtime image?~~
+  Decided 2026-08-01: archived in git history, out of the runtime image.

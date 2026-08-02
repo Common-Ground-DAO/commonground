@@ -1,4 +1,4 @@
-> Status: verified against commit 5777032d4, 2026-08-01
+> Status: verified against commit 3c42f772a, 2026-08-02
 
 # Common Ground Infrastructure Documentation
 
@@ -118,7 +118,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Key environment variables:** `PG_SU_PASSWORD`, `PG_SU_NAME=postgres`, `PG_MEDIASOUP_PASSWORD`, `REDIS_PASSWORD`, `S3_SECRET`, `DEPLOYMENT`, `BASE_URL`
 
 #### `seaweedmaster` / `seaweedvolume` / `s3` (SeaweedFS)
-- **Image:** `chrislusf/seaweedfs` (all three)
+- **Image:** `chrislusf/seaweedfs:4.40` (all three; pinned — do not run an untagged/`latest` image, and keep any deployment at ≥ 4.34 for the 2026 security fixes)
 - **`seaweedmaster`** — master server; manages volume topology and file-ID allocation. Command: `master -ip=seaweedmaster -volumeSizeLimitMB=16`. Single-copy replication via `WEED_MASTER_VOLUME_GROWTH_COPY_1=1` / `..._OTHER=1`.
 - **`seaweedvolume`** — volume server; stores file blobs. Command: `volume -mserver=seaweedmaster:9333 -port=8080 -ip=seaweedvolume -preStopSeconds=1`. Volume: `seaweedfs-volume:/data`.
 - **`s3`** — filer with S3-compatible API on port 8333. Command: `filer -master="seaweedmaster:9333" -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333`. Network alias `s3.local` (used by nginx to proxy file requests). Volumes: `./s3_config/s3.json:/etc/seaweedfs/s3.json:ro` and `seaweedfs-buckets:/data`.

@@ -209,8 +209,10 @@ for larger instances.
 > ./selfhost/selfhost.sh up
 > ```
 >
-> The helper copies (never moves) and refuses to run if `seaweedfs-data` already
-> holds data, so it is safe to re-run. Skip it entirely on a fresh install.
+> The helper copies (never moves), so the host temporarily needs free disk at
+> least the size of the current media store. It refuses to run while a container
+> still uses the old volumes or if `seaweedfs-data` already holds data, so it is
+> safe to re-run. Skip it entirely on a fresh install.
 >
 > On the first start the container entrypoint may `chown -R /data` — the image
 > has run as uid 1000 since 4.00, so an older store has mismatched ownership.

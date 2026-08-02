@@ -5,7 +5,8 @@
 > compose files. Evidence: storage-engine evaluation of 2026-08-02 (summary below;
 > key sources inline).
 >
-> Implemented 2026-08-02 in commit 8eab94e5a (compose) — code and docs are done.
+> Implemented 2026-08-02 — compose collapse in e3e7d4ada, iceberg opt-out in
+> 8eab94e5a; code and docs are done.
 > Three verification items need the maintainer's stack and are still open; see
 > "What still needs the maintainer's stack" at the end. Do not dissolve this file
 > into `docs/` until those are closed.

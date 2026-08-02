@@ -11,10 +11,15 @@
 #
 # Run this ONCE, with the stack stopped, when upgrading an instance that was
 # created before the 3-to-1 consolidation. A fresh install needs nothing.
+# The copy needs free disk at least the size of the current media store.
 #
-#   ./selfhost.sh down          # or: ./run.sh down, for the dev stack
+#   cd docker
+#   ./selfhost/selfhost.sh down
 #   ./selfhost/migrate_seaweed_volumes.sh
-#   ./selfhost.sh up
+#   ./selfhost/selfhost.sh up
+#
+# Dev stack: ./run.sh down (repo root), then pass the dev project prefix:
+#   ./selfhost/migrate_seaweed_volumes.sh docker
 #
 # The source volumes are left untouched; delete them yourself once the new
 # stack has proven healthy:
@@ -40,13 +45,49 @@ echo "  ${SRC_VOLUME}  -> ${DST}/"
 echo "  ${SRC_BUCKETS}/filerldb2 -> ${DST}/filerldb2"
 echo
 
+if ! volume_exists "$SRC_VOLUME" && ! volume_exists "$SRC_BUCKETS"; then
+  echo "Neither source volume exists — nothing to migrate."
+  echo "A fresh (or already cleaned-up) install starts with an empty ${DST}."
+  exit 0
+fi
 for vol in "$SRC_VOLUME" "$SRC_BUCKETS"; do
   if ! volume_exists "$vol"; then
-    echo "Source volume '${vol}' does not exist."
-    echo "Nothing to migrate — a fresh install starts with an empty ${DST}."
+    echo "ERROR: source volume '${vol}' is missing while its sibling exists."
+    echo "That is not a state this script can migrate — a pre-consolidation"
+    echo "instance always has both. Investigate before proceeding."
     exit 1
   fi
 done
+
+# Never copy from volumes a container is still using — a live filer/volume
+# server would produce a torn copy.
+for vol in "$SRC_VOLUME" "$SRC_BUCKETS"; do
+  users="$(docker ps -q --filter volume="$vol")"
+  if [ -n "$users" ]; then
+    echo "ERROR: volume '${vol}' is still in use by running container(s):"
+    docker ps --filter volume="$vol" --format '  {{.Names}}'
+    echo "Stop the stack first."
+    exit 1
+  fi
+done
+
+# The filer leveldb is the index for every uploaded object — without it the
+# blobs are unreadable. Check BEFORE touching the target so a bad source
+# never leaves a half-migrated seaweedfs-data behind.
+if ! docker run --rm -v "${SRC_BUCKETS}:/src:ro" "$HELPER_IMAGE" \
+    sh -c '[ -d /src/filerldb2 ]'; then
+  echo "ERROR: '${SRC_BUCKETS}' contains no filerldb2/ directory."
+  echo "This volume does not look like a pre-consolidation filer store;"
+  echo "refusing to migrate. Nothing was copied."
+  exit 1
+fi
+extra="$(docker run --rm -v "${SRC_BUCKETS}:/src:ro" "$HELPER_IMAGE" \
+  sh -c 'ls -A /src | grep -v "^filerldb2$" || true')"
+if [ -n "$extra" ]; then
+  echo "NOTE: '${SRC_BUCKETS}' holds entries besides filerldb2/ that will NOT"
+  echo "be copied (the old volume stays untouched):"
+  echo "$extra" | sed 's/^/  /'
+fi
 
 # Idempotence: never merge into a target that already holds data. Re-running
 # after a successful merge (or against an already-migrated instance) must not
@@ -63,7 +104,12 @@ if volume_exists "$DST"; then
   echo "Target volume '${DST}' exists but is empty — reusing it."
 else
   echo "Creating target volume '${DST}'..."
-  docker volume create "$DST" >/dev/null
+  # compose labels, so `up` does not warn that the volume "was not created
+  # by Docker Compose"
+  docker volume create \
+    --label "com.docker.compose.project=${PREFIX}" \
+    --label "com.docker.compose.volume=seaweedfs-data" \
+    "$DST" >/dev/null
 fi
 
 echo "Copying volume blobs..."
@@ -78,15 +124,7 @@ docker run --rm \
   -v "${SRC_BUCKETS}:/src:ro" \
   -v "${DST}:/dst" \
   "$HELPER_IMAGE" \
-  sh -c '
-    set -e
-    if [ -d /src/filerldb2 ]; then
-      mkdir -p /dst/filerldb2
-      cp -a /src/filerldb2/. /dst/filerldb2/
-    else
-      echo "  (no filerldb2 in the source volume — nothing to copy)"
-    fi
-  '
+  sh -c 'mkdir -p /dst/filerldb2 && cp -a /src/filerldb2/. /dst/filerldb2/'
 
 echo
 echo "Done. '${DST}' now holds:"

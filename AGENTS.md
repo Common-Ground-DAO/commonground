@@ -63,11 +63,11 @@ they are deleted via dedicated cleanup PRs tracked in
 | Staking (contract, indexing, accrual, Stake UI) | **core** | |
 | Premium / Spark economy (supporter tiers, community upgrades) | **core** | active product feature |
 | Auth: device, passkey/CGID, email+password, email code, wallet/SIWE (EVM), Lukso UP, Twitter, Farcaster | **core** | consolidation planned, see docs/auth-identity |
-| AI assistant | **core (opt-in)** | disabled by default; needs LLM backend |
 | Selfhost deployment profile | **core** | see docs/deployment |
 | Token sale: buy/claim UI, charts, investor wizard (`FullscreenWizard`), Sumsub KYC, NDA/US gates, `trackTokenSales`/`tokenSaleNotifications` jobs | **removed 2026-08-01** | Phase 2 of the slimming roadmap. The `tokensales`/`tokensale_*` tables + entities stay for auditability (no reader, no writer); the five `wizard*` tables were dropped incl. data (`1785628800000-dropWizardDomain`). Do not reintroduce. |
 | Aeternity wallet login, Fuel wallet login (providers, sign/connect components, `@aeternity/aepp-sdk`/`fuels` deps, backend verification, `WalletType` enum values, `wallets` rows) | **removed 2026-08-01** | Phases 3 + 3.5 of the slimming roadmap. Total eradication: no code, no icons, no enum values, and the stored rows are deleted by `1785632400000-dropFuelAeternityWallets` (`down()` restores the enum, not the rows). Every remaining wallet type is EVM-based. Do not reintroduce. |
 | Ecosystems (`EcosystemProvider`, `/e/:ecosystem`, `EcosystemPicker`/`Chip`/`PickerField`/`HomeHeader`, hardcoded partner list, `ecosystemTagList`, partner icons) | **removed 2026-08-01** | Phase 3.5 of the slimming roadmap. **Tags are the replacement** — ecosystems were never anything but strings in `communities.tags`, and the backend never knew the concept. single-segment `/e/:ecosystem` URLs redirect to `/` so old partner links no longer 404 (they land on the unfiltered Home — the tag pre-filter is intentionally gone); existing partner tags live on as ordinary tags (no data cleanup). LUKSO compatibility (UP login, LSP7/LSP8, chain config, `READ_LUKSO`) and every chain tag/icon are untouched. Do not reintroduce. |
+| AI assistant (`AssistantView`, `CommunityLobby/Assistant`, `assistantManager`, `srv/assistant.ts` + `srv/assistant/`, `assistant_dialogs`/`assistant_availability`, the `llama`/`assistant` compose services, the `AI_USE_GPU` compose-merge branches, `openai` + `react-syntax-highlighter` deps) | **removed 2026-08-01** | Phase 4 of the slimming roadmap. It was built in a much earlier phase of AI; **a bot integration takes its place** (bots are core), and keeping both made no sense. The two tables are dropped incl. data by `1785636000000-dropAssistantDomain` (`down()` restores the schema, not the rows). Zero overlap with bot code. `AI_API_KEY`/`AI_USE_GPU` are dead — nothing reads them — but the tracked `docker/.env` placeholder still carries both lines until the maintainer drops them in a separate, deliberate commit (same call as the Phase-2 `SUMSUB_*` lines). Do not reintroduce. |
 
 ## Documentation
 
@@ -120,7 +120,7 @@ Ongoing and planned work lives in `docs/todo/`, one markdown file per workstream
 6. **Never commit secrets.** `docker/.env` is tracked as a placeholder template — keep real values local, never stage them.
 7. **Check the Module Status table** before touching anything — no new code on `removal-pending` modules.
 8. **Blockchain features are optional** — the app must keep working without any blockchain configuration (graceful degradation applies to all optional third-party integrations).
-9. **The backend has multiple entry points** (api, wsapi, memberlist, onchain, mediasoup, jobs, migrateDb, assistant) sharing entities and utilities — check which process your code runs in.
+9. **The backend has multiple entry points** (api, wsapi, memberlist, onchain, mediasoup, jobs, migrateDb) sharing entities and utilities — check which process your code runs in.
 10. **Keep docs truthful** (see Documentation rules above).
 11. **Delete branches after merge.** Once a branch is merged — into `main` or into a
     persistent integration branch such as `develop` — delete it on the remote (and

@@ -1,9 +1,10 @@
 # Backend Inventory (footprint & decommissioning candidates)
 
 > Status: verified against commit 523fceccd, 2026-07-25.
-> Update 2026-08-01: Phases 1 and 2 of ROADMAP_CORE_SLIMMING have been executed —
-> the 8 one-shot jobs, the feeds domain, and the whole token-sale complex (routes,
-> jobs, wizard domain, Sumsub) are **removed** (see the per-row notes below).
+> Update 2026-08-01: Phases 1, 2 and 4 of ROADMAP_CORE_SLIMMING have been executed —
+> the 8 one-shot jobs, the feeds domain, the whole token-sale complex (routes,
+> jobs, wizard domain, Sumsub) and the AI assistant are **removed** (see the
+> per-row notes below).
 
 This is a reference inventory of the backend surface — every HTTP router, every scheduled
 job, every long-running service process, entities that no longer have a code path writing to
@@ -35,7 +36,7 @@ the separate `wsapi` container and is out of scope for this table.
 | `plugins.ts` | `/Plugins` | 668 | 9 | 1 | session; owner/limit checks |
 | `emails.ts` | (none — util module) | 396 | 0 | 0 | n/a (SendGrid composition helpers, imported by other routers) |
 | `cgid.ts` | `/CgId` | 380 | 6 | 0 | session bootstrap + WebAuthn (passkey) verification |
-| `chats.ts` | `/Chat` | 346 | 12 | 0 | session; includes AI-assistant chat/queue routes |
+| `chats.ts` | `/Chat` | 346 → 88 | 12 → 3 | 0 | session; DM routes only. The seven AI-assistant chat/queue routes were removed 2026-08-01. |
 | `search.ts` | `/Search` | 289 | 2 | 0 | public read (session-independent) |
 | `notifications.ts` | `/Notification` | 203 | 9 | 0 | session; VAPID/web-push management |
 | `files.ts` | `/File` | 215 | 1 | 1 | session; `POST /uploadImage` (multipart) + signed-URL fetch |
@@ -119,12 +120,11 @@ distinct Node processes. On the single-node self-host compose
 | WebRTC SFU | `mediasoup` → `node /dist/mediasoup.js` | `mediasoup.ts` (516) + `mediasoup/` (1443) | Media server needs host UDP port range + its own worker processes for voice/video/broadcasts | Only needed if voice/video is used; heavy (CPU + UDP ports) — the largest optional cost |
 | Job runner | `job-runner` → `node /dist/jobs.js` | `jobs.ts` (126) + `jobs/` | Runs the §2 workers off the request path | Keep (but see one-shot dead weight above) |
 | DB migrate | `migrate-db` → `node /dist/migrateDb.js` | `migrateDb.ts` | Runs TypeORM migrations at deploy, then exits | Short-lived — fine |
-| AI assistant queue | `assistant` → `node /dist/assistant.js` | `assistant.ts` (12) + `assistant/` (975) | Drains a Redis-backed LLM request queue to an OpenAI-compatible endpoint | **Not deployed by default** — commented out in `docker-compose.yml:363-380`; `COMMUNITY_ASSISTANT_ENABLED`/`PERSONAL_ASSISTANT_ENABLED = false` (`src/common/config.ts:222`). Requires the GPU compose (`llama`) or an external LLM |
 
 Summary for a minimal single node: `db` + 3× Redis + SeaweedFS (3) + `nginx`/`caddy` +
-`migrate-db` + `api` + `wsapi` + `memberlist` + `job-runner` are the always-on set. `onchain`,
-`mediasoup`, and `assistant` are each only justified by an opt-in feature (blockchain, calls,
-AI respectively) and are the primary candidates for turning off when those features are unused.
+`migrate-db` + `api` + `wsapi` + `memberlist` + `job-runner` are the always-on set. `onchain`
+and `mediasoup` are each only justified by an opt-in feature (blockchain, calls) and are the
+primary candidates for turning off when those features are unused.
 
 ---
 
@@ -162,7 +162,7 @@ erroring.
 | ~~**Sumsub**~~ | KYC / identity verification | **REMOVED 2026-08-01** — router, webhook, helpers, `features.kyc` flag, `SUMSUB_*` env and the `@sumsub/websdk*` packages | — | — |
 | **Twitter / X** | OAuth login + account linking | `srv/api/twitter.ts` (`passport-twitter`), `srv/util/express.ts`, callback in `getRoutes.ts` | secrets `twitter_api_v1_key` + `twitter_api_v1_secret` | Off unless both set (`features.twitterAuth`) |
 | **Farcaster Hub** | Farcaster account verification | `srv/api/util.ts` (`farcasterApi`: `onChainIdRegistryEventByAddress`, `userDataByFid`), `srv/api/accounts.ts` | Hub endpoint (see `util.ts`) | Used by the Farcaster account flow |
-| **OpenAI-compatible LLM** | AI assistant | `srv/assistant/queue.ts` (`new OpenAI({ baseURL, apiKey })`, `http://llama:8000` local or `https://<domain>`) | secret `ai_api_key` / `AI_API_KEY` + assistant service | **Off** (service commented out, assistant flags `false`) |
+| ~~**OpenAI-compatible LLM**~~ | AI assistant | **REMOVED 2026-08-01** — the assistant process, queue, routes and tables, the `llama`/`assistant` compose services and every `AI_USE_GPU` compose-merge branch are gone. `AI_API_KEY`/`AI_USE_GPU` have no reader left, but the tracked `docker/.env` placeholder still carries both lines until the maintainer drops them in a separate, deliberate commit (same call as the Phase-2 `SUMSUB_*` lines) | — | — |
 | **QuikNode** (per-chain RPC) | EVM chain reads for token-gating/staking/sales | `srv/onchain/settings.ts` (per-chain provider URLs), consumed by `onchain` service | secrets/env `quiknode_<chain>` | Off unless configured; LUKSO falls back to the public RPC `rpc.mainnet.lukso.network` |
 | **Infura** (Linea RPC) | Linea chain reads | `srv/onchain/settings.ts` (`INFURA_LINEA`) | secret/env `infura_linea` | Off unless configured |
 | **Giphy** | GIF picker in the message editor | Frontend (`src/util/giphy.ts`, editor components); backend only forwards the key via `instanceConfig.ts` | `CG_GIPHY_API_KEY` | Off unless key set |
@@ -185,7 +185,7 @@ verification above.
 |---|---|---|---|---|
 | 1 | ~~The 8 one-shot backfill jobs in `srv/jobs.ts`~~ **done 2026-08-01** | §2 — all self-guard via `oneshot_jobs` and no-op after first run; no other references | Removes 8 worker spawns + 8 `oneshot_jobs` scans per `job-runner` start; slightly faster/cleaner startup | Low — only affects fresh installs that never ran them; keep them until confident all target instances have run once |
 | 2 | ~~Feeds domain (`Feed`, `FeedItem`, `CommunityFeed` + 4 tables)~~ **done 2026-08-01** (migration `1785542400000-dropFeedsDomain`; the tables turned out to never have been created) | §4 — zero writers **and** zero readers anywhere in `srv/` or the frontend API layer | Removes 3 entities + 4 tables (migration) and dead schema | Low functional (nothing uses it); needs a drop migration and a check that no external tooling reads the tables |
-| 3 | `assistant` service + `assistant/` module | §3/§5 — service commented out in prod compose, flags `false`, not in self-host compose | No always-on cost today; documents that AI is opt-in and requires an LLM backend | Low — already effectively off; this is a documentation/cleanup decision, not a running cost |
+| 3 | ~~`assistant` service + `assistant/` module~~ **done 2026-08-01** (Phase 4) | §3/§5 — service commented out in prod compose, flags `false`, not in self-host compose | removed entirely: process, queue, routes, validators, entities, the two tables (`1785636000000-dropAssistantDomain`), the `llama`/`assistant` compose services and the GPU override | resolved — its role is handed to a future bot integration |
 | 4 | `mediasoup` service | §3 — only needed for voice/video; heaviest optional process (host UDP + workers) | Big resource saving on nodes that do not use calls | Medium — disabling removes all voice/video; gate behind a "calls enabled" toggle |
 | 5 | `onchain` service (+ per-chain RPC integrations) | §3/§5 — inert with no chains configured; app runs without blockchain | Saving on nodes that do not use token-gating/staking/sales | Medium — token-gated roles, staking, and token sales stop working; only for chain-free deployments |
 | 6 | ~~`tokenSaleNotifications` permanent worker~~ **done 2026-08-01** | §2 — already `prod`-only; never spawned on self-host | removed with the whole token-sale complex | None |

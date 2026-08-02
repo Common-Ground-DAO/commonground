@@ -4253,7 +4253,6 @@ __metadata:
     multer: "npm:^1.4.5-lts.1"
     node-cron: "npm:^3.0.2"
     open-graph-scraper: "npm:5.2.3"
-    openai: "npm:^5.3.0"
     passport: "npm:^0.7.0"
     passport-twitter: "npm:^1.0.4"
     pg: "npm:^8.7.1"
@@ -7453,23 +7452,6 @@ __metadata:
     iconv-lite: "npm:^0.6.3"
     validator: "npm:^13.9.0"
   checksum: 10c0/c85400d4d218164ec9b3d3ca20deb9884863ea4e88293dbc10b44e43afeb7f5ff373ee0388da034d0ec60daebd22c996cc2f8c536886d2480966807017ee6f3a
-  languageName: node
-  linkType: hard
-
-"openai@npm:^5.3.0":
-  version: 5.3.0
-  resolution: "openai@npm:5.3.0"
-  peerDependencies:
-    ws: ^8.18.0
-    zod: ^3.23.8
-  peerDependenciesMeta:
-    ws:
-      optional: true
-    zod:
-      optional: true
-  bin:
-    openai: bin/cli
-  checksum: 10c0/6363711a7fb1b905c862de84bcaba03ff5a94cddce4ea5b1393bc1bb73fde70b633bd8e142f95cd27567ad78d34a75cfefebecf1f0bf1bdc649504cf151cfb75
   languageName: node
   linkType: hard
 

@@ -1,6 +1,6 @@
 # Common Ground Backend Documentation
 
-> Status: verified against commit 5ec4952e6, 2026-08-01.
+> Status: verified against commit a3ab0dcc4, 2026-08-01.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -19,7 +19,6 @@ Optional third-party services (email, Twitter auth, blockchain, staking) degrade
 5. [Validation](#5-validation)
 6. [Background Jobs](#6-background-jobs)
 7. [Utilities](#7-utilities)
-8. [AI Assistant](#8-ai-assistant)
 
 ---
 
@@ -53,7 +52,7 @@ Shared between frontend and backend. Contains **no secrets**. Key settings:
 - `PREMIUM` -- Pricing tiers for community and user premium features (Free, Basic, Pro, Enterprise for communities; Supporter 1/2 for users)
 - URL path segments (`URL_COMMUNITY = 'c'`, `URL_USER = 'u'`, `URL_ARTICLE = 'article'`, etc.)
 - Various limits: `MESSAGE_MAX_CHARS = 2000`, `MAX_LINKED_ADDRESSES = 5`, `IMAGE_UPLOAD_SIZE_LIMIT = 8MB`, etc.
-- Feature flags: `COMMUNITY_ASSISTANT_ENABLED`, `PERSONAL_ASSISTANT_ENABLED`, etc.
+- Feature flags: `NOTIFICATIONS_PAGE_ENABLED`, `TOKEN_CREATION_ENABLED`, etc.
 - `COMMUNITY_CONTRACT` -- Address of the on-chain community NFT contract (differs per deployment)
 
 ---
@@ -265,13 +264,6 @@ A subset of message routes is also reachable over the Bot API v1 surface (see be
 - `/startChat` -- Start a direct message chat
 - `/closeChat` -- Close/delete a chat
 - `/getChats` -- Get user's chats
-- `/getOwnAssistantChats` -- Get AI assistant chat list
-- `/loadAssistantChat` -- Load an AI assistant chat conversation
-- `/startAssistantChat` -- Start a new AI assistant conversation
-- `/continueAssistantChat` -- Send a follow-up message to the AI assistant
-- `/deleteAssistantChat` -- Delete an AI chat
-- `/getAssistantQueueData` -- Get current queue position/status
-- `/getAssistantAvailability` -- Get which AI models are available
 
 ### `srv/api/notifications.ts` -- Notification Routes
 
@@ -794,24 +786,6 @@ records. No code writes them any more, and no route reads them.
 - `accruedSpark` (bigint, default 0) -- running total of Spark credited for this position
 - Unique on `(chain, contractAddress, walletAddress, positionId)` and on `(chain, stakeTxHash, stakeLogIndex)` so at-least-once event delivery yields exactly-once effects.
 
-### Assistant Domain
-
-**`AssistantDialog`** (`srv/entities/assistant.ts`, table: `assistant_dialogs`)
-- `id` (UUID, PK)
-- `request` (jsonb) -- full conversation state
-- `userId` -> User
-- `communityId` -> Community (nullable)
-- `title` (varchar 255, nullable)
-- `model` (varchar 255) -- AI model name
-
-**`AssistantModel`** (table: `assistant_availability`)
-- `modelName` (varchar 255, PK)
-- `title` (varchar 255)
-- `isAvailable` (boolean)
-- `domain` (varchar 255)
-- `order` (integer)
-- `extraData` (jsonb, nullable)
-
 ---
 
 ## 4. Repositories
@@ -1001,7 +975,6 @@ Reusable Joi schemas:
 - `Tag` / `Tags` -- Tag strings, max 50 unique tags
 - `Emoji` -- Unicode emoji
 - `Password`, `Secret`, `DateString`, `EIP712Signature`
-- `Assistant.ModelName` -- Valid AI model names
 
 ### Content Validators (`srv/validators/content.ts`)
 
@@ -1188,102 +1161,3 @@ Parses the staking feature configuration from env vars (`STAKING_CHAIN`, `STAKIN
 ### `srv/util/instanceConfig.ts` -- Instance Identity / Capability Flags
 
 Builds the `window.__CG_INSTANCE__` script tag injected into served `index.html` pages (share links / social previews). Declares the deployment, app/CGID URLs, active chains, and a `features` map derived from which credentials this server actually has (email, twitterAuth) so the frontend can hide features that would only fail. Optional keys (reCAPTCHA site key, Giphy key, WalletConnect project id) are included when configured.
-
----
-
-## 8. AI Assistant
-
-The AI assistant system provides community-scoped and personal chat assistants powered by self-hosted open-source LLMs.
-
-### Architecture Overview
-
-```
-User request -> API (chats.ts) -> AssistantQueue (queue.ts) -> OpenAI-compatible API -> LLM
-                                       |
-                                  Redis Queue
-                                       |
-                                  Queue Server (assistant.ts entrypoint)
-```
-
-### Entry Point: `srv/assistant.ts`
-
-Starts the queued assistant server as a separate process. Handles SIGTERM for graceful shutdown.
-
-### Queue System: `srv/assistant/queue.ts`
-
-The `AssistantQueue` class manages a priority queue backed by Redis sorted sets.
-
-**Models supported:**
-- `gemma3_1-27b-it`
-- `mistral-small-3.1-24b-instruct`
-- `qwen2_5-32b-instruct`
-- `qwen3_14b-instruct`
-
-**Priority levels:** 0-3 (0 = highest). Priority is determined by user premium status:
-- Gold (SUPPORTER_2): priority 0 (default, highest)
-- Silver (SUPPORTER_1): priority 1
-- Free: priority 2
-
-Note: The `startAssistantChat` and `continueAssistantChat` routes use these priority values. Priority 3 is technically possible per the type system but is not currently assigned to any user tier.
-
-**Queue configuration:**
-- `MAX_QUEUE_LENGTH = 100`
-- `maxRequeues = 50` -- max times an item can be requeued
-- Uses Redis sorted sets keyed by `Assistant_SortedSet_<priority>_<model>`
-- Queue data stored in Redis hash `Assistant_Queue_Data`
-
-**Key methods:**
-- `addQueueItem({request, dialogId, userId, deviceId, priority})` -- Add to queue
-- `getNextItem(model)` -- Pop highest-priority item
-- `handleQueuedRequests(model)` -- Process loop for a model
-- `cancelQueueItem(dialogId, userId)` -- Cancel a pending request
-- `getQueuePosition(dialogId)` -- Get queue position
-- `startQueuedAssistantServer()` / `stopQueuedAssistantServer()` -- Lifecycle
-
-**Processing:**
-- Uses OpenAI-compatible API (local or remote depending on deployment)
-- Supports function calling (tool use) for channel message retrieval
-- Streams responses back to clients via Socket.IO events
-- Updates dialog state in the database after each exchange
-
-**Available assistants are tracked in the `assistant_availability` database table** and periodically refreshed.
-
-### Templates: `srv/assistant/templates/`
-
-**`index.ts`** -- Exports two template types: `community_v1` and `user_v1`.
-
-**`common.ts`** -- Shared system prompt content describing the Common Ground platform.
-
-**`community.ts`** -- Community assistant template:
-- System message includes: platform info, community name, description, and channel list
-- Has tool access: `getRecentChannelMessages`, `getChannelMessagesRange`
-- Responds in the user's language
-
-**`user.ts`** -- Personal assistant template:
-- System message includes: platform info, user's display name
-- No tool access (simpler assistant)
-
-**`functions.ts`** -- Tool definitions (OpenAI function calling format):
-- `getRecentChannelMessages(channelIndex, limit)` -- Get recent messages from a community channel
-- `getChannelMessagesRange(channelIndex, startDate, endDate)` -- Get messages in a date range
-
-### Data Layer: `srv/assistant/data/`
-
-**`dialog.ts`** -- CRUD for assistant dialog entries:
-- `createDialogItem`, `updateDialogItem`, `getDialogItem`, `getDialogList`, `deleteDialogItem`
-
-**`assistant.ts`** -- `getModelAvailability()` -- queries available models from `assistant_availability` table.
-
-**`community.ts`** -- `getCommunityExtraData(userId, communityId)` -- fetches community title, description, and accessible channels for the assistant context. Only includes channels the user has `CHANNEL_READ` permission for.
-
-**`user.ts`**:
-- `userPremiumState(userId)` -- Returns `'gold'`, `'silver'`, or `'free'` based on active premium features
-- `getUserExtraData(userId)` -- Gets display name for assistant personalization
-
-### Helpers: `srv/assistant/helpers.ts`
-
-`messageToPlainText(body)` -- Converts structured message body (with types: text, mention, newline, tag, link, richTextLink, ticker) into plain text for LLM consumption.
-
-### Message Data: `srv/assistant/data/messages.ts`
-
-Loads channel messages for function calling. Converts structured messages to plain text summaries that the LLM can process.

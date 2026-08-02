@@ -19,9 +19,8 @@ import { DragDropContext, Draggable, DropResult, Droppable } from "react-beautif
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import data from "data";
 import Scrollable from 'components/molecules/Scrollable/Scrollable';
-import { Bell, Brain, ChatsTeardrop, CoinVertical, Compass, HouseSimple, Plus, Storefront } from '@phosphor-icons/react';
+import { Bell, ChatsTeardrop, CoinVertical, Compass, HouseSimple, Plus, Storefront } from '@phosphor-icons/react';
 import { isActiveButton } from 'components/organisms/Menu/ExpandedMenu/ExpandedMenu';
-import config from 'common/config';
 
 type Properties = {
   isExpanded: boolean;
@@ -184,15 +183,6 @@ export default function OwnCommunitiesBrowser(props: Properties) {
                   navigate(getUrl({ type: 'chats' }));
                 }}
               />
-              {config.PERSONAL_ASSISTANT_ENABLED && <MobileMenuOption
-                icon={<Brain weight='duotone' className='h-6 w-6' />}
-                text='Assistant'
-                active={isActiveButton(window.location.pathname, getUrl({type: 'assistant'}))}
-                onClick={() => {
-                  setCommunitySidebarIsOpen(false);
-                  navigate(getUrl({ type: 'assistant' }));
-                }}
-              />}
               <MobileMenuOption
                 icon={<Bell weight='duotone' className='h-6 w-6' />}
                 text='Notifications'

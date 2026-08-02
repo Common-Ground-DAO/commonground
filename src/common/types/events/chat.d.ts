@@ -20,22 +20,6 @@ declare namespace Events {
       data: Pick<Models.Chat.ChatFromApi, "id">;
     });
 
-    type Assistant = {
-      type: 'cliAssistantEvent';
-      dialogId: string;
-      model: Assistant.ModelName;
-      data: {
-        type: 'textChunk';
-        text: string;
-      } | {
-        type: 'functionCall';
-        text: string;
-      };
-    };
-
-    type Event = (
-      Chat |
-      Assistant
-    );
+    type Event = Chat;
   }
 }

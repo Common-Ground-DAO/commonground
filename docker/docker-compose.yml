@@ -334,53 +334,6 @@ services:
     stop_grace_period: 5s
     restart: unless-stopped
 
-  # llama:
-  #   image: ghcr.io/ggml-org/llama.cpp:server-cuda-b5618
-  #   command: >
-  #     --hf-repo unsloth/Qwen3-4B-GGUF:q4_k_m
-  #     --port 8000
-  #     --threads 6
-  #     --ctx-size 4096
-  #     --flash-attn
-  #     --batch-size 512
-  #     --gpu-layers 999
-  #     --host 0.0.0.0
-  #     --cache-type-k q8_0
-  #     --cache-type-v q8_0
-  #     --jinja
-  #     --reasoning-format deepseek
-  #     --alias "Qwen3 4B"
-  #     --api-key ${AI_API_KEY}
-  #   environment:
-  #     - HOME=/data
-  #   networks:
-  #     - cryptogram
-  #   volumes:
-  #     - ./llama/data:/data
-  #   restart: unless-stopped
-  #   user: "${BUILDER_UID}"
-
-  # assistant:
-  #   image: cryptogram/backend
-  #   environment: 
-  #     - DB_TYPE=writer
-  #     - PG_PASSWORD=${PG_WRITER_PASSWORD}
-  #     - REDIS_PASSWORD=${REDIS_PASSWORD}
-  #     - REDIS_SECRET=${REDIS_SECRET}
-  #     - DEPLOYMENT=${DEPLOYMENT}
-  #     - BASE_URL=${BASE_URL}
-  #     - CGID_URL=${BASE_URL}/index_cgid.html
-  #     - AI_API_KEY=${AI_API_KEY}
-  #   depends_on:
-  #     - db
-  #     - redis-socketio
-  #     - redis-data
-  #   networks:
-  #     - cryptogram
-  #   command: ["node", "/dist/assistant.js"]
-  #   stop_grace_period: 1m
-  #   restart: unless-stopped
-
   # pgadmin:
   #   container_name: pgadmin4_container
   #   image: dpage/pgadmin4:5.5

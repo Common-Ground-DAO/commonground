@@ -1,4 +1,4 @@
-> Status: verified against commit a3c3f7608, 2026-08-01
+> Status: verified against commit 6c0befd39, 2026-08-01
 
 # Common Ground Infrastructure Documentation
 
@@ -7,7 +7,7 @@ This document covers the full infrastructure stack for Common Ground, a Discord 
 There are two deployment shapes, each with its own compose file:
 
 - **Dev / internal stack** — `docker/docker-compose.yml`, driven by `run.sh`. Includes a local Hardhat dev chain and test-contract deployment; TLS is self-signed; `DEPLOYMENT` is configurable.
-- **Self-hosted single-server production** — `docker/docker-compose.selfhost.yml`, driven by `docker/selfhost/selfhost.sh`. Caddy terminates real Let's Encrypt TLS, `DEPLOYMENT=prod` on any domain, no dev chain, secrets are generated. See [section 8](#8-self-hosted-single-server-deployment).
+- **Self-hosted single-server production** — `docker/docker-compose.selfhost.yml`, driven by `docker/selfhost/selfhost.sh`. Caddy terminates real Let's Encrypt TLS, `DEPLOYMENT=prod` on any domain, no dev chain, secrets are generated. See [section 7](#7-self-hosted-single-server-deployment).
 
 ---
 
@@ -19,8 +19,7 @@ There are two deployment shapes, each with its own compose file:
 4. [Environment Variables](#4-environment-variables)
 5. [CI/CD Pipelines](#5-cicd-pipelines)
 6. [Developer Workflow](#6-developer-workflow)
-7. [GPU Support](#7-gpu-support-for-ai-features)
-8. [Self-Hosted Single-Server Deployment](#8-self-hosted-single-server-deployment)
+7. [Self-Hosted Single-Server Deployment](#7-self-hosted-single-server-deployment)
 
 ---
 
@@ -149,8 +148,6 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 
 | Service | Purpose |
 |---------|---------|
-| `llama` | Local LLM inference server (llama.cpp with Qwen3-4B, CUDA GPU). See [GPU Support](#7-gpu-support-for-ai-features). |
-| `assistant` | AI assistant backend (`node /dist/assistant.js`). Connects to `llama` for AI-powered community features. |
 | `pgadmin` | PostgreSQL admin web UI (dpage/pgadmin4:5.5). Port `127.0.0.1:8080:80`. |
 | `redis-blockscout` | Redis cache for the Blockscout explorer. |
 | `blockscout` | Blockchain explorer for the local Hardhat chain. Port `127.0.0.1:4000:4000`. |
@@ -230,8 +227,6 @@ Rebuilds only the frontend and nginx:
 3. Run `yarn craco --openssl-legacy-provider build` with `DEPLOYMENT=prod`, `GENERATE_SOURCEMAP=true`, `IMAGE_INLINE_SIZE_LIMIT=5000`, and **`NODE_OPTIONS=--max-old-space-size=4096`** (added to stop the frontend build running out of memory on small machines).
 4. `rsync` the build output into `nginx/dist/`, then `docker compose up -d --no-deps --build nginx` and restart nginx.
 
-This script uses a plain `docker compose` wrapper and does **not** merge the GPU override.
-
 ### Backend Docker Image Build (Two-Stage for Dev)
 
 - **Stage 0 (`Dockerfile_dev_stage_0`):** `FROM node:20.11-bookworm`. Installs system deps, copies `package.json` / `yarn.lock` / `.yarnrc.yml`, runs `yarn`. Cached; rebuilt only when dependencies change.
@@ -249,7 +244,7 @@ There are three nginx configs, one per build target:
 |---|---|---|
 | `nginx_dev.conf` | `Dockerfile_dev` | dev stack (`docker-compose.yml`) |
 | `nginx.conf` | `Dockerfile` | CI/CD (staging/prod, `app.cg`) |
-| `nginx_selfhost.conf` | `Dockerfile_selfhost` | self-host stack ([section 8](#8-self-hosted-single-server-deployment)) |
+| `nginx_selfhost.conf` | `Dockerfile_selfhost` | self-host stack ([section 7](#7-self-hosted-single-server-deployment)) |
 
 ### Development: `docker/nginx/nginx_dev.conf`
 
@@ -290,7 +285,7 @@ Placeholders `{SERVER_NAME}` and `{CGID_SERVER_NAME}` are substituted at Docker 
 
 **Production domains:** main app `app.cg` (prod) / `staging.app.cg` (staging); CG ID wallet `id.app.cg` / `id.staging.app.cg`.
 
-The self-host config (`nginx_selfhost.conf`) is described in [section 8](#8-self-hosted-single-server-deployment).
+The self-host config (`nginx_selfhost.conf`) is described in [section 7](#7-self-hosted-single-server-deployment).
 
 ---
 
@@ -313,7 +308,6 @@ Per `AGENTS.md`, `docker/.env` is tracked in the repo **as a placeholder templat
 | `S3_SECRET` | Secret key for the SeaweedFS S3 API / presigned-URL signing. |
 | `BUILDER_UID` / `BUILDER_GID` | Host UID/GID for the builder container (avoids mounted-volume permission issues). |
 | `RECALCULATE_BALANCES_AND_ROLES` | If `true`, recomputes all token balances/roles on `onchain` startup. |
-| `AI_API_KEY` / `AI_USE_GPU` | Local-LLM key; GPU toggle (merges `docker-compose.gpu.yml`). |
 | `MEDIASOUP_DISABLE_LIBURING` | Disables io_uring in mediasoup (workaround for some kernels/containers). |
 | `LOCAL_CERTIFICATE_IP` | IP baked into self-signed certs. Empty = no certs generated; set a LAN IP for multi-device testing. |
 | `MEDIASOUP_ANNOUNCED_IP` | IP mediasoup advertises for WebRTC ICE candidates; must be client-reachable. |
@@ -346,7 +340,7 @@ Isomorphic (shared frontend/backend). Must **never contain secrets**.
 - **`DEPLOYMENT` detection:** in the browser, from `window.location.href`; in Node.js, from `process.env.DEPLOYMENT`; falls back to `prod`.
 - **Active chains, community contract addresses, feature flags** vary by deployment.
 
-Self-hosted instances additionally declare their identity at serve time via `window.__CG_INSTANCE__` (see `src/common/instance.ts` and [section 8](#8-self-hosted-single-server-deployment)), which overrides the domain-based `DEPLOYMENT` guess.
+Self-hosted instances additionally declare their identity at serve time via `window.__CG_INSTANCE__` (see `src/common/instance.ts` and [section 7](#7-self-hosted-single-server-deployment)), which overrides the domain-based `DEPLOYMENT` guess.
 
 ---
 
@@ -381,7 +375,7 @@ Shared template that deletes the build work directory, `condition: always()`.
 
 ### Entry Point: `run.sh`
 
-`run.sh` (project root) is the primary dev interface. It sources `docker/.env`, changes to `docker/`, and dispatches to sub-commands via a `docker_compose` wrapper that merges `docker-compose.gpu.yml` when `AI_USE_GPU=true` (the `updateFrontend.sh` path uses a plain wrapper without GPU support).
+`run.sh` (project root) is the primary dev interface. It sources `docker/.env`, changes to `docker/`, and dispatches to sub-commands via a `docker_compose` wrapper around `docker-compose.yml`.
 
 ### Available Commands
 
@@ -409,48 +403,7 @@ Shared template that deletes the build work directory, `condition: always()`.
 
 ---
 
-## 7. GPU Support for AI Features
-
-**File:** `docker/docker-compose.gpu.yml`
-
-A Compose override that adds GPU support to the `llama` service. Merged automatically when `AI_USE_GPU=true`.
-
-### What It Does
-
-Adds an NVIDIA GPU reservation to `llama`:
-
-```yaml
-deploy:
-  resources:
-    reservations:
-      devices:
-      - capabilities: [gpu]
-```
-
-### The `llama` Service (Commented Out in Main Compose)
-
-When enabled:
-- **Image:** `ghcr.io/ggml-org/llama.cpp:server-cuda-b5618`
-- **Model:** `unsloth/Qwen3-4B-GGUF` (Q4_K_M), downloaded from Hugging Face on first start
-- **Configuration:** 6 threads, 4096 context, flash attention, 512 batch, all layers on GPU (`--gpu-layers 999`), Q8_0 KV cache, Jinja templating, DeepSeek reasoning format
-- **API:** OpenAI-compatible on port 8000 (internal), secured with `AI_API_KEY`
-- **Volume:** `./llama/data:/data` (model cache, set as `$HOME`)
-
-### The `assistant` Service (Commented Out)
-
-A backend service (`node /dist/assistant.js`) that connects to `llama` for AI-powered community features, authenticating with `AI_API_KEY`.
-
-### Enabling AI Features
-
-1. Set `AI_USE_GPU=true` in `docker/.env` (requires NVIDIA GPU + NVIDIA Container Toolkit).
-2. Uncomment the `llama` and `assistant` service blocks in `docker/docker-compose.yml`.
-3. Run `./run.sh build_full` or `./run.sh update_backend`.
-
-Without a GPU the GPU override is not applied; `llama` can run on CPU (remove `--flash-attn`) but is much slower.
-
----
-
-## 8. Self-Hosted Single-Server Deployment
+## 7. Self-Hosted Single-Server Deployment
 
 **Files:** `docker/docker-compose.selfhost.yml`, `docker/SELFHOST.md`, `docker/selfhost/` (`init.sh`, `selfhost.sh`, `Caddyfile`), `docker/nginx/Dockerfile_selfhost`, `docker/nginx/nginx_selfhost.conf`, `docker/nginx/inject-instance-config.sh`.
 

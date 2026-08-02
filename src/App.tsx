@@ -81,7 +81,6 @@ import { PluginIframeProvider } from 'context/PluginIframeProvider';
 import "@farcaster/auth-kit/styles.css";
 import { AuthKitProvider } from "@farcaster/auth-kit";
 import UserInfoManager from 'components/atoms/UserInfoManager/UserInfoManager';
-import AssistantView from 'views/AssistantView/AssistantView';
 import { PluginDetailsModalProvider } from 'context/PluginDetailsModalProvider';
 import { IsolationModeProvider } from 'context/IsolationModeProvider';
 import { ReportModalProvider } from 'context/ReportModalProvider';
@@ -211,7 +210,6 @@ const RoutedContent = () => {
       <Route path={removeInitialSlash(getUrl({ type: 'notifications' }))} element={<NotificationsBrowser />} />
       <Route path={`${removeInitialSlash(getUrl({ type: 'notifications' }))}:notificationShortUuid/`} element={<NotificationsBrowser />} />
       <Route path="learn-more" element={<LearnMore />} />
-      <Route path={removeInitialSlash(getUrl({ type: 'assistant' }))} element={<AssistantView />} />
       <Route path={`${config.URL_CHATS}/:chatShortUuid/`} element={<ChatView />} />
       <Route path={removeInitialSlash(getUrl({ type: 'profile-settings' }))} element={<ProfileManagementView />} />
       <Route path={removeInitialSlash(getUrl({ type: 'profile-settings-account-and-wallets' }))} element={<WalletManagementView />} />

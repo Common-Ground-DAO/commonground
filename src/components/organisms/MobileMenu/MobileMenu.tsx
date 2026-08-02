@@ -22,7 +22,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import data from "data";
 import { getUrl } from 'common/util';
 import { Bars3Icon } from "@heroicons/react/24/solid";
-import { Bell, Brain, ChatsTeardrop, Compass, Storefront } from "@phosphor-icons/react";
+import { Bell, ChatsTeardrop, Compass, Storefront } from "@phosphor-icons/react";
 
 export default function MobileMenu() {
   const navigate = useNavigate();
@@ -184,14 +184,6 @@ export default function MobileMenu() {
       disabled={!ownUser?.id}
     />
   ), [unreadConversations, ownUser?.id, isActiveButton]);
-  const assistantBtn = useMemo(() => (
-    <MenuButton
-      icon={<Brain weight="duotone" className="w-6 h-6" />}
-      isActive={isActiveButton(getUrl({ type: 'assistant' }))}
-      onClick={() => navigate(getUrl({ type: 'assistant' }))}
-      disabled={!ownUser?.id}
-    />
-  ), [ownUser?.id, isActiveButton]);
   const notificationBtn = useMemo(() => (
     <MenuButton
       icon={<Bell weight="duotone" className="w-6 h-6"/>}
@@ -214,7 +206,6 @@ export default function MobileMenu() {
       {browseBtn}
       {appStoreBtn}
       {chatBtn}
-      {config.PERSONAL_ASSISTANT_ENABLED && assistantBtn}
       {notificationBtn}
       {profileBtn}
     </div>

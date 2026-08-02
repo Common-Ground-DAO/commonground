@@ -1,6 +1,6 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit 5ec4952e6, 2026-08-01
+> Status: verified against commit a3ab0dcc4, 2026-08-01
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -318,12 +318,6 @@ Views are full pages composed of templates/organisms. They live in `src/views/` 
 | `WalletManagementView` | `/settings/account-and-wallets/` | Manage wallets and account |
 | `AudioDevicesManagementView` | `/settings/calls/` | Audio device settings |
 
-### AI Assistant
-
-| View | Route | Purpose |
-|---|---|---|
-| `AssistantView` | `/assistant/` or `.../assistant/` | AI chat assistant (global or community-scoped) |
-
 ### Notifications
 
 | View | Route | Purpose |
@@ -538,7 +532,7 @@ All API communication goes through connector classes that extend `BaseApiConnect
 | `communityApi` | `community.ts` | Community | `getCommunityList`, `getCommunityDetailView`, `joinCommunity`, `leaveCommunity`, `createCommunity`, `updateCommunity`, CRUD for areas/channels/roles, article CRUD, event CRUD, call management, newsletter management, token management |
 | `messageApi` | `messages.ts` | Messages | `createMessage`, `editMessage`, `deleteMessage`, `loadMessages`, `loadUpdates`, `setReaction`, `unsetReaction`, `setChannelLastRead`, `getUrlPreview` |
 | `userApi` | `user.ts` | User | Login, logout, user CRUD, wallet operations, profile management |
-| `chatApi` | `chat.ts` | Chat/DM | Chat creation, message sending, assistant interactions |
+| `chatApi` | `chat.ts` | Chat/DM | `startChat`, `closeChat`, `getChats` |
 | `fileApi` | `file.ts` | Files | File upload, signed URL generation |
 | `notificationsApi` | `notifications.ts` | Notifications | Notification retrieval, read status, web push subscription |
 | `searchApi` | `search.ts` | Search | Global search |
@@ -607,7 +601,6 @@ Thin wrapper classes that coordinate between API connectors and databases.
 | Manager | File | Purpose |
 |---|---|---|
 | `CommunityManager` | `communityManager.ts` | Wraps `communityApi.getCommunityDetailView` with Dexie promise integration. |
-| `AssistantManager` | `assistantManager.ts` | Manages AI assistant state. Handles real-time assistant events via `connectionManager.registerClientEventHandler('cliAssistantEvent')`. Coordinates across tabs via `BroadcastChannel('cg_assistant')`. Tracks dialog status (WAITING/PROCESSING/FINISHED). |
 | `CommunityArticleManager` | `communityArticleManager.ts` | Community article operations. |
 | `UserArticleManager` | `userArticleManager.ts` | User blog/article operations. |
 
@@ -662,7 +655,6 @@ Key route structure (paths are derived from `getUrl(...)` / `config.URL_*`):
 /chats/:chatShortUuid/        -> ChatView
 /notifications/               -> NotificationsBrowser
 /notifications/:notificationShortUuid/ -> NotificationsBrowser
-/assistant/                   -> AssistantView
 /learn-more                   -> LearnMore
 /settings/profile/            -> ProfileManagementView
 /settings/account-and-wallets/ -> WalletManagementView
@@ -696,7 +688,6 @@ roles/                        -> RolesView
 members/                      -> MemberManagementView
 member-applications/          -> MemberApplicationView
 events/                       -> EventsView
-assistant/                    -> AssistantView (community-scoped)
 token/                        -> CommunityTokenView
 call/:callId/                 -> CallPageView
 article/:articleUri/          -> ArticleView
@@ -853,9 +844,7 @@ The app coordinates behavior across multiple open tabs. A single service worker 
 
 3. **Channel data.** The `ChannelDatabaseManager` uses `BroadcastChannel('channelDatabaseManager_events')` (and per-database `chunkedDatabase-<name>` channels) to coordinate channel subscriptions and chunk updates across tabs.
 
-4. **Assistant.** `AssistantManager` coordinates dialog state across tabs via `BroadcastChannel('cg_assistant')`.
-
-5. **localStorage.** Used for cross-tab state sync (`StorageEvent` listener) for current user, last WebSocket connection time, and various preferences.
+4. **localStorage.** Used for cross-tab state sync (`StorageEvent` listener) for current user, last WebSocket connection time, and various preferences.
 
 ---
 

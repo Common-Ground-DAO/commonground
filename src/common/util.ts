@@ -23,8 +23,6 @@ type GetUrlOptions = {
   type: 'chat';
   chat: Pick<Models.Chat.Chat, "id">;
 } | {
-  type: 'assistant';
-} | {
   type: 'notifications';
 } | {
   type: 'notification';
@@ -40,7 +38,6 @@ type GetUrlOptions = {
   'community-members' |
   'community-roles' |
   'community-events' |
-  'community-assistant' |
   'community-token' |
   'community-settings' |
   'community-settings-info' |
@@ -118,9 +115,6 @@ const Helper: Record<GetUrlOptions['type'], (options: any) => string> = {
   'chat': (options: GetUrlOptions & { type: 'chat' }) => {
     return `/${config.URL_CHATS}/${t.fromUUID(options.chat.id)}/`;
   },
-  'assistant': (options: GetUrlOptions & { type: 'assistant' }) => {
-    return `/assistant/`;
-  },
   'notifications': (options: GetUrlOptions & { type: 'notifications' }) => {
     return `/${config.URL_NOTIFICATIONS}/`;
   },
@@ -138,9 +132,6 @@ const Helper: Record<GetUrlOptions['type'], (options: any) => string> = {
   },
   'community-events': (options: GetUrlOptions & { type: 'community-events' }) => {
     return `/${config.URL_COMMUNITY}/${options.community.url}/events/`;
-  },
-  'community-assistant': (options: GetUrlOptions & { type: 'community-assistant' }) => {
-    return `/${config.URL_COMMUNITY}/${options.community.url}/assistant/`;
   },
   'community-token': (options: GetUrlOptions & { type: 'community-token' }) => {
     return `/${config.URL_COMMUNITY}/${options.community.url}/token/`;

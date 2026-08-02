@@ -6,8 +6,8 @@ import React from 'react'
 import './RolePermissionUnit.css';
 import { PermissionType } from 'components/molecules/RolePermissionToggle/RolePermissionToggle';
 import { ChevronDownIcon } from '@heroicons/react/20/solid';
-import { ReactComponent as PreviewIcon } from '../../../components/atoms/icons/20/Preview.svg';
-import { ReactComponent as HammerIcon } from '../../../components/atoms/icons/20/HammerIcon.svg';
+import PreviewIcon from '../../../components/atoms/icons/20/Preview.svg?react';
+import HammerIcon from '../../../components/atoms/icons/20/HammerIcon.svg?react';
 import { XMarkIcon, EyeIcon, CheckIcon } from '@heroicons/react/20/solid';
 
 type Props = {

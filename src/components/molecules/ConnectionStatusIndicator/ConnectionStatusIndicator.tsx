@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { ReactComponent as SyncIcon } from '../../../components/atoms/icons/16/Sync.svg';
+import SyncIcon from '../../../components/atoms/icons/16/Sync.svg?react';
 
 import "./ConnectionStatusIndicator.css";
 import { useConnectionContext } from '../../../context/ConnectionProvider';

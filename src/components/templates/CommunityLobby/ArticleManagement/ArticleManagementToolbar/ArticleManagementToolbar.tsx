@@ -10,9 +10,9 @@ import { useSafeCommunityContext } from "context/CommunityProvider";
 import Button from "../../../../../components/atoms/Button/Button";
 import Modal from "../../../../atoms/Modal/Modal";
 
-import { ReactComponent as CheckmarkIcon } from '../../../../../components/atoms/icons/16/Checkmark.svg';
-import { ReactComponent as CloseIcon } from '../../../../../components/atoms/icons/16/Close.svg';
-import { ReactComponent as CloseIcon1 } from '../../../../../components/atoms/icons/16/Close-1.svg';
+import CheckmarkIcon from '../../../../../components/atoms/icons/16/Checkmark.svg?react';
+import CloseIcon from '../../../../../components/atoms/icons/16/Close.svg?react';
+import CloseIcon1 from '../../../../../components/atoms/icons/16/Close-1.svg?react';
 import { Popover } from "components/atoms/Tooltip/Tooltip";
 import OptionToggle from "components/molecules/OptionToggle/OptionToggle";
 import RolePermissionToggle, { PermissionType } from "components/molecules/RolePermissionToggle/RolePermissionToggle";

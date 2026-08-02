@@ -14,7 +14,7 @@ import { Trash } from '@phosphor-icons/react';
 import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import { calculateAgeString } from 'views/TokenSale/TokenSale';
-import { ReactComponent as ReplyIcon } from "../../atoms/icons/20/Reply.svg";
+import ReplyIcon from "../../atoms/icons/20/Reply.svg?react";
 import data from 'data';
 import ReplyContentRenderer from '../Message/ReplyContentRenderer/ReplyContentRenderer';
 import MessageAttachments from '../Message/MessageAttachments/MessageAttachments';

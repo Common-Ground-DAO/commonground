@@ -4,7 +4,7 @@
 
 import { useNavigate } from "react-router-dom";
 
-import { ReactComponent as ChevronLeftIcon } from '../../components/atoms/icons/16/ChevronLeft.svg';
+import ChevronLeftIcon from '../../components/atoms/icons/16/ChevronLeft.svg?react';
 
 import ChatsMenu from "../../components/organisms/ChatsMenu/ChatsMenu";
 import SectionEndGroups from "../../components/molecules/SectionEndGroups/SectionEndGroups";

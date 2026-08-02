@@ -7,7 +7,7 @@ import { useConnectionContext } from "../../context/ConnectionProvider";
 
 import Scrollable from '../../components/molecules/Scrollable/Scrollable';
 
-import { ReactComponent as ColoredLogoIcon } from '../../components/atoms/icons/misc/Logo/logo.svg';
+import ColoredLogoIcon from '../../components/atoms/icons/misc/Logo/logo.svg?react';
 
 export default function CgUpdate(props: { view: "reload" | "releaseNotes", finishInstallation?: () => Promise<void> }) {
   const { view, finishInstallation } = props;

@@ -4,7 +4,7 @@
 
 import React from 'react'
 import './LinkPreview.css';
-import { ReactComponent as SpinnerIcon } from '../../atoms/icons/16/Spinner.svg';
+import SpinnerIcon from '../../atoms/icons/16/Spinner.svg?react';
 
 const ExternalLinkPreviewSkeleton = () => {
   return (<div className='flex items-start gap-4 p-2 relative external-link-preview'>

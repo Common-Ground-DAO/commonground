@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import Button from "../../atoms/Button/Button";
-import { ReactComponent as AddEmojiIcon } from '../../../components/atoms/icons/20/AddEmoji.svg';
+import AddEmojiIcon from '../../../components/atoms/icons/20/AddEmoji.svg?react';
 import "./EmojiPickerTooltip.css";
 import ScreenAwarePopover from "components/atoms/ScreenAwarePopover/ScreenAwarePopover";
 import EmojiPicker, { EmojiClickData, EmojiStyle, Theme } from "emoji-picker-react";

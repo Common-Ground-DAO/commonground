@@ -4,7 +4,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './CommunityJoinedModal.css';
-import { ReactComponent as RoleIcon } from '../../atoms/icons/20/Role.svg';
+import RoleIcon from '../../atoms/icons/20/Role.svg?react';
 import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal';
 import confetti from 'canvas-confetti';
 import Button from 'components/atoms/Button/Button';

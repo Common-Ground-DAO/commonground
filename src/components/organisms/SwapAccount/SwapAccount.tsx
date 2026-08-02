@@ -14,9 +14,9 @@ import KeyPhrase from "../UserOnboarding/KeyPhrase/KeyPhrase";
 import TextAreaField from "../../molecules/inputs/TextAreaField/TextAreaField";
 import UserSettingsHeader from "../../../components/molecules/UserSettingsHeader/UserSettingsHeader";
 
-import { ReactComponent as ClipboardIcon } from '../../../components/atoms/icons/20/Clipboard.svg';
-import { ReactComponent as EyeIcon } from '../../../components/atoms/icons/16/Eye.svg';
-import { ReactComponent as EyeOffIcon } from '../../../components/atoms/icons/16/EyeOff.svg';
+import ClipboardIcon from '../../../components/atoms/icons/20/Clipboard.svg?react';
+import EyeIcon from '../../../components/atoms/icons/16/Eye.svg?react';
+import EyeOffIcon from '../../../components/atoms/icons/16/EyeOff.svg?react';
 
 import "./SwapAccount.css";
 

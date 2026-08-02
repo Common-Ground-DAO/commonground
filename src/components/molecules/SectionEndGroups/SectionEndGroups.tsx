@@ -8,8 +8,8 @@ import CreateCommunityButton from '../../../components/molecules/CreateCommunity
 import SectionEnd from '../SectionEnd/SectionEnd';
 import { useNavigate } from 'react-router-dom';
 
-import { ReactComponent as AddIcon } from '../../../components/atoms/icons/16/Add.svg';
-import { ReactComponent as HomeIcon } from '../../../components/atoms/icons/24/HomeIcon.svg';
+import AddIcon from '../../../components/atoms/icons/16/Add.svg?react';
+import HomeIcon from '../../../components/atoms/icons/24/HomeIcon.svg?react';
 import { getUrl } from 'common/util';
 
 import "./SectionEndGroups.css";

@@ -7,12 +7,12 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import config from "../../../common/config";
 
-import { ReactComponent as BellIcon } from "../../atoms/icons/24/Bell.svg";
-import { ReactComponent as BellFilledIcon } from "../../atoms/icons/24/BellFilled.svg";
-import { ReactComponent as ChatBubbleIcon } from "../../atoms/icons/24/ChatBubble.svg";
-import { ReactComponent as ChatBubbleFilledIcon } from "../../atoms/icons/24/ChatBubbleFilled.svg";
-import { ReactComponent as HomeSolidIcon } from "../../atoms/icons/24/HomeSolid.svg";
-import { ReactComponent as HomeOutlineIcon } from "../../atoms/icons/24/HomeOutline.svg";
+import BellIcon from "../../atoms/icons/24/Bell.svg?react";
+import BellFilledIcon from "../../atoms/icons/24/BellFilled.svg?react";
+import ChatBubbleIcon from "../../atoms/icons/24/ChatBubble.svg?react";
+import ChatBubbleFilledIcon from "../../atoms/icons/24/ChatBubbleFilled.svg?react";
+import HomeSolidIcon from "../../atoms/icons/24/HomeSolid.svg?react";
+import HomeOutlineIcon from "../../atoms/icons/24/HomeOutline.svg?react";
 
 import { AudioWidget } from "../../../components/molecules/AudioWidget/AudioWidget";
 import MenuButton from "../../../components/molecules/MenuButton/MenuButton";

@@ -9,7 +9,7 @@ import './PremiumManagement.css';
 import { useOwnUser } from 'context/OwnDataProvider';
 import Button from 'components/atoms/Button/Button';
 import communityApi from 'data/api/community';
-import { ReactComponent as SparkIcon } from '../../../atoms/icons/misc/spark.svg';
+import SparkIcon from '../../../atoms/icons/misc/spark.svg?react';
 import SimpleLink from 'components/atoms/SimpleLink/SimpleLink';
 import UpgradesTab from './UpgradesTab';
 import BillingTab from './BillingTab';

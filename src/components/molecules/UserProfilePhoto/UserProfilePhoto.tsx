@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { createRef, useState } from "react";
-import { ReactComponent as CameraPlusIcon } from "../../../components/atoms/icons/24/CameraPlusIcon.svg";
+import CameraPlusIcon from "../../../components/atoms/icons/24/CameraPlusIcon.svg?react";
 import fileApi from "data/api/file";
 import errors from "../../../common/errors";
 import Jdenticon from "../../../components/atoms/Jdenticon/Jdenticon";

@@ -8,7 +8,7 @@ import Button from "../../../../components/atoms/Button/Button";
 import Modal from "../../../atoms/Modal/Modal";
 import { Tooltip } from "../../../../components/atoms/Tooltip/Tooltip";
 
-import { ReactComponent as MetamaskIcon } from '../../../../components/atoms/icons/24/MetamaskIcon.svg';
+import MetamaskIcon from '../../../../components/atoms/icons/24/MetamaskIcon.svg?react';
 
 import signatureHelper, { MetamaskData } from '../../../../util/signatureHelper';
 

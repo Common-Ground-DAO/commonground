@@ -4,7 +4,7 @@
 
 import './SparkMultiIcon.css';
 import React from 'react';
-import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
+import SparkIcon from 'components/atoms/icons/misc/spark.svg?react';
 
 type Props = {
   iconCount: number;

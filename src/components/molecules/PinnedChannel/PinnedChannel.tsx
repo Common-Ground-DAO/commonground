@@ -4,7 +4,7 @@
 
 import React, { useMemo } from 'react'
 import './PinnedChannel.css';
-import { ReactComponent as CornerDownRightIcon } from '../../atoms/icons/20/CornerDownRight.svg';
+import CornerDownRightIcon from '../../atoms/icons/20/CornerDownRight.svg?react';
 import { XMarkIcon } from '@heroicons/react/20/solid';
 import NotificationDot from 'components/atoms/NotificationDot/NotificationDot';
 import { getUrl } from '../../../common/util';

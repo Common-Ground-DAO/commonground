@@ -9,9 +9,9 @@ import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
 import Button from "../../../components/atoms/Button/Button";
 import TalkersCounterButton from "../../../components/molecules/TalkersCounterButton/TalkersCounterButton";
 
-import { ReactComponent as HangupIcon } from '../../../components/atoms/icons/20/Hangup.svg';
-import { ReactComponent as MicrofonIcon } from '../../../components/atoms/icons/20/Microfon.svg';
-import { ReactComponent as MicrofonDisabledIcon } from '../../../components/atoms/icons/20/MicrofonDisabled.svg';
+import HangupIcon from '../../../components/atoms/icons/20/Hangup.svg?react';
+import MicrofonIcon from '../../../components/atoms/icons/20/Microfon.svg?react';
+import MicrofonDisabledIcon from '../../../components/atoms/icons/20/MicrofonDisabled.svg?react';
 import AudioWaves from "../AudioWidget/AudioWaves";
 import { Cog6ToothIcon } from "@heroicons/react/20/solid";
 import ScreenAwareDropdown from "components/atoms/ScreenAwareDropdown/ScreenAwareDropdown";

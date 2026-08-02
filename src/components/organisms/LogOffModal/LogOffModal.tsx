@@ -4,7 +4,7 @@
 
 import Button from "../../../components/atoms/Button/Button";
 
-import { ReactComponent as CloseIcon } from '../../../components/atoms/icons/16/Close-1.svg';
+import CloseIcon from '../../../components/atoms/icons/16/Close-1.svg?react';
 import { useNavigate } from "react-router-dom";
 import loginManager from "data/appstate/login";
 import ScreenAwareModal from "components/atoms/ScreenAwareModal/ScreenAwareModal";

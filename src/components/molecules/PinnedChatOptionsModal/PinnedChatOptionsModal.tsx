@@ -4,7 +4,7 @@
 
 import React, { useCallback, useMemo, useState } from 'react'
 import './PinnedChatOptionsModal.css';
-import { ReactComponent as BookmarkAddIcon } from '../../atoms/icons/20/BookmarkAdd.svg';
+import BookmarkAddIcon from '../../atoms/icons/20/BookmarkAdd.svg?react';
 import { ArrowUpRightIcon, BellAlertIcon } from '@heroicons/react/20/solid';
 import data from 'data';
 import Button from 'components/atoms/Button/Button';

@@ -7,7 +7,7 @@ import './BigWalletIcon.css';
 import { CheckCircleIcon } from '@heroicons/react/24/solid';
 import { WalletIcon } from '@heroicons/react/20/solid';
 import { getTruncatedId } from '../../../util';
-import { ReactComponent as BigWalletIconIcon } from '../icons/misc/BigWallet.svg';
+import BigWalletIconIcon from '../icons/misc/BigWallet.svg?react';
 
 type Props = {
   walletAddress: string;

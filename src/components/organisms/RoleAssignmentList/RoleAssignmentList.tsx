@@ -12,7 +12,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import data from 'data';
 import communityApi from 'data/api/community';
 import { useOwnUser, useOwnWallets } from 'context/OwnDataProvider';
-import { ReactComponent as RoleIcon } from '../../atoms/icons/20/Role.svg';
+import RoleIcon from '../../atoms/icons/20/Role.svg?react';
 import { PredefinedRole } from 'common/enums';
 import { useUserSettingsContext } from 'context/UserSettingsProvider';
 

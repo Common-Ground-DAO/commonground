@@ -12,7 +12,7 @@ import { getUrl } from 'common/util';
 import CommunityHeaderSimple from "components/organisms/CommunityHeader/CommunityHeaderSimple";
 import { useCallback, useEffect } from "react";
 import { CommunitySettingsListItem } from "components/organisms/CommunitySettingsList/CommunitySettingsList";
-import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
+import SparkIcon from 'components/atoms/icons/misc/spark.svg?react';
 
 import "./CommunitySettingsView.css";
 import { PredefinedRole, RoleType } from "common/enums";

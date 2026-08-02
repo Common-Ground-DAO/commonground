@@ -12,7 +12,7 @@ import { useSignIn, useSignInMessage, QRCode, SignInButton } from '@farcaster/au
 import userApi from 'data/api/user';
 import accountsApi from 'data/api/accounts';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
-import { ReactComponent as FarcasterIcon } from '../../../atoms/icons/24/Farcaster.svg';
+import FarcasterIcon from '../../../atoms/icons/24/Farcaster.svg?react';
 
 type Step = Extract<OnboardingStep, "create-other-option" | "login-other-option" | "create-profile-setup" | "login-finished">;
 

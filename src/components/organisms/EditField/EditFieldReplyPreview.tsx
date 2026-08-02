@@ -5,8 +5,8 @@
 import React from 'react';
 
 import { getDisplayName } from "../../../util";
-import { ReactComponent as ReplyIcon } from '../../atoms/icons/16/Reply.svg';
-import { ReactComponent as CloseIcon } from '../../atoms/icons/16/Close-1.svg';
+import ReplyIcon from '../../atoms/icons/16/Reply.svg?react';
+import CloseIcon from '../../atoms/icons/16/Close-1.svg?react';
 import Jdenticon from '../../atoms/Jdenticon/Jdenticon';
 import { convertContentToPlainText } from '../../../common/converters';
 

@@ -3,8 +3,43 @@ const path = require('path');
 const BundleAnalyzerPlugin = require('webpack-bundle-analyzer').BundleAnalyzerPlugin;
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 
+// Mirrors react-scripts' own @svgr/webpack options
+// (node_modules/react-scripts/config/webpack.config.js:392-401) — `svgo: false`
+// matters: svgr's default svgo pass strips `viewBox`.
+const SVGR_OPTIONS = {
+  prettier: false,
+  svgo: false,
+  svgoConfig: {
+    plugins: [{ removeViewBox: false }],
+  },
+  titleProp: true,
+  ref: true,
+};
+
 module.exports = {
+  // Both HTML entry templates moved out of `public/` for the Vite migration
+  // (Vite's publicDir cannot hold HTML entries). react-scripts hardcodes
+  // `public/index.html` via paths.appHtml — repoint it at the new location so
+  // the CRA build keeps working in parallel until the Phase-3 cutover.
+  paths: (paths) => {
+    paths.appHtml = path.resolve(__dirname, 'index.html');
+    return paths;
+  },
   style: {
+    css: {
+      // `src/index.css` now loads the Inter fonts through server-relative
+      // `/fonts/*.ttf` URLs (they used to reach into `../public/`, which Vite
+      // cannot do). Vite leaves server-relative `url()`s untouched; webpack's
+      // css-loader tries to resolve them through `resolve.roots` and fails, so
+      // opt them out here and let the web server serve `public/fonts/`.
+      // Side effect (intended, §5.4): the fonts are no longer *also* emitted
+      // hashed into `static/media/` — they ship once, at the URL the service
+      // worker precaches.
+      loaderOptions: (cssLoaderOptions) => {
+        cssLoaderOptions.url = { filter: (url) => !url.startsWith('/') };
+        return cssLoaderOptions;
+      },
+    },
     postcss: {
       loaderOptions: (postcssLoaderOptions) => {
         postcssLoaderOptions.postcssOptions.plugins = [
@@ -19,6 +54,30 @@ module.exports = {
   },
   webpack: {
     configure: (webpackConfig, { env, paths }) => {
+      // `import X from './foo.svg?react'` — the Vite/svgr form the source tree
+      // was codemodded to. react-scripts' own `.svg` rule chains
+      // @svgr/webpack + file-loader, which makes the *default* export the URL
+      // and the component a named `ReactComponent` export; running svgr alone
+      // for the `?react` query restores "default export = component" so both
+      // build stacks agree. Additive, and dies with craco.config.js in Phase 3.
+      const oneOfRules = webpackConfig.module.rules.find((rule) => Array.isArray(rule.oneOf));
+      if (!oneOfRules) {
+        throw new Error("Could not find the react-scripts `oneOf` rule list to register the SVG `?react` loader");
+      }
+      oneOfRules.oneOf.unshift({
+        test: /\.svg$/,
+        resourceQuery: /^\?react$/,
+        issuer: {
+          and: [/\.(ts|tsx|js|jsx|md|mdx)$/],
+        },
+        use: [
+          {
+            loader: require.resolve("@svgr/webpack"),
+            options: SVGR_OPTIONS,
+          },
+        ],
+      });
+
       webpackConfig.resolve.fallback = {
         ...webpackConfig.resolve.fallback,
         "fs": false,
@@ -64,7 +123,7 @@ module.exports = {
       webpackConfig.plugins.push(
         new HtmlWebpackPlugin({
           inject: true,
-          template: path.resolve(__dirname, 'public', 'index_cgid.html'),
+          template: path.resolve(__dirname, 'index_cgid.html'),
           minify: {
             removeComments: true,
             collapseWhitespace: true,

@@ -3,8 +3,8 @@ const plugin = require('tailwindcss/plugin');
 module.exports = {
   content: [
     './src/**/*.{js,jsx,ts,tsx}',
-    './public/index.html',
-    './public/index_cgid.html',
+    './index.html',
+    './index_cgid.html',
   ],
   safelist: [
     'w-1/3',

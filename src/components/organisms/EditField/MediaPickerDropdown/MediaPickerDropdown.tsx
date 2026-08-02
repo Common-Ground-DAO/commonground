@@ -5,9 +5,9 @@
 import React, { useRef } from 'react'
 import Dropdown from '../../../molecules/Dropdown/Dropdown';
 import DropdownItem from '../../../atoms/ListItem/ListItem';
-import { ReactComponent as AddIcon } from '../../../atoms/icons/24/AddCircle.svg';
-import { ReactComponent as PcIcon } from '../../../atoms/icons/24/PcIcon.svg';
-import { ReactComponent as VideoIcon } from '../../../atoms/icons/24/VideoIcon.svg';
+import AddIcon from '../../../atoms/icons/24/AddCircle.svg?react';
+import PcIcon from '../../../atoms/icons/24/PcIcon.svg?react';
+import VideoIcon from '../../../atoms/icons/24/VideoIcon.svg?react';
 import Button from '../../../atoms/Button/Button';
 import EmbedModal from '../EmbedModal/EmbedModal';
 import shortUUID from 'short-uuid';

@@ -4,7 +4,7 @@
 
 import React from "react";
 import { getDisplayName } from "../../../util";
-import { ReactComponent as DisabledMicrophone } from '../../../components/atoms/icons/20/MicrofonDisabled.svg';
+import DisabledMicrophone from '../../../components/atoms/icons/20/MicrofonDisabled.svg?react';
 
 import Jdenticon from "../Jdenticon/Jdenticon";
 import UserTooltip from "../../organisms/UserTooltip/UserTooltip";

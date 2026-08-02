@@ -7,7 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
 
 import Button from "../../../components/atoms/Button/Button";
-import { ReactComponent as ArrowLeftIcon } from '../../../components/atoms/icons/24/ArrowLeft.svg';
+import ArrowLeftIcon from '../../../components/atoms/icons/24/ArrowLeft.svg?react';
 
 import "./HorizontalCardSlider.css";
 import { getUrl } from 'common/util';

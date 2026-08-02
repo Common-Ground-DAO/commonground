@@ -13,13 +13,13 @@ import UserProfilePhoto from "../../../components/molecules/UserProfilePhoto/Use
 import SimpleLink from "../../../components/atoms/SimpleLink/SimpleLink";
 import Scrollable from "../../molecules/Scrollable/Scrollable";
 
-import { ReactComponent as FollowIcon } from '../../../components/atoms/icons/16/Follow.svg';
-import { ReactComponent as HandshakeIcon } from '../../../components/atoms/icons/16/Handshake.svg';
-import { ReactComponent as GlobeIcon } from '../../../components/atoms/icons/24/Globe.svg';
-import { ReactComponent as LinkIcon } from "../../../components/atoms/icons/24/LinkIcon.svg";
-import { ReactComponent as MessageIcon } from '../../../components/atoms/icons/16/Message.svg';
-import { ReactComponent as XIcon } from '../../atoms/icons/24/X.svg';
-import { ReactComponent as UnfollowIcon } from '../../../components/atoms/icons/16/Unfollow.svg';
+import FollowIcon from '../../../components/atoms/icons/16/Follow.svg?react';
+import HandshakeIcon from '../../../components/atoms/icons/16/Handshake.svg?react';
+import GlobeIcon from '../../../components/atoms/icons/24/Globe.svg?react';
+import LinkIcon from "../../../components/atoms/icons/24/LinkIcon.svg?react";
+import MessageIcon from '../../../components/atoms/icons/16/Message.svg?react';
+import XIcon from '../../atoms/icons/24/X.svg?react';
+import UnfollowIcon from '../../../components/atoms/icons/16/Unfollow.svg?react';
 
 import { useLoadedProfileContext } from "context/ProfileProvider";
 import data from "data";

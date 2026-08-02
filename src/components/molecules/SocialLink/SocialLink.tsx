@@ -9,7 +9,7 @@ import TextInputField from "../inputs/TextInputField/TextInputField";
 import { Tooltip } from "../../atoms/Tooltip/Tooltip";
 import Button from "../../../components/atoms/Button/Button";
 
-import { ReactComponent as CloseIcon } from '../../../components/atoms/icons/16/Close.svg';
+import CloseIcon from '../../../components/atoms/icons/16/Close.svg?react';
 
 import "./SocialLink.css";
 

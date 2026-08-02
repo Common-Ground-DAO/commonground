@@ -4,7 +4,7 @@
 
 import React from 'react';
 import Button from 'components/atoms/Button/Button';
-import { ReactComponent as SparkIcon } from '../../../atoms/icons/misc/spark.svg';
+import SparkIcon from '../../../atoms/icons/misc/spark.svg?react';
 import { useUserSettingsContext } from 'context/UserSettingsProvider';
 
 type Props = {

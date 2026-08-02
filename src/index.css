@@ -3,19 +3,19 @@
 
 @font-face {
   font-family: "Inter";
-  src: url('../public/fonts/Inter-Regular.ttf');
+  src: url('/fonts/Inter-Regular.ttf');
   font-weight: 400;
 }
 
 @font-face {
   font-family: "Inter";
-  src: url('../public/fonts/Inter-Medium.ttf');
+  src: url('/fonts/Inter-Medium.ttf');
   font-weight: 500;
 }
 
 @font-face {
   font-family: "Inter";
-  src: url('../public/fonts/Inter-Bold.ttf');
+  src: url('/fonts/Inter-Bold.ttf');
   font-weight: 600;
 }
 

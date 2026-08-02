@@ -8,7 +8,7 @@ import "./CommunityPhoto.css";
 import { getUrl } from 'common/util';
 import { useLiveQuery } from 'dexie-react-hooks';
 import data from 'data';
-import { ReactComponent as OfficialIcon } from "../../../components/atoms/icons/20/OfficialIcon.svg";
+import OfficialIcon from "../../../components/atoms/icons/20/OfficialIcon.svg?react";
 import { useMemo } from 'react';
 import dayjs from 'dayjs';
 import { getTierElementIcon } from 'util/index';

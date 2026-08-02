@@ -3,8 +3,8 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { Children, useMemo, useState } from 'react';
-import { ReactComponent as CheckedIcon } from 'components/atoms/icons/24/RadioButtonChecked.svg';
-import { ReactComponent as UncheckedIcon } from 'components/atoms/icons/24/RadioButtonUnchecked.svg';
+import CheckedIcon from 'components/atoms/icons/24/RadioButtonChecked.svg?react';
+import UncheckedIcon from 'components/atoms/icons/24/RadioButtonUnchecked.svg?react';
 
 import './CollapsableGroup.css';
 

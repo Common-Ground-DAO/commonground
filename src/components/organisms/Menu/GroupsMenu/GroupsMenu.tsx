@@ -16,7 +16,7 @@ import data from "data";
 import CommunityPhoto from "../../../../components/atoms/CommunityPhoto/CommunityPhoto";
 import NotificationDot from "components/atoms/NotificationDot/NotificationDot";
 import { Tooltip } from "components/atoms/Tooltip/Tooltip";
-import { ReactComponent as OfficialIcon } from "../../../../components/atoms/icons/20/OfficialIcon.svg";
+import OfficialIcon from "../../../../components/atoms/icons/20/OfficialIcon.svg?react";
 
 import './GroupsMenu.css';
 import { getUrl } from 'common/util';

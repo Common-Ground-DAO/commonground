@@ -5,8 +5,8 @@
 import React, { useRef, useState } from 'react'
 import Dropdown from '../../../molecules/Dropdown/Dropdown';
 import { InMemoryAttachment } from '../useAttachments/useAttachments';
-import { ReactComponent as AddIcon } from '../../../../components/atoms/icons/16/Add.svg';
-import { ReactComponent as PcIcon } from '../../../../components/atoms/icons/24/PcIcon.svg';
+import AddIcon from '../../../../components/atoms/icons/16/Add.svg?react';
+import PcIcon from '../../../../components/atoms/icons/24/PcIcon.svg?react';
 import DropdownItem from '../../../atoms/ListItem/ListItem';
 import { addFiles } from './AttachmentDropdown.helpers';
 import config from 'common/config';

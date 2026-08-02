@@ -4,7 +4,7 @@
 
 import { createRef, useState } from "react";
 import errors from "../../../../common/errors";
-import { ReactComponent as CameraPlusIcon } from "../../../../components/atoms/icons/24/CameraPlusIcon.svg";
+import CameraPlusIcon from "../../../../components/atoms/icons/24/CameraPlusIcon.svg?react";
 import Button from "../../../../components/atoms/Button/Button";
 import config from "../../../../common/config";
 import { useWindowSizeContext } from "../../../../context/WindowSizeProvider";

@@ -18,7 +18,7 @@ import { useChats, useOwnUser } from 'context/OwnDataProvider';
 import './../Menu.css';
 import './ExpandedMenu.css';
 import { getUrl } from 'common/util';
-import { ReactComponent as CircleLogo } from "components/atoms/icons/misc/Logo/logo.svg";
+import CircleLogo from "components/atoms/icons/misc/Logo/logo.svg?react";
 import { Bell, ChatsTeardrop, Compass, Plus, CoinVertical, HouseSimple, Storefront } from '@phosphor-icons/react';
 import { useCreateCommunityModalContext } from 'context/CreateCommunityModalProvider';
 

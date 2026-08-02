@@ -9,8 +9,8 @@ import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
 import Button from "../../../components/atoms/Button/Button"
 import UserSettingsList from "../../../components/organisms/UserSettingsList/UserSettingsList"
 
-import { ReactComponent as ChevronDownIcon } from '../../../components/atoms/icons/16/ChevronDown.svg';
-import { ReactComponent as CloseIcon } from '../../../components/atoms/icons/20/Close.svg';
+import ChevronDownIcon from '../../../components/atoms/icons/16/ChevronDown.svg?react';
+import CloseIcon from '../../../components/atoms/icons/20/Close.svg?react';
 import BottomSliderModal from "components/atoms/BottomSliderModal/BottomSliderModal";
 import { useState } from "react";
 import { getUrl } from 'common/util';

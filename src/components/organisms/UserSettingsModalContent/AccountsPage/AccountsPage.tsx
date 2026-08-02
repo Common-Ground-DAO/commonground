@@ -9,10 +9,10 @@ import { ChevronRightIcon, EnvelopeIcon, IdentificationIcon } from '@heroicons/r
 import { Key as PasskeyIcon } from '@phosphor-icons/react';
 import { PageType } from '../UserSettingsModalContent';
 import { getTruncatedId } from '../../../../util';
-import { ReactComponent as XIcon } from '../../../atoms/icons/24/X.svg';
-import { ReactComponent as EthereumIcon } from '../../../atoms/icons/24/Ethereum.svg';
-import { ReactComponent as LuksoIcon } from '../../../atoms/icons/24/Lukso.svg';
-import { ReactComponent as FarcasterIcon } from '../../../atoms/icons/24/Farcaster.svg';
+import XIcon from '../../../atoms/icons/24/X.svg?react';
+import EthereumIcon from '../../../atoms/icons/24/Ethereum.svg?react';
+import LuksoIcon from '../../../atoms/icons/24/Lukso.svg?react';
+import FarcasterIcon from '../../../atoms/icons/24/Farcaster.svg?react';
 
 export type ExternalAccountType = Exclude<Models.User.ProfileItemType, 'cg' | 'bot'>;
 

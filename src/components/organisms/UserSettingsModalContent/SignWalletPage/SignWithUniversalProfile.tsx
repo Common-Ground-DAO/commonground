@@ -9,7 +9,7 @@ import { useSnackbarContext } from 'context/SnackbarContext';
 import userApi from 'data/api/user';
 import { PageType } from '../UserSettingsModalContent';
 import { useUniversalProfile } from 'context/UniversalProfileProvider';
-import { ReactComponent as LuksoIcon } from '../../../atoms/icons/24/Lukso.svg';
+import LuksoIcon from '../../../atoms/icons/24/Lukso.svg?react';
 import luksoApi from 'data/api/lukso';
 import errors from 'common/errors';
 

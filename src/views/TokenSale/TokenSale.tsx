@@ -9,7 +9,7 @@ import Button from 'components/atoms/Button/Button';
 import SimpleLink from 'components/atoms/SimpleLink/SimpleLink';
 import Scrollable from 'components/molecules/Scrollable/Scrollable';
 import SparkFireBg from 'components/organisms/UserSettingsModalContent/HowSparkWorks/SparkFireBg';
-import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
+import SparkIcon from 'components/atoms/icons/misc/spark.svg?react';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import StakeTab from './StakeTab/StakeTab';
 

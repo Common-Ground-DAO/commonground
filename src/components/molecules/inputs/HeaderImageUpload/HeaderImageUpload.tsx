@@ -4,8 +4,8 @@
 
 import { createRef, useState } from "react";
 import errors from "../../../../common/errors";
-import { ReactComponent as CameraPlusIcon } from "../../../atoms/icons/24/CameraPlusIcon.svg";
-import { ReactComponent as ToastErrorIcon } from "../../../atoms/icons/16/ToastErrorIcon.svg";
+import CameraPlusIcon from "../../../atoms/icons/24/CameraPlusIcon.svg?react";
+import ToastErrorIcon from "../../../atoms/icons/16/ToastErrorIcon.svg?react";
 import Button from "../../../atoms/Button/Button";
 import config from "../../../../common/config";
 

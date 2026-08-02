@@ -6,10 +6,10 @@ import React, { useMemo, useState } from 'react'
 import './OnboardingPostOnX.css';
 import OnboardingLogo from '../OnboardingLogo';
 import ToggleText from 'components/molecules/ToggleText/ToggleText';
-import { ReactComponent as XIcon } from '../../../atoms/icons/24/X.svg';
+import XIcon from '../../../atoms/icons/24/X.svg?react';
 import Button from 'components/atoms/Button/Button';
-import { ReactComponent as VerifiedIcon } from "../../../atoms/icons/16/Verified.svg";
-import { ReactComponent as CircleLogo } from "components/atoms/icons/misc/Logo/logo.svg";
+import VerifiedIcon from "../../../atoms/icons/16/Verified.svg?react";
+import CircleLogo from "components/atoms/icons/misc/Logo/logo.svg?react";
 import twitterApi from 'data/api/twitter';
 
 type Props = {

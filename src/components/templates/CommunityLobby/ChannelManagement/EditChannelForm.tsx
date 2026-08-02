@@ -9,7 +9,7 @@ import Button from "components/atoms/Button/Button";
 import Modal from "components/atoms/Modal/Modal";
 import TextAreaField from "components/molecules/inputs/TextAreaField/TextAreaField";
 import TextInputField from "components/molecules/inputs/TextInputField/TextInputField";
-import { ReactComponent as CloseIcon } from 'components/atoms/icons/16/Close-1.svg';
+import CloseIcon from 'components/atoms/icons/16/Close-1.svg?react';
 import RolePermissionToggle, { PermissionType } from "components/molecules/RolePermissionToggle/RolePermissionToggle";
 
 import { useLoadedCommunityContext } from "context/CommunityProvider";

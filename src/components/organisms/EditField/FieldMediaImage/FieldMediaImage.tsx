@@ -9,7 +9,7 @@ import React from 'react'
 import { Transforms } from 'slate';
 import { RenderElementProps, useFocused, useSelected, useSlate } from 'slate-react';
 import { ImageElement } from '../EditField.helpers';
-import { ReactComponent as CameraPlusIcon } from "../../../atoms/icons/24/CameraPlusIcon.svg";
+import CameraPlusIcon from "../../../atoms/icons/24/CameraPlusIcon.svg?react";
 import { matchNodeRule, validateAndUpdateImage } from './FieldMediaImage.projections';
 import MediaControl from '../MediaControl/MediaControl';
 import Tag from '../../../atoms/Tag/Tag';

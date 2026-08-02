@@ -13,13 +13,13 @@ import { Slate, Editable, withReact, ReactEditor, RenderElementProps, RenderLeaf
 import { getDisplayNameString } from '../../../util';
 import { clearEditor, convertToMessageBody, currentWord, CustomElement, CustomText, emptyState, findAndSetWordType, insertMention, isCurrentNodeEmptyParagraph, isCurrentNodeParagraph, isFirstNodeOfType, MentionElement, recalculateNodeTypes, removeAttachment, updateAttachmentImageId } from './EditField.helpers';
 
-import { ReactComponent as ImageIcon } from "../../atoms/icons/16/Image.svg";
-import { ReactComponent as Spinner } from '../../../components/atoms/icons/16/Spinner.svg';
-import { ReactComponent as CheckmarkIcon } from '../../../components/atoms/icons/16/Checkmark.svg';
-import { ReactComponent as CloseIcon } from '../../../components/atoms/icons/16/Close.svg';
-import { ReactComponent as MentionIcon } from '../../../components/atoms/icons/20/MentionLarge.svg';
-import { ReactComponent as EmojiOutlineIcon } from "../../atoms/icons/24/EmojiOutlineIcon.svg";
-import { ReactComponent as PaperPlaneIcon } from "../../atoms/icons/misc/PaperPlane.svg";
+import ImageIcon from "../../atoms/icons/16/Image.svg?react";
+import Spinner from '../../../components/atoms/icons/16/Spinner.svg?react';
+import CheckmarkIcon from '../../../components/atoms/icons/16/Checkmark.svg?react';
+import CloseIcon from '../../../components/atoms/icons/16/Close.svg?react';
+import MentionIcon from '../../../components/atoms/icons/20/MentionLarge.svg?react';
+import EmojiOutlineIcon from "../../atoms/icons/24/EmojiOutlineIcon.svg?react";
+import PaperPlaneIcon from "../../atoms/icons/misc/PaperPlane.svg?react";
 
 import MentionSuggestion from './MentionSuggestion/MentionSuggestion';
 import Scrollable from '../../molecules/Scrollable/Scrollable';

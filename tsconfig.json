@@ -22,7 +22,8 @@
     "jsx": "react-jsx",
     "baseUrl": "src",
     "types":[
-      "dom-screen-wake-lock"
+      "dom-screen-wake-lock",
+      "vite/client"
     ]
   },
   "include": [

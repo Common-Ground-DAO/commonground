@@ -6,11 +6,16 @@
 // build stacks (vite-plugin-svgr under Vite, an additive @svgr/webpack rule
 // under CRA/craco, see craco.config.js).
 //
-// This intentionally does NOT come from `vite/client`: that module redeclares
-// the whole `*.svg` / `*.png` / `*.css` ambient wildcard set, which collides
-// with the react-scripts ambient types still referenced by
-// `src/react-app-env.d.ts` (duplicate identifiers). `vite/client` replaces
-// react-app-env.d.ts in Phase 3, when CRA is removed.
+// `vite/client` does not cover this form — it comes from
+// vite-plugin-svgr's own client types, which cannot be referenced without also
+// pulling in the plugin's Vite-6 type surface. Declaring it here keeps the
+// declaration readable and independent of the plugin version.
+//
+// `vite/client` itself *is* in the tsconfig `types` array. It redeclares the
+// `*.svg` / `*.png` / `*.css` ambient wildcards that react-scripts also
+// declares (via `src/react-app-env.d.ts`); the two coexist without duplicate
+// identifiers — verified under TS 4.5.2 — so react-app-env.d.ts can stay until
+// CRA is removed in Phase 3.
 declare module '*.svg?react' {
   import * as React from 'react';
   const ReactComponent: React.FunctionComponent<

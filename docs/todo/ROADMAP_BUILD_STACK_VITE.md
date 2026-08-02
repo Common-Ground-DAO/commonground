@@ -153,41 +153,156 @@ Everything here shrinks migration surface without touching the build stack.
 Ends with a Vite build that is a drop-in replacement for the CRA `build/` output —
 CRA keeps working in parallel until Phase 3 cuts over.
 
-- [ ] `vite.config.ts`: MPA `rollupOptions.input` = both HTML entries, **emitted at
+- [x] `vite.config.ts`: MPA `rollupOptions.input` = both HTML entries, **emitted at
       the dist root** under their current names; `build.assetsDir = 'static'`;
       `build.assetsInlineLimit = 5000`; `build.sourcemap = true`; `build.target`
-      from the browserslist floors (§3).
-- [ ] Move both HTML entry templates out of `public/` (constraint 11); update the
+      from the browserslist floors (§3). Output paths mirror CRA
+      (`static/js|css|media`) with `hashCharacters: 'hex'` and `[hash:8]` — see
+      "Hash format" below.
+- [x] Move both HTML entry templates out of `public/` (constraint 11); update the
       Tailwind content globs and the templates' relative references; replace
       `%PUBLIC_URL%` with root-relative URLs; keep the emitted HTML
       rewrite-compatible (constraint 4).
-- [ ] `baseUrl` import resolution (constraint 1): resolver or `paths`-map codemod —
+- [x] `baseUrl` import resolution (constraint 1): resolver or `paths`-map codemod —
       implementer's choice, but it must cover the file-level specifiers.
-- [ ] `vite-plugin-svgr` + codemod of the 255 SVG import sites to `?react` default
+      **Chosen: a resolver** (`vite/baseUrlResolve.ts`) — zero source churn, and it
+      reproduces webpack's precedence (node_modules wins, `src/` is the fallback,
+      because react-scripts passes baseUrl as the *last* `resolve.modules` entry).
+- [x] `vite-plugin-svgr` + codemod of the 255 SVG import sites to `?react` default
       imports, mirroring CRA's svgr options (constraint 2); new ambient types
       replacing `react-app-env.d.ts`; add `vite/client` to the explicit `types`
       array (`tsconfig.json:24-26` — not additive-by-default). A TS bump beyond
-      4.1 may be required — surface in review.
-- [ ] Scoped node polyfills (buffer/stream/assert, global `Buffer`) (§2.2); altcha
+      4.1 may be required — surface in review. **No TS bump was needed** (see
+      "TypeScript" below); `react-app-env.d.ts` **stays** until Phase 3.
+- [x] Scoped node polyfills (buffer/stream/assert, global `Buffer`) (§2.2); altcha
       alias (§2.3).
-- [ ] Fix `src/index.css` `../public/` font URLs (§5.4) — `/fonts/*.ttf` must stay
+- [x] Fix `src/index.css` `../public/` font URLs (§5.4) — `/fonts/*.ttf` must stay
       reachable (constraint 9).
-- [ ] Service worker via **`workbox-build` `injectManifest`** (decided): emit
+- [x] Service worker via **`workbox-build` `injectManifest`** (decided): emit
       `/service-worker.js` at the dist root; manual precache entries +
       `revision: buildId`; excludes = `index_cgid.html`, small SVGs (if any are
       still emitted), `.map`/`asset-manifest.json`/`LICENSE`,
       `dontCacheBustURLsMatching`, 5 MB cap (§2.5 — the `.map`/`LICENSE` excludes
       deliberately *fix* today's short-circuit bug, expect the precache to shrink);
       fail-closed non-dev guard; replace `process.env.PUBLIC_URL` in the SW.
-- [ ] **Verify the SVG-prune assumption** (decided): confirm the Vite build emits no
+- [x] **Verify the SVG-prune assumption** (decided): confirm the Vite build emits no
       standalone `static/`-media SVGs for component-imported icons; record the
       result in this file (gates deleting the prune loops in Phase 3).
-- [ ] Dev server: host 0.0.0.0, **port 3000** (load-bearing for the SW registration
+      **Confirmed — see "SVG-prune verification" below.**
+- [x] Dev server: host 0.0.0.0, **port 3000** (load-bearing for the SW registration
       guard, §8.1), HTTPS via the existing local certs.
 - **Done when**: `vite build` output serves correctly when rsynced into the dev
   nginx (both entries, hashed assets under `static/`, SW precache manifest sane),
   and the Vite dev server works in `cg-builder` (HTTP + HTTPS). CRA build still
-  intact.
+  intact. — *Build, dev server (HTTP + HTTPS) and CRA parity verified on the host
+  (node 24); the in-container / rsynced-into-nginx run is Phase 3/4.*
+
+#### Phase 2 results and arrangement notes
+
+**How the two build stacks coexist.** Both HTML templates now live at the repo
+root (`index.html`, `index_cgid.html`) and are shared, not duplicated:
+
+- Vite consumes them directly as MPA entries.
+- CRA reaches them through `craco.config.js`: a `paths` override repoints
+  react-scripts' `paths.appHtml` (which hardcodes `public/index.html` and is
+  also what `checkRequiredFiles` asserts), and the second HtmlWebpackPlugin
+  template path follows.
+- The templates carry **no** `<script src>`. A hardcoded `/src/index.tsx` would
+  survive into CRA's output and 404, so Vite injects the entry script from a
+  `transformIndexHtml` pre-hook (`vite/htmlEntryScripts.ts`) instead.
+
+Two more additive craco tweaks keep CRA green under the shared source tree, and
+all three die with `craco.config.js` in Phase 3:
+
+- an `@svgr/webpack`-only rule for `resourceQuery: /^\?react$/`, because
+  react-scripts' own `.svg` rule chains svgr **+ file-loader**, which makes the
+  *default* export the URL rather than the component;
+- `css-loader`'s `url.filter` set to skip server-relative `url()`s, so the
+  `/fonts/*.ttf` references resolve at the web server instead of through
+  webpack's `resolve.roots`.
+
+**CRA output delta from the shared-source changes** (all intended): the 98
+standalone `static/media/*.svg` files and the 3 duplicated Inter TTFs are no
+longer emitted; `build/` shrinks 64.4 MB → 62.5 MB and the precache manifest
+242 → 229 entries. The emitted `index.html` is otherwise byte-identical apart
+from content hashes.
+
+**SVG-prune verification (gates the Phase-3 prune deletion): confirmed.** The
+Vite dist contains exactly **one** `.svg` file — `logo.svg`, the copy-verbatim
+`public/` asset the pre-React loading screen references — and **zero** files
+under `static/`. Component-imported SVGs are compiled to JSX in both stacks now,
+so `docker/build.sh:79-90` and `selfhost.sh:80-85` can be deleted. The workbox
+small-SVG filter is kept as a tripwire in `vite/serviceWorker.ts` (a precached
+URL that the prune deletes makes `PrecacheController.install()` reject and the
+worker never activates, §10.1).
+
+**Precache manifest**: 229 entries (CRA, post-Phase-2 source) → **117** (Vite).
+The drop is the intended §2.5 bugfix: 95 `.map` files, 16 `LICENSE` files and the
+worker's own `service-worker.js`/`.map` are gone. Content: 1 × `index.html`
+(with a revision hash), 85 js, 15 css, 12 webp, 4 png, all hashed entries with
+`revision: null`, plus the 10 hand-added entries (4 fonts, 4 mp3s, 2
+cross-origin-isolation shells) with `revision: buildId`. `index_cgid.html` is
+excluded, as before.
+
+**Hash format**: rollup's default hash alphabet is base64url, which would have
+made `dontCacheBustURLsMatching: /\.[0-9a-f]{8}\./` dead. The build pins
+`output.hashCharacters: 'hex'` with `[hash:8]`, so the CRA-era pattern keeps
+working unchanged and the emitted names stay in the familiar
+`static/js/name.deadbeef.js` shape.
+
+**TypeScript**: no bump — everything works on the installed **4.5.2**. Vite 6.4,
+`@vitejs/plugin-react` 4, `vite-plugin-svgr` 4 and `vite-plugin-node-polyfills`
+0.23 do not type-check the project, and `vite/client` parses fine under 4.5.
+Vite 6 (not 7) was chosen because the builder image is node 20.11 and Vite 7
+requires ≥ 20.19.
+
+`vite/client` **is** in the tsconfig `types` array now. It does *not* collide
+with the react-scripts ambient types — verified: both declare `*.svg`/`*.png`/
+`*.css` wildcards and TS 4.5.2 merges them without duplicate-identifier errors —
+so `src/react-app-env.d.ts` stays until CRA is removed in Phase 3. The `?react`
+form is typed by a hand-written `src/types/svg-react.d.ts` (neither `vite/client`
+nor react-scripts covers it).
+
+#### Findings that change Phase 3
+
+1. **`tsc --noEmit` is currently a no-op for semantic errors.** `node_modules/viem`
+   ships `.d.ts` files using TS-5 syntax that TS 4.5.2 cannot *parse*; tsc reports
+   633 syntax errors and, because syntactic diagnostics are non-empty, **never runs
+   semantic checking at all** (verified: a deliberately mistyped file in `src/`
+   produces no error). Today's real type check is react-scripts'
+   ForkTsCheckerWebpackPlugin, which filters issues down to `src/**` and therefore
+   ignores the viem noise. Constraint 10 ("the Vite pipeline must add
+   `tsc --noEmit`") is therefore **not** satisfiable as-is: Phase 3 has to either
+   bump TypeScript (viem asks for ≥ 5.0.4) or reproduce ForkTsChecker's filtering.
+2. **`@metamask/sdk` resolves differently under Vite.** It declares `browser` (a
+   UMD bundle) *and* `module` (its **node** ESM build); Vite prefers the ESM
+   `module` entry, which drags the node build — and externalized
+   `fs`/`child_process`/`tls`/`zlib`/`http`/`net`/`os`/`path`/`crypto` — into the
+   browser bundle. webpack's `mainFields` picks the browser UMD build (confirmed
+   against the CRA sourcemaps). `vite.config.ts` pins the browser file explicitly;
+   keep the alias when the dependency is upgraded.
+3. **Chunking regression, open decision.** Vite's default chunking emits one
+   `App` chunk of **5.63 MB**, where CRA's `splitChunks: { chunks: 'all' }` spread
+   the same code over many (CRA's largest chunk: 4.09 MB). Consequences: a single
+   large blocking request instead of parallel ones, and — because it exceeds the
+   roadmap-mandated 5 MB `maximumFileSizeToCacheInBytes` — the app bundle stays
+   **out of the precache** (workbox logs it on every build). Not a functional
+   break (the SW has no runtime caching; the chunk is fetched from the network as
+   it is today, and the update flow is unaffected), but it is a real delta.
+   Options for Phase 3, maintainer's call: (a) raise the cap, one line, zero
+   runtime risk, restores "everything precached"; (b) add `manualChunks` — closer
+   to CRA and better for load performance, but chunk splitting can introduce
+   circular-import initialisation bugs that only show up in a browser, so it needs
+   the Phase-4 verification pass behind it. Deliberately *not* done in Phase 2.
+4. **`asset-manifest.json` is gone** under Vite (it has no consumers, §10.4) — the
+   `Done when` checks for Phase 3 should not look for it.
+5. **`tools/checkHtmlRewriteCompat.mjs`** (new) runs the real rewrite logic from
+   `srv/api/getRoutes.ts` and `docker/nginx/inject-instance-config.sh` against both
+   emitted shells. It passes on the Vite *and* the CRA output; wire it into the
+   Phase-3 build scripts. It also pins a pre-existing quirk: `og:url` ships with an
+   empty `content=""` (it used to be `%PUBLIC_URL%`), which the strip regex's
+   `content="[^"]+"` never matches — so the default `og:url` is *not* stripped on
+   deep-link responses. Unchanged by this phase; fix separately if it matters.
 
 ### Phase 3 — Pipeline cutover + CRA removal + lint/test successor
 

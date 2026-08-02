@@ -4360,15 +4360,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@tailwindcss/line-clamp@npm:^0.4.0":
-  version: 0.4.0
-  resolution: "@tailwindcss/line-clamp@npm:0.4.0"
-  peerDependencies:
-    tailwindcss: ">=2.0.0 || >=3.0.0 || >=3.0.0-alpha.1"
-  checksum: 10c0/d2ac7483bf3e56995736d6c78e456a4776558fe58f26beec105ae9a70becc95f47149e9e668ac5adc89cae36dafe0c611993fa547e03e00bb35800920e177093
-  languageName: node
-  linkType: hard
-
 "@tailwindcss/typography@npm:^0.5.4":
   version: 0.5.4
   resolution: "@tailwindcss/typography@npm:0.5.4"
@@ -8678,7 +8669,6 @@ __metadata:
     "@simplewebauthn/types": "npm:^10.0.0"
     "@tailwindcss/aspect-ratio": "npm:^0.4.0"
     "@tailwindcss/forms": "npm:^0.5.2"
-    "@tailwindcss/line-clamp": "npm:^0.4.0"
     "@tailwindcss/typography": "npm:^0.5.4"
     "@truffle/hdwallet-provider": "npm:^2.0.0"
     "@tsconfig/node20": "npm:^20.1.2"

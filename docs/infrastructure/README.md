@@ -1,4 +1,4 @@
-> Status: verified against commit 5777032d4, 2026-08-01
+> Status: verified against commit db8028247, 2026-08-02
 
 # Common Ground Infrastructure Documentation
 
@@ -58,7 +58,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - Until 2026-08-01 this was three identically configured instances (`redis-sessions`, `redis-socketio`, `redis-data`); the split was mechanical, never load-bearing. `maxmemory` is now the shared budget for all of it.
 - **Backend connection:** `srv/redis/index.ts` (the only file that creates clients) resolves `process.env.REDIS_URL || 'redis://redis:6379'`, password from the Docker secret `redis_password` or `REDIS_PASSWORD`. Neither compose file sets `REDIS_URL`; it exists for deployments that run Redis somewhere else.
 
-> The former `redis-blockscout` service is now fully commented out in the compose file (it only existed for the optional Blockscout explorer).
+> The former `redis-blockscout` service (a cache for the deleted optional Blockscout explorer stack) was removed from the compose file on 2026-08-02.
 
 #### `api`
 - **Image:** `cryptogram/backend` (built from `docker/backend/Dockerfile_dev_stage_1`)
@@ -118,7 +118,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Key environment variables:** `PG_SU_PASSWORD`, `PG_SU_NAME=postgres`, `PG_MEDIASOUP_PASSWORD`, `REDIS_PASSWORD`, `S3_SECRET`, `DEPLOYMENT`, `BASE_URL`
 
 #### `seaweedmaster` / `seaweedvolume` / `s3` (SeaweedFS)
-- **Image:** `chrislusf/seaweedfs` (all three)
+- **Image:** `chrislusf/seaweedfs:4.40` (all three; pinned — do not run an untagged/`latest` image, and keep any deployment at ≥ 4.34 for the 2026 security fixes)
 - **`seaweedmaster`** — master server; manages volume topology and file-ID allocation. Command: `master -ip=seaweedmaster -volumeSizeLimitMB=16`. Single-copy replication via `WEED_MASTER_VOLUME_GROWTH_COPY_1=1` / `..._OTHER=1`.
 - **`seaweedvolume`** — volume server; stores file blobs. Command: `volume -mserver=seaweedmaster:9333 -port=8080 -ip=seaweedvolume -preStopSeconds=1`. Volume: `seaweedfs-volume:/data`.
 - **`s3`** — filer with S3-compatible API on port 8333. Command: `filer -master="seaweedmaster:9333" -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333`. Network alias `s3.local` (used by nginx to proxy file requests). Volumes: `./s3_config/s3.json:/etc/seaweedfs/s3.json:ro` and `seaweedfs-buckets:/data`.
@@ -151,11 +151,8 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 | Service | Purpose |
 |---------|---------|
 | `pgadmin` | PostgreSQL admin web UI (dpage/pgadmin4:5.5). Port `127.0.0.1:8080:80`. |
-| `redis-blockscout` | Redis cache for the Blockscout explorer. |
-| `blockscout` | Blockchain explorer for the local Hardhat chain. Port `127.0.0.1:4000:4000`. |
-| `blockscout-db` | Separate PostgreSQL instance for Blockscout. |
-| `smart-contract-verifier` | Blockscout smart-contract verification service. |
-| `visualizer` | Blockscout visualizer service. |
+
+The formerly commented-out Blockscout explorer stack (`blockscout`, `blockscout-db`, `redis-blockscout`, `smart-contract-verifier`, `visualizer`) and its `docker/envs/` env files were deleted on 2026-08-02.
 
 ### Named Volumes
 
@@ -417,7 +414,7 @@ This profile runs the **entire stack on one server** with real production semant
 - **Caddy** (`caddy:2-alpine`) fronts everything and obtains/renews **Let's Encrypt** certificates automatically for the app domain, the CG ID domain, and mediasoup call signalling (port 4443).
 - **nginx** is built from `Dockerfile_selfhost` (real domains, parameterized CSP, instance-config injection) instead of the dev image.
 - **`DEPLOYMENT=prod`** on any domain — full production behaviour without hardcoding `app.cg`.
-- **No `hardhat` dev chain, no `redis-blockscout`, no test-contract deployment.**
+- **No `hardhat` dev chain, no test-contract deployment.**
 - **Postgres loads the tuned `postgresql.conf`** (same `config_file` command as dev).
 - **Redis `maxmemory` is tuned small** (`${REDIS_MAXMEMORY:-1536mb}` total) instead of the dev 6 GB.
 - **`mediasoup` and `onchain` are optional**: they carry the Compose profiles `calls` and `blockchain`, which `selfhost.sh` enables from `CG_ENABLE_CALLS` / `CG_ENABLE_BLOCKCHAIN` in `.env.selfhost` (both default to `true`). See [docs/deployment §3.8](../deployment/README.md#38-optional-services-calls-and-blockchain) and `docker/SELFHOST.md`.

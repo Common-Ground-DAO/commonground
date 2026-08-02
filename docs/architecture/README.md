@@ -1,4 +1,4 @@
-> Status: verified against commit 5777032d4, 2026-08-01
+> Status: verified against commit 3c42f772a, 2026-08-02
 
 # Common Ground - Architecture Documentation
 
@@ -502,7 +502,7 @@ Common Ground ships a **single-server self-hosting profile** (`docker/docker-com
 - **Caddy** is added in front of nginx. Caddy owns ports 80/443 (and forwards mediasoup's 4443/tcp), obtains Let's Encrypt certificates automatically for the app domain and the CG ID subdomain, and reverse-proxies into the internal nginx. There is no Cloudflare layer.
 - **nginx** uses `nginx_selfhost.conf` (image `cryptogram/nginx-selfhost`). Upstreams are **resolved dynamically** via Docker's embedded DNS (`resolver 127.0.0.11; set $upstream ...; proxy_pass $upstream;`) so nginx starts even if a backend container is not yet up, instead of failing at config-load time on a static upstream.
 - **No dev-chain / test-contract services** (`hardhat` is dev-only). Blockchain features work against public RPC endpoints and are optional.
-- All backend containers (`api`, `wsapi`, `mediasoup`, `onchain`, `job-runner`, `memberlist`, `migrate-db`) run from the same `cryptogram/backend` image, alongside Postgres, the three Redis instances, and SeaweedFS — identical to the cloud topology.
+- All backend containers (`api`, `wsapi`, `mediasoup`, `onchain`, `job-runner`, `memberlist`, `migrate-db`) run from the same `cryptogram/backend` image, alongside Postgres, Redis, and SeaweedFS — identical to the cloud topology.
 
 The two DNS records `chat.example.org` and `id.chat.example.org` must be distinct origins because passkeys are scoped to the CG ID origin.
 

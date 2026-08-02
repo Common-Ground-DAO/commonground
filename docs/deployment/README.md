@@ -1,6 +1,6 @@
 # Common Ground Deployment
 
-> Status: verified against commit f2da92ef6, 2026-08-01.
+> Status: verified against commit db8028247, 2026-08-02.
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -33,7 +33,7 @@ of `docker-compose.selfhost.yml`):
 - nginx is built from `Dockerfile_selfhost` (real domains, instance-config
   injection, parameterized CSP).
 - `DEPLOYMENT=prod` gives full production semantics on any domain.
-- No hardhat dev chain, no `redis-blockscout`, no test contracts.
+- No hardhat dev chain, no test contracts.
 - Postgres loads the tuned `docker/db/postgresql.conf`.
 - Redis `maxmemory` is tuned for a small single machine.
 - The compose project is named `cg-selfhost`, so its containers and volumes
@@ -176,7 +176,7 @@ volumes (`pgdata`, `seaweedfs-volume`, `seaweedfs-buckets`, `caddy-data`,
 | `nginx` | `cryptogram/nginx-selfhost` (built from `Dockerfile_selfhost`) | static frontend + reverse proxy to API/wsapi/S3; injects instance config; sets CSP |
 | `db` | `cryptogram/db` (Postgres) | primary database; loads tuned `postgresql.conf`; healthcheck; `shm_size 256m` |
 | `redis` | `redis:6.2.7-alpine` | one instance for sessions, the Socket.IO adapter and app data; password-protected, `--save ""` (unpersisted), no eviction policy, `maxmemory` tuned |
-| `seaweedmaster` / `seaweedvolume` / `s3` | `chrislusf/seaweedfs` | SeaweedFS object storage: master, volume server, and S3-compatible filer (aliased `s3.local`) |
+| `seaweedmaster` / `seaweedvolume` / `s3` | `chrislusf/seaweedfs:4.40` (pinned) | SeaweedFS object storage: master, volume server, and S3-compatible filer (aliased `s3.local`) |
 | `migrate-db` | `cryptogram/backend` | one-shot DB migration (`migrateDb.js`); `restart on-failure` (Swarm only) |
 | `api` | `cryptogram/backend` | REST API (`api.js`); the image everything else reuses |
 | `wsapi` | `cryptogram/backend` | Socket.IO / real-time server (`wsapi.js`) |

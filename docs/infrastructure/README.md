@@ -1,4 +1,4 @@
-> Status: verified against commit db8028247, 2026-08-02
+> Status: verified against commit 9a320e453, 2026-08-02
 
 # Common Ground Infrastructure Documentation
 

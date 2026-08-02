@@ -76,7 +76,11 @@
   "scripts": {
     "start": "echo 'DEPRECATED, use \"./run.sh start\" instead'",
     "start_https": "echo 'DEPRECATED, use \"./run.sh start_https\" instead'",
-    "build": "printf 'NOT SUPPORTED, use \"./run.sh\" for commands.\n\n' && ./run.sh"
+    "build": "printf 'NOT SUPPORTED, use \"./run.sh\" for commands.\n\n' && ./run.sh",
+    "build:vite": "vite build",
+    "start:vite": "vite",
+    "typecheck": "tsc --noEmit",
+    "check:html-rewrite": "node tools/checkHtmlRewriteCompat.mjs"
   },
   "eslintConfig": {
     "extends": [
@@ -120,11 +124,16 @@
     "@types/react-router-dom": "^5.3.2",
     "@types/sanitize-html": "^2.6.0",
     "@types/ua-parser-js": "^0.7.36",
+    "@vitejs/plugin-react": "^4",
     "autoprefixer": "^10.4.7",
     "postcss": "^8.4.14",
     "tailwindcss": "^3.1.6",
     "truffle-flattener": "1.6.0",
-    "webpack-bundle-analyzer": "^4.6.1"
+    "vite": "^6",
+    "vite-plugin-node-polyfills": "^0.23",
+    "vite-plugin-svgr": "^4",
+    "webpack-bundle-analyzer": "^4.6.1",
+    "workbox-build": "6.5.4"
   },
   "packageManager": "yarn@4.1.0"
 }

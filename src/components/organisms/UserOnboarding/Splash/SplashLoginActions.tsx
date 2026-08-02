@@ -5,9 +5,6 @@
 import React, { useEffect, useRef } from 'react'
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import Button, { ButtonRole } from 'components/atoms/Button/Button';
-import { ReactComponent as FuelIcon } from '../../../atoms/icons/24/Fuel.svg';
-import { ReactComponent as FueletIcon } from '../../../atoms/icons/24/Fuelet.svg';
-import { ReactComponent as AeternityIcon } from '../../../atoms/icons/24/Aeternity.svg';
 import { ReactComponent as EthereumIcon } from '../../../atoms/icons/24/Ethereum.svg';
 import { ReactComponent as LuksoIcon } from '../../../atoms/icons/24/Lukso.svg';
 import { ReactComponent as FarcasterIcon } from '../../../atoms/icons/24/Farcaster.svg';
@@ -17,8 +14,6 @@ import { EnvelopeIcon, DocumentTextIcon } from '@heroicons/react/20/solid';
 import { OnboardingStep } from 'context/UserOnboarding';
 import { useTwitterAuth } from 'hooks/useTwitterAuth';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
-import { useAeternityWallet } from 'context/AeternityWalletProvider';
-import { useFuel } from 'context/FuelWalletProvider';
 import { useUniversalProfile } from 'context/UniversalProfileProvider';
 import { useAccount } from 'wagmi';
 
@@ -27,17 +22,12 @@ export type LoginButtonType =
   'metamask' |
   'eth' |
   'lukso' |
-  'fuel' |
-  'fuelet' |
-  'aeternity' |
   'email' |
   'keyphrase' |
   'farcaster';
 
 export type LoginOption =
   'rainbow' |
-  'fuel' |
-  'aeternity' |
   'universal-profile' |
   'email-password' |
   'keyphrase' |
@@ -52,15 +42,11 @@ type Props = {
 
 const SplashLoginActions: React.FC<Props> = (props) => {
   const { attemptTwitterLogin, setLoginOption, warning, availableButtons } = props;
-  const { connectToWallet, isConnected: isAeternityConnected, hasWallet: hasAeternityWallet } = useAeternityWallet();
-  const { connectToFuel, isConnected: isFuelConnected, hasWallet: hasFuelWallet, hasFuelet } = useFuel();
   const { attemptConnectTwitter, buttonDisabled: twitterButtonDisabled } = useTwitterAuth(attemptTwitterLogin);
   const { connectToUniversalProfile, hasExtension: hasUniversalProfileExtension, isConnected: isUniversalProfileConnected } = useUniversalProfile();
   const { address: ethAddress } = useAccount();
 
   const enableRainbowRedirect = useRef<boolean>(false);
-  const enableFuelRedirect = useRef<boolean>(false);
-  const enableAeternityRedirect = useRef<boolean>(false);
   const enableUniversalProfileRedirect = useRef<boolean>(false);
 
   useEffect(() => {
@@ -70,22 +56,11 @@ const SplashLoginActions: React.FC<Props> = (props) => {
       setLoginOption('rainbow');
     }
 
-    // Move pages if fuel has connected
-    if (enableFuelRedirect.current && isFuelConnected) {
-      enableFuelRedirect.current = false;
-      setLoginOption('fuel');
-    }
-
-    if (enableAeternityRedirect.current && isAeternityConnected) {
-      enableAeternityRedirect.current = false;
-      setLoginOption('aeternity');
-    }
-    
     if (enableUniversalProfileRedirect.current && isUniversalProfileConnected) {
       enableUniversalProfileRedirect.current = false;
       setLoginOption('universal-profile');
     }
-  }, [ethAddress, isFuelConnected, isAeternityConnected, isUniversalProfileConnected, setLoginOption]);
+  }, [ethAddress, isUniversalProfileConnected, setLoginOption]);
 
   const renderButton = (buttonType: LoginButtonType, primary?: boolean) => {
     const role: ButtonRole = primary ? 'primary' : 'chip';
@@ -158,66 +133,6 @@ const SplashLoginActions: React.FC<Props> = (props) => {
             />
           }}
         </ConnectButton.Custom>;
-      case 'fuel':
-        return <Button
-          key='fuel'
-          role={role}
-          className='splash-login-button'
-          text={<>
-            <FuelIcon className='w-5 h-5' /><br/>
-            Fuel Wallet
-          </>}
-          onClick={() => {
-            if (!hasFuelWallet) {
-              window.open('https://wallet.fuel.network/docs/install/', '_blank', 'noreferrer');
-            } else if (!isFuelConnected) {
-              enableFuelRedirect.current = true;
-              connectToFuel();
-            } else {
-              setLoginOption('fuel');
-            }
-          }}
-        />;
-      case 'fuelet':
-        return <Button
-          key='fuelet'
-          role={role}
-          className='splash-login-button'
-          text={<>
-            <FueletIcon className='w-6 h-6 cg-text-main' /><br/>
-            Fuelet Wallet
-          </>}
-          onClick={() => {
-            if (!hasFuelWallet || !hasFuelet) {
-              window.open('https://fuelet.app/', '_blank', 'noreferrer');
-            } else if (!isFuelConnected) {
-              enableFuelRedirect.current = true;
-              connectToFuel();
-            } else {
-              setLoginOption('fuel');
-            }
-          }}
-        />;
-      case 'aeternity':
-        return <Button
-          key='aeternity'
-          className='splash-login-button'
-          role={role}
-          text={<>
-            <AeternityIcon className='w-5 h-5' /><br/>
-            æternity
-          </>}
-          onClick={() => {
-            if (!hasAeternityWallet) {
-              window.open('https://chrome.google.com/webstore/detail/superhero/mnhmmkepfddpifjkamaligfeemcbhdne', '_blank', 'noreferrer');
-            } else if (!isAeternityConnected) {
-              enableAeternityRedirect.current = true;
-              connectToWallet();
-            } else {
-              setLoginOption('aeternity');
-            }
-          }}
-        />;
       case 'lukso':
         return <Button
           key='lukso'

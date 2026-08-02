@@ -12,13 +12,11 @@ import TextInputField from 'components/molecules/inputs/TextInputField/TextInput
 
 import { ReactComponent as CircleLogo } from "components/atoms/icons/misc/Logo/logo.svg";
 import ConnectWalletButton from '../ConnectWalletButton/ConnectWalletButton';
-import ConnectFuelWalletButton from '../ConnectWalletButton/ConnectFuelWalletButton';
 
 import './Login.css';
 import PasswordField from 'components/molecules/PasswordField/PasswordField';
 import { EnvelopeOpenIcon } from '@heroicons/react/20/solid';
 import { OnboardingStep } from 'context/UserOnboarding';
-import ConnectAeternityWalletButton from '../ConnectWalletButton/ConnectAeternityWalletButton';
 import userApi from 'data/api/user';
 
 type Properties = {
@@ -118,14 +116,6 @@ export default function Login(props: Properties) {
             walletData={walletData}
             setWalletData={setWalletData}
           />
-          <ConnectFuelWalletButton
-            walletData={walletData}
-            setWalletData={setWalletData}
-          />
-          {/* <ConnectAeternityWalletButton
-            walletData={walletData}
-            setWalletData={setWalletData}
-          /> */}
         </div>
       </div>
 

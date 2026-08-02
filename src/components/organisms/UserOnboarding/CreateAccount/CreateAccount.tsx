@@ -16,8 +16,6 @@ import Checkbox from 'components/atoms/Checkbox/Checkbox';
 import ConnectWalletButton from '../ConnectWalletButton/ConnectWalletButton';
 
 import "./CreateAccount.css";
-import ConnectAeternityWalletButton from '../ConnectWalletButton/ConnectAeternityWalletButton';
-import ConnectFuelWalletButton from '../ConnectWalletButton/ConnectFuelWalletButton';
 import PasswordField from 'components/molecules/PasswordField/PasswordField';
 import { OnboardingStep } from 'context/UserOnboarding';
 
@@ -89,14 +87,6 @@ export default function CreateAccount(props: Props) {
             walletData={walletData}
             setWalletData={setWalletData}
           />
-          <ConnectFuelWalletButton
-            walletData={walletData}
-            setWalletData={setWalletData}
-          />
-          {/* <ConnectAeternityWalletButton
-            walletData={walletData}
-            setWalletData={setWalletData}
-          /> */}
         </div>
       </div>
       <div className='flex flex-col items-center gap-4 mt-auto'>

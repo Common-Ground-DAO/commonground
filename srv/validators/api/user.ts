@@ -31,19 +31,9 @@ const cgProfileExtraDataValidator = Joi.object<Models.User.UserAccountExtraData_
 const TldSafeEmailValidator = Joi.string().email({ tlds: { allow: tlds } });
 
 const signableWalletDataValidator = Joi.object({
-  type: Joi.string().valid("evm", "fuel", "aeternity").required(),
-  address: Joi.when('type', {
-    switch: [
-      { is: 'evm', then: common.Address.required() },
-      { is: 'aeternity', then: common.AeternityAddress.required() },
-      { is: 'fuel', then: common.FuelAddress.required(), otherwise: Joi.forbidden() },
-    ]
-  }),
-  siweMessage: Joi.when('type', {
-    switch: [
-      { is: 'evm', then: Joi.string().required(), otherwise: Joi.forbidden() }
-    ]
-  }),
+  type: Joi.string().valid("evm").required(),
+  address: common.Address.required(),
+  siweMessage: Joi.string().required(),
   secret: common.Secret.required(),
 }).strict(true);
 
@@ -172,7 +162,7 @@ const userApi = {
   }).required().strict(true),
 
   prepareWalletAction: Joi.object<API.User.prepareWalletAction.Request>({
-    type: Joi.string().valid("cg_evm", "evm", "fuel", "aeternity").required(),
+    type: Joi.string().valid("cg_evm", "evm").required(),
     signature: common.EIP712Signature.required(),
     data: signableWalletDataValidator.required(),
   }).required().strict(true),

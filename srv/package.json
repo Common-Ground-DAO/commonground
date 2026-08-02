@@ -4,7 +4,6 @@
   "main": "index.js",
   "license": "MIT",
   "dependencies": {
-    "@aeternity/aepp-sdk": "^13.2.2",
     "@aws-sdk/client-s3": "^3.88.0",
     "@aws-sdk/s3-request-presigner": "^3.92.0",
     "@erc725/erc725.js": "0.28.2",
@@ -36,7 +35,6 @@
     "express": "^4.17.1",
     "express-fileupload": "^1.2.1",
     "express-session": "^1.17.2",
-    "fuels": "^0.55.0",
     "ip": "^1.1.8",
     "isomorphic-fetch": "^3.0.0",
     "joi": "^17.7.0",

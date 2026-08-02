@@ -1,4 +1,4 @@
-> Status: verified against commit a3c3f7608, 2026-08-01
+> Status: verified against commit 8133e43fe, 2026-08-01
 
 # Authentication & Identity
 
@@ -191,21 +191,22 @@ key, and posts `{ type: "device", deviceId, secret, base64Signature }`. The serv
 No new device is created (this branch reuses the existing `deviceId`). See
 `srv/api/user.ts:187-206`.
 
-### 5.2 Wallet (`type: "wallet"`) — EVM / Fuel / Aeternity
+### 5.2 Wallet (`type: "wallet"`) — EVM only
 
 Two-step, using a **prepared credential** held in the session:
 
 1. `POST /User/prepareWalletAction` (`srv/api/user.ts:904-922`): the client submits a signed
    challenge. The endpoint requires `data.data.secret === session.signSecret`, then calls
    `walletHelper.prepareWalletAction()`.
-2. `prepareWalletAction` (`srv/repositories/wallets.ts:268+`) verifies the signature per wallet type:
-   - **EVM**: SIWE message parsed and `ethers.verifyMessage` recovers the signer; the SIWE `Nonce`
-     must equal the challenge and the recovered address must equal the claimed address
-     (`parseAndVerifySiweWalletData`, `srv/repositories/wallets.ts:217-234`).
-   - **Fuel**: `Signer.recoverAddress(hashMessage(secret), signature)`.
-   - **Aeternity**: `@aeternity/aepp-sdk` `verifyMessage`.
-   It then determines `readyForLogin` (wallet exists, `loginEnabled`, not deleted) vs
-   `readyForCreation`, and stores the result as `session.preparedCredential`.
+2. `prepareWalletAction` (`srv/repositories/wallets.ts:247+`) verifies the signature: the SIWE
+   message is parsed and `ethers.verifyMessage` recovers the signer; the SIWE `Nonce` must equal
+   the challenge and the recovered address must equal the claimed address
+   (`parseAndVerifySiweWalletData`). Only `evm` and `cg_evm` are accepted — the Fuel and Aeternity
+   verification branches were **removed 2026-08-01** (Phase 3 of the slimming roadmap), so those
+   wallet types can no longer be linked or used to log in. Existing `wallets` rows of those types
+   are kept and still listed by `/User/getWallets`.
+   `prepareWalletAction` then determines `readyForLogin` (wallet exists, `loginEnabled`, not
+   deleted) vs `readyForCreation`, and stores the result as `session.preparedCredential`.
 3. `POST /User/login` with `type: "wallet"` reads `preparedCredential`, requires
    `readyForLogin && ownerId`, creates a device, and logs in (`srv/api/user.ts:164-184`).
 
@@ -406,7 +407,7 @@ type.
 
 | Endpoint | Purpose |
 |----------|---------|
-| `/User/prepareWalletAction` | Verify a wallet signature and stage a `preparedCredential` ([§5.2](#52-wallet-type-wallet--evm--fuel--aeternity)). |
+| `/User/prepareWalletAction` | Verify a wallet signature and stage a `preparedCredential` ([§5.2](#52-wallet-type-wallet--evm-only)). |
 | `/User/addPreparedWallet` | Attach the prepared wallet to the current user, with `loginEnabled` / `visibility` flags (`srv/api/user.ts:924-968`). |
 | `/User/updateWallet` | Update wallet flags. |
 | `/User/deleteWallet` | Soft-delete a wallet. |

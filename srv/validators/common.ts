@@ -67,8 +67,6 @@ const common = {
   }).strict(true),
   Base64DeviceSignature: Base64.max(200),
   Address: Joi.string().regex(/^0x[a-fA-F0-9]{40}$/),
-  FuelAddress: Joi.string().regex(/^fuel[a-z0-9]{59}$/),	
-  AeternityAddress: Joi.string().regex(/^ak_[A-Za-z0-9]{40,60}$/),	
   TutorialName: Joi.string().valid('onboarding'),
   Assistant: {
     ModelName: Joi.string().valid('gemma3_1-27b-it', 'qwen2_5-32b-instruct', 'mistral-small-3.1-24b-instruct', 'qwen3_14b-instruct'),

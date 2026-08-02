@@ -69,6 +69,8 @@ export enum WalletVisibility {
   PUBLIC = "public"
 }
 
+// FUEL and AETERNITY are legacy stored types: their login/connect flows were removed
+// (2026-08-01), but existing `wallets` rows keep the type — do not drop the values.
 export enum WalletType {
   CG_EVM = "cg_evm",
   EVM = "evm",

@@ -17,6 +17,9 @@ declare global {
                 type Response = boolean;
             }
 
+            // The `fuel` / `aeternity` variants are legacy-only: those login flows were
+            // removed (2026-08-01), so nothing signs them anymore. They stay because
+            // existing `wallets` rows keep their stored `signatureData.data`.
             type SignableWalletData = {
                 address: Common.Address;
                 secret: string;
@@ -172,9 +175,9 @@ declare global {
 
             namespace prepareWalletAction {
                 type Request = {
-                    type: Exclude<Models.Wallet.Type, "contract_evm">;
+                    type: Extract<Models.Wallet.Type, "evm" | "cg_evm">;
                     signature: string;
-                    data: SignableWalletData;
+                    data: Extract<SignableWalletData, { type: "evm" }>;
                 };
                 type Response = {
                     walletValid: boolean;

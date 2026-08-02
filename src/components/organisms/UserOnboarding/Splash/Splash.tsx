@@ -17,9 +17,7 @@ import { ReactComponent as FingerPrintIcon } from './icons/fingerPrint.svg';
 import { ReactComponent as ComputerIcon } from './icons/computerIcon.svg';
 import { ReactComponent as PasskeyIcon } from './icons/passkeyIcon.svg';
 import { ReactComponent as StopWatchIcon } from './icons/stopWatchIcon.svg';
-import { AeternityStatus, AeternitySignButton } from "../AeternitySign/AeternitySign";
 import { OnboardingEmailStatus, OnboardingEmailButton, type OnboardingEmailState } from "../OnboardingEmail/OnboardingEmail";
-import { FuelStatus, FuelSignButton } from "../FuelSign/FuelSign";
 import { LoginWithKeyPhraseStatus, LoginWithKeyPhraseButton } from "../LoginWithKeyPhrase/LoginWithKeyPhrase";
 import { RainbowStatus, RainbowSignButton } from "../RainbowSign/RainbowSign";
 import { UniversalProfileStatus, UniversalProfileSignButton } from "../UniversalProfileSign/UniversalProfileSign";
@@ -47,9 +45,9 @@ import { FarcasterStatus } from "../FarcasterSign/FarcasterSign";
 import OnboardingPostOnX from "./OnboardingPostOnX/OnboardingPostOnX";
 */
 
-const loginButtons: LoginButtonType[] = (['x', 'eth', 'lukso', 'farcaster', 'fuel', 'email', 'keyphrase'] as LoginButtonType[])
+const loginButtons: LoginButtonType[] = (['x', 'eth', 'lukso', 'farcaster', 'email', 'keyphrase'] as LoginButtonType[])
   .filter(b => b !== 'x' || config.TWITTER_AUTH_ENABLED);
-const createButtons: LoginButtonType[] = (['x', 'eth', 'lukso', 'farcaster', 'fuel', 'email'] as LoginButtonType[])
+const createButtons: LoginButtonType[] = (['x', 'eth', 'lukso', 'farcaster', 'email'] as LoginButtonType[])
   .filter(b => b !== 'x' || config.TWITTER_AUTH_ENABLED);
 
 const Splash: React.FC = () => {
@@ -432,10 +430,6 @@ const Splash: React.FC = () => {
         return <LoginWithKeyPhraseButton success={() => loginFinished({ account: 'wallet' })} />;
       else if (selectedOption === 'rainbow')
         return <RainbowSignButton signatureFinished={walletSignatureFinished} step={step} setStep={setStep} loginFinished={loginFinished} walletData={walletData} />;
-      else if (selectedOption === 'fuel')
-        return <FuelSignButton signatureFinished={walletSignatureFinished} step={step} setStep={setStep} loginFinished={loginFinished} walletData={walletData} />;
-      else if (selectedOption === 'aeternity')
-        return <AeternitySignButton signatureFinished={walletSignatureFinished} step={step} setStep={setStep} loginFinished={loginFinished} walletData={walletData} />;
       else if (selectedOption === 'universal-profile')
         return <UniversalProfileSignButton signatureFinished={luksoSignatureFinished} step={step} luksoData={luksoData} readyForLoginOverride={luksoReadyForLoginOverride} readyForCreationOverride={luksoReadyForCreationOverride} />;
       else if (selectedOption === 'email-password')
@@ -599,12 +593,6 @@ const Splash: React.FC = () => {
         switch (selectedOption) {
           case 'rainbow':
             innerComponent = <RainbowStatus step={step} setStep={setStep} walletData={walletData} />;
-            break;
-          case 'fuel':
-            innerComponent = <FuelStatus step={step} setStep={setStep} walletData={walletData} />;
-            break;
-          case 'aeternity':
-            innerComponent = <AeternityStatus step={step} setStep={setStep} walletData={walletData} />;
             break;
           case 'keyphrase':
             innerComponent = <LoginWithKeyPhraseStatus />;

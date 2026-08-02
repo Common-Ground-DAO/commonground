@@ -1,6 +1,6 @@
 # Database Documentation
 
-> Status: verified against commit a3c3f7608, 2026-08-01
+> Status: verified against commit 8133e43fe, 2026-08-01
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -83,7 +83,7 @@ Blockchain wallets linked to users. Unique constraint on `(type, walletIdentifie
 |--------|------|-------|
 | `id` | `uuid` PK | Auto-generated |
 | `userId` | `uuid` | Nullable, FK -> `users.id` (SET NULL) |
-| `type` | `enum(WalletType)` | EVM, SOLANA, etc. Default `EVM` |
+| `type` | `enum(WalletType)` | `cg_evm`, `evm`, `fuel`, `aeternity`, `contract_evm`. Default `evm`. `fuel`/`aeternity` are retired values (login removed 2026-08-01) kept for existing rows |
 | `walletIdentifier` | `text` | Wallet address |
 | `loginEnabled` | `boolean` | Default `false` |
 | `visibility` | `enum(WalletVisibility)` | PRIVATE, PUBLIC. Default `PRIVATE` |

@@ -14,11 +14,22 @@
   **before or together with** the next staging/prod image rollout. Details:
   [docs/deployment](../deployment/README.md) §6. Nothing in this repo can perform or verify
   the change.
-- [ ] **Pin the SeaweedFS image in the hosted Swarm stack** — the compose files in this
-  repo pin `chrislusf/seaweedfs:4.40` (2026-08-02; security floor 4.34), but the Swarm
-  stack files in the separate infrastructure repository pin independently and may still
-  ride `:latest`. Same coordination as the Redis item above; see
-  [docs/todo/ROADMAP_SEAWEEDFS_CONSOLIDATION.md](ROADMAP_SEAWEEDFS_CONSOLIDATION.md).
+- [ ] **Pin the SeaweedFS image in the hosted Swarm stack, and collapse its three seaweed
+  services into one** — the compose files in this repo pin `chrislusf/seaweedfs:4.40`
+  (2026-08-02; security floor 4.34), but the Swarm stack files in the separate
+  infrastructure repository pin independently and may still ride `:latest`. Same
+  coordination as the Redis item above.
+  - The **pin** is the urgent half and stands on its own.
+  - The **topology** half is not urgent: as of 2026-08-02 both compose files here run a
+    single `seaweed` service (`weed server`, one `seaweedfs-data` volume). The application
+    is agnostic — it only ever talks to `s3.local:8333` — so the Swarm stack can keep the
+    three-service topology indefinitely as long as it pins the same image. Mirroring the
+    collapse there is a footprint/backup win (one volume ⇒ atomic snapshots), not a
+    correctness requirement.
+  - When it is mirrored, the data merge is the same one selfhost does:
+    `docker/selfhost/migrate_seaweed_volumes.sh` documents the required layout (blobs at
+    the `/data` root, filer leveldb in `filerldb2/`), though a Swarm stack will need its
+    own equivalent of the volume copy.
 
 ## Maintainer decisions needed
 

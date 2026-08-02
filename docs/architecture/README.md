@@ -1,4 +1,4 @@
-> Status: verified against commit 3c42f772a, 2026-08-02
+> Status: verified against commit 8eab94e5a, 2026-08-02
 
 # Common Ground - Architecture Documentation
 
@@ -27,8 +27,8 @@ The reference (cloud) deployment terminates TLS at Cloudflare and routes everyth
                      +---------------+     |     |   +------------------+
                      |                     |     |                      |
           +----------v-------+  +----------v-+  +v-----------+  +------v--------+
-          |   Static Files   |  |    API      |  |   wsapi    |  | S3 (SeaweedFS)|
-          |   (React SPA)    |  |  (Express)  |  | (Socket.IO)|  | file proxy    |
+          |   Static Files   |  |    API      |  |   wsapi    |  |    seaweed    |
+          |   (React SPA)    |  |  (Express)  |  | (Socket.IO)|  | SeaweedFS S3  |
           |   served from    |  |  port 4000  |  | port 4000  |  | port 8333     |
           |   /www           |  +------+------+  +-----+------+  +---------------+
           +------------------+         |               |
@@ -66,7 +66,7 @@ A single-server self-hosting profile is also supported; it places **Caddy** (aut
 | **WebSocket Server** | Socket.IO (TypeScript) | `wsapi` | Real-time event broadcasting (messages, presence, notifications), bot socket streams |
 | **Database** | PostgreSQL | `db` | Primary persistent data store; uses LISTEN/NOTIFY for some inter-service signaling |
 | **Redis** | Redis 6.2 | `redis` | One instance for everything: Express session storage via `connect-redis`, the Socket.IO pub/sub adapter for multi-instance broadcasting, and general-purpose caching (user data, rate limiting, bot presence) |
-| **File Storage** | SeaweedFS (S3-compatible) | `seaweedmaster`, `seaweedvolume`, `s3` | S3-compatible object storage for uploaded files and images |
+| **File Storage** | SeaweedFS (S3-compatible) | `seaweed` | S3-compatible object storage for uploaded files and images. One all-in-one `weed server` (master + volume + filer + S3 gateway) since 2026-08-02; other services only ever reach its S3 port 8333 via the alias `s3.local` |
 | **Reverse Proxy** | nginx | `nginx` | TLS termination (cloud), routing, static file serving, S3 file proxying, instance-config injection (self-host) |
 | **WebRTC SFU** | MediaSoup | `mediasoup` | Selective Forwarding Unit for voice/video calls |
 | **Blockchain Watcher** | Custom (ethers.js) | `onchain` | Monitors multi-chain token balances for role gating; indexes staking contract events |
@@ -502,7 +502,7 @@ Common Ground ships a **single-server self-hosting profile** (`docker/docker-com
 - **Caddy** is added in front of nginx. Caddy owns ports 80/443 (and forwards mediasoup's 4443/tcp), obtains Let's Encrypt certificates automatically for the app domain and the CG ID subdomain, and reverse-proxies into the internal nginx. There is no Cloudflare layer.
 - **nginx** uses `nginx_selfhost.conf` (image `cryptogram/nginx-selfhost`). Upstreams are **resolved dynamically** via Docker's embedded DNS (`resolver 127.0.0.11; set $upstream ...; proxy_pass $upstream;`) so nginx starts even if a backend container is not yet up, instead of failing at config-load time on a static upstream.
 - **No dev-chain / test-contract services** (`hardhat` is dev-only). Blockchain features work against public RPC endpoints and are optional.
-- All backend containers (`api`, `wsapi`, `mediasoup`, `onchain`, `job-runner`, `memberlist`, `migrate-db`) run from the same `cryptogram/backend` image, alongside Postgres, Redis, and SeaweedFS — identical to the cloud topology.
+- All backend containers (`api`, `wsapi`, `mediasoup`, `onchain`, `job-runner`, `memberlist`, `migrate-db`) run from the same `cryptogram/backend` image, alongside Postgres, Redis, and the single `seaweed` container — the same topology as the dev profile. (The hosted Swarm stack, which lives in a separate infrastructure repository, still runs the pre-consolidation three-service SeaweedFS topology until it is migrated; the application is agnostic to either, since it only ever talks to `s3.local:8333`.)
 
 The two DNS records `chat.example.org` and `id.chat.example.org` must be distinct origins because passkeys are scoped to the CG ID origin.
 

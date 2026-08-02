@@ -7,10 +7,10 @@
 >
 > Implemented 2026-08-02 — compose collapse in e3e7d4ada, iceberg opt-out in
 > 8eab94e5a; code and docs are done.
-> Cutover of the dev stack done 2026-08-02 (volume merge against real data, full
-> rebuild, S3 reads of migrated objects verified). Still open: the nginx `/files/`
-> presigned path end-to-end, and the selfhost/Swarm cutovers. Do not dissolve this
-> file into `docs/` until those are closed.
+> Cutover of the dev stack done and fully verified 2026-08-02 (volume merge against
+> real data, full rebuild, S3 reads of migrated objects, nginx `/files/` media
+> loading in the browser). Still open: the selfhost and hosted-Swarm cutovers.
+> Do not dissolve this file into `docs/` until those are closed.
 
 ## Decision & context
 
@@ -121,11 +121,10 @@ exact compose command, and `--hostname seaweed` to mimic compose DNS.
   ListObjectsV2, DeleteObject, an anonymous GET via the `Read:cg-media` identity,
   and a **presigned GET fetched with no credentials** all passed (10/10) straight
   against `:8333`. No `SignatureDoesNotMatch`, so `-s3.externalUrl` was not needed.
-- [ ] **nginx `/files/` half** of the presigned flow (the path-embedded signature
-  re-expanded into SigV4 query params, `Host $host:8333`) — **NOT verified**: needs
-  the full stack with nginx and a real backend, which the sandbox cannot bring up.
-  Still needs the maintainer's stack. The backend-presigner result above is good
-  evidence but does not cover the rewrite.
+- [x] **nginx `/files/` half** of the presigned flow (the path-embedded signature
+  re-expanded into SigV4 query params, `Host $host:8333`) — verified 2026-08-02 by
+  the maintainer in the browser against the cut-over dev stack: media loads through
+  the app, i.e. the rewrite verifies against the single-container filer.
 - [x] Internal listeners enumerated inside the container: S3 8333, master 9333,
   volume 8080, filer 8888, Iceberg 8181, plus gRPC siblings 18333/19333/18080/18888.
   Nothing but 8333 is consumed by any other service (sweep below). **8181 is now

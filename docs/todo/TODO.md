@@ -73,8 +73,6 @@
 
 ## Upcoming workstreams (roadmap to be written)
 
-- **Build-stack migration CRA/craco → Vite** — runs after the core slimming (ordering
-  decided 2026-08-01); nothing removed during slimming has to be migrated.
 - **Email: provider-agnostic SMTP** — replace the hard-wired SendGrid client with a
   generic SMTP transport (swap surface is `EmailUtils.sendEmail` in `srv/api/emails.ts`
   plus init in `srv/serverconfig.ts`, see [docs/email-notifications](../email-notifications/README.md));

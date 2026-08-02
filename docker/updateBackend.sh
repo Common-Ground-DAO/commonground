@@ -80,7 +80,7 @@ docker_compose build --no-cache api
 checkError
 
 printf "\n---\n--- Build finished, starting server\n---\n"
-docker_compose up -d
+docker_compose up -d --remove-orphans
 checkError
 
 cd ../docker

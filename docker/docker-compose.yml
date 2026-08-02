@@ -60,41 +60,28 @@ services:
     stop_grace_period: 1m
     restart: unless-stopped
 
-  seaweedmaster:
+  # one all-in-one `weed server` process instead of separate master/volume/filer
+  # containers: -s3 implies -filer, so this single service serves master 9333,
+  # volume 8080, filer 8888 and the S3 gateway on 8333. Only 8333 (alias
+  # s3.local) is consumed by anything else in the stack.
+  # -s3.port.iceberg=0 turns off the Iceberg REST catalog that 4.40 otherwise
+  # starts on 8181 — nothing here speaks Iceberg.
+  # Volume blobs and the filer leveldb (filerldb2/) share one /data volume, so a
+  # filesystem snapshot of it is atomic across blobs and metadata.
+  seaweed:
     image: chrislusf/seaweedfs:4.40
-    command: "master -ip=seaweedmaster -volumeSizeLimitMB=16"
-    restart: unless-stopped
-    networks:
-      - cryptogram
-    environment:
-      WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
-      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
-  
-  seaweedvolume:
-    image: chrislusf/seaweedfs:4.40
-    command: "volume -mserver=seaweedmaster:9333 -port=8080 -ip=seaweedvolume -preStopSeconds=1"
-    restart: unless-stopped
-    volumes:
-      - seaweedfs-volume:/data
-    networks:
-      - cryptogram
-    depends_on:
-      - seaweedmaster
-
-  s3:
-    image: chrislusf/seaweedfs:4.40
-    command: 'filer -master="seaweedmaster:9333" -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333'
+    command: "server -dir=/data -ip=seaweed -master.volumeSizeLimitMB=16 -volume.max=0 -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.port.iceberg=0"
     restart: unless-stopped
     networks:
       cryptogram:
         aliases:
           - s3.local
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
     volumes:
       - ./s3_config/s3.json:/etc/seaweedfs/s3.json:ro
-      - seaweedfs-buckets:/data
-    depends_on:
-      - seaweedmaster
-      - seaweedvolume
+      - seaweedfs-data:/data
 
   migrate-db:
     image: cryptogram/backend
@@ -158,8 +145,7 @@ services:
     depends_on:
       - db
       - redis
-      - seaweedmaster
-      - s3
+      - seaweed
       - memberlist
     networks:
       - cryptogram
@@ -207,8 +193,7 @@ services:
     depends_on:
       - db
       - redis
-      - seaweedmaster
-      - s3
+      - seaweed
     networks:
       - cryptogram
     command: ["node", "/dist/jobs.js"]
@@ -356,8 +341,7 @@ services:
 volumes:
   pgdata:
   pgadmin-data:
-  seaweedfs-volume:
-  seaweedfs-buckets:
+  seaweedfs-data:
   builder-cache:
 
 networks:

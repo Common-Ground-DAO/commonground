@@ -4,6 +4,12 @@
 > `seaweedmaster` / `seaweedvolume` / `s3` into one `weed server` container, in both
 > compose files. Evidence: storage-engine evaluation of 2026-08-02 (summary below;
 > key sources inline).
+>
+> Implemented 2026-08-02 — compose collapse in e3e7d4ada, iceberg opt-out in
+> 8eab94e5a; code and docs are done.
+> Three verification items need the maintainer's stack and are still open; see
+> "What still needs the maintainer's stack" at the end. Do not dissolve this file
+> into `docs/` until those are closed.
 
 ## Decision & context
 
@@ -57,9 +63,11 @@ read-only in April 2026). Outcome, all final:
 
   ```
   weed server -dir=/data -ip=seaweed \
-    -master.volumeSizeLimitMB=<n> \
-    -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333
+    -master.volumeSizeLimitMB=<n> -volume.max=0 -volume.preStopSeconds=1 \
+    -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.port.iceberg=0
   ```
+
+  (`-s3.port.iceberg=0` was added at implementation time — see "code won" note 1.)
 
   `-s3` implies `-filer`. Keep `WEED_MASTER_VOLUME_GROWTH_COPY_1=1` / `..._OTHER=1`.
   `<n>` = `16` (dev) / `${SEAWEED_VOLUME_LIMIT_MB:-1024}` (selfhost), same values as
@@ -85,11 +93,12 @@ volume heartbeats; after the collapse it persists under `/data` for free.
 1. Stop the stack.
 2. Create `seaweedfs-data`; copy `seaweedfs-volume/*` → its root and
    `seaweedfs-buckets/filerldb2/` → `filerldb2/`.
-3. Start; `--remove-orphans` retires the three old containers. That flag is the
-   default only in the **selfhost** wrapper (`selfhost.sh`, since Phase 5) —
-   `run.sh` does *not* pass it, so either add it there in the same PR or the dev
-   stack keeps the three old containers running. The old volumes stay on disk until
-   the operator deletes them — document, don't automate the deletion.
+3. Start; `--remove-orphans` retires the three old containers. Both wrappers now
+   pass it: `selfhost.sh` since Phase 5, and `run.sh up`/`down` as of this PR. The
+   old volumes stay on disk until the operator deletes them — documented, not
+   automated.
+
+Step 2 is implemented as `docker/selfhost/migrate_seaweed_volumes.sh`.
 
 Gotchas:
 
@@ -101,44 +110,103 @@ Gotchas:
 
 ## Verification items (before this lands)
 
-- [ ] **Presigned flows against a single-container stack with a copy of real data** —
-  both the backend presigner (`files.ts`) and the nginx `/files/` SigV4 rewrite
-  (region `global`, `Host $host:8333`). Signature verification behind reverse
-  proxies is SeaweedFS's recurring failure mode (a steady stream of
-  `SignatureDoesNotMatch` fixes through 2026); if it bites, `-s3.externalUrl` is the
-  documented knob. Today's setup works with the same filer code path, so no change
-  is *expected* — verify, don't assume.
-- [ ] Which of the internal listeners (master 9333, volume 8080, filer 8888) can be
-  disabled or bound so other containers on the network can't reach them; at minimum
-  confirm nothing but 8333 is consumed by any other service. The 2026 criticals
-  lived exactly on those planes.
-- [ ] Existing-data reuse path (step 2 above) against a throwaway copy, including a
-  second up/down cycle (idempotence) and an upload + presigned download round-trip.
-- [ ] `docker/build.sh` / `run.sh` / nginx configs reference no seaweed hostname
-  other than `s3.local` (expected from the Phase-5-style sweep; re-verify at
-  implementation time). The compose files themselves DO: unrelated services carry
-  `depends_on: seaweedmaster` / `s3` (four lists per file, like the Redis change) —
-  retarget them to the new single service.
+Verified in a sandbox against the real `chrislusf/seaweedfs:4.40` image, with a
+dummy-credential `s3.json` of the same shape as `docker/s3_config/s3.json`, the
+exact compose command, and `--hostname seaweed` to mimic compose DNS.
+
+- [x] **Backend presigner half** of the presigned flow: `boto3` configured exactly
+  like `files.ts` (region `global`, `forcePathStyle`, bucket `cg-media`) —
+  ListBuckets, CreateBucket, PutObject, GetObject round-trip, HeadObject,
+  ListObjectsV2, DeleteObject, an anonymous GET via the `Read:cg-media` identity,
+  and a **presigned GET fetched with no credentials** all passed (10/10) straight
+  against `:8333`. No `SignatureDoesNotMatch`, so `-s3.externalUrl` was not needed.
+- [ ] **nginx `/files/` half** of the presigned flow (the path-embedded signature
+  re-expanded into SigV4 query params, `Host $host:8333`) — **NOT verified**: needs
+  the full stack with nginx and a real backend, which the sandbox cannot bring up.
+  Still needs the maintainer's stack. The backend-presigner result above is good
+  evidence but does not cover the rewrite.
+- [x] Internal listeners enumerated inside the container: S3 8333, master 9333,
+  volume 8080, filer 8888, Iceberg 8181, plus gRPC siblings 18333/19333/18080/18888.
+  Nothing but 8333 is consumed by any other service (sweep below). **8181 is now
+  disabled** via `-s3.port.iceberg=0`. The rest **cannot** be confined by weed flags
+  — see "code won" note 2.
+- [ ] Existing-data reuse path against a copy of **real** data — **NOT verified**:
+  needs the maintainer's stack. What *was* verified: the merge script against
+  synthetic fixtures (correct target layout, recursive copy incl. nested dirs,
+  refuses a non-empty target, refuses a missing source), and that a container
+  restarted onto an existing populated `/data` keeps its bucket, object and
+  presigned GET working.
+- [x] `docker/build.sh` / `run.sh` / nginx configs reference no seaweed hostname
+  other than `s3.local`. Repo-wide sweep: the only `s3.local` references are
+  `srv/repositories/files.ts` (×2), the four nginx configs, and the compose alias.
+  After the change, `seaweedmaster` / `seaweedvolume` / `seaweedfs-volume` /
+  `seaweedfs-buckets` appear **nowhere outside docs**.
+
+## Implementation findings ("code won")
+
+1. **`weed server -s3` starts an Iceberg REST catalog too.** The Target-picture
+   rationale above claims Iceberg is a `mini`-only liability; 4.40 logs
+   `Start Iceberg REST Catalog Server at http://seaweed:8181` under plain `server`.
+   Since the stated reason for picking `server` was "no extra listeners", the
+   compose command adds **`-s3.port.iceberg=0`** (documented as `0 to disable`).
+   Verified: 8181 gone, S3 round-trip unaffected. This is the one deviation from
+   the command spelled out in Target picture.
+2. **The internal planes cannot be hidden with weed flags.** `-ip.bind=127.0.0.1`
+   plus `-s3.ip.bind=0.0.0.0` does bind master/volume/filer to loopback and leaves
+   S3 reachable — but writes then fail (`PutObject` → `InternalError`), because the
+   components still dial each other at the advertised `-ip` address. So master 9333,
+   volume 8080, filer 8888 and their gRPC ports stay reachable to every container on
+   the `cryptogram` network, exactly as before the consolidation (no regression, no
+   improvement). Confining them needs **network-level** segmentation — e.g. a
+   separate docker network joined only by nginx/api/job-runner — not a flag. Left
+   for the maintainer to decide; noted here rather than in `docs/` on purpose.
+3. **`depends_on` count: two lists per compose file, not four** (`api` and
+   `job-runner` in each). The Verification-items text said "four lists per file";
+   four is the total across both files.
+4. **`-volume.max=0` is a real behavior change, not a no-op.** The default cap is 8
+   volumes; at the dev `-master.volumeSizeLimitMB=16` that would have capped the dev
+   store at 128 MB. Auto-sizing from free disk space is the intended behavior.
+5. **Predicted `/data` layout confirmed exactly**: blobs (`.dat`/`.idx`/`.vif`) at
+   the root, filer leveldb in `filerldb2/`, and master state in `m9333/` — the last
+   of which is the "persists under `/data` for free" the Data-migration section
+   predicted. `vol_dir.uuid` also appears at the root.
 
 ## Checklist
 
-- [ ] Dev compose: 3 services → 1 + volume swap
-- [ ] Selfhost compose: same; keep `SEAWEED_VOLUME_LIMIT_MB` semantics
-- [ ] Migration procedure in `docker/SELFHOST.md` (chown note, old-volume cleanup,
-  `SEAWEED_VOLUME_LIMIT_MB` unchanged) — decide whether `selfhost.sh update` can
-  run the volume merge safely or whether it stays a documented manual step
-- [ ] Docs in the same PR: `docs/architecture` (topology diagram + §"three
-  containers" mentions), `docs/infrastructure` (service sections + volume table),
-  `docs/deployment` (service table + backup/restore section)
-- [ ] **Backup guidance** (the point of the exercise): document
-  stop → snapshot `/data` → start as the blessed baseline (upstream has no
-  online-consistent backup; the maintainer's answer is bucket versioning /
-  [wiki Data-Backup](https://github.com/seaweedfs/seaweedfs/wiki/Data-Backup)).
-  Optional second tier: `weed filer.backup` replicating content to plain files for
-  server-independent restore.
-- [ ] Hosted Swarm: the infra repo must replace its three seaweed services with the
-  single one **before or with** the image rollout — same coordination pattern as the
-  Redis cutover (`docs/deployment` §6, `docs/todo/TODO.md` operational item).
+- [x] Dev compose: 3 services → 1 + volume swap
+- [x] Selfhost compose: same; `SEAWEED_VOLUME_LIMIT_MB` semantics kept
+  (`-master.volumeSizeLimitMB=${SEAWEED_VOLUME_LIMIT_MB:-1024}`, override verified
+  via `docker compose config`)
+- [x] Migration procedure in `docker/SELFHOST.md` (chown note, old-volume cleanup,
+  `SEAWEED_VOLUME_LIMIT_MB` unchanged). **Decision: it stays a documented manual
+  step**, not part of `selfhost.sh update` — the merge is only safe with the stack
+  stopped, whereas `update` is a pull/rebuild/restart cycle. Implemented as
+  `docker/selfhost/migrate_seaweed_volumes.sh`, which copies rather than moves and
+  refuses a non-empty target.
+- [x] `run.sh up`/`down` now pass `--remove-orphans` so the dev stack retires the
+  three old containers
+- [x] Docs in the same PR: `docs/architecture` (topology diagram + service table +
+  selfhost paragraph), `docs/infrastructure` (service section + volume table +
+  depends_on + selfhost volume list), `docs/deployment` (service table + volume
+  enumerations + backup section)
+- [x] **Backup guidance**: stop → snapshot → start documented as the blessed
+  baseline in both `docs/deployment` §3.7 and `docker/SELFHOST.md`, including why
+  one volume makes the snapshot atomic and that upstream has no online-consistent
+  backup. `weed filer.backup` and bucket versioning named as the second tier.
+- [ ] Hosted Swarm: the infra repo must pin the same image, and may mirror the
+  collapse. Recorded in `docs/todo/TODO.md`; **nothing in this repo can perform or
+  verify it**. Note the roadmap's original "before or with the image rollout"
+  framing was too strong for the *topology* half: the app only talks to
+  `s3.local:8333`, so the Swarm stack can stay three-service as long as it pins the
+  image. The pin is the urgent part.
+
+## What still needs the maintainer's stack
+
+1. The nginx `/files/` presigned rewrite against the collapsed container.
+2. The volume merge against a copy of real production/selfhost data, including the
+   first-start `chown -R /data` on a large store.
+3. A full `./run.sh up` cycle confirming `--remove-orphans` actually retires the
+   three old dev containers and that the app serves uploads end-to-end.
 
 ## Rules
 

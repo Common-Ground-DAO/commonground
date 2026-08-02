@@ -167,8 +167,8 @@ Commands:
 ### 3.3 Services (`docker-compose.selfhost.yml`)
 
 All services share the internal `cryptogram` network. State lives in named
-volumes (`pgdata`, `seaweedfs-volume`, `seaweedfs-buckets`, `caddy-data`,
-`caddy-config`, `builder-cache`).
+volumes (`pgdata`, `seaweedfs-data`, `caddy-data`, `caddy-config`,
+`builder-cache`).
 
 | Service | Image | Role |
 |---|---|---|
@@ -176,7 +176,7 @@ volumes (`pgdata`, `seaweedfs-volume`, `seaweedfs-buckets`, `caddy-data`,
 | `nginx` | `cryptogram/nginx-selfhost` (built from `Dockerfile_selfhost`) | static frontend + reverse proxy to API/wsapi/S3; injects instance config; sets CSP |
 | `db` | `cryptogram/db` (Postgres) | primary database; loads tuned `postgresql.conf`; healthcheck; `shm_size 256m` |
 | `redis` | `redis:6.2.7-alpine` | one instance for sessions, the Socket.IO adapter and app data; password-protected, `--save ""` (unpersisted), no eviction policy, `maxmemory` tuned |
-| `seaweedmaster` / `seaweedvolume` / `s3` | `chrislusf/seaweedfs:4.40` (pinned) | SeaweedFS object storage: master, volume server, and S3-compatible filer (aliased `s3.local`) |
+| `seaweed` | `chrislusf/seaweedfs:4.40` (pinned) | SeaweedFS object storage — one all-in-one `weed server` (master + volume + filer + S3 gateway, aliased `s3.local`); only the S3 port 8333 is consumed by other services |
 | `migrate-db` | `cryptogram/backend` | one-shot DB migration (`migrateDb.js`); `restart on-failure` (Swarm only) |
 | `api` | `cryptogram/backend` | REST API (`api.js`); the image everything else reuses |
 | `wsapi` | `cryptogram/backend` | Socket.IO / real-time server (`wsapi.js`) |
@@ -224,10 +224,31 @@ parameterized Content-Security-Policy per server name.
 
 ### 3.7 Backups
 
-All durable state is in three volumes: `pgdata` (database) and
-`seaweedfs-volume` + `seaweedfs-buckets` (uploaded media). Redis is intentionally
-unpersisted (sessions and ephemeral data only). See `docker/SELFHOST.md` for an
-example `pg_dump` command.
+All durable state is in two volumes: `pgdata` (database) and `seaweedfs-data`
+(uploaded media). Redis is intentionally unpersisted (sessions and ephemeral
+data only). See `docker/SELFHOST.md` for an example `pg_dump` command.
+
+Since the 3-to-1 SeaweedFS consolidation, blobs and filer metadata live in the
+same `/data` tree, so a filesystem snapshot of the single `seaweedfs-data`
+volume is atomic across both. The former split (`seaweedfs-volume` +
+`seaweedfs-buckets`) could not offer that: a blob written between the two
+snapshots was either referenced by metadata that had not been captured, or
+captured without the metadata referencing it.
+
+Atomic still does not mean online-consistent — upstream has no online-consistent
+backup mechanism. The blessed baseline is therefore **stop → snapshot → start**:
+
+```bash
+./selfhost/selfhost.sh down
+# snapshot the seaweedfs-data volume (filesystem/LVM/ZFS snapshot, or a tar of
+# its mountpoint), plus a pg_dump of the database
+./selfhost/selfhost.sh up
+```
+
+Upstream's alternatives for hot backups are bucket versioning and
+[wiki Data-Backup](https://github.com/seaweedfs/seaweedfs/wiki/Data-Backup); an
+optional second tier is `weed filer.backup`, which replicates content to plain
+files for a server-independent restore.
 
 ### 3.8 Optional services (calls and blockchain)
 

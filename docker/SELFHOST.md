@@ -196,6 +196,35 @@ for larger instances.
 > update pull it back down — keep or raise the tag locally. Treat `4.34` as
 > the security floor (2026 fixes).
 
+> **Upgrading from a release that ran three SeaweedFS containers**
+> (`seaweedmaster`, `seaweedvolume`, `s3`): they are replaced by a single
+> `seaweed` service running `weed server`, and the two volumes
+> `seaweedfs-volume` + `seaweedfs-buckets` are replaced by one `seaweedfs-data`.
+> `SEAWEED_VOLUME_LIMIT_MB` keeps its meaning. The uploaded media must be
+> merged into the new volume **once, with the stack stopped**:
+>
+> ```bash
+> ./selfhost/selfhost.sh down
+> ./selfhost/migrate_seaweed_volumes.sh      # defaults to the cg-selfhost project
+> ./selfhost/selfhost.sh up
+> ```
+>
+> The helper copies (never moves), so the host temporarily needs free disk at
+> least the size of the current media store. It refuses to run while a container
+> still uses the old volumes or if `seaweedfs-data` already holds data, so it is
+> safe to re-run. Skip it entirely on a fresh install.
+>
+> On the first start the container entrypoint may `chown -R /data` — the image
+> has run as uid 1000 since 4.00, so an older store has mismatched ownership.
+> On a large store this takes a while and **looks like a hang**; let it finish.
+>
+> The old volumes are left untouched. Delete them once the new stack has proven
+> healthy:
+>
+> ```bash
+> docker volume rm cg-selfhost_seaweedfs-volume cg-selfhost_seaweedfs-buckets
+> ```
+
 ## Bot accounts
 
 Bot management is API/CLI only in v1. Existing instances should add the bot
@@ -241,16 +270,30 @@ changes apply prospectively and never claw back credited Spark.
 
 ## Backups
 
-All state lives in three named Docker volumes:
+All state lives in two named Docker volumes:
 
 - `pgdata` — the database (everything except uploaded files)
-- `seaweedfs-volume`, `seaweedfs-buckets` — uploaded media
+- `seaweedfs-data` — uploaded media (blobs and filer metadata in one tree)
 
 Example database backup:
 
 ```bash
 ./selfhost/selfhost.sh compose exec db pg_dump -U postgres cryptogram | gzip > backup.sql.gz
 ```
+
+For the media volume the blessed baseline is **stop → snapshot → start**:
+
+```bash
+./selfhost/selfhost.sh down
+# snapshot cg-selfhost_seaweedfs-data (LVM/ZFS snapshot, or a tar of its
+# mountpoint) — one volume, so blobs and filer metadata are always consistent
+./selfhost/selfhost.sh up
+```
+
+SeaweedFS has no online-consistent backup mechanism, so a snapshot taken while
+the stack is running can capture a blob whose metadata was not written yet (or
+the reverse). Since the storage consolidation, blobs and metadata at least share
+a single volume, so one snapshot covers both.
 
 Redis is intentionally unpersisted (sessions and ephemeral data only) —
 users just log in again after a restart.

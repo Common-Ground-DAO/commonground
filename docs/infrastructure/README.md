@@ -65,7 +65,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Purpose:** Main HTTP REST API server. Handles all `/api/v2/*` requests plus the Bot API v1 (`/BotV1/*`): authentication, community management, file uploads, messaging, contracts, notifications, Twitter/Lukso integrations, search, reporting, bots, and staking.
 - **Command:** `node /dist/api.js`
 - **Port:** Internal only (reached by nginx on port 4000 over the Docker network)
-- **Depends on:** `db`, `redis`, `seaweedmaster`, `s3`, `memberlist`
+- **Depends on:** `db`, `redis`, `seaweed`, `memberlist`
 - **Volumes:**
   - `./vapid_keys.json:/run/secrets/vapid_keys_json:ro` — VAPID keys for web push notifications
   - `./api_data:/api_data:ro` — static API data
@@ -88,7 +88,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Image:** `cryptogram/backend`
 - **Purpose:** Background job processor. Runs scheduled and queued tasks: activity-score calculation, email sending, cleanup jobs, and the Spark staking-accrual job.
 - **Command:** `node /dist/jobs.js`
-- **Depends on:** `db`, `redis`, `seaweedmaster`, `s3`
+- **Depends on:** `db`, `redis`, `seaweed`
 - **Key environment variables:** the writer DB/Redis set, `S3_SECRET`, `SENDGRID_API_KEY`, and the `STAKING_*` set.
 
 #### `mediasoup`
@@ -117,11 +117,18 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Restart policy:** on failure, max 2 attempts, 2-second delay, 60-second window. Does not run persistently.
 - **Key environment variables:** `PG_SU_PASSWORD`, `PG_SU_NAME=postgres`, `PG_MEDIASOUP_PASSWORD`, `REDIS_PASSWORD`, `S3_SECRET`, `DEPLOYMENT`, `BASE_URL`
 
-#### `seaweedmaster` / `seaweedvolume` / `s3` (SeaweedFS)
-- **Image:** `chrislusf/seaweedfs:4.40` (all three; pinned — do not run an untagged/`latest` image, and keep any deployment at ≥ 4.34 for the 2026 security fixes)
-- **`seaweedmaster`** — master server; manages volume topology and file-ID allocation. Command: `master -ip=seaweedmaster -volumeSizeLimitMB=16`. Single-copy replication via `WEED_MASTER_VOLUME_GROWTH_COPY_1=1` / `..._OTHER=1`.
-- **`seaweedvolume`** — volume server; stores file blobs. Command: `volume -mserver=seaweedmaster:9333 -port=8080 -ip=seaweedvolume -preStopSeconds=1`. Volume: `seaweedfs-volume:/data`.
-- **`s3`** — filer with S3-compatible API on port 8333. Command: `filer -master="seaweedmaster:9333" -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333`. Network alias `s3.local` (used by nginx to proxy file requests). Volumes: `./s3_config/s3.json:/etc/seaweedfs/s3.json:ro` and `seaweedfs-buckets:/data`.
+#### `seaweed` (SeaweedFS)
+- **Image:** `chrislusf/seaweedfs:4.40` (pinned — do not run an untagged/`latest` image, and keep any deployment at ≥ 4.34 for the 2026 security fixes)
+- **Purpose:** S3-compatible object storage for uploaded files and images. One all-in-one `weed server` process replaces the former `seaweedmaster` / `seaweedvolume` / `s3` trio (consolidated 2026-08-02).
+- **Command:** `server -dir=/data -ip=seaweed -master.volumeSizeLimitMB=16 -volume.max=0 -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.port.iceberg=0`
+  - `-s3` implies `-filer`, so the single process runs master, volume server, filer and the S3 gateway.
+  - `-volume.max=0` auto-sizes the volume count from free disk space instead of the default cap of 8 (which at a 16 MB volume-size limit would cap the store at 128 MB).
+  - `-s3.port.iceberg=0` disables the Iceberg REST catalog that 4.40 otherwise starts on 8181 — nothing in this stack speaks Iceberg.
+  - Single-copy replication via `WEED_MASTER_VOLUME_GROWTH_COPY_1=1` / `..._OTHER=1`.
+- **Ports (all internal to the `cryptogram` network):** S3 8333, master 9333, volume 8080, filer 8888, plus their gRPC siblings (port + 10000). **Only 8333 is consumed by anything else in the stack** — nginx proxies file requests to it and `srv/repositories/files.ts` uses it as its endpoint, both via the network alias `s3.local`.
+- **Network alias:** `s3.local`
+- **Volumes:** `./s3_config/s3.json:/etc/seaweedfs/s3.json:ro` (dev; `s3.selfhost.json` for self-host) and `seaweedfs-data:/data`
+- **Data layout under `/data`:** volume blobs (`.dat`/`.idx`/`.vif`) at the root, filer leveldb in `filerldb2/`, master raft/sequence state in `m9333/`. Because blobs and filer metadata now share one volume, a filesystem snapshot of `/data` is atomic across both — which the former two-volume split could never be. See [docs/deployment](../deployment/) for the backup baseline.
 
 #### `nginx`
 - **Image:** `cryptogram/nginx` (built from `docker/nginx/Dockerfile_dev`)
@@ -160,8 +167,7 @@ The formerly commented-out Blockscout explorer stack (`blockscout`, `blockscout-
 |--------|---------|---------|
 | `pgdata` | `db` | PostgreSQL data persistence |
 | `pgadmin-data` | `pgadmin` (commented out) | pgAdmin data |
-| `seaweedfs-volume` | `seaweedvolume` | File blob storage |
-| `seaweedfs-buckets` | `s3` | S3 bucket metadata/data |
+| `seaweedfs-data` | `seaweed` | File blobs, filer metadata and master state (one `/data` tree) |
 | `builder-cache` | `cg-builder` | Yarn package cache across builds |
 
 ### S3 Configuration
@@ -468,4 +474,4 @@ Off by default. To enable, deploy your own non-custodial `CgStaking` contract (`
 
 ### Backups & firewall
 
-State lives in three named volumes: `pgdata` (database) and `seaweedfs-volume` + `seaweedfs-buckets` (uploaded media). Redis is intentionally unpersisted (sessions/ephemeral only). Ports to open: `80/tcp` (ACME + HTTPS redirect), `443/tcp+udp` (app + CG ID, HTTP/3), `4443/tcp` (call signalling), `40000–40099/udp` (WebRTC media).
+State lives in two named volumes: `pgdata` (database) and `seaweedfs-data` (uploaded media). Redis is intentionally unpersisted (sessions/ephemeral only). Ports to open: `80/tcp` (ACME + HTTPS redirect), `443/tcp+udp` (app + CG ID, HTTP/3), `4443/tcp` (call signalling), `40000–40099/udp` (WebRTC media).

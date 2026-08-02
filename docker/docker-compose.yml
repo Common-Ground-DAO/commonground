@@ -40,13 +40,6 @@ services:
       - cryptogram
     restart: unless-stopped
 
-  # redis-blockscout:
-  #   image: redis:6.2.7-alpine
-  #   command: redis-server --maxmemory 2GB --save ""
-  #   networks:
-  #     - cryptogram
-  #   restart: unless-stopped
-
   wsapi:
     image: cryptogram/backend
     environment:
@@ -330,70 +323,6 @@ services:
   #     - cryptogram
   #   volumes:
   #     - pgadmin-data:/var/lib/pgadmin
-
-  # blockscout-db:
-  #   image: postgres:14-alpine
-  #   environment:
-  #     - POSTGRES_DB=postgres
-  #     - POSTGRES_USER=postgres
-  #     - POSTGRES_PASSWORD=${PG_SU_PASSWORD}
-  #   networks:
-  #     - cryptogram
-  #   shm_size: '256m'
-  #   stop_signal: SIGINT
-  #   stop_grace_period: 1m
-  #   restart: unless-stopped
-
-  # blockscout:
-  #   depends_on:
-  #     - blockscout-db
-  #     - smart-contract-verifier
-  #     - redis-blockscout
-  #     - hardhat
-  #   image: blockscout/blockscout:4.1.8
-  #   container_name: 'blockscout'
-  #   command: bash -c "bin/blockscout eval \"Elixir.Explorer.ReleaseTasks.create_and_migrate()\" && bin/blockscout start"
-  #   env_file:
-  #     -  ./envs/common-blockscout.env
-  #   environment:
-  #     ETHEREUM_JSONRPC_VARIANT: 'hardhat'
-  #     ETHEREUM_JSONRPC_HTTP_URL: http://hardhat:8545/
-  #     ETHEREUM_JSONRPC_WS_URL: ws://hardhat:8545/
-  #     INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: 'true'
-  #     INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER: 'true'
-  #     DATABASE_URL: postgresql://postgres:${PG_SU_PASSWORD}@blockscout-db:5432/blockscout?ssl=false
-  #     ECTO_USE_SSL: 'false'
-  #     SECRET_KEY_BASE: '56NtB48ear7+wMSf0IQuWDAAazhpb31qyc7GiyspBP2vh7t5zlCsF5QDv76chXeN'
-  #     CHAIN_ID: '31337'
-  #   ports:
-  #     - 127.0.0.1:4000:4000
-  #   #volumes:
-  #     #- ./logs/:/app/logs/
-  #   networks:
-  #     - cryptogram
-  #   restart: unless-stopped
-
-  # smart-contract-verifier:
-  #   image: ghcr.io/blockscout/smart-contract-verifier:${SMART_CONTRACT_VERIFIER_DOCKER_TAG:-latest}
-  #   restart: unless-stopped
-  #   container_name: 'smart-contract-verifier'
-  #   env_file:
-  #     -  ./envs/common-smart-contract-verifier.env
-  #   ports:
-  #     - 127.0.0.1:8043:8043
-  #   networks:
-  #     - cryptogram
-
-  # visualizer:
-  #   image: ghcr.io/blockscout/visualizer:${VISUALIZER_DOCKER_TAG:-latest}
-  #   restart: unless-stopped
-  #   container_name: 'visualizer'
-  #   env_file:
-  #     -  ./envs/common-visualizer.env
-  #   ports:
-  #     - 127.0.0.1:8050:8050
-  #   networks:
-  #     - cryptogram
 
   cg-builder:
     build:

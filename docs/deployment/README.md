@@ -1,6 +1,6 @@
 # Common Ground Deployment
 
-> Status: verified against commit 3c42f772a, 2026-08-02.
+> Status: verified against commit db8028247, 2026-08-02.
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -33,7 +33,7 @@ of `docker-compose.selfhost.yml`):
 - nginx is built from `Dockerfile_selfhost` (real domains, instance-config
   injection, parameterized CSP).
 - `DEPLOYMENT=prod` gives full production semantics on any domain.
-- No hardhat dev chain, no `redis-blockscout`, no test contracts.
+- No hardhat dev chain, no test contracts.
 - Postgres loads the tuned `docker/db/postgresql.conf`.
 - Redis `maxmemory` is tuned for a small single machine.
 - The compose project is named `cg-selfhost`, so its containers and volumes

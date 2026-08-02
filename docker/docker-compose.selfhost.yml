@@ -6,7 +6,7 @@
 #   - nginx is built from Dockerfile_selfhost (real domains, instance-config
 #     injection, parameterized CSP)
 #   - DEPLOYMENT=prod: full production semantics on any domain
-#   - no hardhat dev chain, no redis-blockscout, no test contracts
+#   - no hardhat dev chain, no test contracts
 #   - postgres actually loads the tuned postgresql.conf
 #   - redis maxmemory tuned for a small single machine (total budget of the
 #     single redis instance; override via REDIS_MAXMEMORY)

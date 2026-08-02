@@ -87,14 +87,11 @@
   "scripts": {
     "start": "echo 'DEPRECATED, use \"./run.sh start\" instead'",
     "start_https": "echo 'DEPRECATED, use \"./run.sh start_https\" instead'",
-    "build": "printf 'NOT SUPPORTED, use \"./run.sh\" for commands.\n\n' && ./run.sh",
-    "test": "craco test",
-    "eject": "react-scripts eject"
+    "build": "printf 'NOT SUPPORTED, use \"./run.sh\" for commands.\n\n' && ./run.sh"
   },
   "eslintConfig": {
     "extends": [
-      "react-app",
-      "react-app/jest"
+      "react-app"
     ]
   },
   "browserslist": {

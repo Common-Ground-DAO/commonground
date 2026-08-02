@@ -133,16 +133,9 @@ module.exports = {
       }
     },
   },
-  variants: {
-    extend: {
-      backgroundColor: ['disabled'],
-      textColor: ['disabled']
-    },
-  },
   plugins: [
     require('@tailwindcss/forms'),
     require('@tailwindcss/typography'),
-    require('@tailwindcss/line-clamp'),
     require('@tailwindcss/aspect-ratio'),
     plugin(function ({ addComponents, theme }) {
       addComponents({

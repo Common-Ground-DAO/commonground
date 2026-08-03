@@ -79,7 +79,8 @@ export function serviceWorker(options: ServiceWorkerPluginOptions): Plugin {
     // process before Vite prints the error that actually broke the build — a
     // syntax error in `src/` used to surface as a workbox stack trace. Stand
     // down instead. (Rollup's `renderError` would cover output-phase failures
-    // too, but Vite 6 does not forward it; assertions that run in
+    // too, but Vite 6 never forwarded it and the `buildEnd` route works
+    // identically on Vite 7, so it stays; assertions that run in
     // `generateBundle` print their own message for that reason.)
     buildEnd(error) {
       if (error) bundleFailed = true;

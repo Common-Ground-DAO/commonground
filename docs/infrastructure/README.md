@@ -246,14 +246,14 @@ legacy Azure pipelines — runs the same four steps in this order:
 
 **Environment.** `DEPLOYMENT=prod` and `NODE_OPTIONS=--max-old-space-size=4096`
 are the only variables the build reads. `NODE_OPTIONS` is not optional: a plain
-`vite build` OOMs at 2048 MB and peaks just under ~4 GB container RSS, and node
-sizes its default heap from machine RAM, so a small selfhost VPS would fail
-without it. The 4096 MB figure was re-measured under Node 24 + Vite 7 in the
-builder container (`node:24.18-bookworm`) by a full `./run.sh build_full` run:
-~3.9 GiB peak by `docker stats`, ~4.1 GiB cgroup `memory.peak` (which also
-counts page cache). The flag caps only the V8 heap, so the build still fits —
-but the headroom is thin; treat further dependency growth as a trigger to
-re-measure, with 5120 as the fallback if a build ever OOMs.
+`vite build` OOMs at 2048 MB and peaks at ~4 GB container RSS, and node sizes
+its default heap from machine RAM, so a small selfhost VPS would fail without
+it. The figure was re-measured under Node 24 + Vite 7 by a dedicated measured
+`yarn build` in the builder container (`node:24.18-bookworm`): ~3.9 GiB peak by
+`docker stats`, ~4.1 GiB cgroup `memory.peak` (which also counts page cache).
+The flag caps only the V8 heap, so the build still fits — but the headroom is
+thin; treat further dependency growth as a trigger to re-measure, with 5120 as
+the fallback if a build ever OOMs.
 The legacy Azure pipelines additionally set `PUBLIC_URL` (see below).
 
 Three CRA-era variables are **gone** and must not be reintroduced:
@@ -310,7 +310,7 @@ prod/staging vhosts the directive did not carry `'self'` before the cutover
   JS/CSS chunk is missing from the precache manifest. The precache size cap is
   workbox's CRA-era **5 MiB** — it was raised to 8 MiB while Vite's default
   chunking still emitted one ~5.6 MB app chunk, and went back down once the
-  `manualChunks` vendor groups (below) capped the largest chunk at ~2.2 MB. A
+  `manualChunks` vendor groups (below) capped the largest chunk at ~2.2 MiB. A
   chunk over the cap silently drops out of the precache (which costs offline
   cold start), which is what the assertion turns into a build failure. A prod
   build currently precaches 90 entries / ~10.4 MiB (Vite 7 measurement) — CRA's

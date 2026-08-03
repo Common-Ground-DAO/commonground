@@ -6,7 +6,7 @@ import protoo, { AcceptFn, Peer, ProtooRequest, RejectFn } from 'protoo-server';
 import { mediasoupConfig } from './config';
 import { ActiveSpeakerObserver, AudioLevelObserver, Consumer, Producer, Router, WebRtcServer, WebRtcTransport, Worker } from 'mediasoup/node/lib/types';
 import Logger from './logger';
-import { randomString } from '../util';
+import { realRandomHexString } from '../util';
 import validators from '../validators';
 import deviceHelper from '../repositories/device';
 import errors from '../common/errors';
@@ -403,7 +403,7 @@ export default class Room extends EventEmitter {
         switch (request.method) {
             case 'getSignableSecret':
                 {
-                    const secret = randomString(20);
+                    const secret = realRandomHexString(32);
                     peer.data._cgSecret = secret;
                     accept(secret);
 
@@ -420,6 +420,7 @@ export default class Room extends EventEmitter {
                         delete peer.data._cgSecret;
                         if (peer.id !== userId) {
                             accept("ERROR");
+                            return;
                         }
                         peer.data._cgAuth = true;
                         accept("OK");

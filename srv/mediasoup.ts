@@ -118,8 +118,12 @@ async function getTrafficSinceLastCall(): Promise<{
 }
 let traffic = 0;
 setInterval(async () => {
-    const result = await getTrafficSinceLastCall();
-    traffic = result.received + result.sent;
+    try {
+        const result = await getTrafficSinceLastCall();
+        traffic = result.received + result.sent;
+    } catch (error) {
+        console.error('traffic sampling failed', error);
+    }
 }, config.CALLSERVER_UPDATE_TRAFFIC_INTERVAL);
 
 (async () => {
@@ -332,10 +336,16 @@ async function runProtooWebSocketServer() {
             return;
         }
 
+        // consumerReplicas is a debugging aid inherited from the mediasoup demo
+        // that multiplies the consumers created per producer, and it is fixed
+        // room-wide by whoever connects first. Clamp it hard so a single client
+        // cannot force the worker to allocate an unbounded number of consumers.
         let consumerReplicas = Number(u.get('consumerReplicas'));
 
-        if (isNaN(consumerReplicas)) {
+        if (isNaN(consumerReplicas) || consumerReplicas < 0) {
             consumerReplicas = 0;
+        } else {
+            consumerReplicas = Math.min(4, Math.floor(consumerReplicas));
         }
 
         console.info(
@@ -461,12 +471,20 @@ async function getOrCreateRoom({
         room = await Room.create({ mediasoupWorker, roomId, consumerReplicas, callType, callCreator, stageSlots, callSlots, audioOnly, highQuality });
 
         rooms.set(roomId, room);
-        room.on('close', () => {
-            callHelper.softEndCall(roomId);
+        room.on('close', async () => {
+            try {
+                await callHelper.softEndCall(roomId);
+            } catch (error) {
+                console.error('softEndCall failed', error);
+            }
             rooms.delete(roomId);
         });
-        room.on('forceClose', () => {
-            callHelper.endCallForEveryone(roomId);
+        room.on('forceClose', async () => {
+            try {
+                await callHelper.endCallForEveryone(roomId);
+            } catch (error) {
+                console.error('endCallForEveryone failed', error);
+            }
             rooms.delete(roomId);
         });
     }

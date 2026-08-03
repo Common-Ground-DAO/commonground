@@ -20,6 +20,7 @@ import PluginApi from "./api/plugin";
 import SearchApi from "./api/search";
 import ReportApi from "./api/report";
 import BotApi from "./api/bot";
+import MediasoupApi from "./api/mediasoup";
 
 const validators = {
   Common,
@@ -41,6 +42,7 @@ const validators = {
     Search: SearchApi,
     Report: ReportApi,
     Bot: BotApi,
+    Mediasoup: MediasoupApi,
   }
 }
 

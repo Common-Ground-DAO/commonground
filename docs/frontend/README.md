@@ -1,6 +1,6 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit f2da92ef6, 2026-08-01
+> Status: verified against commit 05be8e9be, 2026-08-03
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -849,6 +849,31 @@ The app coordinates behavior across multiple open tabs. A single service worker 
 ---
 
 ## 9. Build, Entry Points, and Instance Configuration
+
+### Toolchain
+
+The frontend is built with **Vite 6** (`vite.config.ts`). It replaced
+Create React App + craco + webpack; nothing of that stack remains.
+
+| Concern | Where |
+|---|---|
+| Build / dev server | `vite.config.ts`. Multi-page: both HTML shells are rollup inputs and are emitted at the dist root under their own names. Dev server is pinned to host `0.0.0.0`, port **3000** — load-bearing, because `src/data/appstate/serviceWorker.ts` disables SW registration on that origin, which is what keeps dev SW-free. |
+| `baseUrl: "src"` imports | `vite/baseUrlResolve.ts`. `tsconfig.json` sets `baseUrl: "src"` and no `paths` map, backing ~1945 bare-specifier import lines (`components/…`, `common/util`, but also file-level ones like `'App'` and `'service-worker'`). The plugin reimplements webpack's precedence: node_modules wins, `src/` is the fallback. |
+| SVG components | `vite-plugin-svgr`, behind a `?react` query — `import Icon from './icon.svg?react'`, **default** export. `svgo: false` is load-bearing (svgr's default svgo pass strips `viewBox`). Typed by `src/types/svg-react.d.ts`. |
+| Service worker | `vite/serviceWorker.ts` — a nested Vite build plus `workbox-build`'s `injectManifest`; deliberately **not** `vite-plugin-pwa`, because the worker and its registration manager are hand-written. Fails the build if the worker bundle is not a single file or if any emitted JS/CSS chunk is missing from the precache. |
+| Entry `<script>` tags | `vite/htmlEntryScripts.ts` — the shells carry no `<script src>`; the config declares which module belongs to which shell. |
+| Social preview meta | `vite/absoluteSocialMeta.ts` — makes `og:image`/`twitter:image`/`og:url` absolute when `PUBLIC_URL` is set (only the legacy Azure pipelines set it). |
+| Node polyfills | `vite-plugin-node-polyfills`, scoped to `buffer`/`stream`/`assert` + global `Buffer`, for transitive web3 dependencies only. `process` and `global` are deliberately **not** polyfilled: `src/common/` is dual-runtime (the backend consumes it through the `srv/common` symlink) and reads env through a `globalThis` indirection that must keep resolving to nothing in the browser. |
+| CSS | `postcss.config.js` (`tailwindcss/nesting` → `tailwindcss` → `autoprefixer`), `tailwind.config.js`. |
+| Type-check | `yarn typecheck` — `tsc --noEmit` over `src/**` plus `tsconfig.node.json` over the Vite-side files. TypeScript 5.9. |
+| Lint | `yarn lint` — `eslint.config.mjs` (ESLint 9 flat config: typescript-eslint + react + react-hooks), calibrated to the severities the old `react-app` preset enforced. Errors fail, warnings do not. |
+| Tests | `yarn test` — Vitest (`vitest.config.ts`), one smoke test so far. |
+
+Neither type-check nor lint happens during `vite build`, which is why the docker
+build scripts run them as explicit steps — see
+[docs/infrastructure](../infrastructure/README.md#frontend-build-steps).
+
+### Entry points
 
 - **Main entry**: `src/index.tsx` -- the primary web app entry point.
 - **CG ID entry**: `src/index_cgid.tsx` -- alternative entry point for the CG Identity service.

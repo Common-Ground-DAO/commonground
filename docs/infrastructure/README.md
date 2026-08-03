@@ -1,4 +1,4 @@
-> Status: verified against commit 9a320e453, 2026-08-02
+> Status: verified against commit 05be8e9be, 2026-08-03
 
 # Common Ground Infrastructure Documentation
 
@@ -148,7 +148,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 
 #### `cg-builder`
 - **Image:** `commonground/node20` (built from `docker/node20/`)
-- **Purpose:** Build container. Not a running service — invoked via `docker compose run` to execute build commands (yarn install, craco build, tsc compile, contract deployment). Mounts the entire project directory.
+- **Purpose:** Build container. Not a running service — invoked via `docker compose run` to execute build commands (yarn install, type-check/lint/`vite build`, backend `tsc` compile, contract deployment). Mounts the entire project directory.
 - **User:** `${BUILDER_UID}:${BUILDER_GID}` (matches host user to avoid permission issues)
 - **Volumes:** `../:/cg`, `builder-cache:/builder-cache` (persistent yarn cache)
 - **Default command:** `echo "Not running interactive, exiting..."` (always invoked with explicit commands)
@@ -210,15 +210,14 @@ The complete build pipeline, for first-time setup or full rebuilds.
 3. **Generate SSL certificates:** compare `LOCAL_CERTIFICATE_IP` with the stored `certificate_ip`; if changed, regenerate root CA and server certs.
 4. **Clear `backend/dist/` and `nginx/dist/`**, then install frontend dependencies (`docker compose run --rm cg-builder yarn`).
 5. **Generate random build ID:** a random base64 string is written into `src/common/random_build_id.ts` for cache-busting / new-build detection.
-6. **Build the React frontend:** `yarn craco --openssl-legacy-provider build` with `DEPLOYMENT=prod`, `GENERATE_SOURCEMAP=true`, `IMAGE_INLINE_SIZE_LIMIT=5000`, `NODE_OPTIONS=--max-old-space-size=8192`. Output goes to `../build/`, then `rsync`ed into `nginx/dist/`.
-7. **Delete small SVG files:** removes SVGs ≤ 5000 bytes from `nginx/dist/static/media/` (these should be inlined by the bundler, not served as files).
-8. **Build nginx image:** `docker compose build --no-cache nginx`.
-9. **Generate VAPID keys:** if `vapid_keys.json` doesn't exist, generate Web Push VAPID keys via `npx web-push generate-vapid-keys`.
-10. **Build the backend:** clear `backend/dist/`, `rsync` `srv/` (excluding `node_modules` and `.yarn`), copy `build/index.html` into `backend/dist/` (used for server-rendered meta tags), build `commonground/backend_stage_0`, then build the `api` image (stage 1 runs `yarn tsc`).
-11. **Build and start the database:** `docker compose build --no-cache db && docker compose up -d db`.
-12. **Start the full stack:** `docker compose up -d`.
-13. **Deploy smart contracts:** runs `contracts/scripts/deploy.ts` against the local Hardhat node (`--network cgstack`).
-14. **Show logs:** `./logs.sh`.
+6. **Type-check, lint and build the frontend:** one builder run of `yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite`, with `DEPLOYMENT=prod` and `NODE_OPTIONS=--max-old-space-size=4096`. Output goes to `../build/`, then `rsync`ed into `nginx/dist/`. See [Frontend build steps](#frontend-build-steps) for what each step does and why it is a separate step now.
+7. **Build nginx image:** `docker compose build --no-cache nginx`.
+8. **Generate VAPID keys:** if `vapid_keys.json` doesn't exist, generate Web Push VAPID keys via `npx web-push generate-vapid-keys`.
+9. **Build the backend:** clear `backend/dist/`, `rsync` `srv/` (excluding `node_modules` and `.yarn`), copy `build/index.html` into `backend/dist/` (used for server-rendered meta tags), build `commonground/backend_stage_0`, then build the `api` image (stage 1 runs `yarn tsc`).
+10. **Build and start the database:** `docker compose build --no-cache db && docker compose up -d db`.
+11. **Start the full stack:** `docker compose up -d`.
+12. **Deploy smart contracts:** runs `contracts/scripts/deploy.ts` against the local Hardhat node (`--network cgstack`).
+13. **Show logs:** `./logs.sh`.
 
 ### Backend-Only Update: `docker/updateBackend.sh` (`./run.sh update_backend`)
 
@@ -229,8 +228,63 @@ Faster rebuild that only recompiles the backend: stops backend services, rebuild
 Rebuilds only the frontend and nginx:
 1. Clear `nginx/dist/`, rebuild `cg-builder`.
 2. Install dependencies, generate a new random build ID.
-3. Run `yarn craco --openssl-legacy-provider build` with `DEPLOYMENT=prod`, `GENERATE_SOURCEMAP=true`, `IMAGE_INLINE_SIZE_LIMIT=5000`, and **`NODE_OPTIONS=--max-old-space-size=4096`** (added to stop the frontend build running out of memory on small machines).
+3. Run `yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite` with `DEPLOYMENT=prod` and **`NODE_OPTIONS=--max-old-space-size=4096`** (see [Frontend build steps](#frontend-build-steps)).
 4. `rsync` the build output into `nginx/dist/`, then `docker compose up -d --no-deps --build nginx` and restart nginx.
+
+### Frontend build steps
+
+The frontend is built by **Vite** (`vite.config.ts` + the plugins under `vite/`).
+Every build path — `build.sh`, `updateFrontend.sh`, `selfhost.sh` and the two
+legacy Azure pipelines — runs the same four steps in this order:
+
+| Step | Command | Why it is a step |
+|---|---|---|
+| type-check | `yarn typecheck` | `tsc --noEmit` for `src/**` plus `tsconfig.node.json` for the Vite-side files. The old webpack build ran ForkTsChecker inline; a Vite build type-checks nothing, so without this a type error ships silently. |
+| lint | `yarn lint` | `eslint .` against `eslint.config.mjs`. Same reason: react-scripts ran ESLintPlugin inline. Errors fail the build, warnings do not — the same contract CRA had. |
+| build | `yarn build` | `vite build` → `build/`. |
+| HTML rewrite check | `yarn check:html-rewrite` | Runs the real rewrite logic of `srv/api/getRoutes.ts` and `docker/nginx/inject-instance-config.sh` against both emitted shells. Both patch the HTML with string/regex surgery at serve time and fail *silently* when the markup shape drifts. |
+
+**Environment.** `DEPLOYMENT=prod` and `NODE_OPTIONS=--max-old-space-size=4096`
+are the only variables the build reads. `NODE_OPTIONS` is not optional: a plain
+`vite build` OOMs at 2048 MB and peaks around 3.5 GB RSS, and node sizes its
+default heap from machine RAM, so a small selfhost VPS would fail without it.
+The legacy Azure pipelines additionally set `PUBLIC_URL` (see below).
+
+Three CRA-era variables are **gone** and must not be reintroduced:
+
+| Removed | Replacement |
+|---|---|
+| `GENERATE_SOURCEMAP` | `build.sourcemap: true`, unconditional on every path. The app is AGPL; the old no-sourcemap policy dated from the closed-source era. |
+| `IMAGE_INLINE_SIZE_LIMIT` | `build.assetsInlineLimit: 5000` in `vite.config.ts`. |
+| `--openssl-legacy-provider` | Not needed. It was a node flag the craco launcher forwarded because react-scripts 5's webpack hashing hit OpenSSL 3 restrictions. |
+
+`PUBLIC_URL` survives with a much narrower job. It no longer sets a public path —
+asset, manifest and icon URLs are root-relative on every path. When set, it only
+makes the default `og:image` / `twitter:image` / `og:url` meta absolute
+(`vite/absoluteSocialMeta.ts`), because Open Graph scrapers do not resolve
+relative image URLs. Only the two legacy pipelines set it.
+
+**Output layout** (`build/`), pinned to keep the nginx rules untouched:
+
+- `build/index.html`, `build/index_cgid.html` — both entry shells at the web
+  root under exactly these names. `srv/api/getRoutes.ts`,
+  `docker/nginx/inject-instance-config.sh` and the `{CGID_SERVER_NAME}` vhost
+  all depend on that.
+- `build/static/js|css|media/` — `assetsDir: 'static'`, hex `[hash:8]` content
+  hashes. nginx's cache rule keys on
+  `^/(fonts|icons|images|static|audio|downloads)/`, and the service worker's
+  `dontCacheBustURLsMatching: /\.[0-9a-f]{8}\./` needs hex, not rollup's
+  default base64url alphabet.
+- `build/service-worker.js` at the root, built by `vite/serviceWorker.ts`
+  (`workbox-build` `injectManifest`, not `vite-plugin-pwa`). The build **fails**
+  if the nested worker bundle is not exactly that one file, or if any emitted
+  JS/CSS chunk is missing from the precache manifest.
+- everything in `public/` copied verbatim (`fonts/`, `icons/`, `audio/`,
+  `images/`, `video/`, both manifests, `robots.txt`, `logo.svg`).
+- no `asset-manifest.json` — it had no consumers.
+
+**Tests.** `yarn test` (Vitest, `vitest.config.ts`) is not part of the build
+scripts yet; the suite is a single smoke test.
 
 ### Backend Docker Image Build (Two-Stage for Dev)
 
@@ -357,7 +411,7 @@ The project uses **Azure DevOps Pipelines** (YAML). These pipelines target the C
 
 **Trigger:** push to `staging`. **Pool:** `ubuntu-20` (self-hosted agent).
 
-Steps: install Docker/Node/Yarn toolchain → fetch the secure `.yarnrc` (private registry creds) → `yarn` install → copy `srv/` to `docker/backend/dist/` → generate a build ID (written to both `src/common/random_build_id.ts` and `docker/backend/dist/common/random_build_id.ts`) → frontend build with `DEPLOYMENT=prod GENERATE_SOURCEMAP=false IMAGE_INLINE_SIZE_LIMIT=5000 PUBLIC_URL="https://staging.app.cg"` → copy `index.html`/build output into backend and nginx dirs → build and push **backend** and **nginx** images (nginx build args `SERVER_NAME=staging.app.cg`, `CGID_SERVER_NAME=id.staging.app.cg`) with tags `beta` + `$(Build.BuildNumber)` → deploy via **Ansible** over SSH (`docker_swarm_deploy_beta.yml` for the main stack, `deploy_docker_mediasoup.yml` for mediasoup) → clean up.
+Steps: install Docker/Node/Yarn toolchain → fetch the secure `.yarnrc` (private registry creds) → `yarn` install → copy `srv/` to `docker/backend/dist/` → generate a build ID (written to both `src/common/random_build_id.ts` and `docker/backend/dist/common/random_build_id.ts`) → frontend build with `yarn typecheck && yarn lint && DEPLOYMENT=prod PUBLIC_URL="https://staging.app.cg" yarn build && node tools/checkHtmlRewriteCompat.mjs` → copy `index.html`/build output into backend and nginx dirs → build and push **backend** and **nginx** images (nginx build args `SERVER_NAME=staging.app.cg`, `CGID_SERVER_NAME=id.staging.app.cg`) with tags `beta` + `$(Build.BuildNumber)` → deploy via **Ansible** over SSH (`docker_swarm_deploy_beta.yml` for the main stack, `deploy_docker_mediasoup.yml` for mediasoup) → clean up.
 
 ### Production: `pipelines/build-production.yml`
 
@@ -386,8 +440,8 @@ Shared template that deletes the build work directory, `condition: always()`.
 
 | Command | Effect |
 |---|---|
-| `./run.sh start` | React dev server (hot reload) on `http://localhost:3000`, run via `craco start` in `cg-builder`. Backend stack must already be up. |
-| `./run.sh start_https` | Same, but HTTPS with self-signed certs — required for WebRTC calls and LAN multi-device testing. |
+| `./run.sh start` | Vite dev server (HMR) on `http://localhost:3000`, run via `yarn dev` in `cg-builder`. Backend stack must already be up. Port 3000 is load-bearing: the service-worker registration manager disables itself on that origin, which is what keeps the dev server SW-free. |
+| `./run.sh start_https` | Same, but HTTPS with the self-signed certs under `docker/nginx/certs/` — required for WebRTC calls and LAN multi-device testing. **Aborts** if the certs are missing; there is no HTTP fallback. |
 | `./run.sh build_full` | Runs the full `docker/build.sh` pipeline. |
 | `./run.sh update_backend` | Recompiles backend TypeScript, rebuilds backend images. |
 | `./run.sh update_frontend` | Rebuilds only the frontend + nginx (production build). |
@@ -434,7 +488,7 @@ This profile runs the **entire stack on one server** with real production semant
   - Generates `docker/s3_config/s3.selfhost.json` with an S3 secret matching the generated `S3_SECRET` (`chmod 600`).
   - Generates a self-signed cert in `docker/selfhost/certs/` for the internal caddy→mediasoup hop only (clients only ever see the Let's Encrypt cert).
   - The generated `.env.selfhost` prefills the RPC endpoints with **free public JSON-RPC URLs** and `CG_ACTIVE_CHAINS=eth,arbitrum,xdai,base,matic,lukso`, so token-gating works out of the box.
-- **`docker/selfhost/selfhost.sh <cmd>`** — build/operate wrapper. Requires `.env.selfhost`; runs Compose with `--env-file .env.selfhost -f docker-compose.selfhost.yml`. Commands: `build`, `up`, `down`, `logs [service]`, `ps`, `stats`, `compose <args>`, `update` (git pull + rebuild + restart). It sets `COMPOSE_PROFILES` from the `CG_ENABLE_CALLS` / `CG_ENABLE_BLOCKCHAIN` switches and runs `up`/`down`/`update` with `--remove-orphans`, so a service whose switch was flipped off is actually removed. The `build` command mirrors `build.sh` but uses `NODE_OPTIONS=--max-old-space-size=4096` and `GENERATE_SOURCEMAP=false`, and builds the nginx image from `Dockerfile_selfhost`.
+- **`docker/selfhost/selfhost.sh <cmd>`** — build/operate wrapper. Requires `.env.selfhost`; runs Compose with `--env-file .env.selfhost -f docker-compose.selfhost.yml`. Commands: `build`, `up`, `down`, `logs [service]`, `ps`, `stats`, `compose <args>`, `update` (git pull + rebuild + restart). It sets `COMPOSE_PROFILES` from the `CG_ENABLE_CALLS` / `CG_ENABLE_BLOCKCHAIN` switches and runs `up`/`down`/`update` with `--remove-orphans`, so a service whose switch was flipped off is actually removed. The `build` command mirrors `build.sh` (same type-check/lint/build/check chain, same `NODE_OPTIONS=--max-old-space-size=4096`) and builds the nginx image from `Dockerfile_selfhost`. Sourcemaps ship here too — see [Frontend build steps](#frontend-build-steps).
 
 ### Caddy (`docker/selfhost/Caddyfile`)
 

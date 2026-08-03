@@ -21,13 +21,13 @@
  *
  * The logic below is copied verbatim from those two files; keep it in sync.
  *
- * Usage: node tools/checkHtmlRewriteCompat.mjs [distDir]   (default: build-vite)
+ * Usage: node tools/checkHtmlRewriteCompat.mjs [distDir]   (default: build)
  */
 
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-const distDir = path.resolve(process.argv[2] ?? 'build-vite');
+const distDir = path.resolve(process.argv[2] ?? 'build');
 
 // --- srv/api/getRoutes.ts:52-54,62-64,65-85 -------------------------------
 const STRIP_OG = /<meta +property="(og:title|og:description|og:type|og:image|og:url)" +content="[^"]+" *\/?>/g;

@@ -87,7 +87,11 @@ jobs:
       script: |
         corepack enable
         yarn set version 4.1.0
-        DEPLOYMENT=prod GENERATE_SOURCEMAP=false IMAGE_INLINE_SIZE_LIMIT=5000 PUBLIC_URL="https://app.cg" yarn craco --openssl-legacy-provider build
+        # The webpack build used to type-check and lint inline; a Vite build does
+        # neither, so both are explicit steps. PUBLIC_URL keeps the default social
+        # preview meta absolute (vite/absoluteSocialMeta.ts) — it no longer affects
+        # asset URLs, which are root-relative on every build path now.
+        yarn typecheck && yarn lint && DEPLOYMENT=prod PUBLIC_URL="https://app.cg" yarn build && node tools/checkHtmlRewriteCompat.mjs
 
   - task: CopyFiles@2
     displayName: copy generated index.html to backend/dist

@@ -8,16 +8,15 @@ import type { Plugin } from 'vite';
 /**
  * Injects the entry module script into each HTML entry.
  *
- * The two templates (`index.html`, `index_cgid.html`) deliberately contain no
- * `<script src>` of their own: CRA's HtmlWebpackPlugin injects the bundles
- * itself and would choke on a hardcoded `/src/index.tsx` (it would survive into
- * the production HTML and 404). Injecting from a `transformIndexHtml` pre-hook
- * keeps a single set of templates working for both build stacks — pre-hooks run
- * before Vite's `vite:build-html` scans the document for module scripts, so the
- * injected tag is picked up as a real entry.
+ * The two templates (`index.html`, `index_cgid.html`) contain no `<script src>`
+ * of their own. That started as a constraint of running CRA and Vite off one
+ * set of templates (HtmlWebpackPlugin injects its own bundles and would have
+ * shipped a dead `/src/index.tsx` tag), and it is kept now because it keeps the
+ * entry wiring in one place — the config declares which module belongs to which
+ * shell, and a typo fails the build instead of producing a blank page.
  *
- * Dies with `craco.config.js` in Phase 3 (the templates can carry the script
- * tags directly once CRA is gone) — but there is no cost to keeping it.
+ * Pre-hooks run before Vite's `vite:build-html` scans the document for module
+ * scripts, so the injected tag is picked up as a real entry.
  */
 export function htmlEntryScripts(entries: Record<string, string>): Plugin {
   let isBuild = false;

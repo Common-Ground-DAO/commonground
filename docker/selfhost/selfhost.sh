@@ -71,23 +71,16 @@ build() {
     sed -i 's#^const buildId =.*$#const buildId = "'$buildId'";#' ../src/common/random_build_id.ts
   fi
 
-  printf "\n---\n--- Building frontend (prod, no sourcemaps)\n---\n"
-  docker_compose run --rm -e NODE_OPTIONS="--max-old-space-size=4096" -e DEPLOYMENT=prod -e GENERATE_SOURCEMAP=false -e IMAGE_INLINE_SIZE_LIMIT=5000 cg-builder yarn craco --openssl-legacy-provider build
+  # Type-check and lint are separate steps now: the webpack build ran
+  # ForkTsChecker + ESLintPlugin inline and a Vite build does neither.
+  # Sourcemaps ship on every path — the app is AGPL, the old no-sourcemap
+  # policy dated from the closed-source era.
+  printf "\n---\n--- Type-checking, linting and building the frontend\n---\n"
+  docker_compose run --rm -e NODE_OPTIONS="--max-old-space-size=4096" -e DEPLOYMENT=prod cg-builder \
+    bash -c "yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite"
   checkError
   rm -rf nginx/dist/* && rsync -a ../build/* nginx/dist/
   checkError
-
-  for f in nginx/dist/static/media/*.svg; do
-    # No build stack emits standalone `static/media/*.svg` any more (the SVG
-    # imports use svgr's `?react` form), so the glob stays unexpanded. Under
-    # `set -euo pipefail` the `wc` below would then fail and abort the whole
-    # build — skip the literal pattern. (Loop dies with CRA in Phase 3.)
-    [ -e "$f" ] || continue
-    size=$(wc -c "$f" | awk '{print $1}')
-    if [ "$size" -le "5000" ]; then
-      rm "$f"
-    fi
-  done
 
   printf "\n---\n--- Building nginx image\n---\n"
   docker_compose build --no-cache nginx

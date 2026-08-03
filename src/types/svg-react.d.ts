@@ -11,11 +11,9 @@
 // pulling in the plugin's Vite-6 type surface. Declaring it here keeps the
 // declaration readable and independent of the plugin version.
 //
-// `vite/client` itself *is* in the tsconfig `types` array. It redeclares the
-// `*.svg` / `*.png` / `*.css` ambient wildcards that react-scripts also
-// declares (via `src/react-app-env.d.ts`); the two coexist without duplicate
-// identifiers — verified under TS 4.5.2 — so react-app-env.d.ts can stay until
-// CRA is removed in Phase 3.
+// `vite/client` itself *is* in the tsconfig `types` array and covers the plain
+// `*.svg` / `*.png` / `*.css` wildcards that used to come from react-scripts
+// via `src/react-app-env.d.ts` (deleted with CRA).
 declare module '*.svg?react' {
   import * as React from 'react';
   const ReactComponent: React.FunctionComponent<

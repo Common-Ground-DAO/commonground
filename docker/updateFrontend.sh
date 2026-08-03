@@ -36,7 +36,8 @@ fi
 docker_compose run --rm cg-builder yarn && \
 buildId=$(dd if=/dev/random bs=1 count=10 status=none | base64) && \
 sed -i 's#^const buildId =.*$#const buildId = "'$buildId'";#' ../src/common/random_build_id.ts && \
-docker_compose run --rm -e NODE_OPTIONS="--max-old-space-size=4096" -e DEPLOYMENT=prod -e GENERATE_SOURCEMAP=true -e IMAGE_INLINE_SIZE_LIMIT=5000 cg-builder yarn craco --openssl-legacy-provider build && \
+docker_compose run --rm -e NODE_OPTIONS="--max-old-space-size=4096" -e DEPLOYMENT=prod cg-builder \
+  bash -c "yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite" && \
 rsync -a ../build/* nginx/dist/ && \
 docker_compose up -d --no-deps --build nginx
 checkError

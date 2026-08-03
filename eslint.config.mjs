@@ -43,7 +43,6 @@ export default tseslint.config(
   {
     ignores: [
       'build/**',
-      'build-vite/**',
       'dist/**',
       'node_modules/**',
       '.yarn/**',

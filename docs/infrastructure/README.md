@@ -124,6 +124,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
   - `-s3` implies `-filer`, so the single process runs master, volume server, filer and the S3 gateway.
   - `-volume.max=0` auto-sizes the volume count from free disk space instead of the default cap of 8 (which at a 16 MB volume-size limit would cap the store at 128 MB).
   - `-s3.port.iceberg=0` disables the Iceberg REST catalog that 4.40 otherwise starts on 8181 — nothing in this stack speaks Iceberg.
+  - `weed server`, not `weed mini` (upstream's default CMD), on purpose: `mini` bundles WebDAV, an Admin UI and the Iceberg catalog, enables an embedded IAM API on the S3 port by default, and upstream reserves the right to evolve its defaults — `server` keeps a stable flag surface and no extra listeners.
   - Single-copy replication via `WEED_MASTER_VOLUME_GROWTH_COPY_1=1` / `..._OTHER=1`.
 - **Ports (all internal to the `cryptogram` network):** S3 8333, master 9333, volume 8080, filer 8888, plus their gRPC siblings (port + 10000). **Only 8333 is consumed by anything else in the stack** — nginx proxies file requests to it and `srv/repositories/files.ts` uses it as its endpoint, both via the network alias `s3.local`.
 - **Network alias:** `s3.local`

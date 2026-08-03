@@ -323,7 +323,7 @@ All subsequent requests (except `getSignableSecret` and `login`) require `_cgAut
 
 **Every protoo request that carries data is Joi-validated** since the mediasoup hardening of 2026-08-03. `srv/mediasoup/room.ts` validates the request's `data` before touching it: 18 call sites against `validators.API.Mediasoup.*` (`srv/validators/api/mediasoup.ts`), plus `login` against the shared `validators.API.Socket.login`. The three data-less methods (`getSignableSecret`, `getRouterRtpCapabilities`, `endCallForEveryone`) need none.
 
-The schemas are `.strict(true)` (no type coercion — `"1"` is not accepted where a number is expected) and, being plain Joi objects, **reject unknown keys**; only the opaque mediasoup protocol objects (`rtpParameters`, `dtlsParameters`, `device`, `appData`, …) are `.unknown(true)`, and those are validated as bounded objects, never structurally. Ids are length-bounded strings, `peerId`s must be UUIDs. This is a **wire-visible change**: a client sending extra top-level fields now gets an error where it previously succeeded.
+The schemas are `.strict(true)` (no type coercion — `"1"` is not accepted where a number is expected) and, being plain Joi objects, **reject unknown keys**; only the opaque mediasoup protocol objects (`rtpParameters`, `dtlsParameters`, `device`, `appData`, …) are `.unknown(true)` and are not validated structurally — their only size bound is the 960 KB protoo frame limit (`maxReceivedFrameSize`/`maxReceivedMessageSize`, `srv/mediasoup.ts`). Ids are length-bounded strings, `peerId`s must be UUIDs. This is a **wire-visible change**: a client sending extra top-level fields now gets an error where it previously succeeded.
 
 | Method | Data | Response | Description |
 |---|---|---|---|

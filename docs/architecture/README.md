@@ -489,8 +489,8 @@ File serving bypasses the API server. nginx rewrites the signed file path into s
 
 ### Crash Handling
 
-- `api`, `wsapi`: handlers for both `unhandledRejection` and `uncaughtException` log and call `shutdown(1)`
-- `mediasoup`, `onchain`, `job-runner`, `memberlist`: handle `SIGTERM` only; unhandled rejections and uncaught exceptions use Node.js defaults (the process dies)
+- `api`, `wsapi`, `memberlist`: handlers for both `unhandledRejection` and `uncaughtException` log and call `shutdown(1)`
+- `mediasoup`, `onchain`, `job-runner`: handle `SIGTERM` only; unhandled rejections and uncaught exceptions use Node.js defaults (the process dies)
 - `mediasoup` workers: on the mediasoup `Worker.died` event the process exits after a 2s delay
 
 ---

@@ -15,6 +15,11 @@
   the `mediasoup_staging` inventory driven by `pipelines/build-and-deploy-beta.yml`
   (~:181-190, "Deploy mediasoup staging"). **Must happen before the next staging/prod
   rollout of the new images.**
+- [ ] **Confirm the maintainer's selfhost/reference instances have run the SeaweedFS
+  volume cutover** (2026-08-03, storage close-out) — the procedure and
+  `docker/selfhost/migrate_seaweed_volumes.sh` are documented in `docker/SELFHOST.md`;
+  what is untracked is whether the maintainer's own instances have executed it. Confirm
+  once, then strike.
 - [ ] **Cut the hosted Swarm stack over to the single `redis` service** — the stack files
   in the separate infrastructure repository still publish
   `redis-sessions`/`redis-socketio`/`redis-data`, which images built after the core-slimming
@@ -107,13 +112,12 @@
   re-enabling rather than deciding against it. Decide: either it is intended (then say
   so in [docs/bots](../bots/README.md)) or add the endpoint with the matching lifecycle
   bookkeeping (tokens, memberships, presence reconciliation).
-- [ ] **`srv/api/user.ts:393` logs the raw captcha token** (2026-08-03, captcha
-  close-out) — on failed verification the handler does
-  `console.error("Error creating user, captcha verification failed", recaptchaToken, data)`.
-  Drop the token from the log line.
+- [ ] **Trim the failed-captcha error log in `srv/api/user.ts`** (2026-08-03, captcha
+  close-out) — on failed verification the handler logs the raw request context wholesale;
+  reduce it to a minimal, payload-free message.
 - [ ] **`AltchaWidget` re-registers its `statechange` listener on every render**
   (2026-08-03, captcha close-out) — the effect in
-  `src/components/molecules/AltchaWidget/AltchaWidget.tsx:27-41` depends on
+  `src/components/molecules/AltchaWidget/AltchaWidget.tsx:26-42` depends on
   `[onVerified, onReset]`, and both call sites pass inline arrows
   (`src/components/molecules/CaptchaModal/CaptchaModal.tsx:59`,
   `src/components/organisms/UserOnboarding/SetupProfile/SetupProfile.tsx:312`), so the
@@ -121,7 +125,7 @@
 - [ ] **`CaptchaModal` drops the verify promise** (2026-08-03, captcha close-out) —
   `src/components/molecules/CaptchaModal/CaptchaModal.tsx:59` fires
   `userApi.verifyCaptcha({ token })` without `await` or `.catch()`, so a rejection is
-  silently swallowed; the reCAPTCHA path two lines down (`:68`) awaits it.
+  silently swallowed; the reCAPTCHA path below it (`:68`) awaits it.
 - [ ] **Re-check whether `srv/util/axios.ts` still needs `keepAlive: false` on Node 24**
   (2026-08-03) — the custom Axios instance exists for a Node-20-era Axios/undici bug
   (axios#5929 / nodejs#47130) and has not been re-tested since the Node 24 bump. If the

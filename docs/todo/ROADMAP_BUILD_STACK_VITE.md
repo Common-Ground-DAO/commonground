@@ -2,7 +2,10 @@
 
 > Status: Phase 0 (inventory + roadmap) done 2026-08-02, verified against commit
 > db9f209bd; all maintainer decisions resolved 2026-08-02; Phase 1 merged into
-> develop 2026-08-03. Evidence base:
+> develop 2026-08-03; Phases 2 + 3 implemented on the stacked branches
+> `chore/build-stack-phase2-vite-core` / `chore/build-stack-phase3-cutover`
+> (Phase 3 = 373e04b88, 2026-08-03), awaiting the Phase-4 verification pass.
+> Evidence base:
 > [INVENTORY_BUILD_STACK.md](INVENTORY_BUILD_STACK.md) (section references `§n`
 > below point there).
 
@@ -345,33 +348,203 @@ nor react-scripts covers it).
 
 ### Phase 3 — Pipeline cutover + CRA removal + lint/test successor
 
-- [ ] `run.sh start`/`start_https` → Vite dev server in `cg-builder`.
-- [ ] `docker/build.sh`, `docker/updateFrontend.sh`, `docker/selfhost/selfhost.sh`:
+- [x] `run.sh start`/`start_https` → Vite dev server in `cg-builder`.
+      `start_https` **aborts** on missing certs (no silent HTTP fallback), in
+      run.sh *and* in `vite.config.ts`.
+- [x] `docker/build.sh`, `docker/updateFrontend.sh`, `docker/selfhost/selfhost.sh`:
       switch to `vite build`; drop `--openssl-legacy-provider`,
       `GENERATE_SOURCEMAP` (sourcemaps now always on — decided),
       `IMAGE_INLINE_SIZE_LIMIT`; delete the SVG prune loops (gated on the Phase-2
-      verification); revisit `--max-old-space-size` (expected to shrink — verify);
-      keep buildId stamp + `build/index.html → backend/dist` copy working; add the
-      standalone `tsc --noEmit` + eslint step (constraint 10). Touch `pipelines/`
-      (legacy Azure) only if trivial — the GitHub Actions replacement is a separate
-      workstream.
-- [ ] Verify `srv/api/getRoutes.ts` rewriting against the real Vite `index.html`
+      verification); revisit `--max-old-space-size` (**measured, not shrunk** —
+      see below); keep buildId stamp + `build/index.html → backend/dist` copy
+      working; add the standalone `tsc --noEmit` + eslint step (constraint 10).
+      `pipelines/` (legacy Azure) got the same one-line treatment.
+- [x] Verify `srv/api/getRoutes.ts` rewriting against the real Vite `index.html`
       (head markers, meta regexes) and `inject-instance-config.sh` against **both**
-      emitted HTML files (§10.2, §10.3).
-- [ ] nginx: confirm the `static/` rules hit and `no-cache`/deny rules still apply
-      (§10.4). Optional follow-up (separate PR): immutable caching for hashed
-      frontend assets (§2.4/§10.4).
-- [ ] Remove `react-scripts`, `@craco/craco`, `webpack-cli`, `craco.config.js` and
-      the CRA scripts from `package.json` — in **one commit**: `craco.config.js`
-      requires `webpack`/`html-webpack-plugin` only transitively via react-scripts
-      (§2.6).
-- [ ] eslint flat config per decision (typescript-eslint + react + react-hooks,
-      react-app parity); wire it plus `tsc --noEmit` into the build scripts.
-- [ ] Minimal **Vitest** setup (decided): config, one smoke test, `test` script.
-- [ ] Update docs in the same PR: `docs/infrastructure/` (build pipeline, env
-      vars), `docs/frontend/` (tooling), `docs/deployment/` — status-line bumps.
+      emitted HTML files (§10.2, §10.3). `tools/checkHtmlRewriteCompat.mjs` is
+      wired into every build path as `yarn check:html-rewrite`; 28 checks pass.
+- [x] nginx: confirmed, no change needed — see below. Optional follow-up
+      (separate PR): immutable caching for hashed frontend assets (§2.4/§10.4).
+- [x] Remove `react-scripts`, `@craco/craco`, `webpack-cli`, `craco.config.js` and
+      the CRA scripts from `package.json` — in **one commit** (8da707993).
+- [x] eslint flat config per decision (typescript-eslint + react + react-hooks,
+      react-app parity); wired plus `tsc --noEmit` into the build scripts.
+- [x] Minimal **Vitest** setup (decided): config, one smoke test, `test` script.
+- [x] Update docs in the same PR: `docs/infrastructure/`, `docs/frontend/`,
+      `docs/deployment/` — status lines bumped to 05be8e9be, 2026-08-03.
 - **Done when**: `./run.sh build_full` runs fully on Vite and the acceptance-bar
   checks pass in the dev stack; `selfhost.sh` builds; CRA is gone from the repo.
+  — *Everything host-runnable is green (see below). The in-container and
+  in-browser halves are Phase 4: Docker is not usable from the Phase-3
+  worktree.*
+
+#### Phase 3 results
+
+**TypeScript bump (finding 1 resolved).** `typescript` 4.5.2 → **5.9.3** (last
+5.x; viem asks for ≥ 5.0.4). `tsc --noEmit` now genuinely type-checks `src/**`
+— proven by temporarily introducing a type error and watching tsc report it —
+and is green, with the viem syntax-error wall gone. Two knock-on changes:
+
+- `tsconfig.json` `target` es5 → **es2018**. TS 5.5+ grammar-checks regex
+  syntax against the target and rejects the `u` flag + `\p{…}` escapes at
+  `src/common/validators.ts:188`. es2018 is the level the source actually uses,
+  matches the browserslist floors, and stays below the ES2022 threshold that
+  would flip `useDefineForClassFields`. Nothing emits from this tsconfig
+  (`noEmit`) — Vite transpiles against `build.target`, so shipped output is
+  unchanged.
+- `@types/node` 12 → 20 (builder image is node 20.11). Not in the tsconfig
+  `types` array, so it never enters the `src/**` program.
+
+The **backend is unaffected**: `srv/` has its own `package.json`, `yarn.lock`
+and `.yarnrc.yml` (typescript 5.2.2), and `docker/backend/Dockerfile` runs
+`yarn tsc` inside the rsynced tree. `srv/node_modules` is not even installed in
+the frontend worktree, so `tsc -p srv/tsconfig.json` could not be run here —
+but there is no shared install to break.
+
+**Precache cap (finding 3, option (a)).** `maximumFileSizeToCacheInBytes` 5 MB
+→ **8 MiB**. Manifest: 117 entries / 5.06 MiB → **118 entries / 10.48 MiB**,
+i.e. the 5.63 MB `App` chunk is back in. CRA's content baseline was 118 entries
+/ 10.59 MiB, so offline cold start is at parity again. Two assertions now abort
+the build (on **every** `DEPLOYMENT`, unlike the pre-existing fail-closed
+guard, because they catch shipped-product regressions rather than tooling
+breakage):
+
+- `assertPrecacheCoversAllCode` — every emitted `static/js/*.js` and
+  `static/css/*.css` must be in the manifest. Verified by lowering the cap to
+  5 MiB: build exits 1 naming the chunk.
+- `assertWorkerBundleIsSingleFile` — the nested worker build must emit exactly
+  `service-worker.js` (+ `.map`). Verified by letting the nested build copy
+  `public/`: exits 1.
+
+Also corrected a wrong comment: workbox runs user `manifestTransforms` **after**
+`modifyURLPrefix`, not before. The small-SVG tripwire strips the leading slash
+either way, so its behavior was never affected.
+
+**`--max-old-space-size` measured** (host, node 24.10, `/usr/bin/time -v`):
+
+| limit | result | peak RSS |
+|---|---|---|
+| 1536 MB | OOM | 1.85 GB |
+| 2048 MB | OOM | 2.42 GB |
+| 3072 MB | ok | 3.50 GB |
+| 4096 MB | ok | 4.32 GB |
+
+So it did **not** shrink, and it cannot be dropped: node sizes its default heap
+from machine RAM, so a small selfhost VPS would OOM without the flag. All three
+scripts now use **4096** — `build.sh` comes down from 8192, the other two were
+already there. Build wall time ≈ 18 s.
+
+**PUBLIC_URL / og:image (finding 6 resolved).** Implemented rather than
+accepted: `vite/absoluteSocialMeta.ts` makes `og:image`, `twitter:image` and
+`og:url` absolute when `PUBLIC_URL` is set, and is a no-op otherwise. Scoped to
+exactly those three tags — asset, manifest and icon URLs stay root-relative on
+every path, where absoluteness bought nothing (same origin). Keeping CRA's
+variable name means the two legacy pipelines keep their existing env line.
+`checkHtmlRewriteCompat` now accepts both `og:url` shapes: empty content
+(survives the API's strip regex — the documented pre-existing quirk) or an
+absolute URL (stripped, exactly as under CRA).
+
+**ESLint successor.** ESLint 9.39 flat config, typescript-eslint 8.65,
+eslint-plugin-react 7.37, eslint-plugin-react-hooks 7.1. **0 errors, 646
+warnings, exit 0.** Severity is calibrated against what `react-app` actually
+enforced (read out of the preset in the pre-removal `node_modules`): react-app
+was almost entirely a warn ruleset, and react-scripts only failed builds on
+*errors*, so everything the modern recommended presets add on top is registered
+at warn here. Relaxations below a naive "recommended" baseline, all deliberate:
+
+- **react-hooks: only `rules-of-hooks` (error) + `exhaustive-deps` (warn)** —
+  not `recommended-latest`. eslint-plugin-react-hooks 7 folds the React
+  Compiler rules into that preset (`refs` 199, `set-state-in-effect` 101,
+  `use-memo` 20, `preserve-manual-memoization` 18, `immutability` 16, `purity`
+  10, `static-components` 1 = **365 errors**). That is a new engineering
+  policy, not a build-stack migration. Worth its own PR.
+- **off**: `no-extra-boolean-cast` (309), `react/no-unescaped-entities` (51),
+  `react/display-name` (29) — react-app had none of them and all three fire on
+  deliberate idioms here.
+- **error → warn**: `react/jsx-no-target-blank` and `no-empty` (react-app had
+  the first at warn and the second not at all).
+- kept as **errors**, matching react-app: `no-restricted-globals` (same
+  `confusing-browser-globals` list), `@typescript-eslint/no-unused-expressions`
+  (with react-app's `allowShortCircuit`/`allowTernary`/`allowTaggedTemplates` —
+  without them it fires 15×), `react/jsx-no-undef`, `react/no-typos`,
+  `react/require-render-return`, `react-hooks/rules-of-hooks`. `no-undef` is
+  off for TS, as in react-app. react-app's three `import/*` error rules have no
+  equivalent (no import plugin installed).
+
+Warning inventory (the debt this makes visible for the first time):
+`@typescript-eslint/no-unused-vars` 276, `react-hooks/exhaustive-deps` 218,
+`prefer-const` 61, `no-case-declarations` 33, `no-async-promise-executor` 19,
+rest < 10 each. The first two were warnings under react-app too.
+
+Two code fixes the lint step forced:
+
+- `src/common/types/models/itemlist.d.ts` used `public` (and `public async`)
+  modifiers on **interface** members — invalid TypeScript that
+  `skipLibCheck: true` had been hiding and that the typescript-eslint parser
+  refuses outright. Declared types unchanged.
+- 10 stale `eslint-disable` directives (`no-console`, `no-shadow`,
+  `no-restricted-globals`) that no enabled rule reports on any more.
+
+**tsconfig.node.json.** The Vite-side files had no tsconfig home; the main one
+includes `src/` only and pins a `types` array without `node` on purpose.
+`tsconfig.node.json` extends `@tsconfig/node20` with `moduleResolution:
+bundler` (matching how Vite loads its config: esbuild-bundled) and covers
+`vite.config.ts`, `vitest.config.ts`, `vite/*.ts` and `tools/*.mjs`.
+`tools/checkHtmlRewriteCompat.mjs` got JSDoc parameter types so `checkJs` could
+stay on. `yarn typecheck` runs both projects.
+
+**Vitest.** Standalone `vitest.config.ts` (the app config's React/SVGR/polyfill/
+HTML/SW plugins are dead weight for a unit test) that *does* reuse
+`baseUrlResolve`, so tests import through the migration's most load-bearing
+plugin. `environment: node`. One smoke test on `getInstanceConfig()` — the
+whitelist validator for `window.__CG_INSTANCE__`, i.e. the serve-time injection
+both HTML consumers depend on: 4 cases, verified non-tautological by mutating
+the validator to spread the raw object.
+
+**nginx: confirmed, unchanged.** Against the real emitted tree, all 231 files
+under `static/`, `fonts/`, `icons/`, `images/`, `audio/` hit the
+`^/(fonts|icons|images|static|audio|downloads)/` cache rule; `index.html` and
+`service-worker.js` hit `no-cache`; `index_cgid.html` stays denied on the main
+vhost; the fall-through set (`manifest*.json`, `robots.txt`, `logo.svg`, the
+Google verification file, `video/`, `service-worker.js.map`) is the same set
+CRA emitted at the root.
+
+**CRA removal delta.** Beyond the three packages the roadmap named:
+`webpack-bundle-analyzer` and `@babel/plugin-proposal-class-properties` (both
+only reachable through CRA's webpack/babel, zero references), and
+`tools/viewBundleSizes.sh` + its `.gitignore` entry (a webpack-stats viewer fed
+by the commented-out `BundleAnalyzerPlugin` inside `craco.config.js`).
+`src/react-app-env.d.ts` died with it: `vite/client` covers the asset
+wildcards, `src/types/svg-react.d.ts` covers the `?react` form, and the one
+remaining bare `process.env` read (`src/service-worker.ts:181`) got a
+three-line `src/types/process-env.d.ts` — adding `@types/node` to the `types`
+array would have dropped the whole Node global surface into a browser program.
+Lockfile: 493 insertions / 8527 deletions; `yarn install --immutable` green.
+Vite's `outDir` moved `build-vite/` → `build/`.
+
+#### New findings (for Phase 4 / the reviewer)
+
+1. **The emitted HTML is no longer minified.** CRA ran HtmlWebpackPlugin
+   minification; Vite ships the templates verbatim (only injecting the module
+   scripts and, with `PUBLIC_URL`, absolutising three meta tags). Both rewrite
+   consumers are fine with it — that is what `checkHtmlRewriteCompat` proves —
+   and the shells are ~7 KB of comments and whitespace. Noted so nobody
+   mistakes it for a regression; adding an HTML minifier would put the meta-tag
+   regexes back at risk for no meaningful gain.
+2. **Chunking option (b) is still open.** The 5.63 MB `App` chunk is precached
+   again, so correctness and offline parity are restored, but load performance
+   is still one large blocking request where CRA parallelised. `manualChunks`
+   remains the better long-term answer and needs a browser pass behind it
+   (chunk splitting can surface circular-import init bugs).
+3. **`public/images/tokensale_header.png`** (891 KB) has no reference anywhere —
+   the view uses the `.webp`. (`tokensale_social_preview.png` *is* used, by
+   `srv/api/getRoutes.ts:714`.) Dead weight in every build; a one-line deletion
+   for whoever finishes the token-sale removal.
+4. **`og:site_name` is hardcoded to `app.cg`** in both templates, so every
+   self-hosted instance ships it. Pre-existing, unrelated to this workstream,
+   but it sits two lines from the meta tags this phase touched.
+5. **`yarn test` is not in the build scripts.** With one smoke test that would
+   be theatre; wire it in when there is a suite worth gating on.
 
 ### Phase 4 — Verification & wrap-up
 

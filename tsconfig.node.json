@@ -1,0 +1,23 @@
+{
+  // The build-tooling side of the repo: the Vite config, its plugins and the
+  // build-time check scripts. These run in Node, not in the browser, so they
+  // cannot live in the main `tsconfig.json` — that one deliberately pins an
+  // explicit `types` array without `node` to keep the Node globals out of a
+  // browser program, and its `include` is `src/` only.
+  //
+  // `moduleResolution: bundler` matches how these files are actually loaded:
+  // Vite bundles its config (and the plugins it imports) with esbuild before
+  // executing it.
+  "extends": "@tsconfig/node20/tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowJs": true,
+    "checkJs": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "strict": true,
+    "types": ["node"]
+  },
+  "include": ["vite.config.ts", "vite/*.ts", "tools/*.mjs"]
+}

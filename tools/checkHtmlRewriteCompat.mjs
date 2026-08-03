@@ -38,6 +38,12 @@ const INSTANCE_SCRIPT = '<script>window.__CG_INSTANCE__ = {"deployment":"dev"};<
 // --- docker/nginx/inject-instance-config.sh:54 ----------------------------
 // `sed -i "s|<head>|<head>$snippet|"` — sed substitutes the first match per
 // *line*, so the marker has to be a literal, attribute-less, lowercase `<head>`.
+/**
+ * @param {string} html
+ * @param {string} from
+ * @param {string} to
+ * @returns {string}
+ */
 function sedFirstPerLine(html, from, to) {
   return html
     .split('\n')
@@ -46,12 +52,21 @@ function sedFirstPerLine(html, from, to) {
 }
 
 let failures = 0;
+/**
+ * @param {string} label
+ * @param {boolean} ok
+ * @param {string} [detail]
+ */
 function check(label, ok, detail) {
   const status = ok ? '  ok  ' : ' FAIL ';
   console.log(`[${status}] ${label}${!ok && detail ? ` — ${detail}` : ''}`);
   if (!ok) failures++;
 }
 
+/**
+ * @param {string} file
+ * @param {{ expectSocialMeta: boolean }} options
+ */
 function checkFile(file, { expectSocialMeta }) {
   const full = path.join(distDir, file);
   console.log(`\n${file}`);

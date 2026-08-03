@@ -131,7 +131,7 @@ QUIKNODE_SCROLL=https://rpc.scroll.io
 QUIKNODE_ZKSYNC=https://mainnet.era.zksync.io
 QUIKNODE_LUKSO=https://rpc.mainnet.lukso.network/
 
-# Token staking (docs/ROADMAP-staking.md): users time-lock an ERC-20 onchain
+# Token staking (docs/staking/README.md): users time-lock an ERC-20 onchain
 # and earn Spark while it is locked. Off until STAKING_CHAIN,
 # STAKING_TOKEN_ADDRESS and STAKING_CONTRACT_ADDRESS are all set (deploy your
 # own CgStaking instance — see contracts/staking/README.md). The chain must be

@@ -1,6 +1,6 @@
 # Real-time & WebRTC Documentation
 
-> Status: verified against commit 828e1749e, 2026-08-03
+> Status: verified against commit 0f1d72d66, 2026-08-03
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -219,7 +219,7 @@ The media server is **optional at deploy time**. In the self-host profile it sit
 
 Defined in `srv/mediasoup/config.ts`:
 
-- **Workers:** One per CPU core (`os.cpus().length`). `disableLiburing` can be toggled via `MEDIASOUP_DISABLE_LIBURING` env var.
+- **Workers:** One per CPU core (`os.cpus().length`). mediasoup ≥ 3.16 removed the `disableLiburing` worker setting (it now relies on libuv's built-in io_uring), and `srv/mediasoup/config.ts` no longer defines it. `MEDIASOUP_DISABLE_LIBURING=true` survives only as a compatibility shim in `srv/mediasoup.ts` (~:180-186), which translates it into `process.env.UV_USE_IO_URING = '0'` — inherited by the spawned worker processes — unless `UV_USE_IO_URING` is already set explicitly.
 - **RTC Port Range:** `MEDIASOUP_MIN_PORT` to `MEDIASOUP_MAX_PORT` (default 40000-40099)
 - **Media Codecs:**
   - `audio/opus` (48kHz, stereo)
@@ -305,7 +305,7 @@ protoo is used for all WebRTC signaling between the browser and the MediaSoup se
 wss://{callServerUrl}:4443/?roomId={callId}&peerId={userId}&consumerReplicas=0&callCreator={creatorId}&callType={callType}
 ```
 
-Built by `src/util/urlFactory.ts`.
+Built by `src/util/urlFactory.ts`. `consumerReplicas` is a debugging aid inherited from the mediasoup demo (it multiplies the consumers created per producer and is fixed room-wide by whoever connects first); the server clamps it to **[0, 4]**, with `NaN` or negative values falling back to `0` (`srv/mediasoup.ts` ~:339-348).
 
 ### Authentication Flow
 
@@ -320,6 +320,10 @@ Before any media operations, the client must authenticate:
 All subsequent requests (except `getSignableSecret` and `login`) require `_cgAuth === true`.
 
 ### Protoo Requests (Client -> Server)
+
+**Every protoo request that carries data is Joi-validated** since the mediasoup hardening of 2026-08-03. `srv/mediasoup/room.ts` validates the request's `data` before touching it: 18 call sites against `validators.API.Mediasoup.*` (`srv/validators/api/mediasoup.ts`), plus `login` against the shared `validators.API.Socket.login`. The three data-less methods (`getSignableSecret`, `getRouterRtpCapabilities`, `endCallForEveryone`) need none.
+
+The schemas are `.strict(true)` (no type coercion — `"1"` is not accepted where a number is expected) and, being plain Joi objects, **reject unknown keys**; only the opaque mediasoup protocol objects (`rtpParameters`, `dtlsParameters`, `device`, `appData`, …) are `.unknown(true)`, and those are validated as bounded objects, never structurally. Ids are length-bounded strings, `peerId`s must be UUIDs. This is a **wire-visible change**: a client sending extra top-level fields now gets an error where it previously succeeded.
 
 | Method | Data | Response | Description |
 |---|---|---|---|

@@ -6,6 +6,15 @@
 
 ## Operational (time-critical)
 
+- [ ] **Staging verification of the mediasoup 3.14 → 3.23 jump is still outstanding**
+  (2026-08-03, confirmed by the maintainer). The call subsystem has no automated tests,
+  so the bump was validated by code review and local builds only. Needed: a real
+  two-peer call on staging — join, produce, consume, broadcast mode, promote/demote,
+  moderation mute, reconnect, leave — plus confirming that the ICE candidates carry the
+  expected announced address after the `listenIps` → `listenInfos` migration. Target is
+  the `mediasoup_staging` inventory driven by `pipelines/build-and-deploy-beta.yml`
+  (~:181-190, "Deploy mediasoup staging"). **Must happen before the next staging/prod
+  rollout of the new images.**
 - [ ] **Cut the hosted Swarm stack over to the single `redis` service** — the stack files
   in the separate infrastructure repository still publish
   `redis-sessions`/`redis-socketio`/`redis-data`, which images built after the core-slimming
@@ -92,6 +101,32 @@
   mediasoup workstream) — `eslint.config.mjs:51` excludes the entire backend;
   `srv/mediasoup/**` was cleaned up in the mediasoup 3.23 package and could be covered
   now.
+- [ ] **Re-enabling a disabled bot is not implemented** (bot-accounts close-out) —
+  `srv/api/bots.ts` exposes `/disable` (`botHelper.disableBot`) with no enable/restore
+  counterpart, so a disable is terminal for the bot identity. The workstream deferred
+  re-enabling rather than deciding against it. Decide: either it is intended (then say
+  so in [docs/bots](../bots/README.md)) or add the endpoint with the matching lifecycle
+  bookkeeping (tokens, memberships, presence reconciliation).
+- [ ] **`srv/api/user.ts:393` logs the raw captcha token** (2026-08-03, captcha
+  close-out) — on failed verification the handler does
+  `console.error("Error creating user, captcha verification failed", recaptchaToken, data)`.
+  Drop the token from the log line.
+- [ ] **`AltchaWidget` re-registers its `statechange` listener on every render**
+  (2026-08-03, captcha close-out) — the effect in
+  `src/components/molecules/AltchaWidget/AltchaWidget.tsx:27-41` depends on
+  `[onVerified, onReset]`, and both call sites pass inline arrows
+  (`src/components/molecules/CaptchaModal/CaptchaModal.tsx:59`,
+  `src/components/organisms/UserOnboarding/SetupProfile/SetupProfile.tsx:312`), so the
+  add/remove pair runs on each render. Memoize the callbacks or hold them in refs.
+- [ ] **`CaptchaModal` drops the verify promise** (2026-08-03, captcha close-out) —
+  `src/components/molecules/CaptchaModal/CaptchaModal.tsx:59` fires
+  `userApi.verifyCaptcha({ token })` without `await` or `.catch()`, so a rejection is
+  silently swallowed; the reCAPTCHA path two lines down (`:68`) awaits it.
+- [ ] **Re-check whether `srv/util/axios.ts` still needs `keepAlive: false` on Node 24**
+  (2026-08-03) — the custom Axios instance exists for a Node-20-era Axios/undici bug
+  (axios#5929 / nodejs#47130) and has not been re-tested since the Node 24 bump. If the
+  bug persists, update the comment to say so; if not, drop the workaround and use the
+  default agents (connection reuse is worth having back).
 
 ## Optional / nice-to-have
 
@@ -136,6 +171,19 @@
   workstream) — the call subsystem has zero tests, so the 3.14→3.23 jump was validated
   by hand. A join/produce/consume smoke test would let the next mediasoup bump not rely
   on manual staging passes.
+- [ ] **The captcha flow's manual browser pass was never formally ticked** (2026-08-03,
+  captcha close-out) — solve → verify → replay-reject against a real build, plus the PoW
+  duration on a weak device at the current 500k-hash default. Do it once on staging, or
+  strike the item.
+- [ ] **Network segmentation for SeaweedFS's internal ports** (2026-08-03, storage
+  close-out) — the single `seaweed` container serves master 9333, volume 8080 and filer
+  8888 (plus their gRPC siblings at port + 10000) on the shared `cryptogram` network, so
+  every container can reach them; only 8333 is actually consumed. weed's own flags cannot
+  confine them: `-ip.bind=127.0.0.1` with `-s3.ip.bind=0.0.0.0` does bind the internal
+  planes to loopback, but writes then fail because the components dial each other at the
+  advertised `-ip`. Confining them would have to come from compose-level network
+  segmentation — e.g. a second network joined only by `nginx`, `api` and `job-runner`.
+  Hardening nice-to-have, unchanged from the pre-consolidation topology.
 - [ ] **Wire `yarn test` into the build scripts once there is a suite worth gating on**
   (2026-08-03). Vitest is set up (`vitest.config.ts`) with a single smoke test; gating the
   build on that would be theatre. The hook-in point is the
@@ -150,6 +198,10 @@
 - **Bundled mail server in the stack** — decided against (2026-08-02): extra maintenance,
   and operators who want one can run their own. The email direction is
   bring-your-own-SMTP; see the planned email workstream below.
+- **DMs with bots** — explicitly deferred in the bot-accounts workstream (2026-07,
+  "deferred, do not start"): DMs need their own authorization, consent, event,
+  abuse-prevention and UI design. Nothing in the bearer allowlist or the bot socket
+  contract may accidentally enable them.
 
 ## Upcoming workstreams (roadmap to be written)
 

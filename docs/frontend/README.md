@@ -1,6 +1,6 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit 968046f0c, 2026-08-03
+> Status: verified against commit 0f1d72d66, 2026-08-03
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -756,7 +756,7 @@ The `socket.io-client` library provides the real-time WebSocket connection to th
 
 ### MediaSoup Client (Voice/Video)
 
-**Used in:** `src/util/RoomClient.ts`, `src/components/organisms/CallPage/`, `src/context/CallProvider.tsx`
+**Used in:** `src/util/RoomClient.tsx`, `src/components/organisms/CallPage/`, `src/context/CallProvider.tsx`
 
 MediaSoup is used for WebRTC-based voice and video calls:
 - `RoomClient` class wraps MediaSoup client for producing/consuming audio and video streams.

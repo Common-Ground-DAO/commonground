@@ -8,7 +8,7 @@ import { getStakingConfig, type StakingConfig } from "../util/stakingConfig";
 const YEAR_SECONDS = 365 * 86400;
 
 /**
- * Pro-rata Spark target for a position at time t (docs/ROADMAP-staking.md §3):
+ * Pro-rata Spark target for a position at time t (docs/staking/README.md §6):
  *   total(A, d)  = A_tokens × rate × (d/Y) × (1 + d/Y)
  *   target(t)    = floor(total × min(t - stakedAt, d) / d)
  * expressed as a SQL fragment over a staking_positions row `sp` with
@@ -31,7 +31,7 @@ function targetSparkSql(spAlias: string, rateParam: string): string {
 
 /**
  * Staking positions indexed from CgStaking contract events
- * (docs/ROADMAP-staking.md §5.1). All writes are idempotent so the onchain
+ * (docs/staking/README.md §5). All writes are idempotent so the onchain
  * listener's at-least-once delivery yields exactly-once effects.
  */
 
@@ -199,7 +199,7 @@ class StakingHelper {
 
   /**
    * Credit every claimed position up to its current pro-rata target
-   * (docs/ROADMAP-staking.md §5.2). Runs as one atomic statement: position
+   * (docs/staking/README.md §6). Runs as one atomic statement: position
    * rows are locked (SKIP LOCKED makes concurrent runs no-ops), the delta
    * vs. accruedSpark is written to the point_transactions ledger, and user
    * balances are bumped. Absolutely idempotent — a rerun computes delta 0 —

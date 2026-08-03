@@ -1,6 +1,6 @@
 # Common Ground Backend Documentation
 
-> Status: verified against commit 5777032d4, 2026-08-01.
+> Status: verified against commit 0f1d72d66, 2026-08-03.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -1002,6 +1002,7 @@ Each module exports Joi schemas matching their domain's API request types. Files
 - `contract.ts` -- Contract queries
 - `file.ts` -- File uploads
 - `lukso.ts` -- Lukso operations
+- `mediasoup.ts` -- Protoo request handlers of the call server (wired as `validators.API.Mediasoup`)
 - `message.ts` -- Message operations
 - `notification.ts` -- Notification operations
 - `plugin.ts` -- Plugin operations
@@ -1137,7 +1138,7 @@ Converts member lists between binary (UTF-16LE encoded UUIDs) and standard UUID 
 
 ### `srv/util/axios.ts` -- Axios Instance
 
-Custom Axios instance with `keepAlive: false` to work around a Node.js 20 + Axios bug.
+Custom Axios instance that forces `keepAlive: false` on both the HTTP and HTTPS agent. It was introduced for a Node.js-20-era Axios bug ([axios#5929](https://github.com/axios/axios/issues/5929), rooted in [nodejs#47130](https://github.com/nodejs/node/issues/47130)) and has **not** been re-checked since the Node 24 bump — see `docs/todo/TODO.md`.
 
 ### `srv/util/botPrincipal.ts` -- Bot Bearer Authentication
 

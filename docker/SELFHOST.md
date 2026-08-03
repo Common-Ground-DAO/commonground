@@ -239,7 +239,7 @@ that may create and manage platform-owned bots; it is empty by default.
 
 Users can time-lock an ERC-20 token onchain and earn Spark (the platform
 currency) while it is locked — see
-[`docs/ROADMAP-staking.md`](../docs/ROADMAP-staking.md) for the design. The
+[`docs/staking`](../docs/staking/README.md) for the design. The
 feature is **off by default**; the token page's Stake tab shows an
 informational placeholder until it is configured.
 

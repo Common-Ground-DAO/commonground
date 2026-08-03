@@ -16,7 +16,7 @@ import {
 import { User } from "./users";
 
 /**
- * One onchain CgStaking position (docs/ROADMAP-staking.md §5.1). Rows are
+ * One onchain CgStaking position (docs/staking/README.md §5). Rows are
  * created by the onchain listener from Staked events and never deleted;
  * unstaking sets unstakedAt. userId is resolved from the wallet mapping at
  * indexing time and backfilled/cleared as wallets are linked and deleted —

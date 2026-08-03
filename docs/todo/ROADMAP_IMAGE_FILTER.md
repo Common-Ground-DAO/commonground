@@ -46,7 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 ```
 
-Node 20 on Debian Bookworm typically has these already. Test by running `yarn add @tensorflow/tfjs-node` inside the builder container first.
+The backend image is `node:24.18-bookworm` (Node 24 on Debian Bookworm, since 2026-08-03), which typically has these already. Test by running `yarn add @tensorflow/tfjs-node` inside the builder container first — and note that the Node 24 bump makes the native-build question worth re-checking from scratch: `@tensorflow/tfjs-node` has historically lagged new Node majors in prebuilt-binary availability, so the pure-JS fallback noted above may well be the likelier path.
 
 ### No external services required
 

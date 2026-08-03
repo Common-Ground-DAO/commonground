@@ -311,11 +311,11 @@ services:
 
   cg-builder:
     build:
-      context: ./node20
+      context: ./node
       args:
         - BUILDER_UID=${BUILDER_UID}
         - BUILDER_GID=${BUILDER_GID}
-    image: commonground/node20
+    image: commonground/node
     user: "${BUILDER_UID}:${BUILDER_GID}"
     environment:
       - PG_SU_PASSWORD=${PG_SU_PASSWORD}

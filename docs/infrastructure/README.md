@@ -147,7 +147,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **User:** `hardhat`
 
 #### `cg-builder`
-- **Image:** `commonground/node20` (built from `docker/node20/`)
+- **Image:** `commonground/node` (built from `docker/node/`)
 - **Purpose:** Build container. Not a running service — invoked via `docker compose run` to execute build commands (yarn install, type-check/lint/`vite build`, backend `tsc` compile, contract deployment). Mounts the entire project directory.
 - **User:** `${BUILDER_UID}:${BUILDER_GID}` (matches host user to avoid permission issues)
 - **Volumes:** `../:/cg`, `builder-cache:/builder-cache` (persistent yarn cache)

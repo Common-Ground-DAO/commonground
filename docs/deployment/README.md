@@ -204,7 +204,7 @@ volumes (`pgdata`, `seaweedfs-data`, `caddy-data`, `caddy-config`,
 | `job-runner` | `cryptogram/backend` | scheduled jobs incl. Spark accrual (`jobs.js`) |
 | `mediasoup` | `cryptogram/backend` | WebRTC media (`mediasoup.js`); publishes UDP `40000-40099`; uses the internal self-signed cert and `MEDIASOUP_ANNOUNCED_IP=CG_PUBLIC_IP`. Compose profile `calls` — optional, see [3.8](#38-optional-services-calls-and-blockchain) |
 | `onchain` | `cryptogram/backend` | blockchain indexer / balance & role listener (`onchain.js`); receives all `QUIKNODE_*`/RPC and staking env. Compose profile `blockchain` — optional, see [3.8](#38-optional-services-calls-and-blockchain) |
-| `cg-builder` | `commonground/node20` | build-only helper container (not a runtime service) |
+| `cg-builder` | `commonground/node` | build-only helper container (not a runtime service) |
 
 The seven runtime `cryptogram/backend` services are the same image invoked with
 different `command` entrypoints and `DB_TYPE` roles (`writer` for most,

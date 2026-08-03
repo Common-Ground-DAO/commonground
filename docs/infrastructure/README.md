@@ -1,4 +1,4 @@
-> Status: verified against commit ede0ec06b, 2026-08-03
+> Status: verified against commit 968046f0c, 2026-08-03
 
 # Common Ground Infrastructure Documentation
 
@@ -377,6 +377,15 @@ scripts yet; the suite is a single smoke test.
 - **Stage 1 (`Dockerfile_dev_stage_1`):** `FROM commonground/backend_stage_0`. Copies the full `dist/` source and runs `yarn tsc`. Rebuilt on every code change.
 
 **Production backend (`Dockerfile`):** single-stage build, `FROM node:24.18-bookworm`, installs system dependencies (build-essential, python3, Chromium libs for Puppeteer), enables Corepack and runs `yarn && yarn tsc`, then cleans up build tools. Used by the CI/CD pipelines.
+
+All images stay on **Debian bookworm** deliberately: the Node 24 audit
+(2026-08) found that moving to trixie breaks the Puppeteer dependency install
+in `docker/backend/Dockerfile` — trixie ships no `libgcc1` (renamed
+`libgcc-s1`) and renames `libasound2`/`libcups2` to their `…t64` variants under
+the 64-bit `time_t` transition. Forward note for the next Node bump: the
+Node 24 images still bundle Corepack and a Yarn v1 binary, which the first-run
+`yarn set version 4.1.0` bootstrap in the build scripts relies on; the Node 26
+images drop it.
 
 ---
 

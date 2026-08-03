@@ -1,6 +1,6 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit ede0ec06b, 2026-08-03
+> Status: verified against commit 968046f0c, 2026-08-03
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -859,6 +859,18 @@ a bundler swap, not a version bump — and the chunking setup below was measured
 and tuned under Rollup 4. Vite 8 is its own later workstream with its own
 measurements; the Node floor (≥ 20.19) is the same, so the builder image
 (`node:24.18-bookworm`) already covers that jump too.
+
+`build.target` is explicit (`BUILD_TARGET` in `vite.config.ts` — `chrome67,
+edge79, firefox68, opera54, safari14`), so Vite 7's new default target
+(`'baseline-widely-available'`, ≈ Safari 16.0) never applies. Keeping the floor
+at **`safari14`** is deliberate, and a product call rather than a build call:
+it is what keeps plain browsing and login working on iOS 14–15, while web push
+is gated at iOS ≥ 16.4 anyway (`src/context/NotificationProvider.tsx`;
+user-facing copy in `src/components/molecules/PWA/PWA.tsx`). If the floor is
+ever raised, two places must move together: `BUILD_TARGET` (esbuild notation)
+and the `browserslist.production` key in `package.json` (consumed by
+autoprefixer via `postcss.config.js`) — nothing derives the JS target from
+browserslist; `vite.config.ts` duplicates the floors by hand.
 
 | Concern | Where |
 |---|---|

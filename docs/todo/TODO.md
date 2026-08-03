@@ -84,6 +84,14 @@
   build's shell (pointing at hashed assets that no longer exist) on every deep-link/share
   route until `update_backend` runs. Pre-existing, not caused by the Vite cutover; either
   copy `build/index.html` there like `build.sh` does, or document the pairing.
+- [ ] **`srv/jest.config.js` only runs compiled `.js` tests** (2026-08-03, Node 24 audit)
+  — the `ts-jest` preset is configured, but `testRegex`/`moduleFileExtensions` match `.js`
+  only, so the backend test run finds nothing until a `tsc` pass has produced output.
+  Point it at the `.ts` sources.
+- [ ] **Narrow the blanket ESLint exclusion of `srv/**`** (2026-08-03, Node 24 /
+  mediasoup workstream) — `eslint.config.mjs:51` excludes the entire backend;
+  `srv/mediasoup/**` was cleaned up in the mediasoup 3.23 package and could be covered
+  now.
 
 ## Optional / nice-to-have
 
@@ -116,6 +124,18 @@
   `max-age=86400, must-revalidate` in all three nginx configs, although everything under
   `static/` carries a content hash in its name. Long-lived `immutable` caching for the
   hashed subset would remove a daily revalidation round trip per asset.
+- [ ] **Hardhat → 2.29.0** (2026-08-03, Node 24 audit) — the installed 2.2x line
+  hard-codes `SUPPORTED_NODE_VERSIONS = ["^18.0.0","^20.0.0"]` and prints a warning on
+  Node 24 (it continues; the warning shows in every `build_full` contract deploy).
+  2.29.0 silences it. Two files to keep in sync: `contracts/package.json` and
+  `docker/hardhat/node/package.json`. Do **not** jump to Hardhat 3 as a side effect.
+- [ ] **Jest 29 → 30 in `srv/`** (2026-08-03, Node 24 audit) — 29.4.0 runs fine on
+  Node 24; Jest 30 is the first release whose `engines` lists Node 24 explicitly.
+  Belt-and-braces.
+- [ ] **A minimal two-peer mediasoup integration test** (2026-08-03, mediasoup 3.23
+  workstream) — the call subsystem has zero tests, so the 3.14→3.23 jump was validated
+  by hand. A join/produce/consume smoke test would let the next mediasoup bump not rely
+  on manual staging passes.
 - [ ] **Wire `yarn test` into the build scripts once there is a suite worth gating on**
   (2026-08-03). Vitest is set up (`vitest.config.ts`) with a single smoke test; gating the
   build on that would be theatre. The hook-in point is the
@@ -138,3 +158,9 @@
   plus init in `srv/serverconfig.ts`, see [docs/email-notifications](../email-notifications/README.md));
   drop the Mailchimp audience sync (local subscription flag already exists). No bundled
   MTA (see above).
+- **Vite 8 (Rolldown / Oxc)** — deliberately deferred at the Vite 7 bump (2026-08-03):
+  it swaps Rollup for Rolldown and esbuild for Oxc, a bundler swap that needs its own
+  baseline measurements against a chunking setup tuned under Rollup 4. Forward notes:
+  the last `@vitejs/plugin-react` supporting Vite 7 is **5.2.0** (6.x is Vite-8-only),
+  and the two chunking findings above (CG ID entry closure, 11 copies of `tslib`) are
+  worth revisiting under Rolldown, which changes the calculus for both.

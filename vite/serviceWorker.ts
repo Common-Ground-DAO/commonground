@@ -85,9 +85,7 @@ export function serviceWorker(options: ServiceWorkerPluginOptions): Plugin {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       } catch (error) {
         fs.rmSync(tmpDir, { recursive: true, force: true });
-        // eslint-disable-next-line no-console
         console.error('\x1b[31m%s\x1b[0m', '[cg:service-worker]');
-        // eslint-disable-next-line no-console
         console.error('\x1b[31m%s\x1b[0m', (error as Error).stack ?? String(error));
         // The two integrity assertions are not tooling breakage — they mean the
         // build produced a broken worker or an incomplete precache. Those abort
@@ -98,7 +96,6 @@ export function serviceWorker(options: ServiceWorkerPluginOptions): Plugin {
       }
 
       if (!fs.existsSync(path.join(outDir, SW_FILENAME)) && process.env.DEPLOYMENT !== 'dev') {
-        // eslint-disable-next-line no-console
         console.error(
           '\x1b[31m%s\x1b[0m',
           '[cg:service-worker] no service-worker.js was emitted, but it is required for a non-dev build',
@@ -319,10 +316,8 @@ async function injectPrecacheManifest(
   assertPrecacheCoversAllCode(outDir, config.base, manifestURLs);
 
   for (const warning of warnings) {
-    // eslint-disable-next-line no-console
     console.warn('[cg:service-worker]', warning);
   }
-  // eslint-disable-next-line no-console
   console.log(
     `[cg:service-worker] ${SW_FILENAME} — ${count} precache entries, ${(size / 1024 / 1024).toFixed(2)} MiB`,
   );

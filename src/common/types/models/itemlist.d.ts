@@ -72,15 +72,15 @@ declare namespace Models {
         type ItemListUpdateListener<T extends Item> = (data: ItemListState<T>) => void;
 
         interface ItemList<T extends Item> {
-            public items: T[];
-            public state: ItemListState<T>;
-            public ready: Promise<void>;
-            public async init(options: ItemListInitOptions): Promise<number>;
-            public addUpdateListener: (listener: ItemListUpdateListener<T>) => void;
-            public removeUpdateListener: (listener: ItemListUpdateListener<T>) => void;
-            public destroy(notify?: boolean): void;
-            public update(options: ItemListUpdateOptions): Promise<void>;
-            public chunksChangedListener(allChunks: Chunk[]): void;
+            items: T[];
+            state: ItemListState<T>;
+            ready: Promise<void>;
+            init(options: ItemListInitOptions): Promise<number>;
+            addUpdateListener: (listener: ItemListUpdateListener<T>) => void;
+            removeUpdateListener: (listener: ItemListUpdateListener<T>) => void;
+            destroy(notify?: boolean): void;
+            update(options: ItemListUpdateOptions): Promise<void>;
+            chunksChangedListener(allChunks: Chunk[]): void;
         };
 
         type ItemRangeUpdateJob = {

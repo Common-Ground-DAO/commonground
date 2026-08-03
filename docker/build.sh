@@ -76,7 +76,9 @@ checkError
 # ForkTsChecker + ESLintPlugin inline, and a Vite build does neither, so
 # without these two a type or lint error would ship silently.
 # `--max-old-space-size` is still needed — a plain `vite build` OOMs at 2048 MB
-# and needs ~3.5 GB peak RSS; 4096 is the measured floor plus headroom.
+# and peaks at ~4 GB container RSS (≈3.9 GiB docker stats, ≈4.1 GiB cgroup peak;
+# Node 24 + Vite 7); 4096 caps only the V8 heap and is the measured floor with
+# thin headroom.
 docker_compose run --rm -e NODE_OPTIONS="--max-old-space-size=4096" -e DEPLOYMENT=prod cg-builder \
   bash -c "yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite" && \
 rsync -a ../build/* nginx/dist/

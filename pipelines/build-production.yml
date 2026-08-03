@@ -92,8 +92,9 @@ jobs:
         # preview meta absolute (vite/absoluteSocialMeta.ts) — it no longer affects
         # asset URLs, which are root-relative on every build path now.
         # NODE_OPTIONS is not a tuning knob: `vite build` OOMs at 2048 MB and
-        # peaks around 3.5 GB RSS, and node derives its default heap from
-        # machine RAM — 2 GB on an 8 GB agent, which would fail.
+        # peaks at ~4 GB RSS (Node 24 + Vite 7 measurement), and node derives
+        # its default heap from machine RAM — 2 GB on an 8 GB agent, which
+        # would fail.
         yarn typecheck && yarn lint && NODE_OPTIONS="--max-old-space-size=4096" DEPLOYMENT=prod PUBLIC_URL="https://app.cg" yarn build && node tools/checkHtmlRewriteCompat.mjs
 
   - task: CopyFiles@2

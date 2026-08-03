@@ -7,7 +7,7 @@
 //
 // `vite/client` does not cover this form — it comes from
 // vite-plugin-svgr's own client types, which cannot be referenced without also
-// pulling in the plugin's Vite-6 type surface. Declaring it here keeps the
+// pulling in the plugin's own Vite type surface. Declaring it here keeps the
 // declaration readable and independent of the plugin version.
 //
 // `vite/client` itself *is* in the tsconfig `types` array and covers the plain

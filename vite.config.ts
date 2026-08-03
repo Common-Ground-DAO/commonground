@@ -59,7 +59,7 @@ function devServerHttps(): ServerOptions['https'] {
   return { cert: fs.readFileSync(SSL_CRT_FILE), key: fs.readFileSync(SSL_KEY_FILE) };
 }
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   // Both HTML entries live at the repo root; `public/` stays copy-verbatim.
   root: __dirname,
   base: '/',
@@ -160,7 +160,9 @@ export default defineConfig({
     // SW against the dev server.
     port: 3000,
     strictPort: true,
-    https: devServerHttps(),
+    // Only for `vite serve`: the certs are irrelevant to a build, and a stray
+    // SSL_CRT_FILE in someone's environment must not be able to abort one.
+    https: command === 'serve' ? devServerHttps() : undefined,
   },
 
   // The entry scripts are injected into the HTML at transform time (see
@@ -169,4 +171,4 @@ export default defineConfig({
   optimizeDeps: {
     entries: ['src/index.tsx', 'src/index_cgid.tsx'],
   },
-});
+}));

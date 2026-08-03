@@ -458,7 +458,7 @@ origin)" holds for `index.html` on `app.cg`, **not** for `index_cgid.html` on
 absolute URL (stripped, exactly as under CRA).
 
 **ESLint successor.** ESLint 9.39 flat config, typescript-eslint 8.65,
-eslint-plugin-react 7.37, eslint-plugin-react-hooks 7.1. **0 errors, 646
+eslint-plugin-react 7.37, eslint-plugin-react-hooks 7.1. **0 errors, 645
 warnings, exit 0.** Severity is calibrated against what `react-app` actually
 enforced (read out of the preset in the pre-removal `node_modules`): react-app
 was almost entirely a warn ruleset, and react-scripts only failed builds on
@@ -552,7 +552,7 @@ Full adversarial review of the branch. Re-ran on the host (node 24):
 entries / 10.48 MiB with the 5.63 MB `App` chunk in, 231 files under
 `static|fonts|icons|images|audio`, `service-worker.js` + `.map` at the root, one
 `.svg` in the whole dist (`logo.svg`) — `yarn typecheck` ✓, `yarn lint` ✓
-(0 errors / 646 warnings), `yarn test` ✓ (4), `yarn check:html-rewrite` ✓ (28).
+(0 errors / 645 warnings), `yarn test` ✓ (4), `yarn check:html-rewrite` ✓ (28).
 Both integrity assertions were re-proven to fire (cap lowered to 5 MiB → exit 1
 naming the chunk). A `PUBLIC_URL=https://app.cg` build differs from the
 unset build in exactly three meta tags across the two shells and nowhere else.

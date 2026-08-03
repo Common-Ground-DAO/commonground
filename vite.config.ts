@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { defineConfig } from 'vite';
-import type { ServerOptions } from 'vite';
+import type { Plugin, ServerOptions } from 'vite';
 import react from '@vitejs/plugin-react';
 import svgr from 'vite-plugin-svgr';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
@@ -55,6 +55,10 @@ const SVGR_OPTIONS = {
  *     - `@walletconnect/*` and `lodash` — mostly reached through dynamic
  *       imports today (WalletConnect connectors, lazily loaded views); grouping
  *       them would make several hundred KB eager.
+ *
+ * Rule 3 has one case that is enforced rather than trusted: the CG ID entry
+ * must not reach a feature group at all — see `assertCgidEntryChunks` below,
+ * which fails the build if it does.
  *
  * Changing this table needs a **browser pass**, not just a green build: chunk
  * boundaries change module initialisation order, and no build-time check
@@ -140,7 +144,16 @@ const VENDOR_GROUPS: Readonly<Record<string, readonly string[]>> = {
 /** Virtual helper modules rollup and Vite generate; see `manualChunks`. */
 const SHARED_HELPERS = ['vite/preload-helper', 'commonjsHelpers.js', '__vite-browser-external'];
 
-/** `…/node_modules/@scope/name/dist/x.js` → `@scope/name`. */
+/**
+ * `…/node_modules/@scope/name/dist/x.js` → `@scope/name`.
+ *
+ * `lastIndexOf` on purpose: with a nested copy
+ * (`…/node_modules/foo/node_modules/bar/x.js`, and the tree has plenty — ~50
+ * `tslib` copies alone) the *innermost* package is the one that owns the
+ * module. `@phosphor-icons/react` even ships a vendored `react` under its own
+ * `dist/node_modules/`, and that copy belongs with `vendor-react`, not with the
+ * icons.
+ */
 function packageNameOf(id: string): string | undefined {
   const marker = id.lastIndexOf('node_modules/');
   if (marker < 0) return undefined;
@@ -177,6 +190,79 @@ function manualChunks(id: string): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * The only vendor groups the CG ID mini-app is allowed to load up front. Both
+ * entries need React, and `vendor-shared` holds the bundler's own helper
+ * modules, so those two are unavoidable; every other group is main-app code the
+ * mini-app has no use for.
+ */
+const CGID_ALLOWED_GROUPS: ReadonlySet<string> = new Set(['vendor-react', 'vendor-shared']);
+
+/**
+ * Fails the build when the `index_cgid` entry statically reaches a vendor group
+ * it does not need.
+ *
+ * This is the one invariant in `VENDOR_GROUPS` that cannot be read off the
+ * table, and it breaks *silently*: rollup merges an unassigned module into
+ * whichever manual chunk shares its set of dependent entry points, so one new
+ * bundler helper (Vite's `__vitePreload` and the commonjs interop helpers are
+ * pinned in `SHARED_HELPERS`, a future one would not be) or one new shared leaf
+ * dependency is enough to fold the 2.2 MB `vendor-web3` chunk into the
+ * mini-app's critical path. Nothing about the build would look wrong: it stays
+ * green, the precache assertions still pass, and the only symptom is that the
+ * login page got megabytes heavier.
+ *
+ * Read-only assertion over the emitted chunk graph, so it costs nothing and
+ * cannot itself change the output.
+ */
+function assertCgidEntryChunks(): Plugin {
+  return {
+    name: 'cg:assert-cgid-entry-chunks',
+    apply: 'build',
+
+    generateBundle(_options, bundle) {
+      const chunks = new Map<string, { name: string; imports: readonly string[] }>();
+      let entry: string | undefined;
+      for (const output of Object.values(bundle)) {
+        if (output.type !== 'chunk') continue;
+        chunks.set(output.fileName, { name: output.name, imports: output.imports });
+        if (output.isEntry && output.name === 'index_cgid') entry = output.fileName;
+      }
+      // Not "nothing to check": the entry is a configured rollup input, so a
+      // miss means the input names changed and this guard stopped guarding.
+      if (!entry) this.error('cg:assert-cgid-entry-chunks: no entry chunk named `index_cgid`');
+
+      const reached = new Set<string>();
+      const queue = [entry];
+      while (queue.length > 0) {
+        const file = queue.pop() as string;
+        if (reached.has(file)) continue;
+        reached.add(file);
+        queue.push(...(chunks.get(file)?.imports ?? []));
+      }
+
+      const leaked = [...reached]
+        .map((file) => chunks.get(file)?.name ?? '')
+        .filter((name) => Object.hasOwn(VENDOR_GROUPS, name) && !CGID_ALLOWED_GROUPS.has(name))
+        .sort();
+
+      if (leaked.length === 0) return;
+
+      const message =
+        `cg:assert-cgid-entry-chunks: the CG ID mini-app statically imports ${leaked.join(', ')}.\n` +
+        `  Only ${[...CGID_ALLOWED_GROUPS].join(' and ')} may be in that entry — ` +
+        'see VENDOR_GROUPS in vite.config.ts.\n' +
+        '  Usually an unassigned module (a new bundler helper, a new shared leaf dependency) got\n' +
+        '  absorbed into a vendor group; pinning it in `vendor-shared` is the fix.';
+      // Printed as well as thrown: an error raised in `generateBundle` can be
+      // outrun by the service-worker plugin's `closeBundle` (see the comment on
+      // its `buildEnd` hook), and a guard nobody can read is no guard.
+      console.error('\x1b[31m%s\x1b[0m', message);
+      this.error(message);
+    },
+  };
 }
 
 /**
@@ -242,6 +328,7 @@ export default defineConfig(({ command }) => ({
       swSrc: 'src/service-worker.ts',
       plugins: [baseUrlResolve('src')],
     }),
+    assertCgidEntryChunks(),
   ],
 
   resolve: {

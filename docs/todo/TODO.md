@@ -94,12 +94,23 @@
   found while implementing `manualChunks`). `src/cgid/home.tsx` imports `randomString`
   from `src/util/index.tsx`, and that barrel pulls `ExternalIcon` (→
   `@phosphor-icons/react`), `Tooltip` (→ `framer-motion`) and `react-icons/md` in behind
-  it — 5031 modules in the entry's static closure, of which one 540 KB chunk is
-  `react-icons` + `framer-motion` alone. Pre-existing, unrelated to the chunking work,
-  and the reason `@phosphor-icons/react` is excluded from the `vendor-icons` group. Fix
-  is on the `src/` side: move the two or three helpers CG ID actually uses out of the
-  barrel (the mini-app is meant to become its own repository anyway — see the comment in
-  `src/index_cgid.tsx`).
+  it. Measured on a prod build: the entry's static closure is 9 chunks / ~790 KiB, of
+  which a single 529 KiB chunk is `framer-motion` (148 modules) + `popmotion` +
+  `react-icons` + `@phosphor-icons/react` and nothing else. Pre-existing, unrelated to
+  the chunking work, and the reason `@phosphor-icons/react` is excluded from the
+  `vendor-icons` group. Fix is on the `src/` side: move the two or three helpers CG ID
+  actually uses out of the barrel (the mini-app is meant to become its own repository
+  anyway — see the comment in `src/index_cgid.tsx`).
+- [ ] **The dependency tree ships 11 distinct copies of `tslib`** (2026-08-03, found while
+  reviewing `manualChunks`). They are physically separate nested installs on three
+  incompatible pins (`@walletconnect/*` and `rxjs` on 1.14.1; `popmotion`,
+  `file-selector`, `@farcaster/auth-kit` on 2.4.0; `styled-components` on 2.5.0; the root
+  copy on 2.3.1), so the bundler cannot merge them: `vendor-shared` is 62 KiB
+  for ~135 KiB of source that is 11× the same file. Both entries load that chunk, so the
+  CG ID mini-app pays for all 11 — it is most of the +63 KB the vendor grouping cost that
+  entry. `resolve.dedupe: ['tslib']` is **not** a safe fix as it stands (tslib 1 and 2 are
+  not interchangeable); the fix is dependency hygiene — a yarn resolution once the
+  `@walletconnect` v1 packages are gone.
 - [ ] **Immutable caching for hashed frontend assets in nginx — own PR** (2026-08-03).
   `^/(fonts|icons|images|static|audio|downloads)/` is capped at
   `max-age=86400, must-revalidate` in all three nginx configs, although everything under

@@ -1,4 +1,4 @@
-> Status: verified against commit cb1a441f7, 2026-08-03
+> Status: verified against commit 78d62a26b, 2026-08-03
 
 # Common Ground Infrastructure Documentation
 
@@ -333,10 +333,13 @@ pulls nine vendor groups out of the app chunk (`vendor-web3`, `vendor-icons`,
 `vendor-dnd`, `vendor-react`, `vendor-shared`). Vite's default chunking put
 everything statically reachable into one ~5.4 MiB `App` chunk — one large
 blocking request where CRA's `splitChunks: { chunks: 'all' }` had parallelised
-the same code. After the split the largest chunk is `vendor-web3` at ~2.2 MB and
-`App` is ~1.9 MB; the total the app downloads for a first render is unchanged
-(~7.9 MiB over 30 chunks instead of 58), it just arrives in parallel. Three
-rules keep the table safe, all three documented at the definition:
+the same code. After the split the largest chunk is `vendor-web3` at ~2.2 MiB
+and `App` is ~1.9 MiB. The total JS the build ships is unchanged (~9.5 MiB, over
+57 files instead of 86); what changes is the shape — the app's statically
+reachable closure grows by ~0.3 MiB (previously lazy-only ethers/rainbowkit
+modules land inside `vendor-web3`) and then arrives as ~24 parallel requests
+instead of one 5.4 MiB blocking one. Three rules keep the table safe, all three
+documented at the definition:
 
 - only `node_modules` packages are assigned; `src/` keeps the default behavior
   (splitting first-party modules across chunks is how import cycles turn into
@@ -345,13 +348,15 @@ rules keep the table safe, all three documented at the definition:
   do have stay inside one chunk,
 - nothing that a lazily loaded chunk needs more than the app does — and nothing
   the CG ID mini-app reaches. `index_cgid` must not pull vendor chunks it has no
-  use for; verify against the `<link rel="modulepreload">` chain in
-  `build/index_cgid.html` after touching the table (it should list
-  `vendor-react` and `vendor-shared` and no other vendor group). The same rule is
+  use for; `assertCgidEntryChunks` in `vite.config.ts` **fails the build** if its
+  entry statically reaches any group other than `vendor-react` and
+  `vendor-shared` (the `<link rel="modulepreload">` chain in
+  `build/index_cgid.html` is the same set, readable by eye). The same rule is
   why the bundler's own helper modules (`vite/preload-helper`,
   `commonjsHelpers.js`, `__vite-browser-external`) are pinned: an *unassigned*
   module gets absorbed into whichever group shares its reachability signature,
-  and everything imports those three.
+  and everything imports those three — which is exactly the silent regression
+  the assertion exists to catch.
 
 Changing the groups needs a **browser** pass — chunk boundaries change module
 initialisation order and no build-time check catches an initialisation-order

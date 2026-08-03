@@ -44,7 +44,7 @@ const SW_FILENAME = 'service-worker.js';
  * Vite's default chunking emitted a single ~5.6 MB app chunk where CRA's
  * `splitChunks: { chunks: 'all' }` had spread the same code over many; the
  * `manualChunks` vendor groups in vite.config.ts brought the largest emitted
- * chunk back to ~2.3 MB, which leaves plenty of headroom.
+ * chunk back to ~2.2 MiB, which leaves plenty of headroom.
  *
  * `assertPrecacheCoversAllCode` below turns any future overrun into a build
  * failure instead of a log line, so this number cannot silently rot.
@@ -63,6 +63,7 @@ export type ServiceWorkerPluginOptions = {
 
 export function serviceWorker(options: ServiceWorkerPluginOptions): Plugin {
   let config: ResolvedConfig;
+  let bundleFailed = false;
 
   return {
     name: 'cg:service-worker',
@@ -73,7 +74,19 @@ export function serviceWorker(options: ServiceWorkerPluginOptions): Plugin {
       config = resolved;
     },
 
+    // Rollup runs `closeBundle` even when the build already failed. This
+    // plugin's failure path calls `process.exit(1)`, which then kills the
+    // process before Vite prints the error that actually broke the build — a
+    // syntax error in `src/` used to surface as a workbox stack trace. Stand
+    // down instead. (Rollup's `renderError` would cover output-phase failures
+    // too, but Vite 6 does not forward it; assertions that run in
+    // `generateBundle` print their own message for that reason.)
+    buildEnd(error) {
+      if (error) bundleFailed = true;
+    },
+
     async closeBundle() {
+      if (bundleFailed) return;
       // Only the client build emits a service worker; guard against being run
       // for a worker/ssr sub-build.
       if (config.build.ssr) return;

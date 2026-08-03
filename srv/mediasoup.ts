@@ -7,7 +7,6 @@ import https from 'https';
 import protoo from 'protoo-server';
 import express from "express";
 import bodyParser from 'body-parser';
-import url from 'url';
 import cors from 'cors';
 import { AwaitQueue } from 'awaitqueue';
 import { createWorker } from "mediasoup";
@@ -314,10 +313,10 @@ async function runProtooWebSocketServer() {
     // Handle connections from clients.
     protooWebSocketServer.on('connectionrequest', (info: any, accept, reject) => {
         // The client indicates the roomId and peerId in the URL query.
-        const u = url.parse(info.request.url, true);
-        const roomId: string = u.query['roomId'] as string;
-        const peerId: string = u.query['peerId'] as string;
-        const callType: CallType = u.query['callType'] as CallType;
+        const u = new URL(info.request.url, 'http://localhost').searchParams;
+        const roomId: string = u.get('roomId') as string;
+        const peerId: string = u.get('peerId') as string;
+        const callType: CallType = u.get('callType') as CallType;
 
         if (!roomId || !peerId) {
             reject(400, 'Connection request without roomId and/or peerId');
@@ -325,7 +324,7 @@ async function runProtooWebSocketServer() {
             return;
         }
 
-        let consumerReplicas = Number(u.query['consumerReplicas']);
+        let consumerReplicas = Number(u.get('consumerReplicas'));
 
         if (isNaN(consumerReplicas)) {
             consumerReplicas = 0;

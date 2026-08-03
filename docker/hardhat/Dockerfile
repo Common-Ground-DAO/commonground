@@ -1,4 +1,4 @@
-FROM node:20.11-bookworm
+FROM node:24.18-bookworm
 USER root
 RUN mkdir /home/hardhat
 COPY ./node/* /home/hardhat/

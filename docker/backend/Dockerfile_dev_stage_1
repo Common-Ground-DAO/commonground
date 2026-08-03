@@ -2,6 +2,7 @@ FROM commonground/backend_stage_0
 COPY ./dist /dist
 WORKDIR /dist
 HEALTHCHECK --interval=15s --timeout=3s CMD bash /dist/healthcheck/healthcheck.sh
-RUN yarn set version 4.1.0
-RUN yarn tsc
+RUN sed -i 's/yarnPath: .*//g' /dist/.yarnrc.yml && \
+    corepack enable && \
+    yarn tsc
 RUN rm /dist/.yarnrc.yml

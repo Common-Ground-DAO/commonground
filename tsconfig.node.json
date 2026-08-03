@@ -8,7 +8,7 @@
   // `moduleResolution: bundler` matches how these files are actually loaded:
   // Vite bundles its config (and the plugins it imports) with esbuild before
   // executing it.
-  "extends": "@tsconfig/node20/tsconfig.json",
+  "extends": "@tsconfig/node24/tsconfig.json",
   "compilerOptions": {
     "module": "ESNext",
     "moduleResolution": "bundler",

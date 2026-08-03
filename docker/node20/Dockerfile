@@ -1,4 +1,4 @@
-FROM node:20.11-bookworm
+FROM node:24.18-bookworm
 RUN mkdir /cg
 RUN mkdir /builder-cache
 WORKDIR /cg

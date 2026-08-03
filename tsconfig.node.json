@@ -19,5 +19,5 @@
     "strict": true,
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "vite/*.ts", "tools/*.mjs"]
+  "include": ["vite.config.ts", "vitest.config.ts", "vite/*.ts", "tools/*.mjs"]
 }

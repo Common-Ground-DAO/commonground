@@ -75,6 +75,7 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "lint": "eslint .",
+    "test": "vitest run",
     "check:html-rewrite": "node tools/checkHtmlRewriteCompat.mjs"
   },
   "browserslist": {
@@ -129,6 +130,7 @@
     "vite": "^6",
     "vite-plugin-node-polyfills": "^0.23",
     "vite-plugin-svgr": "^4",
+    "vitest": "^4.1.10",
     "workbox-build": "6.5.4"
   },
   "packageManager": "yarn@4.1.0"

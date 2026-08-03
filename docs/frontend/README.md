@@ -1,6 +1,6 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit 05be8e9be, 2026-08-03
+> Status: verified against commit 8f90fc2b4, 2026-08-03
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -853,7 +853,9 @@ The app coordinates behavior across multiple open tabs. A single service worker 
 ### Toolchain
 
 The frontend is built with **Vite 6** (`vite.config.ts`). It replaced
-Create React App + craco + webpack; nothing of that stack remains.
+Create React App + craco + webpack; nothing of that stack remains. Vite **6,
+not 7**, on purpose: the builder image is `node:20.11-bookworm` and Vite 7
+requires node ≥ 20.19 — bumping Vite means bumping the image first.
 
 | Concern | Where |
 |---|---|
@@ -864,8 +866,10 @@ Create React App + craco + webpack; nothing of that stack remains.
 | Entry `<script>` tags | `vite/htmlEntryScripts.ts` — the shells carry no `<script src>`; the config declares which module belongs to which shell. |
 | Social preview meta | `vite/absoluteSocialMeta.ts` — makes `og:image`/`twitter:image`/`og:url` absolute when `PUBLIC_URL` is set (only the legacy Azure pipelines set it). |
 | Node polyfills | `vite-plugin-node-polyfills`, scoped to `buffer`/`stream`/`assert` + global `Buffer`, for transitive web3 dependencies only. `process` and `global` are deliberately **not** polyfilled: `src/common/` is dual-runtime (the backend consumes it through the `srv/common` symlink) and reads env through a `globalThis` indirection that must keep resolving to nothing in the browser. |
+| Dependency aliases | Two exact-match `resolve.alias` entries in `vite.config.ts`, both load-bearing. `altcha-widget-element` → `altcha` loads the widget bundle under a stub module name so its `.d.ts` (which augments `react/jsx-runtime`) never enters the TS program; the stub is `src/types/altcha-widget-element.d.ts`. `@metamask/sdk` is pinned to its browser UMD file, because the package declares both `browser` (UMD) and `module` (its **node** ESM build) and Vite's resolver prefers the ESM entry — which drags `fs`/`child_process`/`tls`/… into the browser bundle. Keep the alias when the dependency is upgraded. |
+| Sourcemaps | `build.sourcemap: true` on every build path (the app is AGPL). **JS only** — Vite/Rollup emit no `.css.map`, unlike CRA. The service worker excludes maps from the precache, so they only cost bandwidth when devtools opens them. |
 | CSS | `postcss.config.js` (`tailwindcss/nesting` → `tailwindcss` → `autoprefixer`), `tailwind.config.js`. |
-| Type-check | `yarn typecheck` — `tsc --noEmit` over `src/**` plus `tsconfig.node.json` over the Vite-side files. TypeScript 5.9. |
+| Type-check | `yarn typecheck` — `tsc --noEmit` over `src/**` plus `tsconfig.node.json` over the Vite-side files. TypeScript 5.9 (4.5 could not even *parse* viem's TS-5 `.d.ts` files, which silently disabled semantic checking). `tsconfig.json` targets **es2018**, not es5: TS 5.5+ grammar-checks regex syntax against the target and rejects the `u` flag + `\p{…}` escapes in `src/common/validators.ts`. Nothing emits from this tsconfig — shipped output is transpiled by Vite against `build.target`, which mirrors the `browserslist` floors. |
 | Lint | `yarn lint` — `eslint.config.mjs` (ESLint 9 flat config: typescript-eslint + react + react-hooks), calibrated to the severities the old `react-app` preset enforced. Errors fail, warnings do not. |
 | Tests | `yarn test` — Vitest (`vitest.config.ts`), one smoke test so far. |
 

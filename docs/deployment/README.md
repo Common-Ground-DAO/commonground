@@ -1,6 +1,6 @@
 # Common Ground Deployment
 
-> Status: verified against commit 05be8e9be, 2026-08-03.
+> Status: verified against commit 8f90fc2b4, 2026-08-03.
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -172,14 +172,17 @@ the CRA removal:
 - **Sourcemaps now ship**, on this path too. The old `GENERATE_SOURCEMAP=false`
   dated from the closed-source era; the app is AGPL, so shipping maps is
   intentional. They are excluded from the service-worker precache, so they cost
-  bandwidth only when someone opens devtools.
+  bandwidth only when someone opens devtools. Scope: **JS maps only** — Vite
+  emits no `.css.map` (CRA did).
 - **Type errors and lint errors fail the build again.** The webpack build used
   to run both checks inline; a Vite build does neither, so `selfhost.sh build`
   runs them as explicit steps before `vite build`.
 
 `NODE_OPTIONS=--max-old-space-size=4096` is required, not a tuning knob: a plain
 `vite build` OOMs at 2048 MB and peaks around 3.5 GB RSS, and node derives its
-default heap from machine RAM — a small VPS would fail without the flag.
+default heap from machine RAM — a small VPS would fail without the flag. The
+value was measured on host node 24 and confirmed inside the `node:20.11`
+builder image, which is what this path actually uses.
 
 ### 3.3 Services (`docker-compose.selfhost.yml`)
 
@@ -228,7 +231,11 @@ Built from `docker/nginx/Dockerfile_selfhost` with build args `SERVER_NAME` and
 static frontend from `/www`, runs the instance-config injection hook at start,
 appends a `Sitemap:` line to `robots.txt`, and reverse-proxies API / wsapi / S3
 upstreams (resolved dynamically via the Docker DNS resolver `127.0.0.11`) with a
-parameterized Content-Security-Policy per server name.
+parameterized Content-Security-Policy per server name. On the CG ID vhost that
+policy is now same-origin for the shell's own assets (`script-src-elem`,
+`style-src`, `manifest-src` are `'self'`); the app domain stays whitelisted only
+in `img-src` and `connect-src`, which is what the mini-app actually uses it for
+(icons under `/icons/`, API calls to `/api/v2/CgId/`).
 
 ### 3.6 Firewall
 

@@ -5,11 +5,11 @@
 /**
  * Successor to the `eslintConfig: { extends: ["react-app"] }` block in
  * package.json. Those presets shipped *inside* react-scripts, so removing CRA
- * orphaned linting entirely — and until now the webpack build was the only
- * place lint ever ran (constraint 10). `yarn lint` is a standalone step now and
- * the docker build scripts run it.
+ * orphaned linting entirely — and until then the webpack build was the only
+ * place lint ever ran. `yarn lint` is a standalone step now and the docker
+ * build scripts run it.
  *
- * Composition, per the roadmap decision: `typescript-eslint` recommended +
+ * Composition, per the migration decision: `typescript-eslint` recommended +
  * `eslint-plugin-react` + `eslint-plugin-react-hooks`. Explicitly *not* the
  * type-checked presets — those are a separate follow-up, not part of a
  * build-stack migration.
@@ -28,8 +28,9 @@
  * config does not carry. Everything the modern recommended presets add on top
  * is therefore registered at "warn" here: it surfaces the debt without turning
  * a toolchain swap into a code-cleanup mandate. Raising any of them is a policy
- * decision for a later PR, and the counts are recorded in
- * docs/todo/ROADMAP_BUILD_STACK_VITE.md.
+ * decision for a later PR; `yarn lint` prints the current counts (0 errors /
+ * ~645 warnings at the time of the cutover, dominated by
+ * `@typescript-eslint/no-unused-vars` and `react-hooks/exhaustive-deps`).
  */
 
 import js from '@eslint/js';

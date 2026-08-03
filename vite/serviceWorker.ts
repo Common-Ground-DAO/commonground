@@ -23,8 +23,8 @@ import type { InlineConfig, Plugin, ResolvedConfig } from 'vite';
  *      `<outDir>/service-worker.js`.
  *
  * Fail-closed: any failure aborts the build unless `DEPLOYMENT=dev`, mirroring
- * the guard at `craco.config.js` (the old §2.5 patch). Two checks are stricter
- * than that and abort regardless of `DEPLOYMENT`, because they guard silent
+ * the guard the old `craco.config.js` workbox patch had. Two checks are
+ * stricter than that and abort regardless of `DEPLOYMENT`, because they guard silent
  * product regressions rather than tooling breakage:
  *
  *   - the nested worker build must emit exactly the worker (+ its sourcemap);
@@ -43,9 +43,9 @@ const SW_FILENAME = 'service-worker.js';
  * Precache size cap. CRA's default was 5 MB, which Vite's default chunking
  * exceeds: it emits one `App` chunk of ~5.6 MB where CRA's
  * `splitChunks: { chunks: 'all' }` spread the same code over many. 8 MiB
- * restores CRA's offline-cold-start parity (roadmap finding 3, option (a));
- * `assertPrecacheCoversAllCode` below turns any future overrun into a build
- * failure instead of a log line, so this number cannot silently rot.
+ * restores CRA's offline-cold-start parity; `assertPrecacheCoversAllCode` below
+ * turns any future overrun into a build failure instead of a log line, so this
+ * number cannot silently rot.
  */
 const MAX_PRECACHE_FILE_SIZE = 8 * 1024 * 1024;
 
@@ -124,8 +124,8 @@ async function buildWorker(
     plugins: options.plugins,
     resolve: { alias: config.resolve.alias },
     define: {
-      // The only build-time env token in shipped code (§7.2): CRA substituted
-      // it via DefinePlugin. Scoped to this exact member expression on purpose
+      // The only build-time env token in shipped code: CRA substituted it
+      // via DefinePlugin. Scoped to this exact member expression on purpose
       // — `src/common/` is dual-runtime and must never see a blanket
       // `process`/`process.env` define.
       'process.env.PUBLIC_URL': JSON.stringify(config.base.replace(/\/$/, '')),
@@ -264,7 +264,7 @@ async function injectPrecacheManifest(
       // `/index.html` and `/index_cgid.html` is denied on the main vhost.
       'index_cgid.html',
       // These three were CRA's defaults, but the craco patch short-circuited
-      // them, so sourcemaps and LICENSE files *are* precached today (§2.5).
+      // them, so sourcemaps and LICENSE files *were* precached under CRA.
       // Applying them here is a deliberate bugfix; expect the manifest to
       // shrink noticeably against the CRA baseline.
       '**/*.map',
@@ -292,9 +292,10 @@ async function injectPrecacheManifest(
     // Under Vite + svgr, component-imported SVGs are compiled to JSX and never
     // emitted as standalone files, so CRA's "skip small static/media SVGs" rule
     // has nothing left to skip. Keep the filter as a tripwire: if a small SVG
-    // ever *is* emitted, it stays out of the precache (the shipped SVG-prune
-    // loops in docker/build.sh would otherwise delete a precached URL and stop
-    // the worker from ever activating, §10.1).
+    // ever *is* emitted, it stays out of the precache — the CRA-era build
+    // scripts deleted small SVGs after the build, and a precached URL that 404s
+    // makes `PrecacheController.install()` reject, so the worker never
+    // activates and PWA updates stop silently.
     // Runs *after* `modifyURLPrefix`, so the URLs are already `base`-prefixed;
     // strip the leading slash to get back to a path under globDirectory.
     manifestTransforms: [

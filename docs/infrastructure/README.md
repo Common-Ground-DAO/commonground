@@ -1,4 +1,4 @@
-> Status: verified against commit 88ede6773, 2026-08-03
+> Status: verified against commit 8f90fc2b4, 2026-08-03
 
 # Common Ground Infrastructure Documentation
 
@@ -248,13 +248,15 @@ legacy Azure pipelines — runs the same four steps in this order:
 are the only variables the build reads. `NODE_OPTIONS` is not optional: a plain
 `vite build` OOMs at 2048 MB and peaks around 3.5 GB RSS, and node sizes its
 default heap from machine RAM, so a small selfhost VPS would fail without it.
+The 4096 MB figure was measured on host node 24 and confirmed in the builder
+container (`node:20.11-bookworm`) by a full `./run.sh build_full` run.
 The legacy Azure pipelines additionally set `PUBLIC_URL` (see below).
 
 Three CRA-era variables are **gone** and must not be reintroduced:
 
 | Removed | Replacement |
 |---|---|
-| `GENERATE_SOURCEMAP` | `build.sourcemap: true`, unconditional on every path. The app is AGPL; the old no-sourcemap policy dated from the closed-source era. |
+| `GENERATE_SOURCEMAP` | `build.sourcemap: true`, unconditional on every path. The app is AGPL; the old no-sourcemap policy dated from the closed-source era. Note the scope: `build.sourcemap` covers **JS only** — the production build emits a `.js.map` next to every chunk and **no** `.css.map` at all (a known Vite/Rollup limitation). CRA emitted CSS maps too, so this is a small regression in CSS debuggability, not a policy change. |
 | `IMAGE_INLINE_SIZE_LIMIT` | `build.assetsInlineLimit: 5000` in `vite.config.ts`. |
 | `--openssl-legacy-provider` | Not needed. It was a node flag the craco launcher forwarded because react-scripts 5's webpack hashing hit OpenSSL 3 restrictions. |
 
@@ -266,22 +268,31 @@ relative image URLs. Only the two legacy pipelines set it.
 
 That change is *not* purely cosmetic on the **CG ID vhost**. Under CRA,
 `PUBLIC_URL=https://app.cg` was baked into `index_cgid.html` too, so the CG ID
-mini-app served at `id.app.cg` loaded its JS, CSS, icons and PWA manifest
-**cross-origin** from `app.cg` — which is what the `Access-Control-Allow-Origin`
-rule on the main vhost's `^/(fonts|icons|images|static|audio|downloads)/`
-location and the `https://app.cg` entries in `$cg_wallet_csp`
-(`docker/nginx/nginx.conf:98-101`) exist for. Those assets are now same-origin.
-Four of the five CSP directives already carried `'self'`; `manifest-src` did
-not and was widened to `manifest-src 'self' https://app.cg`, otherwise
-`/manifest_wallet.json` would be blocked. `nginx_selfhost.conf` always had the
-`'self'` form — self-hosted instances never set `PUBLIC_URL`.
+mini-app served at `id.app.cg` loaded its JS, CSS and PWA manifest
+**cross-origin** from `app.cg` — which is what the `https://app.cg` entries in
+`$cg_wallet_csp` (`docker/nginx/nginx.conf:98-101`) and the
+`Access-Control-Allow-Origin` rule on the main vhost's
+`^/(fonts|icons|images|static|audio|downloads)/` location exist for. The shell's
+own assets are same-origin now, so the main-origin entries were pruned from
+`script-src-elem`, `style-src` and `manifest-src` on both the prod/staging and
+the self-host CG ID vhosts. Two directives keep the main origin, because the
+mini-app genuinely still reaches it: `img-src` (it renders
+`${APP_URL}/icons/128.png`, e.g. `src/cgid/login.tsx`) and `connect-src` (its
+API calls go to `APP_URL/api/v2/CgId/`). `manifest-src 'self'` is load-bearing:
+`/manifest_wallet.json` is now served from the CG ID origin, and the directive
+did not carry `'self'` before the cutover.
 
 **Output layout** (`build/`), pinned to keep the nginx rules untouched:
 
 - `build/index.html`, `build/index_cgid.html` — both entry shells at the web
   root under exactly these names. `srv/api/getRoutes.ts`,
   `docker/nginx/inject-instance-config.sh` and the `{CGID_SERVER_NAME}` vhost
-  all depend on that.
+  all depend on that. The shells are **not minified** any more (CRA ran
+  HtmlWebpackPlugin minification; Vite ships the templates verbatim apart from
+  the injected module script and, with `PUBLIC_URL`, three absolutised meta
+  tags). That is intended, not a regression: both rewrite consumers match on
+  literal markup, and an HTML minifier would put their regexes back at risk to
+  save ~7 KB of comments and whitespace.
 - `build/static/js|css|media/` — `assetsDir: 'static'`, hex `[hash:8]` content
   hashes. nginx's cache rule keys on
   `^/(fonts|icons|images|static|audio|downloads)/`, and the service worker's
@@ -290,7 +301,16 @@ not and was widened to `manifest-src 'self' https://app.cg`, otherwise
 - `build/service-worker.js` at the root, built by `vite/serviceWorker.ts`
   (`workbox-build` `injectManifest`, not `vite-plugin-pwa`). The build **fails**
   if the nested worker bundle is not exactly that one file, or if any emitted
-  JS/CSS chunk is missing from the precache manifest.
+  JS/CSS chunk is missing from the precache manifest. The precache size cap is
+  **8 MiB**, not workbox's CRA-era 5 MB: Vite's default chunking emits one ~5.6 MB
+  app chunk where CRA's `splitChunks` spread the same code over many, and a
+  chunk over the cap silently drops out of the precache (which costs offline
+  cold start). A prod build currently precaches 118 entries / ~10.5 MiB —
+  CRA's content baseline was 118 / ~10.6 MiB. Excluded from the manifest:
+  `index_cgid.html`, sourcemaps, `LICENSE` files, `asset-manifest.json`, the
+  worker itself and the verbatim `public/` copy (the fonts, call sounds and
+  cross-origin-isolation shells that must be precached are added by hand in
+  `src/service-worker.ts`).
 - everything in `public/` copied verbatim (`fonts/`, `icons/`, `audio/`,
   `images/`, `video/`, both manifests, `robots.txt`, `logo.svg`).
 - no `asset-manifest.json` — it had no consumers.
@@ -452,7 +472,7 @@ Shared template that deletes the build work directory, `condition: always()`.
 
 | Command | Effect |
 |---|---|
-| `./run.sh start` | Vite dev server (HMR) on `http://localhost:3000`, run via `yarn dev` in `cg-builder`. Backend stack must already be up. Port 3000 is load-bearing: the service-worker registration manager disables itself on that origin, which is what keeps the dev server SW-free. |
+| `./run.sh start` | Vite dev server (HMR) on `http://localhost:3000`, run via `yarn dev` in `cg-builder`. Backend stack must already be up. Port 3000 is load-bearing: the service-worker registration manager disables itself on that origin, which is what keeps the dev server SW-free. Vite checks the `Host` header on **plain-HTTP** dev servers and accepts only `localhost`, `*.localhost` and IP literals — reaching this dev server through a custom hostname (e.g. `app.cg.local`) needs that host in `server.allowedHosts`. CRA had no such check; `start_https` is exempt (the check is skipped for HTTPS servers). |
 | `./run.sh start_https` | Same, but HTTPS with the self-signed certs under `docker/nginx/certs/` — required for WebRTC calls and LAN multi-device testing. **Aborts** if the certs are missing; there is no HTTP fallback. |
 | `./run.sh build_full` | Runs the full `docker/build.sh` pipeline. |
 | `./run.sh update_backend` | Recompiles backend TypeScript, rebuilds backend images. |

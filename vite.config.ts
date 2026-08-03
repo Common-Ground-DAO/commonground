@@ -69,8 +69,8 @@ export default defineConfig(({ command }) => ({
     react(),
     baseUrlResolve('src'),
     svgr({ include: '**/*.svg?react', svgrOptions: SVGR_OPTIONS }),
-    // Scoped on purpose (§2.2, constraint 6): first-party code uses none of
-    // this, it exists for transitive web3 dependencies. `process` and `global`
+    // Scoped on purpose: first-party code uses none of this, it exists for
+    // transitive web3 dependencies. `process` and `global`
     // stay unpolyfilled — `src/common/` is dual-runtime (backend via the
     // `srv/common` symlink) and reads `process.env` through a `globalThis`
     // indirection that must keep resolving to nothing in the browser.
@@ -94,7 +94,7 @@ export default defineConfig(({ command }) => ({
 
   resolve: {
     alias: [
-      // Exact-match alias (webpack's `altcha-widget-element$`, §2.3): loads the
+      // Exact-match alias (webpack's `altcha-widget-element$`): loads the
       // altcha bundle under a stub module name so its `.d.ts` — which augments
       // react/jsx-runtime and breaks JSX inference with @types/react 18 — never
       // enters the TS program. The stub lives in
@@ -122,7 +122,7 @@ export default defineConfig(({ command }) => ({
     emptyOutDir: true,
     target: BUILD_TARGET,
     // nginx's cache/serve rules key on
-    // `^/(fonts|icons|images|static|audio|downloads)/` (§10.4) — Vite's default
+    // `^/(fonts|icons|images|static|audio|downloads)/` — Vite's default
     // `assets/` would match none of them.
     assetsDir: 'static',
     // Preserves the CRA behavior (`IMAGE_INLINE_SIZE_LIMIT=5000`); CRA's
@@ -155,8 +155,8 @@ export default defineConfig(({ command }) => ({
   server: {
     host: '0.0.0.0',
     // Load-bearing, not a preference: the service-worker registration manager
-    // disables itself when the origin port is 3000 (§8.1,
-    // src/data/appstate/serviceWorker.ts:26-28). Another port would enable the
+    // disables itself when the origin port is 3000
+    // (src/data/appstate/serviceWorker.ts:26-28). Another port would enable the
     // SW against the dev server.
     port: 3000,
     strictPort: true,

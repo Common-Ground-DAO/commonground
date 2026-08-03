@@ -249,7 +249,6 @@ async function runExpressApp() {
     console.info('creating Express app...');
     expressApp = express();
     expressApp.use(bodyParser.json());
-    expressApp.use(express.static(__dirname));
 
     /**
      * For every API request, verify that the roomId in the path matches and

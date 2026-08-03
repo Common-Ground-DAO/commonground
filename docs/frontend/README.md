@@ -1,6 +1,6 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit 828e1749e, 2026-08-03
+> Status: verified against commit ede0ec06b, 2026-08-03
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -852,12 +852,13 @@ The app coordinates behavior across multiple open tabs. A single service worker 
 
 ### Toolchain
 
-The frontend is built with **Vite 6** (`vite.config.ts`). It replaced
-Create React App + craco + webpack; nothing of that stack remains. Vite **6,
-not 7**, on purpose: the Vite 7 bump is a separate, later workstream. Vite 7
-requires node ≥ 20.19, which the builder image (`node:24.18-bookworm`) now
-satisfies — the image bump that unblocks it is done, but the Vite upgrade
-itself is deliberately kept out of that change.
+The frontend is built with **Vite 7** (`vite.config.ts`). It replaced
+Create React App + craco + webpack; nothing of that stack remains. Vite **7,
+not 8**, on purpose: Vite 8 swaps Rollup for Rolldown and esbuild for Oxc —
+a bundler swap, not a version bump — and the chunking setup below was measured
+and tuned under Rollup 4. Vite 8 is its own later workstream with its own
+measurements; the Node floor (≥ 20.19) is the same, so the builder image
+(`node:24.18-bookworm`) already covers that jump too.
 
 | Concern | Where |
 |---|---|
@@ -869,7 +870,7 @@ itself is deliberately kept out of that change.
 | Social preview meta | `vite/absoluteSocialMeta.ts` — makes `og:image`/`twitter:image`/`og:url` absolute when `PUBLIC_URL` is set (only the legacy Azure pipelines set it). |
 | Node polyfills | `vite-plugin-node-polyfills`, scoped to `buffer`/`stream`/`assert` + global `Buffer`, for transitive web3 dependencies only. `process` and `global` are deliberately **not** polyfilled: `src/common/` is dual-runtime (the backend consumes it through the `srv/common` symlink) and reads env through a `globalThis` indirection that must keep resolving to nothing in the browser. |
 | Dependency aliases | Two exact-match `resolve.alias` entries in `vite.config.ts`, both load-bearing. `altcha-widget-element` → `altcha` loads the widget bundle under a stub module name so its `.d.ts` (which augments `react/jsx-runtime`) never enters the TS program; the stub is `src/types/altcha-widget-element.d.ts`. `@metamask/sdk` is pinned to its browser UMD file, because the package declares both `browser` (UMD) and `module` (its **node** ESM build) and Vite's resolver prefers the ESM entry — which drags `fs`/`child_process`/`tls`/… into the browser bundle. Keep the alias when the dependency is upgraded. |
-| Chunking | `build.rollupOptions.output.manualChunks` in `vite.config.ts`: nine vendor groups (`vendor-web3`, `vendor-icons`, `vendor-charts`, `vendor-mediasoup`, `vendor-emoji`, `vendor-editor`, `vendor-dnd`, `vendor-react`, `vendor-shared`) split what Vite's default chunking put into one ~5.4 MiB `App` chunk. `node_modules` only — `src/` keeps the default behavior, because splitting first-party modules is what turns an import cycle into a TDZ crash. `assertCgidEntryChunks` (same file) fails the build if the CG ID entry ever statically reaches a group other than `vendor-react`/`vendor-shared`. Details and the rules the table follows: [docs/infrastructure](../infrastructure/README.md#frontend-build-steps). Changing it needs a browser pass. |
+| Chunking | `build.rollupOptions.output.manualChunks` in `vite.config.ts`: nine vendor groups (`vendor-web3`, `vendor-icons`, `vendor-charts`, `vendor-mediasoup`, `vendor-emoji`, `vendor-editor`, `vendor-dnd`, `vendor-react`, `vendor-shared`) split what Vite's default chunking put into one ~5.4 MiB `App` chunk (a Vite 6 measurement; the groups carried over unchanged in the Vite 7 bump — same chunk set, every chunk same-size or marginally smaller). `node_modules` only — `src/` keeps the default behavior, because splitting first-party modules is what turns an import cycle into a TDZ crash. `assertCgidEntryChunks` (same file) fails the build if the CG ID entry ever statically reaches a group other than `vendor-react`/`vendor-shared`. Details and the rules the table follows: [docs/infrastructure](../infrastructure/README.md#frontend-build-steps). Changing it needs a browser pass. |
 | Sourcemaps | `build.sourcemap: true` on every build path (the app is AGPL). **JS only** — Vite/Rollup emit no `.css.map`, unlike CRA. The service worker excludes maps from the precache, so they only cost bandwidth when devtools opens them. |
 | CSS | `postcss.config.js` (`tailwindcss/nesting` → `tailwindcss` → `autoprefixer`), `tailwind.config.js`. |
 | Type-check | `yarn typecheck` — `tsc --noEmit` over `src/**` plus `tsconfig.node.json` over the Vite-side files. TypeScript 5.9 (4.5 could not even *parse* viem's TS-5 `.d.ts` files, which silently disabled semantic checking). `tsconfig.json` targets **es2018**, not es5: TS 5.5+ grammar-checks regex syntax against the target and rejects the `u` flag + `\p{…}` escapes in `src/common/validators.ts`. Nothing emits from this tsconfig — shipped output is transpiled by Vite against `build.target`, which mirrors the `browserslist` floors. |

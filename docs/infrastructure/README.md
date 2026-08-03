@@ -1,4 +1,4 @@
-> Status: verified against commit 828e1749e, 2026-08-03
+> Status: verified against commit ede0ec06b, 2026-08-03
 
 # Common Ground Infrastructure Documentation
 
@@ -246,10 +246,14 @@ legacy Azure pipelines — runs the same four steps in this order:
 
 **Environment.** `DEPLOYMENT=prod` and `NODE_OPTIONS=--max-old-space-size=4096`
 are the only variables the build reads. `NODE_OPTIONS` is not optional: a plain
-`vite build` OOMs at 2048 MB and peaks around 3.5 GB RSS, and node sizes its
-default heap from machine RAM, so a small selfhost VPS would fail without it.
-The 4096 MB figure was measured on host node 24 and confirmed in the builder
-container (`node:24.18-bookworm`) by a full `./run.sh build_full` run.
+`vite build` OOMs at 2048 MB and peaks just under ~4 GB container RSS, and node
+sizes its default heap from machine RAM, so a small selfhost VPS would fail
+without it. The 4096 MB figure was re-measured under Node 24 + Vite 7 in the
+builder container (`node:24.18-bookworm`) by a full `./run.sh build_full` run:
+~3.9 GiB peak by `docker stats`, ~4.1 GiB cgroup `memory.peak` (which also
+counts page cache). The flag caps only the V8 heap, so the build still fits —
+but the headroom is thin; treat further dependency growth as a trigger to
+re-measure, with 5120 as the fallback if a build ever OOMs.
 The legacy Azure pipelines additionally set `PUBLIC_URL` (see below).
 
 Three CRA-era variables are **gone** and must not be reintroduced:
@@ -309,9 +313,9 @@ prod/staging vhosts the directive did not carry `'self'` before the cutover
   `manualChunks` vendor groups (below) capped the largest chunk at ~2.2 MB. A
   chunk over the cap silently drops out of the precache (which costs offline
   cold start), which is what the assertion turns into a build failure. A prod
-  build currently precaches 90 entries / ~10.5 MiB — CRA's content baseline was
-  118 / ~10.6 MiB; the entry count fell with the chunk count, the bytes did not
-  move. Excluded from the manifest:
+  build currently precaches 90 entries / ~10.4 MiB (Vite 7 measurement) — CRA's
+  content baseline was 118 / ~10.6 MiB; the entry count fell with the chunk
+  count, the bytes did not move. Excluded from the manifest:
   `index_cgid.html`, sourcemaps, `LICENSE` files, `asset-manifest.json`, the
   worker itself and the verbatim `public/` copy (the fonts, call sounds and
   cross-origin-isolation shells that must be precached are added by hand in
@@ -334,12 +338,14 @@ pulls nine vendor groups out of the app chunk (`vendor-web3`, `vendor-icons`,
 everything statically reachable into one ~5.4 MiB `App` chunk — one large
 blocking request where CRA's `splitChunks: { chunks: 'all' }` had parallelised
 the same code. After the split the largest chunk is `vendor-web3` at ~2.2 MiB
-and `App` is ~1.9 MiB. The total JS the build ships is unchanged (~9.5 MiB, over
+and `App` is ~1.9 MiB. The total JS the build ships is unchanged (~9.4 MiB, over
 57 files instead of 86); what changes is the shape — the app's statically
 reachable closure grows by ~0.3 MiB (previously lazy-only ethers/rainbowkit
 modules land inside `vendor-web3`) and then arrives as ~24 parallel requests
-instead of one 5.4 MiB blocking one. Three rules keep the table safe, all three
-documented at the definition:
+instead of one 5.4 MiB blocking one. The groups were tuned under Vite 6 /
+Rollup 4 and carried over unchanged through the Vite 7 bump (esbuild 0.25 →
+0.28): same chunk set, every chunk same-size or marginally smaller. Three rules
+keep the table safe, all three documented at the definition:
 
 - only `node_modules` packages are assigned; `src/` keeps the default behavior
   (splitting first-party modules across chunks is how import cycles turn into

@@ -1,6 +1,6 @@
 # Common Ground Deployment
 
-> Status: verified against commit 828e1749e, 2026-08-03.
+> Status: verified against commit ede0ec06b, 2026-08-03.
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -179,10 +179,12 @@ the CRA removal:
   runs them as explicit steps before `vite build`.
 
 `NODE_OPTIONS=--max-old-space-size=4096` is required, not a tuning knob: a plain
-`vite build` OOMs at 2048 MB and peaks around 3.5 GB RSS, and node derives its
-default heap from machine RAM — a small VPS would fail without the flag. The
-value was measured on host node 24 and confirmed inside the `node:24.18`
-builder image, which is what this path actually uses.
+`vite build` OOMs at 2048 MB and peaks just under ~4 GB container RSS, and node
+derives its default heap from machine RAM — a small VPS would fail without the
+flag. The value was re-measured under Node 24 + Vite 7 inside the `node:24.18`
+builder image, which is what this path actually uses; the flag caps only the V8
+heap, and the headroom is thin (see
+[docs/infrastructure](../infrastructure/README.md#frontend-build-steps)).
 
 ### 3.3 Services (`docker-compose.selfhost.yml`)
 

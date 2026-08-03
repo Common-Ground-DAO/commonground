@@ -78,6 +78,11 @@ checkError
 
 for f in nginx/dist/static/media/*.svg
 do
+  # Since the SVG imports were codemodded to svgr's `?react` form, no build
+  # stack emits standalone `static/media/*.svg` any more and the glob stays
+  # unexpanded — skip the literal pattern instead of running `wc` on it.
+  # (This whole loop goes away with the CRA build in Phase 3.)
+  [ -e "$f" ] || continue
   size=$(wc -c "$f" | awk '{print $1}')
   if [ "$size" -le "5000" ]
   then

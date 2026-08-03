@@ -78,6 +78,11 @@ build() {
   checkError
 
   for f in nginx/dist/static/media/*.svg; do
+    # No build stack emits standalone `static/media/*.svg` any more (the SVG
+    # imports use svgr's `?react` form), so the glob stays unexpanded. Under
+    # `set -euo pipefail` the `wc` below would then fail and abort the whole
+    # build — skip the literal pattern. (Loop dies with CRA in Phase 3.)
+    [ -e "$f" ] || continue
     size=$(wc -c "$f" | awk '{print $1}')
     if [ "$size" -le "5000" ]; then
       rm "$f"

@@ -64,7 +64,10 @@ Maintainer decisions (2026-08-02):
 
 ## Working mode (per phase)
 
-- Fresh branch from `develop` per phase; one phase = one PR.
+- Fresh branch per phase. Phase 1 branched from `develop` and merged individually;
+  **Phases 2–4 stack**: each branches from the previous phase's branch, and the
+  whole stack merges into `develop` as one package after the Phase-4 sign-off
+  (decided 2026-08-03). No merge to `develop` in between.
 - An Opus agent implements the whole phase autonomously — phases are scoped so this
   takes ~1–2 h without intermediate questions. The agent **commits freely on the
   phase branch** as it sees fit.

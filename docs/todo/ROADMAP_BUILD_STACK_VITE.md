@@ -4,7 +4,8 @@
 > db9f209bd; all maintainer decisions resolved 2026-08-02; Phase 1 merged into
 > develop 2026-08-03; Phases 2 + 3 implemented on the stacked branches
 > `chore/build-stack-phase2-vite-core` / `chore/build-stack-phase3-cutover`
-> (Phase 3 = 373e04b88, 2026-08-03), awaiting the Phase-4 verification pass.
+> (Phase 3 implemented 2026-08-03, closed out by the Phase-3 review the same
+> day — see "Phase-3 review" below), awaiting the Phase-4 verification pass.
 > Evidence base:
 > [INVENTORY_BUILD_STACK.md](INVENTORY_BUILD_STACK.md) (section references `§n`
 > below point there).
@@ -341,6 +342,13 @@ nor react-scripts covers it).
    absolute image URLs) — the delta is the default social preview of the bare
    `https://app.cg` URL, where a relative `og:image` is not resolvable by most
    scrapers. Note this is exactly the behavior every selfhost instance has today.
+   **Correction (Phase-3 review, 2026-08-03): "asset/manifest/icon URLs are
+   unaffected (same origin)" is wrong for `index_cgid.html`.** That shell is
+   served on the *CG ID* vhost (`id.app.cg`), a different origin from
+   `PUBLIC_URL`, so under CRA it pulled its JS/CSS/icons/manifest cross-origin
+   from `app.cg` — see the `$cg_wallet_csp` map and the ACAO rule on the main
+   vhost's static location. Root-relative URLs make those same-origin, which
+   needed one CSP widening; see the nginx note below.
    Phase 3 has to touch these pipelines anyway (`GENERATE_SOURCEMAP`,
    `--openssl-legacy-provider`); decide there between dropping `PUBLIC_URL`
    and accepting relative social images, or having the backend/nginx inject
@@ -358,13 +366,16 @@ nor react-scripts covers it).
       verification); revisit `--max-old-space-size` (**measured, not shrunk** —
       see below); keep buildId stamp + `build/index.html → backend/dist` copy
       working; add the standalone `tsc --noEmit` + eslint step (constraint 10).
-      `pipelines/` (legacy Azure) got the same one-line treatment.
+      `pipelines/` (legacy Azure) got the same one-line treatment, plus the
+      `NODE_OPTIONS` heap flag they never needed under webpack.
 - [x] Verify `srv/api/getRoutes.ts` rewriting against the real Vite `index.html`
       (head markers, meta regexes) and `inject-instance-config.sh` against **both**
       emitted HTML files (§10.2, §10.3). `tools/checkHtmlRewriteCompat.mjs` is
       wired into every build path as `yarn check:html-rewrite`; 28 checks pass.
-- [x] nginx: confirmed, no change needed — see below. Optional follow-up
-      (separate PR): immutable caching for hashed frontend assets (§2.4/§10.4).
+- [x] nginx: one CSP line changed (`manifest-src 'self'` on the two CG ID
+      vhosts, found in the Phase-3 review), everything else confirmed unchanged
+      — see below. Optional follow-up (separate PR): immutable caching for
+      hashed frontend assets (§2.4/§10.4).
 - [x] Remove `react-scripts`, `@craco/craco`, `webpack-cli`, `craco.config.js` and
       the CRA scripts from `package.json` — in **one commit** (8da707993).
 - [x] eslint flat config per decision (typescript-eslint + react + react-hooks,
@@ -438,8 +449,10 @@ already there. Build wall time ≈ 18 s.
 accepted: `vite/absoluteSocialMeta.ts` makes `og:image`, `twitter:image` and
 `og:url` absolute when `PUBLIC_URL` is set, and is a no-op otherwise. Scoped to
 exactly those three tags — asset, manifest and icon URLs stay root-relative on
-every path, where absoluteness bought nothing (same origin). Keeping CRA's
-variable name means the two legacy pipelines keep their existing env line.
+every path. Keeping CRA's variable name means the two legacy pipelines keep
+their existing env line. (Review correction: "absoluteness bought nothing (same
+origin)" holds for `index.html` on `app.cg`, **not** for `index_cgid.html` on
+`id.app.cg` — see the nginx entry below.)
 `checkHtmlRewriteCompat` now accepts both `og:url` shapes: empty content
 (survives the API's strip regex — the documented pre-existing quirk) or an
 absolute URL (stripped, exactly as under CRA).
@@ -501,7 +514,17 @@ whitelist validator for `window.__CG_INSTANCE__`, i.e. the serve-time injection
 both HTML consumers depend on: 4 cases, verified non-tautological by mutating
 the validator to spread the raw object.
 
-**nginx: confirmed, unchanged.** Against the real emitted tree, all 231 files
+**nginx: one CSP line changed** (found in the Phase-3 review; the phase
+originally recorded "confirmed, unchanged"). The prod/staging **CG ID** vhosts
+whitelist `https://app.cg` in `img-src` / `connect-src` / `script-src-elem` /
+`style-src` / `manifest-src`, because CRA baked `PUBLIC_URL` into
+`index_cgid.html` and the mini-app loaded everything cross-origin from the main
+origin. With root-relative URLs those assets are same-origin; four directives
+already carried `'self'`, `manifest-src` did not, so `/manifest_wallet.json`
+would have been CSP-blocked. `docker/nginx/nginx.conf:98-101` now reads
+`manifest-src 'self' https://app.cg` (and the staging equivalent) — the form
+`nginx_selfhost.conf:67` always had. Everything else is confirmed unchanged:
+against the real emitted tree, all 231 files
 under `static/`, `fonts/`, `icons/`, `images/`, `audio/` hit the
 `^/(fonts|icons|images|static|audio|downloads)/` cache rule; `index.html` and
 `service-worker.js` hit `no-cache`; `index_cgid.html` stays denied on the main
@@ -521,6 +544,50 @@ three-line `src/types/process-env.d.ts` — adding `@types/node` to the `types`
 array would have dropped the whole Node global surface into a browser program.
 Lockfile: 493 insertions / 8527 deletions; `yarn install --immutable` green.
 Vite's `outDir` moved `build-vite/` → `build/`.
+
+#### Phase-3 review (2026-08-03)
+
+Full adversarial review of the branch. Re-ran on the host (node 24):
+`yarn install --immutable` ✓, `yarn build` (DEPLOYMENT=prod) ✓ — 118 precache
+entries / 10.48 MiB with the 5.63 MB `App` chunk in, 231 files under
+`static|fonts|icons|images|audio`, `service-worker.js` + `.map` at the root, one
+`.svg` in the whole dist (`logo.svg`) — `yarn typecheck` ✓, `yarn lint` ✓
+(0 errors / 646 warnings), `yarn test` ✓ (4), `yarn check:html-rewrite` ✓ (28).
+Both integrity assertions were re-proven to fire (cap lowered to 5 MiB → exit 1
+naming the chunk). A `PUBLIC_URL=https://app.cg` build differs from the
+unset build in exactly three meta tags across the two shells and nowhere else.
+
+Three fixes on top of the implementation:
+
+1. **`manifest-src 'self'` on the prod/staging CG ID vhosts** — the one real
+   bug, see the nginx entry above. Latent since Phase 2, finalised by the
+   Phase-3 decision not to absolutise asset URLs.
+2. **`NODE_OPTIONS=--max-old-space-size=4096` in the two legacy pipelines** —
+   they never needed it under webpack; `vite build` OOMs below ~3 GB and node's
+   default old-space is 2 GB on an 8 GB agent.
+3. Docs corrections for the two claims the above invalidated.
+
+Left as findings, deliberately not changed:
+
+- `--max-old-space-size` was measured on host node **24**; the builder image is
+  node 20.11 and `build.sh` came down from 8192. Headroom over the measured
+  3.5 GB peak is ~15 %. Worth confirming in the Phase-4 in-container run.
+- `vite/absoluteSocialMeta.ts` only rewrites `content` values that are empty or
+  start with `/`; a template edit to a document-relative path would make it a
+  silent no-op, and `checkHtmlRewriteCompat` cannot catch it because the
+  pipelines scope `PUBLIC_URL` to the `yarn build` command only, so the checker
+  never sees it. Low stakes (two legacy pipelines, social preview only).
+- Vite 6's dev-server host check (`server.allowedHosts`, HTTP only) allows
+  `localhost` and IP literals but not arbitrary hostnames; CRA's dev server had
+  no such check. Only matters for someone reaching `./run.sh start` through a
+  custom hostname.
+- `updateFrontend.sh` still does not refresh `docker/backend/dist/index.html`,
+  so after `./run.sh update_frontend` the API serves a shell pointing at the
+  previous build's hashed assets until `update_backend` runs. Pre-existing
+  (§10.1) and unchanged by the migration — CRA's `fullhash` entry names
+  re-busted on every build too.
+- `@types/confusing-browser-globals` is a devDep with no consumer:
+  `eslint.config.mjs` is not covered by either tsconfig. One-line cleanup.
 
 #### New findings (for Phase 4 / the reviewer)
 

@@ -1,4 +1,4 @@
-> Status: verified against commit 05be8e9be, 2026-08-03
+> Status: verified against commit 88ede6773, 2026-08-03
 
 # Common Ground Infrastructure Documentation
 
@@ -263,6 +263,18 @@ asset, manifest and icon URLs are root-relative on every path. When set, it only
 makes the default `og:image` / `twitter:image` / `og:url` meta absolute
 (`vite/absoluteSocialMeta.ts`), because Open Graph scrapers do not resolve
 relative image URLs. Only the two legacy pipelines set it.
+
+That change is *not* purely cosmetic on the **CG ID vhost**. Under CRA,
+`PUBLIC_URL=https://app.cg` was baked into `index_cgid.html` too, so the CG ID
+mini-app served at `id.app.cg` loaded its JS, CSS, icons and PWA manifest
+**cross-origin** from `app.cg` — which is what the `Access-Control-Allow-Origin`
+rule on the main vhost's `^/(fonts|icons|images|static|audio|downloads)/`
+location and the `https://app.cg` entries in `$cg_wallet_csp`
+(`docker/nginx/nginx.conf:98-101`) exist for. Those assets are now same-origin.
+Four of the five CSP directives already carried `'self'`; `manifest-src` did
+not and was widened to `manifest-src 'self' https://app.cg`, otherwise
+`/manifest_wallet.json` would be blocked. `nginx_selfhost.conf` always had the
+`'self'` form — self-hosted instances never set `PUBLIC_URL`.
 
 **Output layout** (`build/`), pinned to keep the nginx rules untouched:
 

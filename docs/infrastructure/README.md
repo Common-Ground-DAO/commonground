@@ -1,4 +1,4 @@
-> Status: verified against commit 8f90fc2b4, 2026-08-03
+> Status: verified against commit cb1a441f7, 2026-08-03
 
 # Common Ground Infrastructure Documentation
 
@@ -304,11 +304,14 @@ prod/staging vhosts the directive did not carry `'self'` before the cutover
   (`workbox-build` `injectManifest`, not `vite-plugin-pwa`). The build **fails**
   if the nested worker bundle is not exactly that one file, or if any emitted
   JS/CSS chunk is missing from the precache manifest. The precache size cap is
-  **8 MiB**, not workbox's CRA-era 5 MB: Vite's default chunking emits one ~5.6 MB
-  app chunk where CRA's `splitChunks` spread the same code over many, and a
+  workbox's CRA-era **5 MiB** — it was raised to 8 MiB while Vite's default
+  chunking still emitted one ~5.6 MB app chunk, and went back down once the
+  `manualChunks` vendor groups (below) capped the largest chunk at ~2.2 MB. A
   chunk over the cap silently drops out of the precache (which costs offline
-  cold start). A prod build currently precaches 118 entries / ~10.5 MiB —
-  CRA's content baseline was 118 / ~10.6 MiB. Excluded from the manifest:
+  cold start), which is what the assertion turns into a build failure. A prod
+  build currently precaches 90 entries / ~10.5 MiB — CRA's content baseline was
+  118 / ~10.6 MiB; the entry count fell with the chunk count, the bytes did not
+  move. Excluded from the manifest:
   `index_cgid.html`, sourcemaps, `LICENSE` files, `asset-manifest.json`, the
   worker itself and the verbatim `public/` copy (the fonts, call sounds and
   cross-origin-isolation shells that must be precached are added by hand in
@@ -323,6 +326,36 @@ prod/staging vhosts the directive did not carry `'self'` before the cutover
   URL 404, and a 404 in the precache makes `PrecacheController.install()` reject
   — the worker never activates and PWA updates stop silently.
 - no `asset-manifest.json` — it had no consumers.
+
+**Chunking.** `build.rollupOptions.output.manualChunks` in `vite.config.ts`
+pulls nine vendor groups out of the app chunk (`vendor-web3`, `vendor-icons`,
+`vendor-charts`, `vendor-mediasoup`, `vendor-emoji`, `vendor-editor`,
+`vendor-dnd`, `vendor-react`, `vendor-shared`). Vite's default chunking put
+everything statically reachable into one ~5.4 MiB `App` chunk — one large
+blocking request where CRA's `splitChunks: { chunks: 'all' }` had parallelised
+the same code. After the split the largest chunk is `vendor-web3` at ~2.2 MB and
+`App` is ~1.9 MB; the total the app downloads for a first render is unchanged
+(~7.9 MiB over 30 chunks instead of 58), it just arrives in parallel. Three
+rules keep the table safe, all three documented at the definition:
+
+- only `node_modules` packages are assigned; `src/` keeps the default behavior
+  (splitting first-party modules across chunks is how import cycles turn into
+  `Cannot access 'X' before initialization` at runtime),
+- one group per coherent library island, so the cyclic imports these libraries
+  do have stay inside one chunk,
+- nothing that a lazily loaded chunk needs more than the app does — and nothing
+  the CG ID mini-app reaches. `index_cgid` must not pull vendor chunks it has no
+  use for; verify against the `<link rel="modulepreload">` chain in
+  `build/index_cgid.html` after touching the table (it should list
+  `vendor-react` and `vendor-shared` and no other vendor group). The same rule is
+  why the bundler's own helper modules (`vite/preload-helper`,
+  `commonjsHelpers.js`, `__vite-browser-external`) are pinned: an *unassigned*
+  module gets absorbed into whichever group shares its reachability signature,
+  and everything imports those three.
+
+Changing the groups needs a **browser** pass — chunk boundaries change module
+initialisation order and no build-time check catches an initialisation-order
+bug.
 
 **Tests.** `yarn test` (Vitest, `vitest.config.ts`) is not part of the build
 scripts yet; the suite is a single smoke test.

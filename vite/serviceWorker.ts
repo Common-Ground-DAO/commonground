@@ -40,14 +40,16 @@ const SW_TMP_DIR = '.cg-sw-build';
 const SW_FILENAME = 'service-worker.js';
 
 /**
- * Precache size cap. CRA's default was 5 MB, which Vite's default chunking
- * exceeds: it emits one `App` chunk of ~5.6 MB where CRA's
- * `splitChunks: { chunks: 'all' }` spread the same code over many. 8 MiB
- * restores CRA's offline-cold-start parity; `assertPrecacheCoversAllCode` below
- * turns any future overrun into a build failure instead of a log line, so this
- * number cannot silently rot.
+ * Precache size cap, back at CRA's default. It was temporarily 8 MiB, because
+ * Vite's default chunking emitted a single ~5.6 MB app chunk where CRA's
+ * `splitChunks: { chunks: 'all' }` had spread the same code over many; the
+ * `manualChunks` vendor groups in vite.config.ts brought the largest emitted
+ * chunk back to ~2.3 MB, which leaves plenty of headroom.
+ *
+ * `assertPrecacheCoversAllCode` below turns any future overrun into a build
+ * failure instead of a log line, so this number cannot silently rot.
  */
-const MAX_PRECACHE_FILE_SIZE = 8 * 1024 * 1024;
+const MAX_PRECACHE_FILE_SIZE = 5 * 1024 * 1024;
 
 /** Aborts the build regardless of `DEPLOYMENT` (see the plugin doc comment). */
 class FatalServiceWorkerError extends Error {}

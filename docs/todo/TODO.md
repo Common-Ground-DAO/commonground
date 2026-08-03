@@ -90,15 +90,16 @@
 - [ ] **Dev-stack service toggles** — the `calls`/`blockchain` compose profiles exist only
   in the selfhost profile; the dev stack starts `mediasoup` and `onchain` unconditionally.
   If wanted, `run.sh` needs the same `COMPOSE_PROFILES` derivation `selfhost.sh` has.
-- [ ] **`manualChunks` for the frontend bundle — own PR** (2026-08-03, left over from the
-  Vite workstream). Vite's default chunking emits one ~5.6 MB app chunk where CRA's
-  `splitChunks: { chunks: 'all' }` parallelised the same code, i.e. one large blocking
-  request on first load. Correctness and offline parity are already restored (the 8 MiB
-  precache cap in `vite/serviceWorker.ts` plus `assertPrecacheCoversAllCode`), so this is
-  purely a load-performance item. Rough vendor split available: `src/` ~2.2 MB, heroicons
-  0.9, ethers 0.84, viem 0.80, recharts 0.5, mediasoup-client 0.5. Needs a **browser**
-  verification pass behind it — chunk splitting can surface circular-import
-  initialisation bugs that no build check catches.
+- [ ] **The CG ID mini-app drags ~540 KB of main-app UI into its entry** (2026-08-03,
+  found while implementing `manualChunks`). `src/cgid/home.tsx` imports `randomString`
+  from `src/util/index.tsx`, and that barrel pulls `ExternalIcon` (→
+  `@phosphor-icons/react`), `Tooltip` (→ `framer-motion`) and `react-icons/md` in behind
+  it — 5031 modules in the entry's static closure, of which one 540 KB chunk is
+  `react-icons` + `framer-motion` alone. Pre-existing, unrelated to the chunking work,
+  and the reason `@phosphor-icons/react` is excluded from the `vendor-icons` group. Fix
+  is on the `src/` side: move the two or three helpers CG ID actually uses out of the
+  barrel (the mini-app is meant to become its own repository anyway — see the comment in
+  `src/index_cgid.tsx`).
 - [ ] **Immutable caching for hashed frontend assets in nginx — own PR** (2026-08-03).
   `^/(fonts|icons|images|static|audio|downloads)/` is capped at
   `max-age=86400, must-revalidate` in all three nginx configs, although everything under

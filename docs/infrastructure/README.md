@@ -1,4 +1,4 @@
-> Status: verified against commit 968046f0c, 2026-08-03
+> Status: verified against commit 0f1d72d66, 2026-08-03
 
 # Common Ground Infrastructure Documentation
 
@@ -124,11 +124,18 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
   - `-s3` implies `-filer`, so the single process runs master, volume server, filer and the S3 gateway.
   - `-volume.max=0` auto-sizes the volume count from free disk space instead of the default cap of 8 (which at a 16 MB volume-size limit would cap the store at 128 MB).
   - `-s3.port.iceberg=0` disables the Iceberg REST catalog that 4.40 otherwise starts on 8181 — nothing in this stack speaks Iceberg.
+  - `weed server`, not `weed mini` (upstream's default CMD), on purpose: `mini` bundles WebDAV, an Admin UI and the Iceberg catalog, enables an embedded IAM API on the S3 port by default, and upstream reserves the right to evolve its defaults — `server` keeps a stable flag surface and no extra listeners.
   - Single-copy replication via `WEED_MASTER_VOLUME_GROWTH_COPY_1=1` / `..._OTHER=1`.
 - **Ports (all internal to the `cryptogram` network):** S3 8333, master 9333, volume 8080, filer 8888, plus their gRPC siblings (port + 10000). **Only 8333 is consumed by anything else in the stack** — nginx proxies file requests to it and `srv/repositories/files.ts` uses it as its endpoint, both via the network alias `s3.local`.
 - **Network alias:** `s3.local`
 - **Volumes:** `./s3_config/s3.json:/etc/seaweedfs/s3.json:ro` (dev; `s3.selfhost.json` for self-host) and `seaweedfs-data:/data`
 - **Data layout under `/data`:** volume blobs (`.dat`/`.idx`/`.vif`) at the root, filer leveldb in `filerldb2/`, master raft/sequence state in `m9333/`. Because blobs and filer metadata now share one volume, a filesystem snapshot of `/data` is atomic across both — which the former two-volume split could never be. See [docs/deployment](../deployment/) for the backup baseline.
+
+**Storage engine of record (decision 2026-08-02).** SeaweedFS stays. A comparison against the alternatives (MinIO's community repo was archived read-only in April 2026) landed as follows:
+
+- **RustFS — rejected.** Still pre-GA (`1.0.0-beta.12`), ~28 security advisories between Dec 2025 and Jul 2026 with no downward trend, documented unreviewed/LLM-reviewed merges of auth-relevant code, and an opaque MinIO-style `xl.meta` on-disk format. Not to be revisited before it has a year of boring GA history.
+- **Garage (v2.3.0) and versitygw (v1.7.0) — credible, but not worth the move.** Garage is the community default for this profile and versitygw stores objects as plain POSIX files (the best possible backup story), but either swap means an S3-level data migration across every existing deployment — hosted and every self-host install — for no user-visible gain.
+- The application's coupling is thin (`srv/repositories/files.ts` speaks plain S3 against one `cg-media` bucket), so a swap stays *possible*; re-evaluate only when a concrete need appears.
 
 #### `nginx`
 - **Image:** `cryptogram/nginx` (built from `docker/nginx/Dockerfile_dev`)
@@ -472,7 +479,7 @@ Per `AGENTS.md`, `docker/.env` is tracked in the repo **as a placeholder templat
 | `TWITTER_CALLBACK_URL` / `TWITTER_OAUTH2_CLIENT_ID` / `TWITTER_OAUTH2_CLIENT_SECRET` / `TWITTER_API_KEY` / `TWITTER_API_SECRET` | Twitter/X login. |
 | `SENDGRID_API_KEY` | SendGrid transactional email. |
 
-Additional variables consumed by the compose file when present (with defaults): the `STAKING_*` set (`STAKING_CHAIN`, `STAKING_TOKEN_ADDRESS`, `STAKING_CONTRACT_ADDRESS`, `STAKING_BASE_RATE`, `STAKING_MIN_LOCK_DAYS`, `STAKING_MAX_LOCK_DAYS`) and the bot limits (`PLATFORM_OPERATOR_USER_IDS`, `BOT_USER_OWNER_LIMIT`, `BOT_COMMUNITY_OWNER_LIMIT`, `BOT_PLATFORM_OWNER_LIMIT`, `BOT_ACTIVE_TOKEN_LIMIT`, `BOT_API_RATE_LIMIT_PER_MINUTE`, `BOT_MESSAGE_RATE_LIMIT_PER_MINUTE`). See [`docs/BOT-API.md`](../BOT-API.md) and [`docs/ROADMAP-staking.md`](../ROADMAP-staking.md).
+Additional variables consumed by the compose file when present (with defaults): the `STAKING_*` set (`STAKING_CHAIN`, `STAKING_TOKEN_ADDRESS`, `STAKING_CONTRACT_ADDRESS`, `STAKING_BASE_RATE`, `STAKING_MIN_LOCK_DAYS`, `STAKING_MAX_LOCK_DAYS`) and the bot limits (`PLATFORM_OPERATOR_USER_IDS`, `BOT_USER_OWNER_LIMIT`, `BOT_COMMUNITY_OWNER_LIMIT`, `BOT_PLATFORM_OWNER_LIMIT`, `BOT_ACTIVE_TOKEN_LIMIT`, `BOT_API_RATE_LIMIT_PER_MINUTE`, `BOT_MESSAGE_RATE_LIMIT_PER_MINUTE`). See [`docs/BOT-API.md`](../BOT-API.md) and [`docs/staking`](../staking/README.md).
 
 ### `srv/serverconfig.ts` — Backend Server Configuration
 
@@ -618,7 +625,7 @@ Every third-party integration is optional; leaving its key empty in `.env.selfho
 
 ### Token staking (Spark)
 
-Off by default. To enable, deploy your own non-custodial `CgStaking` contract (`contracts/staking/`) and set `STAKING_CHAIN` (must be in `CG_ACTIVE_CHAINS`), `STAKING_TOKEN_ADDRESS`, `STAKING_CONTRACT_ADDRESS`, and optionally `STAKING_BASE_RATE` / `STAKING_MIN_LOCK_DAYS` / `STAKING_MAX_LOCK_DAYS` in `.env.selfhost`, then `./selfhost/selfhost.sh up` to recreate the `api`, `job-runner` and `onchain` services. See `docs/ROADMAP-staking.md`.
+Off by default. To enable, deploy your own non-custodial `CgStaking` contract (`contracts/staking/`) and set `STAKING_CHAIN` (must be in `CG_ACTIVE_CHAINS`), `STAKING_TOKEN_ADDRESS`, `STAKING_CONTRACT_ADDRESS`, and optionally `STAKING_BASE_RATE` / `STAKING_MIN_LOCK_DAYS` / `STAKING_MAX_LOCK_DAYS` in `.env.selfhost`, then `./selfhost/selfhost.sh up` to recreate the `api`, `job-runner` and `onchain` services. See [`docs/staking`](../staking/README.md).
 
 ### Backups & firewall
 

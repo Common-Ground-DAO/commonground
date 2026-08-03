@@ -1,4 +1,4 @@
-> Status: verified against commit 5777032d4, 2026-08-01
+> Status: verified against commit 0f1d72d66, 2026-08-03
 
 # Authentication & Identity
 
@@ -8,8 +8,8 @@ bot-token authentication plane, signup (including captcha), and account linking.
 
 The [architecture README](../architecture/README.md#3-authentication--sessions) keeps only a short
 overview of this area — this file owns the detail. The bot HTTP surface is documented separately in
-[`docs/BOT-API.md`](../BOT-API.md); bot identity/roadmap in
-[`docs/ROADMAP-bot-accounts.md`](../ROADMAP-bot-accounts.md).
+[`docs/BOT-API.md`](../BOT-API.md); the bot account architecture (identity model, ownership,
+lifecycle) in [the bots docs](../bots/README.md).
 
 ---
 
@@ -482,5 +482,5 @@ every non-device method and persisting it after the server confirms the login.
 
 - Overview & session table: [architecture README §3](../architecture/README.md#3-authentication--sessions)
 - Socket.IO auth handshake: [realtime README](../realtime/README.md)
-- Bot HTTP API: [`docs/BOT-API.md`](../BOT-API.md), [`docs/ROADMAP-bot-accounts.md`](../ROADMAP-bot-accounts.md)
+- Bot HTTP API: [`docs/BOT-API.md`](../BOT-API.md); bot account architecture: [bots README](../bots/README.md)
 - Entities: [database README](../database/README.md)

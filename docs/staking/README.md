@@ -1,6 +1,6 @@
 # Staking
 
-> Status: verified against commit a3c3f7608, 2026-08-01.
+> Status: verified against commit 0f1d72d66, 2026-08-03.
 
 CG token **staking** lets users time-lock their CG tokens on-chain for a freely
 chosen duration and earn **Spark** (the platform currency, stored as
@@ -12,6 +12,11 @@ to drive a server-side accrual job.
 The feature is **optional and instance-configurable**. When it is not configured
 the Stake tab keeps its "coming soon" state, exactly like every other optional
 service.
+
+Deliberately out of scope, decided when the feature was planned: no onchain
+reward tokens, no transferable positions, no early-exit penalties, and no
+governance. The contract does one thing — hold tokens until `unlockAt` and
+return them.
 
 ---
 
@@ -70,7 +75,6 @@ Component map:
 | Client API | `src/data/api/staking.ts`, types `src/common/types/api/staking.d.ts` |
 | Shared formula/ABI | `src/common/staking.ts` |
 | UI | `src/views/TokenSale/StakeTab/` |
-| Roadmap (source of design decisions) | `docs/ROADMAP-staking.md` |
 
 ---
 
@@ -289,7 +293,7 @@ owner, so new tables need explicit grants.
 ## Spark economics and accrual
 
 **Total Spark for a position** of `A` CG locked `d` days (all defaults tunable
-via config, `docs/ROADMAP-staking.md` §3):
+via config, see [§3 Configuration](#configuration)):
 
 ```
 spark(A, d) = A × BASE_RATE × (d / 365) × (1 + d / 365)
@@ -298,6 +302,24 @@ spark(A, d) = A × BASE_RATE × (d / 365) × (1 + d / 365)
 - `BASE_RATE` default 0.012 Spark per CG per 365 days.
 - The `(1 + d/365)` factor makes commitment super-linear: a 1-year lock earns
   2× pro-rata, a 730-day lock ~3× (capped by the max duration).
+
+### Why `BASE_RATE` defaults to 0.012
+
+The default was calibrated against the real holder distribution recorded in the
+governance vote of 2025-12, priced against Spark's purchase anchor (1 USD ⇒
+1,000 Spark; Supporter-1 is 1,000 Spark/month, Supporter-2 5,000/month):
+
+| Position, locked 1 year | Spark earned | Reference |
+| --- | --- | --- |
+| 168k CG | ≈ 4.0k | |
+| 1M CG (median voter) | 24k | 2× a year of Supporter-1 |
+| 2.5M CG | 60k | a year of Supporter-2 |
+| 11.2M CG (largest holder) | ≈ 269k | ≈ $269 equivalent |
+
+The full-cohort worst case — every holder locking everything for a year — is
+≈ $925/year equivalent, which was judged an acceptable emission. `BASE_RATE` is
+the single tuning knob for all of it; rate changes apply prospectively (the
+target trajectory shifts, already credited Spark is never clawed back).
 
 Accrual is implemented as a **continuous pro-rata target**, not a per-day loop.
 Each claimed position's credited Spark equals, at any time `t`:

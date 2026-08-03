@@ -4,7 +4,7 @@
 
 /**
  * Client-side mirror of the staking Spark formula
- * (docs/ROADMAP-staking.md §3). Cosmetic preview only — the accrual job's
+ * (docs/staking/README.md §6). Cosmetic preview only — the accrual job's
  * exact SQL arithmetic is authoritative.
  *
  *   total(A, d) = A_tokens × rate × (d/Y) × (1 + d/Y)

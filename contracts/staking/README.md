@@ -1,7 +1,7 @@
 # CgStaking
 
 Non-custodial time-lock staking for the CG token, per
-[`docs/ROADMAP-staking.md`](../../docs/ROADMAP-staking.md). Users lock tokens
+[`docs/staking`](../../docs/staking/README.md). Users lock tokens
 for a freely chosen duration (bounds fixed at deployment); positions cannot be
 withdrawn early. There is **no admin, no pause, no upgrade path, and no rescue
 function** — the contract can only ever return exactly what was staked to the

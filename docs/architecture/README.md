@@ -1,4 +1,4 @@
-> Status: verified against commit 8eab94e5a, 2026-08-02
+> Status: verified against commit 0f1d72d66, 2026-08-03
 
 # Common Ground - Architecture Documentation
 
@@ -489,8 +489,8 @@ File serving bypasses the API server. nginx rewrites the signed file path into s
 
 ### Crash Handling
 
-- `api`, `wsapi`, `mediasoup`: handlers for both `unhandledRejection` and `uncaughtException` log and call `shutdown(1)`
-- `onchain`, `job-runner`, `memberlist`: handle `SIGTERM` only; unhandled rejections use Node.js defaults
+- `api`, `wsapi`, `memberlist`: handlers for both `unhandledRejection` and `uncaughtException` log and call `shutdown(1)`
+- `mediasoup`, `onchain`, `job-runner`: handle `SIGTERM` only; unhandled rejections and uncaught exceptions use Node.js defaults (the process dies)
 - `mediasoup` workers: on the mediasoup `Worker.died` event the process exits after a 2s delay
 
 ---

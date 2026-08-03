@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 /**
- * Staking configuration (docs/ROADMAP-staking.md §7). The feature is off
+ * Staking configuration (docs/staking/README.md §3). The feature is off
  * unless both STAKING_CHAIN and STAKING_CONTRACT_ADDRESS are configured —
  * graceful degradation like every other optional service.
  */

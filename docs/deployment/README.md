@@ -1,6 +1,6 @@
 # Common Ground Deployment
 
-> Status: verified against commit ede0ec06b, 2026-08-03.
+> Status: verified against commit 0f1d72d66, 2026-08-03.
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -326,7 +326,7 @@ the nginx path computes the equivalent `CG_FEATURE_*` booleans from
 | `CG_WALLETCONNECT_PROJECT_ID` | WalletConnect wallets (QR / mobile deep-link) | injected wallets (MetaMask etc.) still work |
 
 Token staking (Spark) and bot accounts are likewise off by default and enabled
-via `.env.selfhost` — see [`docs/ROADMAP-staking.md`](../ROADMAP-staking.md),
+via `.env.selfhost` — see [`docs/staking`](../staking/README.md),
 [`docs/BOT-API.md`](../BOT-API.md) and `docker/SELFHOST.md`.
 
 ---

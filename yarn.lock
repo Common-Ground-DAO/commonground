@@ -5960,7 +5960,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/node@npm:*, @types/node@npm:^12.0.0":
+"@types/node@npm:*":
   version: 12.20.37
   resolution: "@types/node@npm:12.20.37"
   checksum: 10c0/6fac1a3b4639314b6f9bda1064de4d63564d3704759a817fbd9d66b2b0ae7bb5622e10ca4acdba3c61a2a0ac94f20e9975993a56a3ff666c29ffac9d65fee196
@@ -5978,6 +5978,15 @@ __metadata:
   version: 12.20.55
   resolution: "@types/node@npm:12.20.55"
   checksum: 10c0/3b190bb0410047d489c49bbaab592d2e6630de6a50f00ba3d7d513d59401d279972a8f5a598b5bb8ddc1702f8a2f4ec57a65d93852f9c329639738e7053637d1
+  languageName: node
+  linkType: hard
+
+"@types/node@npm:^20":
+  version: 20.19.43
+  resolution: "@types/node@npm:20.19.43"
+  dependencies:
+    undici-types: "npm:~6.21.0"
+  checksum: 10c0/9bcec3b5295bdd77ff0b44a528a69f7e22028c347507ba2c69be47ec84e30299f45043b222e9c86c510e138c9c53b2419dd5cd34920602a4a5a381c288075318
   languageName: node
   linkType: hard
 
@@ -9756,7 +9765,7 @@ __metadata:
     "@types/d3": "npm:^7.4.3"
     "@types/dom-screen-wake-lock": "npm:^1.0.2"
     "@types/lodash": "npm:^4.14.182"
-    "@types/node": "npm:^12.0.0"
+    "@types/node": "npm:^20"
     "@types/protoo-client": "npm:^4.0.1"
     "@types/react": "npm:18"
     "@types/react-beautiful-dnd": "npm:^13.1.2"
@@ -9816,7 +9825,7 @@ __metadata:
     tailwindcss: "npm:^3.1.6"
     truffle-flattener: "npm:1.6.0"
     typechain: "npm:^7.0.0"
-    typescript: "npm:^4.1.2"
+    typescript: "npm:5.9.3"
     ua-parser-js: "npm:^1.0.35"
     viem: "npm:^1.5.3"
     vite: "npm:^6"
@@ -22945,23 +22954,23 @@ __metadata:
   languageName: node
   linkType: hard
 
-"typescript@npm:^4.1.2":
-  version: 4.5.2
-  resolution: "typescript@npm:4.5.2"
+"typescript@npm:5.9.3":
+  version: 5.9.3
+  resolution: "typescript@npm:5.9.3"
   bin:
     tsc: bin/tsc
     tsserver: bin/tsserver
-  checksum: 10c0/8fc40b886018889ad2099cb1b477c4f0373528c9fca83860ad33e898fe19ada22568477aca91741fbeabf0402e203f0e2d6d14ed6973ad826893cc13b2dfd459
+  checksum: 10c0/6bd7552ce39f97e711db5aa048f6f9995b53f1c52f7d8667c1abdc1700c68a76a308f579cd309ce6b53646deb4e9a1be7c813a93baaf0a28ccd536a30270e1c5
   languageName: node
   linkType: hard
 
-"typescript@patch:typescript@npm%3A^4.1.2#optional!builtin<compat/typescript>":
-  version: 4.5.2
-  resolution: "typescript@patch:typescript@npm%3A4.5.2#optional!builtin<compat/typescript>::version=4.5.2&hash=bcec9a"
+"typescript@patch:typescript@npm%3A5.9.3#optional!builtin<compat/typescript>":
+  version: 5.9.3
+  resolution: "typescript@patch:typescript@npm%3A5.9.3#optional!builtin<compat/typescript>::version=5.9.3&hash=d69c25"
   bin:
     tsc: bin/tsc
     tsserver: bin/tsserver
-  checksum: 10c0/90eaf5227b6a755da1a77665b24b958a8bc79b12b435c4254255ceada6ac6eb7905678b37c23c4f63a298b7ed6bee8fc87df78b98d0b0e7f0e30e873334121fd
+  checksum: 10c0/6f7e53bf0d9702350deeb6f35e08b69cbc8b958c33e0ec77bdc0ad6a6c8e280f3959dcbfde6f5b0848bece57810696489deaaa53d75de3578ff255d168c1efbd
   languageName: node
   linkType: hard
 
@@ -23027,6 +23036,13 @@ __metadata:
   version: 6.20.0
   resolution: "undici-types@npm:6.20.0"
   checksum: 10c0/68e659a98898d6a836a9a59e6adf14a5d799707f5ea629433e025ac90d239f75e408e2e5ff086afc3cace26f8b26ee52155293564593fbb4a2f666af57fc59bf
+  languageName: node
+  linkType: hard
+
+"undici-types@npm:~6.21.0":
+  version: 6.21.0
+  resolution: "undici-types@npm:6.21.0"
+  checksum: 10c0/c01ed51829b10aa72fc3ce64b747f8e74ae9b60eafa19a7b46ef624403508a54c526ffab06a14a26b3120d055e1104d7abe7c9017e83ced038ea5cf52f8d5e04
   languageName: node
   linkType: hard
 

@@ -7,16 +7,15 @@ import https from 'https';
 import protoo from 'protoo-server';
 import express from "express";
 import bodyParser from 'body-parser';
-import url from 'url';
 import cors from 'cors';
 import { AwaitQueue } from 'awaitqueue';
 import { createWorker } from "mediasoup";
 
 import { httpsConf, mediasoupConfig } from "./mediasoup/config";
 import { clone } from "./mediasoup/utils";
-import { TransportListenIp } from 'mediasoup/node/lib/Transport';
+import { TransportListenInfo } from 'mediasoup/types';
 import Room from "./mediasoup/room";
-import * as types from "mediasoup/node/lib/types";
+import * as types from "mediasoup/types";
 import { fakeHealthcheck } from './mediasoup/mediasoupHealthcheck';
 import callHelper from './repositories/calls';
 import { CallType } from './common/enums';
@@ -119,8 +118,12 @@ async function getTrafficSinceLastCall(): Promise<{
 }
 let traffic = 0;
 setInterval(async () => {
-    const result = await getTrafficSinceLastCall();
-    traffic = result.received + result.sent;
+    try {
+        const result = await getTrafficSinceLastCall();
+        traffic = result.received + result.sent;
+    } catch (error) {
+        console.error('traffic sampling failed', error);
+    }
 }, config.CALLSERVER_UPDATE_TRAFFIC_INTERVAL);
 
 (async () => {
@@ -174,6 +177,14 @@ async function updateServerStatus() {
 async function runMediasoupWorkers() {
     const { numWorkers } = mediasoupConfig;
 
+    // mediasoup >= 3.16 dropped its own `disableLiburing` worker setting and now
+    // relies on libuv's built-in io_uring, which is toggled via the UV_USE_IO_URING
+    // environment variable inherited by the spawned worker process. Preserve the
+    // existing MEDIASOUP_DISABLE_LIBURING deployment contract by translating it.
+    if (process.env.MEDIASOUP_DISABLE_LIBURING === 'true' && process.env.UV_USE_IO_URING === undefined) {
+        process.env.UV_USE_IO_URING = '0';
+    }
+
     console.info('running %d mediasoup Workers...', numWorkers);
 
     for (let i = 0; i < numWorkers; ++i) {
@@ -183,7 +194,6 @@ async function runMediasoupWorkers() {
                 logTags: mediasoupConfig.workerSettings.logTags,
                 rtcMinPort: Number(mediasoupConfig.workerSettings.rtcMinPort),
                 rtcMaxPort: Number(mediasoupConfig.workerSettings.rtcMaxPort),
-                disableLiburing: mediasoupConfig.workerSettings.disableLiburing,
             });
 
         worker.on('died', () => {
@@ -234,9 +244,10 @@ async function runWebServer(): Promise<void> {
     await new Promise<void>((resolve) => {
         const { listenIp, listenPort } = httpsConf;
         webServer.listen(listenPort, listenIp, () => {
-            if (mediasoupConfig?.webRtcTransportOptions?.listenIps?.[0]) {
-                const listenIps: TransportListenIp = mediasoupConfig.webRtcTransportOptions.listenIps[0] as TransportListenIp;
-                const ip = listenIps.announcedIp || listenIps.ip;
+            const listenInfos = (mediasoupConfig?.webRtcTransportOptions as { listenInfos?: TransportListenInfo[] })?.listenInfos;
+            if (listenInfos?.[0]) {
+                const info: TransportListenInfo = listenInfos[0];
+                const ip = info.announcedAddress || info.ip;
                 console.log('server is running');
                 console.log(`open https://${ip}:${listenPort} in your web browser`);
             }
@@ -314,10 +325,10 @@ async function runProtooWebSocketServer() {
     // Handle connections from clients.
     protooWebSocketServer.on('connectionrequest', (info: any, accept, reject) => {
         // The client indicates the roomId and peerId in the URL query.
-        const u = url.parse(info.request.url, true);
-        const roomId: string = u.query['roomId'] as string;
-        const peerId: string = u.query['peerId'] as string;
-        const callType: CallType = u.query['callType'] as CallType;
+        const u = new URL(info.request.url, 'http://localhost').searchParams;
+        const roomId: string = u.get('roomId') as string;
+        const peerId: string = u.get('peerId') as string;
+        const callType: CallType = u.get('callType') as CallType;
 
         if (!roomId || !peerId) {
             reject(400, 'Connection request without roomId and/or peerId');
@@ -325,10 +336,16 @@ async function runProtooWebSocketServer() {
             return;
         }
 
-        let consumerReplicas = Number(u.query['consumerReplicas']);
+        // consumerReplicas is a debugging aid inherited from the mediasoup demo
+        // that multiplies the consumers created per producer, and it is fixed
+        // room-wide by whoever connects first. Clamp it hard so a single client
+        // cannot force the worker to allocate an unbounded number of consumers.
+        let consumerReplicas = Number(u.get('consumerReplicas'));
 
-        if (isNaN(consumerReplicas)) {
+        if (isNaN(consumerReplicas) || consumerReplicas < 0) {
             consumerReplicas = 0;
+        } else {
+            consumerReplicas = Math.min(4, Math.floor(consumerReplicas));
         }
 
         console.info(
@@ -454,12 +471,20 @@ async function getOrCreateRoom({
         room = await Room.create({ mediasoupWorker, roomId, consumerReplicas, callType, callCreator, stageSlots, callSlots, audioOnly, highQuality });
 
         rooms.set(roomId, room);
-        room.on('close', () => {
-            callHelper.softEndCall(roomId);
+        room.on('close', async () => {
+            try {
+                await callHelper.softEndCall(roomId);
+            } catch (error) {
+                console.error('softEndCall failed', error);
+            }
             rooms.delete(roomId);
         });
-        room.on('forceClose', () => {
-            callHelper.endCallForEveryone(roomId);
+        room.on('forceClose', async () => {
+            try {
+                await callHelper.endCallForEveryone(roomId);
+            } catch (error) {
+                console.error('endCallForEveryone failed', error);
+            }
             rooms.delete(roomId);
         });
     }

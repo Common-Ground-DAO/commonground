@@ -132,7 +132,7 @@ class DeviceHelper {
     const encoder = new TextEncoder();
     const signedData = encoder.encode(secret);
     const buffer = Buffer.from(base64Signature, 'base64');
-    const signature = new Uint8Array(buffer, buffer.byteOffset, buffer.byteLength);
+    const signature = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
     const key = await webcrypto.subtle.importKey(
       "jwk",
       data.publicKey,

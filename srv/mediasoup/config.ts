@@ -3,9 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { cpus } from 'os';
-import { RouterOptions, WebRtcServerOptions, WebRtcTransportOptions, WorkerSettings } from "mediasoup/node/lib/types";
-
-export const domain: string = process.env.DOMAIN || 'localhost';
+import { RouterOptions, WebRtcServerOptions, WebRtcTransportOptions, WorkerSettings } from "mediasoup/types";
 
 export const httpsConf = {
   listenIp: '0.0.0.0',
@@ -27,9 +25,10 @@ interface MediasoupConfig {
 export const mediasoupConfig: MediasoupConfig = {
   numWorkers: Object.keys(cpus()).length,
   workerSettings: {
+    logLevel: 'warn',
+    logTags: ['info', 'ice', 'dtls', 'rtp', 'srtp', 'rtcp', 'bwe', 'score', 'simulcast', 'svc', 'sctp'],
     rtcMinPort: parseInt(process.env.MEDIASOUP_MIN_PORT || '40000', 10),
     rtcMaxPort: parseInt(process.env.MEDIASOUP_MAX_PORT || '40099', 10),
-    disableLiburing: process.env.MEDIASOUP_DISABLE_LIBURING === 'true',
   },
   routerOptions: {
     mediaCodecs: [
@@ -77,26 +76,33 @@ export const mediasoupConfig: MediasoupConfig = {
       {
         protocol: 'udp',
         ip: process.env.MEDIASOUP_LISTEN_IP || '0.0.0.0',
-        announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP,
+        announcedAddress: process.env.MEDIASOUP_ANNOUNCED_IP,
         port: 40000
       },
       {
         protocol: 'tcp',
         ip: process.env.MEDIASOUP_LISTEN_IP || '0.0.0.0',
-        announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP,
+        announcedAddress: process.env.MEDIASOUP_ANNOUNCED_IP,
         port: 40000
       },
     ]
   },
   webRtcTransportOptions: {
-    listenIps:
+    listenInfos:
       [
         {
+          protocol: 'udp',
           ip: process.env.MEDIASOUP_LISTEN_IP || '0.0.0.0',
-          announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP
+          announcedAddress: process.env.MEDIASOUP_ANNOUNCED_IP
+        },
+        {
+          protocol: 'tcp',
+          ip: process.env.MEDIASOUP_LISTEN_IP || '0.0.0.0',
+          announcedAddress: process.env.MEDIASOUP_ANNOUNCED_IP
         }
       ],
     initialAvailableOutgoingBitrate: 1000000,
-    maxSctpMessageSize: 262144
+    maxSendMessageSize: 262144,
+    maxReceiveMessageSize: 262144
   }
 };

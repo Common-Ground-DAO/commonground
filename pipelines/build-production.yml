@@ -26,7 +26,7 @@ jobs:
   - task: NodeTool@0
     displayName: Install node
     inputs:
-      versionSpec: 20.11.1
+      versionSpec: 24.x
 
   - task: Npm@1
     displayName: Install yarn

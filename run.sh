@@ -101,7 +101,7 @@ else
   printf "\e[1mup\e[0m\nStart the stack in detached mode and show logs.\n\n"
   printf "\e[1mdown\e[0m\nStop the stack.\n\n"
   printf "\e[1mcompose <arg_1> <arg_2> ...\e[0m\nRun docker compose commands. For example, to run 'docker compose ps', use './run.sh compose ps'.\n\n"
-  printf "\e[1mshell\e[0m\nStart a shell in the cg-builder container (node20) and mount the project directory into it. It can then be used to run yarn commands.\n\n"
+  printf "\e[1mshell\e[0m\nStart a shell in the cg-builder container (node) and mount the project directory into it. It can then be used to run yarn commands.\n\n"
   printf "\e[1mmake_migration <migration_name>\e[0m\nCreate a new migration with the given name.\n\n"
   printf "\e[1mmake_empty_migration <migration_name>\e[0m\nCreate a new empty migration with the given name.\n\n\n"
 

@@ -347,11 +347,11 @@ services:
 
   cg-builder:
     build:
-      context: ./node20
+      context: ./node
       args:
         - BUILDER_UID=${BUILDER_UID:-1000}
         - BUILDER_GID=${BUILDER_GID:-1000}
-    image: commonground/node20
+    image: commonground/node
     user: "${BUILDER_UID:-1000}:${BUILDER_GID:-1000}"
     environment:
       - YARN_CACHE_FOLDER=/builder-cache

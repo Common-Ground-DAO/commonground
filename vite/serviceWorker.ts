@@ -23,11 +23,34 @@ import type { InlineConfig, Plugin, ResolvedConfig } from 'vite';
  *      `<outDir>/service-worker.js`.
  *
  * Fail-closed: any failure aborts the build unless `DEPLOYMENT=dev`, mirroring
- * the guard at `craco.config.js` (the old §2.5 patch).
+ * the guard at `craco.config.js` (the old §2.5 patch). Two checks are stricter
+ * than that and abort regardless of `DEPLOYMENT`, because they guard silent
+ * product regressions rather than tooling breakage:
+ *
+ *   - the nested worker build must emit exactly the worker (+ its sourcemap);
+ *     a stray import that makes rollup split the worker would produce chunks
+ *     that are never served and never precached (`assertWorkerBundleIsSingleFile`);
+ *   - every emitted JS/CSS entry and chunk must end up in the precache manifest
+ *     (`assertPrecacheCoversAllCode`). Falling out of the precache is what
+ *     workbox reports with a *log line* — it costs offline cold start and makes
+ *     the first load after an update refetch the missing chunk over the network.
  */
 
 const SW_TMP_DIR = '.cg-sw-build';
 const SW_FILENAME = 'service-worker.js';
+
+/**
+ * Precache size cap. CRA's default was 5 MB, which Vite's default chunking
+ * exceeds: it emits one `App` chunk of ~5.6 MB where CRA's
+ * `splitChunks: { chunks: 'all' }` spread the same code over many. 8 MiB
+ * restores CRA's offline-cold-start parity (roadmap finding 3, option (a));
+ * `assertPrecacheCoversAllCode` below turns any future overrun into a build
+ * failure instead of a log line, so this number cannot silently rot.
+ */
+const MAX_PRECACHE_FILE_SIZE = 8 * 1024 * 1024;
+
+/** Aborts the build regardless of `DEPLOYMENT` (see the plugin doc comment). */
+class FatalServiceWorkerError extends Error {}
 
 export type ServiceWorkerPluginOptions = {
   /** Worker entry, relative to the project root. */
@@ -66,7 +89,10 @@ export function serviceWorker(options: ServiceWorkerPluginOptions): Plugin {
         console.error('\x1b[31m%s\x1b[0m', '[cg:service-worker]');
         // eslint-disable-next-line no-console
         console.error('\x1b[31m%s\x1b[0m', (error as Error).stack ?? String(error));
-        if (process.env.DEPLOYMENT !== 'dev') {
+        // The two integrity assertions are not tooling breakage — they mean the
+        // build produced a broken worker or an incomplete precache. Those abort
+        // on every deployment, including `dev`.
+        if (error instanceof FatalServiceWorkerError || process.env.DEPLOYMENT !== 'dev') {
           process.exit(1);
         }
       }
@@ -129,6 +155,89 @@ async function buildWorker(
   };
 
   await build(inlineConfig);
+  assertWorkerBundleIsSingleFile(config, tmpDir);
+}
+
+/**
+ * A service worker is registered as one file and nothing else from that build
+ * is ever served. If rollup decides to split it — a static import of something
+ * it deems shared, a dynamic import `inlineDynamicImports` cannot swallow, an
+ * asset emitted from CSS or an `new URL(…, import.meta.url)` — the extra chunks
+ * land in the temp dir, get thrown away, and the worker breaks at runtime with
+ * a 404 on first fetch. Assert the bundle is exactly the worker + its
+ * sourcemap.
+ */
+function assertWorkerBundleIsSingleFile(config: ResolvedConfig, tmpDir: string): void {
+  const expected = new Set([SW_FILENAME]);
+  if (config.build.sourcemap) expected.add(`${SW_FILENAME}.map`);
+
+  const emitted = listFilesRecursive(tmpDir);
+  const unexpected = emitted.filter((file) => !expected.has(file));
+  const missing = [...expected].filter((file) => !emitted.includes(file));
+
+  if (unexpected.length > 0 || missing.length > 0) {
+    throw new FatalServiceWorkerError(
+      'the service-worker bundle is not a single file.\n' +
+        `  expected: ${[...expected].join(', ')}\n` +
+        `  emitted:  ${emitted.join(', ') || '(nothing)'}\n` +
+        (unexpected.length > 0
+          ? '  A stray import made rollup split the worker; the extra chunks are ' +
+            'never served. Inline it or move it out of the worker.\n'
+          : ''),
+    );
+  }
+}
+
+function listFilesRecursive(dir: string, prefix = ''): string[] {
+  if (!fs.existsSync(dir)) return [];
+  const files: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) files.push(...listFilesRecursive(path.join(dir, entry.name), rel));
+    else files.push(rel);
+  }
+  return files.sort();
+}
+
+/**
+ * Every emitted JS/CSS entry and chunk must be in the precache manifest.
+ *
+ * Workbox only *logs* when a file exceeds `maximumFileSizeToCacheInBytes`, and
+ * a glob/ignore mistake does not even do that — either way the app shell would
+ * still install, then hit the network for the missing chunk and fail offline.
+ * Compare the shipped `static/js` + `static/css` set against the manifest and
+ * fail the build on any difference.
+ *
+ * Deliberate excludes are scoped out by construction: `.map` and `LICENSE`
+ * files, `index_cgid.html`, `asset-manifest.json` and small `static/media`
+ * SVGs are none of them JS or CSS.
+ */
+function assertPrecacheCoversAllCode(outDir: string, base: string, manifestURLs: Set<string>): void {
+  const code: string[] = [];
+  for (const [dir, ext] of [
+    ['static/js', '.js'],
+    ['static/css', '.css'],
+  ]) {
+    for (const file of listFilesRecursive(path.join(outDir, dir))) {
+      if (file.endsWith(ext)) code.push(`${dir}/${file}`);
+    }
+  }
+
+  // `modifyURLPrefix` has already prefixed the manifest URLs with `base`.
+  const prefix = base.endsWith('/') ? base : `${base}/`;
+  const missing = code.filter((file) => !manifestURLs.has(prefix + file));
+
+  if (missing.length > 0) {
+    const detail = missing
+      .map((file) => `    ${file} (${(fs.statSync(path.join(outDir, file)).size / 1024 / 1024).toFixed(2)} MiB)`)
+      .join('\n');
+    throw new FatalServiceWorkerError(
+      `${missing.length} emitted JS/CSS file(s) are not in the precache manifest:\n${detail}\n` +
+        `  Precaching every entry and chunk is what makes an offline cold start work.\n` +
+        `  If a chunk is over the ${(MAX_PRECACHE_FILE_SIZE / 1024 / 1024).toFixed(0)} MiB cap, either split it ` +
+        `(build.rollupOptions.output.manualChunks) or raise MAX_PRECACHE_FILE_SIZE.`,
+    );
+  }
 }
 
 async function injectPrecacheManifest(
@@ -137,6 +246,12 @@ async function injectPrecacheManifest(
   outDir: string,
 ): Promise<void> {
   const { injectManifest } = await import('workbox-build');
+
+  // `injectManifest` reports only count/size, so capture the manifest itself
+  // from the last transform in the chain (workbox runs user `manifestTransforms`
+  // after the size cap, `modifyURLPrefix` and `dontCacheBustURLsMatching` —
+  // see node_modules/workbox-build/build/lib/transform-manifest.js).
+  const manifestURLs = new Set<string>();
 
   const { count, size, warnings } = await injectManifest({
     swSrc: path.join(tmpDir, SW_FILENAME),
@@ -176,20 +291,15 @@ async function injectPrecacheManifest(
     // Vite is configured for hex content hashes (see vite.config.ts), so the
     // CRA-era pattern still applies: a hashed URL needs no separate revision.
     dontCacheBustURLsMatching: /\.[0-9a-f]{8}\./,
-    // CRA's default, kept per the roadmap decision. Note that Vite's default
-    // chunking produces one very large `App` chunk where CRA's
-    // `splitChunks: { chunks: 'all' }` spread the same code over many — see the
-    // "chunking" note in docs/todo/ROADMAP_BUILD_STACK_VITE.md; anything above
-    // this limit is logged by workbox and simply stays out of the precache.
-    maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+    maximumFileSizeToCacheInBytes: MAX_PRECACHE_FILE_SIZE,
     // Under Vite + svgr, component-imported SVGs are compiled to JSX and never
     // emitted as standalone files, so CRA's "skip small static/media SVGs" rule
     // has nothing left to skip. Keep the filter as a tripwire: if a small SVG
     // ever *is* emitted, it stays out of the precache (the shipped SVG-prune
     // loops in docker/build.sh would otherwise delete a precached URL and stop
     // the worker from ever activating, §10.1).
-    // Runs before `modifyURLPrefix`, so the URLs here are still relative to
-    // globDirectory.
+    // Runs *after* `modifyURLPrefix`, so the URLs are already `base`-prefixed;
+    // strip the leading slash to get back to a path under globDirectory.
     manifestTransforms: [
       (entries) => ({
         manifest: entries.filter((entry) => {
@@ -199,8 +309,14 @@ async function injectPrecacheManifest(
         }),
         warnings: [],
       }),
+      (entries) => {
+        for (const entry of entries) manifestURLs.add(entry.url);
+        return { manifest: entries, warnings: [] };
+      },
     ],
   });
+
+  assertPrecacheCoversAllCode(outDir, config.base, manifestURLs);
 
   for (const warning of warnings) {
     // eslint-disable-next-line no-console

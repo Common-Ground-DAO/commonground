@@ -13,9 +13,9 @@ import { createWorker } from "mediasoup";
 
 import { httpsConf, mediasoupConfig } from "./mediasoup/config";
 import { clone } from "./mediasoup/utils";
-import { TransportListenIp } from 'mediasoup/node/lib/Transport';
+import { TransportListenInfo } from 'mediasoup/types';
 import Room from "./mediasoup/room";
-import * as types from "mediasoup/node/lib/types";
+import * as types from "mediasoup/types";
 import { fakeHealthcheck } from './mediasoup/mediasoupHealthcheck';
 import callHelper from './repositories/calls';
 import { CallType } from './common/enums';
@@ -173,6 +173,14 @@ async function updateServerStatus() {
 async function runMediasoupWorkers() {
     const { numWorkers } = mediasoupConfig;
 
+    // mediasoup >= 3.16 dropped its own `disableLiburing` worker setting and now
+    // relies on libuv's built-in io_uring, which is toggled via the UV_USE_IO_URING
+    // environment variable inherited by the spawned worker process. Preserve the
+    // existing MEDIASOUP_DISABLE_LIBURING deployment contract by translating it.
+    if (process.env.MEDIASOUP_DISABLE_LIBURING === 'true' && process.env.UV_USE_IO_URING === undefined) {
+        process.env.UV_USE_IO_URING = '0';
+    }
+
     console.info('running %d mediasoup Workers...', numWorkers);
 
     for (let i = 0; i < numWorkers; ++i) {
@@ -182,7 +190,6 @@ async function runMediasoupWorkers() {
                 logTags: mediasoupConfig.workerSettings.logTags,
                 rtcMinPort: Number(mediasoupConfig.workerSettings.rtcMinPort),
                 rtcMaxPort: Number(mediasoupConfig.workerSettings.rtcMaxPort),
-                disableLiburing: mediasoupConfig.workerSettings.disableLiburing,
             });
 
         worker.on('died', () => {
@@ -233,9 +240,10 @@ async function runWebServer(): Promise<void> {
     await new Promise<void>((resolve) => {
         const { listenIp, listenPort } = httpsConf;
         webServer.listen(listenPort, listenIp, () => {
-            if (mediasoupConfig?.webRtcTransportOptions?.listenIps?.[0]) {
-                const listenIps: TransportListenIp = mediasoupConfig.webRtcTransportOptions.listenIps[0] as TransportListenIp;
-                const ip = listenIps.announcedIp || listenIps.ip;
+            const listenInfos = (mediasoupConfig?.webRtcTransportOptions as { listenInfos?: TransportListenInfo[] })?.listenInfos;
+            if (listenInfos?.[0]) {
+                const info: TransportListenInfo = listenInfos[0];
+                const ip = info.announcedAddress || info.ip;
                 console.log('server is running');
                 console.log(`open https://${ip}:${listenPort} in your web browser`);
             }

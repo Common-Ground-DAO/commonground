@@ -4,7 +4,7 @@
 
 import protoo, { AcceptFn, Peer, ProtooRequest, RejectFn } from 'protoo-server';
 import { mediasoupConfig } from './config';
-import { ActiveSpeakerObserver, AudioLevelObserver, Consumer, Producer, Router, WebRtcServer, WebRtcTransport, Worker } from 'mediasoup/node/lib/types';
+import { ActiveSpeakerObserver, AudioLevelObserver, Consumer, Producer, Router, WebRtcServer, WebRtcTransport, Worker } from 'mediasoup/types';
 import Logger from './logger';
 import { realRandomHexString } from '../util';
 import validators from '../validators';
@@ -596,12 +596,17 @@ export default class Room extends EventEmitter {
                             transport.id, trace.type, trace);
 
                         if (trace.type === 'bwe' && trace.direction === 'out') {
+                            const info = trace.info as {
+                                desiredBitrate: number;
+                                effectiveDesiredBitrate: number;
+                                availableBitrate: number;
+                            };
                             peer.notify(
                                 'downlinkBwe',
                                 {
-                                    desiredBitrate: trace.info.desiredBitrate,
-                                    effectiveDesiredBitrate: trace.info.effectiveDesiredBitrate,
-                                    availableBitrate: trace.info.availableBitrate
+                                    desiredBitrate: info.desiredBitrate,
+                                    effectiveDesiredBitrate: info.effectiveDesiredBitrate,
+                                    availableBitrate: info.availableBitrate
                                 })
                                 .catch((error) => {
                                     logger.error(error)

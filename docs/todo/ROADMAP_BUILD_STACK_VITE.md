@@ -25,7 +25,9 @@ Scoping (2026-08-01/02):
   slimming has to be migrated.
 - Runtime config stays `window.__CG_INSTANCE__` + `src/common/config.ts`; no build-time
   env baking (§7.2). No `REACT_APP_*` → no env migration beyond the single
-  `PUBLIC_URL` token in the service worker.
+  `PUBLIC_URL` token in the service worker — **corrected in Phase 2**, see
+  "Findings that change Phase 3" #6: the two legacy Azure pipelines also pass
+  `PUBLIC_URL` as the CRA homepage.
 - `src/common/` stays dual-runtime (backend consumes it via the `srv/common` symlink,
   §7.3): no blanket `define` of `process`/`process.env`, no Vite-only syntax there.
 - Both HTML entries stay at the web root under their current names
@@ -231,7 +233,11 @@ from content hashes.
 Vite dist contains exactly **one** `.svg` file — `logo.svg`, the copy-verbatim
 `public/` asset the pre-React loading screen references — and **zero** files
 under `static/`. Component-imported SVGs are compiled to JSX in both stacks now,
-so `docker/build.sh:79-90` and `selfhost.sh:80-85` can be deleted. The workbox
+so `docker/build.sh:79-90` and `selfhost.sh:80-85` can be deleted. Until then
+they had to be made no-match-safe in this phase: with nothing left to prune the
+glob stays unexpanded, and in `selfhost.sh` (`set -euo pipefail`) the `wc -c`
+on the literal pattern aborted the build right after the frontend rsync. Both
+loops now start with `[ -e "$f" ] || continue`. The workbox
 small-SVG filter is kept as a tripwire in `vite/serviceWorker.ts` (a precached
 URL that the prune deletes makes `PrecacheController.install()` reject and the
 worker never activates, §10.1).
@@ -286,14 +292,27 @@ nor react-scripts covers it).
    the same code over many (CRA's largest chunk: 4.09 MB). Consequences: a single
    large blocking request instead of parallel ones, and — because it exceeds the
    roadmap-mandated 5 MB `maximumFileSizeToCacheInBytes` — the app bundle stays
-   **out of the precache** (workbox logs it on every build). Not a functional
-   break (the SW has no runtime caching; the chunk is fetched from the network as
-   it is today, and the update flow is unaffected), but it is a real delta.
-   Options for Phase 3, maintainer's call: (a) raise the cap, one line, zero
-   runtime risk, restores "everything precached"; (b) add `manualChunks` — closer
+   **out of the precache** (workbox logs it on every build). Measured against the
+   CRA baseline: CRA precaches 229 entries / 31.15 MiB, of which 10.59 MiB is the
+   non-`.map`/non-`LICENSE` content (118 entries, largest chunk 3.9 MiB); Vite
+   precaches 117 entries / 5.06 MiB — i.e. the *only* content difference is the
+   one missing 5.63 MB `App` chunk. Two consequences, both real and both about
+   caching rather than correctness:
+   - **offline cold start regresses.** The SW has no runtime caching, so the app
+     shell loads from the precache, then `import('./App')` hits the network and
+     fails offline — `src/index.tsx`'s `preloadApp()` catch shows the "Error :'("
+     screen. Under CRA the app started offline.
+   - **the first load after an update pulls 5.63 MB over the network.** Precache
+     install warms the new build's assets while the old version still runs; the
+     excluded chunk is only fetched when the reloaded page asks for it.
+   Options for Phase 3, maintainer's call: (a) raise the cap (one line, zero
+   runtime risk, restores parity — the precache would go to ~10.7 MiB, still a
+   third of today's CRA precache; recommended); (b) add `manualChunks` — closer
    to CRA and better for load performance, but chunk splitting can introduce
    circular-import initialisation bugs that only show up in a browser, so it needs
    the Phase-4 verification pass behind it. Deliberately *not* done in Phase 2.
+   Whichever is chosen, the build should **fail loudly** when an entry/chunk falls
+   out of the precache instead of leaving it to a workbox log line.
 4. **`asset-manifest.json` is gone** under Vite (it has no consumers, §10.4) — the
    `Done when` checks for Phase 3 should not look for it.
 5. **`tools/checkHtmlRewriteCompat.mjs`** (new) runs the real rewrite logic from
@@ -303,6 +322,23 @@ nor react-scripts covers it).
    empty `content=""` (it used to be `%PUBLIC_URL%`), which the strip regex's
    `content="[^"]+"` never matches — so the default `og:url` is *not* stripped on
    deep-link responses. Unchanged by this phase; fix separately if it matters.
+6. **`PUBLIC_URL` is not only a service-worker token** — the claim in "Decisions
+   made" is wrong for the two legacy Azure pipelines, which build with
+   `PUBLIC_URL="https://app.cg"` / `"https://staging.app.cg"`
+   (`pipelines/build-production.yml:90`, `pipelines/build-and-deploy-beta.yml:90`).
+   Everything else (`run.sh`, `docker/build.sh`, `updateFrontend.sh`,
+   `selfhost.sh`) leaves it empty, which is why the `%PUBLIC_URL%` → root-relative
+   rewrite is byte-parity there. On the two pipeline paths it is *not*: the shells
+   used to ship absolute `og:image`/`twitter:image`/`og:url` values and now ship
+   `/icons/preview.png` and `content=""`. Asset/manifest/icon URLs are unaffected
+   (same origin), and deep-link responses are unaffected (`getRoutes.ts` injects
+   absolute image URLs) — the delta is the default social preview of the bare
+   `https://app.cg` URL, where a relative `og:image` is not resolvable by most
+   scrapers. Note this is exactly the behavior every selfhost instance has today.
+   Phase 3 has to touch these pipelines anyway (`GENERATE_SOURCEMAP`,
+   `--openssl-legacy-provider`); decide there between dropping `PUBLIC_URL`
+   and accepting relative social images, or having the backend/nginx inject
+   absolute ones.
 
 ### Phase 3 — Pipeline cutover + CRA removal + lint/test successor
 

@@ -5,11 +5,11 @@
 import React from 'react';
 import { Placement } from '@floating-ui/react-dom-interactions';
 
-import { ReactComponent as CheckIcon } from '../../../components/atoms/icons/20/Check.svg';
-import { ReactComponent as CloseIcon } from '../../../components/atoms/icons/20/Close.svg';
-import { ReactComponent as QuestionMarkCircleIcon } from '../../../components/atoms/icons/20/QuestionMarkCircle.svg';
-import { ReactComponent as ShieldCheckIcon } from '../../../components/atoms/icons/20/ShieldCheck.svg';
-import { ReactComponent as CloseFilledIcon } from '../../../components/atoms/icons/16/Close-1.svg';
+import CheckIcon from '../../../components/atoms/icons/20/Check.svg?react';
+import CloseIcon from '../../../components/atoms/icons/20/Close.svg?react';
+import QuestionMarkCircleIcon from '../../../components/atoms/icons/20/QuestionMarkCircle.svg?react';
+import ShieldCheckIcon from '../../../components/atoms/icons/20/ShieldCheck.svg?react';
+import CloseFilledIcon from '../../../components/atoms/icons/16/Close-1.svg?react';
 import { SignalIcon, WalletIcon } from '@heroicons/react/20/solid';
 
 import { Tooltip } from '../Tooltip/Tooltip';

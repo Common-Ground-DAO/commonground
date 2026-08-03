@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ReactComponent as ChatIcon } from '../../../components/atoms/icons/16/Chat.svg';
+import ChatIcon from '../../../components/atoms/icons/16/Chat.svg?react';
 import Modal from '../../atoms/Modal/Modal';
 import { useWindowSizeContext } from '../../../context/WindowSizeProvider';
 import { createSearchParams, useLocation, useNavigate, useSearchParams } from 'react-router-dom';

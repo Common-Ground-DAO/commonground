@@ -5,7 +5,7 @@
 import React from 'react'
 import './MediaAttachment.css';
 import { InMemoryAttachment } from 'components/organisms/EditField/useAttachments/useAttachments';
-import { ReactComponent as CloseIcon } from '../../../components/atoms/icons/16/Close.svg';
+import CloseIcon from '../../../components/atoms/icons/16/Close.svg?react';
 import { useSignedUrl } from '../../../hooks/useSignedUrl';
 import { Popover } from '../../../components/atoms/Tooltip/Tooltip';
 import FullscreenImageModal from '../../../components/atoms/FullscreenImageModal/FullscreenImageModal';

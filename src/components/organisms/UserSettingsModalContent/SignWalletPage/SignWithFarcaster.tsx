@@ -8,7 +8,7 @@ import userApi from 'data/api/user';
 import accountsApi from 'data/api/accounts';
 import { PageType } from '../UserSettingsModalContent';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
-import { ReactComponent as FarcasterIcon } from '../../../atoms/icons/24/Farcaster.svg';
+import FarcasterIcon from '../../../atoms/icons/24/Farcaster.svg?react';
 
 type Props = {
   setPage: (pageType: PageType) => void;

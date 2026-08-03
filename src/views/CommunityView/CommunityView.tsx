@@ -10,8 +10,8 @@ import CommunityLobby from '../../components/templates/CommunityLobby/CommunityL
 import MemberList from '../../components/organisms/MemberList/MemberList';
 import CommunityContentList from 'components/templates/CommunityContentList/CommunityContentList';
 
-import { ReactComponent as UsersWithPlusIcon } from '../../components/atoms/icons/24/UsersWithPlus.svg';
-import { ReactComponent as SpinnerIcon } from '../../components/atoms/icons/16/Spinner.svg';
+import UsersWithPlusIcon from '../../components/atoms/icons/24/UsersWithPlus.svg?react';
+import SpinnerIcon from '../../components/atoms/icons/16/Spinner.svg?react';
 
 import { useWindowSizeContext } from "../../context/WindowSizeProvider";
 import { useLoadedCommunityContext } from '../../context/CommunityProvider';

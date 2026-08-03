@@ -5,11 +5,11 @@
 import React, { useEffect, useRef } from 'react'
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import Button, { ButtonRole } from 'components/atoms/Button/Button';
-import { ReactComponent as EthereumIcon } from '../../../atoms/icons/24/Ethereum.svg';
-import { ReactComponent as LuksoIcon } from '../../../atoms/icons/24/Lukso.svg';
-import { ReactComponent as FarcasterIcon } from '../../../atoms/icons/24/Farcaster.svg';
-import { ReactComponent as MetamaskIcon } from '../../../atoms/icons/24/MetamaskIcon.svg';
-import { ReactComponent as XIcon } from '../../../atoms/icons/24/X.svg';
+import EthereumIcon from '../../../atoms/icons/24/Ethereum.svg?react';
+import LuksoIcon from '../../../atoms/icons/24/Lukso.svg?react';
+import FarcasterIcon from '../../../atoms/icons/24/Farcaster.svg?react';
+import MetamaskIcon from '../../../atoms/icons/24/MetamaskIcon.svg?react';
+import XIcon from '../../../atoms/icons/24/X.svg?react';
 import { EnvelopeIcon, DocumentTextIcon } from '@heroicons/react/20/solid';
 import { OnboardingStep } from 'context/UserOnboarding';
 import { useTwitterAuth } from 'hooks/useTwitterAuth';

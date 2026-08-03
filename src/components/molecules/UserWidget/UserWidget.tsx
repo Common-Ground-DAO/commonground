@@ -15,7 +15,7 @@ import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import { createPortal } from "react-dom";
 import { getDisplayName } from '../../../util';
 import { useUserSettingsContext } from 'context/UserSettingsProvider';
-import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
+import SparkIcon from 'components/atoms/icons/misc/spark.svg?react';
 import { useSnackbarContext } from 'context/SnackbarContext';
 
 type Props = {

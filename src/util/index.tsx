@@ -5,9 +5,9 @@
 import type { AccessLevel, AjaxResponse } from "common/types";
 import { idRegex, itemUrlRegex } from "common/util";
 import short from 'short-uuid';
-import { ReactComponent as XIcon } from '../components/atoms/icons/24/X.svg';
-import { ReactComponent as OfficialIcon } from "../components/atoms/icons/20/OfficialIcon.svg";
-import { ReactComponent as FarcasterIcon } from '../components/atoms/icons/24/Farcaster.svg';
+import XIcon from '../components/atoms/icons/24/X.svg?react';
+import OfficialIcon from "../components/atoms/icons/20/OfficialIcon.svg?react";
+import FarcasterIcon from '../components/atoms/icons/24/Farcaster.svg?react';
 import { Tooltip } from "components/atoms/Tooltip/Tooltip";
 import ExternalIcon from "components/atoms/ExternalIcon/ExternalIcon";
 import CrystalIcon from "../components/atoms/icons/misc/communitySettings/crystal.webp";

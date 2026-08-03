@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import Button from '../../../../components/atoms/Button/Button';
-import { ReactComponent as DismissIcon } from '../../../../components/atoms/icons/20/Dismiss.svg';
+import DismissIcon from '../../../../components/atoms/icons/20/Dismiss.svg?react';
 
 import "./ManagementContentModalFooterButton.css";
 

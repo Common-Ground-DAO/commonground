@@ -6,7 +6,7 @@ import React, { useCallback, useMemo } from 'react'
 import { AudioWidgetProps } from './AudioWidget';
 import MenuNftButton from '../MenuNftButton/MenuNftButton';
 import Jdenticon from 'components/atoms/Jdenticon/Jdenticon';
-import { ReactComponent as MicOffIcon } from '../../../components/atoms/icons/16/MicOff.svg';
+import MicOffIcon from '../../../components/atoms/icons/16/MicOff.svg?react';
 import { useOwnUser } from 'context/OwnDataProvider';
 import { useCallContext } from 'context/CallProvider';
 import { useUserSettingsContext } from 'context/UserSettingsProvider';

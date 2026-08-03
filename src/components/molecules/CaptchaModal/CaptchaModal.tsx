@@ -10,7 +10,7 @@ import { useDarkModeContext } from 'context/DarkModeProvider';
 import userApi from 'data/api/user';
 import AltchaWidget from '../AltchaWidget/AltchaWidget';
 import { CAPTCHA_MISCONFIGURED_TEXT, useCaptchaProvider } from 'context/CaptchaContext';
-import { ReactComponent as CircleLogo } from "components/atoms/icons/misc/Logo/logo.svg";
+import CircleLogo from "components/atoms/icons/misc/Logo/logo.svg?react";
 import './CaptchaModal.css';
 
 const CaptchaModal = () => {

@@ -5,8 +5,8 @@
 import Button from "../../../components/atoms/Button/Button";
 import Modal from "../../atoms/Modal/Modal";
 
-import { ReactComponent as CheckmarkFilledIcon } from '../../../components/atoms/icons/20/CheckmarkFilled.svg';
-import { ReactComponent as CloseIcon } from '../../../components/atoms/icons/16/Close-1.svg';
+import CheckmarkFilledIcon from '../../../components/atoms/icons/20/CheckmarkFilled.svg?react';
+import CloseIcon from '../../../components/atoms/icons/16/Close-1.svg?react';
 import Dialog, { DialogRefHandle } from "../../molecules/Dialog/Dialog";
 import { useRef } from "react";
 import { useLoadedCommunityContext } from "context/CommunityProvider";

@@ -5,7 +5,7 @@
 import { Placement } from "@floating-ui/react-dom-interactions";
 import Button from "../../atoms/Button/Button";
 import { Popover, PopoverHandle } from "../../atoms/Tooltip/Tooltip";
-import { ReactComponent as ChevronDownIcon } from '../../../components/atoms/icons/16/ChevronDown.svg';
+import ChevronDownIcon from '../../../components/atoms/icons/16/ChevronDown.svg?react';
 
 import "./Dropdown.css";
 import React, { forwardRef, useImperativeHandle, useMemo, useRef } from "react";

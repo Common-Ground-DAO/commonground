@@ -6,7 +6,7 @@ import UserProfile from "../../components/organisms/UserProfile/UserProfile";
 import Scrollable from "../../components/molecules/Scrollable/Scrollable";
 
 import { useSafeProfileContext } from "context/ProfileProvider";
-import { ReactComponent as SpinnerIcon } from '../../components/atoms/icons/16/Spinner.svg';
+import SpinnerIcon from '../../components/atoms/icons/16/Spinner.svg?react';
 
 import './ProfileView.css';
 

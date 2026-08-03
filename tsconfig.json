@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "es5",
+    "target": "es2018",
     "lib": [
       "dom",
       "dom.iterable",
@@ -22,7 +22,8 @@
     "jsx": "react-jsx",
     "baseUrl": "src",
     "types":[
-      "dom-screen-wake-lock"
+      "dom-screen-wake-lock",
+      "vite/client"
     ]
   },
   "include": [

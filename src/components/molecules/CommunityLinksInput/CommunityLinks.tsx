@@ -6,7 +6,7 @@ import { useRef, useState } from 'react';
 import { InlineToastType } from '../../atoms/InlineToast/InlineToast';
 import CommunityLinkInput from './CommunityLinkInput';
 import Button from '../../atoms/Button/Button';
-import { ReactComponent as Add } from '../../atoms/icons/16/Add.svg';
+import Add from '../../atoms/icons/16/Add.svg?react';
 
 import "./CommunityLinks.css";
 

@@ -16,7 +16,7 @@ import Button from 'components/atoms/Button/Button';
 import _ from 'lodash';
 import ToggleText from 'components/molecules/ToggleText/ToggleText';
 import { getAccountIcon } from '../AccountsPage/AccountsPage';
-import { ReactComponent as CircleLogo } from "components/atoms/icons/misc/Logo/logo.svg";
+import CircleLogo from "components/atoms/icons/misc/Logo/logo.svg?react";
 import { getDisplayName } from '../../../../util';
 
 type Props = {

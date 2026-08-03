@@ -8,7 +8,7 @@ import config from "common/config";
 import ToggleInputField from "components/molecules/inputs/ToggleInputField/ToggleInputField";
 import Tag from "components/atoms/Tag/Tag";
 import dayjs from "dayjs";
-import { ReactComponent as SparkIcon } from '../../../atoms/icons/misc/spark.svg';
+import SparkIcon from '../../../atoms/icons/misc/spark.svg?react';
 import { useCommunityPremiumTier } from "hooks/usePremiumTier";
 import "./UpgradesTab.css";
 import Button from "components/atoms/Button/Button";

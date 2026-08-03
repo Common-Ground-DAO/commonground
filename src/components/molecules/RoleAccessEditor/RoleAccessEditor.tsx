@@ -6,7 +6,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 
 import Button from 'components/atoms/Button/Button';
 import { ArrowPathIcon } from '@heroicons/react/20/solid';
-import { ReactComponent as TokenIcon } from '../../atoms/icons/20/Token.svg';
+import TokenIcon from '../../atoms/icons/20/Token.svg?react';
 import TokenRuleEditor from '../AccessRulesEditor/TokenRuleEditor';
 
 import './RoleAccessEditor.css';

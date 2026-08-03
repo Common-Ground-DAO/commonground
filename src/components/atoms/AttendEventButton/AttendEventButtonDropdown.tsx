@@ -9,8 +9,8 @@ import dayjs from 'dayjs';
 import React, { useCallback, useMemo } from 'react'
 import Button from '../Button/Button';
 
-import { ReactComponent as AppleIcon } from '../../atoms/icons/20/AppleIcon.svg';
-import { ReactComponent as GoogleIcon } from '../../atoms/icons/20/GoogleIcon.svg';
+import AppleIcon from '../../atoms/icons/20/AppleIcon.svg?react';
+import GoogleIcon from '../../atoms/icons/20/GoogleIcon.svg?react';
 import ShareButton from '../ShareButton/ShareButton';
 import { getUrl } from 'common/util';
 import { ArrowUpTrayIcon, XCircleIcon } from '@heroicons/react/20/solid';

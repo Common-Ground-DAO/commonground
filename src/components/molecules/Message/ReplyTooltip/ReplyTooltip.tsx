@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import Button from "../../../../components/atoms/Button/Button";
-import { ReactComponent as ReplyIcon } from "../../../atoms/icons/20/Reply.svg";
+import ReplyIcon from "../../../atoms/icons/20/Reply.svg?react";
 
 export default function ReplyTooltip(props: {
     id: string,

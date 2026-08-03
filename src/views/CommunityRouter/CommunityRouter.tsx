@@ -5,7 +5,7 @@
 import React, { useEffect, useMemo } from "react";
 import { Route, Routes, useParams } from "react-router-dom";
 
-import { ReactComponent as SpinnerIcon } from '../../components/atoms/icons/16/Spinner.svg';
+import SpinnerIcon from '../../components/atoms/icons/16/Spinner.svg?react';
 
 import CommunityManagementView from "views/CommunityManagementView/CommunityManagementView";
 import AreaChannelManagementView from "views/AreaChannelManagementView/AreaChannelManagementView";

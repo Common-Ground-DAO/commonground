@@ -9,7 +9,7 @@ import RolesManagementList from './RolesManagementList';
 import RoleEditor from './RoleEditor';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';
 import data from 'data';
-import { ReactComponent as SpinnerIcon } from '../../../atoms/icons/16/Spinner.svg';
+import SpinnerIcon from '../../../atoms/icons/16/Spinner.svg?react';
 import { PredefinedRole } from 'common/enums';
 import _ from 'lodash';
 import SaveRoleWarningModal from './SaveRoleWarningModal';

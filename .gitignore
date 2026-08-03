@@ -27,7 +27,6 @@ src/common/generated
 public/workers
 public/*.wasm
 tools/iconOverview.html
-tools/buildStats.json
 
 tools/BrowserStack
 

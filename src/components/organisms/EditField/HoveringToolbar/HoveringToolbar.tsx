@@ -6,11 +6,11 @@ import React from 'react';
 import { Range, Text, Editor, Transforms } from 'slate';
 import { useFocused, useSlate } from 'slate-react';
 
-import { ReactComponent as EditorHeaderIcon } from "../../../atoms/icons/20/EditorHeaderIcon.svg";
-import { ReactComponent as EditorBoldIcon } from "../../../atoms/icons/20/EditorBoldIcon.svg";
-import { ReactComponent as EditorItalicIcon } from "../../../atoms/icons/20/EditorItalicIcon.svg";
-import { ReactComponent as EditorLinkIcon } from "../../../atoms/icons/20/EditorLinkIcon.svg";
-import { ReactComponent as CloseIcon } from '../../../atoms/icons/16/Close.svg';
+import EditorHeaderIcon from "../../../atoms/icons/20/EditorHeaderIcon.svg?react";
+import EditorBoldIcon from "../../../atoms/icons/20/EditorBoldIcon.svg?react";
+import EditorItalicIcon from "../../../atoms/icons/20/EditorItalicIcon.svg?react";
+import EditorLinkIcon from "../../../atoms/icons/20/EditorLinkIcon.svg?react";
+import CloseIcon from '../../../atoms/icons/16/Close.svg?react';
 import { linkRegexGenerator } from '../../../../common/validators';
 import { Portal } from '../EditField';
 

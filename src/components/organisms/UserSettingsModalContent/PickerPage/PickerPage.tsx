@@ -7,7 +7,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { PageType } from '../UserSettingsModalContent';
 import { useOwnUser } from 'context/OwnDataProvider';
 import LogOffModal from 'components/organisms/LogOffModal/LogOffModal';
-import { ReactComponent as SparkIcon } from '../../../atoms/icons/20/Spark.svg';
+import SparkIcon from '../../../atoms/icons/20/Spark.svg?react';
 import { Bell, Lifebuoy, Palette, Robot, SealCheck, SignOut, Wallet } from '@phosphor-icons/react';
 import UserProfileV2 from 'components/molecules/UserProfileV2/UserProfileV2';
 

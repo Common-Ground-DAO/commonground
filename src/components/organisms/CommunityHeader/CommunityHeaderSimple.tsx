@@ -6,7 +6,7 @@ import React from "react";
 import { useSignedUrl } from '../../../hooks/useSignedUrl';
 import { Tooltip } from "../../../components/atoms/Tooltip/Tooltip";
 import { useLoadedCommunityContext } from "context/CommunityProvider";
-import { ReactComponent as VerifiedIcon } from "../../../components/atoms/icons/16/Verified.svg";
+import VerifiedIcon from "../../../components/atoms/icons/16/Verified.svg?react";
 
 import './CommunityHeader.css';
 import { useCommunityPremiumTier } from "hooks/usePremiumTier";

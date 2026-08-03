@@ -5,11 +5,11 @@
 import { AccessLevel } from "common/types";
 import { PredefinedRole } from "common/enums";
 
-import { ReactComponent as DismissIcon } from '../../../components/atoms/icons/20/Dismiss.svg';
-import { ReactComponent as MuteIcon } from '../../../components/atoms/icons/20/Mute.svg';
-import { ReactComponent as DeleteIcon } from '../../../components/atoms/icons/20/Delete.svg';
-import { ReactComponent as ModIcon } from '../../../components/atoms/icons/20/Mod.svg';
-import { ReactComponent as RoleIcon } from '../../../components/atoms/icons/20/Role.svg';
+import DismissIcon from '../../../components/atoms/icons/20/Dismiss.svg?react';
+import MuteIcon from '../../../components/atoms/icons/20/Mute.svg?react';
+import DeleteIcon from '../../../components/atoms/icons/20/Delete.svg?react';
+import ModIcon from '../../../components/atoms/icons/20/Mod.svg?react';
+import RoleIcon from '../../../components/atoms/icons/20/Role.svg?react';
 import { useLoadedCommunityContext } from "../../../context/CommunityProvider";
 
 import Button from "../../../components/atoms/Button/Button";

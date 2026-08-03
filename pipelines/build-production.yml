@@ -87,7 +87,14 @@ jobs:
       script: |
         corepack enable
         yarn set version 4.1.0
-        DEPLOYMENT=prod GENERATE_SOURCEMAP=false IMAGE_INLINE_SIZE_LIMIT=5000 PUBLIC_URL="https://app.cg" yarn craco --openssl-legacy-provider build
+        # The webpack build used to type-check and lint inline; a Vite build does
+        # neither, so both are explicit steps. PUBLIC_URL keeps the default social
+        # preview meta absolute (vite/absoluteSocialMeta.ts) — it no longer affects
+        # asset URLs, which are root-relative on every build path now.
+        # NODE_OPTIONS is not a tuning knob: `vite build` OOMs at 2048 MB and
+        # peaks around 3.5 GB RSS, and node derives its default heap from
+        # machine RAM — 2 GB on an 8 GB agent, which would fail.
+        yarn typecheck && yarn lint && NODE_OPTIONS="--max-old-space-size=4096" DEPLOYMENT=prod PUBLIC_URL="https://app.cg" yarn build && node tools/checkHtmlRewriteCompat.mjs
 
   - task: CopyFiles@2
     displayName: copy generated index.html to backend/dist

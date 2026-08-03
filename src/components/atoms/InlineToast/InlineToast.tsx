@@ -4,7 +4,7 @@
 
 import React from "react";
 
-import { ReactComponent as CheckmarkIcon } from '../../atoms/icons/16/Checkmark.svg';
+import CheckmarkIcon from '../../atoms/icons/16/Checkmark.svg?react';
 import "./InlineToast.css";
 import { Spinner } from "@phosphor-icons/react";
 

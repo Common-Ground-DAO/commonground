@@ -18,7 +18,7 @@ import userApi from 'data/api/user';
 import dayjs from 'dayjs';
 import { useCommunityListView } from 'context/CommunityListViewProvider';
 import CommunityPhoto from 'components/atoms/CommunityPhoto/CommunityPhoto';
-import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
+import SparkIcon from 'components/atoms/icons/misc/spark.svg?react';
 
 type Props = {
   setCurrentPage: (pageType: PageType) => void;

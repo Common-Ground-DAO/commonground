@@ -21,9 +21,9 @@ import { useLoadedCommunityContext } from "context/CommunityProvider";
 import { useCommunitySidebarContext } from "../CommunityViewSidebar/CommunityViewSidebarContext";
 import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
 
-import { ReactComponent as NotAllowedIcon } from '../../../components/atoms/icons/16/NotAllowed.svg';
-import { ReactComponent as ChevronDownIcon } from '../../../components/atoms/icons/16/ChevronDown.svg';
-import { ReactComponent as SparkIcon } from '../../../components/atoms/icons/misc/spark.svg';
+import NotAllowedIcon from '../../../components/atoms/icons/16/NotAllowed.svg?react';
+import ChevronDownIcon from '../../../components/atoms/icons/16/ChevronDown.svg?react';
+import SparkIcon from '../../../components/atoms/icons/misc/spark.svg?react';
 import { PredefinedRole, RoleType } from "common/enums";
 import { getUrl } from 'common/util';
 

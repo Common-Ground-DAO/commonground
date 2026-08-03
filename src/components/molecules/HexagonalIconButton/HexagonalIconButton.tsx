@@ -3,8 +3,8 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import Button, { ButtonRole } from "../../../components/atoms/Button/Button";
-import { ReactComponent as HexagonalIconHover } from "../../atoms/icons/48/HexagonalIconHover.svg";
-import { ReactComponent as HexagonalIcon } from "../../atoms/icons/48/HexagonalIcon.svg";
+import HexagonalIconHover from "../../atoms/icons/48/HexagonalIconHover.svg?react";
+import HexagonalIcon from "../../atoms/icons/48/HexagonalIcon.svg?react";
 import './HexagonalIconButton.css';
 
 type Props = {

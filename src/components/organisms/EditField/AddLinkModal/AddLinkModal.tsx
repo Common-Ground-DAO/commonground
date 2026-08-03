@@ -5,7 +5,7 @@
 import React from 'react'
 import Button from '../../../atoms/Button/Button';
 import TextInputField from '../../../molecules/inputs/TextInputField/TextInputField';
-import { ReactComponent as EditorLinkIcon } from "../../../atoms/icons/20/EditorLinkIcon.svg";
+import EditorLinkIcon from "../../../atoms/icons/20/EditorLinkIcon.svg?react";
 import { useSlate, ReactEditor } from 'slate-react';
 import EditFieldControlPopup from '../EditFieldControlPopup/EditFieldControlPopup';
 import Tag from '../../../atoms/Tag/Tag';

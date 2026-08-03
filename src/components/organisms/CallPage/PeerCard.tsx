@@ -15,7 +15,7 @@ import ListItem from "components/atoms/ListItem/ListItem";
 import { ArrowTopRightOnSquareIcon, StarIcon } from "@heroicons/react/20/solid";
 import { StarIcon as OutlinedStarIcon } from "@heroicons/react/24/outline";
 import { HandRaisedIcon } from "@heroicons/react/24/solid";
-import { ReactComponent as DisabledMicrophone } from "../../../components/atoms/icons/20/MicrofonDisabled.svg";
+import DisabledMicrophone from "../../../components/atoms/icons/20/MicrofonDisabled.svg?react";
 import { CallType } from "common/enums";
 import UserTooltip from "../UserTooltip/UserTooltip";
 import { UserTooltipHandle } from "components/atoms/Tooltip/UserProfilePopover";

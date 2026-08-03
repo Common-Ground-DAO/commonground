@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { getDisplayName } from "../../../../util";
-import { ReactComponent as ReplyIcon } from "../../../atoms/icons/20/Reply.svg";
+import ReplyIcon from "../../../atoms/icons/20/Reply.svg?react";
 import { convertContentToPlainText } from "../../../../common/converters";
 import { useOwnUser } from "context/OwnDataProvider";
 

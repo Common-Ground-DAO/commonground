@@ -56,12 +56,72 @@
 - [ ] **`role_gated_files` + `GET /gated-videos/:filename` / `GET /gated-files/:filename`**
   — their only content producers were the wizard data-room elements removed in Phase 2;
   the table has no create path in code. Removal candidate.
+- [ ] **Drop the `@types/confusing-browser-globals` devDep** (2026-08-03, Vite workstream)
+  — its only would-be consumer is `eslint.config.mjs`, which no tsconfig project covers
+  (`tsconfig.json` includes `src/` only, `tsconfig.node.json` lists `vite.config.ts`,
+  `vitest.config.ts`, `vite/*.ts`, `tools/*.mjs`). The runtime package
+  `confusing-browser-globals` stays — the flat config imports it. One-line cleanup.
+- [ ] **Delete `public/images/tokensale_header.png`** (891 KB, 2026-08-03, Vite workstream)
+  — nothing references it; `src/views/TokenSale/TokenSale.tsx:106` uses the `.webp`. It
+  ships in every build. (`public/images/tokensale_social_preview.png` **is** used, by
+  `srv/api/getRoutes.ts` — do not delete that one.) Belongs to the token-sale removal.
+- [ ] **`og:site_name` in `index.html` is hardcoded to `app.cg`** (2026-08-03) — every
+  self-hosted instance ships it in its social previews. Pre-existing, unrelated to the
+  Vite migration, but it sits two lines from the meta tags that migration touched.
+  (`index_cgid.html` says `CG ID`, which is domain-neutral and fine.) Either drop the
+  tag or have the two injection paths rewrite it like the other social meta.
+- [ ] **Prune what is left of the CG ID vhost's cross-origin allowances** (2026-08-03,
+  Vite workstream) — `8f90fc2b4` removed the main-origin entries that the CRA
+  `PUBLIC_URL` layout needed, but two allowances of the same vintage are still there:
+  `https://analytics.{prod,staging}.app.cg` in the CG ID `script-src-elem`/`connect-src`
+  (`docker/nginx/nginx.conf:100-101`), although Matomo is injected only by `src/index.tsx`
+  — the *main* entry — and never by the CG ID mini-app; and the `$cg_allow_origin` ACAO
+  rule on the main vhost (`nginx.conf:110`, `nginx_selfhost.conf:77`), which exists for
+  asset loads from the CG ID origin that are same-origin since the cutover. Both are
+  widenings, not breakage. Needs the same built-image check the CSP prune had.
+- [ ] **`docker/updateFrontend.sh` does not refresh `docker/backend/dist/index.html`**
+  (2026-08-03) — after `./run.sh update_frontend` the API keeps serving the *previous*
+  build's shell (pointing at hashed assets that no longer exist) on every deep-link/share
+  route until `update_backend` runs. Pre-existing, not caused by the Vite cutover; either
+  copy `build/index.html` there like `build.sh` does, or document the pairing.
 
 ## Optional / nice-to-have
 
 - [ ] **Dev-stack service toggles** — the `calls`/`blockchain` compose profiles exist only
   in the selfhost profile; the dev stack starts `mediasoup` and `onchain` unconditionally.
   If wanted, `run.sh` needs the same `COMPOSE_PROFILES` derivation `selfhost.sh` has.
+- [ ] **The CG ID mini-app drags ~540 KB of main-app UI into its entry** (2026-08-03,
+  found while implementing `manualChunks`). `src/cgid/home.tsx` imports `randomString`
+  from `src/util/index.tsx`, and that barrel pulls `ExternalIcon` (→
+  `@phosphor-icons/react`), `Tooltip` (→ `framer-motion`) and `react-icons/md` in behind
+  it. Measured on a prod build: the entry's static closure is 9 chunks / ~790 KiB, of
+  which a single 529 KiB chunk is `framer-motion` (148 modules) + `popmotion` +
+  `react-icons` + `@phosphor-icons/react` and nothing else. Pre-existing, unrelated to
+  the chunking work, and the reason `@phosphor-icons/react` is excluded from the
+  `vendor-icons` group. Fix is on the `src/` side: move the two or three helpers CG ID
+  actually uses out of the barrel (the mini-app is meant to become its own repository
+  anyway — see the comment in `src/index_cgid.tsx`).
+- [ ] **The dependency tree ships 11 distinct copies of `tslib`** (2026-08-03, found while
+  reviewing `manualChunks`). They are physically separate nested installs on three
+  incompatible pins (`@walletconnect/*` and `rxjs` on 1.14.1; `popmotion`,
+  `file-selector`, `@farcaster/auth-kit` on 2.4.0; `styled-components` on 2.5.0; the root
+  copy on 2.3.1), so the bundler cannot merge them: `vendor-shared` is 62 KiB
+  for ~135 KiB of source that is 11× the same file. Both entries load that chunk, so the
+  CG ID mini-app pays for all 11 — it is most of the +63 KB the vendor grouping cost that
+  entry. `resolve.dedupe: ['tslib']` is **not** a safe fix as it stands (tslib 1 and 2 are
+  not interchangeable); the fix is dependency hygiene — a yarn resolution once the
+  `@walletconnect` v1 packages are gone.
+- [ ] **Immutable caching for hashed frontend assets in nginx — own PR** (2026-08-03).
+  `^/(fonts|icons|images|static|audio|downloads)/` is capped at
+  `max-age=86400, must-revalidate` in all three nginx configs, although everything under
+  `static/` carries a content hash in its name. Long-lived `immutable` caching for the
+  hashed subset would remove a daily revalidation round trip per asset.
+- [ ] **Wire `yarn test` into the build scripts once there is a suite worth gating on**
+  (2026-08-03). Vitest is set up (`vitest.config.ts`) with a single smoke test; gating the
+  build on that would be theatre. The hook-in point is the
+  `yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite` chain that
+  `docker/build.sh`, `docker/updateFrontend.sh`, `docker/selfhost/selfhost.sh` and both
+  legacy pipelines run.
 
 ## Deferred (decided against for now)
 

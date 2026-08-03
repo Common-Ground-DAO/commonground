@@ -24,7 +24,7 @@ import {
 } from 'wagmi';
 import { Chain, Client, Transport, parseUnits } from 'viem';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { ReactComponent as EthereumIcon } from '../../../atoms/icons/24/Ethereum.svg';
+import EthereumIcon from '../../../atoms/icons/24/Ethereum.svg?react';
 import getSiweMessage from 'util/siwe';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import { ethers, providers } from 'ethers';

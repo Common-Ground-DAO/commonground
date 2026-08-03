@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import Button from "../../../components/atoms/Button/Button";
-import { ReactComponent as UnlockedIcon } from '../../../components/atoms/icons/misc/Unlocked.svg';
+import UnlockedIcon from '../../../components/atoms/icons/misc/Unlocked.svg?react';
 
 import "./TokenGatedTag.css";
 

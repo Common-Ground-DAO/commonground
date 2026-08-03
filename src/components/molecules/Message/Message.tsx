@@ -30,7 +30,7 @@ import MessageTimestamp from "./MessageTimestamp/MessageTimestamp";
 import UserTooltip from 'components/organisms/UserTooltip/UserTooltip';
 import { UserTooltipHandle } from 'components/atoms/Tooltip/UserProfilePopover';
 import { useSafeCommunityContext } from 'context/CommunityProvider';
-import { ReactComponent as ReplyIcon } from 'components/atoms/icons/20/Reply.svg';
+import ReplyIcon from 'components/atoms/icons/20/Reply.svg?react';
 
 type Props = {
   message: Models.Message.Message;

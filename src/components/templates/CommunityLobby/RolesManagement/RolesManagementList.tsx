@@ -7,7 +7,7 @@ import Button from '../../../../components/atoms/Button/Button';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';
 import React, { useCallback, useMemo } from 'react'
 
-import { ReactComponent as RoleIcon } from '../../../atoms/icons/20/Role.svg';
+import RoleIcon from '../../../atoms/icons/20/Role.svg?react';
 import { HandArrowDown, Info } from '@phosphor-icons/react';
 import { createSearchParams, useNavigate } from 'react-router-dom';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';

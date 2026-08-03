@@ -6,7 +6,7 @@ import { useCallback, useState } from "react";
 import data from "data";
 import Modal from "components/atoms/Modal/Modal";
 import TextInputField from "components/molecules/inputs/TextInputField/TextInputField";
-import { ReactComponent as CloseIcon } from 'components/atoms/icons/16/Close-1.svg';
+import CloseIcon from 'components/atoms/icons/16/Close-1.svg?react';
 import Button from "components/atoms/Button/Button";
 import { useNavigationContext } from "components/SuspenseRouter/SuspenseRouter";
 import { useSnackbarContext } from "context/SnackbarContext";

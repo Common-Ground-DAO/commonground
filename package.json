@@ -4,7 +4,6 @@
   "private": true,
   "dependencies": {
     "@common-ground-dao/cg-plugin-lib-host": "^0.9.15",
-    "@craco/craco": "7.1.0",
     "@emoji-mart/data": "^1.0.2",
     "@farcaster/auth-kit": "^0.3.1",
     "@floating-ui/react-dom-interactions": "^0.10.3",
@@ -49,7 +48,6 @@
     "react-modal-sheet": "^2.0.0",
     "react-native-get-random-values": "^1.8.0",
     "react-router-dom": "^6.0.2",
-    "react-scripts": "5.0.1",
     "react-select": "^5.2.2",
     "react-swipeable": "^7.0.0",
     "recharts": "^2.12.7",
@@ -63,25 +61,22 @@
     "stream-browserify": "^3.0.0",
     "styled-components": "^6.1.8",
     "typechain": "^7.0.0",
-    "typescript": "^4.1.2",
+    "typescript": "5.9.3",
     "ua-parser-js": "^1.0.35",
     "viem": "^1.5.3",
     "wagmi": "^1.3.9",
     "web-vitals": "^1.0.1",
-    "webpack-cli": "5.1.4",
     "workbox-precaching": "6.5.4",
     "workbox-routing": "6.5.4",
     "yet-another-react-lightbox": "^2.2.7"
   },
   "scripts": {
-    "start": "echo 'DEPRECATED, use \"./run.sh start\" instead'",
-    "start_https": "echo 'DEPRECATED, use \"./run.sh start_https\" instead'",
-    "build": "printf 'NOT SUPPORTED, use \"./run.sh\" for commands.\n\n' && ./run.sh"
-  },
-  "eslintConfig": {
-    "extends": [
-      "react-app"
-    ]
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "check:html-rewrite": "node tools/checkHtmlRewriteCompat.mjs"
   },
   "browserslist": {
     "production": [
@@ -98,7 +93,7 @@
     ]
   },
   "devDependencies": {
-    "@babel/plugin-proposal-class-properties": "^7.18.6",
+    "@eslint/js": "^9",
     "@openzeppelin/contracts": "^4.4.2",
     "@simplewebauthn/types": "^10.0.0",
     "@tailwindcss/aspect-ratio": "^0.4.0",
@@ -108,10 +103,11 @@
     "@tsconfig/node20": "^20.1.2",
     "@types/audioworklet": "^0.0.23",
     "@types/canvas-confetti": "^1.6.4",
+    "@types/confusing-browser-globals": "^1",
     "@types/d3": "^7.4.3",
     "@types/dom-screen-wake-lock": "^1.0.2",
     "@types/lodash": "^4.14.182",
-    "@types/node": "^12.0.0",
+    "@types/node": "^20",
     "@types/react": "18",
     "@types/react-beautiful-dnd": "^13.1.2",
     "@types/react-dom": "18",
@@ -120,11 +116,22 @@
     "@types/react-router-dom": "^5.3.2",
     "@types/sanitize-html": "^2.6.0",
     "@types/ua-parser-js": "^0.7.36",
+    "@vitejs/plugin-react": "^4",
     "autoprefixer": "^10.4.7",
+    "confusing-browser-globals": "^1.0.11",
+    "eslint": "^9",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.9.0",
     "postcss": "^8.4.14",
     "tailwindcss": "^3.1.6",
     "truffle-flattener": "1.6.0",
-    "webpack-bundle-analyzer": "^4.6.1"
+    "typescript-eslint": "^8.65.0",
+    "vite": "^6",
+    "vite-plugin-node-polyfills": "^0.23",
+    "vite-plugin-svgr": "^4",
+    "vitest": "^4.1.10",
+    "workbox-build": "6.5.4"
   },
   "packageManager": "yarn@4.1.0"
 }

@@ -11,7 +11,7 @@ import { useWindowSizeContext } from '../../../context/WindowSizeProvider';
 
 import Button from '../../atoms/Button/Button';
 import CreateCommunityButton from '../../molecules/CreateCommunityButton/CreateCommunityButton';
-import { ReactComponent as ChevronDownIcon } from '../../../components/atoms/icons/16/ChevronDown.svg';
+import ChevronDownIcon from '../../../components/atoms/icons/16/ChevronDown.svg?react';
 import Dropdown from '../../molecules/Dropdown/Dropdown';
 import DropdownItem from '../../atoms/ListItem/ListItem';
 import GroupSlider from 'components/molecules/GroupSlider/GroupSlider';

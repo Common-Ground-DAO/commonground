@@ -72,22 +72,15 @@ else
 fi
 checkError
 
-docker_compose run --rm -e NODE_OPTIONS="--max-old-space-size=8192" -e DEPLOYMENT=prod -e GENERATE_SOURCEMAP=true -e IMAGE_INLINE_SIZE_LIMIT=5000 cg-builder yarn craco --openssl-legacy-provider build && \
+# Type-check and lint are separate steps now: the webpack build used to run
+# ForkTsChecker + ESLintPlugin inline, and a Vite build does neither, so
+# without these two a type or lint error would ship silently.
+# `--max-old-space-size` is still needed — a plain `vite build` OOMs at 2048 MB
+# and needs ~3.5 GB peak RSS; 4096 is the measured floor plus headroom.
+docker_compose run --rm -e NODE_OPTIONS="--max-old-space-size=4096" -e DEPLOYMENT=prod cg-builder \
+  bash -c "yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite" && \
 rsync -a ../build/* nginx/dist/
 checkError
-
-for f in nginx/dist/static/media/*.svg
-do
-  size=$(wc -c "$f" | awk '{print $1}')
-  if [ "$size" -le "5000" ]
-  then
-    # this only happens in local development environment,
-    # to make sure files which should be inline cannot be
-    # loaded in another way
-    printf "Deleting small svg file with size $size: $f\n"
-    rm "$f"
-  fi
-done
 
 docker_compose build --no-cache nginx
 checkError

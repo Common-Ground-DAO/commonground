@@ -12,10 +12,10 @@ import UserTooltip from '../../organisms/UserTooltip/UserTooltip';
 import Timestamp from '../../../components/atoms/Timestamp/Timestamp';
 
 import { getDisplayName, getDisplayNameString } from '../../../util';
-import { ReactComponent as ReplyIcon } from '../../../components/atoms/icons/16/Reply.svg';
-import { ReactComponent as ModIcon } from '../../../components/atoms/icons/16/Mod.svg';
-import { ReactComponent as MentionIcon } from '../../../components/atoms/icons/16/Mention.svg';
-import { ReactComponent as FollowIcon } from '../../../components/atoms/icons/16/Follow.svg';
+import ReplyIcon from '../../../components/atoms/icons/16/Reply.svg?react';
+import ModIcon from '../../../components/atoms/icons/16/Mod.svg?react';
+import MentionIcon from '../../../components/atoms/icons/16/Mention.svg?react';
+import FollowIcon from '../../../components/atoms/icons/16/Follow.svg?react';
 
 import data from 'data';
 import NotificationDot from 'components/atoms/NotificationDot/NotificationDot';

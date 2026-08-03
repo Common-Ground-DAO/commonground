@@ -9,7 +9,7 @@ import { useNavigate } from "react-router";
 import { CommunityLink } from "common/types";
 import { validateGenericTextInput } from "../../../common/validators";
 
-import { ReactComponent as CloseIcon } from '../../../components/atoms/icons/16/Close-1.svg';
+import CloseIcon from '../../../components/atoms/icons/16/Close-1.svg?react';
 
 import Button from "../../../components/atoms/Button/Button";
 import Modal from "../../atoms/Modal/Modal";

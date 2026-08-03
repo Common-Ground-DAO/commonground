@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useRef, useState } from 'react';
-import { ReactComponent as SpinnerIcon } from '../../atoms/icons/16/Spinner.svg';
+import SpinnerIcon from '../../atoms/icons/16/Spinner.svg?react';
 
 import "./Button.css";
 

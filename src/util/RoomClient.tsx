@@ -895,7 +895,7 @@ export class RoomClient {
       (
         { dtlsParameters },
         callback,
-        errback // eslint-disable-line no-shadow
+        errback
       ) => {
         this._protoo
           ?.request("connectWebRtcTransport", {
@@ -911,7 +911,6 @@ export class RoomClient {
       "produce",
       async ({ kind, rtpParameters, appData }, callback, errback) => {
         try {
-          // eslint-disable-next-line no-shadow
           const { id } = await this._protoo?.request("produce", {
             transportId: this._sendTransport?.id,
             kind,
@@ -976,7 +975,7 @@ export class RoomClient {
       (
         { dtlsParameters },
         callback,
-        errback // eslint-disable-line no-shadow
+        errback
       ) => {
         this._protoo
           ?.request("connectWebRtcTransport", {

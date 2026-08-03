@@ -10,9 +10,9 @@ import Button from "../../../../components/atoms/Button/Button";
 import EmojiPickerTooltip from "../../EmojiPickerTooltip/EmojiPickerTooltip";
 import ReplyTooltip from "../ReplyTooltip/ReplyTooltip";
 
-import { ReactComponent as ModIcon } from '../../../../components/atoms/icons/20/Mod.svg';
-import { ReactComponent as DeleteIcon } from '../../../../components/atoms/icons/20/Delete.svg';
-import { ReactComponent as EditIcon } from '../../../../components/atoms/icons/20/Edit.svg';
+import ModIcon from '../../../../components/atoms/icons/20/Mod.svg?react';
+import DeleteIcon from '../../../../components/atoms/icons/20/Delete.svg?react';
+import EditIcon from '../../../../components/atoms/icons/20/Edit.svg?react';
 
 import "./MessageTooltip.css";
 import { useOwnUser } from "context/OwnDataProvider";

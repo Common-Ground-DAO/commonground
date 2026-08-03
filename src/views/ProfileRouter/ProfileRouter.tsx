@@ -4,7 +4,7 @@
 
 import { Route, Routes } from "react-router-dom";
 
-import { ReactComponent as SpinnerIcon } from '../../components/atoms/icons/16/Spinner.svg';
+import SpinnerIcon from '../../components/atoms/icons/16/Spinner.svg?react';
 
 import config from "common/config";
 import { useSafeProfileContext } from "context/ProfileProvider";

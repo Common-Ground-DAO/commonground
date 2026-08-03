@@ -17,8 +17,8 @@ import OwnCommunitiesBrowser from "../../../views/OwnCommunitiesBrowser/OwnCommu
 import Scrollable, { PositionData } from "../../molecules/Scrollable/Scrollable";
 // import { NewspaperIcon, BookOpenIcon, LightBulbIcon, PencilIcon } from '@heroicons/react/20/solid';
 
-import { ReactComponent as SidebarCollapseIcon } from '../../../components/atoms/icons/20/SidebarCollapse.svg';
-import { ReactComponent as SidebarExpandIcon } from '../../../components/atoms/icons/20/SidebarExpand.svg';
+import SidebarCollapseIcon from '../../../components/atoms/icons/20/SidebarCollapse.svg?react';
+import SidebarExpandIcon from '../../../components/atoms/icons/20/SidebarExpand.svg?react';
 import { getUrl } from 'common/util';
 import { StartCallModal } from "../StartCallModal/StartCallModal";
 import config from "common/config";

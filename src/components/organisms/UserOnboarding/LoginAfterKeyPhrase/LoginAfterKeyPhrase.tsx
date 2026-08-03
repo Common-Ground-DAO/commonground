@@ -7,7 +7,7 @@ import './LoginAfterKeyPhrase.css';
 
 import userApi from 'data/api/user';
 import { validateEmailInput, validatePassword } from 'common/validators';
-import { ReactComponent as CircleLogo } from "components/atoms/icons/misc/Logo/logo.svg";
+import CircleLogo from "components/atoms/icons/misc/Logo/logo.svg?react";
 
 import Button from "components/atoms/Button/Button";
 import TextInputField from 'components/molecules/inputs/TextInputField/TextInputField';

@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useState } from 'react';
-import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
+import SparkIcon from 'components/atoms/icons/misc/spark.svg?react';
 import useLocalStorage from 'hooks/useLocalStorage';
 import { SupporterTile, SupporterTileProps } from '../BecomeSupporter/BecomeSupporter';
 import Button from 'components/atoms/Button/Button';

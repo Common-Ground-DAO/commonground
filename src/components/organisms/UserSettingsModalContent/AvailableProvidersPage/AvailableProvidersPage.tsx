@@ -8,10 +8,10 @@ import UserSettingsButton from '../../../molecules/UserSettingsButton/UserSettin
 import { EnvelopeIcon } from '@heroicons/react/24/solid';
 import { ChevronRightIcon } from '@heroicons/react/20/solid';
 import { PageType } from '../UserSettingsModalContent';
-import { ReactComponent as EthereumIcon } from '../../../atoms/icons/24/Ethereum.svg';
-import { ReactComponent as XIcon } from '../../../atoms/icons/24/X.svg';
-import { ReactComponent as LuksoIcon } from '../../../atoms/icons/24/Lukso.svg';
-import { ReactComponent as FarcasterIcon } from '../../../atoms/icons/24/Farcaster.svg';
+import EthereumIcon from '../../../atoms/icons/24/Ethereum.svg?react';
+import XIcon from '../../../atoms/icons/24/X.svg?react';
+import LuksoIcon from '../../../atoms/icons/24/Lukso.svg?react';
+import FarcasterIcon from '../../../atoms/icons/24/Farcaster.svg?react';
 import { useOwnUser } from 'context/OwnDataProvider';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';

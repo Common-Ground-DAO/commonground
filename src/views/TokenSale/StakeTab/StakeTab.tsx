@@ -10,7 +10,7 @@ import { parseUnits, formatUnits } from 'viem';
 import Button from 'components/atoms/Button/Button';
 import TextInputField from 'components/molecules/inputs/TextInputField/TextInputField';
 import SkeletonLine from 'components/atoms/SkeletonLine/SkeletonLine';
-import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
+import SparkIcon from 'components/atoms/icons/misc/spark.svg?react';
 import { useOwnUser } from 'context/OwnDataProvider';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import stakingApi from 'data/api/staking';

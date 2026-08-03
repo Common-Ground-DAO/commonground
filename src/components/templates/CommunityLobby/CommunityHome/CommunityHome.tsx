@@ -20,7 +20,7 @@ import LoginBanner from 'components/molecules/LoginBanner/LoginBanner';
 import { useOwnUser } from 'context/OwnDataProvider';
 import LiveCallExplorer from 'components/organisms/LiveCallExplorer/LiveCallExplorer';
 import CommunityInput from 'components/molecules/CommunityInput/CommunityInput';
-import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
+import SparkIcon from 'components/atoms/icons/misc/spark.svg?react';
 import { useUserSettingsContext } from 'context/UserSettingsProvider';
 import JoinNewsletterBanner from 'components/molecules/JoinNewsletterBanner/JoinNewsletterBanner';
 import { useCommunityPremiumTier } from 'hooks/usePremiumTier';

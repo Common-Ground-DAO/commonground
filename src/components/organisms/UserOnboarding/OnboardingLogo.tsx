@@ -4,7 +4,7 @@
 
 import React from 'react'
 import './UserOnboarding.css';
-import { ReactComponent as CircleLogo } from "components/atoms/icons/misc/Logo/logo.svg";
+import CircleLogo from "components/atoms/icons/misc/Logo/logo.svg?react";
 
 const OnboardingLogo = () => {
   return (<CircleLogo className='user-onboarding-logo' />);

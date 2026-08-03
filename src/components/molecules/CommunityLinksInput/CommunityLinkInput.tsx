@@ -7,7 +7,7 @@ import { useState } from "react";
 import { InlineToastType } from "../../atoms/InlineToast/InlineToast";
 import TextInputField from "../../molecules/inputs/TextInputField/TextInputField";
 import { Tooltip } from "../../atoms/Tooltip/Tooltip";
-import { ReactComponent as CloseIcon } from '../../atoms/icons/16/Close.svg';
+import CloseIcon from '../../atoms/icons/16/Close.svg?react';
 
 type Props = {
     link: Common.Link;

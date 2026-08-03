@@ -23,7 +23,7 @@ import {
 } from 'wagmi';
 import { Chain, Client, Transport, parseUnits } from 'viem';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { ReactComponent as EthereumIcon } from '../../../atoms/icons/24/Ethereum.svg';
+import EthereumIcon from '../../../atoms/icons/24/Ethereum.svg?react';
 import getSiweMessage from 'util/siwe';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import { ethers } from 'ethers';
@@ -36,8 +36,8 @@ import ScreenAwareDropdown from 'components/atoms/ScreenAwareDropdown/ScreenAwar
 import ExternalIcon, { ExternalIconType } from 'components/atoms/ExternalIcon/ExternalIcon';
 import { getBeneficiary, getPayableTokens } from 'common/premiumConfig';
 import { getTruncatedId } from '../../../../util';
-import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
-import { ReactComponent as SpinnerIcon } from 'components/atoms/icons/16/Spinner.svg';
+import SparkIcon from 'components/atoms/icons/misc/spark.svg?react';
+import SpinnerIcon from 'components/atoms/icons/16/Spinner.svg?react';
 
 type Props = {
   setCurrentPage: (pageType: PageType) => void;

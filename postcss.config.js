@@ -1,7 +1,8 @@
-// NOTE: craco currently overrides this chain — `craco.config.js` (style.postcss)
-// replaces the plugin array wholesale, so nothing reads this file today. Vite will
-// read it after the build-stack cutover, so it must stay in sync with the craco
-// chain until CRA/craco is removed.
+// The single source of truth for the PostCSS chain. Vite reads this file
+// automatically. Until the CRA removal, `craco.config.js` (style.postcss)
+// replaced the plugin array wholesale and nothing read this file at all — the
+// two had drifted apart (a dead `postcss-import` here), which is why Phase 1
+// reconciled them before Vite started reading it.
 module.exports = {
   plugins: {
     'tailwindcss/nesting': {},

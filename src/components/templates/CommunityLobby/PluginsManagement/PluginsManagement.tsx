@@ -6,7 +6,7 @@ import './PluginsManagement.css';
 import React, { useCallback, useMemo, useState } from 'react'
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';
-import { ReactComponent as SpinnerIcon } from '../../../atoms/icons/16/Spinner.svg';
+import SpinnerIcon from '../../../atoms/icons/16/Spinner.svg?react';
 import { useNavigate } from 'react-router-dom';
 import Scrollable from 'components/molecules/Scrollable/Scrollable';
 import { useNavigationContext } from 'components/SuspenseRouter/SuspenseRouter';

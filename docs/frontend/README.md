@@ -1,6 +1,6 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit 78d62a26b, 2026-08-03
+> Status: verified against commit 828e1749e, 2026-08-03
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -854,8 +854,10 @@ The app coordinates behavior across multiple open tabs. A single service worker 
 
 The frontend is built with **Vite 6** (`vite.config.ts`). It replaced
 Create React App + craco + webpack; nothing of that stack remains. Vite **6,
-not 7**, on purpose: the builder image is `node:20.11-bookworm` and Vite 7
-requires node ≥ 20.19 — bumping Vite means bumping the image first.
+not 7**, on purpose: the Vite 7 bump is a separate, later workstream. Vite 7
+requires node ≥ 20.19, which the builder image (`node:24.18-bookworm`) now
+satisfies — the image bump that unblocks it is done, but the Vite upgrade
+itself is deliberately kept out of that change.
 
 | Concern | Where |
 |---|---|

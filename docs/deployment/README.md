@@ -1,6 +1,6 @@
 # Common Ground Deployment
 
-> Status: verified against commit 8f90fc2b4, 2026-08-03.
+> Status: verified against commit 828e1749e, 2026-08-03.
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -181,7 +181,7 @@ the CRA removal:
 `NODE_OPTIONS=--max-old-space-size=4096` is required, not a tuning knob: a plain
 `vite build` OOMs at 2048 MB and peaks around 3.5 GB RSS, and node derives its
 default heap from machine RAM — a small VPS would fail without the flag. The
-value was measured on host node 24 and confirmed inside the `node:20.11`
+value was measured on host node 24 and confirmed inside the `node:24.18`
 builder image, which is what this path actually uses.
 
 ### 3.3 Services (`docker-compose.selfhost.yml`)
@@ -365,7 +365,7 @@ exist under `pipelines/`, plus a shared clean-up template.
 ### Staging — `pipelines/build-and-deploy-beta.yml`
 
 - **Trigger:** push to the `staging` branch. **Pool:** `ubuntu-20`.
-- Installs Docker 20.10.14, Node 20.11.1, Yarn 4.1.0 (via corepack), plus
+- Installs Docker 20.10.14, Node 24.x, Yarn 4.1.0 (via corepack), plus
   build tooling; pulls a private `.yarnrc` as a secure file.
 - Copies `srv/` into `docker/backend/dist/`, stamps a random build id, and
   builds the prod frontend with `PUBLIC_URL="https://staging.app.cg"` (which

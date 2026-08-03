@@ -1,6 +1,6 @@
 # Real-time & WebRTC Documentation
 
-> Status: verified against commit 3c42f772a, 2026-08-02
+> Status: verified against commit 828e1749e, 2026-08-03
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -111,7 +111,7 @@ For browser clients, the socket immediately joins its `expressSession:{sessionId
 
 | Event | Data | Callback | Description |
 |---|---|---|---|
-| `getSignableSecret` | none | `(secret: string)` | Server generates a random 20-char string, stores it on `socket.data.signableSecret`, returns it to the client for device authentication |
+| `getSignableSecret` | none | `(secret: string)` | Server generates a cryptographically random hex string, stores it on `socket.data.signableSecret`, returns it to the client for device authentication |
 | `cgPing` | none | `(timestamp: number)` | Returns `Date.now()` for client-side latency/clock-drift detection |
 | `login` | `{ deviceId, secret, base64Signature }` | `("OK" \| "ERROR")` | Authenticates the socket. Verifies the device signature against the signable secret. On success, joins user/device/role/community rooms and sets user online status |
 | `logout` | none | none | Leaves all rooms except the temporary community visitor room. Sets user offline if this was the last socket |
@@ -311,7 +311,7 @@ Built by `src/util/urlFactory.ts`.
 
 Before any media operations, the client must authenticate:
 
-1. Client sends `getSignableSecret` request -> server returns a random 20-char string.
+1. Client sends `getSignableSecret` request -> server returns a cryptographically random hex string.
 2. Client signs the secret using its device private key (`signApiSecret`).
 3. Client sends `login` request with `{ deviceId, secret, base64Signature }`.
 4. Server verifies the device and checks that `peerId === userId`.

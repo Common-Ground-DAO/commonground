@@ -1,4 +1,4 @@
-> Status: verified against commit 78d62a26b, 2026-08-03
+> Status: verified against commit 828e1749e, 2026-08-03
 
 # Common Ground Infrastructure Documentation
 
@@ -249,7 +249,7 @@ are the only variables the build reads. `NODE_OPTIONS` is not optional: a plain
 `vite build` OOMs at 2048 MB and peaks around 3.5 GB RSS, and node sizes its
 default heap from machine RAM, so a small selfhost VPS would fail without it.
 The 4096 MB figure was measured on host node 24 and confirmed in the builder
-container (`node:20.11-bookworm`) by a full `./run.sh build_full` run.
+container (`node:24.18-bookworm`) by a full `./run.sh build_full` run.
 The legacy Azure pipelines additionally set `PUBLIC_URL` (see below).
 
 Three CRA-era variables are **gone** and must not be reintroduced:
@@ -367,10 +367,10 @@ scripts yet; the suite is a single smoke test.
 
 ### Backend Docker Image Build (Two-Stage for Dev)
 
-- **Stage 0 (`Dockerfile_dev_stage_0`):** `FROM node:20.11-bookworm`. Installs system deps, copies `package.json` / `yarn.lock` / `.yarnrc.yml`, runs `yarn`. Cached; rebuilt only when dependencies change.
+- **Stage 0 (`Dockerfile_dev_stage_0`):** `FROM node:24.18-bookworm`. Installs system deps, copies `package.json` / `yarn.lock` / `.yarnrc.yml`, enables Corepack and runs `yarn`. Cached; rebuilt only when dependencies change.
 - **Stage 1 (`Dockerfile_dev_stage_1`):** `FROM commonground/backend_stage_0`. Copies the full `dist/` source and runs `yarn tsc`. Rebuilt on every code change.
 
-**Production backend (`Dockerfile`):** single-stage build, `FROM node:20.11-bookworm`, installs system dependencies (build-essential, python3, Chromium libs for Puppeteer), runs `yarn && yarn tsc`, then cleans up build tools. Used by the CI/CD pipelines.
+**Production backend (`Dockerfile`):** single-stage build, `FROM node:24.18-bookworm`, installs system dependencies (build-essential, python3, Chromium libs for Puppeteer), enables Corepack and runs `yarn && yarn tsc`, then cleans up build tools. Used by the CI/CD pipelines.
 
 ---
 

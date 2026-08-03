@@ -9,6 +9,7 @@ import type { ServerOptions } from 'vite';
 import react from '@vitejs/plugin-react';
 import svgr from 'vite-plugin-svgr';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
+import { absoluteSocialMeta } from './vite/absoluteSocialMeta';
 import { baseUrlResolve } from './vite/baseUrlResolve';
 import { htmlEntryScripts } from './vite/htmlEntryScripts';
 import { serviceWorker } from './vite/serviceWorker';
@@ -71,6 +72,9 @@ export default defineConfig({
       'index.html': '/src/index.tsx',
       'index_cgid.html': '/src/index_cgid.tsx',
     }),
+    // Only the legacy Azure pipelines set PUBLIC_URL; everywhere else this is
+    // a no-op. See vite/absoluteSocialMeta.ts.
+    absoluteSocialMeta(process.env.PUBLIC_URL),
     serviceWorker({
       swSrc: 'src/service-worker.ts',
       plugins: [baseUrlResolve('src')],

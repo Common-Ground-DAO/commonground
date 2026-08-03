@@ -81,11 +81,15 @@ function checkFile(file, { expectSocialMeta }) {
     check('default og meta present to strip', ogBefore === 4, `found ${ogBefore}`);
     check('all strippable og meta removed', ogLeft === 0, `${ogLeft} left`);
     check('all strippable twitter/description meta removed', twLeft === 0, `${twLeft} left`);
-    // Known, pre-existing: `og:url` ships with an empty `content=""` (it used
-    // to be `%PUBLIC_URL%`), and the strip regex requires a non-empty value.
+    // Known, pre-existing: without `PUBLIC_URL`, `og:url` ships with an empty
+    // `content=""` (it used to be `%PUBLIC_URL%`) and the strip regex requires
+    // a non-empty value, so it survives. With `PUBLIC_URL` set (the two legacy
+    // Azure pipelines) `vite/absoluteSocialMeta.ts` fills it in and it *is*
+    // stripped — exactly as under CRA. Both shapes are correct; a *third* one
+    // would mean the plugin or the template drifted.
     check(
-      'og:url is the documented empty-content exception',
-      /property="og:url" content=""/.test(stripped),
+      'og:url is either the empty-content exception or stripped as absolute',
+      /property="og:url" content=""/.test(stripped) || !/property="og:url"/.test(stripped),
       'unexpected og:url shape',
     );
   }

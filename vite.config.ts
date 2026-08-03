@@ -409,8 +409,10 @@ export default defineConfig(({ command }) => ({
 
   // The entry scripts are injected into the HTML at transform time (see
   // vite/htmlEntryScripts.ts), which the dependency scanner does not see — name
-  // them explicitly so dev-server cold starts pre-bundle properly.
+  // them explicitly so dev-server cold starts pre-bundle properly. Vite 7 runs
+  // every entry through tinyglobby (a bare path that stops matching fails
+  // silently), so keep this an explicit glob for exactly the two entry files.
   optimizeDeps: {
-    entries: ['src/index.tsx', 'src/index_cgid.tsx'],
+    entries: ['src/{index,index_cgid}.tsx'],
   },
 }));

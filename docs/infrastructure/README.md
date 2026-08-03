@@ -279,8 +279,10 @@ the self-host CG ID vhosts. Two directives keep the main origin, because the
 mini-app genuinely still reaches it: `img-src` (it renders
 `${APP_URL}/icons/128.png`, e.g. `src/cgid/login.tsx`) and `connect-src` (its
 API calls go to `APP_URL/api/v2/CgId/`). `manifest-src 'self'` is load-bearing:
-`/manifest_wallet.json` is now served from the CG ID origin, and the directive
-did not carry `'self'` before the cutover.
+`/manifest_wallet.json` is now served from the CG ID origin, and on the
+prod/staging vhosts the directive did not carry `'self'` before the cutover
+(`nginx_selfhost.conf` always had it — self-hosted instances never set
+`PUBLIC_URL`).
 
 **Output layout** (`build/`), pinned to keep the nginx rules untouched:
 
@@ -312,7 +314,14 @@ did not carry `'self'` before the cutover.
   cross-origin-isolation shells that must be precached are added by hand in
   `src/service-worker.ts`).
 - everything in `public/` copied verbatim (`fonts/`, `icons/`, `audio/`,
-  `images/`, `video/`, both manifests, `robots.txt`, `logo.svg`).
+  `images/`, `video/`, both manifests, `robots.txt`, `logo.svg`). `src/index.css`
+  references the Inter faces as server-relative `/fonts/*.ttf` on purpose, i.e.
+  *not* through the bundler: `src/service-worker.ts` hand-precaches exactly those
+  URLs, so they have to keep resolving to the `public/` copy. Routing them
+  through Vite would hash them into `static/media/` and ship every face twice
+  (which is what CRA did); removing them from `public/` would make a precached
+  URL 404, and a 404 in the precache makes `PrecacheController.install()` reject
+  — the worker never activates and PWA updates stop silently.
 - no `asset-manifest.json` — it had no consumers.
 
 **Tests.** `yarn test` (Vitest, `vitest.config.ts`) is not part of the build

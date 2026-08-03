@@ -24,6 +24,14 @@ import type { Plugin } from 'vite';
  * `PUBLIC_URL` deliberately keeps its CRA name so the legacy pipelines need no
  * change. Unset (every docker/selfhost path) is a no-op: those instances ship
  * relative social meta, which is what they already do today.
+ *
+ * Brittle by construction, so keep it in mind when editing the templates: the
+ * replacement only matches a `content` value that is empty or starts with `/`.
+ * Rewriting one of these three tags to a document-relative path
+ * (`icons/preview.png`) turns this plugin into a silent no-op, and
+ * `yarn check:html-rewrite` cannot catch it — the legacy pipelines scope
+ * `PUBLIC_URL` to the `yarn build` command, so the checker never sees a
+ * `PUBLIC_URL` build.
  */
 
 const ABSOLUTE_META = [

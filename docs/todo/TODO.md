@@ -70,6 +70,15 @@
   Vite migration, but it sits two lines from the meta tags that migration touched.
   (`index_cgid.html` says `CG ID`, which is domain-neutral and fine.) Either drop the
   tag or have the two injection paths rewrite it like the other social meta.
+- [ ] **Prune what is left of the CG ID vhost's cross-origin allowances** (2026-08-03,
+  Vite workstream) — `8f90fc2b4` removed the main-origin entries that the CRA
+  `PUBLIC_URL` layout needed, but two allowances of the same vintage are still there:
+  `https://analytics.{prod,staging}.app.cg` in the CG ID `script-src-elem`/`connect-src`
+  (`docker/nginx/nginx.conf:100-101`), although Matomo is injected only by `src/index.tsx`
+  — the *main* entry — and never by the CG ID mini-app; and the `$cg_allow_origin` ACAO
+  rule on the main vhost (`nginx.conf:110`, `nginx_selfhost.conf:77`), which exists for
+  asset loads from the CG ID origin that are same-origin since the cutover. Both are
+  widenings, not breakage. Needs the same built-image check the CSP prune had.
 - [ ] **`docker/updateFrontend.sh` does not refresh `docker/backend/dist/index.html`**
   (2026-08-03) — after `./run.sh update_frontend` the API keeps serving the *previous*
   build's shell (pointing at hashed assets that no longer exist) on every deep-link/share

@@ -2,9 +2,8 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-// `import Icon from './icon.svg?react'` — the SVGR component form used by both
-// build stacks (vite-plugin-svgr under Vite, an additive @svgr/webpack rule
-// under CRA/craco, see craco.config.js).
+// `import Icon from './icon.svg?react'` — the SVGR component form every SVG
+// import in src/ uses (vite-plugin-svgr, configured in vite.config.ts).
 //
 // `vite/client` does not cover this form — it comes from
 // vite-plugin-svgr's own client types, which cannot be referenced without also

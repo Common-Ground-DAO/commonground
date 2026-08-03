@@ -12,7 +12,7 @@ import deviceHelper from '../repositories/device';
 import errors from '../common/errors';
 import callHelper from '../repositories/calls';
 import { CallType } from '../common/enums';
-const EventEmitter = require('events').EventEmitter;
+import { EventEmitter } from 'events';
 
 const logger = new Logger('Room');
 /**
@@ -87,8 +87,6 @@ export default class Room extends EventEmitter {
                 audioOnly,
                 highQuality
             });
-        console.log('ROOM CREATED WITH X BROADCASTERS SLOTS: ')
-        console.log(stageSlots);
         return room;
     }
     
@@ -209,14 +207,6 @@ export default class Room extends EventEmitter {
         } else {
             this.emit('close');
         }
-    }
-
-    logStatus() {
-        logger.info(
-            'logStatus() [roomId:%s, protoo Peers:%s]',
-            this._roomId,
-            this._protooRoom.peers.length
-        );
     }
 
     /**
@@ -1324,5 +1314,3 @@ export default class Room extends EventEmitter {
         }
     }
 }
-
-module.exports = Room;

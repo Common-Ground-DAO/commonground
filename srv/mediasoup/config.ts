@@ -5,8 +5,6 @@
 import { cpus } from 'os';
 import { RouterOptions, WebRtcServerOptions, WebRtcTransportOptions, WorkerSettings } from "mediasoup/types";
 
-export const domain: string = process.env.DOMAIN || 'localhost';
-
 export const httpsConf = {
   listenIp: '0.0.0.0',
   listenPort: parseInt(process.env.PROTOO_LISTEN_PORT || '4443', 10),

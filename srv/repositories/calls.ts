@@ -664,7 +664,6 @@ class CallHelper {
     callId: string,
     userId: string,
   ) {
-    console.log("insertCallMember", callId, userId);
     const result = await pool.query(`
       INSERT INTO callmembers (
         "callId",

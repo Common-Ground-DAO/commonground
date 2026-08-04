@@ -1,6 +1,6 @@
 # Common Ground Deployment
 
-> Status: verified against commit 92e42513c, 2026-08-04
+> Status: verified against commit 7fc321995, 2026-08-04
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is

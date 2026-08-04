@@ -1414,7 +1414,11 @@ untouched via `git diff`.
   `vendor-web3` **3.82 → 3.56 MB**: ethers 5 (~896 KB) left it, wagmi 2 + viem 2 +
   rainbowkit 2 are bigger, and the eager duplicate viem the wave-0 review found is
   gone (the second viem in the tree is now WalletConnect-core's exact 2.23.2 pin,
-  which loads with the lazily-split WC connector).
+  which loads with the lazily-split WC connector). Final-gate correction
+  (2026-08-04): the wave-0a hope that this wave would fully collapse the
+  duplicate viem did NOT come true — WalletConnect core exact-pins its own
+  copy (2.23.2 next to 2.55.10), so two viem copies remain in lockfile and
+  bundle. Not fixable without force-resolving an exact transitive pin.
 - **Interim review (2026-08-04, fresh context) — findings and what was done.**
   The review verified the two things that would have been worst to get wrong:
   ethers 5's `.send(method, params)` really is `request({ method, params })` with
@@ -1622,8 +1626,10 @@ untouched via `git diff`.
     the EditField error boundary) and `docs/frontend` now lists `slate-dom`.
     Accepted notes: `vendor-editor` +32 kB raw (genuine upstream growth, no
     duplicates — the chunk is eager, so it is initial-load weight); editor
-    nodes are no longer deep-frozen (immer left — accidental mutation would
-    now corrupt silently instead of throwing; nothing mutates today).
+    nodes are no longer deep-frozen (immer left slate — accidental mutation
+    would now corrupt silently instead of throwing; nothing mutates today.
+    Note: wave 4d reintroduces an immer copy via recharts 3's Redux runtime;
+    the slate consequence is unchanged).
   - **Manual (maintainer)**: a real editing pass in the article editor
     (marks, links via the toolbar link input, images) and the chat (mentions,
     paste incl. screenshots, send), on desktop **and mobile** — 0.107–0.110
@@ -1689,14 +1695,41 @@ untouched via `git diff`.
 
 ## Final gate
 
-- [ ] Full code review of the cumulative diff (fresh reviewer context, not the
+- [x] Full code review of the cumulative diff (fresh reviewer context, not the
   implementing agent), findings fixed or explicitly waived by the maintainer.
-- [ ] `yarn npm audit --all` clean of high severity in both workspaces (document
+  - Run 2026-08-04 over `develop..chore/deps-wave4d-react19` (stack topology,
+    final-tree manifest/lockfile coherence, docs coherence, cross-wave
+    interactions, supply-chain settings, full gates on the tip). **No
+    blocker.** Three should-fixes, all applied in the final-gate fixes commit
+    on the tip: the four dangling doc status hashes swapped to their
+    restacked SHAs; the stale `viem`/`ethers` row in docs/frontend; and the
+    four `node-gyp-build` natives (`bufferutil`/`utf-8-validate`/`keccak`/
+    `secp256k1`) removed from BOTH `dependenciesMeta` allowlists — they load
+    their shipped prebuilds without install scripts (verified by require +
+    functional smoke in both workspaces; matches the `contracts/` precedent),
+    so allowlisting them only widened the attack surface the hardening
+    exists to close. Notes folded into the wave records: the viem duplicate
+    persists (WalletConnect exact-pin), immer is back via recharts 3, the
+    benign typeorm↔redis-6 peer warning, `@types/react-router-dom` v5
+    cleanup stays a TODO.md item.
+- [x] `yarn npm audit --all` clean of high severity in both workspaces (document
   any accepted residual findings here).
-- [ ] Docs trued up in the same PRs that changed behavior (AGENTS.md tech-stack
+  - Final state: **root 0 high / 1 moderate / 0 low** — the single residual
+    is the `@truffle/hdwallet-provider` 2.1.15 deprecation notice (the
+    package is out of scope by decision 7, Truffle tooling). **srv: zero
+    findings.** Starting point was root 22 high / 33 moderate / 1 low and
+    srv 20 high / 23 moderate / 4 low.
+- [x] Docs trued up in the same PRs that changed behavior (AGENTS.md tech-stack
   bullets, docs/frontend, docs/realtime for socket.io, docs/infrastructure for
   sharp/puppeteer image notes) — status lines updated.
-- [ ] TODO.md: the absorbed items (axios keepAlive re-check, jest 30,
+- [x] TODO.md: the absorbed items (axios keepAlive re-check, jest 30,
   @types/confusing-browser-globals) were struck when this roadmap was created; add
-  any leftovers discovered during the waves.
-- [ ] Delete this file (lifecycle), folding lasting insights into docs/.
+  any leftovers discovered during the waves. (Done incrementally: the giphy
+  phantom dep, the CG-ID bundle re-measurement, the tslib finding, dead-code
+  candidates.)
+- [ ] Delete this file (lifecycle), folding lasting insights into docs/. **Left
+  for the merge**: the file is the maintainer's review/merge/manual-test
+  companion; delete it once the stack is merged and the manual matrix is done.
+  Still open besides the merges: **decision 9** (MetaMask-without-extension
+  via RainbowKit's `metaMaskWallet` — its own small PR, never part of these
+  waves).

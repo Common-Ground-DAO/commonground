@@ -556,6 +556,17 @@ untouched via `git diff`.
       `startAuthentication({ optionsJSON, useBrowserAutofill })` (4 call sites).
     - v13 retired the types package — imports moved to `@simplewebauthn/server`
       (4 srv files) and `@simplewebauthn/browser` (`src/common/types/api/cgid.d.ts`).
+      **Review catch**: that fifth file is ALSO an srv file (`srv/common` is a
+      symlink into `src/common`, and srv's tsconfig includes it) — inside the
+      container build there is no parent node_modules, `skipLibCheck` swallowed
+      the unresolved import, and the passkey API types silently became `any` on
+      exactly the migrated surface. Fixed by declaring `@simplewebauthn/browser`
+      (zero-dep) in srv devDependencies, as the old types package deliberately was.
+    - Only wire-format delta of the whole migration (review-measured, v10 vs v13
+      side by side): v13's `generateRegistrationOptions` appends `hints: []` to
+      the options JSON. Benign — WebIDL ignores unknown dictionary members, and
+      an empty hints list is a no-op — but it does reach the browser and the
+      stored `debugData`.
     - v13's `attestationType` change ('indirect' removed) doesn't touch us ('none').
     - `requireUserVerification` defaults verified **identical** (true) in v10.0.1
       and v13.3.2 sources — no silent auth-policy change.
@@ -603,7 +614,9 @@ untouched via `git diff`.
   (options renamed), node-cron 3 → 4 (optional — skip if API churn outweighs value),
   mime-types 2 → 3, reflect-metadata 0.1 → 0.2 (verify TypeORM compat note; since
   wave 0, typeorm 0.3.31 already loads a nested reflect-metadata 0.2.2 next to the
-  hoisted 0.1.14 — verified interoperable, but the bump should dedupe to one copy),
+  hoisted 0.1.14 — verified interoperable, but the bump should dedupe to one copy;
+  since wave 1.5, @simplewebauthn/server 13 eagerly loads a third nested 0.2.x via
+  @peculiar/x509 → tsyringe),
   altcha 2 → 3 + altcha-lib 1 → 2 **as a pair** (widget and server lib must agree
   on the challenge format — test the PoW flow end to end).
 - [ ] **PR 2c (frontend, service worker)**: workbox `6.5.4` → `^7.4` (precaching +

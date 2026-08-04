@@ -68,6 +68,7 @@
     "xml": "^1.0.1"
   },
   "devDependencies": {
+    "@simplewebauthn/browser": "^13.0.0",
     "@tsconfig/node24": "24.0.4",
     "@types/bcrypt": "^5.0.0",
     "@types/connect-redis": "^0.0.17",

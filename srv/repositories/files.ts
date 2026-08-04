@@ -387,9 +387,15 @@ class FileHelper {
       }
     }
     const putObject = new PutObjectCommand({
+      // The already materialised buffer, not the `resized` Sharp instance: a
+      // Sharp object is a Duplex of unknown length, and since @aws-sdk 3.9x the
+      // S3 client rejects unknown-length stream bodies outright
+      // ("Invalid value \"undefined\" for header x-amz-decoded-content-length")
+      // instead of falling back to chunked encoding. The bytes are identical -
+      // streaming the instance only re-ran the whole pipeline a second time.
       Bucket: cgBucketName,
       Key: fileId,
-      Body: resized
+      Body: resizedBuffer
     });
     await client.send(putObject);
     await this.upsertDatabaseFile(

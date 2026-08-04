@@ -17,7 +17,11 @@ import { parseUrl } from "@smithy/url-parser";
 import { Hash } from "@smithy/hash-node";
 import { HttpRequest } from "@smithy/protocol-http";
 import { formatUrl } from "@aws-sdk/util-format-url";
-import sharp, { Blend } from 'sharp';
+// Types are imported by name rather than through the `sharp.*` namespace: the
+// namespace only exists in sharp's CommonJS `export =` typings, so it resolves
+// under the build's `moduleResolution: Node16` but not under the CommonJS
+// resolution ts-jest compiles the test suite with. The named types exist in both.
+import sharp, { Blend, type Sharp, type WebpOptions, type JpegOptions } from 'sharp';
 import crypto from "crypto";
 import { Readable } from "stream";
 import { Blob, Buffer } from "buffer";
@@ -201,7 +205,7 @@ async function createBackground(imageBuffer: Buffer, width: number, height: numb
 async function composeImages(background: Buffer, foreground: Buffer, width: number, height: number): Promise<Buffer> {
   const alphaValue = Math.round(0.5 * 255);
   const transparencyMask = Buffer.alloc(width * height, alphaValue);
-  const webpOptions: sharp.WebpOptions = { quality: 92, effort: 5 };
+  const webpOptions: WebpOptions = { quality: 92, effort: 5 };
   const opacity = {
     input: transparencyMask,
     raw: {
@@ -285,7 +289,7 @@ class FileHelper {
   public async convertToJpg(imageBuffer: Buffer, width: number, height: number): Promise<Buffer> {
     let image = sharp(imageBuffer);
     if (width && height) image = image.resize(width, height);
-    const jpegOptions: sharp.JpegOptions = { quality: 90, progressive: true };
+    const jpegOptions: JpegOptions = { quality: 90, progressive: true };
     return await image.jpeg(jpegOptions).toBuffer();
   }
 
@@ -340,9 +344,9 @@ class FileHelper {
       throw new Error(errors.server.FILESIZE_EXCEEDED);
     }
 
-    let resized: sharp.Sharp;
+    let resized: Sharp;
     let resizedBuffer: Buffer;
-    const webpOptions: sharp.WebpOptions = { quality: 92, effort: 5 };
+    const webpOptions: WebpOptions = { quality: 92, effort: 5 };
     if (resize) {
       let finalWidth = resize.width;
       let finalHeight = resize.height;
@@ -458,7 +462,7 @@ class FileHelper {
   public async composeCommunityImage(imageBuffer: Buffer): Promise<Buffer> {
     const width = 1200;
     const height = 630;
-    const webpOptions: sharp.WebpOptions = { quality: 92, effort: 5 };
+    const webpOptions: WebpOptions = { quality: 92, effort: 5 };
     const foreground = await sharp(imageBuffer).resize(410, 410, { fit: 'cover' }).webp(webpOptions).toBuffer(); // await createHexagonalForeground(imageBuffer, Math.round(width * 0.43));
     const background = await createBackground(foreground, width, height);
     const composedImage = await composeImages(background, foreground, width, height);

@@ -710,10 +710,10 @@ The `RedisManager` class (`srv/redis/index.ts`) manages all Redis connections:
 - All four clients are created through `srv/redis/client.ts`, which pins
   `RESP: 2`. node-redis 6 defaults to RESP3; `@socket.io/redis-adapter` 8.3 is
   written against RESP2, so the protocol stays where node-redis 4 had it.
-- `REDIS_LEGACY_MODE` is **obsolete and ignored** since node-redis 6 /
-  connect-redis 10 (node-redis dropped `legacyMode`, and connect-redis speaks
-  the promise API). It is still set in the compose files; removing it there is
-  a pending maintainer cleanup.
+- `REDIS_LEGACY_MODE` is gone: node-redis 6 dropped `legacyMode`, connect-redis
+  10 speaks the promise API, and the backend never reads the variable any more.
+  The inert `REDIS_LEGACY_MODE=true` lines were removed from both compose files
+  (maintainer decision, 2026-08-04).
 
 ### Socket.IO Redis Adapter
 

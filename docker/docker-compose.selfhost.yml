@@ -183,7 +183,6 @@ services:
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SECRET=${REDIS_SECRET}
-      - REDIS_LEGACY_MODE=true
       - DEPLOYMENT=prod
       - BASE_URL=https://${CG_DOMAIN}
       - CGID_URL=https://${CG_ID_DOMAIN}

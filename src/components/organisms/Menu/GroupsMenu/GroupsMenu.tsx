@@ -4,12 +4,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink } from "react-router-dom";
-import {
-  DragDropContext,
-  Draggable,
-  Droppable,
-  DropResult
-} from "react-beautiful-dnd";
+import { closestCenter, DndContext, DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { useDragSensors } from "hooks/useDragSensors";
 import { useLiveQuery } from "dexie-react-hooks";
 import data from "data";
 
@@ -40,6 +38,8 @@ export default function GroupsMenu(props: Props) {
   const currentCommunity = communityCtx.state === "loaded" ? communityCtx.community : undefined;
 
   const [sortedCommunities, setSortedCommunities] = useState(communities);
+  const [draggingOver, setDraggingOver] = useState(false);
+  const sensors = useDragSensors();
 
   const sortCommunities = useCallback((orderedCommunityIds: string[]) => {
     const sortedCommunities: Models.Community.DetailView[] = [];
@@ -84,60 +84,62 @@ export default function GroupsMenu(props: Props) {
     delayDebouncedSave(orderedCommunityIds, 1500);
   }, [ownUser, sortCommunities]);
 
-  const onDragEnd = useCallback(async (result: DropResult) => {
-    const { draggableId, type, destination, source } = result;
-    if (type === 'communities') {
-      const changedLocation = !!source && !!destination && destination.droppableId === source.droppableId && destination.index !== source.index;
-      if (changedLocation) {
-        const draggedCommunity = sortedCommunities?.find(community => community.id === draggableId);
-        if (draggedCommunity) {
-          updateCommunityOrder(draggedCommunity, source.index, destination.index);
-        }
-      }
+  const communityIds = useMemo(() => (sortedCommunities || []).map(community => community.id), [sortedCommunities]);
+
+  const onDragEnd = useCallback((event: DragEndEvent) => {
+    setDraggingOver(false);
+    const { active, over } = event;
+    if (!over || active.id === over.id) {
+      return;
     }
-  }, [sortedCommunities, updateCommunityOrder]);
+    const sourceIndex = communityIds.indexOf(String(active.id));
+    const destinationIndex = communityIds.indexOf(String(over.id));
+    if (sourceIndex < 0 || destinationIndex < 0 || sourceIndex === destinationIndex) {
+      return;
+    }
+    const draggedCommunity = sortedCommunities?.find(community => community.id === active.id);
+    if (draggedCommunity) {
+      updateCommunityOrder(draggedCommunity, sourceIndex, destinationIndex);
+    }
+  }, [communityIds, sortedCommunities, updateCommunityOrder]);
 
   return (
-    <DragDropContext onDragEnd={onDragEnd}>
-      <Droppable
-        droppableId="communities"
-        type="communities"
-      >
-        {(provided, snapshot) => (
-          <div className={`groups-menu${props.collapsed ? ' collapsed' : ''}${snapshot.isDraggingOver ? ' dragging-over' : ''}`}>
-            <div
-              {...provided.droppableProps}
-              className="items"
-              ref={provided.innerRef}
-            >
-              {sortedCommunities?.map((community, index) => (
-                <CommunityItem
-                  key={community.id}
-                  community={community}
-                  index={index}
-                  selected={community.id === currentCommunity?.id}
-                  collapsed={props.collapsed}
-                />
-              ))}
-              {provided.placeholder}
-            </div>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={() => setDraggingOver(true)}
+      onDragCancel={() => setDraggingOver(false)}
+      onDragEnd={onDragEnd}
+    >
+      <SortableContext items={communityIds} strategy={verticalListSortingStrategy}>
+        <div className={`groups-menu${props.collapsed ? ' collapsed' : ''}${draggingOver ? ' dragging-over' : ''}`}>
+          <div className="items">
+            {sortedCommunities?.map(community => (
+              <CommunityItem
+                key={community.id}
+                community={community}
+                selected={community.id === currentCommunity?.id}
+                collapsed={props.collapsed}
+              />
+            ))}
           </div>
-        )}
-      </Droppable>
-    </DragDropContext>
+        </div>
+      </SortableContext>
+    </DndContext>
   );
 }
 
 type CommunityItemProps = {
   community: Models.Community.DetailView;
   selected: boolean;
-  index: number;
   collapsed: boolean;
 }
 
 function CommunityItem(props: CommunityItemProps) {
-  const { community, selected, index, collapsed } = props;
+  const { community, selected, collapsed } = props;
   const { isMobile } = useWindowSizeContext();
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: community.id });
   const channels = useLiveQuery(() => {
     return data.community.getChannels(community.id);
   }, [community.id]);
@@ -216,23 +218,23 @@ function CommunityItem(props: CommunityItemProps) {
     }
   }, [ownPinnedChannels, community.url, collapsed]);
 
+  // The whole item is the drag handle, as it was under react-beautiful-dnd.
   return useMemo(() => (
-    <Draggable
-      draggableId={community.id}
-      index={index}
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        position: 'relative',
+        zIndex: isDragging ? 5000 : undefined,
+      }}
     >
-      {(provided, snapshot) => (
-        <div
-          {...provided.draggableProps}
-          {...provided.dragHandleProps}
-          ref={provided.innerRef}
-        >
-          <div className={`group-item-container${snapshot.isDragging ? ' dragging' : ''}${collapsed ? ' collapsed' : ''}`}>
-            {communityIconContent}
-            {ownPinnedChannelsContent}
-          </div>
-        </div>
-      )}
-    </Draggable>
-  ), [index, community.id, collapsed, communityIconContent, ownPinnedChannelsContent]);
+      <div className={`group-item-container${isDragging ? ' dragging' : ''}${collapsed ? ' collapsed' : ''}`}>
+        {communityIconContent}
+        {ownPinnedChannelsContent}
+      </div>
+    </div>
+  ), [attributes, listeners, setNodeRef, transform, transition, isDragging, collapsed, communityIconContent, ownPinnedChannelsContent]);
 }

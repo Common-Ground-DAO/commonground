@@ -15,7 +15,10 @@ import { UserGroupIcon } from '@heroicons/react/24/outline';
 
 import { useOwnCommunities, useOwnUser } from "context/OwnDataProvider";
 import { getUrl } from 'common/util';
-import { DragDropContext, Draggable, DropResult, Droppable } from "react-beautiful-dnd";
+import { closestCenter, DndContext, DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { useDragSensors } from "hooks/useDragSensors";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import data from "data";
 import Scrollable from 'components/molecules/Scrollable/Scrollable';
@@ -36,6 +39,8 @@ export default function OwnCommunitiesBrowser(props: Properties) {
   const { setVisible } = useCreateCommunityModalContext();
   const { setCommunitySidebarIsOpen } = useCommunitySidebarContext();
   const [sortedCommunities, setSortedCommunities] = useState(ownCommunities);
+  const [draggingOver, setDraggingOver] = useState(false);
+  const sensors = useDragSensors();
   const navigate = useNavigate();
 
   const navigateToHome = useCallback(() => {
@@ -90,74 +95,61 @@ export default function OwnCommunitiesBrowser(props: Properties) {
     delayDebouncedSave(orderedCommunityIds, 200);
   }, [ownUser?.communityOrder]);
 
-  const onDragEnd = useCallback(async (result: DropResult) => {
-    const { draggableId, type, destination, source } = result;
-    if (type === 'communities') {
-      const changedLocation = !!source && !!destination && destination.droppableId === source.droppableId && destination.index !== source.index;
-      if (changedLocation) {
-        const draggedCommunity = ownCommunities.find(community => community.id === draggableId);
-        if (draggedCommunity) {
-          updateCommunityOrder(draggedCommunity.id, source.index, destination.index);
-        }
-      }
+  const communityIds = useMemo(() => (sortedCommunities || []).map(community => community.id), [sortedCommunities]);
+
+  const onDragEnd = useCallback((event: DragEndEvent) => {
+    setDraggingOver(false);
+    const { active, over } = event;
+    if (!over || active.id === over.id) {
+      return;
     }
-  }, [ownCommunities, updateCommunityOrder]);
+    const sourceIndex = communityIds.indexOf(String(active.id));
+    const destinationIndex = communityIds.indexOf(String(over.id));
+    if (sourceIndex < 0 || destinationIndex < 0 || sourceIndex === destinationIndex) {
+      return;
+    }
+    const draggedCommunity = ownCommunities.find(community => community.id === active.id);
+    if (draggedCommunity) {
+      updateCommunityOrder(draggedCommunity.id, sourceIndex, destinationIndex);
+    }
+  }, [communityIds, ownCommunities, updateCommunityOrder]);
 
   const communitiesMemo = useMemo(() => {
     if (!!sortedCommunities && sortedCommunities.length > 0) {
-      return <Droppable
-        droppableId="communities"
-        type="communities"
-      >
-        {(provided, snapshot) => (
-          <div
-            {...provided.droppableProps}
-            ref={provided.innerRef}
-            className={[
-              'own-communities-content column-view',
-              snapshot.isDraggingOver ? 'dragging-over' : ''
-            ].join(' ').trim()}
-          >
-            {sortedCommunities.map((community, index) => {
-              // FIXME: unread should reflect the real value
-              return <Draggable
-                key={community.id}
-                draggableId={community.id}
-                index={index}
-              >
-                {(provided, snapshot) => (
-                  <div
-                    {...provided.draggableProps}
-                    {...provided.dragHandleProps}
-                    ref={provided.innerRef}
-                    className={snapshot.isDragging ? 'draggable-container dragging' : 'draggable-container'}
-                  >
-                    <OwnCommunityCard
-                      key={community.id}
-                      community={community}
-                      size='small'
-                      hideNewTag
-                      collapsed={!isExpanded}
-                    />
-                  </div>
-                )}
-              </Draggable>
-            })}
-            {provided.placeholder}
-          </div>
-        )}
-      </Droppable>;
+      return <SortableContext items={communityIds} strategy={verticalListSortingStrategy}>
+        <div
+          className={[
+            'own-communities-content column-view',
+            draggingOver ? 'dragging-over' : ''
+          ].join(' ').trim()}
+        >
+          {sortedCommunities.map(community => {
+            // FIXME: unread should reflect the real value
+            return <SortableCommunityCard
+              key={community.id}
+              community={community}
+              collapsed={!isExpanded}
+            />
+          })}
+        </div>
+      </SortableContext>;
     }
     else {
       return null;
     }
-  }, [sortedCommunities, isExpanded])
+  }, [sortedCommunities, communityIds, draggingOver, isExpanded])
 
   if (isMobile) {
     return (
       <Scrollable className='community-icons' hideOnNoScroll>
         <div className='own-communities' ref={contentRef}>
-          <DragDropContext onDragEnd={onDragEnd}>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={() => setDraggingOver(true)}
+            onDragCancel={() => setDraggingOver(false)}
+            onDragEnd={onDragEnd}
+          >
             <div className='own-communities-content-container'>
               <MobileMenuOption
                 icon={<Compass weight='duotone' className='h-6 w-6' />}
@@ -223,7 +215,7 @@ export default function OwnCommunitiesBrowser(props: Properties) {
                 )}
               </div>
             </div>
-          </DragDropContext>
+          </DndContext>
         </div>
       </Scrollable>
     );
@@ -232,6 +224,40 @@ export default function OwnCommunitiesBrowser(props: Properties) {
     setTimeout(() => navigate(getUrl({ type: 'home' })), 0);
     return (<></>);
   }
+}
+
+type SortableCommunityCardProps = {
+  community: Models.Community.DetailView;
+  collapsed: boolean;
+};
+
+/** The whole card is the drag handle, as it was under react-beautiful-dnd. */
+function SortableCommunityCard(props: SortableCommunityCardProps) {
+  const { community, collapsed } = props;
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: community.id });
+
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        position: 'relative',
+        zIndex: isDragging ? 5000 : undefined,
+      }}
+      className={isDragging ? 'draggable-container dragging' : 'draggable-container'}
+    >
+      <OwnCommunityCard
+        community={community}
+        size='small'
+        hideNewTag
+        collapsed={collapsed}
+      />
+    </div>
+  );
 }
 
 type MobileMenuOptionProps = {

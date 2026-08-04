@@ -1296,7 +1296,15 @@ untouched via `git diff`.
     direct child of the composer's `flex flex-col gap-2` container, so in flow it
     became a zero-height flex item and added an 8px gap above every message,
     comment and article composer. Restored with an explicit
-    `getInputProps({ style: { position: 'absolute' } })`.
+    `getInputProps({ style: { position: 'absolute' } })`. **That fix itself
+    shipped a worse bug** (maintainer-reported 2026-08-05, fixed in a
+    follow-up commit on this branch): dropzone 20 spreads caller props AFTER
+    its defaults, so the partial style replaced the library's entire hiding
+    style and left a fully visible native file input floating over every
+    EditField surface (chat composer, article editor). The input now carries
+    the full hidden style plus the out-of-flow position; sweep confirmed the
+    other ten `<input type="file">` sites all use explicit `display: none`
+    and were never affected.
   - [x] **@giphy/react-components 9.2 → 10.1.2** (+ `@giphy/js-fetch-api` 5.3 →
     5.8). The peer range moves react `16.10.2 - 18` → `18 - 19`, and **every prop
     we pass is unchanged** — but the "pure peer-range major, `.d.ts` byte-identical"

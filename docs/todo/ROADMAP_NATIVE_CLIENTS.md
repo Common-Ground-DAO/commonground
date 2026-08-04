@@ -1,6 +1,8 @@
 # Roadmap: Native Clients (Electron desktop, iOS, Android)
 
-> Status: draft 2026-08-04, decisions pending (see [Decisions needed](#decisions-needed)).
+> Status: active 2026-08-04 — maintainer confirmed the plan and decided items 1, 2
+> and 8a below (2026-08-04): official multi-instance app, publisher-run push
+> gateway, Electron first with mobile gated on desktop stability.
 > Goal: ship Common Ground as a desktop app (Electron: macOS/Linux/Windows) and as
 > two native mobile apps (Swift/iOS, Kotlin/Android). Native mobile means native
 > codebases — not React Native / not a WebView wrapper.
@@ -61,23 +63,25 @@ turn "the web client's private protocol" into "the Common Ground client API".
   documented deprecation window) so old app builds against newer selfhost
   instances fail predictably, not mysteriously. Write the policy down in
   `docs/api/`.
-- [ ] **P-256 device keys.** `common.JsonWebKey` requires `crv: P-384`, and the
-  web client generates P-384. iOS's Secure Enclave only does **P-256** —
-  hardware-backed keys on iOS are impossible under the current validator. Accept
-  `P-256 | P-384` (verification code paths are curve-agnostic in WebCrypto/node)
-  so mobile keys can live in Secure Enclave / Android StrongBox.
+- [x] **P-256 device keys** (done 2026-08-04, this PR). `common.JsonWebKey` now
+  accepts `P-256 | P-384`; `verifyDeviceAndGetUserId` derives curve and hash
+  from the registered key (P-256/SHA-256, P-384/SHA-384 — verified both). The
+  web client keeps generating P-384; mobile keys can live in Secure Enclave /
+  Android StrongBox.
 - [ ] **Push transport abstraction.** `sendWsOrWebPushNotificationEvent` knows
   exactly one transport (VAPID web push). Introduce a per-device transport
   (`webpush | apns | fcm | unifiedpush`) and payload mapping. Architectural
   decision required first: APNs/FCM credentials belong to the *app publisher*,
   not the instance operator — selfhost instances therefore need a **push
   gateway** (Matrix/Sygnal model: instance → gateway run by the app publisher →
-  APNs/FCM), with UnifiedPush as the self-sovereign Android alternative. Design
-  doc before code.
-- [ ] **User-to-user blocking.** Community-level bans exist; personal blocks do
-  not. Apple guideline 1.2 requires "the ability to block abusive users" for
-  UGC apps — this is an App Review gate, not a nice-to-have. Backend + web UI
-  first (small, self-contained), mobile inherits it.
+  APNs/FCM), with UnifiedPush as the self-sovereign Android alternative.
+  **Decided 2026-08-04: publisher-run gateway it is** — next step is the design
+  doc (gateway API, instance registration, payload privacy).
+- [ ] **User-to-user blocking** (confirmed by maintainer 2026-08-04).
+  Community-level bans exist; personal blocks do not. Apple guideline 1.2
+  requires "the ability to block abusive users" for UGC apps — an App Review
+  gate, not a nice-to-have. Backend + web UI first (small, self-contained),
+  mobile inherits it.
 - [ ] **Auth flows without a browser context.** Email+password and email-code:
   plain REST, fine. Passkeys/CGID and wallet logins assume the CGID popup /
   browser extensions:
@@ -194,9 +198,9 @@ picker + signing infrastructure, not app code.
 
 | # | Decision | Options / recommendation |
 |---|---|---|
-| 1 | Distribution model | One official multi-instance app (Element/Mastodon model) — **recommended**; per-instance whitelabel builds are a services offering later |
-| 2 | Push gateway | Publisher-run gateway for APNs/FCM (Matrix/Sygnal model) + UnifiedPush; requires us to operate a small always-on service |
-| 3 | iOS token features | Hide Spark purchase/staking on iOS non-US storefronts; US storefront may use external-purchase links (post-2025 3.1.1 rules); wallet *login* is fine everywhere |
+| 1 | Distribution model | **Decided 2026-08-04**: one official multi-instance app — users choose which instance to connect to in the app; per-instance whitelabel builds are a services offering later |
+| 2 | Push gateway | **Decided 2026-08-04**: publisher-run gateway for APNs/FCM (Matrix/Sygnal model) + UnifiedPush; requires us to operate a small always-on service |
+| 3 | iOS token features | Maintainer decision, handled outside this roadmap (store-policy question, not an engineering one) |
 | 4 | Mobile code sharing | Spec-driven codegen, no shared runtime (**recommended**) vs Kotlin Multiplatform core |
 | 5 | Electron renderer source | Remote-load instance web app (**recommended**) vs bundled frontend |
 | 6 | F-Droid | Yes (AGPL-consistent) — implies UnifiedPush path is non-optional |
@@ -214,9 +218,9 @@ Phase 4 (Android MVP)    ~3-4 months ─┘
 Calls on mobile (v1.1)                          ~6-8 weeks per platform
 ```
 
-Electron delivers user-visible value in weeks and forces none of the hard
-decisions; Phase 0 is cheap and de-risks everything; mobile is the long game
-and should not start before Phase 0 lands and decisions 1–4 are made.
+**Decided 2026-08-04: Electron is the starting point; mobile work begins once
+the desktop app runs stable in production use.** Phase 0 proceeds in parallel
+with Electron — it is server-side and does not compete for the same work.
 
 ## Rules
 

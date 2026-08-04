@@ -689,7 +689,7 @@ class CommunityEventHelper {
             AND cep."communityEventId" = $1
             AND cep."permissions" @> ARRAY['EVENT_ATTEND']::"public"."communities_events_permissions_permissions_enum"[]
         ) RETURNING "userId"`, [data.id]);
-      if (updateEventMembers.rowCount > 0) {
+      if ((updateEventMembers.rowCount ?? 0) > 0) {
         //update the successResult.participantIds and successResult.participantCount
         successResult.participantIds = successResult.participantIds.filter(id => !updateEventMembers.rows.find(row => row.userId === id));
         successResult.participantCount = successResult.participantIds.length;

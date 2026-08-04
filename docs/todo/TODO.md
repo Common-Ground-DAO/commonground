@@ -212,6 +212,11 @@
   plus init in `srv/serverconfig.ts`, see [docs/email-notifications](../email-notifications/README.md));
   drop the Mailchimp audience sync (local subscription flag already exists). No bundled
   MTA (see above).
+- **Express 5** — out of scope for the 2026-08 dependency updates. Forward note:
+  `srv/package.json` pins `resolutions: { "@types/express": "4",
+  "@types/express-serve-static-core": "4" }` because `@types/express-{session,ws,fileupload}`
+  depend on `@types/express@*` → 5.x, which hoists an incompatible `Request` type next
+  to the v4 one. Whoever picks up Express 5 drops both pins.
 - **react-router 7** — out of scope for the 2026-08 dependency updates. Forward note:
   the root `package.json` carries a **security hold** `resolutions: { "react-router-dom":
   "6.30.1" }` — 6.30.2–6.30.4 are vulnerable to GHSA-jjmj-jmhj-qwj2 (open redirect →

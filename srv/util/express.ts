@@ -136,6 +136,16 @@ app.use(cookieParser());
 // SESSION SETUP
 const RedisStore = connectRedis(session);
 
+// kept in its own binding because `SessionOptions['cookie']` is a union with a
+// per-request callback since express-session 1.19 — indexing into it directly
+// no longer type-checks
+const sessionCookieOptions: session.CookieOptions = {
+  maxAge: 12*60*60*1000, // 12 hours
+  httpOnly: true,
+  secure: config.DEPLOYMENT !== "dev",
+  sameSite: 'lax',
+};
+
 const sessionOptions: session.SessionOptions = {
   store: new RedisStore({
     client: redisManager.getClient('session')
@@ -143,12 +153,7 @@ const sessionOptions: session.SessionOptions = {
   name: serverconfig.SESSION_COOKIE_NAME,
   secret: dockerSecret('redis_secret') || process.env.REDIS_SECRET as string,
   proxy: true,
-  cookie: {
-    maxAge: 12*60*60*1000, // 12 hours
-    httpOnly: true,
-    secure: config.DEPLOYMENT !== "dev",
-    sameSite: 'lax',
-  },
+  cookie: sessionCookieOptions,
   resave: false,
   saveUninitialized: true,
   rolling: true,
@@ -158,7 +163,7 @@ const sessionOptions: session.SessionOptions = {
 // (id.<domain>) share a session; derived from BASE_URL so self-hosted
 // instances get their own domain (.app.cg / .staging.app.cg unchanged)
 if (config.DEPLOYMENT !== 'dev') {
-  sessionOptions.cookie!.domain = `.${urls.APP_HOSTNAME}`;
+  sessionCookieOptions.domain = `.${urls.APP_HOSTNAME}`;
 }
 
 const sessionMiddleware = session(sessionOptions);

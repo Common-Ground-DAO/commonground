@@ -532,7 +532,7 @@ async function _createCommunityArticle(
         ).join(',')}
     `;
     const caaResult = await db.query(query);
-    if (caaResult.rowCount > 0) {
+    if ((caaResult.rowCount ?? 0) > 0) {
       return row;
     }
   }

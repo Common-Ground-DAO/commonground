@@ -878,7 +878,7 @@ async function _createChannel(
     ).join(',')}
     `;
     const permResult = await runner.query(query);
-    if (permResult.rowCount > 0) {
+    if ((permResult.rowCount ?? 0) > 0) {
       return insertResult;
     }
   }
@@ -2609,7 +2609,7 @@ class CommunityHelper {
       FROM role_id_query
       ON CONFLICT ("userId", "roleId") DO NOTHING
     `);
-    return result.rowCount;
+    return result.rowCount ?? 0;
   }
 
   public async removeUserFromUnclaimableRoles(userId: string, roleIds: string[]): Promise<void> {

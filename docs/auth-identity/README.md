@@ -1,4 +1,4 @@
-> Status: verified against commit 0f1d72d66, 2026-08-03
+> Status: verified against commit 96e828069, 2026-08-04
 
 # Authentication & Identity
 
@@ -67,7 +67,7 @@ Sessions are managed by `express-session` with a Redis-backed store, configured 
 
 | Setting | Value | Source |
 |---------|-------|--------|
-| Store | `connect-redis` on the shared `redis` instance (`sess:` prefix) | `srv/util/express.ts:137-142` |
+| Store | `connect-redis` 10 (`RedisStore`) on the shared `redis` instance (`sess:` prefix) | `srv/util/express.ts` |
 | Cookie name | `connect.sid` in prod, `cg_<deployment>.sid` otherwise | `srv/serverconfig.ts:25` |
 | Secret | Docker secret `redis_secret`, else `REDIS_SECRET` env | `srv/util/express.ts:144` |
 | `maxAge` | 12 hours | `srv/util/express.ts:147` |

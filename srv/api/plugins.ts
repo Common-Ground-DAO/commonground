@@ -345,7 +345,13 @@ registerPostRoute<
 
     // Check if request is unique
     const requestKey = `pluginRequest:${pluginRequest.requestId}`;
-    const [getResults] = await dataClient.multi().get(requestKey).set(requestKey, "1", { EX: 900, NX: true }).exec();
+    const [getResults] = await dataClient
+      .multi()
+      .get(requestKey)
+      // node-redis 5+ spells the SET flags as `expiration`/`condition`; the
+      // old `{ EX, NX }` shape still works but is deprecated.
+      .set(requestKey, "1", { expiration: { type: 'EX', value: 900 }, condition: 'NX' })
+      .execTyped();
     if (getResults === "1") {
       throw new Error(errors.server.DUPLICATED_SIGNED_REQUEST);
     }

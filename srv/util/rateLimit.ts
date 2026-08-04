@@ -35,10 +35,12 @@ export default function ipRateLimitHandler(options: {
           .expire(key, Math.floor(options.windowMs / 1000))
           .zRemRangeByScore(key, 0, now - options.windowMs)
           .zCount(key, now - options.windowMs, now)
-          .exec()
+          // `execTyped()` (node-redis 5+) preserves the per-command reply types
+          // of the chain; plain `exec()` now collapses them to `ReplyUnion[]`.
+          .execTyped()
           .then((results) => {
             // console.log("RATE LIMIT RESULTS", results, limit)
-            const count = (results[3] as number);
+            const count = results[3];
             if (count <= limit) {
               return true;
             }

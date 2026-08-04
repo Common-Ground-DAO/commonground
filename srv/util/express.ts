@@ -5,7 +5,7 @@
 import express from 'express';
 import cors from 'cors';
 import session from 'express-session';
-import connectRedis from 'connect-redis';
+import { RedisStore } from 'connect-redis';
 import cookieParser from 'cookie-parser';
 import redisManager from '../redis';
 import { dockerSecret } from '.';
@@ -134,7 +134,10 @@ app.use((request, response, next) => {
 app.use(cookieParser());
 
 // SESSION SETUP
-const RedisStore = connectRedis(session);
+// connect-redis ≥7 exports the store as a plain class instead of the
+// `connectRedis(session)` factory v6 used, and talks to node-redis through its
+// promise API (no `legacyMode` client any more). The default key prefix is
+// still `sess:`, so sessions written by the old store keep working.
 
 // kept in its own binding because `SessionOptions['cookie']` is a union with a
 // per-request callback since express-session 1.19 — indexing into it directly

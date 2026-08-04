@@ -116,7 +116,6 @@ services:
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SECRET=${REDIS_SECRET}
-      - REDIS_LEGACY_MODE=true
       - DEPLOYMENT=${DEPLOYMENT}
       - BASE_URL=${BASE_URL}
       - CGID_URL=${BASE_URL}/index_cgid.html
@@ -321,7 +320,6 @@ services:
       - PG_SU_NAME=postgres
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SECRET=${REDIS_SECRET}
-      - REDIS_LEGACY_MODE=true
       - BASE_URL=${BASE_URL}
       - CGID_URL=${BASE_URL}/index_cgid.html
       - S3_SECRET=${S3_SECRET}

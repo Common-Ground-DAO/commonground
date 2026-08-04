@@ -266,7 +266,10 @@ export async function htmlToImage(data: {
 
   const content = await page.$("body");
   if (content) {
-    imageBuffer = await content.screenshot({ omitBackground: true });
+    // puppeteer 23 changed every screenshot API from `Buffer` to `Uint8Array`
+    // (it dropped the Node-only type so the same code runs in the browser).
+    // Callers pass this straight into sharp, which wants a Buffer.
+    imageBuffer = Buffer.from(await content.screenshot({ omitBackground: true }));
   }
 
   await page.close();

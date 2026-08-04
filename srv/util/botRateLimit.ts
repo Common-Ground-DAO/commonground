@@ -19,8 +19,10 @@ export async function enforceBotRateLimit(tokenId: string, scope: 'api' | 'messa
     .multi()
     .incr(key)
     .expire(key, Math.ceil(WINDOW_MS / 1000) + 1)
-    .exec();
-  const count = results[0] as number;
+    // `execTyped()` (node-redis 5+) preserves the per-command reply types;
+    // plain `exec()` now collapses them to `ReplyUnion[]`.
+    .execTyped();
+  const count = results[0];
   if (count > limit) {
     throw new Error(errors.server.RATE_LIMIT_EXCEEDED);
   }

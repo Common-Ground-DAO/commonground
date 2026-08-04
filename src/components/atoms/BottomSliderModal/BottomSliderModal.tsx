@@ -49,14 +49,24 @@ const BottomSliderModal: React.FC<React.PropsWithChildren<Props>> = (props) => {
       className={className}
       /*
         react-modal-sheet v5 added virtual-keyboard avoidance and enables it by
-        default. Its implementation flips `navigator.virtualKeyboard.overlaysContent`
+        default. On Chromium it flips `navigator.virtualKeyboard.overlaysContent`
         to `true` for as long as a sheet is open, which stops `visualViewport.height`
         from shrinking when the keyboard opens — and that is exactly the signal
         `WindowSizeProvider` uses to drive `--visualHeight` (and this component's
-        own height, see BottomSliderModal.css). Keeping it off preserves the v2
-        behaviour and leaves keyboard handling with the app.
+        own height, see BottomSliderModal.css). On iOS Safari (no VirtualKeyboard
+        API) it instead pads the scroller by `window.innerHeight -
+        visualViewport.height` — the same delta `WindowSizeProvider` already
+        subtracts from `--visualHeight`, so it would double-compensate. Keeping
+        it off preserves the v2 behaviour on both platforms and leaves keyboard
+        handling with the app.
       */
       avoidKeyboard={false}
+      /*
+        v5 also raised the flick-to-dismiss velocity threshold from v2's
+        500 px/s to 1200 px/s; without this prop a normal quick downward swipe
+        would snap the sheet back open instead of closing it. Keep v2's feel.
+      */
+      dragVelocityThreshold={500}
       style={{ zIndex: props.overrideZIndex || 1000 }}
     >
       <Sheet.Container>
@@ -65,7 +75,10 @@ const BottomSliderModal: React.FC<React.PropsWithChildren<Props>> = (props) => {
           `Sheet.Content` renders its own scroller child (class
           `react-modal-sheet-content-scroller`) since react-modal-sheet v5, which
           replaces the `Sheet.Scroller` compound component v2 needed around the
-          children — same DOM depth, same scroller styles.
+          children — same DOM depth; the scroller keeps v2's height/overflow and
+          adds `overscroll-behavior-y: none` (plus `touch-action: pan-down`
+          while scrolled to the top, which is what makes the drag-to-close
+          gesture win over scrolling there).
         */}
         <Sheet.Content>
           {content}

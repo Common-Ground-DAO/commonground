@@ -5153,15 +5153,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/react-motion@npm:^0.0.33":
-  version: 0.0.33
-  resolution: "@types/react-motion@npm:0.0.33"
-  dependencies:
-    "@types/react": "npm:*"
-  checksum: 10c0/7fbeb4c90d4f0f69f6a38efb2b955ce3232b2e5b55bd67c0fe5be6715ac9589cd19245465a22aa771f4c6aad20737ef3dd0b91a50dabaad71cb8f1f6631ae207
-  languageName: node
-  linkType: hard
-
 "@types/react-router-dom@npm:^5.3.2":
   version: 5.3.3
   resolution: "@types/react-router-dom@npm:5.3.3"
@@ -7820,7 +7811,6 @@ __metadata:
     "@types/react": "npm:18"
     "@types/react-dom": "npm:18"
     "@types/react-google-recaptcha": "npm:^2.1.8"
-    "@types/react-motion": "npm:^0.0.33"
     "@types/react-router-dom": "npm:^5.3.2"
     "@types/sanitize-html": "npm:^2.6.0"
     "@vitejs/plugin-react": "npm:^4"

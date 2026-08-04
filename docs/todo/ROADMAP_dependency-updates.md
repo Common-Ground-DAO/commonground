@@ -102,6 +102,70 @@ progresses; delete the file when the workstream is done (lifecycle per AGENTS.md
 8. `chore/deps-wave2c-frontend-sw` — stacked on 7. **Ready for review.**
 9. `chore/deps-wave3-web3` — stacked on 8. **Ready for review** (large manual
    test surface, see the wave-3 note).
+10. `chore/yarn-supply-chain-hardening` — stacked on 9, but **independent of the
+    dependency waves** (touches `.yarnrc.yml`, `dependenciesMeta`, the Yarn
+    binary, `docker/*.sh`, docs). Merge it early if the stack is reordered.
+
+## Supply-chain hardening (out-of-band, 2026-08-04)
+
+Not part of the original plan. On the day this workstream ran, the
+**"Shai-Hulud: Here We Go Again"** npm worm poisoned ~440 packages (keyv,
+cacheable, flat-cache, file-entry-cache, `@ornikar`/`@servicetitan`/`@qlik`/…),
+first malicious publish ~09:35 UTC. It executed from a `preinstall` hook, so an
+install alone was enough. Every wave above resolved and installed packages
+straight through that window.
+
+**We were not affected** — verified, not assumed: `keyv` 4.5.4 (poisoned: 6.0.0),
+`file-entry-cache` 8.0.0 (11.1.6), `flat-cache` 4.0.1 (6.1.24),
+`cacheable-request` 7.0.4 (13.0.20); zero packages from any of the nine victim
+orgs in any of the three lockfiles; and all **1,191 name@version pairs this
+workstream newly resolved** were checked against the registry's publish dates —
+the only one published inside the attack window is `puppeteer` 25.5.0 (09:47
+UTC), whose `install.mjs` was read in full and is the stock 1,242-byte Google
+installer. Local IOC sweep clean (no `setup.mjs`, no 727 KB `Math_Symbol.js` —
+the one present is the legitimate 1,074-byte Unicode table —, no preinstall
+scripts anywhere in either `node_modules`, no `gh-token-monitor` persistence, no
+`.vscode/tasks.json`). **No credential rotation warranted.**
+
+Two things made that pure luck rather than defence, and both are now fixed on
+branch `chore/yarn-supply-chain-hardening`:
+
+- Yarn 4.1.0's `enableScripts` default is **`true`** (the pinned binary says
+  `default:!0`; yarnpkg.com's docs claim `false` — they describe a newer Yarn).
+  A poisoned `preinstall` would have run.
+- `yarn npm audit`, the per-wave gate, was **blind to this**: no GHSA advisory
+  existed for the highest-traffic poisoned packages while the attack ran.
+
+**What the hardening does** (details in `docs/infrastructure` §2):
+`enableScripts: false` in both workspaces with an explicit
+`dependenciesMeta.<pkg>.built: true` allowlist (root: esbuild + 4 natives; srv:
+those plus bcrypt, mediasoup, puppeteer, unrs-resolver), and
+**`npmMinimalAgeGate: 1w`** — a native package cooldown. Both required moving
+Yarn **4.1.0 → 4.17.1**, which is where those settings exist (and where
+`enableScripts` already defaults to `false`); pnpm was considered and is
+unnecessary. The upgrade changed the lockfile metadata format (8 → 10) but **no
+resolved version**.
+
+Verified: cooldown functional (`yarn up -R terser` resolves 5.49.0 of 8 July
+instead of 5.49.1 published today 07:12 UTC); allowlist functional in the
+**image build** — bcrypt, mediasoup and puppeteer's Chromium are all present in
+the rebuilt containers, contracts still deploy (their natives fall back to the
+JS implementations), and a social-preview render goes end to end through
+nginx → api → Chromium → sharp (512×268 JPEG). Full frontend gate green, srv
+tsc + 20 tests green, stack healthy.
+
+**Consequence for the remaining waves**: every newly added package must also be
+checked for publish date, not just `yarn npm audit` — the gate now does that
+automatically for anything under a week old.
+
+**Open, for the maintainer**: 13 packages resolved *before* the cooldown existed
+are younger than a week (the AWS SDK set and typescript-eslint 8.66.0 of 3 Aug,
+`ws` 8.21.2, `undici`, `jose`, `nanoid`, `hono`, `terser`, `electron-to-chromium`,
+`node-releases`, the rolldown bindings, and `puppeteer`/`@puppeteer/browsers` of
+4 Aug). All were checked individually against the campaign and are clean. Whether
+to re-resolve them under the gate for consistency — which means re-running the
+wave-0…3 verification — is a call worth making deliberately; doing nothing means
+the next refresh picks them up naturally.
 
 ## Wave 0 — lockfile refresh within existing ranges (2 PRs)
 

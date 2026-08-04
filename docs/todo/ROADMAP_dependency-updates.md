@@ -182,7 +182,8 @@ below).
 | 10 | `chore/deps-wave3-web3` | ready — gates re-run green + in-container rebuild + live smoke; largest manual-test surface |
 | 11 | `chore/deps-wave4a-dnd` | ready — finished WIP + review fixes, functionally verified headlessly (see wave 4a) |
 | 12 | `chore/deps-wave4b-motion` | ready — reviewed, findings fixed (see wave 4b) |
-| 13 | `chore/deps-wave4c-slate` | implemented + functionally verified, review pending (see wave 4c) |
+| 13 | `chore/deps-wave4c-slate` | ready — reviewed (no blocker), findings fixed (see wave 4c) |
+| 14 | `chore/deps-wave4d-react19` | implemented + verified against the built stack, review pending (see wave 4d) |
 
 **Restack record (2026-08-04).** Tree equality of the restacked stack top
 against the pre-restack stack top was verified with `git diff` — the only
@@ -1633,11 +1634,44 @@ untouched via `git diff`.
     on expanded selections, where 0.106 never scrolled — check the composer/
     article scroll position doesn't jump, incl. mobile with the keyboard
     open), and **deleting an image/embed in the article editor**.
-- [ ] **PR 4d**: react/react-dom/@types 18 → 19 flip + recharts 2 → 3 (React-19
+- [x] **PR 4d**: react/react-dom/@types 18 → 19 flip + recharts 2 → 3 (React-19
   support) + fallout fixes (types churn: `JSX.Element` namespace, ref callbacks,
   `useRef` argument requirement). Check react-google-recaptcha and remaining
   React-18-peer packages; `react-native-get-random-values` looks vestigial — verify
   and drop if unused.
+  - Done 2026-08-04 (Fable directly), branch `chore/deps-wave4d-react19`.
+    react/react-dom 19.2.8, @types 19.2.17, recharts 3.10.1.
+    `react-native-get-random-values` verified vestigial and dropped. A peer
+    survey over every react-peered direct dependency found none excluding 19 —
+    waves 4a–4c had migrated exactly the ones that did.
+  - The wave-0a `@types/react` resolution moved `"18"` → `"19"` instead of
+    being dropped: it keeps every `@types/react@*` consumer on the single
+    19.2.17 copy (one resolution in the lockfile, verified).
+  - Fallout was purely mechanical, three classes: the removed global JSX
+    namespace (83 files → `React.JSX.Element`), `useRef()` needing an initial
+    value (24 sites → `useRef(undefined)`), and `useRef<T>(null)` now being
+    `RefObject<T | null>` (the receiving prop/context/hook declarations widen;
+    `MutableRefObject` declarations untouched). Plus the two file-picker
+    inputs moving `onInput` → `onChange` (React 19 retyped onInput to the new
+    InputEvent type; for file inputs it is the same DOM event).
+  - recharts 3: the single call site (LockDurationSlider) uses no changed API.
+    The chart itself is behind the wallet-gated staking form and was not
+    reachable headlessly — **manual: open the stake form and check the
+    lock-duration curve renders** (recharts 3 rewrote the rendering engine).
+  - **Runtime verification against the built stack over nginx** (not the dev
+    server): the complete wave-4a drag suite (13 checks incl. keyboard drags,
+    gap drops, cancel-outside, positional announcements) and the wave-4c
+    editor suite (typing, mentions, paste, marks/toolbar, undo) are green on
+    React 19. Of note for future sessions: the same suites against a vite dev
+    server can fail spuriously right after dependency changes (stale
+    optimize-graph serving) — the production build is the reference.
+  - Audit after the flip: **root 1 moderate** (the `@truffle/hdwallet-provider`
+    deprecation notice — the only residual finding of the whole workstream),
+    srv 0. The react-beautiful-dnd and recharts notices are gone.
+  - **Manual (maintainer)**: a general React-19 smoke of the app (the flip
+    touches every component; the headless suites cover the two riskiest
+    surfaces but not calls/wallet/plugins UI), the stake-form chart above, and
+    a PWA/service-worker update cycle on the built app.
 - react-router stays on the v6 line (v7 out of scope).
 
 ## Final gate

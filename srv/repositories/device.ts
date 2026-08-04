@@ -133,12 +133,15 @@ class DeviceHelper {
     const signedData = encoder.encode(secret);
     const buffer = Buffer.from(base64Signature, 'base64');
     const signature = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    // Curve and hash follow the registered key: P-384/SHA-384 (web client),
+    // P-256/SHA-256 (native clients with hardware-backed keys).
+    const namedCurve = data.publicKey.crv === "P-256" ? "P-256" : "P-384";
     const key = await webcrypto.subtle.importKey(
       "jwk",
       data.publicKey,
       {
         name: "ECDSA",
-        namedCurve: "P-384"
+        namedCurve
       },
       false,
       ["verify"]
@@ -146,7 +149,7 @@ class DeviceHelper {
     const valid = await webcrypto.subtle.verify(
       {
         name: "ECDSA",
-        hash: "SHA-384"
+        hash: namedCurve === "P-256" ? "SHA-256" : "SHA-384"
       },
       key,
       signature,

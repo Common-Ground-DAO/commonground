@@ -97,6 +97,7 @@ progresses; delete the file when the workstream is done (lifecycle per AGENTS.md
 4. `chore/deps-wave1b-frontend` — stacked on 3. **Ready for review.**
 5. `chore/deps-wave15-webauthn` — stacked on 4. **Ready for review**
    (maintainer passkey pass wanted before merge, see the wave-1.5 note).
+6. `chore/deps-wave2a-backend-infra` — stacked on 5. **Ready for review.**
 
 ## Wave 0 — lockfile refresh within existing ranges (2 PRs)
 
@@ -590,24 +591,160 @@ untouched via `git diff`.
 
 ## Wave 2 — independent majors (3 PRs)
 
-- [ ] **PR 2a (backend infra)**:
-  - [ ] redis `^4.0.0` → `^6` **together with** connect-redis `^6` → `^10` (single
-    PR — connect-redis 8+ requires the v4+ client API changes; verify session store
-    init in `srv/serverconfig.ts` and every `createClient` call site)
-  - [ ] puppeteer `^22` → `^25` (headless "new" default, `page.waitForTimeout`
-    removal, cache dir move — check Docker image for bundled-Chromium path
-    assumptions)
-  - [ ] jest `^29` → `^30` + ts-jest current + `@types/jest` `^29`→`^30`
-    (absorbed from TODO.md). Partially pulled forward into 1a by the wave-1
-    review: `jest.config.js` already matches `.spec.(js|ts)` and `yarn tests`
-    runs the ipPrefix suite; the never-compiling `tests/accounts.spec.ts` is
-    already deleted (it imported entities that never existed — the backend suite
-    starts fresh). Wanted here: a regression test for the image-upload path
-    (multer → sharp → S3), which had none when the wave-0b SDK bump broke it.
-  - [ ] **drop `@types/connect-redis` + `@types/redis`** (interim review, 2026-08-04):
-    `@types/redis` is a stub whose dependency drags a full *runtime* `redis@6.2.0`
-    copy into the image next to the real client (verified unused via
-    `require.resolve`); connect-redis ≥7 ships its own types anyway.
+- [x] **PR 2a (backend infra)** — branch `chore/deps-wave2a-backend-infra`,
+  stacked on `chore/deps-wave15-webauthn`. **Audit: 1 moderate → 0 findings**
+  (the puppeteer `<24.15.0` EOL notice was the last one left in `srv`; both
+  workspaces' remaining findings now live only in the frontend, owned by
+  2c/3/4a/4d).
+  - [x] redis `^4.0.0` → `^6.2.0` **together with** connect-redis `^6.0.0` →
+    `^10.0.0` (single commit — connect-redis 10 peer-requires `redis >=5` and
+    the promise API)
+    - **`legacyMode` is gone and `REDIS_LEGACY_MODE` is now ignored.** node-redis
+      5 removed the `createClient({ legacyMode: true })` option (replaced by
+      `client.legacy()` on an existing client, which we do not need), and
+      connect-redis 10 talks to the promise API directly. The session client is
+      an ordinary client now and the three callback branches in
+      `RedisManager.get/set/del` are deleted. **Maintainer decision pending**:
+      `REDIS_LEGACY_MODE=true` is still set in `docker/docker-compose.yml`
+      (api + wsapi) and `docker/docker-compose.selfhost.yml`; it is inert and
+      can be dropped whenever convenient. `docs/realtime` and
+      `docs/infrastructure` were corrected in this PR.
+    - **New `srv/redis/client.ts` is the single `createClient` call site and
+      pins `RESP: 2`.** node-redis 6 flipped the default protocol to RESP3
+      (`DEFAULT_RESP = 3`). `@socket.io/redis-adapter` 8.3 — the newest release
+      — is written against RESP2: it drives pub/sub through the v4
+      `pSubscribe(pattern, listener, bufferMode)` API and reads `PUBSUB NUMSUB`
+      positionally (`parseInt(reply[1])`), which redis.io documents as a *map*
+      reply under RESP3. Measured against redis 6.2.7 (this stack) and redis
+      8.10: both still answer with a flat array even on a RESP3 connection, so
+      that hazard is latent rather than live — the pin stays anyway, so the
+      upgrade is a client-library change and not also a protocol change.
+      Adopting RESP3 is its own change with its own verification.
+    - **API changes made** (verified against the v4→v5 and v5→v6 migration
+      guides and the installed `.d.ts`, then against live redis):
+      `multi().exec()` now returns `Array<ReplyUnion>` instead of the
+      per-command types, so the four chains that index into their results use
+      `execTyped()` (`util/rateLimit.ts`, `util/botRateLimit.ts`,
+      `redis/userdata.ts` ×2, `api/plugins.ts`) — no logic restructured, the
+      casts just disappear. `getUserData` builds its multi in place instead of
+      reassigning (`q = q.hGetAll(k)` no longer type-checks now that the builder
+      carries the accumulated reply tuple). SET flags moved from
+      `{ NX, EX, PX }` to `{ condition, expiration }` (`util/captcha.ts` ×2,
+      `api/plugins.ts`; the flat form still works but is deprecated). `zAdd`,
+      `zRem`, `zCount`, `zRemRangeByScore`, `expire`, `incr`, `sAdd`, `sRem`,
+      `sCard`, `sInter`, `hSet`, `hGetAll`, `get`/`set`/`del`, `ping`, `eval`,
+      `duplicate()` and `publish`/`pSubscribe` all kept their signatures.
+      Nothing in `srv/` uses `scan`, `quit()`/`disconnect()` or the removed
+      `isolationPoolOptions`/`client.commandOptions()`, so the rest of the v5
+      breakage does not apply.
+    - **Two v6 behaviour changes worth knowing** (not acted on): commands now
+      have a **default 5 s timeout** (`DEFAULT_COMMAND_TIMEOUT`; there was none
+      in v4/v5), so a wedged Redis fails fast instead of hanging a request —
+      arguably better, but it is a change; and `socket.keepAliveInitialDelay`
+      defaults to 30 s instead of 5 s.
+    - `yarn` warns that typeorm wants `redis ^3 || ^4 || ^5`. That peer is for
+      TypeORM's optional Redis **query cache**, which this codebase does not use
+      (`util/datasource.ts` sets no `cache` option) — inert.
+    - **Sessions survive the upgrade.** connect-redis's default prefix is still
+      `sess:` and the serializer is still `JSON`, unchanged from v6. Proven
+      live: a session written by connect-redis 6 + legacyMode *before* the
+      rebuild was read back by connect-redis 10 (same sid re-issued, `createdAt`
+      preserved) and `touch()` refreshed its TTL.
+  - [x] **drop `@types/connect-redis` + `@types/redis`**
+    - Done with the redis commit. `@types/redis` was only reachable through
+      `@types/connect-redis`'s dependency, so removing the latter removed both
+      (`grep @types/redis yarn.lock` → 0). connect-redis 10 ships its own
+      types (`dist/connect-redis.d.ts` / `.d.cts`).
+  - [x] puppeteer `^22` → `^25.5.0`
+    - **One code change**: puppeteer 23 changed every screenshot API from
+      `Buffer` to `Uint8Array`, and `htmlToImage()` (`srv/api/util.ts`) feeds
+      its result to sharp through `api/getRoutes.ts` (4 call sites) — wrapped in
+      `Buffer.from()`. Nothing else in 23/24/25 touches this code: the
+      `headless: 'new'` default and `page.waitForTimeout` were already gone in
+      **22** (not part of this delta), and the cache directory has been
+      `~/.cache/puppeteer` since 19. 23's `.npmrc`-config removal, per-browser
+      env vars and `product`→`browser` rename, 24's Firefox-over-CDP removal and
+      retired `PuppeteerLaunchOptions` types, and 25's removal of
+      `Browser.isConnected()` / `MouseOptions.clickCount` / `Puppeteer.product`
+      are all unused here.
+    - **puppeteer 25 is ESM-only** (`"type": "module"`; the `require` export
+      condition points at the ESM build — 22/23/24 were true dual builds). This
+      backend compiles to CommonJS, so it now depends on Node's `require(ESM)`.
+      Verified working on node 24.18 both standalone and in the built image, and
+      `tsc` under `module: nodenext` accepts it. Worth remembering if the Node
+      floor ever moves *down*.
+    - **Dockerfile: no change needed, but two notes for the maintainer.**
+      (1) The Debian package list in `docker/backend/Dockerfile` and
+      `Dockerfile_dev_stage_0` is sufficient for Chrome 151 — no new system
+      libraries. Cosmetic: `libgcc1` and `libasound2` are pre-bookworm names
+      that only resolve via transitional packages; a future image refresh should
+      use `libgcc-s1` / `libasound2t64`.
+      (2) puppeteer 25 downloads **Chrome for Testing 151** instead of 127, so
+      the postinstall payload grows from ~563 MB to ~651 MB (chrome
+      328→389 MB, chrome-headless-shell 235→262 MB) — the image gets roughly
+      90 MB bigger. Nothing to fix; the bare `yarn` in the image already puts
+      it in `/root/.cache/puppeteer`, which is where puppeteer looks.
+    - Verified with the production launch args (`--no-sandbox --no-zygote
+      --single-process`): launch, `setContent`, element screenshot, sharp
+      round-trip — on the host and inside the rebuilt `api` container.
+    - Pre-existing, **not** fixed here (would change rendered output):
+      `api/util.ts` calls `page.setViewport(...)` without awaiting it, right
+      before taking the screenshot.
+  - [x] jest `^29.4.0` → `^30.4.2` + `@types/jest` `^29` → `^30.0.0` +
+    ts-jest pinned to `^29.4.12`
+    - There is no ts-jest 30; 29.4.0 added `jest: ^30` to its peer range and
+      29.4.12 was already the resolved version, so only the floor moved.
+    - `jest.config.js` needed no change (wave 1 already pointed it at
+      `.spec.(js|ts)`). None of jest 30's breaking changes apply: no removed
+      matcher aliases in the suite, no `--testPathPattern` in any script, no
+      deep imports into jest internals, `testEnvironment: 'node'` unchanged.
+      The pre-existing ts-jest `TS151002` warning (hybrid module kind without
+      `isolatedModules`) is unchanged — ts-jest's version did not move.
+    - **Node floors of this whole PR**: redis 6 ≥20, connect-redis 10 ≥22,
+      puppeteer 25 ≥22.12, jest 30 `^18.14 || ^20 || ^22 || >=24`. The image is
+      node 24.18 — all satisfied, and `@tsconfig/node24` already encodes that.
+  - [x] **regression test for the image-upload path** — `tests/saveImage.spec.ts`
+    (7 tests), the thing the wave-0b `@aws-sdk` bump broke unnoticed. Mocks the
+    S3 client and the pg pool and drives the real multer→sharp→PutObject code.
+    The load-bearing assertion is `Buffer.isBuffer(input.Body)` — a Sharp
+    instance or any `Readable` passes a naive truthiness check and only fails
+    deep inside the SDK. Around it: key = sha256 of exactly the uploaded bytes,
+    a real webp at the requested dimensions (resized and un-resized), bucket
+    auto-creation ordering, the `files` row matching what was stored, and an
+    oversized image rejected before S3 is touched.
+    - Two mocks were unavoidable and are documented in the file:
+      `repositories/users`/`communities` (they drag in the native `bcrypt`
+      binding, which is only built inside the image) and `util/postgres`.
+    - `repositories/files.ts` now imports sharp's option types **by name**
+      instead of through the `sharp.*` namespace. That namespace only exists in
+      sharp's CommonJS `export =` typings, which the build reaches via
+      `moduleResolution: Node16` but ts-jest — compiling the suite as plain
+      CommonJS — does not. Type-only change.
+  - Verification gate: `npx tsc --noEmit` clean after every step;
+    `./run.sh update_backend` green twice (after the redis step and at the end),
+    stack healthy afterwards; `yarn tests` **20/20** (13 ipPrefix + 7 new)
+    under jest 30. Live smokes against the running stack, all green:
+    `getCommunityList` over nginx→api→pg with a session cookie issued *and*
+    re-read through connect-redis 10 (including a pre-upgrade session, see
+    above); the `ipRateLimitHandler` multi/zAdd/expire/zRemRangeByScore/zCount
+    chain allowing 3 and rejecting the 4th request per /64 while creating the
+    /56 and /48 buckets, and rejecting an unparseable `X-Forwarded-For` with
+    `INVALID_REQUEST`; the `userdata` set/hash chains and `enforceBotRateLimit`;
+    `PING`; and an end-to-end `@socket.io/redis-emitter` (api) → redis →
+    `@socket.io/redis-adapter` (wsapi) → socket.io client broadcast, with the
+    client also receiving `buildId` over a websocket upgrade. For puppeteer,
+    `GET /c/<url>/image.jpeg` over nginx renders a real community social
+    preview (512×268 progressive JPEG) through Chrome 151 → sharp. For the
+    upload path, `POST /api/v2/File/uploadImage` over nginx stores a 110×110
+    webp readable back out of seaweed.
+  - Docs trued up in this PR: `docs/realtime` (RedisManager section),
+    `docs/infrastructure` (`REDIS_LEGACY_MODE`, the `createClient` call site),
+    `docs/architecture` (the four-client table's "why separate" column),
+    `docs/auth-identity` (session store row) — status lines bumped.
+  - Not verifiable headlessly (maintainer): a browser pass on login/session
+    behaviour after the session-store swap, and a social-preview image
+    (`/preview/...` GET routes) rendered by the new Chromium in a real browser
+    context.
 - [ ] **PR 2b (cross-workspace small majors)**: ua-parser-js 1 → 2 in **both**
   workspaces (AGPL dual-license is fine for us; `getResult()` API shape changed),
   @hapi/tlds 1 → 2 (data-only), short-uuid 4 → 6, open-graph-scraper 5 → 6

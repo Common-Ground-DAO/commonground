@@ -1,4 +1,4 @@
-> Status: verified against commit ff0f70311, 2026-08-04
+> Status: verified against commit 81cf60a37, 2026-08-04
 
 # Common Ground Infrastructure Documentation
 
@@ -56,7 +56,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
   - pub/sub adapter for Socket.IO (`v2:`), distributing real-time events across backend instances
   - general-purpose cache (rate limiting, bot presence, captcha, user data)
 - Until 2026-08-01 this was three identically configured instances (`redis-sessions`, `redis-socketio`, `redis-data`); the split was mechanical, never load-bearing. `maxmemory` is now the shared budget for all of it.
-- **Backend connection:** `srv/redis/index.ts` (the only file that creates clients) resolves `process.env.REDIS_URL || 'redis://redis:6379'`, password from the Docker secret `redis_password` or `REDIS_PASSWORD`. Neither compose file sets `REDIS_URL`; it exists for deployments that run Redis somewhere else.
+- **Backend connection:** `srv/redis/index.ts` resolves `process.env.REDIS_URL || 'redis://redis:6379'`, password from the Docker secret `redis_password` or `REDIS_PASSWORD`, and hands both to `srv/redis/client.ts` — the only file that calls `createClient`, and where `RESP: 2` is pinned. Neither compose file sets `REDIS_URL`; it exists for deployments that run Redis somewhere else.
 
 > The former `redis-blockscout` service (a cache for the deleted optional Blockscout explorer stack) was removed from the compose file on 2026-08-02.
 
@@ -69,7 +69,9 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Volumes:**
   - `./vapid_keys.json:/run/secrets/vapid_keys_json:ro` — VAPID keys for web push notifications
   - `./api_data:/api_data:ro` — static API data
-- **Key environment variables:** `DB_TYPE=writer`, `PG_PASSWORD` (writer), `REDIS_PASSWORD`, `REDIS_SECRET`, `REDIS_LEGACY_MODE=true`, `DEPLOYMENT`, `BASE_URL`, `CGID_URL`, `S3_SECRET`, `SENDGRID_API_KEY`, `GOOGLE_RECAPTCHA_SECRET_KEY`, Twitter OAuth credentials, the `STAKING_*` set, and the bot limits (`PLATFORM_OPERATOR_USER_IDS`, `BOT_USER_OWNER_LIMIT`, `BOT_COMMUNITY_OWNER_LIMIT`, `BOT_PLATFORM_OWNER_LIMIT`, `BOT_ACTIVE_TOKEN_LIMIT`, `BOT_API_RATE_LIMIT_PER_MINUTE`, `BOT_MESSAGE_RATE_LIMIT_PER_MINUTE`).
+- **Key environment variables:** `DB_TYPE=writer`, `PG_PASSWORD` (writer), `REDIS_PASSWORD`, `REDIS_SECRET`, `REDIS_LEGACY_MODE=true` (obsolete since
+  node-redis 6 / connect-redis 10 — still set in the compose files, ignored by
+  the backend), `DEPLOYMENT`, `BASE_URL`, `CGID_URL`, `S3_SECRET`, `SENDGRID_API_KEY`, `GOOGLE_RECAPTCHA_SECRET_KEY`, Twitter OAuth credentials, the `STAKING_*` set, and the bot limits (`PLATFORM_OPERATOR_USER_IDS`, `BOT_USER_OWNER_LIMIT`, `BOT_COMMUNITY_OWNER_LIMIT`, `BOT_PLATFORM_OWNER_LIMIT`, `BOT_ACTIVE_TOKEN_LIMIT`, `BOT_API_RATE_LIMIT_PER_MINUTE`, `BOT_MESSAGE_RATE_LIMIT_PER_MINUTE`).
 
 #### `wsapi`
 - **Image:** `cryptogram/backend`

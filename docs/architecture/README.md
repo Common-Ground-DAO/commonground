@@ -1,4 +1,4 @@
-> Status: verified against commit 0f1d72d66, 2026-08-03
+> Status: verified against commit 96e828069, 2026-08-04
 
 # Common Ground - Architecture Documentation
 
@@ -341,11 +341,11 @@ This allows the API server to emit events (via the shared Redis pub/sub channel)
 
 ### Redis Clients
 
-One Redis instance (`redis`, default URL `redis://redis:6379`, override with `REDIS_URL`) serves every purpose. `srv/redis/index.ts` is the only file that creates clients and still keeps four of them — for protocol reasons, not because they address different servers:
+One Redis instance (`redis`, default URL `redis://redis:6379`, override with `REDIS_URL`) serves every purpose. `srv/redis/index.ts` owns the connections (all built by `srv/redis/client.ts`, the only `createClient` call site) and still keeps four of them:
 
 | Client | Purpose | Why it is separate |
 |--------|---------|--------------------|
-| `session` | Express session storage (connect-redis, `sess:`). Written by `api`, read by `wsapi` for cookie verification. | needs `legacyMode` — connect-redis v6 speaks the node-redis v3 API |
+| `session` | Express session storage (connect-redis, `sess:`). Written by `api`, read by `wsapi` for cookie verification. | historical — it used to be the one client needing `legacyMode`; kept because collapsing connections is a behaviour change |
 | `socketIOPub` / `socketIOSub` | Socket.IO adapter pub/sub (`v2:`) for broadcasting across `wsapi` instances. | a subscribing connection cannot issue normal commands |
 | `data` | General-purpose caching, `UserDataManager`, rate limiting, bot connection-presence leases. | plain command connection |
 

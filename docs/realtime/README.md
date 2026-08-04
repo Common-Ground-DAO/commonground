@@ -1,6 +1,6 @@
 # Real-time & WebRTC Documentation
 
-> Status: verified against commit 0f1d72d66, 2026-08-03
+> Status: verified against commit 96e828069, 2026-08-04
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -706,8 +706,14 @@ The `RedisManager` class (`srv/redis/index.ts`) manages all Redis connections:
 - `socketIOSub` is a `duplicate()` of `socketIOPub` (same connection config, separate client for subscribing)
 - `isReady` promise resolves when all clients are connected
 - Generates a random `instanceId` per process instance
-- Supports legacy mode for the session client via `REDIS_LEGACY_MODE` env var
-- Exposes `get`, `set`, `del` operations with legacy mode fallback for the session client
+- Exposes `get`, `set`, `del` convenience operations on any of the four clients
+- All four clients are created through `srv/redis/client.ts`, which pins
+  `RESP: 2`. node-redis 6 defaults to RESP3; `@socket.io/redis-adapter` 8.3 is
+  written against RESP2, so the protocol stays where node-redis 4 had it.
+- `REDIS_LEGACY_MODE` is **obsolete and ignored** since node-redis 6 /
+  connect-redis 10 (node-redis dropped `legacyMode`, and connect-redis speaks
+  the promise API). It is still set in the compose files; removing it there is
+  a pending maintainer cleanup.
 
 ### Socket.IO Redis Adapter
 

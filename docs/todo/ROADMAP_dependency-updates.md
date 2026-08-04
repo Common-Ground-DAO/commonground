@@ -220,6 +220,33 @@ JS implementations), and a social-preview render goes end to end through
 nginx → api → Chromium → sharp (512×268 JPEG). Full frontend gate green, srv
 tsc + 20 tests green, stack healthy.
 
+**Follow-up audit (same day): four more install paths, one unprotected.** The
+first pass only covered the two main workspaces. A sweep of every way a package
+can be installed here found:
+
+- **`docker/hardhat/Dockerfile` ran a bare `yarn`** — in a node image that is the
+  bundled **Yarn 1.22**, which has no `enableScripts` and no cooldown at all —
+  against a `package.json` with **no lockfile**. The Hardhat dev-chain image
+  therefore resolved a large toolchain to whatever was newest at build time and
+  executed every lifecycle script in it. Fixed: corepack + `packageManager:
+  yarn@4.17.1` + its own `.yarnrc.yml`. No allowlist needed (the contracts
+  workspace already proved the toolchain installs and deploys with scripts off).
+- **Both Azure pipelines `cp` a secure file OVER the repo's `.yarnrc.yml`**, so
+  CI discarded the hardening silently on every staging and production build.
+  They now re-append both settings after the copy.
+- **Four `yarn set version 4.1.0` bootstraps** survived in `updateFrontend.sh`,
+  `selfhost.sh` and the two pipelines. This is not cosmetic: 4.1.0 **hard-errors**
+  on the unknown `npmMinimalAgeGate` key, so those paths would have broken.
+- **Five `npx` call sites** all resolve locally today, but npx silently downloads
+  and runs a missing package. They pass `--no` now, which makes that a loud
+  failure (verified in both directions).
+
+Coverage is now complete: every `package.json` in the repo resolves to a
+`.yarnrc.yml` carrying both controls — root and `srv/` directly, `contracts/` by
+Yarn's directory walk, `docker/hardhat/node/` by its own. Verified by rebuilding
+the hardhat image (dev chain answers `eth_blockNumber`), redeploying the
+contracts, and running both npx tools.
+
 **Consequence for the remaining waves**: every newly added package must also be
 checked for publish date, not just `yarn npm audit` — the gate now does that
 automatically for anything under a week old.

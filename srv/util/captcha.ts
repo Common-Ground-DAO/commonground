@@ -105,7 +105,7 @@ async function getHmacKey(): Promise<string> {
       const generated = realRandomHexString(32);
       // SET NX is atomic: only the first instance to reach it wins, everyone
       // else reads the stored value below.
-      await client.set(key, generated, { NX: true });
+      await client.set(key, generated, { condition: 'NX' });
       const stored = await client.get(key);
       return stored || generated;
     })().catch((e) => {
@@ -163,7 +163,10 @@ async function verifyAltchaToken(token: string): Promise<boolean> {
   await redisManager.isReady;
   const client = redisManager.getClient("data");
   const replayKey = `captcha:altcha:used:${challengeId}`;
-  const set = await client.set(replayKey, "1", { NX: true, PX: CHALLENGE_TTL_MS });
+  const set = await client.set(replayKey, "1", {
+    condition: 'NX',
+    expiration: { type: 'PX', value: CHALLENGE_TTL_MS },
+  });
   return set !== null;
 }
 

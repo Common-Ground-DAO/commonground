@@ -2,40 +2,43 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import * as redis from 'redis';
 import {
   realRandomHexString,
   dockerSecret
 } from '../util';
 import UserDataManager from './userdata';
+import { createRedisClient, type CgRedisClient } from './client';
 
 type ClientType = 'session'|'socketIOPub'|'socketIOSub'|'data';
 
 class RedisManager {
-  private legacyMode: boolean;
-  private clients: { [name in ClientType]: ReturnType<typeof redis['createClient']> };
+  private clients: { [name in ClientType]: CgRedisClient };
   private _userData: UserDataManager;
   private _instanceId: string;
 
   public isReady: Promise<void>;
 
   constructor() {
-    this.legacyMode = process.env.REDIS_LEGACY_MODE === 'true';
-    // One Redis instance serves every purpose. The four client objects stay:
-    // the session client needs `legacyMode` (connect-redis v6 speaks the
-    // node-redis v3 API) and the Socket.IO adapter needs a dedicated
-    // subscriber connection — both are protocol requirements, not reasons to
-    // run separate servers. Key prefixes are pairwise disjoint.
+    // One Redis instance serves every purpose. Four client objects: the
+    // Socket.IO adapter needs a dedicated subscriber connection (a subscribed
+    // RESP2 connection cannot issue normal commands), which is a protocol
+    // requirement; the separate `session` client is now only historical (it
+    // used to be the one client that needed `legacyMode`) and is kept because
+    // collapsing connections is a behaviour change, not a dependency bump.
+    // Key prefixes are pairwise disjoint.
+    //
+    // NOTE: `REDIS_LEGACY_MODE` is obsolete and ignored. It existed because
+    // connect-redis v6 spoke the node-redis v3 callback API, so the session
+    // client had to be created with `legacyMode: true`. connect-redis 10 uses
+    // the promise API directly and node-redis dropped `legacyMode` entirely, so
+    // there is nothing left to switch. The variable is still set in the compose
+    // files; it is harmless, and removing it there is a maintainer decision.
     const url = process.env.REDIS_URL || 'redis://redis:6379';
     const password = dockerSecret('redis_password') || process.env.REDIS_PASSWORD;
-    const sessionClient = redis.createClient({
-      url,
-      password,
-      legacyMode: this.legacyMode
-    });
-    const socketIOPubClient = redis.createClient({ url, password });
+    const sessionClient = createRedisClient({ url, password });
+    const socketIOPubClient = createRedisClient({ url, password });
     const socketIOSubClient = socketIOPubClient.duplicate();
-    const dataClient = redis.createClient({ url, password });
+    const dataClient = createRedisClient({ url, password });
     this.clients = {
       session: sessionClient,
       socketIOPub: socketIOPubClient,
@@ -72,53 +75,17 @@ class RedisManager {
 
   public async get(type: ClientType, key: string) {
     await this.isReady;
-    if (this.legacyMode && type === 'session') {
-      return new Promise<string|null>((resolve, reject) => {
-        (this.clients.session as any).get(key, (err: unknown, value: string|null) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(value);
-          }
-        });
-      });
-    } else {
-      return this.clients[type].get(key);
-    }
+    return this.clients[type].get(key);
   }
 
   public async set(type: ClientType, key: string, value: string) {
     await this.isReady;
-    if (this.legacyMode && type === 'session') {
-      return new Promise<void>((resolve, reject) => {
-        (this.clients.session as any).set(key, value, (err: unknown, status: string) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve();
-          }
-        });
-      });
-    } else {
-      return this.clients[type].set(key, value);
-    }
+    return this.clients[type].set(key, value);
   }
 
   public async del(type: ClientType, key: string) {
     await this.isReady;
-    if (this.legacyMode && type === 'session') {
-      return new Promise<void>((resolve, reject) => {
-        (this.clients.session as any).del(key, (err: unknown, status: string) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve();
-          }
-        });
-      });
-    } else {
-      return this.clients[type].del(key);
-    }
+    return this.clients[type].del(key);
   }
 }
 

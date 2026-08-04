@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import type * as redis from 'redis';
+import type { CgRedisClient } from './client';
 import { randomString } from '../util';
 
 const userSessionPrefix = 'us';
@@ -10,11 +10,11 @@ const userDataPrefix = 'ud';
 const onlineUsersKey = 'online-user-addresses';
 
 export default class UserDataManager {
-  private client: ReturnType<typeof redis['createClient']>;
+  private client: CgRedisClient;
   private isReady: Promise<void>;
 
   constructor(
-    client: ReturnType<typeof redis['createClient']>,
+    client: CgRedisClient,
     isReady: Promise<void>,
   ) {
     this.client = client;
@@ -34,10 +34,12 @@ export default class UserDataManager {
   public async removeUserSession(userId: string, sessionId: string): Promise<number> {
     await this.isReady;
     const key = `${userSessionPrefix}:${userId}`;
+    // `execTyped()` (node-redis 5+) keeps the per-command reply types of the
+    // chain instead of collapsing them to `ReplyUnion[]` like plain `exec()`.
     const sessionCount = (await this.client.multi()
       .sRem(key, sessionId)
       .sCard(key)
-      .exec())[1] as number;
+      .execTyped())[1];
     if (sessionCount === 0) {
       await this.client.sRem(onlineUsersKey, userId);
     }
@@ -56,9 +58,14 @@ export default class UserDataManager {
       return [];
     }
     const keys = userIds.map(userId => `${userDataPrefix}:${userId}`);
-    let dataQuery = this.client.multi();
+    // Queued in place rather than by reassignment: since node-redis 5 the multi
+    // builder carries the accumulated reply tuple in its type, so
+    // `q = q.hGetAll(k)` no longer type-checks. The methods mutate and return
+    // `this`, so the loop is equivalent. HGETALL replies stay plain objects
+    // (RESP2 — see redis/client.ts), which is what the cast below assumes.
+    const dataQuery = this.client.multi();
     for (const key of keys) {
-      dataQuery = dataQuery.hGetAll(key);
+      dataQuery.hGetAll(key);
     }
     return (await dataQuery.exec()) as unknown as { status?: Models.User.OnlineStatus }[];
   }
@@ -69,11 +76,11 @@ export default class UserDataManager {
       // namespaced so the throwaway intersection set can never collide with
       // one of the real key prefixes on the shared instance
       const randomKey = `tmp:${randomString(6)}`;
-      const [ , result ] = (await this.client.multi()
+      const [ , result ] = await this.client.multi()
         .sAdd(randomKey, userIds)
         .sInter([randomKey, onlineUsersKey])
         .del(randomKey)
-        .exec()) as [undefined, string[]];
+        .execTyped();
       return result;
     } else {
       return [];

@@ -20,7 +20,8 @@ type Props = {
   onCreateChannelClick: (area: Models.Community.Area) => void;
   sortedTextChannels: Models.Community.Channel[];
   dragging: boolean;
-  draggableHandlerProps: DraggableProvidedDragHandleProps | undefined;
+  // react-beautiful-dnd types >= 13.1.3 widened `dragHandleProps` to include null
+  draggableHandlerProps: DraggableProvidedDragHandleProps | null | undefined;
   selectedId?: string;
 }
 

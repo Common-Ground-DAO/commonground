@@ -94,10 +94,60 @@ newest version its existing range allows. `^0.x` semantics keep slate, sharp,
 reflect-metadata, typeorm-in-0.3 etc. from jumping lines. Verify manifests are
 untouched via `git diff`.
 
-- [ ] **PR 0a (frontend)**: `yarn up -R '*'` in `/`. Expected security payoff: axios
+- [x] **PR 0a (frontend)**: `yarn up -R '*'` in `/`. Expected security payoff: axios
   1.19, lodash 4.18, sanitize-html 2.17, joi 17.13.4, postcss 8.5.25, plus dozens of
   minors (react-router 6.30, styled-components 6.4, dayjs, emoji-picker…). Full
   verification gate + bundle-size sanity check against the Vite-7 baseline.
+  - Branch `chore/deps-wave0-frontend`. Audit: **22 high → 0 high**, 33 moderate → 7,
+    1 low → 0. Six of the seven residual moderates are deprecation notices already
+    scheduled in later waves (@floating-ui rename 2c, @metamask/sdk 3,
+    @simplewebauthn/types 1.5, react-beautiful-dnd 4a, recharts 4d) plus
+    `@truffle/hdwallet-provider`. **The seventh is net-new and needs a decision**:
+    react-router-dom 6.30.4 is in the range of GHSA-jjmj-jmhj-qwj2 (open redirect →
+    XSS, moderate, >=6.30.2 <=6.30.4). There is **no fixed 6.x release** — the fix is
+    react-router 7.13, and v7 is out of scope (decision 7). Either accept the residual
+    or hold the range at 6.30.1, which predates the vulnerable range.
+  - `yarn up -R '*'` alone is **not** the full refresh the wave assumed: micromatch's
+    `*` does not cross `/`, so every scoped package stayed at its range floor. The
+    lockfile was produced with `yarn up -R '*' '@*/*'`. **Use both patterns in PR 0b.**
+  - Resolved: axios 1.6.7→1.19.0, lodash 4.17.21→4.18.1, sanitize-html 2.6.1→2.17.6,
+    joi 17.7.0→17.13.4, postcss 8.4.31→8.5.25, react-router-dom 6.0.2→6.30.4,
+    styled-components 6.1.8→6.4.4, tailwindcss 3.1.6→3.4.19, react/react-dom
+    18.2.0→18.3.1, viem 1.2.5→1.21.4, wagmi 1.3.9→1.4.13, rainbowkit 1.0.8→1.3.7,
+    recharts 2.12.7→2.15.4, emoji-picker-react 4.9.2→4.19.1, dayjs 1.10.7→1.11.21,
+    react-select 5.2.2→5.10.2, ethers 5.7.2→5.8.0. Deliberately unmoved (`^0.x` /
+    exact pins / out-of-scope majors): slate 0.103, slate-react 0.106, socket.io-client
+    4.7.1, dexie 4.0.8, workbox 6.5.4, @simplewebauthn 10, @metamask/sdk 0.1.0,
+    @farcaster/auth-kit 0.3.1 — all owned by later waves.
+  - Four fixes were needed; none were optional:
+    1. **`history` became an explicit dependency** (`^5.3.0`). react-router-dom 6.30
+       dropped its `history` dep in favour of `@remix-run/router`, and
+       `src/components/SuspenseRouter/SuspenseRouter.tsx` imports `createBrowserHistory`
+       from it — a phantom dependency that broke module resolution, not just types.
+    2. **`resolutions: { "@types/react": "18" }`.** Five `@types/*` packages depend on
+       `@types/react@*`, which now resolves to 19.x; the second copy made every
+       react-beautiful-dnd / react-google-recaptcha component fail `TS2786`. The pin
+       goes away again in wave 4d.
+    3. **`ua-parser-js` pinned into `vendor-shared`** (vite.config.ts). RainbowKit 1.3
+       added a `ua-parser-js` dependency; because the CG ID mini-app imports it
+       directly too, rollup folded the whole `vendor-web3` chunk into the `index_cgid`
+       entry and `cg:assert-cgid-entry-chunks` failed the build — precisely the failure
+       mode that guard exists for. (The workbox `Invalid mapping` error that follows a
+       failed build is a knock-on effect of the empty `outDir`, not a separate bug.)
+    4. `AreaItem`'s `draggableHandlerProps` widened to `| null`, matching
+       `@types/react-beautiful-dnd` ≥13.1.3.
+  - Bundle (raw JS, no sourcemaps): 9.88 MB → 10.82 MB (+9.5%) over 53 chunks.
+    **`vendor-web3` is the whole regression: 2.26 MB → 3.82 MB (+1.56 MB)**, from
+    viem 1.2→1.21 + wagmi 1.4 + rainbowkit 1.3 (which also adds `@tanstack/react-query`).
+    It is eager for the main app, so wave 3 should re-measure. Offsetting it,
+    `vendor-icons` fell 690 KB → 60 KB (heroicons 2.2 tree-shakes properly). The CG ID
+    entry is unaffected: `index_cgid` 8.5 KB + `vendor-shared` 72.5 KB + `vendor-react`.
+  - Gate: typecheck / lint (0 errors, 645 pre-existing warnings) / test (4) / build /
+    check:html-rewrite all green.
+  - **Manual browser pass wanted** before merge: client-side navigation (the `history`
+    package is now a separate copy from react-router's vendored one) and a general
+    smoke of the wallet/login flows, a call, the editor, charts and the emoji picker —
+    the `VENDOR_GROUPS` change moves chunk boundaries, which no build-time check covers.
 - [ ] **PR 0b (backend)**: same in `/srv`. Expected: axios 1.19, typeorm 0.3.x-latest
   (SQL-injection fixes), express 4.21, ws 8.21, pg 8.22, express-fileupload 1.5.2,
   AWS SDK current. While here: re-check whether `srv/util/axios.ts` still needs its

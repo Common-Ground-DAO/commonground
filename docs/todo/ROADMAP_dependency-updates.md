@@ -182,9 +182,15 @@ untouched via `git diff`.
     ws 8.5.0→8.21.2, pg 8.7.3→8.22.0, express-fileupload 1.3.1→1.5.2,
     `@aws-sdk/*` 3.1x→3.1102.0, joi 17.7→17.13.4, redis 4.0.4→4.7.1,
     puppeteer 22.2→22.15, express-session 1.17→1.19, multer …lts.1→lts.2,
-    ip 1.1.8→1.1.9. Unmoved by design (exact pins / `^0.x`): socket.io 4.7.1,
-    `@socket.io/redis-adapter` 8.2.1, ethers 6.7.1, cookie 0.4.2,
-    cookie-signature 1.0.6, sharp 0.30.7, connect-redis 6.1.3, mediasoup 3.23.2.
+    ip 1.1.8→1.1.9, sharp 0.30.6→0.30.7 (in-line). Unmoved by design (exact pins /
+    `^0.x`): socket.io 4.7.1, `@socket.io/redis-adapter` 8.2.1, ethers 6.7.1,
+    cookie 0.4.2, cookie-signature 1.0.6, connect-redis 6.1.3, mediasoup 3.23.2.
+    Interim-review corrections (2026-08-04): `@sendgrid/mail` 8.1.3→8.1.6 and
+    `@mailchimp/mailchimp_marketing` 3.0.78→3.0.80 **did** move — in-range patch
+    bumps only; decision 6 ("do not touch") means no manual work / no majors, and
+    both get deleted by the email workstream, so this is fine. The `ws 8.5.0→8.21.2`
+    line is the direct dep; a nested ws 8.5.0 survives inside the exact-pinned
+    ethers 6.7.1 (not audit-flagged).
   - Four fallout fixes were needed; none optional (`package.json` had to change —
     the `yarn up` itself left it untouched, `git diff` confirmed, the edits below
     are the follow-up):
@@ -263,6 +269,11 @@ untouched via `git diff`.
     the exact pins exist** (likely express-session cookie-format compat — a
     cookie-signature bump may invalidate existing sessions). Bump what is safe,
     document what is deliberately kept.
+  - [ ] **drop `express-fileupload` + `@types/express-fileupload`** (interim review,
+    2026-08-04): nothing in `srv/` imports it — uploads go through multer in
+    `srv/api/files.ts` — so its audit finding was about unreachable code, and
+    `@types/express-fileupload` is one of the three packages forcing the
+    `@types/express: "4"` resolution.
 - [ ] **PR 1b (frontend)**:
   - [ ] socket.io-client `4.7.1` → `4.8.3` (stay in sync with server; reconnect smoke)
   - [ ] dexie `4.0.8` → `4.4.x`, dexie-react-hooks `1.1.7` → `4.4.x` (verify the
@@ -291,12 +302,21 @@ untouched via `git diff`.
     assumptions)
   - [ ] jest `^29` → `^30` + ts-jest current (absorbed from TODO.md; point
     `srv/jest.config.js` at the `.ts` sources while touching it — the config
-    currently only finds compiled `.js`)
+    currently only finds compiled `.js`). **Plus** (wave-0 finding): add
+    `@types/jest`, and rewrite-or-delete `srv/tests/accounts.spec.ts` — it imports
+    an `entities/accounts` / `Account` active-record API that has never existed in
+    this repo, so the suite fails as soon as jest actually finds it.
+  - [ ] **drop `@types/connect-redis` + `@types/redis`** (interim review, 2026-08-04):
+    `@types/redis` is a stub whose dependency drags a full *runtime* `redis@6.2.0`
+    copy into the image next to the real client (verified unused via
+    `require.resolve`); connect-redis ≥7 ships its own types anyway.
 - [ ] **PR 2b (cross-workspace small majors)**: ua-parser-js 1 → 2 in **both**
   workspaces (AGPL dual-license is fine for us; `getResult()` API shape changed),
   @hapi/tlds 1 → 2 (data-only), short-uuid 4 → 6, open-graph-scraper 5 → 6
   (options renamed), node-cron 3 → 4 (optional — skip if API churn outweighs value),
-  mime-types 2 → 3, reflect-metadata 0.1 → 0.2 (verify TypeORM compat note),
+  mime-types 2 → 3, reflect-metadata 0.1 → 0.2 (verify TypeORM compat note; since
+  wave 0, typeorm 0.3.31 already loads a nested reflect-metadata 0.2.2 next to the
+  hoisted 0.1.14 — verified interoperable, but the bump should dedupe to one copy),
   altcha 2 → 3 + altcha-lib 1 → 2 **as a pair** (widget and server lib must agree
   on the challenge format — test the PoW flow end to end).
 - [ ] **PR 2c (frontend, service worker)**: workbox `6.5.4` → `^7.4` (precaching +

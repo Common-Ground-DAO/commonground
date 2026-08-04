@@ -47,6 +47,12 @@
 
 ## Maintainer decisions needed
 
+- [ ] **Move `contracts/` to its own repository / submodule?** (2026-08-04, raised by
+  the maintainer during dependency-update planning) — contracts are not needed for
+  selfhosting, no new on-chain work is planned, and extracting them would take the
+  Hardhat/Truffle toolchain (and its audit surface) out of the main repo. Decide, and
+  if yes, plan the extraction (keep `contracts/staking` Foundry setup intact; the
+  backend only consumes ABIs).
 - [ ] **Premium purchases on self-hosted instances** — the Spark purchase flow (`PaySpark`)
   sends to Common Ground's own beneficiary addresses hardcoded in
   `src/common/premiumConfig.ts`, and purchases are only credited by the onchain listener.
@@ -70,11 +76,6 @@
 - [ ] **`role_gated_files` + `GET /gated-videos/:filename` / `GET /gated-files/:filename`**
   — their only content producers were the wizard data-room elements removed in Phase 2;
   the table has no create path in code. Removal candidate.
-- [ ] **Drop the `@types/confusing-browser-globals` devDep** (2026-08-03, Vite workstream)
-  — its only would-be consumer is `eslint.config.mjs`, which no tsconfig project covers
-  (`tsconfig.json` includes `src/` only, `tsconfig.node.json` lists `vite.config.ts`,
-  `vitest.config.ts`, `vite/*.ts`, `tools/*.mjs`). The runtime package
-  `confusing-browser-globals` stays — the flat config imports it. One-line cleanup.
 - [ ] **Delete `public/images/tokensale_header.png`** (891 KB, 2026-08-03, Vite workstream)
   — nothing references it; `src/views/TokenSale/TokenSale.tsx:106` uses the `.webp`. It
   ships in every build. (`public/images/tokensale_social_preview.png` **is** used, by
@@ -126,11 +127,6 @@
   `src/components/molecules/CaptchaModal/CaptchaModal.tsx:59` fires
   `userApi.verifyCaptcha({ token })` without `await` or `.catch()`, so a rejection is
   silently swallowed; the reCAPTCHA path below it (`:68`) awaits it.
-- [ ] **Re-check whether `srv/util/axios.ts` still needs `keepAlive: false` on Node 24**
-  (2026-08-03) — the custom Axios instance exists for a Node-20-era Axios/undici bug
-  (axios#5929 / nodejs#47130) and has not been re-tested since the Node 24 bump. If the
-  bug persists, update the comment to say so; if not, drop the workaround and use the
-  default agents (connection reuse is worth having back).
 
 ## Optional / nice-to-have
 
@@ -157,7 +153,8 @@
   CG ID mini-app pays for all 11 — it is most of the +63 KB the vendor grouping cost that
   entry. `resolve.dedupe: ['tslib']` is **not** a safe fix as it stands (tslib 1 and 2 are
   not interchangeable); the fix is dependency hygiene — a yarn resolution once the
-  `@walletconnect` v1 packages are gone.
+  `@walletconnect` v1 packages are gone (the wagmi 2 migration in
+  `ROADMAP_dependency-updates.md` wave 3 removes them; re-check then).
 - [ ] **Immutable caching for hashed frontend assets in nginx — own PR** (2026-08-03).
   `^/(fonts|icons|images|static|audio|downloads)/` is capped at
   `max-age=86400, must-revalidate` in all three nginx configs, although everything under
@@ -168,9 +165,6 @@
   Node 24 (it continues; the warning shows in every `build_full` contract deploy).
   2.29.0 silences it. Two files to keep in sync: `contracts/package.json` and
   `docker/hardhat/node/package.json`. Do **not** jump to Hardhat 3 as a side effect.
-- [ ] **Jest 29 → 30 in `srv/`** (2026-08-03, Node 24 audit) — 29.4.0 runs fine on
-  Node 24; Jest 30 is the first release whose `engines` lists Node 24 explicitly.
-  Belt-and-braces.
 - [ ] **A minimal two-peer mediasoup integration test** (2026-08-03, mediasoup 3.23
   workstream) — the call subsystem has zero tests, so the 3.14→3.23 jump was validated
   by hand. A join/produce/consume smoke test would let the next mediasoup bump not rely

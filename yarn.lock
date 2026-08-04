@@ -26,13 +26,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@altcha/crypto@npm:^0.0.1":
-  version: 0.0.1
-  resolution: "@altcha/crypto@npm:0.0.1"
-  checksum: 10c0/686cfb4a2ab536bcc041cff0acaff97862f4bd27570f63306ad9c948ba8d579c76770088542b1056784b43e5daa9417ba2346ebece00f234cd6aade839e06fa9
-  languageName: node
-  linkType: hard
-
 "@apideck/better-ajv-errors@npm:^0.3.1":
   version: 0.3.7
   resolution: "@apideck/better-ajv-errors@npm:0.3.7"
@@ -3461,13 +3454,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@rollup/rollup-linux-x64-gnu@npm:4.18.0":
-  version: 4.18.0
-  resolution: "@rollup/rollup-linux-x64-gnu@npm:4.18.0"
-  conditions: os=linux & cpu=x64 & libc=glibc
-  languageName: node
-  linkType: hard
-
 "@rollup/rollup-linux-x64-gnu@npm:4.62.4":
   version: 4.62.4
   resolution: "@rollup/rollup-linux-x64-gnu@npm:4.62.4"
@@ -6004,16 +5990,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"altcha@npm:2.3.0":
-  version: 2.3.0
-  resolution: "altcha@npm:2.3.0"
+"altcha@npm:3.2.1":
+  version: 3.2.1
+  resolution: "altcha@npm:3.2.1"
   dependencies:
-    "@altcha/crypto": "npm:^0.0.1"
-    "@rollup/rollup-linux-x64-gnu": "npm:4.18.0"
-  dependenciesMeta:
-    "@rollup/rollup-linux-x64-gnu":
-      optional: true
-  checksum: 10c0/5ce8cc2671c827d57ee62797ad9bd209c5c1d5736a113af10a74e81aa1be907626d8aea9c6c0eceff84d97511eeeeb88fa7082dc07e991e4f08416555999333b
+    hash-wasm: "npm:^4.12.0"
+  checksum: 10c0/13e8c17572331c46aeb1ea2526917c02cbf5d0f8ace9be0f5fcfcd43cbef6200c3b3d2a1be3d845618331889ecbeb786d4917b6e58a42cd8477e62aa96ff97d7
   languageName: node
   linkType: hard
 
@@ -7674,7 +7656,7 @@ __metadata:
     "@types/react-router-dom": "npm:^5.3.2"
     "@types/sanitize-html": "npm:^2.6.0"
     "@vitejs/plugin-react": "npm:^4"
-    altcha: "npm:2.3.0"
+    altcha: "npm:3.2.1"
     assert: "npm:^2.0.0"
     autoprefixer: "npm:^10.4.7"
     axios: "npm:^1.6.7"
@@ -10814,6 +10796,13 @@ __metadata:
     inherits: "npm:^2.0.4"
     safe-buffer: "npm:^5.2.1"
   checksum: 10c0/6dc185b79bad9b6d525cd132a588e4215380fdc36fec6f7a8a58c5db8e3b642557d02ad9c367f5e476c7c3ad3ccffa3607f308b124e1ed80e3b80a1b254db61e
+  languageName: node
+  linkType: hard
+
+"hash-wasm@npm:^4.12.0":
+  version: 4.12.0
+  resolution: "hash-wasm@npm:4.12.0"
+  checksum: 10c0/6cb95055319810b6f673de755289960683a9831807690795f0e8918b2fd7e6ae5b82a9dc47cbace171cf2814b412ef68c315a0ead0b4d96bd3e56a05e4bde136
   languageName: node
   linkType: hard
 

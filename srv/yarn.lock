@@ -2695,10 +2695,53 @@ __metadata:
   languageName: node
   linkType: hard
 
-"altcha-lib@npm:1.4.1":
-  version: 1.4.1
-  resolution: "altcha-lib@npm:1.4.1"
-  checksum: 10c0/3c55b39ee0448d82a3215abbf499a1563e0155cb1ae1bff745f75b2d8ef4db2cbdea324b9ff0a3ebb235531edfe6cca196d7ed060bab318b73a9918585d9cf90
+"altcha-lib@npm:2.3.2":
+  version: 2.3.2
+  resolution: "altcha-lib@npm:2.3.2"
+  peerDependencies:
+    "@fastify/cookie": ^11.0.0
+    "@fastify/cors": ^11.0.0
+    "@fastify/formbody": ^8.0.0
+    "@nestjs/common": ^10.0.0 || ^11.0.0
+    "@nestjs/core": ^10.0.0 || ^11.0.0
+    "@nestjs/platform-express": ^10.0.0 || ^11.0.0
+    "@sveltejs/kit": ^2.0.0
+    cookie-parser: ^1.0.0
+    cors: ^2.0.0
+    express: ^4.0.0 || ^5.0.0
+    fastify: ^5.0.0
+    h3: ^2.0.0
+    hono: ^4.0.0
+  peerDependenciesMeta:
+    "@fastify/cookie":
+      optional: true
+    "@fastify/cors":
+      optional: true
+    "@fastify/formbody":
+      optional: true
+    "@nestjs/common":
+      optional: true
+    "@nestjs/core":
+      optional: true
+    "@nestjs/platform-express":
+      optional: true
+    "@sveltejs/kit":
+      optional: true
+    cookie-parser:
+      optional: true
+    cors:
+      optional: true
+    express:
+      optional: true
+    fastify:
+      optional: true
+    h3:
+      optional: true
+    hono:
+      optional: true
+  bin:
+    altcha-lib: bin/cli.mjs
+  checksum: 10c0/779e197c21b0ad45973050127299333983d335f4a48d98cf704d4ae476c218c0fd167532dbd6ed065c7e5a172772f5c18caa9371cdc0683ecd52611871f5a33b
   languageName: node
   linkType: hard
 
@@ -3685,7 +3728,7 @@ __metadata:
     "@types/protoo-server": "npm:^4.0.2"
     "@types/web-push": "npm:^3.6.0"
     "@types/xml": "npm:^1.0.8"
-    altcha-lib: "npm:1.4.1"
+    altcha-lib: "npm:2.3.2"
     awaitqueue: "npm:^3.0.1"
     axios: "npm:^1.6.7"
     bcrypt: "npm:^5.1.0"

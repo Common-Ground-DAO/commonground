@@ -3714,7 +3714,7 @@ __metadata:
     protoo-server: "npm:4.0.8"
     puppeteer: "npm:^25"
     redis: "npm:^6.2.0"
-    reflect-metadata: "npm:^0.1.13"
+    reflect-metadata: "npm:^0.2.2"
     sharp: "npm:^0.35.3"
     short-uuid: "npm:^6.0.3"
     slugify: "npm:^1.6.6"

@@ -4,10 +4,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { closestCenter, DndContext, DragEndEvent } from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { DndContext, DragEndEvent } from "@dnd-kit/core";
+import { rectSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useDragSensors } from "hooks/useDragSensors";
+import { dragAnnouncements, listCollisionDetection, useDragSensors } from "hooks/useDragSensors";
 import { useLiveQuery } from "dexie-react-hooks";
 import data from "data";
 
@@ -106,12 +106,16 @@ export default function GroupsMenu(props: Props) {
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={listCollisionDetection}
+      accessibility={{ announcements: dragAnnouncements }}
       onDragStart={() => setDraggingOver(true)}
+      // rbd's isDraggingOver was on only while hovering the list, not for the
+      // whole drag — with the cancel-outside collision rule, `over` tracks it.
+      onDragOver={event => setDraggingOver(!!event.over)}
       onDragCancel={() => setDraggingOver(false)}
       onDragEnd={onDragEnd}
     >
-      <SortableContext items={communityIds} strategy={verticalListSortingStrategy}>
+      <SortableContext items={communityIds} strategy={rectSortingStrategy}>
         <div className={`groups-menu${props.collapsed ? ' collapsed' : ''}${draggingOver ? ' dragging-over' : ''}`}>
           <div className="items">
             {sortedCommunities?.map(community => (
@@ -138,8 +142,8 @@ type CommunityItemProps = {
 function CommunityItem(props: CommunityItemProps) {
   const { community, selected, collapsed } = props;
   const { isMobile } = useWindowSizeContext();
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: community.id });
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
+    useSortable({ id: community.id, data: { label: `community ${community.title}` } });
   const channels = useLiveQuery(() => {
     return data.community.getChannels(community.id);
   }, [community.id]);
@@ -221,7 +225,10 @@ function CommunityItem(props: CommunityItemProps) {
   // The whole item is the drag handle, as it was under react-beautiful-dnd.
   return useMemo(() => (
     <div
-      ref={setNodeRef}
+      // Node and keyboard activator in one: registering the activator restores
+      // dnd-kit's `event.target` guard, so Space on the focused NavLink inside
+      // the item activates the link instead of lifting the row.
+      ref={element => { setNodeRef(element); setActivatorNodeRef(element); }}
       {...attributes}
       {...listeners}
       style={{
@@ -236,5 +243,5 @@ function CommunityItem(props: CommunityItemProps) {
         {ownPinnedChannelsContent}
       </div>
     </div>
-  ), [attributes, listeners, setNodeRef, transform, transition, isDragging, collapsed, communityIconContent, ownPinnedChannelsContent]);
+  ), [attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging, collapsed, communityIconContent, ownPinnedChannelsContent]);
 }

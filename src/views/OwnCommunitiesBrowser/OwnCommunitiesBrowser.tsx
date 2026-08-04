@@ -15,10 +15,10 @@ import { UserGroupIcon } from '@heroicons/react/24/outline';
 
 import { useOwnCommunities, useOwnUser } from "context/OwnDataProvider";
 import { getUrl } from 'common/util';
-import { closestCenter, DndContext, DragEndEvent } from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { DndContext, DragEndEvent } from "@dnd-kit/core";
+import { rectSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useDragSensors } from "hooks/useDragSensors";
+import { dragAnnouncements, listCollisionDetection, useDragSensors } from "hooks/useDragSensors";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import data from "data";
 import Scrollable from 'components/molecules/Scrollable/Scrollable';
@@ -116,7 +116,7 @@ export default function OwnCommunitiesBrowser(props: Properties) {
 
   const communitiesMemo = useMemo(() => {
     if (!!sortedCommunities && sortedCommunities.length > 0) {
-      return <SortableContext items={communityIds} strategy={verticalListSortingStrategy}>
+      return <SortableContext items={communityIds} strategy={rectSortingStrategy}>
         <div
           className={[
             'own-communities-content column-view',
@@ -145,8 +145,13 @@ export default function OwnCommunitiesBrowser(props: Properties) {
         <div className='own-communities' ref={contentRef}>
           <DndContext
             sensors={sensors}
-            collisionDetection={closestCenter}
+            collisionDetection={listCollisionDetection}
+            accessibility={{ announcements: dragAnnouncements }}
             onDragStart={() => setDraggingOver(true)}
+            // rbd's isDraggingOver was on only while hovering the list, not
+            // for the whole drag — with the cancel-outside collision rule,
+            // `over` tracks it.
+            onDragOver={event => setDraggingOver(!!event.over)}
             onDragCancel={() => setDraggingOver(false)}
             onDragEnd={onDragEnd}
           >
@@ -234,12 +239,15 @@ type SortableCommunityCardProps = {
 /** The whole card is the drag handle, as it was under react-beautiful-dnd. */
 function SortableCommunityCard(props: SortableCommunityCardProps) {
   const { community, collapsed } = props;
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: community.id });
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
+    useSortable({ id: community.id, data: { label: `community ${community.title}` } });
 
   return (
     <div
-      ref={setNodeRef}
+      // Node and keyboard activator in one: registering the activator restores
+      // dnd-kit's `event.target` guard, so Space on a focused descendant is
+      // not hijacked into a drag lift.
+      ref={element => { setNodeRef(element); setActivatorNodeRef(element); }}
       {...attributes}
       {...listeners}
       style={{

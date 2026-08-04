@@ -23,9 +23,9 @@ type Props = {
 
 export default function ChannelItem(props: Props) {
     const { areaId, channel, onChannelEditClick, selected } = props;
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
         id: channel.channelId,
-        data: { type: 'text-channels', areaId },
+        data: { type: 'text-channels', areaId, label: `channel ${channel.title}` },
     });
 
     const className = [
@@ -37,7 +37,11 @@ export default function ChannelItem(props: Props) {
     return (
         <div
             className={className}
-            ref={setNodeRef}
+            // The row is both the sortable node and the keyboard activator —
+            // registering the activator restores dnd-kit's `event.target`
+            // guard, so Space on a focused *descendant* is not hijacked into a
+            // drag lift.
+            ref={element => { setNodeRef(element); setActivatorNodeRef(element); }}
             {...attributes}
             {...listeners}
             style={{

@@ -15,10 +15,11 @@ import {
   DragOverEvent,
   DragStartEvent,
   pointerWithin,
+  rectIntersection,
 } from '@dnd-kit/core';
-import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { rectSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { useDragSensors } from 'hooks/useDragSensors';
+import { dragAnnouncements, useDragSensors } from 'hooks/useDragSensors';
 import AreaItem from './AreaItem/AreaItem';
 import Button from 'components/atoms/Button/Button';
 import data from 'data';
@@ -47,14 +48,25 @@ function findChannelArea(dict: ChannelDict, channelId: string): string | undefin
  * keeps a channel from being dropped onto an area row (there is no nesting
  * beyond area → channel).
  *
- * Within the surviving targets, a row beats the list container it sits in.
- * A pointer drop outside every typed target resolves to nothing — which is
- * what react-beautiful-dnd reported (`destination: null`) and what makes the
- * drop a cancel instead of a snap to the nearest list. Keyboard drags have no
- * pointer position for `pointerWithin` to work with; their virtual rect was
- * already aligned to a typed target by `typedSortableKeyboardCoordinates`, and
- * `closestCorners` (the same metric that getter ranks by) re-identifies that
- * target — rows and containers both, so an empty area stays reachable.
+ * Within the surviving targets the shape follows rbd's model — first decide
+ * the *list*, then the slot inside it:
+ *
+ * - Channel drags: the pointer sitting inside an area's channel-list container
+ *   picks that area (containers cover their rows, gaps and padding, so there
+ *   are no dead zones inside a list). Within the picked area the row under the
+ *   pointer wins, else the row the *dragged rect* overlaps (an in-gap drop
+ *   keeps its slot instead of falling through to the container's "append"
+ *   semantics), else — the area is empty — the container itself. A pointer
+ *   outside every container (over an area header, between areas) falls back
+ *   to whatever typed target the dragged rect overlaps.
+ * - Area drags (no containers exist): pointer over a row, else the row the
+ *   dragged rect overlaps — rbd hit-tested the dragged item's rect, so the
+ *   flex gaps between area rows were never dead zones.
+ * - A pointer drop overlapping nothing resolves to nothing, which is rbd's
+ *   `destination: null`: a cancel, not a snap to the nearest list.
+ * - Keyboard drags have no pointer position; their virtual rect was already
+ *   aligned to a typed target by `typedSortableKeyboardCoordinates`, and
+ *   `closestCorners` (the same metric that getter ranks by) re-identifies it.
  */
 const typedCollisionDetection: CollisionDetection = (args) => {
   const activeType = args.active.data.current?.type;
@@ -63,18 +75,30 @@ const typedCollisionDetection: CollisionDetection = (args) => {
   const rows = candidates.filter(container => !container.data.current?.isContainer);
   const containers = candidates.filter(container => container.data.current?.isContainer);
 
-  const rowHit = pointerWithin({ ...args, droppableContainers: rows });
-  if (rowHit.length > 0) {
-    return rowHit;
+  if (!args.pointerCoordinates) {
+    return closestCorners({ ...args, droppableContainers: candidates });
   }
-  const containerHit = pointerWithin({ ...args, droppableContainers: containers });
-  if (containerHit.length > 0) {
-    return containerHit;
+
+  const containerPointerHit = pointerWithin({ ...args, droppableContainers: containers });
+  if (containerPointerHit.length > 0) {
+    const areaId = containerPointerHit[0].data?.droppableContainer?.data.current?.areaId;
+    const rowsWithin = rows.filter(row => row.data.current?.areaId === areaId);
+    const rowPointerHit = pointerWithin({ ...args, droppableContainers: rowsWithin });
+    if (rowPointerHit.length > 0) {
+      return rowPointerHit;
+    }
+    const rowRectHit = rectIntersection({ ...args, droppableContainers: rowsWithin });
+    if (rowRectHit.length > 0) {
+      return rowRectHit;
+    }
+    return containerPointerHit;
   }
-  if (args.pointerCoordinates) {
-    return [];
+
+  const rowPointerHit = pointerWithin({ ...args, droppableContainers: rows });
+  if (rowPointerHit.length > 0) {
+    return rowPointerHit;
   }
-  return closestCorners({ ...args, droppableContainers: candidates });
+  return rectIntersection({ ...args, droppableContainers: candidates });
 };
 
 const BASE_ORDER_STEP = 1000000;
@@ -193,6 +217,10 @@ const ChannelManagementAreaList: React.FC<Props> = (props) => {
   // react-beautiful-dnd.
   const [dragChannels, setDragChannels] = useState<ChannelDict | null>(null);
   const [channelDragStart, setChannelDragStart] = useState<{ areaId: string; index: number } | null>(null);
+  // Which area's list the dragged channel is currently over — drives the list
+  // tint, which under rbd (`isDraggingOver`) was on the whole time the drag
+  // hovered the list, not only while the container itself won a collision.
+  const [dragOverAreaId, setDragOverAreaId] = useState<string | null>(null);
   const renderedChannels = dragChannels ?? channelsDict;
   const areaIds = useMemo(() => _areas.map(area => area.id), [_areas]);
 
@@ -348,11 +376,12 @@ const ChannelManagementAreaList: React.FC<Props> = (props) => {
   // and only settled on drop.
   const onDragOver = useCallback((event: DragOverEvent) => {
     const { active, over } = event;
-    if (active.data.current?.type !== CHANNEL_TYPE || !over) {
+    if (active.data.current?.type !== CHANNEL_TYPE) {
       return;
     }
-    const targetAreaId = over.data.current?.areaId as string | undefined;
-    if (!targetAreaId) {
+    const targetAreaId = over?.data.current?.areaId as string | undefined;
+    setDragOverAreaId(targetAreaId ?? null);
+    if (!over || !targetAreaId) {
       return;
     }
 
@@ -382,6 +411,7 @@ const ChannelManagementAreaList: React.FC<Props> = (props) => {
   const onDragCancel = useCallback(() => {
     setChannelDragStart(null);
     setDragChannels(null);
+    setDragOverAreaId(null);
   }, []);
 
   const onDragEnd = useCallback(async (event: DragEndEvent) => {
@@ -400,6 +430,7 @@ const ChannelManagementAreaList: React.FC<Props> = (props) => {
     // this render's `dragChannels` closure, not out of the state.
     setDragChannels(null);
     setChannelDragStart(null);
+    setDragOverAreaId(null);
     if (overId !== undefined) {
       await onChannelDragEnd(activeId, overId);
     }
@@ -428,12 +459,13 @@ const ChannelManagementAreaList: React.FC<Props> = (props) => {
   return (<DndContext
     sensors={sensors}
     collisionDetection={typedCollisionDetection}
+    accessibility={{ announcements: dragAnnouncements }}
     onDragStart={onDragStart}
     onDragOver={onDragOver}
     onDragCancel={onDragCancel}
     onDragEnd={onDragEnd}
   >
-    <SortableContext items={areaIds} strategy={verticalListSortingStrategy}>
+    <SortableContext items={areaIds} strategy={rectSortingStrategy}>
       <div className="management-area">
         <div className="area-panel">
           <div
@@ -443,7 +475,7 @@ const ChannelManagementAreaList: React.FC<Props> = (props) => {
               const expanded = expandedAreaIds.includes(area.id);
               const sortedTextChannels = renderedChannels[area.id]?.textChannels;
               return (
-                <SortableAreaRow key={area.id} areaId={area.id}>
+                <SortableAreaRow key={area.id} areaId={area.id} title={area.title}>
                   {(dragging, dragHandleProps) => (
                     <AreaItem
                       area={area}
@@ -455,7 +487,8 @@ const ChannelManagementAreaList: React.FC<Props> = (props) => {
                       onCreateChannelClick={onCreateChannelClick}
                       dragging={dragging}
                       draggableHandlerProps={dragHandleProps}
-                      highlightOnDragOver={channelDragStart?.areaId === area.id}
+                      highlightOnDragOver={channelDragStart?.areaId === area.id && dragOverAreaId === area.id}
+                      channelDragActive={channelDragStart !== null}
                       selectedId={selectedId}
                     />
                   )}
@@ -479,6 +512,7 @@ const ChannelManagementAreaList: React.FC<Props> = (props) => {
 
 type SortableAreaRowProps = {
   areaId: string;
+  title: string;
   children: (dragging: boolean, dragHandleProps: DragHandleProps) => React.ReactNode;
 };
 
@@ -488,7 +522,7 @@ type SortableAreaRowProps = {
  */
 function SortableAreaRow(props: SortableAreaRowProps) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
-    useSortable({ id: props.areaId, data: { type: AREA_TYPE } });
+    useSortable({ id: props.areaId, data: { type: AREA_TYPE, label: `area ${props.title}` } });
 
   return (
     <div

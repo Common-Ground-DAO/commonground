@@ -3,10 +3,15 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import {
+  Announcements,
+  CollisionDetection,
+  closestCorners,
   KeyboardCode,
   KeyboardCoordinateGetter,
   KeyboardSensor,
   MouseSensor,
+  pointerWithin,
+  rectIntersection,
   TouchSensor,
   useSensor,
   useSensors,
@@ -32,16 +37,108 @@ export const typedSortableKeyboardCoordinates: KeyboardCoordinateGetter = (event
   const activeType = args.context.active?.data.current?.type;
   // The getter only calls `getEnabled()` and `get(id)`. A prototype-chained
   // wrapper does not work here — DroppableContainersMap extends Map, whose
-  // methods reject a non-Map receiver — so delegate explicitly.
+  // methods reject a non-Map receiver — so delegate explicitly. The two-method
+  // shape is an internal contract of @dnd-kit/sortable (verified against
+  // 10.0.0); if a future bump starts calling anything else, the catch below
+  // degrades to the stock getter instead of breaking keyboard drags.
   const scoped = {
     get: (id: Parameters<typeof containers.get>[0]) => containers.get(id),
     getEnabled: () => containers.getEnabled()
       .filter(entry => entry.data.current?.type === activeType),
   } as typeof containers;
-  return sortableKeyboardCoordinates(event, {
-    ...args,
-    context: { ...args.context, droppableContainers: scoped },
-  });
+  try {
+    return sortableKeyboardCoordinates(event, {
+      ...args,
+      context: { ...args.context, droppableContainers: scoped },
+    });
+  } catch {
+    return sortableKeyboardCoordinates(event, args);
+  }
+};
+
+/**
+ * Collision detection for a single flat sortable list, shaped after
+ * react-beautiful-dnd's hit testing:
+ *
+ * - pointer inside a row wins outright;
+ * - otherwise the *dragged row's rect* is intersected with the rows, which is
+ *   what covers the flex gaps between rows — rbd hit-tested the dragged item's
+ *   rect, so it had no dead zones there;
+ * - a pointer drop with no intersection at all (dragged well away from the
+ *   list) resolves to nothing, which is rbd's `destination: null` — a cancel,
+ *   not a snap to the nearest row (`closestCenter` would never return empty);
+ * - keyboard drags have no pointer position; their virtual rect was aligned to
+ *   a target by the coordinate getter, and `closestCorners` — the getter's own
+ *   ranking metric — re-identifies it.
+ */
+export const listCollisionDetection: CollisionDetection = (args) => {
+  if (!args.pointerCoordinates) {
+    return closestCorners(args);
+  }
+  const pointerHit = pointerWithin(args);
+  if (pointerHit.length > 0) {
+    return pointerHit;
+  }
+  return rectIntersection(args);
+};
+
+/**
+ * Positional screen-reader announcements, replacing dnd-kit's defaults —
+ * which read out raw droppable ids (UUIDs here) and would have made keyboard
+ * dragging unusable non-visually. react-beautiful-dnd announced positions
+ * ("You have moved the item to position 4 of 6"); this restores that. Every
+ * `useSortable`/`useDroppable` on a drag surface passes `data.label` so the
+ * announcements can name the thing being moved instead of its id.
+ */
+export const dragAnnouncements: Announcements = {
+  onDragStart({ active }) {
+    const label = active.data.current?.label ?? 'item';
+    const sortable = active.data.current?.sortable;
+    return sortable
+      ? `Picked up ${label}, position ${sortable.index + 1} of ${sortable.items.length}.`
+      : `Picked up ${label}.`;
+  },
+  onDragOver({ active, over }) {
+    const label = active.data.current?.label ?? 'item';
+    if (!over) {
+      return `${label} is no longer over a drop target.`;
+    }
+    const sortable = over.data.current?.sortable;
+    if (sortable) {
+      return `${label} was moved to position ${sortable.index + 1} of ${sortable.items.length}.`;
+    }
+    return `${label} was moved into ${over.data.current?.label ?? 'another list'}.`;
+  },
+  onDragEnd({ active, over }) {
+    const label = active.data.current?.label ?? 'item';
+    if (!over) {
+      return `${label} was dropped without a target and returned to its position.`;
+    }
+    const sortable = over.data.current?.sortable;
+    if (sortable) {
+      return `${label} was dropped at position ${sortable.index + 1} of ${sortable.items.length}.`;
+    }
+    return `${label} was dropped into ${over.data.current?.label ?? 'another list'}.`;
+  },
+  onDragCancel({ active }) {
+    const label = active.data.current?.label ?? 'item';
+    return `Dragging was cancelled. ${label} returned to its position.`;
+  },
+};
+
+// Hoisted so `useSensor`'s identity-based memoization holds — fresh option
+// literals per render would produce a new sensors array (and with it new
+// synthetic `listeners` objects) every render, defeating the `useMemo`/
+// `React.memo` layers of the components that spread them.
+const MOUSE_OPTIONS = { activationConstraint: { distance: 5 } };
+const TOUCH_OPTIONS = { activationConstraint: { delay: 120, tolerance: 5 } };
+const KEYBOARD_OPTIONS = {
+  coordinateGetter: typedSortableKeyboardCoordinates,
+  keyboardCodes: {
+    start: [KeyboardCode.Space],
+    cancel: [KeyboardCode.Esc],
+    end: [KeyboardCode.Space],
+  },
 };
 
 /**
@@ -68,15 +165,8 @@ export const typedSortableKeyboardCoordinates: KeyboardCoordinateGetter = (event
  */
 export function useDragSensors() {
   return useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 120, tolerance: 5 } }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: typedSortableKeyboardCoordinates,
-      keyboardCodes: {
-        start: [KeyboardCode.Space],
-        cancel: [KeyboardCode.Esc],
-        end: [KeyboardCode.Space],
-      },
-    }),
+    useSensor(MouseSensor, MOUSE_OPTIONS),
+    useSensor(TouchSensor, TOUCH_OPTIONS),
+    useSensor(KeyboardSensor, KEYBOARD_OPTIONS),
   );
 }

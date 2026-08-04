@@ -5,10 +5,10 @@
 import { DotsSixVertical, Minus, Plus } from '@phosphor-icons/react';
 import React, { useCallback, useMemo, useState } from 'react';
 import './MultiEntryField.css';
-import { closestCenter, DndContext, DragEndEvent } from '@dnd-kit/core';
-import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { DndContext, DragEndEvent } from '@dnd-kit/core';
+import { rectSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { useDragSensors } from 'hooks/useDragSensors';
+import { dragAnnouncements, listCollisionDetection, useDragSensors } from 'hooks/useDragSensors';
 import Button from 'components/atoms/Button/Button';
 import TextAreaField from '../TextAreaField/TextAreaField';
 
@@ -57,18 +57,23 @@ const MultiEntryField: React.FC<Props> = (props) => {
   return (<div className='flex flex-col gap-1 cg-text-main'>
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={listCollisionDetection}
+      accessibility={{ announcements: dragAnnouncements }}
       onDragStart={() => setDraggingOver(true)}
+      // rbd's isDraggingOver was on only while hovering the list, not for the
+      // whole drag — with the cancel-outside collision rule, `over` tracks it.
+      onDragOver={event => setDraggingOver(!!event.over)}
       onDragCancel={() => setDraggingOver(false)}
       onDragEnd={onDragEnd}
     >
-      <SortableContext items={entryIds} strategy={verticalListSortingStrategy}>
+      <SortableContext items={entryIds} strategy={rectSortingStrategy}>
         <div
           className={`multi-entry-field-container flex flex-col gap-1 ${draggingOver ? ' dragging-over' : ''}`}
         >
           {entries.map((entry, index) => <SortableEntry
             key={index}
             id={entryIds[index]}
+            index={index}
           >
             <div className='entry-field-content'>
               <Minus weight='duotone' className='w-6 h-6 cg-text-secondary cursor-pointer' onClick={() => {
@@ -112,9 +117,9 @@ const MultiEntryField: React.FC<Props> = (props) => {
 }
 
 /** One row: the handle is the grip icon only, so the textarea stays selectable. */
-function SortableEntry(props: React.PropsWithChildren<{ id: string }>) {
+function SortableEntry(props: React.PropsWithChildren<{ id: string; index: number }>) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
-    useSortable({ id: props.id });
+    useSortable({ id: props.id, data: { label: `entry ${props.index + 1}` } });
 
   return (
     <div

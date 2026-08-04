@@ -44,7 +44,11 @@ const SW_FILENAME = 'service-worker.js';
  * Vite's default chunking emitted a single ~5.6 MB app chunk where CRA's
  * `splitChunks: { chunks: 'all' }` had spread the same code over many; the
  * `manualChunks` vendor groups in vite.config.ts brought the largest emitted
- * chunk back to ~2.2 MiB, which leaves plenty of headroom.
+ * chunk back to ~2.2 MiB. The 2026-08 dependency refresh grew `vendor-web3`
+ * to ~3.6 MiB (partly a duplicated viem pulled in via `@safe-global`, expected
+ * to collapse again with the wagmi-2 wave) — still under the cap, but the
+ * headroom is now ~1.4 MiB, not "plenty"; re-measure before making anything
+ * else in the web3 group eager.
  *
  * `assertPrecacheCoversAllCode` below turns any future overrun into a build
  * failure instead of a log line, so this number cannot silently rot.

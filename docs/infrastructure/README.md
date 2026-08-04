@@ -1,4 +1,4 @@
-> Status: verified against commit 42c829000, 2026-08-04
+> Status: verified against commit ff0f70311, 2026-08-04
 
 # Common Ground Infrastructure Documentation
 
@@ -378,12 +378,15 @@ prod/staging vhosts the directive did not carry `'self'` before the cutover
   JS/CSS chunk is missing from the precache manifest. The precache size cap is
   workbox's CRA-era **5 MiB** — it was raised to 8 MiB while Vite's default
   chunking still emitted one ~5.6 MB app chunk, and went back down once the
-  `manualChunks` vendor groups (below) capped the largest chunk at ~2.2 MiB. A
+  `manualChunks` vendor groups (below) capped the largest chunk at ~2.2 MiB
+  (since the 2026-08 dependency refresh the largest is `vendor-web3` at
+  ~3.6 MiB — see the chunking note below — still under the cap). A
   chunk over the cap silently drops out of the precache (which costs offline
   cold start), which is what the assertion turns into a build failure. A prod
-  build currently precaches 90 entries / ~10.4 MiB (Vite 7 measurement) — CRA's
+  build currently precaches 86 entries / ~11.3 MiB (2026-08 dependency-refresh
+  measurement; Vite 7 baseline was 90 / ~10.4 MiB) — CRA's
   content baseline was 118 / ~10.6 MiB; the entry count fell with the chunk
-  count, the bytes did not move. Excluded from the manifest:
+  count, the bytes moved only with the dependency refresh. Excluded from the manifest:
   `index_cgid.html`, sourcemaps, `LICENSE` files, `asset-manifest.json`, the
   worker itself and the verbatim `public/` copy (the fonts, call sounds and
   cross-origin-isolation shells that must be precached are added by hand in
@@ -405,12 +408,16 @@ pulls nine vendor groups out of the app chunk (`vendor-web3`, `vendor-icons`,
 `vendor-dnd`, `vendor-react`, `vendor-shared`). Vite's default chunking put
 everything statically reachable into one ~5.4 MiB `App` chunk — one large
 blocking request where CRA's `splitChunks: { chunks: 'all' }` had parallelised
-the same code. After the split the largest chunk is `vendor-web3` at ~2.2 MiB
-and `App` is ~1.9 MiB. The total JS the build ships is unchanged (~9.4 MiB, over
-57 files instead of 86); what changes is the shape — the app's statically
+the same code. After the split the largest chunk was `vendor-web3` at ~2.2 MiB
+and `App` ~1.9 MiB, with the total JS unchanged (~9.4 MiB over
+57 files instead of 86); what changed was the shape — the app's statically
 reachable closure grows by ~0.3 MiB (previously lazy-only ethers/rainbowkit
 modules land inside `vendor-web3`) and then arrives as ~24 parallel requests
-instead of one 5.4 MiB blocking one. The groups were tuned under Vite 6 /
+instead of one 5.4 MiB blocking one. The 2026-08 dependency refresh (wave 0 of
+the dependency-update roadmap) grew `vendor-web3` to ~3.6 MiB and the total to
+~10.4 MiB over 54 files — about half of that regression is a duplicated viem 2
+pulled in via `@safe-global/safe-apps-provider`, which the wagmi-2 wave is
+expected to collapse; re-measure there. The groups were tuned under Vite 6 /
 Rollup 4 and carried over unchanged through the Vite 7 bump (esbuild 0.25 →
 0.28): same chunk set, every chunk same-size or marginally smaller. Three rules
 keep the table safe, all three documented at the definition:

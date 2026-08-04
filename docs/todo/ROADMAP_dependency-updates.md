@@ -180,7 +180,8 @@ below).
 | 8 | `chore/deps-wave2b-small-majors` | ready — now carries decision 12 (`typeorm-extension` + orphans dropped; exactly one `reflect-metadata` left) |
 | 9 | `chore/deps-wave2c-frontend-sw` | ready — gates re-run green |
 | 10 | `chore/deps-wave3-web3` | ready — gates re-run green + in-container rebuild + live smoke; largest manual-test surface |
-| 11 | `chore/deps-wave4a-dnd` | in progress (see wave 4a) |
+| 11 | `chore/deps-wave4a-dnd` | ready — finished WIP + review fixes, functionally verified headlessly (see wave 4a) |
+| 12 | `chore/deps-wave4b-motion` | implemented, review pending (see wave 4b) |
 
 **Restack record (2026-08-04).** Tree equality of the restacked stack top
 against the pre-restack stack top was verified with `git diff` — the only
@@ -1481,27 +1482,67 @@ untouched via `git diff`.
 
 ## Wave 4 — React 19 (est. 4 PRs, sequential)
 
-- [ ] **PR 4a**: replace `react-beautiful-dnd` (dead, no React 19) in its 6 usage
+- [x] **PR 4a**: replace `react-beautiful-dnd` (dead, no React 19) in its 6 usage
   sites (`ChannelManagement` tree ×3, `GroupsMenu`, `MultiEntryField`,
   `OwnCommunitiesBrowser`). Target library: agent evaluates `@dnd-kit` vs Atlassian
   `pragmatic-drag-and-drop` against the actual DnD patterns used, then commits to
   one. Drop `@types/react-beautiful-dnd`.
-  - **Status: WIP commit `6ed66775a` on `chore/deps-wave4a-dnd`, DO NOT MERGE.**
-    A subagent had already written a complete @dnd-kit migration to disk when its
-    run was aborted; rather than lose it, it is committed as an explicit WIP. It
-    compiles (typecheck, lint 0 errors, build, audit loses the rbd deprecation),
-    and it is restacked onto the hardening branch so the three @dnd-kit packages
-    were added under the cooldown (all from 2023/2024, so unaffected by it).
-  - **Still owed before this can be a real PR** — do not treat any of it as done:
-    a **fresh-context review** (mandatory for wave 4); **functional verification
-    of an actual drag** (reorder semantics, drop-target rules, the persistence
-    call on drop, disabled states, drag handles — none of it has been exercised,
-    in a browser or headlessly); **keyboard accessibility**, which
-    react-beautiful-dnd provided out of the box; a written **library-choice
-    rationale** (@dnd-kit vs pragmatic-drag-and-drop was never argued); and docs
-    (`docs/frontend`, the `VENDOR_GROUPS` comment in `vite.config.ts`) plus this
-    checkbox. Either finish it properly or drop the commit and redo the wave —
-    both are legitimate; silently building on it is not.
+  - **Done 2026-08-04** (second agent context): the aborted subagent's WIP was
+    **finished, not discarded** — inspection showed it translated rbd's
+    semantics faithfully (the order-persistence helpers are byte-identical to
+    the rbd version, warts included). Resolved: @dnd-kit/core 6.3.1, sortable
+    10.0.0, utilities 3.2.2 (all 2023/2024 publishes, individually
+    date-checked). `dnd-core` (unused since the initial commit) is dropped here
+    too — the restack moved its accidental removal out of the hardening commit.
+  - **Library choice (argued in the migration commit):** @dnd-kit over
+    Atlassian pragmatic-drag-and-drop because every usage site is a sortable
+    list (five flat + the nested area→channel tree) and dnd-kit's sortable
+    preset + first-class KeyboardSensor map 1:1 onto rbd's model — pragmatic
+    ships raw adapters and leaves sortable/keyboard semantics to be hand-built.
+    Shared `useDragSensors` reproduces rbd's ergonomics (5px sloppy-click,
+    120ms touch long-press, Space/arrows/Esc keymap).
+  - **Fresh-context review (mandatory for wave 4) ran and earned its keep**:
+    2 blockers — the flex gaps between rows/blocks were dead zones
+    (`pointerWithin`-only hit testing): an area dropped in a gap silently
+    snapped back, a channel dropped in a gap fell through to the container's
+    append semantics — plus real should-fixes: `closestCenter` on the flat
+    lists turned drops anywhere on the page into reorders (rbd cancelled),
+    wrong sorting strategy for variable-height rows, default screen-reader
+    announcements reading raw UUIDs, sensor options defeating `useSensor`
+    memoization (new `listeners` per render), missing keyboard-activator
+    registration (Space on a focused descendant lifted the row). All fixed:
+    collision detection now follows rbd's list-first model (container by
+    pointer → row by pointer → row by dragged-rect overlap → container;
+    outside = cancel), `rectSortingStrategy` on non-uniform lists, positional
+    announcements fed by per-item `data.label`, hoisted sensor options,
+    activator refs, rbd-style hover tint, and a ~row-height drop zone for
+    empty areas during a channel drag.
+  - **Functionally verified headlessly against the real app** (puppeteer,
+    API-bootstrapped user/community/areas/channels, every assertion checked
+    against the persisted API state): mouse reorder within an area, mouse
+    cross-area move, mouse area reorder, keyboard drags (area, channel,
+    cross-area), Escape cancel without persistence, plain click still
+    expands/collapses (no drag hijack), **drops in the inter-row and
+    inter-block gaps land at the right slot** (the review's blockers, now
+    regression-tested), drops far outside every target cancel, and the live
+    region announces positions ("channel chan-two was moved to position 1
+    of 2"). Gate green after every commit (typecheck / lint 0 errors / test /
+    build / check:html-rewrite).
+  - **Known, accepted deviations from rbd** (review notes, not fixed by
+    design): no `DragOverlay`, so the dragged row is transformed in place and
+    can be clipped by scrolling ancestors (rbd floated a `position: fixed`
+    clone); `.dragging-over` styling on the flat lists derives from hover now
+    but the dimming itself is unchanged. Both are visual-feel items on the
+    maintainer's manual list.
+  - Docs: no `docs/` statement mentioned react-beautiful-dnd; the
+    `VENDOR_GROUPS` comment in vite.config.ts was rewritten with the
+    migration (`vendor-dnd` now matches `@dnd-kit/`).
+  - **Manual (maintainer, not verifiable headlessly)**: drag *feel* on a real
+    touch device (the 120ms long-press lift vs. scrolling the sidebar — the
+    MouseSensor/TouchSensor split is what keeps a swipe scrolling), a real
+    screen-reader pass over the new positional announcements, and the visual
+    polish points above (in-place transform vs rbd's floating clone,
+    especially inside the scrolling community sidebar).
 - [ ] **PR 4b**: framer-motion 7 → `motion` v12 (3 direct usage files) and
   react-modal-sheet 2 → 5 (peer-depends on motion v12) in one PR. Also unblocks the
   CG-ID-entry bundle-bloat item in TODO.md (framer-motion is its biggest chunk —

@@ -6,7 +6,7 @@
 
 Common Ground is a full-stack TypeScript application:
 
-- **Frontend**: React 18 SPA (Vite) with Tailwind CSS, Slate rich-text editor, markdown rendering, and styled-components
+- **Frontend**: React 19 SPA (Vite) with Tailwind CSS, Slate rich-text editor, markdown rendering, and styled-components
 - **Backend**: Express.js REST API + Socket.IO real-time layer with TypeORM (PostgreSQL) and Redis
 - **WebRTC**: MediaSoup-based voice/video calling (group calls, broadcasts)
 - **Bots**: first-class bot accounts with a bearer-token Bot API v1 (`/api/bot/v1`)

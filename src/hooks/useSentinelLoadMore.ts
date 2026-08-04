@@ -4,7 +4,7 @@
 
 import { useEffect, useRef } from "react";
 
-export const useSentinelLoadMore = (sentinelRef: React.RefObject<HTMLDivElement>, loadingMore: boolean, loadMore: () => void) => {
+export const useSentinelLoadMore = (sentinelRef: React.RefObject<HTMLDivElement | null>, loadingMore: boolean, loadMore: () => void) => {
   const didFirstLoad = useRef(false);
 
   if (!didFirstLoad.current && loadingMore) {

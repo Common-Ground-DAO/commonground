@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import Button from "../../../components/atoms/Button/Button";
 import NotificationCount from "../../../components/atoms/NotificationCount/NotificationCount";
 import NotificationDot from 'components/atoms/NotificationDot/NotificationDot';
@@ -9,14 +10,14 @@ import NotificationDot from 'components/atoms/NotificationDot/NotificationDot';
 import './MenuButton.css';
 
 type Props = {
-  icon?: JSX.Element;
+  icon?: React.JSX.Element;
   onClick?: (ev: React.MouseEvent<HTMLButtonElement, MouseEvent>) => void;
   className?: string;
   isActive?: boolean;
   disabled?: boolean;
   showDot?: boolean;
   notificationCount?: number;
-  buttonRef?: React.RefObject<HTMLButtonElement>;
+  buttonRef?: React.RefObject<HTMLButtonElement | null>;
 }
 
 export default function MenuButton(props: Props) {

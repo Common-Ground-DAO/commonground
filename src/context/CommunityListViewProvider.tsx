@@ -21,8 +21,8 @@ const updatedTimestamps = new Map<string, number>();
 const fetchCalledTimestampMap = new Map<string, number>();
 
 export function CommunityListViewProvider(props: { children: ReactNode }) {
-  const allCommunitiesRef = useRef<Models.Community.ListView[] | undefined>();
-  const ownCommunityIdsRef = useRef<Set<string> | undefined>();
+  const allCommunitiesRef = useRef<Models.Community.ListView[] | undefined>(undefined);
+  const ownCommunityIdsRef = useRef<Set<string> | undefined>(undefined);
 
   useEffect(() => {
     uniqueDb.uniques.get("CommunityListViewUpdateTimestamps").then((result) => {

@@ -18,7 +18,7 @@ type Props = {
   customClassname?: string;
   hideMobileHandler?: boolean;
   noDefaultScrollable?: boolean;
-  footerActions?: JSX.Element;
+  footerActions?: React.JSX.Element;
   modalRootStyle?: React.CSSProperties;
 };
 

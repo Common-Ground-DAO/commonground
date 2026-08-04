@@ -37,8 +37,8 @@ export type RendererProps = {
 type Props= {
   itemList: Models.ItemList.ItemList<Models.Message.Message>;
   identifierKey?: string;
-  scrollHelper: JSX.Element;
-  scrollHelperRef: React.RefObject<HTMLDivElement>;
+  scrollHelper: React.JSX.Element;
+  scrollHelperRef: React.RefObject<HTMLDivElement | null>;
   Renderer: React.FC<RendererProps>;
   replyClick: (id: string, senderId: string, body: Models.Message.Body) => void;
   editClick: (message: Models.Message.Message) => void;
@@ -47,8 +47,8 @@ type Props= {
   lastFocusedIdRef: React.MutableRefObject<string | undefined>;
   onScroll?: (deltaY: number) => void;
   channelId: string;
-  scrollableRef: React.RefObject<ScrollableHandle>;
-  scrollableInnerRef: React.RefObject<HTMLDivElement>;
+  scrollableRef: React.RefObject<ScrollableHandle | null>;
+  scrollableInnerRef: React.RefObject<HTMLDivElement | null>;
   loadingNextRef: React.MutableRefObject<Promise<void> | null>;
   loadingPreviousRef: React.MutableRefObject<Promise<void> | null>;
   initializingItemListRef: React.MutableRefObject<Promise<void> | null>;
@@ -67,7 +67,7 @@ export const BETWEEN_LOADS_TIMEOUT = 500;
  * 
  * @returns true if element was found an scrolled to, false otherwise
  */
-export function scrollToMessageById(scrollableRef: React.RefObject<ScrollableHandle>, messageId: string): boolean {
+export function scrollToMessageById(scrollableRef: React.RefObject<ScrollableHandle | null>, messageId: string): boolean {
   const element = document.getElementById(messageId);
   const scrollable = scrollableRef.current;
   if (!!scrollable && !!element) {
@@ -397,7 +397,7 @@ export default function ScrollingMessageList(props: Props) {
 
 const MessagesLoadingIndicator = (props: {
   visible: boolean | 'invisible';
-  divRef: React.RefObject<HTMLDivElement>;
+  divRef: React.RefObject<HTMLDivElement | null>;
   randomizePlaceholderTrigger: string;
 }) => {
   const {

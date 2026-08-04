@@ -320,8 +320,8 @@ const OnboardingManagement: React.FC = () => {
 
 type OnboardingBoxProps = {
   expanded: boolean;
-  header: JSX.Element;
-  content: JSX.Element;
+  header: React.JSX.Element;
+  content: React.JSX.Element;
 }
 
 const OnboardingBox: React.FC<OnboardingBoxProps> = (props) => {

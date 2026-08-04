@@ -176,7 +176,7 @@ const CommunityHeader: React.FC<Props> = ({ onHeaderClick, banned, collapsed }) 
 
   const menuItems = useMemo(() => {
     if (!isMobile) {
-      const menuItems: JSX.Element[] = [];
+      const menuItems: React.JSX.Element[] = [];
       if (communityPermissions.has('COMMUNITY_MANAGE_INFO')) {
         menuItems.push(<ManagementContentModalMenuItem leftElement={<HouseSimple weight="duotone" className="w-5 h-5"/>} key="General" text="General" url="manage-community" />);
       }

@@ -12,14 +12,14 @@ type Props = {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
-  label?: string | JSX.Element;
+  label?: string | React.JSX.Element;
   subLabel?: string;
   inputClassName?: string;
   labelClassName?: string;
   error?: string;
   hideErrorText?: boolean;
   disabled?: boolean;
-  inputRef?: React.RefObject<HTMLInputElement>;
+  inputRef?: React.RefObject<HTMLInputElement | null>;
   inlineToast?: InlineToastType;
   toastSuccessText?: string;
   forceShowToast?: true;
@@ -34,8 +34,8 @@ type Props = {
   maxLetters?: number;
   autoCapitalize?: string;
   autoFocus?: boolean;
-  iconLeft?: JSX.Element;
-  iconRight?: JSX.Element;
+  iconLeft?: React.JSX.Element;
+  iconRight?: React.JSX.Element;
   autoComplete?: string;
   name?: string;
   pattern?: string;

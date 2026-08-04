@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import ReactDOM from "react-dom";
 import {
   useFloating,
@@ -29,8 +30,8 @@ export type PopoverProps = {
   placement: Placement;
   padding?: number;
   offset?: number;
-  triggerContent: string | JSX.Element;
-  tooltipContent: string | JSX.Element;
+  triggerContent: string | React.JSX.Element;
+  tooltipContent: string | React.JSX.Element;
   triggerClassName?: string;
   tooltipClassName?: string;
   openDelay?: number;
@@ -42,7 +43,7 @@ export type PopoverProps = {
   disableFlip?: boolean;
   onOpen?: () => void;
   onClose?: () => void;
-  closeBtnRef?: React.RefObject<HTMLButtonElement>;
+  closeBtnRef?: React.RefObject<HTMLButtonElement | null>;
   disableDismiss?: boolean;
   allowPropagation?: boolean;
 } & PopoverTrigger;

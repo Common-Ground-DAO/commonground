@@ -1,6 +1,6 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit 41b7a11aa, 2026-08-04
+> Status: verified against commit 4a9754f8f, 2026-08-04
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -821,7 +821,7 @@ their names — they animate with a plain CSS transition and CSS keyframes respe
 | `dayjs` | Date formatting/manipulation (with plugins: isToday, isYesterday, isTomorrow, advancedFormat, utc, timezone) |
 | `lodash` | Utility functions (debounce, isEqual, etc.) |
 | `react-dropzone` | Drag-and-drop file upload (`noPaste` is set — `EditField` has its own paste-to-attach handler) |
-| `viem` / `ethers` | EVM operations (unit formatting, SIWE signing, mnemonic wallets) |
+| `viem` | EVM operations (unit formatting, SIWE signing, mnemonic wallets — `ethers` left the frontend in the 2026-08 web3 wave) |
 | `boring-avatars` | Generated default avatars (the `Jdenticon` component's `marble` variant) — there is no `jdenticon` package |
 | `emoji-regex` | Large-emoji detection in message rendering |
 | `@floating-ui/react` | Positioning + interaction hooks behind `Tooltip`/`Popover`, `UserProfilePopover` and the message hover toolbar |

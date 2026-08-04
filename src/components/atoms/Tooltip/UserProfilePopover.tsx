@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import ReactDOM from "react-dom";
 import {
   useFloating,
@@ -26,8 +27,8 @@ import { randomString } from "../../../util";
 type Props = {
   placement: Placement;
   padding: number;
-  triggerContent: string | JSX.Element;
-  tooltipContent: string | JSX.Element;
+  triggerContent: string | React.JSX.Element;
+  tooltipContent: string | React.JSX.Element;
   triggerClassName?: string;
   tooltipClassName?: string;
   openDelay?: number;
@@ -35,7 +36,7 @@ type Props = {
   withDelayGroup?: boolean;
   delayGroupListId?: string;
   isMessageTooltip?: boolean;
-  modalDescendantRef?: React.RefObject<HTMLDivElement>; // is using to prevent close popover when its modal descendant is alive
+  modalDescendantRef?: React.RefObject<HTMLDivElement | null>; // is using to prevent close popover when its modal descendant is alive
 }
 
 export type UserTooltipHandle = {

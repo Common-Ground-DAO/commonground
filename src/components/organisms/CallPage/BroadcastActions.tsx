@@ -130,7 +130,7 @@ const BroadcastActions: React.FC<CallActionsProps> = (props) => {
         if (isFullscreen) onFullScreen();
     }, [isFullscreen, leaveCall, onFullScreen, onLeaveCall]);
 
-    const shareDropdownItems: JSX.Element[] = useMemo(() => [
+    const shareDropdownItems: React.JSX.Element[] = useMemo(() => [
         <ListItem
             title='Start sharing'
             icon={<TvIcon className="w-5 h-5" />}

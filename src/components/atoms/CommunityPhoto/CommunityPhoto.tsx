@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import { useLocation } from 'react-router-dom';
 
 import "./CommunityPhoto.css";
@@ -41,7 +42,7 @@ export default function CommunityPhoto(props: Props) {
     ), [size, noHover, location.pathname, community?.url]);
 
     return useMemo(() => {
-        let extraIcon: JSX.Element | undefined = undefined;
+        let extraIcon: React.JSX.Element | undefined = undefined;
         if (showExtraIcon) {
             if (!!community.official) {
                 extraIcon = <OfficialIcon className="community-photo-official-icon w-4 h-4 absolute -right-1 -bottom-1"/>;

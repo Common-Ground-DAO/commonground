@@ -109,7 +109,7 @@ const CallActions: React.FC<CallActionsProps> = ({ onLeaveCall, onFullScreen, is
     }, [isFullscreen, leaveCall, onFullScreen, onLeaveCall]);
 
 
-    const shareDropdownItems: JSX.Element[] = useMemo(() => [
+    const shareDropdownItems: React.JSX.Element[] = useMemo(() => [
         <ListItem
             key={'Start sharing'}
             title='Start sharing'

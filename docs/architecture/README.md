@@ -1,4 +1,4 @@
-> Status: verified against commit 96e828069, 2026-08-04
+> Status: verified against commit 91efa7c82, 2026-08-04
 
 # Common Ground - Architecture Documentation
 

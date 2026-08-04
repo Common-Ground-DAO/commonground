@@ -2,15 +2,16 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
 import { useNavigate } from "react-router-dom";
 
 import './FrontPageSectionHeader.css';
 type Props = {
-    sectionTitle: JSX.Element;
+    sectionTitle: React.JSX.Element;
     dedicatedBrowserUrl?: string;
-    leftContent?: JSX.Element;
-    rightContent?: JSX.Element | undefined;
+    leftContent?: React.JSX.Element;
+    rightContent?: React.JSX.Element | undefined;
     buttonsClassName?: string;
     useLargeHeader?: boolean;
 }

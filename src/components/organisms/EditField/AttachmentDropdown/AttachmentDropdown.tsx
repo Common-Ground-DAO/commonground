@@ -55,7 +55,7 @@ const AttachmentDropdown: React.FC<Props> = ({ setAttachments, setAttachmentErro
         multiple={true}
         name="image-uploader"
         ref={inputFileRef}
-        onInput={handleChatMediaChange}
+        onChange={handleChatMediaChange}
         style={{ display: "none" }}
       />
       <Dropdown

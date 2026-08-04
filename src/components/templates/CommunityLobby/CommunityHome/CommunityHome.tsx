@@ -131,7 +131,7 @@ function CommunityHome(props: Props) {
         });
     }, [community.id, setVisitedState]);
 
-    const CommunityLink = (props: { link: Common.Link }): JSX.Element => {
+    const CommunityLink = (props: { link: Common.Link }): React.JSX.Element => {
         const { link } = props;
         const url = useMemo(() => {
             if (!link.url.match(/^http(s)?:\/\//i)) {

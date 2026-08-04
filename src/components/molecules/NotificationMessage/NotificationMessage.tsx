@@ -142,7 +142,7 @@ const NotificationMessage: React.FC<Props> = ({ notification, selected, onClick 
     return <span className='unknown-subject'>Unknown subject</span>;
   }, [community, notification.subjectCommunityId, notification.subjectUserId, notification.type, user, isMobile]);
 
-  const extraInfo: (JSX.Element | null) = useMemo(() => {
+  const extraInfo: (React.JSX.Element | null) = useMemo(() => {
     switch (notification.type) {
       case 'Mention':
       case 'Reply': {

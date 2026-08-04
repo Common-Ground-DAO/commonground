@@ -6,9 +6,9 @@ import React from "react";
 import './UserSettingsButton.css';
 
 type Props = {
-  leftElement?: JSX.Element;
-  text: string | JSX.Element;
-  rightElement?: JSX.Element;
+  leftElement?: React.JSX.Element;
+  text: string | React.JSX.Element;
+  rightElement?: React.JSX.Element;
   onClick?: (ev: React.MouseEvent<HTMLDivElement>) => void;
   className?: string;
   active?: boolean;

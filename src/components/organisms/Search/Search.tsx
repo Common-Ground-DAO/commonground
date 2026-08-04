@@ -145,7 +145,7 @@ const Search: React.FC<Props> = (props) => {
 
   const userData = useMultipleUserData(userIds);
 
-  let loadingAndEmptyContent: JSX.Element | null = null;
+  let loadingAndEmptyContent: React.JSX.Element | null = null;
 
   if (userSearchState.status === 'loading' && communitySearchState.status === 'loading' && articleSearchState.status === 'loading' && appSearchState.status === 'loading') {
     loadingAndEmptyContent = <div className="flex items-center cg-text-main justify-center">

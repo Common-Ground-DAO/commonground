@@ -165,13 +165,13 @@ export function AllContentRenderer(props: {
 
   const mentionedUsers = useMultipleUserData(mentionedUserIds);
 
-  const resultContent: JSX.Element[] = [];
-  let currentBlock: JSX.Element[] = [];
+  const resultContent: React.JSX.Element[] = [];
+  let currentBlock: React.JSX.Element[] = [];
   let skipNextDivEncasing = true;
   let nextClassName: string[] = [];
   let hasRenderedMidLoginBanner = false;
 
-  let timestamp: JSX.Element | null = null
+  let timestamp: React.JSX.Element | null = null
   if (!props.hideTimestamp) {
     timestamp = <MessageTimestamp
       key='message-timestamp'
@@ -206,7 +206,7 @@ export function AllContentRenderer(props: {
 
   processedContent.forEach((c, index) => {
     const messageKey = `${messageKeyBase}${c.type}-${index}`;
-    let currentElement: JSX.Element | undefined = undefined;
+    let currentElement: React.JSX.Element | undefined = undefined;
     switch (c.type) {
       case 'tag':
         currentElement = (<span className="message-content-tag" key={messageKey}>#{c.value}</span>);
@@ -243,7 +243,7 @@ export function AllContentRenderer(props: {
       case 'header': {
         const headerElements = c.value.map((textEl, index) => {
           const internalMessageKey = 'text-' + index;
-          let internalElement: string | JSX.Element = textEl.value;
+          let internalElement: string | React.JSX.Element = textEl.value;
           if (textEl.bold) {
             internalElement = <strong key={internalMessageKey}>{internalElement}</strong>;
           }

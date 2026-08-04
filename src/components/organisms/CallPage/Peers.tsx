@@ -61,7 +61,7 @@ const PeersCards: React.FC<Props> = ({ mobileCollapsed }) => {
     }, [peersArray, spotlightedPeer, activeSpeaker]);
 
     const peerCards = useMemo(() => {
-        const result: Record<string, JSX.Element> = {};
+        const result: Record<string, React.JSX.Element> = {};
         for (const peer of sortedPeersByPriority) {
             const actualUser = allUsers?.find(u => u.id === peer.id);
             if (actualUser) {

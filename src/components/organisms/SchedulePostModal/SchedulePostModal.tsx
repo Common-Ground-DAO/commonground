@@ -21,7 +21,7 @@ type Props = {
   onClose: () => void;
   roles: Models.Community.CommunityArticlePermission[];
   scheduleArticle: (scheduleDate: dayjs.Dayjs | null, markAsNewsletter: boolean) => Promise<void>;
-  itemArticleRef: React.RefObject<ItemArticleType>;
+  itemArticleRef: React.RefObject<ItemArticleType | null>;
   sentAsNewsletter: boolean;
 };
 

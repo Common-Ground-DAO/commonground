@@ -22,7 +22,7 @@ export function isLocalUrl(url: string) {
 type Props = {
   className?: string;
   href: string;
-  modalContentRef?: React.RefObject<HTMLDivElement>;
+  modalContentRef?: React.RefObject<HTMLDivElement | null>;
   inlineLink?: boolean;
   skipInternalLinkProcessing?: boolean;
 }

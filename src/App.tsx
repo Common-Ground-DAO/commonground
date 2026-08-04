@@ -360,7 +360,7 @@ function Inner() {
 function App() {
   const { showReleaseNotes } = useConnectionContext();
 
-  let content: JSX.Element;
+  let content: React.JSX.Element;
   if (showReleaseNotes === true) {
     content = (
       <CgUpdate view="releaseNotes" />

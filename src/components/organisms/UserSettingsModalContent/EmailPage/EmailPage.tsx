@@ -49,7 +49,7 @@ const EmailPage: React.FC<Props> = ({ saveOnCloseMode, goBack }) => {
     password: string;
     passwordError: string | undefined;
     emailVerified: boolean;
-  }>();
+  }>(undefined);
 
   useEffect(() => {
     requestInfo.current = {

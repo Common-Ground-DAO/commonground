@@ -37,7 +37,7 @@ export default function MobileMenu() {
   const communities = useOwnCommunities();
   const ownUser = useOwnUser();
 
-  const communityIdsRef = useRef<string[]>();
+  const communityIdsRef = useRef<string[]>(undefined);
   const communityIds = useMemo(() => {
     const oldCommunityIds = communityIdsRef.current;
     if (!oldCommunityIds) {

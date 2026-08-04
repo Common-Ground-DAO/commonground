@@ -408,7 +408,7 @@ export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
   }, [community?.id]);
 
   const content = useMemo(() => {
-    let inner: JSX.Element | null;
+    let inner: React.JSX.Element | null;
     if (isJoinedCommunity) {
       inner = innerJoinedContent;
     } else {
@@ -451,9 +451,9 @@ export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
 type SidebarButtonProps = {
   onClick: () => void;
   className?: string;
-  icon: JSX.Element;
+  icon: React.JSX.Element;
   text: string;
-  rightElement?: JSX.Element;
+  rightElement?: React.JSX.Element;
 };
 
 const SidebarButton = React.memo((props: SidebarButtonProps) => {

@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import Button, { ButtonRole } from "../../../components/atoms/Button/Button";
 import HexagonalIconHover from "../../atoms/icons/48/HexagonalIconHover.svg?react";
 import HexagonalIcon from "../../atoms/icons/48/HexagonalIcon.svg?react";
@@ -9,7 +10,7 @@ import './HexagonalIconButton.css';
 
 type Props = {
   text?: string;
-  icon?: JSX.Element;
+  icon?: React.JSX.Element;
   onClick?: () => void;
   className?: string;
   role?: ButtonRole;

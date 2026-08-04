@@ -182,7 +182,8 @@ below).
 | 10 | `chore/deps-wave3-web3` | ready — gates re-run green + in-container rebuild + live smoke; largest manual-test surface |
 | 11 | `chore/deps-wave4a-dnd` | ready — finished WIP + review fixes, functionally verified headlessly (see wave 4a) |
 | 12 | `chore/deps-wave4b-motion` | ready — reviewed, findings fixed (see wave 4b) |
-| 13 | `chore/deps-wave4c-slate` | implemented + functionally verified, review pending (see wave 4c) |
+| 13 | `chore/deps-wave4c-slate` | ready — reviewed (no blocker), findings fixed (see wave 4c) |
+| 14 | `chore/deps-wave4d-react19` | ready — reviewed (no blocker), findings fixed (see wave 4d) |
 
 **Restack record (2026-08-04).** Tree equality of the restacked stack top
 against the pre-restack stack top was verified with `git diff` — the only
@@ -210,6 +211,41 @@ deltas are intended:
   tree is correct.
 
 Nothing has been pushed. All branches are local.
+
+**Restack record #2 (2026-08-05, onto develop 6f1b23fa1).** The maintainer's
+collaborator pushed five PRs to develop (#41–#45: corepack instead of
+yarnPath for issue #40, the 64-char call-secret validator, sharp ^0.33.5 for
+the job-runner crash loop, the native-clients roadmap, P-256 device keys).
+The whole stack was rebased onto that, bottom-first, gates re-run per branch
+(same scope as restack #1). Real conflicts were confined to five files; the
+substantive integrations:
+
+- **The hardening branch adopts develop's corepack mechanism** instead of
+  re-introducing `yarnPath` (which points at a gitignored binary — exactly
+  issue #40): no yarnPath anywhere, `packageManager` is the single version
+  source, the `commonground/node` image's corepack pre-fetch moves
+  4.1.0 → 4.17.1, the four "Missing .yarn directory" repair blocks in
+  updateBackend/updateFrontend/selfhost.sh are deleted, and the pipelines
+  drop `yarn set version` in favour of plain `corepack enable`. **Dev-host
+  note (maintainer): run `corepack enable` once** — without it the shell
+  falls back to a global yarn 1.22 (this session used `corepack yarn`
+  explicitly throughout).
+- **The dependenciesMeta allowlists are now born minimal in the hardening
+  commit** (root: esbuild; srv: bcrypt, mediasoup, puppeteer, unrs-resolver):
+  the final-gate proof that the four node-gyp-build natives load their
+  prebuilds without scripts moved from a tip fix into the source, and the
+  sharp exemption is unnecessary from the start because develop's base is
+  already sharp 0.33 (prebuilt @img/*). Wave 1a's sharp commit is now
+  0.33 → 0.35.3 and no longer touches the allowlist.
+- Florian's sharp ^0.33.5 is the same crash-loop fix wave 0b diagnosed; the
+  1a bump supersedes it (verified: 0.33.5 through waves 0b–1a-pre-sharp,
+  0.35.3 after, both load and encode).
+- The wsapi call-secret change and the P-256 device-key validator merged
+  cleanly (no wave touches those regions; the P-384 web-client path our
+  verification scripts use is unchanged).
+- Doc status lines were re-mapped to restack-2 SHAs (the restack-1 blemish
+  list is obsolete; all thirteen `> Status:` hashes are now reachable from
+  the stack tip).
 
 ## Supply-chain hardening (out-of-band, 2026-08-04)
 
@@ -1260,7 +1296,15 @@ untouched via `git diff`.
     direct child of the composer's `flex flex-col gap-2` container, so in flow it
     became a zero-height flex item and added an 8px gap above every message,
     comment and article composer. Restored with an explicit
-    `getInputProps({ style: { position: 'absolute' } })`.
+    `getInputProps({ style: { position: 'absolute' } })`. **That fix itself
+    shipped a worse bug** (maintainer-reported 2026-08-05, fixed in a
+    follow-up commit on this branch): dropzone 20 spreads caller props AFTER
+    its defaults, so the partial style replaced the library's entire hiding
+    style and left a fully visible native file input floating over every
+    EditField surface (chat composer, article editor). The input now carries
+    the full hidden style plus the out-of-flow position; sweep confirmed the
+    other ten `<input type="file">` sites all use explicit `display: none`
+    and were never affected.
   - [x] **@giphy/react-components 9.2 → 10.1.2** (+ `@giphy/js-fetch-api` 5.3 →
     5.8). The peer range moves react `16.10.2 - 18` → `18 - 19`, and **every prop
     we pass is unchanged** — but the "pure peer-range major, `.d.ts` byte-identical"
@@ -1413,7 +1457,11 @@ untouched via `git diff`.
   `vendor-web3` **3.82 → 3.56 MB**: ethers 5 (~896 KB) left it, wagmi 2 + viem 2 +
   rainbowkit 2 are bigger, and the eager duplicate viem the wave-0 review found is
   gone (the second viem in the tree is now WalletConnect-core's exact 2.23.2 pin,
-  which loads with the lazily-split WC connector).
+  which loads with the lazily-split WC connector). Final-gate correction
+  (2026-08-04): the wave-0a hope that this wave would fully collapse the
+  duplicate viem did NOT come true — WalletConnect core exact-pins its own
+  copy (2.23.2 next to 2.55.10), so two viem copies remain in lockfile and
+  bundle. Not fixable without force-resolving an exact transitive pin.
 - **Interim review (2026-08-04, fresh context) — findings and what was done.**
   The review verified the two things that would have been worst to get wrong:
   ethers 5's `.send(method, params)` really is `request({ method, params })` with
@@ -1621,8 +1669,10 @@ untouched via `git diff`.
     the EditField error boundary) and `docs/frontend` now lists `slate-dom`.
     Accepted notes: `vendor-editor` +32 kB raw (genuine upstream growth, no
     duplicates — the chunk is eager, so it is initial-load weight); editor
-    nodes are no longer deep-frozen (immer left — accidental mutation would
-    now corrupt silently instead of throwing; nothing mutates today).
+    nodes are no longer deep-frozen (immer left slate — accidental mutation
+    would now corrupt silently instead of throwing; nothing mutates today.
+    Note: wave 4d reintroduces an immer copy via recharts 3's Redux runtime;
+    the slate consequence is unchanged).
   - **Manual (maintainer)**: a real editing pass in the article editor
     (marks, links via the toolbar link input, images) and the chat (mentions,
     paste incl. screenshots, send), on desktop **and mobile** — 0.107–0.110
@@ -1633,23 +1683,96 @@ untouched via `git diff`.
     on expanded selections, where 0.106 never scrolled — check the composer/
     article scroll position doesn't jump, incl. mobile with the keyboard
     open), and **deleting an image/embed in the article editor**.
-- [ ] **PR 4d**: react/react-dom/@types 18 → 19 flip + recharts 2 → 3 (React-19
+- [x] **PR 4d**: react/react-dom/@types 18 → 19 flip + recharts 2 → 3 (React-19
   support) + fallout fixes (types churn: `JSX.Element` namespace, ref callbacks,
   `useRef` argument requirement). Check react-google-recaptcha and remaining
   React-18-peer packages; `react-native-get-random-values` looks vestigial — verify
   and drop if unused.
+  - Done 2026-08-04 (Fable directly), branch `chore/deps-wave4d-react19`.
+    react/react-dom 19.2.8, @types 19.2.17, recharts 3.10.1.
+    `react-native-get-random-values` verified vestigial and dropped. A peer
+    survey over every react-peered direct dependency found none excluding 19 —
+    waves 4a–4c had migrated exactly the ones that did.
+  - The wave-0a `@types/react` resolution moved `"18"` → `"19"` instead of
+    being dropped: it keeps every `@types/react@*` consumer on the single
+    19.2.17 copy (one resolution in the lockfile, verified).
+  - Fallout was purely mechanical, three classes: the removed global JSX
+    namespace (83 files → `React.JSX.Element`), `useRef()` needing an initial
+    value (24 sites → `useRef(undefined)`), and `useRef<T>(null)` now being
+    `RefObject<T | null>` (the receiving prop/context/hook declarations widen;
+    `MutableRefObject` declarations untouched). Plus the two file-picker
+    inputs moving `onInput` → `onChange` (React 19 retyped onInput to the new
+    InputEvent type; for file inputs it is the same DOM event).
+  - recharts 3: the single call site (LockDurationSlider) uses no changed API.
+    **The chart is verified pixel-identical** (review, 2026-08-04): the exact
+    chart was bundled twice — recharts 2.15.4 + React 18 vs recharts 3.10.1 +
+    React 19 — and rendered headlessly to byte-identical PNGs (same area path,
+    same ReferenceDot position, same ticks). No manual chart check needed.
+    Two review fixes applied on this branch: `react-is: "19"` became a direct
+    dependency (recharts 3 demoted it to a peer; the surviving nested 16.13.1
+    copy cannot recognize React-19 elements, which would silently disable
+    fragment flattening in future charts), and the `vendor-charts` group now
+    lists recharts 3's actual runtime (the Redux set + es-toolkit) instead of
+    the departed recharts-scale/react-smooth. Review notes accepted: the v3
+    chart svg gains `role="application" tabindex="0"` (a new tab stop in the
+    stake form); `React.ElementRef`/`MutableRefObject` are deprecated-but-
+    working aliases in @types/react 19 — left for a later cleanup.
+  - **Runtime verification against the built stack over nginx** (not the dev
+    server): the complete wave-4a drag suite (13 checks incl. keyboard drags,
+    gap drops, cancel-outside, positional announcements) and the wave-4c
+    editor suite (typing, mentions, paste, marks/toolbar, undo) are green on
+    React 19. Of note for future sessions: the same suites against a vite dev
+    server can fail spuriously right after dependency changes (stale
+    optimize-graph serving) — the production build is the reference.
+  - Audit after the flip: **root 1 moderate** (the `@truffle/hdwallet-provider`
+    deprecation notice — the only residual finding of the whole workstream),
+    srv 0. The react-beautiful-dnd and recharts notices are gone.
+  - **Manual (maintainer)**: a general React-19 smoke of the app (the flip
+    touches every component; the headless suites cover the two riskiest
+    surfaces but not calls/wallet/plugins UI), the ALTCHA captcha widget on an
+    ALTCHA-configured instance (React 19 assigns the custom element's
+    `challenge` as a property instead of an attribute — verified equivalent
+    against the real widget, but a live-instance look costs nothing), and a
+    PWA/service-worker update cycle on the built app.
 - react-router stays on the v6 line (v7 out of scope).
 
 ## Final gate
 
-- [ ] Full code review of the cumulative diff (fresh reviewer context, not the
+- [x] Full code review of the cumulative diff (fresh reviewer context, not the
   implementing agent), findings fixed or explicitly waived by the maintainer.
-- [ ] `yarn npm audit --all` clean of high severity in both workspaces (document
+  - Run 2026-08-04 over `develop..chore/deps-wave4d-react19` (stack topology,
+    final-tree manifest/lockfile coherence, docs coherence, cross-wave
+    interactions, supply-chain settings, full gates on the tip). **No
+    blocker.** Three should-fixes, all applied in the final-gate fixes commit
+    on the tip: the four dangling doc status hashes swapped to their
+    restacked SHAs; the stale `viem`/`ethers` row in docs/frontend; and the
+    four `node-gyp-build` natives (`bufferutil`/`utf-8-validate`/`keccak`/
+    `secp256k1`) removed from BOTH `dependenciesMeta` allowlists — they load
+    their shipped prebuilds without install scripts (verified by require +
+    functional smoke in both workspaces; matches the `contracts/` precedent),
+    so allowlisting them only widened the attack surface the hardening
+    exists to close. Notes folded into the wave records: the viem duplicate
+    persists (WalletConnect exact-pin), immer is back via recharts 3, the
+    benign typeorm↔redis-6 peer warning, `@types/react-router-dom` v5
+    cleanup stays a TODO.md item.
+- [x] `yarn npm audit --all` clean of high severity in both workspaces (document
   any accepted residual findings here).
-- [ ] Docs trued up in the same PRs that changed behavior (AGENTS.md tech-stack
+  - Final state: **root 0 high / 1 moderate / 0 low** — the single residual
+    is the `@truffle/hdwallet-provider` 2.1.15 deprecation notice (the
+    package is out of scope by decision 7, Truffle tooling). **srv: zero
+    findings.** Starting point was root 22 high / 33 moderate / 1 low and
+    srv 20 high / 23 moderate / 4 low.
+- [x] Docs trued up in the same PRs that changed behavior (AGENTS.md tech-stack
   bullets, docs/frontend, docs/realtime for socket.io, docs/infrastructure for
   sharp/puppeteer image notes) — status lines updated.
-- [ ] TODO.md: the absorbed items (axios keepAlive re-check, jest 30,
+- [x] TODO.md: the absorbed items (axios keepAlive re-check, jest 30,
   @types/confusing-browser-globals) were struck when this roadmap was created; add
-  any leftovers discovered during the waves.
-- [ ] Delete this file (lifecycle), folding lasting insights into docs/.
+  any leftovers discovered during the waves. (Done incrementally: the giphy
+  phantom dep, the CG-ID bundle re-measurement, the tslib finding, dead-code
+  candidates.)
+- [ ] Delete this file (lifecycle), folding lasting insights into docs/. **Left
+  for the merge**: the file is the maintainer's review/merge/manual-test
+  companion; delete it once the stack is merged and the manual matrix is done.
+  Still open besides the merges: **decision 9** (MetaMask-without-extension
+  via RainbowKit's `metaMaskWallet` — its own small PR, never part of these
+  waves).

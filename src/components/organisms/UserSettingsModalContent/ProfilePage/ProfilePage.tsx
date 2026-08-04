@@ -63,7 +63,7 @@ const ProfilePage: React.FC<Props> = (props) => {
     homepage: string;
     links: Common.Link[];
     displayAccount: Models.User.ProfileItemType | undefined;
-  }>();
+  }>(undefined);
 
   useEffect(() => {
     requestInfo.current = {

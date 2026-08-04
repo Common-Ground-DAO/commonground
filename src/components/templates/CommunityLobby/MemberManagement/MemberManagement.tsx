@@ -135,7 +135,7 @@ export default function MemberManagement() {
   }, [roles, memberListData]);
 
   const memberItems = useMemo(() => {
-    const items: JSX.Element[] = [];
+    const items: React.JSX.Element[] = [];
     if (!memberListData) return items;
     const { memberList, offset } = memberListData;
 
@@ -296,7 +296,7 @@ const MemberItem: React.FC<MemberItemProps> = ({ data, index }) => {
       return null;
     }
     return <div className="flex gap-0.5 items-center flex-nowrap overflow-x-hidden">
-      {data.roles.reduce<(JSX.Element | string)[]>(
+      {data.roles.reduce<(React.JSX.Element | string)[]>(
         (agg, role) => {
           agg.push(
             <span className={`member-list-role`} key={role.id}>

@@ -146,13 +146,13 @@ const ExpandedMenu: React.FC<Props> = ({ expanded }) => {
 
 type ExpandedMenuButtonProps = {
   text?: string;
-  icon?: JSX.Element;
+  icon?: React.JSX.Element;
   onClick?: (ev: React.MouseEvent<HTMLElement, MouseEvent>) => void;
   className?: string;
   isActive?: boolean;
   disabled?: boolean;
   notificationCount?: number;
-  buttonRef?: React.RefObject<HTMLButtonElement>;
+  buttonRef?: React.RefObject<HTMLButtonElement | null>;
 }
 
 function ExpandedMenuButton(props: ExpandedMenuButtonProps) {

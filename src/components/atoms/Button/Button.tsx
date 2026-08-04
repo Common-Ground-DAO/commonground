@@ -10,9 +10,9 @@ import "./Button.css";
 export type ButtonRole = "primary" | "secondary" | "borderless" | "textual" | "inactive" | "admin" | "audio" | "menu" | "chip" | "destructive" | "final";
 
 export interface ButtonProps {
-  iconLeft?: JSX.Element;
-  iconRight?: JSX.Element;
-  text?: string | JSX.Element;
+  iconLeft?: React.JSX.Element;
+  iconRight?: React.JSX.Element;
+  text?: string | React.JSX.Element;
   className?: string;
   style?: React.CSSProperties;
   role?: ButtonRole;
@@ -21,7 +21,7 @@ export interface ButtonProps {
   onMouseEnter?: (ev: React.MouseEvent<HTMLButtonElement>) => void;
   onMouseLeave?: (ev: React.MouseEvent<HTMLButtonElement>) => void;
   tabIndex?: number;
-  buttonRef?: React.RefObject<HTMLButtonElement>;
+  buttonRef?: React.RefObject<HTMLButtonElement | null>;
   loading?: boolean;
   active?: boolean;
   longPress?: boolean;

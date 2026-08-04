@@ -129,8 +129,15 @@ const VENDOR_GROUPS: Readonly<Record<string, readonly string[]>> = {
   // `d3-<module>` packages.
   'vendor-charts': [
     'recharts',
-    'recharts-scale',
-    'react-smooth',
+    // recharts 3 replaced its 2.x helpers (recharts-scale, react-smooth)
+    // with a Redux-based runtime; these are recharts-only in this app.
+    '@reduxjs/toolkit',
+    'react-redux',
+    'redux',
+    'redux-thunk',
+    'immer',
+    'reselect',
+    'es-toolkit',
     'victory-vendor',
     'decimal.js-light',
     'internmap',

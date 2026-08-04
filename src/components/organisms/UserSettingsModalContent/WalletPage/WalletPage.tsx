@@ -46,7 +46,7 @@ const WalletPage: React.FC<Props> = (props) => {
   const requestInfo = useRef<{
     // visibility: Models.Wallet.Visibility
     useToLogin: boolean;
-  }>();
+  }>(undefined);
 
   useEffect(() => {
     requestInfo.current = {

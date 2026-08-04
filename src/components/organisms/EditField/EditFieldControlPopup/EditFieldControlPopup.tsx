@@ -10,7 +10,7 @@ type Props = {
   visible: boolean;
   close: () => void;
   editFieldHeight: number;
-  triggerRef: React.RefObject<HTMLDivElement>;
+  triggerRef: React.RefObject<HTMLDivElement | null>;
 }
 
 const EditFieldControlPopup: React.FC<React.PropsWithChildren<Props>> = (props) => {

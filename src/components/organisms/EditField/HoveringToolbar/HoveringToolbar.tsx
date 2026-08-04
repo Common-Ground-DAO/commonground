@@ -152,7 +152,7 @@ const HoveringToolbar = () => {
 
 type FormatButtonProps = {
   format: EditorFormatOptions;
-  icon: JSX.Element;
+  icon: React.JSX.Element;
   onClick?: () => void;
 }
 

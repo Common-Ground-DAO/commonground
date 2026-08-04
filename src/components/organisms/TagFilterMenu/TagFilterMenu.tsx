@@ -16,7 +16,7 @@ import TextInputField from 'components/molecules/inputs/TextInputField/TextInput
 import { tagStringToPredefinedTag } from 'components/molecules/inputs/TagInputField/TagInputField';
 
 type Props = {
-  triggerContent: JSX.Element;
+  triggerContent: React.JSX.Element;
   activeTags: PredefinedTag[];
   setActiveTags: (tags: PredefinedTag[]) => void;
 };

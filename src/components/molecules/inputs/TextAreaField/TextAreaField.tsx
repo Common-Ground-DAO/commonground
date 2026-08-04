@@ -21,7 +21,7 @@ type Props = {
   autoFocus?: boolean;
   disabled?: boolean;
   maxLetters?: number;
-  inputRef?: React.RefObject<HTMLTextAreaElement>;
+  inputRef?: React.RefObject<HTMLTextAreaElement | null>;
   inlineToast?: InlineToastType;
   onKeyPress?: (e: React.KeyboardEvent<Element>) => void;
   onFocus?: (e: React.FocusEvent<Element>) => void;

@@ -36,6 +36,14 @@ import {
   darkTheme,
   lightTheme,
 } from '@rainbow-me/rainbowkit';
+import {
+  coinbaseWallet,
+  injectedWallet,
+  metaMaskWallet,
+  rainbowWallet,
+  safeWallet,
+  walletConnectWallet,
+} from '@rainbow-me/rainbowkit/wallets';
 import { WagmiProvider } from 'wagmi';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fallback, http, type Chain } from 'viem';
@@ -171,7 +179,22 @@ const wagmiConfig = getDefaultConfig({
   projectId: config.WALLETCONNECT_PROJECT_ID,
   chains: activeChains,
   transports,
-  ssr: false,
+  // Spelled out rather than left to RainbowKit 2's default set, which differs
+  // from RainbowKit 1's: it drops Coinbase Wallet (replacing it with Base
+  // Account) and the generic injected/Brave entries. This list is the wallets
+  // RainbowKit 1's `getDefaultWallets` offered. Brave and other extensions
+  // still surface through wagmi's EIP-6963 discovery.
+  wallets: [{
+    groupName: 'Recommended',
+    wallets: [
+      injectedWallet,
+      safeWallet,
+      rainbowWallet,
+      coinbaseWallet,
+      metaMaskWallet,
+      walletConnectWallet,
+    ],
+  }],
 });
 
 const queryClient = new QueryClient();

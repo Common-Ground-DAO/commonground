@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect } from 'react';
 import { useReadContracts } from 'wagmi';
 import { formatUnits } from 'viem';
 
@@ -30,7 +30,9 @@ const WalletOverview: React.FC<{
   tokenAddress: string;
   chainId: number;
   connectedAddress?: string;
-}> = ({ wallets, tokenAddress, chainId, connectedAddress }) => {
+  /** Bumped by the parent after a confirmed stake/unstake, to refetch balances. */
+  refreshToken?: number;
+}> = ({ wallets, tokenAddress, chainId, connectedAddress, refreshToken }) => {
   const { setIsOpen, setCurrentPage } = useUserSettingsContext();
 
   const evmWallets = useMemo(
@@ -39,9 +41,11 @@ const WalletOverview: React.FC<{
   );
 
   // wagmi 2: `useContractReads` → `useReadContracts`; `enabled` moved under
-  // `query`, and `watch` is gone (the balances refresh on remount / query
-  // invalidation instead of per block).
-  const { data: balances } = useReadContracts({
+  // `query`, and `watch: true` is gone. Nothing invalidates these queries on
+  // its own, so the parent signals a confirmed stake/unstake via `refreshToken`
+  // and the effect below refetches — otherwise the wallet balances shown here
+  // would stay stale until the next window focus.
+  const { data: balances, refetch: refetchBalances } = useReadContracts({
     contracts: evmWallets.map(wallet => ({
       address: tokenAddress as `0x${string}`,
       abi: erc20MinimalAbi,
@@ -53,6 +57,10 @@ const WalletOverview: React.FC<{
     })) as any,
     query: { enabled: evmWallets.length > 0 },
   });
+
+  useEffect(() => {
+    if (refreshToken) refetchBalances();
+  }, [refreshToken]);
 
   const openWalletSettings = () => {
     setCurrentPage('wallet');

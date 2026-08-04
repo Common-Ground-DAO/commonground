@@ -209,8 +209,11 @@ const PaySpark: React.FC<Props> = (props) => {
 
   const { data: sendData, error: sendError, isError: sendIsError, isPending: isSendLoading, sendTransaction } = useSendTransaction();
 
-  const { isSuccess: isWriteSuccess } = useWaitForTransactionReceipt({ hash: writeData });
-  const { isSuccess: isSendSuccess } = useWaitForTransactionReceipt({ hash: sendData });
+  // The explicit timeout overrides viem 2's 180 s default (viem 1 had none): a
+  // slow but perfectly good payment must still reach the success page.
+  const RECEIPT_TIMEOUT_MS = 30 * 60 * 1000;
+  const { isSuccess: isWriteSuccess } = useWaitForTransactionReceipt({ hash: writeData, timeout: RECEIPT_TIMEOUT_MS });
+  const { isSuccess: isSendSuccess } = useWaitForTransactionReceipt({ hash: sendData, timeout: RECEIPT_TIMEOUT_MS });
 
   // wagmi 1 signalled "this transaction cannot be sent" by withholding the
   // `write`/`sendTransaction` callback; wagmi 2 always hands them out, so the
@@ -293,9 +296,17 @@ const PaySpark: React.FC<Props> = (props) => {
     }
   }, [isActiveAddressLinked, address, chain, signMessageAsync, showSnackbar]);
 
+  // Deliberately keyed on `address` alone. wagmi 1's `useNetwork()` synthesised
+  // a chain object for *any* connected chain id; wagmi 2's `useAccount().chain`
+  // is `undefined` whenever the wallet sits on a chain that is not in our
+  // config. Requiring `chain` here would drop such a user onto the "Connect
+  // wallet" branch, whose ConnectButton is itself gated on `!address` — i.e. an
+  // empty screen. With `address` only they land on the payment UI, where
+  // `networkSwitchNeeded` is true and the "Switch Network" button is the way
+  // out, exactly as before.
   const walletConnected = useMemo(() => {
-    return !!address && !!chain;
-  }, [address, chain]);
+    return !!address;
+  }, [address]);
 
   const selectedToken = useMemo(() => payableTokens.find(token => token.address === paymentToken), [payableTokens, paymentToken]);
 
@@ -473,7 +484,7 @@ const PaySpark: React.FC<Props> = (props) => {
         className='w-full max-w-full'
         text='Switch Network'
         onClick={() => {
-          if (paymentChain) switchChainAsync({ chainId: paymentChain.id });
+          if (paymentChain) switchChainAsync({ chainId: paymentChain.id }).catch(() => undefined);
         }}
         disabled={!networkSwitchNeeded && (isWriteLoading || isSendLoading || !paymentToken || !payReady)}
       />}

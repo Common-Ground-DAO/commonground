@@ -85,6 +85,24 @@
   (b) `src/cgid/home.tsx` calls `startRegistration`/`startAuthentication` outside
   its `try`, so a user cancel becomes an unhandled rejection (login.tsx and
   createPasskey.tsx do it correctly inside).
+- [ ] **The legacy MetaMask connect path lost its no-extension flow** (2026-08-04,
+  dependency-update wave-3 review) — `signatureHelper.connectMetamask()` (reached
+  from `WalletsEditor/WalletSelectModal`, i.e. "Add wallet → MetaMask") used to
+  instantiate `@metamask/sdk`, which, when `window.ethereum` was **absent**,
+  injected its own provider and ran the install-modal / mobile deep-link flow.
+  That dependency was 0.1.0 (deprecated, superseded by MetaMask Connect) and is
+  dropped; on a mobile browser without the extension the path now throws
+  "Please install MetaMask!". Decide: route this button through RainbowKit's own
+  MetaMask connector (which does deep-link), or leave it extension-only.
+- [ ] **`signatureHelper.metamaskSignData` and `recoverSigner` have no callers**
+  (2026-08-04, dependency-update wave-3 review) — with them, the
+  `@metamask/eth-sig-util` dependency is unreachable too. Verify and delete.
+- [ ] **`TokenRuleEditor` silently rounds over-precise token amounts**
+  (2026-08-04, dependency-update wave-3 review) — its guard regex allows
+  unbounded decimals, and viem's `parseUnits` rounds half-up where ethers 5 threw
+  `fractional component exceeds decimals` (which the `catch` turned into "no
+  rule"). So `1.5555555` on a 6-decimal token now becomes `1.555556` instead of
+  being rejected. Bound the decimals in the regex, or reject explicitly.
 - [ ] **`@giphy/js-types` is a phantom dependency** (2026-08-04, dependency-update
   wave-2 review) — imported directly by `MessageAttachments.tsx`, `GiphyPicker.tsx`
   and `useAttachments.tsx`, declared in no `package.json`; it only resolves because

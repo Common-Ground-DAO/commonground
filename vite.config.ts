@@ -353,17 +353,14 @@ export default defineConfig(({ command }) => ({
       // enters the TS program. The stub lives in
       // src/types/altcha-widget-element.d.ts.
       { find: /^altcha-widget-element$/, replacement: 'altcha' },
-      // @metamask/sdk declares `browser` (a UMD bundle) *and* `module` (its
-      // **node** ESM build). Vite's resolver prefers an ESM `module` entry over
-      // a non-ESM `browser` entry, so it pulls the node build into the browser
-      // bundle — fs/child_process/tls/zlib get externalized and throw at
-      // runtime. webpack's `mainFields: ['browser', 'module', 'main']` picks the
-      // browser UMD build (verified against the CRA sourcemaps); pin the same
-      // file here.
-      {
-        find: /^@metamask\/sdk$/,
-        replacement: '@metamask/sdk/dist/browser/umd/metamask-sdk.js',
-      },
+      // There used to be a `@metamask/sdk` → browser-UMD alias here. It is gone
+      // with the wagmi 2 migration: the SDK is no longer a direct dependency
+      // (wagmi's `metaMask` connector dynamically imports it), and 0.33's
+      // `browser`/`module` fields both point at the browser ESM build, so Vite
+      // resolves it correctly unaided. Measured: without the alias the precache
+      // is 60 KB *smaller*. The original reason — 0.1.0's `module` entry being
+      // the node build, dragging fs/child_process/tls into the browser bundle —
+      // no longer applies. Do not re-add it without re-measuring.
     ],
   },
 

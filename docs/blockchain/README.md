@@ -232,7 +232,7 @@ Each chain's `PROVIDER_URL` (in `srv/onchain/settings.ts`) reads from a `QUIKNOD
 
 > Some public endpoints restrict `eth_getLogs` (the method the event listener relies on). The self-host defaults are chosen to avoid providers that block it.
 
-**Frontend RPCs.** The production app uses a domain-locked Alchemy key, which cannot serve self-hosted origins (CORS). `src/App.tsx` therefore detects self-hosted instances (`window.__CG_INSTANCE__`) and, for those, wires wagmi's `configureChains` with a `jsonRpcProvider` keyed by numeric chain id (matching the backend's public defaults) plus `publicProvider()` as fallback — instead of the Alchemy provider. viem's built-in public RPCs were too flaky for balance reads and transaction simulation, so explicit endpoints are used.
+**Frontend RPCs.** The production app uses a domain-locked Alchemy key, which cannot serve self-hosted origins (CORS). `src/App.tsx` therefore detects self-hosted instances (`window.__CG_INSTANCE__`) and, for those, builds wagmi 2's per-chain transports with the self-hosted RPC URLs keyed by numeric chain id (matching the backend's public defaults), each wrapped in `fallback([http(selfhostRpc), http()])` so the chain's default public RPC is still the second leg — instead of the Alchemy endpoints. viem's built-in public RPCs were too flaky for balance reads and transaction simulation, so explicit endpoints are used.
 
 ---
 
@@ -728,7 +728,7 @@ A mobile-only view that renders the `WalletsManagement` component. On desktop, w
 Since the Phase-2 slimming the `/token/` page is a header plus the stake tab; the
 buy/claim flow, the charts and the `cgTokensale_v1_abi` are gone.
 
-The **StakeTab** (`src/views/TokenSale/StakeTab/StakeTab.tsx`) handles staking: it reads/writes via wagmi (`useContractRead`, `useContractWrite`, `useWaitForTransaction`), using the `stakingContractAbi` and `erc20MinimalAbi` from `src/common/staking.ts`. The flow is ERC-20 `approve` then `stake(amount, lockSeconds)`, plus `unstake(positionId)` for matured positions. Positions and config are fetched from the backend (`src/data/api/staking.ts`).
+The **StakeTab** (`src/views/TokenSale/StakeTab/StakeTab.tsx`) handles staking: it reads/writes via wagmi 2 (`useReadContract`, `useWriteContract`, `useWaitForTransactionReceipt`; the balance and allowance reads are refetched explicitly after a confirmed write, since wagmi 2 has no `watch: true`), using the `stakingContractAbi` and `erc20MinimalAbi` from `src/common/staking.ts`. The flow is ERC-20 `approve` then `stake(amount, lockSeconds)`, plus `unstake(positionId)` for matured positions. Positions and config are fetched from the backend (`src/data/api/staking.ts`).
 
 ### SafeAndUpgradesView
 

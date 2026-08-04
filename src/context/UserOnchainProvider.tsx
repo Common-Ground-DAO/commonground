@@ -46,8 +46,22 @@ function ChainWrapper({
     if (!publicClient) return;
     if (trackedTransactions.has(tx.hash)) return;
     trackedTransactions.add(tx.hash);
-    publicClient.waitForTransactionReceipt({ hash: tx.hash as `0x${string}` }).then(() => {
-      showSnackbar({ type: 'success', text: tx.text });
+    publicClient.waitForTransactionReceipt({
+      hash: tx.hash as `0x${string}`,
+      // viem 2 defaults to a 180 s timeout where viem 1 waited indefinitely;
+      // a slow-but-fine mainnet transaction must not be reported as failed.
+      timeout: 30 * 60 * 1000,
+    }).then((receipt) => {
+      // ethers 5's `.wait()` *threw* on a reverted transaction, so the old code
+      // never reached this branch for one. viem resolves either way, so the
+      // status has to be checked explicitly — otherwise a reverted payment pops
+      // a green "… sent".
+      if (receipt.status === 'success') {
+        showSnackbar({ type: 'success', text: tx.text });
+      }
+      else {
+        showSnackbar({ type: 'warning', text: `${tx.text} — transaction reverted` });
+      }
     })
     .catch(e => console.log("Transaction error", e))
     .finally(() => {

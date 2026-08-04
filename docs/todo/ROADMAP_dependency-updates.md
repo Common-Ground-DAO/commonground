@@ -1216,6 +1216,63 @@ untouched via `git diff`.
   rainbowkit 2 are bigger, and the eager duplicate viem the wave-0 review found is
   gone (the second viem in the tree is now WalletConnect-core's exact 2.23.2 pin,
   which loads with the lazily-split WC connector).
+- **Interim review (2026-08-04, fresh context) — findings and what was done.**
+  The review verified the two things that would have been worst to get wrong:
+  ethers 5's `.send(method, params)` really is `request({ method, params })` with
+  the result untouched (so `eth_sign`/`eth_signTypedData_v4` are bit-identical),
+  and ethers-5-vs-viem mnemonic login produces a byte-identical signature from
+  the same `m/44'/60'/0'/0/0` derivation. Backend verification paths re-checked
+  (EIP-191 via `ethers.verifyMessage`, Lukso via ERC-1271). The five Alchemy URLs
+  and the `fallback` semantics were confirmed against viem 1's own chain
+  definitions. **Fixed on this branch:**
+  - **Reverted transactions showed a green success snackbar.** ethers 5's
+    `.wait()` *threw* on `status === 0`, so the old code never reached the
+    success branch; viem resolves either way. `UserOnchainProvider` now checks
+    `receipt.status`.
+  - **viem 2 added a 180 s default receipt timeout** where viem 1 waited forever,
+    so a merely slow mainnet transaction would have surfaced as "Transaction
+    failed" (StakeTab) or never reached the success page (PaySpark). All three
+    `waitForTransactionReceipt` sites now pass an explicit 30-minute timeout.
+  - **PaySpark dead-ended on an unconfigured chain.** wagmi 1's `useNetwork()`
+    synthesised a chain object for any connected chain id; wagmi 2's
+    `useAccount().chain` is `undefined` outside our chain list, which sent such
+    users to a "Connect wallet" branch whose ConnectButton is itself gated on
+    `!address` — an empty screen. `walletConnected` keys on `address` alone now,
+    so they land on the payment UI with the "Switch Network" button.
+  - **RainbowKit 2's default wallet set is not RainbowKit 1's** — it drops
+    Coinbase Wallet (for Base Account) and the injected/Brave entries. The
+    wallet list is spelled out explicitly now to keep the old set. (Cost:
+    ~5 lazy chunks / ~0.5 MiB of precache.)
+  - **WalletOverview's balances never refreshed** after a stake (nothing
+    invalidates that query). StakeTab bumps a `refreshToken` after a confirmed
+    write and the component refetches.
+  - `switchChainAsync` in PaySpark was missing the `.catch(() => undefined)` the
+    other three call sites have — an unhandled rejection whenever a user
+    declines the network switch.
+  - **The `@metamask/sdk` Vite alias is removed** (it aliased a package that is
+    no longer a direct dependency; 0.33's `browser`/`module` both point at the
+    browser ESM build, and measured, the precache is 60 KB *smaller* without it).
+    `docs/frontend` and two stale wagmi-1 statements in `docs/blockchain`
+    (`configureChains`/`jsonRpcProvider`, StakeTab's hook names) trued up.
+  - **My `@metamask/sdk` justification was wrong** and is corrected here: the
+    SDK did *not* only ever return `window.ethereum`. When `window.ethereum` was
+    absent it injected its own provider (`shouldSetOnWindow: true`) and ran the
+    install-modal / deep-link flow, so dropping it removes the
+    no-extension-MetaMask path from `WalletSelectModal`. The removal stands (0.1.0
+    is deprecated and RainbowKit's own MetaMask connector covers mobile
+    deep-linking), but it is a functional change, not a no-op — flagged for the
+    maintainer, recorded in TODO.md.
+  - **Not fixed, recorded as notes** (behavioural deltas inherent to viem 2):
+    `formatUnits` drops trailing `.0`; `parseUnits` silently rounds
+    over-precise input where ethers 5 threw (makes `TokenRuleEditor`'s
+    unbounded-decimals input round instead of reject); `mnemonicToAccount`
+    accepts a bad BIP-39 checksum where ethers validated it (valid mnemonics are
+    unaffected — proven byte-identical); viem 2 changed several chains' default
+    public RPCs, i.e. the second leg of every `fallback`; Lukso UP addresses now
+    come back in whatever casing the extension returns rather than EIP-55
+    (every backend lookup is `LOWER()`-normalised, verified — cosmetic only).
+    `signatureHelper.metamaskSignData`/`recoverSigner` turn out to have **no
+    callers at all** — dead-code item in TODO.md.
 - **Manual test surface (maintainer — none of this is verifiable headlessly):**
   every wallet login (MetaMask, WalletConnect, Coinbase, **Lukso UP** — the
   `eth_sign` path was rewritten, and SIWE verification is server-side), the

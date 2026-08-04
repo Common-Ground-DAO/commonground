@@ -87,6 +87,9 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
   const [wallets, setWallets] = useState<Models.Wallet.Wallet[] | undefined>(undefined);
   const [pendingTx, setPendingTx] = useState<{ hash: `0x${string}`; kind: 'approve' | 'stake' | 'unstake' } | null>(null);
   const [unstakingId, setUnstakingId] = useState<string | null>(null);
+  // Bumped after a confirmed write so WalletOverview refetches its balances
+  // (wagmi 2 has no `watch: true` to do it per block).
+  const [balanceRefreshToken, setBalanceRefreshToken] = useState(0);
 
   const loadServerState = useCallback(async () => {
     try {
@@ -164,6 +167,9 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
     isError: receiptIsError,
   } = useWaitForTransactionReceipt({
     hash: pendingTx?.hash,
+    // viem 2 defaults to a 180 s timeout where viem 1 waited indefinitely —
+    // without this a merely slow transaction would surface as "failed".
+    timeout: 30 * 60 * 1000,
     query: { enabled: !!pendingTx },
   });
 
@@ -176,6 +182,7 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
     // is gone, so both reads are refetched explicitly here.
     refetchAllowance();
     refetchBalance();
+    setBalanceRefreshToken(t => t + 1);
     if (receiptError || receipt?.status !== 'success') {
       showSnackbar({ type: 'warning', text: 'Transaction failed.' });
       return;
@@ -315,6 +322,7 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
       tokenAddress={config.tokenAddress}
       chainId={chainId!}
       connectedAddress={address}
+      refreshToken={balanceRefreshToken}
     />
 
     <div className='flex flex-col gap-3'>

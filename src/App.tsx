@@ -31,12 +31,22 @@ import { DarkModeProvider, useDarkModeContext } from 'context/DarkModeProvider';
 
 import '@rainbow-me/rainbowkit/styles.css';
 import {
-  getDefaultWallets,
+  getDefaultConfig,
   RainbowKitProvider,
   darkTheme,
   lightTheme,
 } from '@rainbow-me/rainbowkit';
-import { WagmiConfig, createConfig, configureChains } from 'wagmi';
+import {
+  coinbaseWallet,
+  injectedWallet,
+  metaMaskWallet,
+  rainbowWallet,
+  safeWallet,
+  walletConnectWallet,
+} from '@rainbow-me/rainbowkit/wallets';
+import { WagmiProvider } from 'wagmi';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fallback, http, type Chain } from 'viem';
 import {
   mainnet,
   polygon,
@@ -50,10 +60,6 @@ import {
   hardhat,
   base,
 } from 'wagmi/chains';
-// import { createPublicClient, http } from 'viem';
-import { publicProvider } from 'wagmi/providers/public';
-import { jsonRpcProvider } from 'wagmi/providers/jsonRpc';
-import { alchemyProvider } from 'wagmi/providers/alchemy';
 import config from 'common/config';
 import CommunityRouter from 'views/CommunityRouter/CommunityRouter';
 import ProfileRouter from 'views/ProfileRouter/ProfileRouter';
@@ -118,10 +124,10 @@ const TwitterCallbackView = React.lazy(() => import('views/TwitterCallbackView/T
 const VerifyEmailView = React.lazy(() => import('views/VerifyEmailView/VerifyEmailView'));
 const IsolationModeToggle = React.lazy(() => import('views/IsolationModeToggle/IsolationModeToggle'));
 
-const activeChains: any[] = [mainnet, polygon, optimism, arbitrum, gnosis, bsc, fantom, avalanche, zkSync, base];
-if (config.DEPLOYMENT === 'dev') {;
-  activeChains.push(hardhat);
-}
+const activeChains = (config.DEPLOYMENT === 'dev'
+  ? [mainnet, polygon, optimism, arbitrum, gnosis, bsc, fantom, avalanche, zkSync, base, hardhat]
+  : [mainnet, polygon, optimism, arbitrum, gnosis, bsc, fantom, avalanche, zkSync, base]
+) as unknown as readonly [Chain, ...Chain[]];
 
 // self-hosted instances (identified by an injected instance config) can't use
 // CG's domain-locked Alchemy key — their requests fail CORS. They use each
@@ -142,34 +148,56 @@ const selfhostRpcByChainId: Record<number, string> = {
   42: 'https://rpc.mainnet.lukso.network',
 };
 
-const { chains, publicClient, webSocketPublicClient } = configureChains(
-  activeChains,
-  isSelfHosted
-    ? [
-        jsonRpcProvider({
-          rpc: (chain) => selfhostRpcByChainId[chain.id]
-            ? { http: selfhostRpcByChainId[chain.id] }
-            : null,
-        }),
-        publicProvider(),
-      ]
-    : [alchemyProvider({ apiKey: '_sIiYKLDy9V9dQChacf2G5Nz7mxxghqZ' }), publicProvider()],
-);
+// wagmi 2 has no provider chain — `configureChains` is gone and each chain gets
+// its own transport. This table reproduces what wagmi 1's `alchemyProvider()`
+// resolved to: it only handled chains whose viem-1 definition carried an
+// `rpcUrls.alchemy` entry (exactly these five), and every other chain fell
+// through to `publicProvider()`. viem 2 dropped those per-chain alchemy URLs,
+// so they are spelled out here.
+const ALCHEMY_API_KEY = '_sIiYKLDy9V9dQChacf2G5Nz7mxxghqZ';
+const alchemyRpcByChainId: Record<number, string> = {
+  [mainnet.id]: 'https://eth-mainnet.g.alchemy.com/v2',
+  [polygon.id]: 'https://polygon-mainnet.g.alchemy.com/v2',
+  [optimism.id]: 'https://opt-mainnet.g.alchemy.com/v2',
+  [arbitrum.id]: 'https://arb-mainnet.g.alchemy.com/v2',
+  [base.id]: 'https://base-mainnet.g.alchemy.com/v2',
+};
 
-const { connectors } = getDefaultWallets({
+// `fallback([preferred, http()])` is wagmi 1's provider-list semantics: try the
+// configured endpoint, fall back to the chain's default public RPC.
+const transports = Object.fromEntries(activeChains.map((chain) => {
+  const preferred = isSelfHosted
+    ? selfhostRpcByChainId[chain.id]
+    : (alchemyRpcByChainId[chain.id] && `${alchemyRpcByChainId[chain.id]}/${ALCHEMY_API_KEY}`);
+  return [chain.id, preferred ? fallback([http(preferred), http()]) : http()];
+}));
+
+const wagmiConfig = getDefaultConfig({
   appName: 'Common Ground',
   // WalletConnect Cloud project ids are origin-allowlisted upstream, so
   // self-hosted instances configure their own (CG_WALLETCONNECT_PROJECT_ID)
   projectId: config.WALLETCONNECT_PROJECT_ID,
-  chains
+  chains: activeChains,
+  transports,
+  // Spelled out rather than left to RainbowKit 2's default set, which differs
+  // from RainbowKit 1's: it drops Coinbase Wallet (replacing it with Base
+  // Account) and the generic injected/Brave entries. This list is the wallets
+  // RainbowKit 1's `getDefaultWallets` offered. Brave and other extensions
+  // still surface through wagmi's EIP-6963 discovery.
+  wallets: [{
+    groupName: 'Recommended',
+    wallets: [
+      injectedWallet,
+      safeWallet,
+      rainbowWallet,
+      coinbaseWallet,
+      metaMaskWallet,
+      walletConnectWallet,
+    ],
+  }],
 });
 
-const wagmiConfig = createConfig({
-  autoConnect: true,
-  connectors,
-  publicClient,
-  webSocketPublicClient,
-});
+const queryClient = new QueryClient();
 
 export function removeInitialSlash(value: string) {
   if (value[0] === "/") {
@@ -249,9 +277,9 @@ function Inner() {
   return (
     <>
       <IsolationModeProvider>
-      <WagmiConfig config={wagmiConfig}>
+      <WagmiProvider config={wagmiConfig}>
+      <QueryClientProvider client={queryClient}>
       <RainbowKitProvider
-        chains={chains}
         theme={mode.isDarkMode ? darkTheme() : lightTheme()}
         modalSize='compact'
         // appInfo={{learnMoreUrl: 'https://app.cg'}} // define our own learn more url
@@ -322,7 +350,8 @@ function Inner() {
       </WindowSizeProvider>
       </AuthKitProvider>
       </RainbowKitProvider>
-      </WagmiConfig>
+      </QueryClientProvider>
+      </WagmiProvider>
       </IsolationModeProvider>
     </>
   );

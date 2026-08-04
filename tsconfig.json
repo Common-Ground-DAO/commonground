@@ -1,6 +1,11 @@
 {
   "compilerOptions": {
-    "target": "es2018",
+    // es2020, not es2018: viem 2 and its `ox` dependency ship .ts sources
+    // containing BigInt literals, which tsc rejects below ES2020. This affects
+    // type checking only — the emitted bundle's target comes from
+    // `BUILD_TARGET` in vite.config.ts (the browserslist floors), and every
+    // floor there supports BigInt.
+    "target": "es2020",
     "lib": [
       "dom",
       "dom.iterable",

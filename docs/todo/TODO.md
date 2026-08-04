@@ -85,6 +85,24 @@
   (b) `src/cgid/home.tsx` calls `startRegistration`/`startAuthentication` outside
   its `try`, so a user cancel becomes an unhandled rejection (login.tsx and
   createPasskey.tsx do it correctly inside).
+- [ ] **The legacy MetaMask connect path lost its no-extension flow** (2026-08-04,
+  dependency-update wave-3 review) — `signatureHelper.connectMetamask()` (reached
+  from `WalletsEditor/WalletSelectModal`, i.e. "Add wallet → MetaMask") used to
+  instantiate `@metamask/sdk`, which, when `window.ethereum` was **absent**,
+  injected its own provider and ran the install-modal / mobile deep-link flow.
+  That dependency was 0.1.0 (deprecated, superseded by MetaMask Connect) and is
+  dropped; on a mobile browser without the extension the path now throws
+  "Please install MetaMask!". Decide: route this button through RainbowKit's own
+  MetaMask connector (which does deep-link), or leave it extension-only.
+- [ ] **`signatureHelper.metamaskSignData` and `recoverSigner` have no callers**
+  (2026-08-04, dependency-update wave-3 review) — with them, the
+  `@metamask/eth-sig-util` dependency is unreachable too. Verify and delete.
+- [ ] **`TokenRuleEditor` silently rounds over-precise token amounts**
+  (2026-08-04, dependency-update wave-3 review) — its guard regex allows
+  unbounded decimals, and viem's `parseUnits` rounds half-up where ethers 5 threw
+  `fractional component exceeds decimals` (which the `catch` turned into "no
+  rule"). So `1.5555555` on a 6-decimal token now becomes `1.555556` instead of
+  being rejected. Bound the decimals in the regex, or reject explicitly.
 - [ ] **`@giphy/js-types` is a phantom dependency** (2026-08-04, dependency-update
   wave-2 review) — imported directly by `MessageAttachments.tsx`, `GiphyPicker.tsx`
   and `useAttachments.tsx`, declared in no `package.json`; it only resolves because
@@ -176,6 +194,14 @@
   not interchangeable); the fix is dependency hygiene — a yarn resolution once the
   `@walletconnect` v1 packages are gone (the wagmi 2 migration in
   `ROADMAP_dependency-updates.md` wave 3 removes them; re-check then).
+  **Re-checked after wave 3 (2026-08-04): 11 copies → 4** (1.14.1, 2.4.0, 2.7.0,
+  2.8.1). But the premise above does not hold: the WalletConnect **v1 SDK** is
+  indeed gone, while the tslib-1.14.1 pin comes from WalletConnect's own
+  1.x-versioned *helper* packages (`@walletconnect/environment`, `events`,
+  `jsonrpc-*`, `safe-json`, `time`) — which WalletConnect **v2** core still
+  depends on. So a blanket tslib resolution is still unsafe; what is left is
+  merging the three tslib-2 copies (2.4.0 / 2.7.0 / 2.8.1), which *is* safe and
+  worth a resolution on its own.
 - [ ] **Immutable caching for hashed frontend assets in nginx — own PR** (2026-08-03).
   `^/(fonts|icons|images|static|audio|downloads)/` is capped at
   `max-age=86400, must-revalidate` in all three nginx configs, although everything under

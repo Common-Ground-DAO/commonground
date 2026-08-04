@@ -10,24 +10,22 @@ import Button from 'components/atoms/Button/Button';
 import userApi from 'data/api/user';
 import useLocalStorage from 'hooks/useLocalStorage';
 import {
-  erc20ABI,
   useAccount,
-  useNetwork,
   useSignMessage,
-  useSwitchNetwork,
-  usePrepareContractWrite,
-  useContractWrite,
-  usePrepareSendTransaction,
+  useSwitchChain,
+  useSimulateContract,
+  useWriteContract,
+  useEstimateGas,
   useSendTransaction,
-  useWaitForTransaction,
+  useWaitForTransactionReceipt,
+  usePublicClient,
 } from 'wagmi';
-import { Chain, Client, Transport, parseUnits } from 'viem';
+import { Chain, erc20Abi, formatUnits, parseUnits } from 'viem';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import EthereumIcon from '../../../atoms/icons/24/Ethereum.svg?react';
 import getSiweMessage from 'util/siwe';
 import { useSnackbarContext } from 'context/SnackbarContext';
-import { ethers } from 'ethers';
-import { useEthersProvider, useUserOnchainContext } from 'context/UserOnchainProvider';
+import { useUserOnchainContext } from 'context/UserOnchainProvider';
 import ListItem from 'components/atoms/ListItem/ListItem';
 import { ChevronDownIcon } from '@heroicons/react/20/solid';
 import PaddedIcon from 'components/atoms/PaddedIcon/PaddedIcon';
@@ -72,8 +70,10 @@ const PaySpark: React.FC<Props> = (props) => {
   const { address } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const wallets = useOwnWallets();
-  const { chain } = useNetwork();
-  const { chains, error, switchNetworkAsync } = useSwitchNetwork();
+  // wagmi 2: `useNetwork()` folded into `useAccount()`; `useSwitchNetwork` →
+  // `useSwitchChain` (`switchChainAsync({ chainId })`).
+  const { chain } = useAccount();
+  const { chains, error, switchChainAsync } = useSwitchChain();
   const [walletSignError, setWalletSignError] = useState<string>();
   const [tokenBalance, setTokenBalance] = useState<bigint | undefined>();
   const [tokenDecimals, setTokenDecimals] = useState<number | undefined>();
@@ -131,39 +131,48 @@ const PaySpark: React.FC<Props> = (props) => {
 
   const balanceString = useMemo(() => {
     if (tokenBalance === undefined || tokenDecimals === undefined) return null;
-    return `${ethers.utils.formatUnits(tokenBalance, tokenDecimals)}`;
-    // return `${ethers.utils.formatUnits(tokenBalance, tokenDecimals)} ${tokenInfoString}`;
+    return `${formatUnits(tokenBalance, tokenDecimals)}`;
   }, [tokenBalance, tokenDecimals]);
 
-  const provider = useEthersProvider({ chainId: paymentChain?.id });
+  // Balances are read straight off viem's public client now; the ethers 5
+  // adapter this used to go through is gone with the wagmi 2 migration.
+  const publicClient = usePublicClient({ chainId: paymentChain?.id });
 
   const updateBalance = useCallback((state: { mounted: boolean }) => {
-    if (!!paymentToken && !!paymentChain && !!address) {
+    if (!!paymentToken && !!paymentChain && !!address && !!publicClient) {
       setTokenBalance(undefined);
       if (paymentToken === 'native') {
         setTokenDecimals(18);
-        provider.getBalance(address).then(balance => {
+        publicClient.getBalance({ address }).then(balance => {
           if (state.mounted) {
-            setTokenBalance(BigInt(balance.toString()));
+            setTokenBalance(balance);
             setTokenDecimals(18);
           }
-        });
+        }).catch(e => console.error('Error reading native balance', e));
       }
       else {
         setTokenDecimals(undefined);
-        const contract = new ethers.Contract(paymentToken, erc20ABI, provider);
         Promise.all([
-          contract.balanceOf(address),
-          contract.decimals(),
+          publicClient.readContract({
+            address: paymentToken as Common.Address,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [address],
+          }),
+          publicClient.readContract({
+            address: paymentToken as Common.Address,
+            abi: erc20Abi,
+            functionName: 'decimals',
+          }),
         ]).then(([balance, decimals]) => {
           if (state.mounted) {
-            setTokenBalance(BigInt(balance.toString()));
+            setTokenBalance(balance);
             setTokenDecimals(Number(decimals));
           }
-        });
+        }).catch(e => console.error('Error reading token balance', e));
       }
     }
-  }, [paymentToken, paymentChain, address, provider]);
+  }, [paymentToken, paymentChain, address, publicClient]);
 
   useEffect(() => {
     const state = { mounted: true };
@@ -173,26 +182,44 @@ const PaySpark: React.FC<Props> = (props) => {
     }
   }, [updateBalance]);
 
-  const { config: writeConfig } = usePrepareContractWrite({
-    address: paymentToken === 'native' ? undefined : paymentToken,
-    abi: erc20ABI,
+  const payValue = parseUnits((sparkAmount / tokenCoinRatio).toString(), tokenDecimals as number);
+
+  // wagmi 2 split the prepare/execute pair differently: `usePrepareContractWrite`
+  // → `useSimulateContract` (whose `data.request` is what `writeContract` takes),
+  // and `usePrepareSendTransaction` → plain `useSendTransaction` with the params
+  // at call time. The simulate/estimate results are still what gates the
+  // "Not enough funds in wallet" state below — a failing simulation or gas
+  // estimate is exactly what made wagmi 1 withhold the `write`/`sendTransaction`
+  // callback.
+  const { data: simulation } = useSimulateContract({
+    address: paymentToken === 'native' ? undefined : paymentToken as Common.Address,
+    abi: erc20Abi,
     functionName: 'transfer',
-    args: [beneficiaryAddress as Common.Address, parseUnits((sparkAmount / tokenCoinRatio).toString(), tokenDecimals as number)],
-    enabled: paymentToken?.startsWith('0x') && !!beneficiaryAddress,
+    args: [beneficiaryAddress as Common.Address, payValue],
+    query: { enabled: !!paymentToken?.startsWith('0x') && !!beneficiaryAddress && tokenDecimals !== undefined },
   });
 
-  const { data: writeData, error: writeError, isError: writeIsError, isLoading: isWriteLoading, write } = useContractWrite(writeConfig);
+  const { data: writeData, error: writeError, isError: writeIsError, isPending: isWriteLoading, writeContract } = useWriteContract();
 
-  const { config: sendConfig } = usePrepareSendTransaction({
-    to: beneficiaryAddress,
-    value: parseUnits((sparkAmount / tokenCoinRatio).toString(), tokenDecimals as number),
-    enabled: paymentToken === 'native' && !!beneficiaryAddress,
+  const { data: gasEstimate } = useEstimateGas({
+    to: beneficiaryAddress as Common.Address | undefined,
+    value: payValue,
+    query: { enabled: paymentToken === 'native' && !!beneficiaryAddress && tokenDecimals !== undefined },
   });
 
-  const { data: sendData, error: sendError, isError: sendIsError, isLoading: isSendLoading, sendTransaction } = useSendTransaction(sendConfig);
+  const { data: sendData, error: sendError, isError: sendIsError, isPending: isSendLoading, sendTransaction } = useSendTransaction();
 
-  const { isSuccess: isWriteSuccess } = useWaitForTransaction({ hash: writeData?.hash });
-  const { isSuccess: isSendSuccess } = useWaitForTransaction({ hash: sendData?.hash });
+  // The explicit timeout overrides viem 2's 180 s default (viem 1 had none): a
+  // slow but perfectly good payment must still reach the success page.
+  const RECEIPT_TIMEOUT_MS = 30 * 60 * 1000;
+  const { isSuccess: isWriteSuccess } = useWaitForTransactionReceipt({ hash: writeData, timeout: RECEIPT_TIMEOUT_MS });
+  const { isSuccess: isSendSuccess } = useWaitForTransactionReceipt({ hash: sendData, timeout: RECEIPT_TIMEOUT_MS });
+
+  // wagmi 1 signalled "this transaction cannot be sent" by withholding the
+  // `write`/`sendTransaction` callback; wagmi 2 always hands them out, so the
+  // equivalent signal is whether the simulation (token) or the gas estimate
+  // (native) succeeded.
+  const payReady = paymentToken === 'native' ? gasEstimate !== undefined : simulation !== undefined;
 
   useEffect(() => {
     const state = { mounted: true };
@@ -217,18 +244,18 @@ const PaySpark: React.FC<Props> = (props) => {
   }, [isSendSuccess, setCurrentPage, updateBalance]);
 
   useEffect(() => {
-    const hash = writeData?.hash;
+    const hash = writeData;
     if (hash && chain) {
       trackTransaction(hash, chain, `${priceString} sent`);
     }
-  }, [chain, priceString, trackTransaction, writeData?.hash]);
+  }, [chain, priceString, trackTransaction, writeData]);
 
   useEffect(() => {
-    const hash = sendData?.hash;
+    const hash = sendData;
     if (hash && chain) {
       trackTransaction(hash, chain, `${priceString} sent`);
     }
-  }, [chain, priceString, sendData?.hash, trackTransaction]);
+  }, [chain, priceString, sendData, trackTransaction]);
 
   const networkSwitchNeeded = chain?.id !== paymentChain?.id;
 
@@ -269,9 +296,17 @@ const PaySpark: React.FC<Props> = (props) => {
     }
   }, [isActiveAddressLinked, address, chain, signMessageAsync, showSnackbar]);
 
+  // Deliberately keyed on `address` alone. wagmi 1's `useNetwork()` synthesised
+  // a chain object for *any* connected chain id; wagmi 2's `useAccount().chain`
+  // is `undefined` whenever the wallet sits on a chain that is not in our
+  // config. Requiring `chain` here would drop such a user onto the "Connect
+  // wallet" branch, whose ConnectButton is itself gated on `!address` — i.e. an
+  // empty screen. With `address` only they land on the payment UI, where
+  // `networkSwitchNeeded` is true and the "Switch Network" button is the way
+  // out, exactly as before.
   const walletConnected = useMemo(() => {
-    return !!address && !!chain;
-  }, [address, chain]);
+    return !!address;
+  }, [address]);
 
   const selectedToken = useMemo(() => payableTokens.find(token => token.address === paymentToken), [payableTokens, paymentToken]);
 
@@ -449,23 +484,23 @@ const PaySpark: React.FC<Props> = (props) => {
         className='w-full max-w-full'
         text='Switch Network'
         onClick={() => {
-          switchNetworkAsync?.(paymentChain?.id);
+          if (paymentChain) switchChainAsync({ chainId: paymentChain.id }).catch(() => undefined);
         }}
-        disabled={!networkSwitchNeeded && (isWriteLoading || isSendLoading || !paymentToken || (!sendTransaction && !write))}
+        disabled={!networkSwitchNeeded && (isWriteLoading || isSendLoading || !paymentToken || !payReady)}
       />}
       {!networkSwitchNeeded && <Button
         role='primary'
         className='w-full max-w-full'
-        text={(!sendTransaction && !write) ? 'Not enough funds in wallet' : 'Confirm purchase'}
+        text={!payReady ? 'Not enough funds in wallet' : 'Confirm purchase'}
         loading={isWriteLoading || isSendLoading}
         onClick={async () => {
           if (paymentToken === 'native') {
-            sendTransaction?.();
-          } else {
-            write?.();
+            if (beneficiaryAddress) sendTransaction({ to: beneficiaryAddress as Common.Address, value: payValue });
+          } else if (simulation) {
+            writeContract(simulation.request);
           }
         }}
-        disabled={!networkSwitchNeeded && (isWriteLoading || isSendLoading || !paymentToken || (!sendTransaction && !write))}
+        disabled={!networkSwitchNeeded && (isWriteLoading || isSendLoading || !paymentToken || !payReady)}
       />}
     </div>);
   }

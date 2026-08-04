@@ -417,18 +417,21 @@ class LoginManager {
 
   public async prepareMnemonicLogin(mnemonic: string): Promise<API.User.prepareWalletAction.Response> {
     mnemonic = mnemonic.toLowerCase().trim().replace(/  +/, ' ');
-    const [ ethers, secret ] = await Promise.all([
-      import("ethers"),
+    // Was ethers 5's `Wallet.fromMnemonic`; viem's account derivation produces
+    // the same address and the same EIP-191 (`personal_sign`) signature, which
+    // is what the backend verifies.
+    const [ { mnemonicToAccount }, secret ] = await Promise.all([
+      import("viem/accounts"),
       userApi.getSignableSecret()
     ]);
-    
-    const wallet = ethers.Wallet.fromMnemonic(mnemonic);
+
+    const wallet = mnemonicToAccount(mnemonic);
     const siweMessage = getSiweMessage({
       address: wallet.address.toLowerCase() as Common.Address,
       chainId: 1,
       secret,
     });
-    const signature = await wallet.signMessage(siweMessage);
+    const signature = await wallet.signMessage({ message: siweMessage });
     console.log(`Deprecated mnemonic login with wallet address: ${wallet.address.toLowerCase()}`);
     const data: API.User.SignableWalletData = {
       address: wallet.address.toLowerCase() as Common.Address,

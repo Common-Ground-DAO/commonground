@@ -3,31 +3,9 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { PageType } from "components/organisms/UserSettingsModalContent/UserSettingsModalContent";
-import { useOwnUser, useOwnWallets } from 'context/OwnDataProvider';
-import Button from 'components/atoms/Button/Button';
-import userApi from 'data/api/user';
-import useLocalStorage from 'hooks/useLocalStorage';
-import {
-  erc20ABI,
-  useAccount,
-  useNetwork,
-  useSignMessage,
-  useSwitchNetwork,
-  usePublicClient,
-  PublicClient,
-  usePrepareContractWrite,
-  useContractWrite,
-  usePrepareSendTransaction,
-  useSendTransaction,
-  useWaitForTransaction,
-} from 'wagmi';
-import { Chain, Client, Transport, parseUnits } from 'viem';
-import { ConnectButton } from '@rainbow-me/rainbowkit';
-import EthereumIcon from '../../../atoms/icons/24/Ethereum.svg?react';
-import getSiweMessage from 'util/siwe';
+import { usePublicClient } from 'wagmi';
+import { Chain } from 'viem';
 import { useSnackbarContext } from 'context/SnackbarContext';
-import { ethers, providers } from 'ethers';
 
 type Tx = {
   hash: string;
@@ -47,30 +25,6 @@ export const UserOnchainContext = React.createContext<UserOnchainContextState>({
   txByChain: {},
 });
 
-function clientToProvider(client: Client<Transport, Chain>) {
-  const { chain, transport } = client
-  const network = {
-    chainId: chain.id,
-    name: chain.name,
-    ensAddress: chain.contracts?.ensRegistry?.address,
-  }
-  if (transport.type === 'fallback')
-    return new providers.FallbackProvider(
-      (transport.transports as ReturnType<Transport>[]).map(
-        ({ value }) => new providers.JsonRpcProvider(value?.url, network),
-      ),
-    )
-  return new providers.JsonRpcProvider(transport.url, network)
-}
-
-/** Hook to convert a viem Client to an ethers.js Provider. */
-export function useEthersProvider({
-  chainId,
-}: { chainId?: number | undefined } = {}) {
-  const client = usePublicClient({ chainId })
-  return useMemo(() => clientToProvider(client), [client])
-}
-
 function ChainWrapper({
   chainId,
   txByChain,
@@ -82,17 +36,32 @@ function ChainWrapper({
 }) {
   const trackedTransactions = useMemo(() => new Set<string>(), []);
   const transactions = txByChain[chainId];
-  const provider = useEthersProvider({ chainId });
+  // Was a viem→ethers-5 adapter (`clientToProvider` + `useEthersProvider`);
+  // viem's own client waits for the receipt directly, so ethers is gone.
+  const publicClient = usePublicClient({ chainId });
 
   const { showSnackbar } = useSnackbarContext();
 
   const checkTransaction = useCallback((tx: Tx) => {
-    if (!provider) return;
+    if (!publicClient) return;
     if (trackedTransactions.has(tx.hash)) return;
     trackedTransactions.add(tx.hash);
-    provider.getTransaction(tx.hash).then(tx => tx.wait()).then(receipt => {
-      console.log("Receipt", receipt);
-      showSnackbar({ type: 'success', text: tx.text });
+    publicClient.waitForTransactionReceipt({
+      hash: tx.hash as `0x${string}`,
+      // viem 2 defaults to a 180 s timeout where viem 1 waited indefinitely;
+      // a slow-but-fine mainnet transaction must not be reported as failed.
+      timeout: 30 * 60 * 1000,
+    }).then((receipt) => {
+      // ethers 5's `.wait()` *threw* on a reverted transaction, so the old code
+      // never reached this branch for one. viem resolves either way, so the
+      // status has to be checked explicitly — otherwise a reverted payment pops
+      // a green "… sent".
+      if (receipt.status === 'success') {
+        showSnackbar({ type: 'success', text: tx.text });
+      }
+      else {
+        showSnackbar({ type: 'warning', text: `${tx.text} — transaction reverted` });
+      }
     })
     .catch(e => console.log("Transaction error", e))
     .finally(() => {
@@ -108,7 +77,7 @@ function ChainWrapper({
         return newTxByChain;
       });
     });
-  }, [transactions, provider, showSnackbar]);
+  }, [transactions, publicClient, showSnackbar]);
 
   useEffect(() => {
     transactions.forEach(checkTransaction);

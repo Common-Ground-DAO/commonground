@@ -1,6 +1,8 @@
 # Blockchain Integration
 
-> Status: verified against commit 5777032d4, 2026-08-01
+> Status: verified against commit 5777032d4, 2026-08-01; the frontend wallet
+> stack (sections on `App.tsx` and `UserOnchainProvider`) re-verified against the
+> 2026-08-04 wagmi-2 migration.
 
 This document covers all blockchain-related subsystems in Common Ground: smart contracts, on-chain data reading, token-gated roles, wallet management, token staking, and the API surface connecting them. The token sale itself was removed in the Phase-2 slimming (2026-08-01) — only its contract source and its database tables remain, for auditability.
 
@@ -32,7 +34,7 @@ Common Ground runs a dedicated **onchain microservice** (`srv/onchain.ts`) that 
 
 The main API server (`srv/api/`) exposes user-facing endpoints for contract lookup, Lukso Universal Profile operations, and staking data, delegating heavy on-chain reads to the onchain microservice.
 
-The frontend uses **wagmi v1 + RainbowKit** for wallet connection and transaction signing. It also has a dedicated provider for **Lukso Universal Profile** wallets.
+The frontend uses **wagmi v2 + viem v2 + RainbowKit v2** for wallet connection and transaction signing (there is no ethers dependency in the frontend since 2026-08). It also has a dedicated provider for **Lukso Universal Profile** wallets.
 
 ```
 Frontend (wagmi/RainbowKit)  --->  Main API Server (srv/api/)
@@ -230,7 +232,7 @@ Each chain's `PROVIDER_URL` (in `srv/onchain/settings.ts`) reads from a `QUIKNOD
 
 > Some public endpoints restrict `eth_getLogs` (the method the event listener relies on). The self-host defaults are chosen to avoid providers that block it.
 
-**Frontend RPCs.** The production app uses a domain-locked Alchemy key, which cannot serve self-hosted origins (CORS). `src/App.tsx` therefore detects self-hosted instances (`window.__CG_INSTANCE__`) and, for those, wires wagmi's `configureChains` with a `jsonRpcProvider` keyed by numeric chain id (matching the backend's public defaults) plus `publicProvider()` as fallback — instead of the Alchemy provider. viem's built-in public RPCs were too flaky for balance reads and transaction simulation, so explicit endpoints are used.
+**Frontend RPCs.** The production app uses a domain-locked Alchemy key, which cannot serve self-hosted origins (CORS). `src/App.tsx` therefore detects self-hosted instances (`window.__CG_INSTANCE__`) and, for those, builds wagmi 2's per-chain transports with the self-hosted RPC URLs keyed by numeric chain id (matching the backend's public defaults), each wrapped in `fallback([http(selfhostRpc), http()])` so the chain's default public RPC is still the second leg — instead of the Alchemy endpoints. viem's built-in public RPCs were too flaky for balance reads and transaction simulation, so explicit endpoints are used.
 
 ---
 
@@ -696,11 +698,11 @@ Because Spark is credited as an integer, very small stakes would floor to a life
 
 The app is wrapped in:
 
-- `WagmiConfig` (wagmi v1) configured via `configureChains` over `activeChains`: `mainnet, polygon, optimism, arbitrum, gnosis, bsc, fantom, avalanche, zkSync, base` (plus `hardhat` when `DEPLOYMENT === 'dev'`).
+- `WagmiProvider` (wagmi v2) with a config built by RainbowKit's `getDefaultConfig`, plus the `QueryClientProvider` wagmi 2 requires. Chains (`activeChains`): `mainnet, polygon, optimism, arbitrum, gnosis, bsc, fantom, avalanche, zkSync, base` (plus `hardhat` when `DEPLOYMENT === 'dev'`).
 - `RainbowKitProvider` for the wallet connection modal (supports dark/light themes).
 - Provider chain: the hosted app uses `alchemyProvider(...)` + `publicProvider()`; self-hosted instances use a `jsonRpcProvider` (public RPC per chain id) + `publicProvider()` instead — see [RPC Providers](#rpc-providers-and-running-without-paid-endpoints).
 
-`getDefaultWallets` from RainbowKit sets up MetaMask, Coinbase Wallet, WalletConnect, etc. The WalletConnect `projectId` comes from `config.WALLETCONNECT_PROJECT_ID` (self-hosted instances set their own via `CG_WALLETCONNECT_PROJECT_ID`, since project ids are origin-allowlisted upstream).
+`getDefaultConfig` from RainbowKit sets up MetaMask, Coinbase Wallet, WalletConnect, etc. (it replaced `getDefaultWallets` + `createConfig` in RainbowKit 2). Per-chain transports are built in `App.tsx`: `fallback([http(preferred), http()])`, where *preferred* is the Alchemy endpoint (mainnet, polygon, optimism, arbitrum, base — the set wagmi 1's `alchemyProvider` covered) or, on self-hosted instances, the keyless RPC from `selfhostRpcByChainId`. The WalletConnect `projectId` comes from `config.WALLETCONNECT_PROJECT_ID` (self-hosted instances set their own via `CG_WALLETCONNECT_PROJECT_ID`, since project ids are origin-allowlisted upstream).
 
 ### Additional Wallet Providers
 
@@ -710,9 +712,8 @@ The app is wrapped in:
 
 **File:** `src/context/UserOnchainProvider.tsx`
 
-Provides a `trackTransaction(hash, chain, text)` function that monitors pending transactions. Uses `usePublicClient` from wagmi to get a viem client and converts it to an ethers.js provider via `clientToProvider()`. Tracks transactions per chain and shows snackbar notifications on completion.
+Provides a `trackTransaction(hash, chain, text)` function that monitors pending transactions. Uses `usePublicClient` from wagmi and awaits `waitForTransactionReceipt` on the viem client directly (the former `clientToProvider()` viem→ethers-5 adapter is gone). Tracks transactions per chain and shows snackbar notifications on completion.
 
-Exports `useEthersProvider()` hook for components that need an ethers.js provider (bridge between viem/wagmi and ethers.js).
 
 ### Wallet Management View
 
@@ -727,7 +728,7 @@ A mobile-only view that renders the `WalletsManagement` component. On desktop, w
 Since the Phase-2 slimming the `/token/` page is a header plus the stake tab; the
 buy/claim flow, the charts and the `cgTokensale_v1_abi` are gone.
 
-The **StakeTab** (`src/views/TokenSale/StakeTab/StakeTab.tsx`) handles staking: it reads/writes via wagmi (`useContractRead`, `useContractWrite`, `useWaitForTransaction`), using the `stakingContractAbi` and `erc20MinimalAbi` from `src/common/staking.ts`. The flow is ERC-20 `approve` then `stake(amount, lockSeconds)`, plus `unstake(positionId)` for matured positions. Positions and config are fetched from the backend (`src/data/api/staking.ts`).
+The **StakeTab** (`src/views/TokenSale/StakeTab/StakeTab.tsx`) handles staking: it reads/writes via wagmi 2 (`useReadContract`, `useWriteContract`, `useWaitForTransactionReceipt`; the balance and allowance reads are refetched explicitly after a confirmed write, since wagmi 2 has no `watch: true`), using the `stakingContractAbi` and `erc20MinimalAbi` from `src/common/staking.ts`. The flow is ERC-20 `approve` then `stake(amount, lockSeconds)`, plus `unstake(positionId)` for matured positions. Positions and config are fetched from the backend (`src/data/api/staking.ts`).
 
 ### SafeAndUpgradesView
 

@@ -1,6 +1,6 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit ac33fcf69, 2026-08-04
+> Status: verified against commit 88794f739, 2026-08-04
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -790,13 +790,23 @@ Farcaster decentralized social protocol integration:
 
 Used to draw the reward-curve preview in the staking UI (`AreaChart` of previewed Spark vs. lock duration, with a reference dot for the selected duration).
 
-### framer-motion (Animations)
+### motion (Animations)
 
-Used across the codebase for animations and transitions:
-- `AnimatedContainerVertical`: expand/collapse animations.
-- `AnimatedTabPage`: page transition animations.
-- Various modal enter/exit animations.
-- List item animations.
+`motion` v12 (the successor of `framer-motion`; imports come from `motion/react`).
+Direct usage is narrow — three files, and only `motion.div` + `AnimatePresence`:
+
+| File | What it animates |
+|---|---|
+| `src/components/atoms/Tooltip/Tooltip.tsx` | tooltip/popover enter + exit (fade + scale spring) |
+| `src/components/atoms/Tooltip/UserProfilePopover.tsx` | user popover enter + exit |
+| `src/components/molecules/Message/Message.tsx` | the message hover toolbar |
+
+Indirectly it also drives `react-modal-sheet` (v5 peer-depends on `motion >= 11`),
+which is the bottom sheet behind `BottomSliderModal` — see `ScreenAwareModal` /
+`ScreenAwarePopover` for how mobile falls back to it.
+
+`AnimatedContainerVertical` and `AnimatedTabPage` are **not** motion-based despite
+their names — they animate with a plain CSS transition and CSS keyframes respectively.
 
 ### Other Notable Libraries
 

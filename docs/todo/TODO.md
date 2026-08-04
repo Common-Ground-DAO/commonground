@@ -184,6 +184,13 @@
   `vendor-icons` group. Fix is on the `src/` side: move the two or three helpers CG ID
   actually uses out of the barrel (the mini-app is meant to become its own repository
   anyway — see the comment in `src/index_cgid.tsx`).
+  **Re-measured after the framer-motion → motion 12 swap (2026-08-04, deps wave 4b):
+  it got slightly worse, and the library was never the fixable part.** The entry's
+  static closure is now 9 chunks / 835,990 B (was 801,571 B), of which the one big
+  chunk is 582,931 B (was 548,512 B) — `motion-dom` + `framer-motion` 12 +
+  `motion-utils` in place of framer-motion 7 + `popmotion`, next to the same
+  `react-icons` / `@phosphor-icons/react` / `short-uuid` / `@floating-ui` modules.
+  The barrel import is still the whole story; a library swap cannot fix it.
 - [ ] **The dependency tree ships 11 distinct copies of `tslib`** (2026-08-03, found while
   reviewing `manualChunks`). They are physically separate nested installs on three
   incompatible pins (`@walletconnect/*` and `rxjs` on 1.14.1; `popmotion`,

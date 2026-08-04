@@ -51,7 +51,7 @@
     "puppeteer": "^22.2.0",
     "redis": "^4.0.0",
     "reflect-metadata": "^0.1.13",
-    "sharp": "^0.30.6",
+    "sharp": "^0.33.5",
     "short-uuid": "^4.2.0",
     "slugify": "^1.6.6",
     "socket.io": "4.7.1",

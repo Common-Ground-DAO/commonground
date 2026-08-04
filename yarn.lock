@@ -3682,19 +3682,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@simplewebauthn/browser@npm:^10.0.0":
-  version: 10.0.0
-  resolution: "@simplewebauthn/browser@npm:10.0.0"
-  dependencies:
-    "@simplewebauthn/types": "npm:^10.0.0"
-  checksum: 10c0/da7764df8c5d3d4201ace4847f89416fbbfac7db254c94530ffc7e8ed3c4530f013950e074f5eae83eeb9ac9c1323f25813487c21c7d4827da485e739b8c6261
-  languageName: node
-  linkType: hard
-
-"@simplewebauthn/types@npm:^10.0.0":
-  version: 10.0.0
-  resolution: "@simplewebauthn/types@npm:10.0.0"
-  checksum: 10c0/364dd5add9001ef17e2b54dd0f54ff1901cc2c455b195fcb7bf2108eec792709bd2747c5095b69efbc834c82a8ec602ef7362564e214c482251fc3f9c0b16f41
+"@simplewebauthn/browser@npm:^13.0.0":
+  version: 13.3.0
+  resolution: "@simplewebauthn/browser@npm:13.3.0"
+  checksum: 10c0/23a9c14777c4ef6d15fd6c876a1035e6e597e92f96cd0ffe83b0b869f0e4db7789a591da9a39d1fe2c0529c42ecc291c4a30227fc705f0b7729c255f9ccc7c21
   languageName: node
   linkType: hard
 
@@ -7669,8 +7660,7 @@ __metadata:
     "@openzeppelin/contracts": "npm:^4.4.2"
     "@phosphor-icons/react": "npm:^2.1.4"
     "@rainbow-me/rainbowkit": "npm:^1.0.8"
-    "@simplewebauthn/browser": "npm:^10.0.0"
-    "@simplewebauthn/types": "npm:^10.0.0"
+    "@simplewebauthn/browser": "npm:^13.0.0"
     "@tailwindcss/aspect-ratio": "npm:^0.4.0"
     "@tailwindcss/forms": "npm:^0.5.2"
     "@tailwindcss/typography": "npm:^0.5.4"

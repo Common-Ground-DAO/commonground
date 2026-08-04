@@ -7,7 +7,7 @@ import common from "../common";
 import {
   type AuthenticationResponseJSON,
   type RegistrationResponseJSON,
-} from "@simplewebauthn/types";
+} from "@simplewebauthn/server";
 
 const cgIdApi = {
   generateRegistrationOptions: Joi.object<API.CgId.generateRegistrationOptions.Request>({

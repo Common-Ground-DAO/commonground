@@ -12,11 +12,9 @@ import {
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
   type GenerateAuthenticationOptionsOpts,
-} from "@simplewebauthn/server";
-import {
   type PublicKeyCredentialCreationOptionsJSON,
   type PublicKeyCredentialRequestOptionsJSON,
-} from "@simplewebauthn/types";
+} from "@simplewebauthn/server";
 import config from "../common/config";
 import urls from "../util/urls";
 import walletHelper from "../repositories/wallets";
@@ -191,10 +189,12 @@ registerPostRoute<
 
       if (result.verified === true && result.registrationInfo !== undefined) {
         verified = true;
+        // v11 restructured registrationInfo: credentialID/credentialPublicKey/
+        // counter moved into `credential` as id/publicKey/counter. The names in
+        // our own passkeys.data JSONB stay as they are — stored rows are not
+        // affected by the library rename.
         const {
-          credentialID,
-          credentialPublicKey,
-          counter,
+          credential,
           credentialDeviceType,
           credentialBackedUp,
         } = result.registrationInfo;
@@ -203,8 +203,8 @@ registerPostRoute<
 
         const passkeyId = await walletHelper.addPasskey(userId, {
           webAuthnUserID: passkeyCreationOptions.user.id,
-          credentialID,
-          credentialPublicKeyBase64: Buffer.from(credentialPublicKey).toString("base64"),
+          credentialID: credential.id,
+          credentialPublicKeyBase64: Buffer.from(credential.publicKey).toString("base64"),
           credentialDeviceType,
           credentialBackedUp,
           transports: data.registrationResponse.response.transports,
@@ -213,7 +213,7 @@ registerPostRoute<
             registrationResponse: data.registrationResponse,
             deviceInfo: undefined,
           },
-        }, counter);
+        }, credential.counter);
 
         if (userId) {
           const passkeys = await walletHelper.getUserPasskeys(userId);
@@ -312,9 +312,10 @@ registerPostRoute<
         expectedChallenge: passkeyAuthenticationOptions.challenge,
         expectedOrigin,
         expectedRPID: passkeyAuthenticationOptions.rpId!,
-        authenticator: {
-          credentialID,
-          credentialPublicKey: new Uint8Array(Buffer.from(credentialPublicKeyBase64, "base64")),
+        // v11 renamed `authenticator` to `credential` (WebAuthnCredential shape)
+        credential: {
+          id: credentialID,
+          publicKey: new Uint8Array(Buffer.from(credentialPublicKeyBase64, "base64")),
           transports,
           counter: passkey.counter,
         }

@@ -61,7 +61,7 @@ function CgIdHome({
       });
       console.log("options", options);
   
-      const result = await startRegistration(options)
+      const result = await startRegistration({ optionsJSON: options })
       console.log("result", result);
   
       let verified = false;
@@ -95,7 +95,7 @@ function CgIdHome({
       const options = await cgIdApi.generateAuthenticationOptions({});
       console.log("options", options);
   
-      const result = await startAuthentication(options, false);
+      const result = await startAuthentication({ optionsJSON: options });
       console.log("result", result);
   
       let verified = false;

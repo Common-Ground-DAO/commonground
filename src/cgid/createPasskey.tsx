@@ -78,7 +78,7 @@ function CgIdCreatePasskey({
       console.log("options", options);
       step = 1;
 
-      const result = await startRegistration(options)
+      const result = await startRegistration({ optionsJSON: options })
       console.log("result", result);
       step = 2;
 

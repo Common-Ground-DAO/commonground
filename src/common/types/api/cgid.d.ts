@@ -8,7 +8,7 @@ import {
     type PublicKeyCredentialRequestOptionsJSON,
     type RegistrationResponseJSON,
     type AuthenticatorTransportFuture
-} from "@simplewebauthn/types";
+} from "@simplewebauthn/browser";
 
 declare global {
     namespace API {

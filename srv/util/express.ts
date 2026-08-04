@@ -16,7 +16,7 @@ import { UserV2 } from 'twitter-api-v2';
 import {
   type PublicKeyCredentialCreationOptionsJSON,
   type PublicKeyCredentialRequestOptionsJSON,
-} from '@simplewebauthn/types';
+} from '@simplewebauthn/server';
 import passport from 'passport';
 import { botAllowlistMiddleware, botAuthenticationMiddleware } from './botPrincipal';
 

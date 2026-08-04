@@ -15,7 +15,7 @@
     "@metamask/sdk": "^0.1.0",
     "@phosphor-icons/react": "^2.1.4",
     "@rainbow-me/rainbowkit": "^1.0.8",
-    "@simplewebauthn/browser": "^10.0.0",
+    "@simplewebauthn/browser": "^13.0.0",
     "@types/protoo-client": "^4.0.1",
     "altcha": "2.3.0",
     "assert": "^2.0.0",
@@ -96,7 +96,6 @@
   "devDependencies": {
     "@eslint/js": "^9",
     "@openzeppelin/contracts": "^4.4.2",
-    "@simplewebauthn/types": "^10.0.0",
     "@tailwindcss/aspect-ratio": "^0.4.0",
     "@tailwindcss/forms": "^0.5.2",
     "@tailwindcss/typography": "^0.5.4",

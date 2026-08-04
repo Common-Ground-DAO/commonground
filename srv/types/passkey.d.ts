@@ -7,7 +7,7 @@ import {
     type PublicKeyCredentialRequestOptionsJSON,
     type RegistrationResponseJSON,
     type AuthenticatorTransportFuture,
-} from "@simplewebauthn/types";
+} from "@simplewebauthn/server";
 
 declare global {    
     namespace Models {

@@ -227,7 +227,13 @@ untouched via `git diff`.
     `yarn tsc` is the gate — it caught all four fallout classes above), full stack
     healthy, `POST /api/v2/Community/getCommunityList` returns real rows over
     nginx→api→pg, session cookie issued through connect-redis, joi rejects a bad
-    body. `./run.sh build_full` smoke run as well. Interactive login / message-send
+    body. `./run.sh build_full` smoke run as well. **Post-hoc (found during 1a,
+    fix commit moved into this branch): the AWS SDK 3.88→3.1102 bump broke image
+    uploads** — `saveImage()` handed the Sharp instance (an unknown-length stream)
+    to `PutObjectCommand`, which the new SDK rejects outright; fixed by passing
+    the already-materialised buffer, verified end to end against the running
+    stack. The upload path had no test — regression test wanted in 2a.
+    Interactive login / message-send
     remain the maintainer's part.
   - **The jest gate could not be met, and not because of the config.**
     `srv/tests/accounts.spec.ts` (unchanged since the initial commit) imports

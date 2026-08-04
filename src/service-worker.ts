@@ -16,7 +16,7 @@ import { registerRoute } from 'workbox-routing';
 import buildId from 'common/random_build_id';
 import { getUrl } from 'common/util';
 import type { MessageFromServiceWorker } from 'data/appstate/serviceWorker';
-import UAParser from 'ua-parser-js';
+import { UAParser } from 'ua-parser-js';
 
 const userAgent = UAParser(navigator.userAgent);
 

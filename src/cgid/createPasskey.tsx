@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useCallback, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { startRegistration } from '@simplewebauthn/browser';
-import UAParser from 'ua-parser-js';
+import { UAParser } from 'ua-parser-js';
 
 import cgIdApi from 'data/api/cgid';
 import { randomString } from '../util';

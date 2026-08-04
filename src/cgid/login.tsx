@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import cgIdApi from 'data/api/cgid';
-import UAParser from 'ua-parser-js';
+import { UAParser } from 'ua-parser-js';
 import {
   startAuthentication,
 } from '@simplewebauthn/browser';

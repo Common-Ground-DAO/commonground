@@ -9,7 +9,7 @@ import { useNavigate } from "react-router-dom";
 import connectionManager from "../data/appstate/connection";
 import serviceWorkerManager from "../data/appstate/serviceWorker";
 import useLocalStorage from "hooks/useLocalStorage";
-import UAParser from "ua-parser-js";
+import { UAParser } from "ua-parser-js";
 
 type PwaStatus =
   "iOS_UpdateRequired" |
@@ -89,7 +89,11 @@ function getCurrentPwaStatus(appWasInstalled: boolean): PwaStatus {
   }
   // Android
   else if (userAgent.os.name === "Android") {
-    if (userAgent.browser.name === "Chrome") {
+    // ua-parser-js 2 renamed the mobile builds of the desktop browsers: Android
+    // Chrome reports "Mobile Chrome" (as does Chrome on iOS), where v1 reported
+    // a plain "Chrome". Both spellings are accepted so the install prompt keeps
+    // working no matter which copy of the parser ends up bundled.
+    if (userAgent.browser.name === "Chrome" || userAgent.browser.name === "Mobile Chrome") {
       if (!isInPWA) {
         if (appWasInstalled) {
           return "Android_InChrome_PWAInstallSuccess";

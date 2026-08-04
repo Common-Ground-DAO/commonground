@@ -331,13 +331,29 @@ untouched via `git diff`.
     add unit tests (v4, v6 prefix grouping, mapped v4, invalid input)
     - Done 2026-08-04 (Fable directly): pure logic extracted to
       `srv/util/ipPrefix.ts` (no redis import → unit-testable), `ip`/`@types/ip`
-      removed, 11 tests in `srv/tests/ipPrefix.spec.ts` (run via ts-jest CLI
-      override until 2a fixes `jest.config.js`; `@types/jest` pulled forward from
-      2a). Two deliberate behavior changes, both documented in the code: v6
-      prefix keys are now zero-padded per byte (the old unpadded hex could
-      collide across prefixes — unrelated /56s could share a bucket; old keys
-      age out within the window), and `::ffff:a.b.c.d` now keys on the embedded
-      IPv4 instead of failing the request with INVALID_REQUEST.
+      removed, 13 tests in `srv/tests/ipPrefix.spec.ts`. **Interim review verified
+      correctness hard**: oracle-checked against the WHATWG URL parser over 243k
+      generated isIPv6-valid inputs (0 mismatches; the old `ip.toBuffer` even had
+      a truncation bug the rewrite doesn't), and 1.5M adversarial inputs prove
+      the change is strictly fail-closed (no input gains a key that was rejected
+      before). Three deliberate behavior changes, documented in the code:
+      (1) v6 prefix keys zero-padded per byte (old unpadded hex collided across
+      prefixes; old keys age out within the window); (2) `::ffff:a.b.c.d` gets a
+      real per-client bucket — the review corrected my original claim here: the
+      old code did NOT reject v4-mapped clients, it truncated them at the first
+      dot and keyed them ALL into one shared all-zero bucket (global limit
+      collision); (3) strict `node:net` validation rejects non-canonical shapes
+      (`070.41.3.18`, `999.1.2.3`, `1.2.3`, `abcd`) that the old regexes keyed
+      as-is — now INVALID_REQUEST, fail-closed. The commit message of the ip
+      commit still carries the wrong pre-review v4-mapped rationale; the code
+      comment, tests and this note are the corrected record.
+    - Review-driven pull-forwards from 2a (small, kept 2a's jest-30 bump intact):
+      `jest.config.js` now matches `.spec.(js|ts)` with ts+js moduleFileExtensions
+      so `yarn tests` actually runs the suite (13/13); the never-compiling
+      `tests/accounts.spec.ts` (imported entities that never existed) is deleted
+      — 2a starts the backend suite fresh; `@types/jest` pinned `^29` to match
+      jest 29 (the `^30` I first added dragged a jest-30 runtime subtree into the
+      production image via the Dockerfile's bare `yarn`).
   - [x] cookie `0.4.2` → current + cookie-signature `1.0.6`: first **investigate why
     the exact pins exist** (likely express-session cookie-format compat — a
     cookie-signature bump may invalidate existing sessions). Bump what is safe,
@@ -432,12 +448,13 @@ untouched via `git diff`.
   - [ ] puppeteer `^22` → `^25` (headless "new" default, `page.waitForTimeout`
     removal, cache dir move — check Docker image for bundled-Chromium path
     assumptions)
-  - [ ] jest `^29` → `^30` + ts-jest current (absorbed from TODO.md; point
-    `srv/jest.config.js` at the `.ts` sources while touching it — the config
-    currently only finds compiled `.js`). **Plus** (wave-0 finding): add
-    `@types/jest`, and rewrite-or-delete `srv/tests/accounts.spec.ts` — it imports
-    an `entities/accounts` / `Account` active-record API that has never existed in
-    this repo, so the suite fails as soon as jest actually finds it.
+  - [ ] jest `^29` → `^30` + ts-jest current + `@types/jest` `^29`→`^30`
+    (absorbed from TODO.md). Partially pulled forward into 1a by the wave-1
+    review: `jest.config.js` already matches `.spec.(js|ts)` and `yarn tests`
+    runs the ipPrefix suite; the never-compiling `tests/accounts.spec.ts` is
+    already deleted (it imported entities that never existed — the backend suite
+    starts fresh). Wanted here: a regression test for the image-upload path
+    (multer → sharp → S3), which had none when the wave-0b SDK bump broke it.
   - [ ] **drop `@types/connect-redis` + `@types/redis`** (interim review, 2026-08-04):
     `@types/redis` is a stub whose dependency drags a full *runtime* `redis@6.2.0`
     copy into the image next to the real client (verified unused via

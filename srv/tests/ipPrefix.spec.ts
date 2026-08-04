@@ -67,11 +67,28 @@ describe('classifyForwardedIp', () => {
     expect(classifyForwardedIp('ffff::ffff').ip56String).toBe('ffff0000000000');
   });
 
+  it('keys v4 embedded in a non-mapped position on the v6 prefixes', () => {
+    // NAT64 well-known prefix — must NOT be treated as a v4 client
+    expect(classifyForwardedIp('64:ff9b::1.2.3.4')).toEqual({
+      ipString: '0064ff9b00000000',
+      ip56String: '0064ff9b000000',
+      ip48String: '0064ff9b0000',
+    });
+  });
+
   it('returns no keys for invalid input', () => {
     expect(classifyForwardedIp('')).toEqual({});
     expect(classifyForwardedIp('not-an-ip')).toEqual({});
-    expect(classifyForwardedIp('999.1.2.3')).toEqual({});
     expect(classifyForwardedIp('1:2:3')).toEqual({});
     expect(classifyForwardedIp('::ffff:')).toEqual({});
+    expect(classifyForwardedIp('::ffff:1.2.3.999')).toEqual({});
+  });
+
+  it('rejects non-canonical v4 shapes the old regex-based code keyed as-is', () => {
+    // fail-closed vs. the `ip` package: these all got rate-limit keys before
+    expect(classifyForwardedIp('070.41.3.18')).toEqual({});
+    expect(classifyForwardedIp('999.1.2.3')).toEqual({});
+    expect(classifyForwardedIp('1.2.3')).toEqual({});
+    expect(classifyForwardedIp('abcd')).toEqual({});
   });
 });

@@ -45,14 +45,21 @@ export function ipv6ToBytes(addr: string): Uint8Array {
  *   single subscriber allocation can't dodge the limit by rotating interface
  *   IDs), hex-encoded one byte = two zero-padded chars.
  * - `::ffff:a.b.c.d` (v4-mapped) keys on the embedded IPv4 like a plain v4
- *   client. The `ip`-based implementation rejected such requests outright.
+ *   client. The `ip`-based implementation truncated these at the first dot
+ *   (its extractor regex had no `.`), so every v4-mapped client worldwide
+ *   was keyed into one shared all-zero-prefix bucket.
  * - Anything else returns no keys, which the rate limiter treats as an
  *   invalid request.
  *
- * The v6 keys' zero-padding is new with the `node:net` rewrite: the old
- * unpadded per-byte hex could collide across different prefixes (0x12,0x03
- * and 0x01,0x23 both encoded as "123"), letting unrelated networks share a
- * bucket. Old-format keys simply age out within the rate-limit window.
+ * Three deliberate changes vs. the `ip`-based implementation, all fail-closed:
+ * - v6 keys are zero-padded per byte: the old unpadded hex could collide
+ *   across different prefixes (0x12,0x03 and 0x01,0x23 both encoded as
+ *   "123"), letting unrelated networks share a bucket. Old-format keys age
+ *   out within the rate-limit window.
+ * - v4-mapped addresses get a real per-client bucket (see above).
+ * - `node:net` validation is strict where `ip`'s regexes were not:
+ *   non-canonical v4 shapes (`070.41.3.18`, `999.1.2.3`, `1.2.3`) and bare
+ *   hex words (`abcd`) used to be keyed as-is and are now rejected.
  */
 export function classifyForwardedIp(xForwardedFor: string): {
   ipString?: string;

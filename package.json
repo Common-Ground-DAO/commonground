@@ -104,7 +104,6 @@
     "@tsconfig/node24": "24.0.4",
     "@types/audioworklet": "^0.0.23",
     "@types/canvas-confetti": "^1.6.4",
-    "@types/confusing-browser-globals": "^1",
     "@types/d3": "^7.4.3",
     "@types/dom-screen-wake-lock": "^1.0.2",
     "@types/lodash": "^4.14.182",

@@ -4302,13 +4302,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/confusing-browser-globals@npm:^1":
-  version: 1.0.3
-  resolution: "@types/confusing-browser-globals@npm:1.0.3"
-  checksum: 10c0/65aa3a176b695d5a724aba800d5f7027e9f825a39ab9742ac51addb926f0f2ddfdc719e962bdd82c18cc858bc6daa5b283362c8773303ee9fc06a8360fe93049
-  languageName: node
-  linkType: hard
-
 "@types/d3-array@npm:*, @types/d3-array@npm:^3.0.3":
   version: 3.2.2
   resolution: "@types/d3-array@npm:3.2.2"
@@ -7685,7 +7678,6 @@ __metadata:
     "@tsconfig/node24": "npm:24.0.4"
     "@types/audioworklet": "npm:^0.0.23"
     "@types/canvas-confetti": "npm:^1.6.4"
-    "@types/confusing-browser-globals": "npm:^1"
     "@types/d3": "npm:^7.4.3"
     "@types/dom-screen-wake-lock": "npm:^1.0.2"
     "@types/lodash": "npm:^4.14.182"

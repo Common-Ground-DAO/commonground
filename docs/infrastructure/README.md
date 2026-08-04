@@ -544,6 +544,7 @@ Per `AGENTS.md`, `docker/.env` is tracked in the repo **as a placeholder templat
 | `QUIKNODE_*` | Per-chain RPC endpoint URLs used by `onchain` (name is historical — any JSON-RPC URL works). Now includes `QUIKNODE_LUKSO`. |
 | `INFURA_LINEA` | RPC endpoint for Linea. |
 | `GOOGLE_RECAPTCHA_SECRET_KEY` | Server-side reCAPTCHA v2 secret. |
+| `CAPTCHA_PROVIDER` / `ALTCHA_HMAC_KEY` / `ALTCHA_COST` / `ALTCHA_COUNTER_MAX` | Captcha provider selection and ALTCHA proof-of-work tuning (see [docs/auth-identity](../auth-identity/README.md)). None of them are set in either compose file — add them to the `api` service to tune. |
 | `TWITTER_CALLBACK_URL` / `TWITTER_OAUTH2_CLIENT_ID` / `TWITTER_OAUTH2_CLIENT_SECRET` / `TWITTER_API_KEY` / `TWITTER_API_SECRET` | Twitter/X login. |
 | `SENDGRID_API_KEY` | SendGrid transactional email. |
 

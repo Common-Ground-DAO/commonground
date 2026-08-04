@@ -607,7 +607,8 @@ untouched via `git diff`.
       an ordinary client now and the three callback branches in
       `RedisManager.get/set/del` are deleted. **Maintainer decision pending**:
       `REDIS_LEGACY_MODE=true` is still set in `docker/docker-compose.yml`
-      (api + wsapi) and `docker/docker-compose.selfhost.yml`; it is inert and
+      (**api** at :119 and **cg-builder** at :324 — not wsapi, which never set
+      it) and `docker/docker-compose.selfhost.yml` (:186, api); it is inert and
       can be dropped whenever convenient. `docs/realtime` and
       `docs/infrastructure` were corrected in this PR.
     - **New `srv/redis/client.ts` is the single `createClient` call site and
@@ -793,9 +794,21 @@ untouched via `git diff`.
       user short link keeps resolving.
   - [x] **open-graph-scraper 5.2.3 → 6.12.0** (exact pin kept) — one call site,
     `getUrlPreview` in `srv/api/messages.ts`.
-    - We only ever pass `{ url }`, so none of v6's option renames (the `got` →
-      `fetch` switch, `downloadLimit` removal, `headers`/`retry`/
-      `followAllRedirects` folded into `fetchOptions`) apply.
+    - The option *renames* (the `got` → `fetch` switch, `headers`/`retry`/
+      `followAllRedirects` folded into `fetchOptions`) don't apply — but
+      **`downloadLimit`'s removal did, and this note originally got that wrong**
+      (interim review, 2026-08-04). v5 defaulted to a 1 MB cap that we inherited
+      by passing only `{ url }`; v6 has no equivalent and buffers the entire
+      body — then runs cheerio over it — *before* checking the content type.
+      The reviewer reproduced an OOM process kill through this route, which is
+      unauthenticated and takes a caller-supplied URL. **Fixed**: the route now
+      fetches the page itself through the shared axios instance with
+      `maxContentLength` 1 MB, a content-type check, a 10 s timeout and
+      `maxRedirects: 5`, then hands the HTML to `ogs({ html })`. Since ogs
+      rejects `html` together with `url`, relative `og:image` URLs are resolved
+      against the final (post-redirect) URL in the route.
+      The wider SSRF surface of this endpoint is pre-existing and out of scope —
+      tracked privately, not in `docs/`.
     - v6 normalises `ogImage` to `ImageObject[]`; the `string` and
       single-object branches are removed.
     - **Error semantics are unchanged and were already surprising**: v5 *and*
@@ -869,7 +882,13 @@ untouched via `git diff`.
       (PBKDF2 iterations per attempt, default 5000) × `ALTCHA_COUNTER_MAX`
       (default 4000; the answer is drawn per challenge from `[max/2, max]`).
       `docs/auth-identity` §6 trued up, status line bumped. **No compose
-      change was needed** — neither compose file ever set `ALTCHA_MAX_NUMBER`.
+      change was needed** — neither compose file ever set `ALTCHA_MAX_NUMBER`
+      (and neither sets the two new knobs either, which is now stated in both
+      `docs/auth-identity` and the `docs/infrastructure` env table).
+      Interim-review fix: the `randomInt` arguments were swapped —
+      altcha-lib's signature is `randomInt(max, min = 1)`, so the call read
+      `max=2000, min=4000`. It happened to produce nearly the intended interval
+      (measured 2001–3999 instead of 2000–4000), but it was wrong API use.
     - **The defaults are measured.** Driving the real widget in headless Chrome
       (16 cores): ~0.44 ms per counter step at cost 5000. altcha-lib's own
       suggested range (counter 5000–10000) measured **2.7 s and 4.2 s** — a

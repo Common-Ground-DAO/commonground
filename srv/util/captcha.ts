@@ -154,7 +154,8 @@ export async function createCaptchaChallenge(): Promise<Challenge> {
     // Deterministic mode: the server picks the answer up front and publishes a
     // prefix of its derived key, so the client's work is bounded by `counter`
     // instead of depending on how lucky it gets.
-    counter: randomInt(Math.ceil(ALTCHA_COUNTER_MAX / 2), ALTCHA_COUNTER_MAX),
+    // altcha-lib's signature is `randomInt(max, min = 1)` — max first.
+    counter: randomInt(ALTCHA_COUNTER_MAX, Math.ceil(ALTCHA_COUNTER_MAX / 2)),
     deriveKey,
     expiresAt: new Date(Date.now() + CHALLENGE_TTL_MS),
     ...secrets,

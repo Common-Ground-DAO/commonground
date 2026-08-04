@@ -331,8 +331,9 @@ Signup is protected by a **captcha provider abstraction** (`srv/util/captcha.ts`
   work is ALTCHA v2 (`PBKDF2/SHA-256` key search): difficulty is tuned via `ALTCHA_COST`
   (iterations per attempt, default 5000) and `ALTCHA_COUNTER_MAX` (upper bound of the answer the
   client must find, default 4000 — the counter is drawn per challenge from
-  `[max/2, max]`). The v1-era `ALTCHA_MAX_NUMBER` no longer does anything and logs a warning
-  when set.
+  `[max/2, max]`). Neither variable is set in either compose file; tuning the difficulty means
+  adding it to the `api` service's environment. The v1-era `ALTCHA_MAX_NUMBER` no longer does
+  anything and logs a warning when set.
 - **`recaptcha`**: Google reCAPTCHA v2. Auto-selected when `CAPTCHA_PROVIDER` is unset but a
   secret (`google_recaptcha_secret_key` / `GOOGLE_RECAPTCHA_SECRET_KEY`) is present — this
   preserves the historical behaviour of the official instances.

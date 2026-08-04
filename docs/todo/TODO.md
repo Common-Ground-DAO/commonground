@@ -184,8 +184,10 @@
   on manual staging passes.
 - [ ] **The captcha flow's manual browser pass was never formally ticked** (2026-08-03,
   captcha close-out) — solve → verify → replay-reject against a real build, plus the PoW
-  duration on a weak device at the current 500k-hash default. Do it once on staging, or
-  strike the item.
+  duration on a weak device. (Updated 2026-08-04: the v1 500k-hash default is gone —
+  the ALTCHA v2 rework in the dependency-update wave 2b made this `ALTCHA_COST` ×
+  `ALTCHA_COUNTER_MAX` PBKDF2 work, measured ~1.0–1.5 s headless.) Do it once on
+  staging, or strike the item.
 - [ ] **Network segmentation for SeaweedFS's internal ports** (2026-08-03, storage
   close-out) — the single `seaweed` container serves master 9333, volume 8080 and filer
   8888 (plus their gRPC siblings at port + 10000) on the shared `cryptogram` network, so

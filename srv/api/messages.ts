@@ -25,6 +25,10 @@ import { enforceBotRateLimit } from "../util/botRateLimit";
 
 const t = createTranslator();
 
+/** Caps for what `/getUrlPreview` will buffer from a caller-supplied URL. */
+const URL_PREVIEW_MAX_BYTES = 1_000_000;
+const URL_PREVIEW_MAX_IMAGE_BYTES = 8_000_000;
+
 const messagingRouter = express.Router();
 
 for (const route of [
@@ -969,7 +973,38 @@ registerPostRoute<
   validators.API.Message.getUrlPreview,
   async (request, response, data) => {
     const { url } = data;
-    const metadataResult = await ogs({ url });
+
+    // The page is fetched here rather than by open-graph-scraper, because v6
+    // dropped v5's `downloadLimit` (1 MB by default) without a replacement: it
+    // buffers the whole response body and runs cheerio over it *before* looking
+    // at the content type. On this route — unauthenticated, caller-supplied URL
+    // — a large response was reproducibly enough to OOM-kill the process.
+    // axios caps the buffered body instead, and ogs runs on the HTML string.
+    let html: string;
+    let finalUrl = url;
+    try {
+      const pageResponse = await axios.get<string>(url, {
+        responseType: 'text',
+        maxContentLength: URL_PREVIEW_MAX_BYTES,
+        maxRedirects: 5,
+        timeout: 10000,
+        transitional: { forcedJSONParsing: false },
+        headers: { Accept: 'text/html' },
+      });
+      const contentType = String(pageResponse.headers['content-type'] || '');
+      if (contentType && !contentType.includes('text/')) {
+        throw new Error(errors.server.INVALID_REQUEST);
+      }
+      html = typeof pageResponse.data === 'string' ? pageResponse.data : '';
+      finalUrl = pageResponse.request?.res?.responseUrl || url;
+    }
+    catch (e) {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
+
+    // ogs rejects `html` together with `url`, so relative URLs in the document
+    // are resolved here instead of by the library.
+    const metadataResult = await ogs({ html });
     if (metadataResult.error) {
       throw new Error(errors.server.INVALID_REQUEST);
     }
@@ -977,12 +1012,26 @@ registerPostRoute<
     // open-graph-scraper 6 normalises `ogImage` to an `ImageObject[]` — v5
     // could also hand back a bare string or a single object, which is what the
     // removed branches covered. The array can still be empty or absent.
-    const imageUrl = metadataResult.result.ogImage?.[0]?.url || '';
+    const rawImageUrl = metadataResult.result.ogImage?.[0]?.url || '';
+    let imageUrl = '';
+    if (rawImageUrl) {
+      try {
+        imageUrl = new URL(rawImageUrl, finalUrl).toString();
+      }
+      catch (e) {
+        imageUrl = '';
+      }
+    }
 
     let imageId = '';
     if (imageUrl) {
       try {
-        const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+        const imageResponse = await axios.get(imageUrl, {
+          responseType: 'arraybuffer',
+          maxContentLength: URL_PREVIEW_MAX_IMAGE_BYTES,
+          maxRedirects: 5,
+          timeout: 10000,
+        });
         if (imageResponse.status === 200) {
           const buffer = Buffer.from(imageResponse.data, "utf-8");
           const image = await fileHelper.saveImage(null, { type: 'urlPreviewImage' }, buffer, { width: 250, height: 167 }, { withoutEnlargement: true });

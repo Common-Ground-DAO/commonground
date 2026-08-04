@@ -15,15 +15,14 @@ import {
   useFloating,
   useInteractions,
   useHover,
-  useDelayGroupContext,
   useDelayGroup,
   useFloatingParentNodeId,
   FloatingTree,
   offset,
   useDismiss,
-  FloatingContext,
+  HandleCloseContext,
   useClick
-} from "@floating-ui/react-dom-interactions";
+} from "@floating-ui/react";
 import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
 import { useOwnUser } from "context/OwnDataProvider";
 import MessageTimestamp from "./MessageTimestamp/MessageTimestamp";
@@ -87,11 +86,9 @@ export default function Message(props: Props) {
   const [isTooltipSticked, setTooltipSticked] = useState(false);
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
   const [showReplyIndicator, setShowReplyIndicator] = useState(false);
-  const { delay, currentId, setCurrentId } = useDelayGroupContext();
   const parentId = useFloatingParentNodeId();
   const tooltipRoot = useMemo(() => document.getElementById("tooltip-root") as HTMLElement, []);
   const messageRef = useRef<HTMLDivElement>(null);
-  const delayedCloseTimeoutRef = useRef<any>(null);
   const ownUser = useOwnUser();
   const userTooltipRef = useRef<UserTooltipHandle>(null);
   const replyIndicatorDivRef = useRef<HTMLDivElement>(null);
@@ -109,25 +106,17 @@ export default function Message(props: Props) {
     }
   }, [visibilityObserver]);
 
+  // `setCurrentId` moved into `useDelayGroup` in `@floating-ui/react` 0.27, and
+  // the `currentId`/`delayedCloseTimeoutRef` branch it used to guard was dead:
+  // both arms only called `setMessageIsHovered(false)` and nothing ever
+  // assigned `delayedCloseTimeoutRef.current`.
   const onOpenChange = useCallback(
     (open: boolean) => {
-      if (open) {
-        setMessageIsHovered(true);
-        setCurrentId(message.id);
-      } else {
-        if (isMobile || message.id !== currentId) {
-          setMessageIsHovered(false);
-        } else {
-          if (delayedCloseTimeoutRef.current) {
-            clearTimeout(delayedCloseTimeoutRef.current);
-          }
-          setMessageIsHovered(false);
-        }
-      }
+      setMessageIsHovered(open);
     }
-  , [message.id, currentId, isMobile, setCurrentId, setMessageIsHovered]);
+  , [setMessageIsHovered]);
 
-  const { x, y, reference, floating, strategy, context, update } = useFloating({
+  const { x, y, refs, strategy, context, update, isPositioned } = useFloating({
     placement: "top-end",
     open: messageIsHovered && !isImageModalOpen,
     onOpenChange,
@@ -150,13 +139,14 @@ export default function Message(props: Props) {
     });
   }, [context.refs.reference.current]);
 
+  const { delay } = useDelayGroup(context, { id: message.id });
+
   const { getReferenceProps } = useInteractions([
-    useDelayGroup(context, { id: message.id }),
     useHover(context, {
       enabled: !isMobile,
       delay,
       handleClose: (() => {
-        const fn = ({ onClose, refs }: FloatingContext & { onClose: () => void }) => (event: PointerEvent) => {
+        const fn = ({ onClose, refs }: HandleCloseContext) => (event: MouseEvent) => {
           if (isTooltipSticked) return;
 
           const path = event.composedPath();
@@ -322,16 +312,18 @@ export default function Message(props: Props) {
   const floatingStyle = useMemo(() => {
     const result: React.CSSProperties = {
       position: strategy,
-      top: y ?? 0,
-      left: ownMessage ? x ?? 0 : Math.max(x ?? 0, tooltipMinLeft),
-      visibility: x === null || y === null ? "hidden" : "visible",
+      top: y,
+      left: ownMessage ? x : Math.max(x, tooltipMinLeft),
+      // `x`/`y` are no longer `null` before the first positioning pass; that
+      // state is `isPositioned` now (see Tooltip.tsx).
+      visibility: isPositioned ? "visible" : "hidden",
       zIndex: 10,
       boxSizing: "border-box",
       border: "none",
       padding: "0",
     };
     return result;
-  }, [strategy, x, y, tooltipMinLeft, ownMessage]);
+  }, [strategy, x, y, isPositioned, tooltipMinLeft, ownMessage]);
 
   const hasReactions = useMemo(() => !!message.reactions && Object.keys(message.reactions).length > 0, [message.reactions]);
   const isSpecial = useMemo(() => message.body.content[0]?.type === "special", [message.body]);
@@ -407,7 +399,7 @@ export default function Message(props: Props) {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0 }}
             transition={{ type: "spring", damping: 20, stiffness: 300, delay: 0.0 }}
-            ref={floating}
+            ref={refs.setFloating}
             style={floatingStyle}
           >
             <MessageToolTip
@@ -434,12 +426,13 @@ export default function Message(props: Props) {
     else {
       return null;
     }
-  }, [messageIsHovered, message.body, message.id, message.updatedAt.getTime(), channelId, editClick, floating, floatingStyle, replyClick, tooltipSetReaction, update])
+  }, [messageIsHovered, message.body, message.id, message.updatedAt.getTime(), channelId, editClick, refs.setFloating, floatingStyle, replyClick, tooltipSetReaction, update])
 
   const returnValue = useMemo(() => {
     const content = (
       <div
-        {...getReferenceProps({ ref: reference, className: messageItemClassname })}
+        ref={refs.setReference}
+        {...getReferenceProps({ className: messageItemClassname })}
         id={message.id}
         onTouchStart={touchListener.bind(null, 'start')}
         onTouchMove={touchListener.bind(null, 'move')}
@@ -461,7 +454,7 @@ export default function Message(props: Props) {
     } else {
       return content;
     }
-  }, [reference, messageItemClassname, touchListener, replyContent, messageContent, messageHoveredContent, parentId]);
+  }, [refs.setReference, messageItemClassname, touchListener, replyContent, messageContent, messageHoveredContent, parentId]);
   
   return returnValue;
 }

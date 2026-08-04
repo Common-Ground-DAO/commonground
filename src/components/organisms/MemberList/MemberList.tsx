@@ -11,7 +11,7 @@ import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
 
 import UserTag from "../../atoms/UserTag/UserTag";
 import Scrollable, { type PositionData } from "../../molecules/Scrollable/Scrollable";
-import { FloatingDelayGroup } from "@floating-ui/react-dom-interactions";
+import { FloatingDelayGroup } from "@floating-ui/react";
 import SidebarExpandIcon from '../../../components/atoms/icons/20/SidebarExpand.svg?react';
 import SearchField from "../../../components/atoms/SearchField/SearchField";
 import { useCommunityChannelIdContext } from "context/CommunityChannelProvider";

@@ -10,15 +10,14 @@ import {
   shift,
   flip,
   Placement,
-  useDelayGroupContext,
   useDelayGroup,
   useFloatingParentNodeId,
   FloatingTree,
   useClick,
   useDismiss,
   autoUpdate,
-  FloatingContext
-} from "@floating-ui/react-dom-interactions";
+  HandleCloseContext
+} from "@floating-ui/react";
 import { motion, AnimatePresence } from "framer-motion";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { useGlobalDictionaryContext } from "../../../context/GlobalDictionaryProvider";
@@ -60,7 +59,6 @@ const UserProfilePopover = forwardRef<UserTooltipHandle, Props>((props, ref) => 
 
   const [open, setOpen] = useState<boolean>(false);
   const { dict, setEntry } = useGlobalDictionaryContext();
-  const { delay, setCurrentId } = useDelayGroupContext();
   const parentId = useFloatingParentNodeId();
   const tooltipRoot = useMemo(() => document.getElementById("tooltip-root") as HTMLElement, []);
   const thisId = useMemo(() => randomString(), []);
@@ -68,14 +66,15 @@ const UserProfilePopover = forwardRef<UserTooltipHandle, Props>((props, ref) => 
   const onOpenChange = useCallback(
     (open: boolean) => {
       setOpen(open);
-      if (open && withDelayGroup) {
-        setCurrentId(delayGroupListId);
-      }
+      // `useDelayGroup` publishes the group's `currentId` itself since
+      // `@floating-ui/react` 0.27 (a layout effect on `open`); the old
+      // `react-dom-interactions` hook did not, which is why this callback used
+      // to call `setCurrentId` by hand.
       if (open === true) {
         setEntry('tooltip-user-tooltip', thisId);
       }
     }
-    , [withDelayGroup, delayGroupListId, setCurrentId, setEntry, thisId]);
+    , [setEntry, thisId]);
 
   useEffect(() => {
     if (dict['tooltip-user-tooltip'] !== thisId) {
@@ -83,7 +82,7 @@ const UserProfilePopover = forwardRef<UserTooltipHandle, Props>((props, ref) => 
     }
   }, [dict, thisId]);
 
-  const { x, y, reference, floating, strategy, context } = useFloating({
+  const { x, y, refs, strategy, context, isPositioned } = useFloating({
     placement,
     open,
     onOpenChange,
@@ -91,18 +90,26 @@ const UserProfilePopover = forwardRef<UserTooltipHandle, Props>((props, ref) => 
       flip(),
       shift({ padding })
     ],
-    whileElementsMounted: (reference, floating, update) => {
+    // See the note in Tooltip.tsx: 0.27 requires the autoUpdate teardown to be
+    // returned, and returning nothing leaked the `animationFrame` rAF loop.
+    whileElementsMounted: (reference, floating, update) =>
       autoUpdate(reference, floating, update, {
         ancestorScroll: true,
         ancestorResize: true,
         elementResize: true,
         animationFrame: true
       })
-    }
   });
 
+  // 0.27 turned `useDelayGroup` from an `useInteractions` entry into a hook
+  // that returns the group context, replacing the deprecated
+  // `useDelayGroupContext()`. It also publishes `currentId` itself, which the
+  // old hook left to the caller — so `enabled` has to carry the `withDelayGroup`
+  // gate that used to sit on the manual `setCurrentId` call, or a popover that
+  // never opted into grouping would start claiming the group.
+  const { delay } = useDelayGroup(context, { id: delayGroupListId, enabled: !!withDelayGroup });
+
   const { getReferenceProps, getFloatingProps } = useInteractions([
-    useDelayGroup(context, { id: delayGroupListId }),
     useHover(context, {
       enabled: open,
       delay: openDelay !== undefined && closeDelay !== undefined ? {
@@ -110,7 +117,7 @@ const UserProfilePopover = forwardRef<UserTooltipHandle, Props>((props, ref) => 
         close: closeDelay
       } : delay,
       handleClose: (() => {
-        const fn = ({ onClose, refs }: FloatingContext & { onClose: () => void }) => (event: PointerEvent) => {
+        const fn = ({ onClose, refs }: HandleCloseContext) => (event: MouseEvent) => {
           const path = event.composedPath();
           const triggerEl = refs.reference.current;
           const floatEl = refs.floating.current;
@@ -139,21 +146,32 @@ const UserProfilePopover = forwardRef<UserTooltipHandle, Props>((props, ref) => 
     }
   }), [onOpenChange]);
 
+  // `isPositioned` goes false again the moment `open` does, but AnimatePresence
+  // keeps this element mounted through its exit animation — gating visibility on
+  // `isPositioned` alone would hide the popover instantly instead of fading it
+  // out. Latch it for the lifetime of one open cycle: hidden only before the
+  // first placement.
+  const [hasBeenPositioned, setHasBeenPositioned] = useState(false);
+  useEffect(() => {
+    if (isPositioned) setHasBeenPositioned(true);
+    else if (open) setHasBeenPositioned(false);
+  }, [isPositioned, open]);
+
   const floatingStyle: React.CSSProperties = useMemo(() => ({
     position: strategy,
-    top: y ?? 0,
-    left: x ?? 0,
-    visibility: x === null || y === null ? "hidden" : "visible",
+    top: y,
+    left: x,
+    visibility: isPositioned || hasBeenPositioned ? "visible" : "hidden",
     zIndex: 600,
     boxSizing: "border-box",
     maxHeight: `calc(100vh - ${2 * padding}px)`,
     paddingLeft: `${padding}px`,
     paddingRight: `${padding}px`,
-  }), [strategy, x, y, padding]);
+  }), [strategy, x, y, isPositioned, hasBeenPositioned, padding]);
 
   const content = (
     <>
-      <div {...getReferenceProps({ className: triggerClassName, ref: reference })}>
+      <div ref={refs.setReference} {...getReferenceProps({ className: triggerClassName })}>
         {triggerContent}
       </div>
       {ReactDOM.createPortal((
@@ -164,7 +182,7 @@ const UserProfilePopover = forwardRef<UserTooltipHandle, Props>((props, ref) => 
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0 }}
               transition={{ type: "spring", damping: 20, stiffness: 300 }}
-              ref={floating}
+              ref={refs.setFloating}
               className={tooltipClassName}
               style={floatingStyle}
               {...getFloatingProps()}

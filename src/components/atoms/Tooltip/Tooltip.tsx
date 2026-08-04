@@ -17,8 +17,8 @@ import {
   FloatingTree,
   autoUpdate,
   useDismiss,
-  FloatingContext,
-} from "@floating-ui/react-dom-interactions";
+  HandleCloseContext,
+} from "@floating-ui/react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import './Tooltip.css';
 import { useGlobalDictionaryContext } from "../../../context/GlobalDictionaryProvider";
@@ -135,23 +135,27 @@ export const Popover = forwardRef<PopoverHandle, PopoverProps>((props, ref) => {
     return options;
   }, [padding, _offset, disableFlip]);
 
-  const { x, y, reference, floating, strategy, context, middlewareData } = useFloating({
+  const { x, y, refs, strategy, context, middlewareData, isPositioned } = useFloating({
     placement,
     open,
     onOpenChange,
     middleware: middlewareOptions,
-    whileElementsMounted: (reference, floating, update) => {
+    // The returned teardown is load-bearing: `@floating-ui/react` 0.27 requires
+    // `whileElementsMounted` to hand back autoUpdate's cleanup, where the old
+    // `@floating-ui/react-dom-interactions` types allowed `void`. Returning
+    // nothing left the `animationFrame: true` rAF loop running for every
+    // tooltip that had ever been opened.
+    whileElementsMounted: (reference, floating, update) =>
       autoUpdate(reference, floating, update, {
         ancestorScroll: true,
         ancestorResize: true,
         elementResize: true,
         animationFrame: true,
-      });
-    },
+      }),
   });
 
   const handleClose = useMemo(() => {
-    const fn = ({ onClose, refs }: FloatingContext & { onClose: () => void }) => (event: PointerEvent) => {
+    const fn = ({ onClose, refs }: HandleCloseContext) => (event: MouseEvent) => {
       const path = event.composedPath();
       const triggerEl = refs.reference.current;
       const floatEl = refs.floating.current;
@@ -205,13 +209,17 @@ export const Popover = forwardRef<PopoverHandle, PopoverProps>((props, ref) => {
 
   const floatingStyle: React.CSSProperties = useMemo(() => ({
     position: strategy,
-    top: `${Math.round(y ?? 0)}px`,
-    left: `${Math.round(x ?? 0)}px`,
-    visibility: x === null || y === null ? "hidden" : "visible",
+    top: `${Math.round(y)}px`,
+    left: `${Math.round(x)}px`,
+    // `x`/`y` used to be `null` until the first positioning pass; in
+    // `@floating-ui/react` they start at 0 and `isPositioned` carries that
+    // information instead. Without this the tooltip would flash at the
+    // viewport origin for one frame.
+    visibility: isPositioned ? "visible" : "hidden",
     zIndex: 10100,
     boxSizing: "border-box",
     maxHeight: `calc(var(--visualHeight) - ${2 * (padding ?? 0)}px)`
-  }), [strategy, x, y, padding]);
+  }), [strategy, x, y, isPositioned, padding]);
 
   const staticSide = useMemo(() => ({
     top: 'bottom',
@@ -271,7 +279,7 @@ export const Popover = forwardRef<PopoverHandle, PopoverProps>((props, ref) => {
           <motion.div
             key="tooltip"
             className={`tooltip ${tooltipClassName ?? ''}`}
-            ref={floating}
+            ref={refs.setFloating}
             style={floatingStyle}
             initial={{ opacity: 0, scale: 0.85 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -289,7 +297,7 @@ export const Popover = forwardRef<PopoverHandle, PopoverProps>((props, ref) => {
             <motion.div
               key="tooltip"
               className={`tooltip ${tooltipClassName ?? ''}`}
-              ref={floating}
+              ref={refs.setFloating}
               style={floatingStyle}
               initial={{ opacity: 0, scale: 0.85 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -304,17 +312,19 @@ export const Popover = forwardRef<PopoverHandle, PopoverProps>((props, ref) => {
       }
     }
     return null;
-  }, [open, domChildOfTrigger, tooltipClassName, floating, floatingStyle, tooltipContent, showArrow, staticSide]);
+  }, [open, domChildOfTrigger, tooltipClassName, refs.setFloating, floatingStyle, tooltipContent, showArrow, staticSide]);
 
   const content = (
     <>
-      <div {...getReferenceProps({
-        className: triggerClassName,
-        ref: reference,
-        onClick: (event) => {
-          if (!allowPropagation) event.stopPropagation();
-        },
-      })}>
+      <div
+        ref={refs.setReference}
+        {...getReferenceProps({
+          className: triggerClassName,
+          onClick: (event) => {
+            if (!allowPropagation) event.stopPropagation();
+          },
+        })}
+      >
         {triggerContent}
       </div>
       {animatePresence}

@@ -62,14 +62,19 @@ const InnerComponent: React.FC<Props> = (props) => {
     return result;
   }, [props.images, signedUrlsMap]);
 
-  const slides: SlideImage[] = imageUrls.map(url => ({
+  // Must be memoised: lightbox v3 compares `slides` by identity and dispatches
+  // an `update` that resets `currentIndex` back to `index` whenever it changes.
+  // A fresh array on every render would therefore snap the carousel back to the
+  // originally clicked image on any re-render — e.g. a window resize, which
+  // `useWindowSizeContext` above turns into one. (v2 read `index` only at open.)
+  const slides: SlideImage[] = useMemo(() => imageUrls.map(url => ({
     src: url,
-  }));
+  })), [imageUrls]);
 
   const plugins = React.useMemo(() => {
     if (slides.length > 1) return [Thumbnails, Zoom];
     else return [Zoom];
-  }, [slides]);
+  }, [slides.length]);
 
   return <Lightbox
     className='fullscreen-image-modal'
@@ -81,7 +86,13 @@ const InnerComponent: React.FC<Props> = (props) => {
     carousel={{
       finite: true,
       preload: 3,
-      padding: isMobile ? '5%' : '2% 5%'
+      // v3 narrowed `carousel.padding` from a CSS shorthand string to a single
+      // `LengthOrPercentage`, so the desktop `'2% 5%'` no longer type-checks.
+      // Rendering is unaffected: v2's parser already did
+      // `parseInt('2% 5%')` → 2 and wrote one all-sides value, so this has
+      // always been 2% on every side — `'2%'` is the identical value, not a
+      // visual change.
+      padding: isMobile ? '5%' : '2%'
     }}
     controller={{
       closeOnBackdropClick: true

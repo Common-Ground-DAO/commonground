@@ -1,4 +1,4 @@
-> Status: verified against commit 81cf60a37, 2026-08-04
+> Status: verified against commit c78cbeaac, 2026-08-04
 
 # Common Ground Infrastructure Documentation
 
@@ -373,7 +373,10 @@ prod/staging vhosts the directive did not carry `'self'` before the cutover
   `dontCacheBustURLsMatching: /\.[0-9a-f]{8}\./` needs hex, not rollup's
   default base64url alphabet.
 - `build/service-worker.js` at the root, built by `vite/serviceWorker.ts`
-  (`workbox-build` `injectManifest`, not `vite-plugin-pwa`). The build **fails**
+  (`workbox-build` 7 `injectManifest`, not `vite-plugin-pwa`; the 6 → 7 bump
+  changed nothing here — `workbox-precaching`/`-routing` are the same sources
+  under a new version string and no `injectManifest` option was renamed). The
+  build **fails**
   if the nested worker bundle is not exactly that one file, or if any emitted
   JS/CSS chunk is missing from the precache manifest. The precache size cap is
   workbox's CRA-era **5 MiB** — it was raised to 8 MiB while Vite's default
@@ -383,7 +386,7 @@ prod/staging vhosts the directive did not carry `'self'` before the cutover
   ~3.6 MiB — see the chunking note below — still under the cap). A
   chunk over the cap silently drops out of the precache (which costs offline
   cold start), which is what the assertion turns into a build failure. A prod
-  build currently precaches 86 entries / ~11.3 MiB (2026-08 dependency-refresh
+  build currently precaches 87 entries / ~11.34 MiB (2026-08 dependency-refresh
   measurement; Vite 7 baseline was 90 / ~10.4 MiB) — CRA's
   content baseline was 118 / ~10.6 MiB; the entry count fell with the chunk
   count, the bytes moved only with the dependency refresh. Excluded from the manifest:

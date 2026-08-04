@@ -212,7 +212,11 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
     }
   }, [props.richTextMode, editor, setAttachments, attachmentLimit]);
 
-  const { getInputProps, getRootProps, isDragActive, rootRef } = useDropzone({ onDrop: onFilesDrop, noClick: true })
+  // `noPaste` is required, not cosmetic: react-dropzone 20 turned paste-to-upload
+  // on by default and wires the handler into `getRootProps`, so a screenshot
+  // pasted into the Slate `<Editable>` below would bubble to the dropzone root
+  // and be attached a second time on top of `handlePaste`'s own `addFiles` call.
+  const { getInputProps, getRootProps, isDragActive, rootRef } = useDropzone({ onDrop: onFilesDrop, noClick: true, noPaste: true })
 
   // Update mentionable users on search string change
   React.useEffect(() => {
@@ -806,7 +810,29 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
   const linkPreview = attachments.find(att => att.type === 'linkPreview');
   return (
     <div {...getRootProps({ className: props.overrideClassName || `message-field${isMobile && isFocused ? ' message-field-expanded' : ''}` })}>
-      <input {...getInputProps()} />
+      {/* react-dropzone 20 stopped absolutely positioning the hidden input (its
+          own #1413: an out-of-flow input scrolls the page when focused). Here
+          the input is a direct child of a `flex flex-col gap-2` container, so
+          in flow it becomes a zero-height flex item and adds one 8px gap above
+          the composer. Putting it back out of flow restores the old layout.
+          CAUTION: getInputProps spreads the passed props AFTER its defaults, so
+          a partial `style` REPLACES the library's hiding style wholesale (a
+          bare `position: absolute` left a fully visible native file widget
+          floating over the composer). The library's hidden style is therefore
+          reproduced here in full, plus the out-of-flow position. */}
+      <input {...getInputProps({
+        style: {
+          border: 0,
+          display: 'block',
+          height: 0,
+          margin: 0,
+          opacity: 0,
+          overflow: 'hidden',
+          padding: 0,
+          width: 0,
+          position: 'absolute',
+        },
+      })} />
       {isDragActive && <div className='message-field-drop-tip'>
         <ImageIcon />
         <span>Drop your files here</span>

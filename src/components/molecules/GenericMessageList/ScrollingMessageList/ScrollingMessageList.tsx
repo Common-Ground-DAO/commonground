@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { FloatingDelayGroup } from "@floating-ui/react-dom-interactions";
+import { FloatingDelayGroup } from "@floating-ui/react";
 import dayjs from "dayjs";
 
 import Jdenticon from "../../../atoms/Jdenticon/Jdenticon";

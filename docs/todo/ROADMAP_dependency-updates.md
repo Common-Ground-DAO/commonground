@@ -99,6 +99,7 @@ progresses; delete the file when the workstream is done (lifecycle per AGENTS.md
    (maintainer passkey pass wanted before merge, see the wave-1.5 note).
 6. `chore/deps-wave2a-backend-infra` — stacked on 5. **Ready for review.**
 7. `chore/deps-wave2b-small-majors` — stacked on 6. **Ready for review.**
+8. `chore/deps-wave2c-frontend-sw` — stacked on 7. **Ready for review.**
 
 ## Wave 0 — lockfile refresh within existing ranges (2 PRs)
 
@@ -950,15 +951,173 @@ untouched via `git diff`.
     each time. Live smokes: `getCommunityList` over nginx (joi still rejects a
     bad body), typeorm entity metadata inside the image, and the full ALTCHA
     PoW round trip above.
-- [ ] **PR 2c (frontend, service worker)**: workbox `6.5.4` → `^7.4` (precaching +
-  routing + build in lockstep). Own PR because the SW drives PWA install, push and
-  multi-tab coordination; needs a manual push-notification + update-flow test.
-  Also here: `@floating-ui/react-dom-interactions` → `@floating-ui/react` (renamed
-  package, mechanical import fix), web-vitals 1 → 6 (tiny surface), emojilib 3 → 4,
-  boring-avatars 1 → 2, yet-another-react-lightbox 2 → 3, react-dropzone 14 → 20
-  (check the few dropzone call sites), @giphy/react-components 9 → 10.
-  Verify each against its actual usage surface before bumping — anything that turns
-  out non-trivial gets split out rather than forced.
+- [x] **PR 2c (frontend, service worker)** — branch `chore/deps-wave2c-frontend-sw`,
+  stacked on `chore/deps-wave2b-small-majors`. **Audit: root 5 moderate → 4**
+  (the `@floating-ui/react-dom-interactions` deprecation is gone; `@metamask/sdk`
+  → 3, `@truffle/hdwallet-provider`, react-beautiful-dnd → 4a, recharts → 4d
+  remain). `srv` untouched, still 0 findings. Nothing was skipped.
+  - [x] **workbox `6.5.4` → `7.4.1`** (precaching + routing in `dependencies`,
+    build in `devDependencies`, exact pins kept).
+    - **workbox 7 is a dependency refresh, not an API change.** `workbox-precaching`
+      and `workbox-routing` are byte-identical between 6.5.4 and 7.4.1 apart from
+      their `_version.ts` marker (diffed the published `src/` trees), and
+      `PrecacheController.d.ts` is identical, so `addToCacheList` / `install` /
+      `activate` / `createHandlerBoundToURL` in `src/service-worker.ts` are
+      untouched. The only real runtime delta in the whole subtree is
+      `workbox-strategies`' `StrategyHandler.doneWaiting()`, which now drains its
+      extend-lifetime promises with `Promise.allSettled` and rethrows the first
+      rejection instead of awaiting them one by one — a bugfix.
+    - **No `injectManifest` option was renamed.** The `workbox-build` option
+      schema changes are exactly two: `globStrict` removed (unused) and `wasm`
+      added to the *default* `globPatterns` (we pass our own). `swSrc`/`swDest`/
+      `globDirectory`/`globPatterns`/`globIgnores`/`modifyURLPrefix`/
+      `dontCacheBustURLsMatching`/`maximumFileSizeToCacheInBytes`/
+      `manifestTransforms` all survive, and `lib/transform-manifest.js` still runs
+      user transforms last — which is the assumption `vite/serviceWorker.ts`
+      relies on to capture the manifest for `assertPrecacheCoversAllCode`.
+      v7 raises the Node floor to 16 (image is 24) and switched workbox-build's
+      own toolchain to rollup 4 / eta.
+    - `workbox-google-analytics` is deprecated but still published at 7.4.1 and
+      still arrives transitively via workbox-build's `generateSW` templates.
+      Nothing imports it; we only call `injectManifest`.
+    - **Precache manifest before/after the bump: identical** — 87 entries,
+      11,914,178 bytes, same URLs, same sizes, same revisions.
+      `service-worker.js` itself grew 91,636 → 91,751 bytes.
+  - [x] **`@floating-ui/react-dom-interactions` 0.10.3 → `@floating-ui/react`
+    0.27.20.** Landed on the current version rather than the 0.19 rename: the
+    whole delta was 14 type errors in three files, and 0.19 would only have
+    deferred the same work into wave 4 (0.27 is the React-19-ready line).
+    Seven of the ten call sites only import `FloatingDelayGroup` or `Placement`.
+    - `useFloating().reference`/`.floating` are gone → `refs.setReference` /
+      `refs.setFloating`, moved out of `getReferenceProps({ref})` onto the
+      element. `refs.setReference` still registers the DOM reference, so the
+      `handleClose` predicates and Message's touch/reply gesture code keep
+      reading `refs.reference.current`.
+    - `useDelayGroup(context, {id})` is no longer an `useInteractions` entry; it
+      returns the group context and replaces the deprecated
+      `useDelayGroupContext`, and it publishes `currentId` itself (layout effect
+      on `open`) where the old hook left that to the caller. The manual
+      `setCurrentId` calls are therefore removed — and in `UserProfilePopover`
+      the `withDelayGroup` gate had to move onto `enabled`, or a popover that
+      never opted in would start claiming the group.
+    - `handleClose` is typed `HandleClose` now: only the event type changes
+      (`PointerEvent` → `MouseEvent`); `__options.blockPointerEvents` still fits
+      (`SafePolygonOptions`) and `HandleCloseContext extends FloatingContext`.
+    - **Two latent bugs fell out and are fixed, not papered over.** (1)
+      `whileElementsMounted` must return autoUpdate's teardown — the old types
+      allowed `void` and the code returned nothing, so the `animationFrame: true`
+      autoUpdate loop was **never torn down**: one permanent rAF loop per
+      tooltip/popover ever mounted, in both `Tooltip` and `UserProfilePopover`.
+      (2) `x`/`y` no longer start as `null` (they start at 0; `isPositioned`
+      carries that state), so `visibility: x === null ? 'hidden' : 'visible'`
+      would have degenerated to a constant `'visible'` and flashed the floating
+      element at the viewport origin. All three files key off `isPositioned` now.
+    - Dead code found while migrating: `Message.onOpenChange`'s `currentId`
+      branch — both arms only called `setMessageIsHovered(false)` and nothing
+      ever assigned `delayedCloseTimeoutRef.current`. Collapsed; the ref deleted.
+  - [x] **web-vitals 1.1.2 → 6.0.1** — v3 renamed the getters (`getCLS` →
+    `onCLS`) and retired `ReportHandler` for `(metric: Metric) => void`; v5
+    dropped FID, so `src/reportWebVitals.ts` reports INP instead. Note for later:
+    `src/index.tsx` calls `module.default()` with **no handler and only in dev**,
+    so the module has been inert all along — a dead-code candidate (same class as
+    the `MessageDatabase` and `useUserAgent` findings in 1b/2b).
+  - [x] **emojilib: dropped, not bumped** — zero importers (`git grep` over every
+    tracked file hits only `package.json`/`yarn.lock`). The emoji data actually in
+    use comes from `@emoji-mart/data` + `emoji-picker-react`. Same class as the
+    `mime-types` removal in 2b.
+  - [x] **boring-avatars 1.7 → 2.0.4** — the risk was silently regenerating every
+    default avatar in the product, and it does not happen: diffing the two builds,
+    the `marble` generator is the same function with the literals `8`/`4` replaced
+    by `size/10` and `size/20` over the unchanged `size = 80`, the element count is
+    still 3, and the emitted SVG (mask `rx` 160, both blurred paths, the
+    `feGaussianBlur` filter) is character-identical. `export default Avatar`
+    survives; the major is the react `>=18` peer bump.
+  - [x] **yet-another-react-lightbox 2.6 → 3.32.2** — one call site. The only
+    breaking change that reaches us is `carousel.padding`, narrowed from a CSS
+    shorthand to a single `LengthOrPercentage`, so the desktop `'2% 5%'` no longer
+    type-checks and becomes **`'2%'`**. Interim review, 2026-08-04: my original
+    reasoning here (2% vertical / 5% horizontal, "only widens horizontally") was
+    **wrong** — v2's parser already did `parseInt('2% 5%')` → 2 and wrote a single
+    all-sides value, so the desktop lightbox has always rendered 2% on all four
+    sides. The new value is byte-identical at runtime; there is nothing to eyeball.
+    All four `yarl__` hooks `FullscreenImageModal.css` overrides still exist in v3.
+    **The review did find a real v3 regression the bump missed**: v3 compares
+    `slides` by identity and dispatches an `update` that resets `currentIndex`
+    back to `index`, where v2 read `index` only at open — with the unmemoised
+    `slides` array, any re-render (a window resize, via `useWindowSizeContext`)
+    snapped the carousel back to the originally clicked image. Fixed by memoising
+    `slides` (and keying the `plugins` memo on `slides.length`).
+  - [x] **react-dropzone 14.2 → 20.0.0** — one call site (`EditField`).
+    `rootRef`, `getRootProps`/`getInputProps`, `isDragActive`, `onDrop` and
+    `noClick` survive all six majors; `useFsAccessApi` is irrelevant because
+    nothing opens the picker. **The one real hazard is new: paste-to-upload is on
+    by default** and hangs off `getRootProps`, so a screenshot pasted into the
+    Slate `<Editable>` inside the dropzone root would have been attached twice —
+    once by `handlePaste`, once by the bubbled dropzone handler. Fixed with
+    `noPaste: true`. Node floor ≥22 (image is 24). Interim review found a second
+    one: **v20 stopped absolutely positioning the hidden input** (upstream #1413
+    — an out-of-flow input scrolls the page when focused), and that input is a
+    direct child of the composer's `flex flex-col gap-2` container, so in flow it
+    became a zero-height flex item and added an 8px gap above every message,
+    comment and article composer. Restored with an explicit
+    `getInputProps({ style: { position: 'absolute' } })`.
+  - [x] **@giphy/react-components 9.2 → 10.1.2** (+ `@giphy/js-fetch-api` 5.3 →
+    5.8). The peer range moves react `16.10.2 - 18` → `18 - 19`, and **every prop
+    we pass is unchanged** — but the "pure peer-range major, `.d.ts` byte-identical"
+    claim I first wrote here is **false** (interim review): v10 removed
+    `fetchPriority`/`useTransform` and, more importantly, **rewrote the `Grid`
+    layout engine** from an absolutely-positioned masonry to CSS flex columns with
+    `gap`, dropping the inline `width` on `.giphy-grid`. We use none of the removed
+    props and the DOM change is contained, but `GiphyPicker.css`'s
+    `width: fit-content !important` existed to beat that inline width — **the Giphy
+    picker wants a browser look** (added to the manual list below).
+    `@giphy/js-types` moved 5.0.0 → 5.1.0 and is a phantom dependency (imported by
+    three files, declared by none) — noted in TODO.md.
+  - Gate: `yarn typecheck && yarn lint && yarn test && yarn build &&
+    yarn check:html-rewrite` green after every step — 0 lint errors, the unchanged
+    645 pre-existing warnings, 4/4 tests.
+  - **Precache manifest across the whole PR**: 87 entries / 11,914,178 bytes →
+    87 / 11,890,320 bytes (−23,858 B, −0.2%); the URL set is identical once
+    content hashes are normalised. Bundle (raw JS, no sourcemaps):
+    **10,901,315 → 10,876,874 bytes (−24,441 B, −0.22%)** over the same 54 chunks;
+    `App.chunk.js` −36 KB carries it (floating-ui 0.27 and boring-avatars 2 are
+    both smaller than what they replace). `vendor-web3` is untouched.
+  - **Headless smoke through nginx** (`./run.sh update_frontend` into the running
+    stack, puppeteer over `https://localhost:8001`): the service worker registers
+    and reaches `activated`, `navigator.serviceWorker.ready` resolves, and the
+    `workbox-precache-v2` cache holds **97 entries** — exactly the 87 manifest
+    entries plus the 10 hand-pushed URLs (4 fonts, 4 call sounds, 2
+    cross-origin-isolation shells). The app shell renders with **zero
+    `pageerror`s**; the console errors that remain are pre-existing dev-stack
+    artefacts (CSP blocking an inline script and the `http://localhost:8000`
+    signed image URLs on an `https://localhost:8001` page). A second pass drove
+    the migrated `Popover`: hovering a trigger portals a `.tooltip.tooltip-simple`
+    into `#tooltip-root`, positioned (top 483px / left 585px, not 0,0) and
+    `visibility: visible` — i.e. `refs.setReference`, `refs.setFloating`,
+    `useHover` and `isPositioned` all behave in the real bundle.
+  - **Not verifiable headlessly (maintainer)** — the standing wave-2 flag plus
+    what this PR added:
+    - **push notifications end to end** and the **PWA update flow**
+      (`SKIP_WAITING` → `activate` → the `reload` broadcast → new worker serving
+      the new precache), on a real installed PWA. The precache manifest is proven
+      identical, but the install/update ceremony is not something a fresh headless
+      profile exercises.
+    - **hover UX** after the floating-ui major, in a browser: message hover
+      toolbar (incl. the delay group on a long message list), user popovers,
+      dropdowns, the emoji-picker tooltip, and the `mouseleave*` close modes —
+      the synthetic-hover smoke proves positioning, not feel.
+    - ~~image lightbox framing on desktop~~ — retired: the review proved the
+      padding value is identical at runtime (see the lightbox note above). What
+      *is* worth a look instead: **swiping through a multi-image lightbox while
+      resizing / rotating** (the memoised `slides` fix), and the **user popover's
+      fade-out** (the `hasBeenPositioned` latch).
+    - **the Giphy picker** in a browser — v10 rewrote the Grid's layout from
+      absolute masonry to flex columns, and `GiphyPicker.css`'s
+      `width: fit-content !important` was written against the old inline width.
+    - **paste-a-screenshot into the composer** (that `noPaste: true` really does
+      leave exactly one attachment) and drag & drop onto the message field; while
+      there, check the composer's vertical spacing (the hidden-input
+      `position: absolute` restoration).
 
 ## Wave 3 — web3 stack (1–2 PRs)
 

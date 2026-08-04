@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React from 'react';
-import { Placement } from '@floating-ui/react-dom-interactions';
+import { Placement } from '@floating-ui/react';
 
 import CheckIcon from '../../../components/atoms/icons/20/Check.svg?react';
 import CloseIcon from '../../../components/atoms/icons/20/Close.svg?react';

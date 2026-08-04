@@ -18,7 +18,7 @@ import YoutubeIframe from 'components/atoms/YoutubeIframe/YoutubeIframe';
 
 const FieldEmbed: React.FC<RenderElementProps & { element: EmbedElement }> = (props) => {
   const editor = useSlate();
-  const selected = useSelected();
+  const selected = useSelected({ suppressThrow: true });
   const focused = useFocused();
   const [error, setError] = React.useState<string | undefined>();
   const [showReassignModal, setShowReassignModal] = React.useState(false);

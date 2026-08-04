@@ -965,7 +965,7 @@ const FieldElement: React.FC<RenderElementProps> = React.memo((props) => {
 });
 
 const Mention: React.FC<RenderElementProps & { element: MentionElement }> = React.memo(({ attributes, children, element }) => {
-  const selected = useSelected();
+  const selected = useSelected({ suppressThrow: true });
   const focused = useFocused();
   const displayName = element.userData ? getDisplayNameString(element.userData) : 'Failed to fetch';
   return (

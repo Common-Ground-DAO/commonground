@@ -147,9 +147,15 @@ untouched via `git diff`.
     4. `AreaItem`'s `draggableHandlerProps` widened to `| null`, matching
        `@types/react-beautiful-dnd` ≥13.1.3.
   - Bundle (raw JS, no sourcemaps): 9.88 MB → 10.82 MB (+9.5%) over 53 chunks.
-    **`vendor-web3` is the whole regression: 2.26 MB → 3.82 MB (+1.56 MB)**, from
-    viem 1.2→1.21 + wagmi 1.4 + rainbowkit 1.3 (which also adds `@tanstack/react-query`).
-    It is eager for the main app, so wave 3 should re-measure. Offsetting it,
+    **`vendor-web3` is the whole regression: 2.26 MB → 3.82 MB (+1.56 MB)**. About
+    half of that is a **duplicated viem**: `@wagmi/connectors` 3.1 pulls
+    `@safe-global/safe-apps-provider` → safe-apps-sdk 9 → **viem 2.55** (826 KB raw)
+    next to our viem 1.21 (978 KB); the rest is viem 1.2→1.21 growth + wagmi 1.4 +
+    rainbowkit 1.3 (which also adds `@tanstack/react-query`). Verified benign at
+    runtime (disjoint code paths). Deliberately NOT deduped via a
+    `@safe-global/safe-apps-sdk: 8` resolution — forcing a major down for a wallet
+    connector is riskier than 826 KB for the interim; **wave 3's viem-2 migration
+    collapses the duplicate — re-measure there** (interim review finding A, 2026-08-04). Offsetting it,
     `vendor-icons` fell 690 KB → 60 KB (heroicons 2.2 tree-shakes properly). The CG ID
     entry is unaffected: `index_cgid` 8.5 KB + `vendor-shared` 72.5 KB + `vendor-react`.
   - Gate: typecheck / lint (0 errors, 645 pre-existing warnings) / test (4) / build /

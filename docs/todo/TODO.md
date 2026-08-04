@@ -212,6 +212,11 @@
   plus init in `srv/serverconfig.ts`, see [docs/email-notifications](../email-notifications/README.md));
   drop the Mailchimp audience sync (local subscription flag already exists). No bundled
   MTA (see above).
+- **react-router 7** — out of scope for the 2026-08 dependency updates. Forward note:
+  the root `package.json` carries a **security hold** `resolutions: { "react-router-dom":
+  "6.30.1" }` — 6.30.2–6.30.4 are vulnerable to GHSA-jjmj-jmhj-qwj2 (open redirect →
+  XSS) and the only fix is v7. Whoever picks up react-router 7 must drop that pin (and
+  the then-vestigial `history` direct dependency SuspenseRouter still imports).
 - **Vite 8 (Rolldown / Oxc)** — deliberately deferred at the Vite 7 bump (2026-08-03):
   it swaps Rollup for Rolldown and esbuild for Oxc, a bundler swap that needs its own
   baseline measurements against a chunking setup tuned under Rollup 4. Forward notes:

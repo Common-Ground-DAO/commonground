@@ -49,11 +49,10 @@ const SVGR_OPTIONS = {
  *     A manual group is loaded as a whole, so pulling in a package that is
  *     currently only reached through a dynamic import would make that code
  *     eager. Two concrete exclusions:
- *     - `ua-parser-js` — a `mediasoup-client` and (since RainbowKit 1.3) a
- *       web3-stack dependency *and* a direct dependency of the CG ID mini-app;
- *       grouping it with either feature group would drag that whole group into
- *       the `index_cgid` entry. It lives in `vendor-shared` instead, which both
- *       entries load anyway.
+ *     - `ua-parser-js` — a web3-stack dependency (via RainbowKit 1.3) *and* a
+ *       direct dependency of the CG ID mini-app; grouping it with the web3
+ *       group would drag that whole group into the `index_cgid` entry. It
+ *       lives in `vendor-shared` instead, which both entries load anyway.
  *     - `@walletconnect/*` and `lodash` — mostly reached through dynamic
  *       imports today (WalletConnect connectors, lazily loaded views); grouping
  *       them would make several hundred KB eager.
@@ -84,7 +83,7 @@ const VENDOR_GROUPS: Readonly<Record<string, readonly string[]>> = {
   // `ua-parser-js` is here because exactly that happened: it is a direct,
   // eager dependency of both entries (`src/cgid/login.tsx` and
   // `src/hooks/useUserAgent.ts`) *and*, since RainbowKit 1.3, of the web3
-  // stack — so rollup folded the 2.2 MB `vendor-web3` chunk into `index_cgid`.
+  // stack — so rollup folded the entire `vendor-web3` chunk into `index_cgid`.
   // Pinning it here is the fix `assertCgidEntryChunks` tells you to apply; it
   // costs nothing, since both entries load it up front anyway.
   'vendor-shared': [
@@ -138,9 +137,8 @@ const VENDOR_GROUPS: Readonly<Record<string, readonly string[]>> = {
     'd3',
     'd3-',
   ],
-  // The call stack. Deliberately excludes `ua-parser-js` (see rule 3 — it sits
-  // in `vendor-shared`) and `events` (generic); `npm-events-package` is
-  // mediasoup's own aliased copy.
+  // The call stack. Deliberately excludes `events` (generic);
+  // `npm-events-package` is mediasoup's own aliased copy.
   'vendor-mediasoup': [
     'mediasoup-client',
     'sdp-transform',

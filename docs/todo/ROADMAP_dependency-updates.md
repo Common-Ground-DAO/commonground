@@ -100,6 +100,8 @@ progresses; delete the file when the workstream is done (lifecycle per AGENTS.md
 6. `chore/deps-wave2a-backend-infra` — stacked on 5. **Ready for review.**
 7. `chore/deps-wave2b-small-majors` — stacked on 6. **Ready for review.**
 8. `chore/deps-wave2c-frontend-sw` — stacked on 7. **Ready for review.**
+9. `chore/deps-wave3-web3` — stacked on 8. **Ready for review** (large manual
+   test surface, see the wave-3 note).
 
 ## Wave 0 — lockfile refresh within existing ranges (2 PRs)
 
@@ -1121,30 +1123,107 @@ untouched via `git diff`.
 
 ## Wave 3 — web3 stack (1–2 PRs)
 
-- [ ] wagmi `^1.3.9` → `^2` + viem `^1` → `^2` + @rainbow-me/rainbowkit `^1` → `^2`
+- [x] wagmi `^1.3.9` → `^2` + viem `^1` → `^2` + @rainbow-me/rainbowkit `^1` → `^2`
   (+ new peer dep `@tanstack/react-query`). Mechanical hook renames
   (`useContractRead` → `useReadContract`, `useNetwork` → `useAccount().chain`,
   `useWaitForTransaction` → `useWaitForTransactionReceipt`, `configureChains` gone —
   transports move into `createConfig`, `WagmiConfig` → `WagmiProvider`).
-- [ ] **Remove ethers 5 from the frontend** in the same wave: swap the five
-  utils-only files to viem's `formatUnits`/`parseUnits`/`parseEther`; rewrite the
-  three provider files (`signatureHelper`, `UserOnchainProvider` incl. its
-  viem→ethers adapter, `UniversalProfileProvider`) on viem wallet/public clients —
-  or, only where a genuine ethers dependency remains, ethers 6 `BrowserProvider`.
-  Goal: `ethers` disappears from root `package.json` entirely (backend keeps
-  ethers 6).
-- [ ] `@metamask/sdk` 0.1.0 is deprecated (superseded by MetaMask Connect): check
-  whether the RainbowKit-2 connector set covers our need and the direct dependency
-  can simply be dropped.
-- [ ] @farcaster/auth-kit `0.3` → `0.8` (login flow retest).
-- [ ] `typechain` (root dep): scoping grep found **no usage** in `src/` — verify and
-  drop if truly dead (contracts/ has its own typechain-types).
-- [ ] After wagmi 2: the `@walletconnect` v1 packages disappear — revisit the
-  "11 copies of tslib" item in TODO.md (a yarn resolution becomes safe then).
-- [ ] Afterwards, evaluate wagmi 3 (+ RainbowKit compat) — separate decision, don't
-  chain it blindly onto this PR.
-- Manual test surface: every wallet login (MetaMask, WalletConnect, Lukso UP, SIWE),
-  token-gating rule editor, PaySpark purchase flow.
+  - Done 2026-08-04 (Fable directly), branch `chore/deps-wave3-web3`.
+    Resolved: wagmi 2.19.5, viem 2.55.10, rainbowkit 2.2.11, @tanstack/react-query
+    5.101.4. **wagmi 3 deliberately not taken** (own decision per the roadmap's
+    last bullet — RainbowKit 2 targets wagmi 2).
+  - `App.tsx`: `configureChains` + `getDefaultWallets` + `createConfig` collapse
+    into RainbowKit 2's `getDefaultConfig`, wrapped in
+    `WagmiProvider` → `QueryClientProvider` → `RainbowKitProvider`
+    (`RainbowKitProvider` no longer takes `chains`).
+    **The provider list needed real care**: viem 2 dropped the per-chain
+    `rpcUrls.alchemy` entries wagmi 1's `alchemyProvider()` read, so the Alchemy
+    endpoints are now an explicit table — reproducing exactly the five chains
+    viem 1 carried them for (mainnet, polygon, optimism, arbitrum, base); every
+    other chain fell through to `publicProvider()` before and gets a bare
+    `http()` now. wagmi 1's provider-list semantics ("try this, then the public
+    RPC") map onto `fallback([http(preferred), http()])`, which is what both the
+    Alchemy and the self-hosted `selfhostRpcByChainId` paths use.
+  - Hook migrations: `useContractRead(s)` → `useReadContract(s)` with `enabled`
+    moved under `query` and **`watch: true` gone** — `StakeTab`'s balance and
+    allowance are refetched explicitly after a write instead, and
+    `WalletOverview`'s balances refresh on query invalidation rather than per
+    block. The three per-contract `useContractWrite` hooks collapse into one
+    `useWriteContract` (address/abi/functionName move to the call;
+    `writeAsync` → `writeContractAsync`, which resolves to the hash itself, not
+    `{ hash }`). `useWaitForTransaction`'s `onSettled` callback is gone (it is a
+    TanStack query now), so `StakeTab`'s settle handling moved into an effect
+    keyed on the query's terminal state.
+  - `PaySpark`: `usePrepareContractWrite` → `useSimulateContract` (+
+    `useWriteContract(simulation.request)`), `usePrepareSendTransaction` →
+    `useEstimateGas` + plain `useSendTransaction`. wagmi 1 signalled "cannot
+    send" by *withholding* the `write`/`sendTransaction` callback; wagmi 2 always
+    hands them out, so the "Not enough funds in wallet" state is now derived from
+    whether the simulation (token) or the gas estimate (native) succeeded.
+- [x] **Remove ethers 5 from the frontend** in the same wave.
+  - `ethers` is gone from root `package.json`. The five utils-only files use
+    viem's `formatUnits`/`parseUnits` (`ethers.BigNumber.from(x)` → `BigInt(x)`).
+  - `UserOnchainProvider`: the `clientToProvider`/`useEthersProvider` viem→ethers
+    adapter is **deleted**; the tracker awaits
+    `publicClient.waitForTransactionReceipt` directly. `PaySpark`'s balance reads
+    go through `publicClient.getBalance`/`readContract` with viem's `erc20Abi`
+    (wagmi 2 dropped the re-exported `erc20ABI`).
+  - `signatureHelper` and `UniversalProfileProvider` are ported to the **raw
+    EIP-1193 provider**, not viem's wallet client — deliberately: both sign with
+    `eth_sign` / `eth_signTypedData_v4`, and viem's `signMessage` would issue
+    `personal_sign`, which the backend's verification would reject. ethers 5's
+    `.send(method, params)` was `request({ method, params })` under another name,
+    so this is a rename, not a rewrite.
+  - One dynamic `import("ethers")` hid in `data/appstate/login.ts` (the deprecated
+    mnemonic login) — now `mnemonicToAccount` from `viem/accounts`; same address
+    derivation, same EIP-191 signature.
+  - `ethers` **still resolves in the tree at 6.17.0**, pulled in by
+    `@farcaster/auth-kit` 0.8. That is the same situation as before (ethers was
+    eager in `vendor-web3` then too), just no longer a direct dependency.
+- [x] `@metamask/sdk` 0.1.0 **dropped**. Its only use instantiated the SDK, took
+  `getProvider()`, and then required it to be *identical* to `window.ethereum` —
+  every path where it was not threw. So it could only ever return what
+  `window.ethereum` already was; `signatureHelper` uses that directly now.
+  (Fallout: `window.MSStream` in `MobileMenu/util.ts` was typed only by an
+  ambient declaration the SDK happened to ship — replaced with a local cast.)
+- [x] @farcaster/auth-kit `0.3` → `0.8` (0.8.2). No API change at our three call
+  sites (`AuthKitProvider`, `useSignIn`, `useSignInMessage`, `QRCode`,
+  `SignInButton`). **Login flow retest is on the maintainer's list.**
+- [x] `typechain` (root dep): scoping grep confirmed **no usage** in `src/` —
+  dropped. (`contracts/` has its own typechain-types and its own manifest.)
+- [x] After wagmi 2: **the WalletConnect v1 SDK is gone** (`@walletconnect/client`,
+  `qrcode-modal` etc. no longer resolve). `tslib` copies fell **11 → 4**
+  (1.14.1, 2.4.0, 2.7.0, 2.8.1). The remaining tslib 1.14.1 comes from
+  WalletConnect's *own* 1.x-versioned helper packages (`@walletconnect/environment`,
+  `events`, `jsonrpc-*`, `safe-json`, `time`), which WC **v2** core still depends
+  on — so the TODO.md item's premise ("a yarn resolution becomes safe once the v1
+  packages are gone") does **not** hold yet: tslib 1 and 2 are still both
+  genuinely required. TODO.md updated with this finding rather than acted on.
+- Not done, deliberately: **wagmi 3** (separate decision, per the roadmap).
+- **tsconfig `target` es2018 → es2020**: viem 2 and its `ox` dependency ship `.ts`
+  sources containing BigInt literals, which tsc rejects below ES2020. Type
+  checking only — the emitted bundle's target comes from `BUILD_TARGET` in
+  `vite.config.ts` (the browserslist floors), every one of which supports BigInt.
+- Gate: `yarn typecheck && yarn lint && yarn test && yarn build &&
+  yarn check:html-rewrite` all green (0 lint errors; warnings 645 → 622 with the
+  removed ethers code). Audit: root **4 moderate → 3** (`@metamask/sdk`'s
+  deprecation notice gone; react-beautiful-dnd → 4a, recharts → 4d,
+  @truffle/hdwallet-provider remain).
+- Bundle: raw JS **10,876,874 → 10,834,767 bytes** (−42 KB) — but the shape
+  changed a lot: RainbowKit 2 code-splits its connectors, so the build went from
+  54 to 126 chunks and the precache from 87 to 158 entries (11.34 → 11.21 MiB).
+  `vendor-web3` **3.82 → 3.56 MB**: ethers 5 (~896 KB) left it, wagmi 2 + viem 2 +
+  rainbowkit 2 are bigger, and the eager duplicate viem the wave-0 review found is
+  gone (the second viem in the tree is now WalletConnect-core's exact 2.23.2 pin,
+  which loads with the lazily-split WC connector).
+- **Manual test surface (maintainer — none of this is verifiable headlessly):**
+  every wallet login (MetaMask, WalletConnect, Coinbase, **Lukso UP** — the
+  `eth_sign` path was rewritten, and SIWE verification is server-side), the
+  token-gating rule editor (`parseUnits`/`formatUnits` swaps), the **PaySpark
+  purchase flow end to end** on a real chain incl. the network-switch button and
+  the "Not enough funds" state, **staking**: approve → stake → unstake incl. the
+  balance/allowance refresh that replaced `watch: true`, the deprecated
+  **mnemonic login**, and the **Farcaster** sign-in.
 
 ## Wave 4 — React 19 (est. 4 PRs, sequential)
 

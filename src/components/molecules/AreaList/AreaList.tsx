@@ -4,7 +4,7 @@
 
 import React, { useEffect, useState } from 'react';
 
-import { ethers } from 'ethers';
+import { formatUnits } from 'viem';
 import config from '../../../common/config';
 import { CommunityPermission } from 'common/enums';
 import contractApi from '../../../data/api/contract';
@@ -176,7 +176,7 @@ const ContractDetails = (props: { contracts: Record<string, Models.Contract.Data
         )}
         <div className="flex-grow" />
         <div className="py-1 px-2 rounded" style={{ backgroundColor: '#F9F9F9', color: '#242424', fontWeight: '500' }}>
-          {ethers.utils.formatUnits(rule.amount, contract.data.type === "ERC20" ? contract.data.decimals : 0)}
+          {formatUnits(BigInt(rule.amount), contract.data.type === "ERC20" ? contract.data.decimals : 0)}
         </div>
       </div>
       <div className="mb-1">

@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAccount, useContractRead, useContractWrite, useNetwork, useSwitchNetwork, useWaitForTransaction } from 'wagmi';
+import { useAccount, useReadContract, useWriteContract, useSwitchChain, useWaitForTransactionReceipt } from 'wagmi';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { parseUnits, formatUnits } from 'viem';
 
@@ -109,9 +109,10 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
   }, [ownUser?.id, loadServerState]);
 
   const chainId = config ? chainIds[config.chain] : undefined;
-  const { address, isConnected } = useAccount();
-  const { chain: connectedChain } = useNetwork();
-  const { switchNetworkAsync } = useSwitchNetwork();
+  // wagmi 2: `useNetwork()` folded into `useAccount()`, `useSwitchNetwork` →
+  // `useSwitchChain` (which takes `{ chainId }` rather than a bare id).
+  const { address, isConnected, chain: connectedChain } = useAccount();
+  const { switchChainAsync } = useSwitchChain();
   const { openConnectModal } = useConnectModal();
   const { setIsOpen: setSettingsOpen, setCurrentPage: setSettingsPage } = useUserSettingsContext();
   const onCorrectChain = !!chainId && connectedChain?.id === chainId;
@@ -124,70 +125,74 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
   const lockValid = !!config && Number.isInteger(lockDaysNumber) &&
     lockDaysNumber >= config.minLockDays && lockDaysNumber <= config.maxLockDays;
 
-  const { data: balance } = useContractRead({
+  // wagmi 2: reads are TanStack queries — `enabled` moved under `query`, and
+  // `watch` is gone (block-watching is opt-in via `useBlockNumber` + refetch;
+  // these two are refetched explicitly after every write instead).
+  const { data: balance, refetch: refetchBalance } = useReadContract({
     address: config?.tokenAddress as `0x${string}` | undefined,
     abi: erc20MinimalAbi,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
-    enabled: !!config && !!address,
     chainId,
-    watch: true,
+    query: { enabled: !!config && !!address },
   });
-  const { data: allowance, refetch: refetchAllowance } = useContractRead({
+  const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address: config?.tokenAddress as `0x${string}` | undefined,
     abi: erc20MinimalAbi,
     functionName: 'allowance',
     args: address && config ? [address, config.contractAddress as `0x${string}`] : undefined,
-    enabled: !!config && !!address,
     chainId,
-    watch: true,
+    query: { enabled: !!config && !!address },
   });
 
   const needsApproval = amountWei > BigInt(0) && allowance !== undefined && (allowance as bigint) < amountWei;
   const insufficientBalance = amountWei > BigInt(0) && balance !== undefined && (balance as bigint) < amountWei;
 
-  const approveWrite = useContractWrite({
-    address: config?.tokenAddress as `0x${string}`,
-    abi: erc20MinimalAbi,
-    functionName: 'approve',
-  });
-  const stakeWrite = useContractWrite({
-    address: config?.contractAddress as `0x${string}`,
-    abi: stakingContractAbi,
-    functionName: 'stake',
-  });
-  const unstakeWrite = useContractWrite({
-    address: config?.contractAddress as `0x${string}`,
-    abi: stakingContractAbi,
-    functionName: 'unstake',
+  // wagmi 2 collapsed the three per-contract `useContractWrite` hooks into one
+  // `useWriteContract`: address/abi/functionName move from the hook to the call,
+  // and `writeAsync` (which resolved to `{ hash }`) becomes `writeContractAsync`
+  // (which resolves to the hash itself).
+  const { writeContractAsync } = useWriteContract();
+
+  // wagmi 2 dropped the `onSettled` callback from the receipt hook (it is a
+  // TanStack query now), so the settle handling moves into an effect keyed on
+  // the query's terminal state.
+  const {
+    data: receipt,
+    error: receiptError,
+    isSuccess: receiptSuccess,
+    isError: receiptIsError,
+  } = useWaitForTransactionReceipt({
+    hash: pendingTx?.hash,
+    query: { enabled: !!pendingTx },
   });
 
-  useWaitForTransaction({
-    hash: pendingTx?.hash,
-    enabled: !!pendingTx,
-    onSettled: (receipt, error) => {
-      const kind = pendingTx?.kind;
-      setPendingTx(null);
-      setUnstakingId(null);
-      if (error || receipt?.status !== 'success') {
-        showSnackbar({ type: 'warning', text: 'Transaction failed.' });
-        return;
-      }
-      if (kind === 'approve') {
-        refetchAllowance();
-        showSnackbar({ type: 'success', text: 'Approval confirmed — you can stake now.' });
-      }
-      else if (kind === 'stake') {
-        setAmount('');
-        showSnackbar({ type: 'success', text: 'Staked! Your position appears below once the chain is indexed (a minute or two).' });
-        setTimeout(loadServerState, 45_000);
-      }
-      else if (kind === 'unstake') {
-        showSnackbar({ type: 'success', text: 'Unstaked — tokens are back in your wallet.' });
-        setTimeout(loadServerState, 45_000);
-      }
-    },
-  });
+  useEffect(() => {
+    if (!pendingTx || (!receiptSuccess && !receiptIsError)) return;
+    const kind = pendingTx.kind;
+    setPendingTx(null);
+    setUnstakingId(null);
+    // The write moved the allowance and/or the balance. wagmi 1's `watch: true`
+    // is gone, so both reads are refetched explicitly here.
+    refetchAllowance();
+    refetchBalance();
+    if (receiptError || receipt?.status !== 'success') {
+      showSnackbar({ type: 'warning', text: 'Transaction failed.' });
+      return;
+    }
+    if (kind === 'approve') {
+      showSnackbar({ type: 'success', text: 'Approval confirmed — you can stake now.' });
+    }
+    else if (kind === 'stake') {
+      setAmount('');
+      showSnackbar({ type: 'success', text: 'Staked! Your position appears below once the chain is indexed (a minute or two).' });
+      setTimeout(loadServerState, 45_000);
+    }
+    else if (kind === 'unstake') {
+      showSnackbar({ type: 'success', text: 'Unstaked — tokens are back in your wallet.' });
+      setTimeout(loadServerState, 45_000);
+    }
+  }, [receiptSuccess, receiptIsError, receipt, receiptError]);
 
   const submit = useCallback(async (kind: 'approve' | 'stake') => {
     if (!config || !chainId) return;
@@ -196,20 +201,26 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
       return;
     }
     if (!onCorrectChain) {
-      await switchNetworkAsync?.(chainId).catch(() => undefined);
+      await switchChainAsync({ chainId }).catch(() => undefined);
       return;
     }
     try {
       if (kind === 'approve') {
-        const result = await approveWrite.writeAsync({
+        const hash = await writeContractAsync({
+          address: config.tokenAddress as `0x${string}`,
+          abi: erc20MinimalAbi,
+          functionName: 'approve',
           args: [config.contractAddress as `0x${string}`, amountWei],
         });
-        setPendingTx({ hash: result.hash, kind: 'approve' });
+        setPendingTx({ hash, kind: 'approve' });
       } else {
-        const result = await stakeWrite.writeAsync({
+        const hash = await writeContractAsync({
+          address: config.contractAddress as `0x${string}`,
+          abi: stakingContractAbi,
+          functionName: 'stake',
           args: [amountWei, BigInt(lockDaysNumber * 86400)],
         });
-        setPendingTx({ hash: result.hash, kind: 'stake' });
+        setPendingTx({ hash, kind: 'stake' });
       }
     } catch (e) {
       console.error(`Error sending ${kind} transaction`, e);
@@ -218,18 +229,24 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
         showSnackbar({ type: 'warning', text: `Could not send the ${kind} transaction: ${message.slice(0, 140) || 'unknown error'}` });
       }
     }
-  }, [config, chainId, isConnected, onCorrectChain, openConnectModal, switchNetworkAsync, approveWrite, stakeWrite, amountWei, lockDaysNumber]);
+  }, [config, chainId, isConnected, onCorrectChain, openConnectModal, switchChainAsync, writeContractAsync, amountWei, lockDaysNumber]);
 
   const unstake = useCallback(async (positionId: string) => {
     if (!chainId) return;
     if (!onCorrectChain) {
-      await switchNetworkAsync?.(chainId).catch(() => undefined);
+      await switchChainAsync({ chainId }).catch(() => undefined);
       return;
     }
     try {
       setUnstakingId(positionId);
-      const result = await unstakeWrite.writeAsync({ args: [BigInt(positionId)] });
-      setPendingTx({ hash: result.hash, kind: 'unstake' });
+      if (!config) return;
+      const hash = await writeContractAsync({
+        address: config.contractAddress as `0x${string}`,
+        abi: stakingContractAbi,
+        functionName: 'unstake',
+        args: [BigInt(positionId)],
+      });
+      setPendingTx({ hash, kind: 'unstake' });
     } catch (e) {
       setUnstakingId(null);
       console.error('Error sending unstake transaction', e);
@@ -238,7 +255,7 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
         showSnackbar({ type: 'warning', text: `Could not send the unstake transaction: ${message.slice(0, 140) || 'unknown error'}` });
       }
     }
-  }, [chainId, onCorrectChain, switchNetworkAsync, unstakeWrite]);
+  }, [chainId, config, onCorrectChain, switchChainAsync, writeContractAsync]);
 
   // anonymous visitors and unconfigured instances keep the informational page
   if (!ownUser?.id || config === null) return comingSoon;
@@ -338,7 +355,7 @@ const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
           : false)}
         onClick={() => {
           if (primaryAction === 'connect') openConnectModal?.();
-          else if (primaryAction === 'switch') switchNetworkAsync?.(chainId!).catch(() => undefined);
+          else if (primaryAction === 'switch') switchChainAsync({ chainId: chainId! }).catch(() => undefined);
           else if (primaryAction === 'approve' || primaryAction === 'stake') submit(primaryAction);
         }}
       />

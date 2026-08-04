@@ -10,7 +10,7 @@ import TokenIcon from '../../atoms/icons/20/Token.svg?react';
 import TokenRuleEditor from '../AccessRulesEditor/TokenRuleEditor';
 
 import './RoleAccessEditor.css';
-import { ethers } from 'ethers';
+import { formatUnits } from 'viem';
 import { HandArrowDown, HandDeposit, LockKey } from '@phosphor-icons/react';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import { createSearchParams, useLocation, useNavigate } from 'react-router-dom';
@@ -51,7 +51,7 @@ const RoleAccessEditor: React.FC<Props> = (props) => {
       if (_contract) {
         amount = rule1.amount;
         if (_contract?.data.type === 'ERC20' || _contract?.data.type === 'LSP7') {
-          amount = ethers.utils.formatUnits(ethers.BigNumber.from(amount), _contract.data.decimals) as `${number}`;
+          amount = formatUnits(BigInt(amount), _contract.data.decimals) as `${number}`;
         }
       }
       result.push({
@@ -66,7 +66,7 @@ const RoleAccessEditor: React.FC<Props> = (props) => {
         if (_contract) {
           amount = rule2.amount;
           if (_contract?.data.type === 'ERC20' || _contract?.data.type === 'LSP7') {
-            amount = ethers.utils.formatUnits(ethers.BigNumber.from(amount), _contract.data.decimals) as `${number}`;
+            amount = formatUnits(BigInt(amount), _contract.data.decimals) as `${number}`;
           }
         }
         result.push({

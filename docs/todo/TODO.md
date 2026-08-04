@@ -176,6 +176,14 @@
   not interchangeable); the fix is dependency hygiene — a yarn resolution once the
   `@walletconnect` v1 packages are gone (the wagmi 2 migration in
   `ROADMAP_dependency-updates.md` wave 3 removes them; re-check then).
+  **Re-checked after wave 3 (2026-08-04): 11 copies → 4** (1.14.1, 2.4.0, 2.7.0,
+  2.8.1). But the premise above does not hold: the WalletConnect **v1 SDK** is
+  indeed gone, while the tslib-1.14.1 pin comes from WalletConnect's own
+  1.x-versioned *helper* packages (`@walletconnect/environment`, `events`,
+  `jsonrpc-*`, `safe-json`, `time`) — which WalletConnect **v2** core still
+  depends on. So a blanket tslib resolution is still unsafe; what is left is
+  merging the three tslib-2 copies (2.4.0 / 2.7.0 / 2.8.1), which *is* safe and
+  worth a resolution on its own.
 - [ ] **Immutable caching for hashed frontend assets in nginx — own PR** (2026-08-03).
   `^/(fonts|icons|images|static|audio|downloads)/` is capped at
   `max-age=86400, must-revalidate` in all three nginx configs, although everything under

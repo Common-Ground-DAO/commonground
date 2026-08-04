@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useMemo } from 'react';
-import { useContractReads } from 'wagmi';
+import { useReadContracts } from 'wagmi';
 import { formatUnits } from 'viem';
 
 import Button from 'components/atoms/Button/Button';
@@ -38,7 +38,10 @@ const WalletOverview: React.FC<{
     [wallets],
   );
 
-  const { data: balances } = useContractReads({
+  // wagmi 2: `useContractReads` → `useReadContracts`; `enabled` moved under
+  // `query`, and `watch` is gone (the balances refresh on remount / query
+  // invalidation instead of per block).
+  const { data: balances } = useReadContracts({
     contracts: evmWallets.map(wallet => ({
       address: tokenAddress as `0x${string}`,
       abi: erc20MinimalAbi,
@@ -48,8 +51,7 @@ const WalletOverview: React.FC<{
       // wagmi's Narrow<> typing rejects runtime-mapped contract arrays;
       // results are guarded with typeof checks below
     })) as any,
-    enabled: evmWallets.length > 0,
-    watch: true,
+    query: { enabled: evmWallets.length > 0 },
   });
 
   const openWalletSettings = () => {

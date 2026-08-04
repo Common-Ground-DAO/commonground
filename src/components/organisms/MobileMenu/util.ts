@@ -16,7 +16,10 @@ export function getMobileOperatingSystem() {
     }
 
     // iOS detection from: http://stackoverflow.com/a/9039885/177710
-    if (/iPad|iPhone|iPod/.test(userAgent) && !window.MSStream) {
+    // (`MSStream` is an old IE-on-Windows-Phone global; it was only typed here
+    // by an ambient declaration `@metamask/sdk` happened to ship, which stopped
+    // being in scope when that direct dependency was dropped.)
+    if (/iPad|iPhone|iPod/.test(userAgent) && !(window as any).MSStream) {
         return "iOS";
     }
 

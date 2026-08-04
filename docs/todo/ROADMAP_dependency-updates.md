@@ -8,6 +8,21 @@
 **Created**: 2026-08-04. Living document — update checkboxes and notes as work
 progresses; delete the file when the workstream is done (lifecycle per AGENTS.md).
 
+> **HANDOVER STATE (2026-08-04, end of the first agent context).**
+> Waves **0, 1, 1.5, 2 and 3 are complete**: implemented, gated, reviewed by a
+> fresh context per wave, and the review findings fixed (each wave's note below
+> records what the review caught). An out-of-band **supply-chain hardening** PR
+> also landed — read that section before running any install, because the rules
+> for adding packages changed.
+>
+> **Wave 4 is open.** Its first PR exists only as an explicitly-marked WIP commit
+> (`6ed66775a`) that **must not be merged as is** — see the wave-4a note. 4b, 4c
+> and 4d have not been started. The Final gate has not been run.
+>
+> Nothing has ever been pushed. All branches are local; the maintainer pushes and
+> merges. Whoever picks this up: read the "Execution conventions", the
+> "Supply-chain hardening" section and the branch list, in that order.
+
 ---
 
 ## Evidence base (audited 2026-08-04)
@@ -105,6 +120,7 @@ progresses; delete the file when the workstream is done (lifecycle per AGENTS.md
 10. `chore/yarn-supply-chain-hardening` — stacked on 9, but **independent of the
     dependency waves** (touches `.yarnrc.yml`, `dependenciesMeta`, the Yarn
     binary, `docker/*.sh`, docs). Merge it early if the stack is reordered.
+11. `chore/deps-wave4a-dnd` — stacked on 10. **WIP, not reviewable yet** (see 4a).
 
 ## Supply-chain hardening (out-of-band, 2026-08-04)
 
@@ -1353,6 +1369,22 @@ untouched via `git diff`.
   `OwnCommunitiesBrowser`). Target library: agent evaluates `@dnd-kit` vs Atlassian
   `pragmatic-drag-and-drop` against the actual DnD patterns used, then commits to
   one. Drop `@types/react-beautiful-dnd`.
+  - **Status: WIP commit `6ed66775a` on `chore/deps-wave4a-dnd`, DO NOT MERGE.**
+    A subagent had already written a complete @dnd-kit migration to disk when its
+    run was aborted; rather than lose it, it is committed as an explicit WIP. It
+    compiles (typecheck, lint 0 errors, build, audit loses the rbd deprecation),
+    and it is restacked onto the hardening branch so the three @dnd-kit packages
+    were added under the cooldown (all from 2023/2024, so unaffected by it).
+  - **Still owed before this can be a real PR** — do not treat any of it as done:
+    a **fresh-context review** (mandatory for wave 4); **functional verification
+    of an actual drag** (reorder semantics, drop-target rules, the persistence
+    call on drop, disabled states, drag handles — none of it has been exercised,
+    in a browser or headlessly); **keyboard accessibility**, which
+    react-beautiful-dnd provided out of the box; a written **library-choice
+    rationale** (@dnd-kit vs pragmatic-drag-and-drop was never argued); and docs
+    (`docs/frontend`, the `VENDOR_GROUPS` comment in `vite.config.ts`) plus this
+    checkbox. Either finish it properly or drop the commit and redo the wave —
+    both are legitimate; silently building on it is not.
 - [ ] **PR 4b**: framer-motion 7 → `motion` v12 (3 direct usage files) and
   react-modal-sheet 2 → 5 (peer-depends on motion v12) in one PR. Also unblocks the
   CG-ID-entry bundle-bloat item in TODO.md (framer-motion is its biggest chunk —

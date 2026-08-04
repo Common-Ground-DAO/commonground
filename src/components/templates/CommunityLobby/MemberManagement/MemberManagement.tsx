@@ -4,7 +4,7 @@
 
 import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { FloatingDelayGroup } from "@floating-ui/react-dom-interactions";
+import { FloatingDelayGroup } from "@floating-ui/react";
 
 import { useLoadedCommunityContext } from "../../../../context/CommunityProvider";
 import { useCommunitySidebarContext } from "../../../../components/organisms/CommunityViewSidebar/CommunityViewSidebarContext";

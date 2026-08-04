@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { Placement } from "@floating-ui/react-dom-interactions";
+import { Placement } from "@floating-ui/react";
 import Button from "../../atoms/Button/Button";
 import { Popover, PopoverHandle } from "../../atoms/Tooltip/Tooltip";
 import ChevronDownIcon from '../../../components/atoms/icons/16/ChevronDown.svg?react';

@@ -6,7 +6,7 @@
     "@common-ground-dao/cg-plugin-lib-host": "^0.9.15",
     "@emoji-mart/data": "^1.0.2",
     "@farcaster/auth-kit": "^0.3.1",
-    "@floating-ui/react-dom-interactions": "^0.10.3",
+    "@floating-ui/react": "^0.27.20",
     "@giphy/js-fetch-api": "^5.3.0",
     "@giphy/react-components": "^9.2.3",
     "@hapi/tlds": "^1.0.5",

@@ -2225,7 +2225,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@floating-ui/dom@npm:^1.0.1, @floating-ui/dom@npm:^1.2.1":
+"@floating-ui/dom@npm:^1.0.1, @floating-ui/dom@npm:^1.8.0":
   version: 1.8.0
   resolution: "@floating-ui/dom@npm:1.8.0"
   dependencies:
@@ -2235,28 +2235,29 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@floating-ui/react-dom-interactions@npm:^0.10.3":
-  version: 0.10.3
-  resolution: "@floating-ui/react-dom-interactions@npm:0.10.3"
+"@floating-ui/react-dom@npm:^2.1.9":
+  version: 2.1.9
+  resolution: "@floating-ui/react-dom@npm:2.1.9"
   dependencies:
-    "@floating-ui/react-dom": "npm:^1.0.0"
-    aria-hidden: "npm:^1.1.3"
+    "@floating-ui/dom": "npm:^1.8.0"
   peerDependencies:
     react: ">=16.8.0"
     react-dom: ">=16.8.0"
-  checksum: 10c0/01e4dbb93bde171bea173fe4d1690f1945889931df8c8e4dc0b64c3591c1c2ab169b3eee6b1e640778d3fafe12fa7b25b463ffe8624101c9f4c75280f2627254
+  checksum: 10c0/9fa9851069738cb9591a1ab2da16e257f193eae5fd2d6d48ad0b1e73f3c049929b6805c5ad43d4af3c1da63c60b215b0ee4651a1fe5caeb80e66d9d423744348
   languageName: node
   linkType: hard
 
-"@floating-ui/react-dom@npm:^1.0.0":
-  version: 1.3.0
-  resolution: "@floating-ui/react-dom@npm:1.3.0"
+"@floating-ui/react@npm:^0.27.20":
+  version: 0.27.20
+  resolution: "@floating-ui/react@npm:0.27.20"
   dependencies:
-    "@floating-ui/dom": "npm:^1.2.1"
+    "@floating-ui/react-dom": "npm:^2.1.9"
+    "@floating-ui/utils": "npm:^0.2.12"
+    tabbable: "npm:^6.0.0"
   peerDependencies:
-    react: ">=16.8.0"
-    react-dom: ">=16.8.0"
-  checksum: 10c0/bd9883660d216fdecca76a0b0ecef580d1914fb3d73775920569b641c9c3be552cff1ffa88ba6e7fbd8022d81ddfdf480b1ba81fa8e01366c4117576c5e315fb
+    react: ">=17.0.0"
+    react-dom: ">=17.0.0"
+  checksum: 10c0/5ebeb4c877128e9a274692849ceb2103b370441626e97ade38c25db5d94371dd7274292eda05208cc5d1c92c594a59595a1909799c2ac8ff44f9e651a4fe55b3
   languageName: node
   linkType: hard
 
@@ -6095,7 +6096,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"aria-hidden@npm:^1.1.3, aria-hidden@npm:^1.2.3":
+"aria-hidden@npm:^1.2.3":
   version: 1.2.6
   resolution: "aria-hidden@npm:1.2.6"
   dependencies:
@@ -7626,7 +7627,7 @@ __metadata:
     "@emoji-mart/data": "npm:^1.0.2"
     "@eslint/js": "npm:^9"
     "@farcaster/auth-kit": "npm:^0.3.1"
-    "@floating-ui/react-dom-interactions": "npm:^0.10.3"
+    "@floating-ui/react": "npm:^0.27.20"
     "@giphy/js-fetch-api": "npm:^5.3.0"
     "@giphy/react-components": "npm:^9.2.3"
     "@hapi/tlds": "npm:^1.0.5"
@@ -16617,6 +16618,13 @@ __metadata:
     tar: "npm:^4.0.2"
     xhr-request: "npm:^1.0.1"
   checksum: 10c0/c951cc122f7c4e9c16fb2dd6328ef037fb313b727e70f903396f29a16b1c4a58f09d41772593c6bbde8c9070276212d7b3357ccb5c216b4eabaffb2460c6fa9a
+  languageName: node
+  linkType: hard
+
+"tabbable@npm:^6.0.0":
+  version: 6.5.0
+  resolution: "tabbable@npm:6.5.0"
+  checksum: 10c0/7d778af05a3093800265831198cad9d0024f3d65cdd4405007490f7430b42ff4e80060b4679f45281fb96ddbddc5fb895e8ea36e3ebdc811051e14acc9c7c02c
   languageName: node
   linkType: hard
 

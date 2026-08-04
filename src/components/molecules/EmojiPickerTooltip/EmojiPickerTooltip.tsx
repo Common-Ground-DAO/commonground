@@ -9,7 +9,7 @@ import ScreenAwarePopover from "components/atoms/ScreenAwarePopover/ScreenAwareP
 import EmojiPicker, { EmojiClickData, EmojiStyle, Theme } from "emoji-picker-react";
 import { useDarkModeContext } from "context/DarkModeProvider";
 import { useWindowSizeContext } from "context/WindowSizeProvider";
-import { Placement } from "@floating-ui/react-dom-interactions";
+import { Placement } from "@floating-ui/react";
 
 type Props = {
     onEmojiClick: (value: string) => void;

@@ -6,7 +6,7 @@ import { useLoadedCommunityContext } from 'context/CommunityProvider';
 import _ from 'lodash';
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  closestCenter,
+  closestCorners,
   CollisionDetection,
   DndContext,
   DragEndEvent,
@@ -47,9 +47,14 @@ function findChannelArea(dict: ChannelDict, channelId: string): string | undefin
  * keeps a channel from being dropped onto an area row (there is no nesting
  * beyond area → channel).
  *
- * Within the surviving targets, a row beats the list container it sits in, and
- * `closestCenter` is the fallback so that keyboard drags — which have no
- * pointer position for `pointerWithin` to work with — still resolve.
+ * Within the surviving targets, a row beats the list container it sits in.
+ * A pointer drop outside every typed target resolves to nothing — which is
+ * what react-beautiful-dnd reported (`destination: null`) and what makes the
+ * drop a cancel instead of a snap to the nearest list. Keyboard drags have no
+ * pointer position for `pointerWithin` to work with; their virtual rect was
+ * already aligned to a typed target by `typedSortableKeyboardCoordinates`, and
+ * `closestCorners` (the same metric that getter ranks by) re-identifies that
+ * target — rows and containers both, so an empty area stays reachable.
  */
 const typedCollisionDetection: CollisionDetection = (args) => {
   const activeType = args.active.data.current?.type;
@@ -66,7 +71,10 @@ const typedCollisionDetection: CollisionDetection = (args) => {
   if (containerHit.length > 0) {
     return containerHit;
   }
-  return closestCenter({ ...args, droppableContainers: rows });
+  if (args.pointerCoordinates) {
+    return [];
+  }
+  return closestCorners({ ...args, droppableContainers: candidates });
 };
 
 const BASE_ORDER_STEP = 1000000;

@@ -4,6 +4,7 @@
 
 import {
   KeyboardCode,
+  KeyboardCoordinateGetter,
   KeyboardSensor,
   MouseSensor,
   TouchSensor,
@@ -11,6 +12,37 @@ import {
   useSensors,
 } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
+
+/**
+ * `sortableKeyboardCoordinates` with the candidate set scoped to droppables of
+ * the active drag's `data.type`.
+ *
+ * The stock getter walks towards the *geometrically* nearest droppable of any
+ * kind. On surfaces with more than one droppable type that breaks keyboard
+ * drags outright: arrow-down from an area header lands on the area's own
+ * channel list (the nearest rect below), the typed collision detection then
+ * resolves right back to the same area, and the drop is a no-op.
+ * react-beautiful-dnd never had the problem because its keyboard mode moved by
+ * list index within the scoped droppable type. Scoping the candidates restores
+ * that behavior; on single-type surfaces the filter matches everything
+ * (both sides' `type` is undefined) and the getter behaves like the stock one.
+ */
+export const typedSortableKeyboardCoordinates: KeyboardCoordinateGetter = (event, args) => {
+  const containers = args.context.droppableContainers;
+  const activeType = args.context.active?.data.current?.type;
+  // The getter only calls `getEnabled()` and `get(id)`. A prototype-chained
+  // wrapper does not work here — DroppableContainersMap extends Map, whose
+  // methods reject a non-Map receiver — so delegate explicitly.
+  const scoped = {
+    get: (id: Parameters<typeof containers.get>[0]) => containers.get(id),
+    getEnabled: () => containers.getEnabled()
+      .filter(entry => entry.data.current?.type === activeType),
+  } as typeof containers;
+  return sortableKeyboardCoordinates(event, {
+    ...args,
+    context: { ...args.context, droppableContainers: scoped },
+  });
+};
 
 /**
  * The sensor set every drag & drop surface in the app shares.
@@ -39,7 +71,7 @@ export function useDragSensors() {
     useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 120, tolerance: 5 } }),
     useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
+      coordinateGetter: typedSortableKeyboardCoordinates,
       keyboardCodes: {
         start: [KeyboardCode.Space],
         cancel: [KeyboardCode.Esc],

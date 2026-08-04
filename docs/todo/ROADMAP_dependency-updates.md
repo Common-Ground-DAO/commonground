@@ -182,6 +182,7 @@ below).
 | 10 | `chore/deps-wave3-web3` | ready — gates re-run green + in-container rebuild + live smoke; largest manual-test surface |
 | 11 | `chore/deps-wave4a-dnd` | ready — finished WIP + review fixes, functionally verified headlessly (see wave 4a) |
 | 12 | `chore/deps-wave4b-motion` | ready — reviewed, findings fixed (see wave 4b) |
+| 13 | `chore/deps-wave4c-slate` | implemented + functionally verified, review pending (see wave 4c) |
 
 **Restack record (2026-08-04).** Tree equality of the restacked stack top
 against the pre-restack stack top was verified with `git diff` — the only
@@ -1583,9 +1584,35 @@ untouched via `git diff`.
     pattern, not reachable headlessly), the `noDefaultScrollable`/
     `hideMobileHandler`/`floatingMode`/`footerActions` sheet variants, swipe
     feel on a real device, and anything virtual-keyboard on real mobile.
-- [ ] **PR 4c**: slate + slate-history + slate-react to the current 0.x line (≥ first
+- [x] **PR 4c**: slate + slate-history + slate-react to the current 0.x line (≥ first
   React-19-compatible slate-react). Editor is core functionality — Fable implements
   this itself, thorough manual matrix (marks, links, mentions, paste, mobile).
+  - Done 2026-08-04 (Fable directly), branch `chore/deps-wave4c-slate`. Resolved:
+    slate 0.126.0, slate-react 0.126.0, slate-history 0.113.1, plus the new
+    **slate-dom 0.126.0** (slate-react ≥0.111 split its DOM layer out and
+    peer-requires it — it becomes a direct dependency). All ≥3 weeks old,
+    cooldown-clean. **Zero code changes needed**: tsc, lint, vitest, build,
+    check:html-rewrite green on the untouched sources.
+  - The riskiest upstream deltas were verified functionally, not assumed
+    (headless Chrome against the real app + dev stack, API-bootstrapped
+    community): 0.116 stopped re-rendering elements on selection change —
+    the HoveringToolbar still appears on a real selection, the bold/italic/
+    header toolbar buttons still track the selection's active state (on ↔ off),
+    and marks render (`<strong>`/`<em>`/`h3` toggle on and off). Chat editor:
+    typing, mention popup + accepted mention void, paste via ClipboardEvent,
+    editor clearing on send, undo via slate-history — all green.
+  - **One test-environment finding, explicitly not a slate regression**: the
+    headless setup cannot get a chat message onto the server (no createMessage
+    request is issued). Bisected: identical failure on the pre-slate wave-4b
+    tree — the data-layer/socket bootstrap in a fresh headless profile is the
+    cause, not this wave. Message send end-to-end stays on the maintainer's
+    manual list (it was API-smoke-verified against the built stack in the
+    earlier waves).
+  - **Manual (maintainer)**: a real editing pass in the article editor
+    (marks, links via the toolbar link input, images) and the chat (mentions,
+    paste incl. screenshots, send), on desktop **and mobile** — 0.107–0.110
+    reworked Android/IME input handling wholesale, which no headless test
+    covers; plus emoji picker insertion and message *editing*.
 - [ ] **PR 4d**: react/react-dom/@types 18 → 19 flip + recharts 2 → 3 (React-19
   support) + fallout fixes (types churn: `JSX.Element` namespace, ref callbacks,
   `useRef` argument requirement). Check react-google-recaptcha and remaining

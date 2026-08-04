@@ -6,6 +6,7 @@ import config from './common/config';
 import serverconfig from './serverconfig';
 import {
   randomString,
+  realRandomHexString,
   userRoomKey,
   roleRoomKey,
   communityRoomKey,
@@ -305,7 +306,7 @@ redisManager.isReady.then(async () => {
     socket.join(expressSessionRoomKey(sessionId));
 
     socket.on("getSignableSecret", (callback) => {
-      const signableSecret = randomString(20);
+      const signableSecret = realRandomHexString(32);
       socket.data.signableSecret = signableSecret;
       try {
         callback(signableSecret);

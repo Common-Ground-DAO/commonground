@@ -53,7 +53,15 @@ const common = {
   EIP712Signature: Joi.string(),
   DateString: Joi.string().isoDate(),
   Password: Joi.string(),
-  Secret: Joi.string().length(20),
+  // Signable login secrets. Two generations coexist: wsapi still issues
+  // 20-char alphanumeric secrets (randomString), the call server issues
+  // 64-char hex secrets (realRandomHexString(32)) since the mediasoup
+  // hardening. Every consumer compares the echoed secret against the one it
+  // stored for the connection, so the validator only pins the two shapes.
+  Secret: Joi.alternatives().try(
+    Joi.string().length(20),
+    Joi.string().hex().length(64),
+  ),
   ItemUrl,
   ItemUrlNullable: Joi.alternatives().try(ItemUrl, Joi.equal(null)),
   JsonWebKey: Joi.object({

@@ -18,7 +18,7 @@ import {
   autoUpdate,
   HandleCloseContext
 } from "@floating-ui/react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence } from "motion/react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { useGlobalDictionaryContext } from "../../../context/GlobalDictionaryProvider";
 import { randomString } from "../../../util";

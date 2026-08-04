@@ -13,7 +13,7 @@ import permissionHelper from "../repositories/permissions";
 import validators from "../validators";
 import { registerPostRoute } from "./util";
 import notificationHelper from "../repositories/notifications";
-import shortUUID from "short-uuid";
+import { createTranslator } from "short-uuid";
 import { User } from "../util/express";
 import ogs from 'open-graph-scraper';
 import fileHelper from "../repositories/files";
@@ -23,7 +23,7 @@ import botHelper from "../repositories/bots";
 import { allowBotRoute } from "../util/botPrincipal";
 import { enforceBotRateLimit } from "../util/botRateLimit";
 
-const t = shortUUID();
+const t = createTranslator();
 
 const messagingRouter = express.Router();
 
@@ -974,15 +974,10 @@ registerPostRoute<
       throw new Error(errors.server.INVALID_REQUEST);
     }
 
-    let imageUrl: string;
-    const { ogImage } = metadataResult.result;
-    if (typeof ogImage === 'string') {
-      imageUrl = ogImage;
-    } else if (Array.isArray(ogImage)) {
-      imageUrl = ogImage[0].url;
-    } else {
-      imageUrl = ogImage?.url || '';
-    }
+    // open-graph-scraper 6 normalises `ogImage` to an `ImageObject[]` — v5
+    // could also hand back a bare string or a single object, which is what the
+    // removed branches covered. The array can still be empty or absent.
+    const imageUrl = metadataResult.result.ogImage?.[0]?.url || '';
 
     let imageId = '';
     if (imageUrl) {

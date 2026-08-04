@@ -14,7 +14,7 @@ import eventHelper from "../repositories/event";
 import onchainHelper from "../repositories/onchain";
 import { CallPermission, CallType, ChannelPermission, CommunityApprovalState, CommunityEventPermission, CommunityPermission, PredefinedRole, RoleType, UserBlockState } from "../common/enums";
 import callHelper from "../repositories/calls";
-import shortUUID from "short-uuid";
+import { createTranslator } from "short-uuid";
 import fileHelper from "../repositories/files";
 import axios from "../util/axios";
 import { convertBinaryMemberListToUuid, convertBinaryToUuid, convertUuidToBinary } from "../util/memberListHelpers";
@@ -24,7 +24,7 @@ import emailUtils from "./emails";
 import userHelper from "../repositories/users";
 
 const communityRouter = express.Router();
-const t = shortUUID();
+const t = createTranslator();
 
 registerPostRoute<
   API.Community.getCommunityList.Request,

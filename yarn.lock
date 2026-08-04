@@ -7717,7 +7717,7 @@ __metadata:
     react-swipeable: "npm:^7.0.0"
     recharts: "npm:^2.12.7"
     sanitize-html: "npm:^2.6.1"
-    short-uuid: "npm:^4.2.0"
+    short-uuid: "npm:^6.0.3"
     slate: "npm:^0.103.0"
     slate-history: "npm:^0.100.0"
     slate-react: "npm:^0.106.0"
@@ -15915,13 +15915,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"short-uuid@npm:^4.2.0":
-  version: 4.2.2
-  resolution: "short-uuid@npm:4.2.2"
+"short-uuid@npm:^6.0.3":
+  version: 6.0.3
+  resolution: "short-uuid@npm:6.0.3"
   dependencies:
     any-base: "npm:^1.1.0"
-    uuid: "npm:^8.3.2"
-  checksum: 10c0/ffc5ef95c978dc122dda7a6c04a232101f1bc72082633ea9f4ac00ff730adbed365768b3dcee0e2ff96282b61269c8bc53d5b51e9c03d1ec0f8e77675f7ae8be
+  checksum: 10c0/35ceafd2599ec035fa1328013dbbedb4b10cea8eb04e15feecc3d5d0ba40ad94204d035f915d6b4fbb8d52ca29b7a5251c830fa145f05a8bf84f6f2cb5f805b7
   languageName: node
   linkType: hard
 

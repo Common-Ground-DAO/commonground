@@ -10,7 +10,7 @@ import PcIcon from '../../../atoms/icons/24/PcIcon.svg?react';
 import VideoIcon from '../../../atoms/icons/24/VideoIcon.svg?react';
 import Button from '../../../atoms/Button/Button';
 import EmbedModal from '../EmbedModal/EmbedModal';
-import shortUUID from 'short-uuid';
+import { createTranslator } from 'short-uuid';
 import { ReactEditor, useSlate } from 'slate-react';
 import { Editor, Transforms } from 'slate';
 import { isCurrentNodeEmptyParagraph } from '../EditField.helpers';
@@ -22,10 +22,10 @@ type Props = {
 
 };
 
-const randomIdGen = shortUUID();
+const randomIdGen = createTranslator();
 
 export function addImageMedia(editor: Editor, file: File) {
-  const elementId = randomIdGen.new();
+  const elementId = randomIdGen.generate();
 
   if (isCurrentNodeEmptyParagraph(editor)) {
     Transforms.setNodes(editor, { type: 'image', children: [{ text: '' }], id: elementId, fileCandidate: file, imageId: '', largeImageId: '', caption: '', size: 'medium' });

@@ -53,7 +53,7 @@
     "react-swipeable": "^7.0.0",
     "recharts": "^2.12.7",
     "sanitize-html": "^2.6.1",
-    "short-uuid": "^4.2.0",
+    "short-uuid": "^6.0.3",
     "slate": "^0.103.0",
     "slate-history": "^0.100.0",
     "slate-react": "^0.106.0",

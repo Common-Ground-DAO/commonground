@@ -4,7 +4,7 @@
 
 import type { AccessLevel, AjaxResponse } from "common/types";
 import { idRegex, itemUrlRegex } from "common/util";
-import short from 'short-uuid';
+import { createTranslator } from 'short-uuid';
 import XIcon from '../components/atoms/icons/24/X.svg?react';
 import OfficialIcon from "../components/atoms/icons/20/OfficialIcon.svg?react";
 import FarcasterIcon from '../components/atoms/icons/24/Farcaster.svg?react';
@@ -20,7 +20,7 @@ import GoldTvIcon from "../components/atoms/icons/misc/communitySettings/goldtv.
 import { MdWorkspacePremium } from "react-icons/md";
 import dayjs from "dayjs";
 
-const t = short();
+const t = createTranslator();
 
 export async function ajax<T>(method: "GET" | "PUT" | "POST" | "UPDATE", url: string, data?: string | FormData): Promise<AjaxResponse<T>> {
   try {

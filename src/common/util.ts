@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import config from "./config";
-import short from 'short-uuid';
+import { createTranslator } from 'short-uuid';
 import { UserPremiumFeatureName } from "./enums";
 import errors from "./errors";
 import dayjs from "dayjs";
@@ -13,7 +13,7 @@ import slugify from "slugify";
 export const itemUrlRegex = /^[a-z0-9-]{3,50}$/i;
 export const addressRegex = /^0x[a-f0-9]{40}$/i;
 
-const t = short();
+const t = createTranslator();
 
 type GetUrlOptions = {
   type: 'home';

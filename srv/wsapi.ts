@@ -29,6 +29,9 @@ import botTokenHelper from './repositories/botTokens';
 import botHelper from './repositories/bots';
 
 import cookieParser from 'cookie-parser';
+// The manual-unsign alternative below needs `cookie-signature`, which was
+// removed from package.json in 2026-08 (nothing imported it; express-session
+// and cookie-parser each bundle their own copy). Re-add it before reviving.
 // import signature from 'cookie-signature';
 import cookie from 'cookie';
 const secret = dockerSecret('redis_secret') || process.env.REDIS_SECRET as string;

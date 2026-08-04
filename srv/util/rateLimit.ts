@@ -3,44 +3,15 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import express from 'express';
-import ip from 'ip';
 import redisManager from '../redis';
 import errors from '../common/errors';
+import { classifyForwardedIp } from './ipPrefix';
 
 const redisClient = redisManager.getClient('data');
 
 export function extractIpFromRequest(req: express.Request) {
-  let ipString: string | undefined;
-  let ip56String: string | undefined;
-  let ip48String: string | undefined;
   const xForwardedFor = req.headers['x-forwarded-for'];
-  if (typeof xForwardedFor === 'string') {
-    const v4 = xForwardedFor.match(/^(\d{1,3}\.){3}\d{1,3}/);
-    const v6 = xForwardedFor.match(/^[0-9a-f:]+/i);
-    if (v4 && ip.isV4Format(v4[0])) {
-      ipString = v4[0];
-    }
-    else if (v6 && ip.isV6Format(v6[0])) {
-      const buf = ip.toBuffer(v6[0]);
-      const array = new Uint8Array(buf);
-      const arr48: number[] = [];
-      const arr56: number[] = [];
-      const arr64: number[] = [];
-      for (let i = 0; i < 6; i++) {
-        arr48.push(array[i]);
-        arr56.push(array[i]);
-        arr64.push(array[i]);
-      }
-      arr56.push(array[6]);
-      arr64.push(array[6]);
-      arr64.push(array[7]);
-
-      ipString = arr64.map(i => i.toString(16)).join('');
-      ip56String = arr56.map(i => i.toString(16)).join('');
-      ip48String = arr48.map(i => i.toString(16)).join('');
-    }
-  }
-  return { ipString, ip56String, ip48String };
+  return classifyForwardedIp(typeof xForwardedFor === 'string' ? xForwardedFor : '');
 }
 
 export default function ipRateLimitHandler(options: {

@@ -93,6 +93,7 @@ progresses; delete the file when the workstream is done (lifecycle per AGENTS.md
    commit. **Ready for review.**
 2. `chore/deps-wave0-backend` — stacked on 1 (roadmap lives there). Merge after 1.
    **Ready for review.**
+3. `chore/deps-wave1a-backend` — stacked on 2. **Ready for review.**
 
 ## Wave 0 — lockfile refresh within existing ranges (2 PRs)
 
@@ -257,29 +258,170 @@ untouched via `git diff`.
 
 ## Wave 1 — targeted security bumps the ranges can't reach (2 PRs)
 
-- [ ] **PR 1a (backend)**:
-  - [ ] sharp `^0.30.6` → `^0.35.3` (libvips/libwebp CVEs); **drop `@types/sharp`**
+- [x] **PR 1a (backend)** — branch `chore/deps-wave1a-backend`, stacked on
+  `chore/deps-wave0-backend`. **Audit: 3 high / 3 moderate / 1 low (wave-0b end
+  state) → 0 high / 2 moderate / 0 low.** (The branch base after the `ip` commit
+  was already 2 high / 3 moderate / 1 low.) Everything gone: `ip` SSRF, sharp
+  libwebp + libvips, multer 1.x EOL, cookie <0.7 out-of-bounds chars. The two
+  residual moderates are deprecation notices owned by later waves: puppeteer 22
+  (→ 2a) and `@simplewebauthn/types` (→ 1.5).
+  - [x] sharp `^0.30.6` → `^0.35.3` (libvips/libwebp CVEs); **drop `@types/sharp`**
     (sharp ships its own types since 0.32); verify the call sites against the
     0.32/0.33 changelogs (resize/rotate defaults, `failOn` rename) and that the
     Docker image build still gets working binaries
-  - [ ] multer `1.4.5-lts.1` → `^2.2.0` + `@types/multer` `^2` — near drop-in; check
+    - Nothing in `repositories/files.ts` touches a removed API: no
+      `failOnError`/`paletteBitDepth`/legacy `sharpen` props (removed in 0.35),
+      no `trim` (object-only since 0.33), no GIF output (0.34 changed the
+      default loop), no `removeAlpha`. `sharp.gravity.center`, `extend`,
+      `extract`, `composite` (incl. `raw` + `tile`), `blur`, `rotate()`,
+      `resize(fit: cover|fill, withoutEnlargement)` and `metadata().size` all
+      behave as before — exercised against 0.35.3 with a script mirroring every
+      call site. 0.35's new `limitInputChannels: 5` default is above anything we
+      feed it.
+    - **Node ≥ 20.9** is required by 0.35 (image is node 24.18). Installation is
+      now prebuilt `@img/sharp-*` optional deps instead of `prebuild-install`,
+      so the in-container `yarn` needs no build toolchain for it; verified inside
+      the built image (`sharp 0.35.3 / libvips 8.18.3`, webp encode works in both
+      `api` and `job-runner`).
+    - **The wave-0 job-runner crash-loop is gone.** The two-sequential-
+      `worker_threads` repro that reproduced `Module did not self-register` on
+      0.30.x runs clean four times in a row, both on the host and inside the
+      `job-runner` container. Over ~40 minutes of stack uptime the job runner
+      spawned 33 workers (10× `emailNotifications`, 19× `onlineStatusCheck`,
+      1× `activityScore`), all exited 0, the permanent `premiumRenewal` worker
+      stayed alive and the container has 0 restarts.
+  - [x] multer `1.4.5-lts.1` → `^2.2.0` + `@types/multer` `^2` — near drop-in; check
     the registration sites for removed 1.x-era options
-  - [ ] socket.io `4.7.1` → `4.8.3` (exact pin kept), `@socket.io/redis-adapter`
+    - One registration site (`srv/api/files.ts`) using only `memoryStorage()`,
+      `limits.fileSize` and `.single('uploaded')` — none of it changed in 2.x
+      (2.x only raises the Node floor to 10.16 and drops mkdirp/object-assign/
+      xtend). Verified on an express 4.22 harness replicating the route shape
+      *and* against the running stack: `req.file` is a Buffer, `req.body.options`
+      is still the text field, a 9 MB file still fails `LIMIT_FILE_SIZE`.
+    - Note for wave 2a: `@types/multer` 2 is another consumer of
+      `@types/express@*`, so it joins the packages pinning the
+      `@types/express: "4"` resolution.
+  - [x] socket.io `4.7.1` → `4.8.3` (exact pin kept), `@socket.io/redis-adapter`
     `8.2.1` → `8.3.0`, check `@socket.io/redis-emitter` + `socket.io-adapter`
     compatibility matrix
-  - [ ] **replace `ip`**: rewrite the v4/v6 classification + IPv6 /56 prefix
+    - Matrix, read off the installed manifests: redis-adapter 8.3.0 raises its
+      peer range to `socket.io-adapter ^2.5.4` (was `^2.4.0`); our direct
+      `socket.io-adapter ^2.4.0` resolves to 2.5.8, which also satisfies
+      socket.io 4.8.3's `~2.5.2` → **one copy**. `socket.io-adapter` is imported
+      nowhere; the direct dep exists only for that peer range. redis-emitter
+      5.1.0 pairs with redis-adapter 8.x (both `notepack.io ~3.0.1`) and shares
+      the same `socket.io-parser` 4.2.7 copy. socket.io 4.8.3 pulls engine.io
+      6.6.9 (was 6.5.5), which **drops the `cookie ~0.4.1` / `@types/cookie`
+      deps** — the last consumer of the old cookie line besides our own pin.
+    - **4.8.3 server ↔ 4.7.1 client verified explicitly** (frontend stays on
+      4.7.1 until 1b): polling→websocket upgrade, websocket-only, event + ack
+      round-trips, reconnect after a forced transport close, and the handshake
+      `cookie` header `wsapi.ts:decodeSessionId()` reads. Repeated through nginx
+      against the running stack with a real session cookie: connect, upgrade,
+      server `buildId` event, no server-side disconnect. 4.8's additions
+      (WebTransport, connection state recovery, `cleanupEmptyChildNamespaces`)
+      are opt-in and unused.
+    - Still open (maintainer, needs a browser): a **voice-call smoke** — the
+      manual-test flag from the execution conventions. Calls run over
+      protoo/mediasoup, not socket.io, but the call *signalling UI* is driven by
+      socket.io events.
+  - [x] **replace `ip`**: rewrite the v4/v6 classification + IPv6 /56 prefix
     extraction in `srv/util/rateLimit.ts` on `node:net` (`isIPv4`/`isIPv6`) +
     manual prefix parse or `ipaddr.js`; delete the dependency and `@types/ip`;
     add unit tests (v4, v6 prefix grouping, mapped v4, invalid input)
-  - [ ] cookie `0.4.2` → current + cookie-signature `1.0.6`: first **investigate why
+    - Done 2026-08-04 (Fable directly): pure logic extracted to
+      `srv/util/ipPrefix.ts` (no redis import → unit-testable), `ip`/`@types/ip`
+      removed, 13 tests in `srv/tests/ipPrefix.spec.ts`. **Interim review verified
+      correctness hard**: oracle-checked against the WHATWG URL parser over 243k
+      generated isIPv6-valid inputs (0 mismatches; the old `ip.toBuffer` even had
+      a truncation bug the rewrite doesn't), and 1.5M adversarial inputs prove
+      the change is strictly fail-closed (no input gains a key that was rejected
+      before). Three deliberate behavior changes, documented in the code:
+      (1) v6 prefix keys zero-padded per byte (old unpadded hex collided across
+      prefixes; old keys age out within the window); (2) `::ffff:a.b.c.d` gets a
+      real per-client bucket — the review corrected my original claim here: the
+      old code did NOT reject v4-mapped clients, it truncated them at the first
+      dot and keyed them ALL into one shared all-zero bucket (global limit
+      collision); (3) strict `node:net` validation rejects non-canonical shapes
+      (`070.41.3.18`, `999.1.2.3`, `1.2.3`, `abcd`) that the old regexes keyed
+      as-is — now INVALID_REQUEST, fail-closed. The commit message of the ip
+      commit still carries the wrong pre-review v4-mapped rationale; the code
+      comment, tests and this note are the corrected record.
+    - Review-driven pull-forwards from 2a (small, kept 2a's jest-30 bump intact):
+      `jest.config.js` now matches `.spec.(js|ts)` with ts+js moduleFileExtensions
+      so `yarn tests` actually runs the suite (13/13); the never-compiling
+      `tests/accounts.spec.ts` (imported entities that never existed) is deleted
+      — 2a starts the backend suite fresh; `@types/jest` pinned `^29` to match
+      jest 29 (the `^30` I first added dragged a jest-30 runtime subtree into the
+      production image via the Dockerfile's bare `yarn`).
+  - [x] cookie `0.4.2` → current + cookie-signature `1.0.6`: first **investigate why
     the exact pins exist** (likely express-session cookie-format compat — a
     cookie-signature bump may invalidate existing sessions). Bump what is safe,
     document what is deliberately kept.
-  - [ ] **drop `express-fileupload` + `@types/express-fileupload`** (interim review,
+    - **Why they exist: no reason that survives inspection.** Both pins date to
+      the initial commit (`git log -S`), with no rationale anywhere. `cookie` has
+      exactly one consumer, `cookie.parse()` on the Socket.IO handshake header in
+      `wsapi.ts`; `cookie-signature` has **none** — its import in `wsapi.ts` is
+      commented out and nothing else references it.
+    - **cookie → `0.7.2`** (exact pin kept), the version cookie-parser 1.4.7
+      itself depends on, so the tree collapses to a single copy and the low-
+      severity GHSA-pxg6-pf52-xh8x (`<0.7.0`, and only reachable through
+      `serialize`, which we never call) is gone. Differential-tested 0.4.2 vs
+      0.7.2 on a realistic signed express-session header (quoted, empty,
+      percent-encoded, `s:`-prefixed values): byte-identical `parse()` output and
+      identical `cookieParser.signedCookies()` result.
+    - **Deliberately not taken further**: cookie 1.x is named-exports-only (needs
+      a wsapi import rewrite), re-duplicates the package next to cookie-parser's
+      0.7.2 and carries no security delta; cookie 2.x is **ESM-only** with a
+      renamed API (`parse` → `parseCookie`) and `engines.node >= 22` — not worth
+      it for one `parse()` call in a CommonJS build. Revisit if the backend ever
+      goes ESM.
+    - **cookie-signature dropped** (with `@types/cookie-signature`) instead of
+      bumped, and **no session can be invalidated by it**: express-session signs
+      with its own `~1.0.7` copy and cookie-parser verifies with its own exact
+      `1.0.6` — already a cross-version pair *before* this change. Proved 1.0.6
+      and 1.0.7 emit byte-identical signatures and verify each other's. After
+      removal each consumer still resolves the same version as before (only the
+      hoisting flipped: 1.0.7 is now the hoisted copy, cookie-parser keeps a
+      nested 1.0.6). The commented-out `import signature from 'cookie-signature'`
+      in `wsapi.ts` was left in place as the record of the alternative unsign
+      path; re-enabling it means re-adding the dependency.
+  - [x] **drop `express-fileupload` + `@types/express-fileupload`** (interim review,
     2026-08-04): nothing in `srv/` imports it — uploads go through multer in
     `srv/api/files.ts` — so its audit finding was about unreachable code, and
     `@types/express-fileupload` is one of the three packages forcing the
     `@types/express: "4"` resolution.
+    - Grep claim re-verified over every tracked file in `srv/`: the string
+      "fileupload" appeared only in `package.json`. Removed.
+    - **It does not dissolve the `@types/express: "4"` resolution** — seven other
+      packages depend on `@types/express@*` (`express-session`, `express-ws`,
+      `cookie-parser`, `connect-redis`, `passport`, `passport-twitter` and now
+      `@types/multer` 2). The pin stays until Express 5 (out of scope).
+  - [x] **Fallout fixed here, but not caused here**: image uploads were broken on
+    the branch base. `saveImage()` handed the *Sharp instance* to S3
+    `PutObjectCommand` as a stream body, and since the wave-0b `@aws-sdk`
+    3.88 → 3.1102 bump the client rejects unknown-length stream bodies outright
+    (`Invalid value "undefined" for header "x-amz-decoded-content-length"` →
+    API answers `UNKNOWN`). Bisected in the running stack: Buffer body OK, fs
+    stream OK (the SDK stats its `path`), plain `Readable.from(buffer)` fails
+    identically to the Sharp stream, and SDK 3.88.0 still accepts an
+    unknown-length stream with only a warning. Fix: pass `resizedBuffer`, which
+    `saveImage()` already materialised for the sha256 file id — streaming the
+    consumed Sharp instance only re-ran the whole pipeline a second time.
+    **Worth mentioning in the wave-0b PR description**; wave 2a should add a
+    regression test for the upload path.
+  - Verification gate: `npx tsc --noEmit` in `srv/` clean after every step;
+    `./run.sh update_backend` green (in-container `yarn` + `yarn tsc`, no native
+    build step needed any more — sharp installs prebuilt); `./run.sh build_full`
+    green with the whole stack healthy afterwards; `tests/ipPrefix.spec.ts`
+    still 11/11 via the ts-jest CLI override (`jest.config.js` untouched, it is
+    2a's job). Live smoke over nginx: `getCommunityList` returns real rows
+    through nginx→api→pg, a session cookie is issued through connect-redis, joi
+    rejects a bad body, `POST /api/v2/File/uploadImage` stores a 110×110 webp in
+    seaweed with a matching `files` row, and a socket.io-client 4.7.1 client
+    connects, upgrades to websocket and receives `buildId`.
+  - Not verifiable headlessly (maintainer): interactive login, message send,
+    a voice call, and a browser-side reconnect/presence pass.
 - [ ] **PR 1b (frontend)**:
   - [ ] socket.io-client `4.7.1` → `4.8.3` (stay in sync with server; reconnect smoke)
   - [ ] dexie `4.0.8` → `4.4.x`, dexie-react-hooks `1.1.7` → `4.4.x` (verify the
@@ -306,12 +448,13 @@ untouched via `git diff`.
   - [ ] puppeteer `^22` → `^25` (headless "new" default, `page.waitForTimeout`
     removal, cache dir move — check Docker image for bundled-Chromium path
     assumptions)
-  - [ ] jest `^29` → `^30` + ts-jest current (absorbed from TODO.md; point
-    `srv/jest.config.js` at the `.ts` sources while touching it — the config
-    currently only finds compiled `.js`). **Plus** (wave-0 finding): add
-    `@types/jest`, and rewrite-or-delete `srv/tests/accounts.spec.ts` — it imports
-    an `entities/accounts` / `Account` active-record API that has never existed in
-    this repo, so the suite fails as soon as jest actually finds it.
+  - [ ] jest `^29` → `^30` + ts-jest current + `@types/jest` `^29`→`^30`
+    (absorbed from TODO.md). Partially pulled forward into 1a by the wave-1
+    review: `jest.config.js` already matches `.spec.(js|ts)` and `yarn tests`
+    runs the ipPrefix suite; the never-compiling `tests/accounts.spec.ts` is
+    already deleted (it imported entities that never existed — the backend suite
+    starts fresh). Wanted here: a regression test for the image-upload path
+    (multer → sharp → S3), which had none when the wave-0b SDK bump broke it.
   - [ ] **drop `@types/connect-redis` + `@types/redis`** (interim review, 2026-08-04):
     `@types/redis` is a stub whose dependency drags a full *runtime* `redis@6.2.0`
     copy into the image next to the real client (verified unused via

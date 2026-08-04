@@ -1,6 +1,7 @@
 # Common Ground Backend Documentation
 
-> Status: verified against commit 0f1d72d66, 2026-08-03.
+> Status: verified against commit 0f1d72d66, 2026-08-03; rate-limit section
+> against the 2026-08-04 dependency-update wave 1a.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -1111,6 +1112,14 @@ Redis-based rate limiter using sorted sets for sliding window counting.
 2. Checks counts in Redis sorted sets per URL+IP combination
 3. Applies separate limits for IPv4/IPv6-64, IPv6-56, and IPv6-48 prefixes
 4. Throws `RATE_LIMIT_EXCEEDED` if any limit is breached
+
+The IP classification itself lives in `srv/util/ipPrefix.ts` (2026-08: built on
+`node:net` `isIPv4`/`isIPv6`, replacing the unmaintained `ip` package). IPv6
+bucket keys are zero-padded per-byte hex of the /64, /56 and /48 prefixes;
+v4-mapped addresses (`::ffff:a.b.c.d`) key on the embedded IPv4; inputs that
+fail strict validation get no keys and the request is rejected with
+`INVALID_REQUEST`. Unit tests: `srv/tests/ipPrefix.spec.ts` (runs via
+`yarn tests` in `srv/`).
 
 ### `srv/util/express.ts` -- Express Configuration
 

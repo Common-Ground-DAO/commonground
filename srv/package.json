@@ -86,8 +86,7 @@
     "@types/pg-format": "^1.0.2",
     "@types/web-push": "^3.6.0",
     "jest": "^30.4.2",
-    "ts-jest": "^29.4.12",
-    "typeorm-extension": "^2.4.2"
+    "ts-jest": "^29.4.12"
   },
   "resolutions": {
     "@types/express": "4",

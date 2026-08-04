@@ -1,6 +1,6 @@
 # Common Ground Deployment
 
-> Status: verified against commit 0f1d72d66, 2026-08-03.
+> Status: verified against commit 92e42513c, 2026-08-04
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -367,8 +367,12 @@ exist under `pipelines/`, plus a shared clean-up template.
 ### Staging — `pipelines/build-and-deploy-beta.yml`
 
 - **Trigger:** push to the `staging` branch. **Pool:** `ubuntu-20`.
-- Installs Docker 20.10.14, Node 24.x, Yarn 4.1.0 (via corepack), plus
-  build tooling; pulls a private `.yarnrc` as a secure file.
+- Installs Docker 20.10.14, Node 24.x, Yarn 4.17.1 (via corepack), plus
+  build tooling; pulls a private `.yarnrc` as a secure file. **That secure file
+  replaces the repository's `.yarnrc.yml`**, so the pipeline re-appends
+  `enableScripts: false` and `npmMinimalAgeGate: 1w` after copying it — without
+  that, CI builds would run without the supply-chain controls the repo
+  configures (see docs/infrastructure §2).
 - Copies `srv/` into `docker/backend/dist/`, stamps a random build id, and
   builds the prod frontend with `PUBLIC_URL="https://staging.app.cg"` (which
   now only keeps the default social-preview meta absolute — asset URLs are

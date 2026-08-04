@@ -48,17 +48,7 @@ build() {
   docker_compose build cg-builder
   checkError
 
-  if [ ! -d ../.yarn ]; then
-    printf "\n---\n--- Missing .yarn directory, setting yarn to version 4.1.0\n---\n"
-    docker_compose run --rm cg-builder bash -c "sed -i 's/yarnPath: .*//g' .yarnrc.yml && yarn set version 4.1.0"
-    checkError
-  fi
 
-  if [ ! -d ../srv/.yarn ]; then
-    printf "\n---\n--- Missing srv/.yarn directory, setting yarn to version 4.1.0\n---\n"
-    docker_compose run --rm cg-builder bash -c "sed -i 's/yarnPath: .*//g' srv/.yarnrc.yml && cd srv && yarn set version 4.1.0"
-    checkError
-  fi
 
   printf "\n---\n--- Installing frontend dependencies\n---\n"
   docker_compose run --rm cg-builder yarn
@@ -91,7 +81,7 @@ build() {
     if [ ! -d ../srv/node_modules/web-push ]; then
       docker_compose run --rm -T cg-builder bash -c "cd srv && yarn"
     fi
-    docker_compose run --rm -T cg-builder bash -c "cd srv && npx web-push generate-vapid-keys --json > ../docker/vapid_keys.json"
+    docker_compose run --rm -T cg-builder bash -c "cd srv && npx --no web-push generate-vapid-keys --json > ../docker/vapid_keys.json"
     checkError
   fi
 

@@ -26,12 +26,6 @@ cd ../docker && \
 docker_compose build cg-builder
 checkError
 
-if [ ! -d ../.yarn ]
-then
-  printf "\n---\n--- Missing .yarn directory, setting yarn to version 4.1.0 \n---\n"
-  docker_compose run --rm cg-builder bash -c "sed -i 's/yarnPath: .*//g' .yarnrc.yml && yarn set version 4.1.0"
-  checkError
-fi
 
 docker_compose run --rm cg-builder yarn && \
 buildId=$(dd if=/dev/random bs=1 count=10 status=none | base64) && \

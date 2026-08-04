@@ -223,8 +223,10 @@ affected version, but both controls would have made it structurally impossible:
   `utf-8-validate`, `keccak`, `secp256k1`) and `sharp` (≥0.33 installs the
   prebuilt `@img/*` packages) are deliberately NOT allowlisted: they load
   their shipped prebuilds without ever running an install script (verified in
-  both workspaces, and `contracts/` runs the same natives with scripts off).
-  Everything else that ships an install script here does
+  both workspaces). `contracts/` and `docker/hardhat/node/` have **no** allowlist
+  on purpose — their Hardhat toolchains install and deploy fine with every build
+  script disabled (the native crypto modules load their shipped prebuilds;
+  no install script needed), which is verified, not assumed. Everything else that ships an install script here does
   nothing but print a message (`es5-ext`, `web3`, `web3-bzz`, `web3-shh`) or has
   a pure-JS fallback (`bigint-buffer`) and is
   deliberately left disabled — Yarn logs a `YN0004` warning for each, which is
@@ -242,7 +244,23 @@ affected version, but both controls would have made it structurally impossible:
 Yarn 4.1.0 had neither (its `enableScripts` default was `true`, contrary to what
 the current yarnpkg.com docs say — the pinned binary is the authority), which is
 why the version moved as part of the same change. The upgrade changed the
-lockfile metadata format (8 → 10) but **no resolved version**.
+lockfile metadata format (8 → 10) but **no resolved version**. Note that 4.1.0
+*hard-errors* on the unknown `npmMinimalAgeGate` key, so every place that
+bootstraps a Yarn version has to stay at 4.17.1 or newer: `docker/build.sh`,
+`docker/updateBackend.sh`, `docker/updateFrontend.sh`,
+`docker/selfhost/selfhost.sh` and both Azure pipelines.
+
+**Every install path in the repository is covered**, which took more than the two
+main workspaces:
+
+| Path | How it is covered |
+|---|---|
+| root, `srv/` | own `.yarnrc.yml` + `dependenciesMeta` allowlist |
+| `contracts/` | inherits the root `.yarnrc.yml` (Yarn walks up); no allowlist needed |
+| `docker/hardhat/node/` | **was the one unprotected path** — `docker/hardhat/Dockerfile` ran a bare `yarn`, i.e. the base image's Yarn 1.22, with no lockfile and scripts on. It now enables corepack, pins `packageManager: yarn@4.17.1`, and ships its own `.yarnrc.yml`. |
+| backend image build | the copied `.yarnrc.yml` carries both controls (no `yarnPath` exists any more — corepack provisions the `packageManager`-pinned 4.17.1); verified by the `YN0004` warnings in the build output |
+| Azure pipelines | the secure-file `.yarnrc.yml` **replaces** the repo's, so the pipelines re-append both settings after copying it — see the comment there |
+| `npx` call sites | `web-push` and `truffle-flattener` both resolve to declared local dependencies, so npx never fetches from the registry |
 
 ### Full Build: `docker/build.sh` (`./run.sh build_full`)
 
@@ -251,7 +269,12 @@ The complete build pipeline, for first-time setup or full rebuilds.
 **Steps (in order):**
 
 1. **Stop and clean:** `docker compose down --remove-orphans`, then `docker compose build cg-builder`.
-2. **Ensure Yarn 4.17.1:** if `.yarn` / `srv/.yarn` are missing, run `yarn set version 4.17.1` inside the builder. (Both workspaces pin the same version in `packageManager`; the backend image ignores `yarnPath` and lets corepack resolve from there.)
+2. **Yarn 4.17.1 comes from corepack**: the `commonground/node` base image
+   enables corepack and pre-fetches the `packageManager`-pinned release into a
+   world-readable `COREPACK_HOME`, so builder runs need no bootstrap step and
+   no network fetch. (The former "Missing .yarn directory" repair blocks and
+   `yarn set version` calls are gone; on a dev host, run `corepack enable`
+   once to get the same resolution outside the containers.)
 3. **Generate SSL certificates:** compare `LOCAL_CERTIFICATE_IP` with the stored `certificate_ip`; if changed, regenerate root CA and server certs.
 4. **Clear `backend/dist/` and `nginx/dist/`**, then install frontend dependencies (`docker compose run --rm cg-builder yarn`).
 5. **Generate random build ID:** a random base64 string is written into `src/common/random_build_id.ts` for cache-busting / new-build detection.
@@ -428,9 +451,9 @@ All images stay on **Debian bookworm** deliberately: the Node 24 audit
 in `docker/backend/Dockerfile` — trixie ships no `libgcc1` (renamed
 `libgcc-s1`) and renames `libasound2`/`libcups2` to their `…t64` variants under
 the 64-bit `time_t` transition. Forward note for the next Node bump: the
-Node 24 images still bundle Corepack and a Yarn v1 binary, which the first-run
-`yarn set version 4.1.0` bootstrap in the build scripts relies on; the Node 26
-images drop it.
+Node 24 images still bundle Corepack, which the `corepack install -g
+yarn@4.17.1` step in `docker/node/Dockerfile` relies on; the Node 26 images
+drop Corepack, so that step will need corepack installed explicitly first.
 
 ---
 

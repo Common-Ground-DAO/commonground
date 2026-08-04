@@ -135,7 +135,8 @@
     "workbox-build": "6.5.4"
   },
   "resolutions": {
-    "@types/react": "18"
+    "@types/react": "18",
+    "react-router-dom": "6.30.1"
   },
   "dependenciesMeta": {
     "esbuild": {

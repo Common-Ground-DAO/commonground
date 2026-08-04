@@ -76,6 +76,10 @@
 - [ ] **`role_gated_files` + `GET /gated-videos/:filename` / `GET /gated-files/:filename`**
   — their only content producers were the wizard data-room elements removed in Phase 2;
   the table has no create path in code. Removal candidate.
+- [ ] **Drop the `@types/react-router-dom` devDep** (2026-08-04, dependency-update
+  wave 0a) — it is the v5 types package, while the app runs react-router-dom v6, which
+  ships its own types. Typecheck passes with it installed today, but it is vestigial
+  and one `@types/history` drift away from conflicting. One-line cleanup.
 - [ ] **Delete `public/images/tokensale_header.png`** (891 KB, 2026-08-03, Vite workstream)
   — nothing references it; `src/views/TokenSale/TokenSale.tsx:106` uses the `.webp`. It
   ships in every build. (`public/images/tokensale_social_preview.png` **is** used, by

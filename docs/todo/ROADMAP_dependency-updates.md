@@ -87,6 +87,12 @@ progresses; delete the file when the workstream is done (lifecycle per AGENTS.md
 
 ---
 
+## Branch / stacking order (update as branches are cut)
+
+1. `chore/deps-wave0-frontend` — off `develop`; carries the roadmap-creation docs
+   commit. **Ready for review.**
+2. `chore/deps-wave0-backend` — stacked on 1 (roadmap lives there). Merge after 1.
+
 ## Wave 0 — lockfile refresh within existing ranges (2 PRs)
 
 No `package.json` changes; `yarn up -R '*'` re-resolves every dependency to the
@@ -105,8 +111,12 @@ untouched via `git diff`.
     `@truffle/hdwallet-provider`. **The seventh is net-new and needs a decision**:
     react-router-dom 6.30.4 is in the range of GHSA-jjmj-jmhj-qwj2 (open redirect →
     XSS, moderate, >=6.30.2 <=6.30.4). There is **no fixed 6.x release** — the fix is
-    react-router 7.13, and v7 is out of scope (decision 7). Either accept the residual
-    or hold the range at 6.30.1, which predates the vulnerable range.
+    react-router 7.13, and v7 is out of scope (decision 7). **Resolved conservatively
+    (2026-08-04, agent decision, maintainer may override)**: `resolutions` holds
+    react-router-dom at 6.30.1, which predates the vulnerable range — security
+    posture stays no worse than before the refresh. The pin dissolves whenever the
+    deferred react-router-7 workstream lands; drop it from `package.json` then.
+    Gate re-run green after the hold (typecheck, test 4/4, build, check:html-rewrite).
   - `yarn up -R '*'` alone is **not** the full refresh the wave assumed: micromatch's
     `*` does not cross `/`, so every scoped package stayed at its range floor. The
     lockfile was produced with `yarn up -R '*' '@*/*'`. **Use both patterns in PR 0b.**

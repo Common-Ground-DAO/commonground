@@ -81,7 +81,14 @@ const InnerComponent: React.FC<Props> = (props) => {
     carousel={{
       finite: true,
       preload: 3,
-      padding: isMobile ? '5%' : '2% 5%'
+      // v3 narrowed `carousel.padding` from a CSS shorthand string to a single
+      // `LengthOrPercentage` applied on all four sides, so the desktop
+      // `'2% 5%'` (2% vertical / 5% horizontal) has to collapse to one value.
+      // `'2%'` is the side that must not grow: CSS percentage padding resolves
+      // against the container *width*, so keeping 5% would have turned a 38px
+      // top/bottom gutter on a 1920px viewport into 96px and shrunk the image.
+      // Taking 2% instead only widens the picture horizontally.
+      padding: isMobile ? '5%' : '2%'
     }}
     controller={{
       closeOnBackdropClick: true

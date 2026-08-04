@@ -212,7 +212,11 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
     }
   }, [props.richTextMode, editor, setAttachments, attachmentLimit]);
 
-  const { getInputProps, getRootProps, isDragActive, rootRef } = useDropzone({ onDrop: onFilesDrop, noClick: true })
+  // `noPaste` is required, not cosmetic: react-dropzone 20 turned paste-to-upload
+  // on by default and wires the handler into `getRootProps`, so a screenshot
+  // pasted into the Slate `<Editable>` below would bubble to the dropzone root
+  // and be attached a second time on top of `handlePaste`'s own `addFiles` call.
+  const { getInputProps, getRootProps, isDragActive, rootRef } = useDropzone({ onDrop: onFilesDrop, noClick: true, noPaste: true })
 
   // Update mentionable users on search string change
   React.useEffect(() => {

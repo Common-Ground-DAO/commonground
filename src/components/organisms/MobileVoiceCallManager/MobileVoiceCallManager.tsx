@@ -10,10 +10,10 @@ import "./MobileVoiceCallManager.css";
 import { useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getUrl } from 'common/util';
-import shortUUID from 'short-uuid';
+import { createTranslator } from 'short-uuid';
 import { useCommunityListView } from 'context/CommunityListViewProvider';
 
-const short = shortUUID();
+const short = createTranslator();
 
 type Props = {
 }

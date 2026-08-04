@@ -14,9 +14,9 @@ import Scrollable, { PositionData } from "../../components/molecules/Scrollable/
 import UserProfileDetails from "../../components/organisms/UserProfileDetails/UserProfileDetails";
 import { useLoadedProfileContext } from 'context/ProfileProvider';
 import { shortUuidRegex } from 'views/ArticleView/ArticleView';
-import shortUUID from "short-uuid";
+import { createTranslator } from "short-uuid";
 
-const t = shortUUID();
+const t = createTranslator();
 
 export default function BlogView() {
     const { articleUri } = useParams<'articleUri'>();

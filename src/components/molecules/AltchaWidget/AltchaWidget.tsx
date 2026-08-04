@@ -44,7 +44,9 @@ const AltchaWidget: React.FC<Props> = ({ onVerified, onReset, className }) => {
     <div className={className}>
       {React.createElement('altcha-widget', {
         ref,
-        challengeurl: challengeUrl,
+        // altcha 3 merged `challengeurl` and `challengejson` into one
+        // `challenge` attribute that takes either a URL or inline JSON.
+        challenge: challengeUrl,
       })}
     </div>
   );

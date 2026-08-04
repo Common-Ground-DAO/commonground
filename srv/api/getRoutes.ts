@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { readFileSync } from "fs";
-import shortUUID from "short-uuid";
+import { createTranslator } from "short-uuid";
 import express from "express";
 import config from "../common/config";
 import articleHelper from "../repositories/articles";
@@ -63,7 +63,7 @@ const _tpl = indexhtml
   .replace(/<meta +property="(og:title|og:description|og:type|og:image|og:url)" +content="[^"]+" *\/?>/g, '')
   .replace(/<meta +name="(twitter:title|twitter:description|twitter:image|description)" +content="[^"]+" *\/?>/g, '');
 const insertPos = _tpl.indexOf('</head>');
-const translator = shortUUID();
+const translator = createTranslator();
 
 const escapeHtml = (str: string | null | undefined) => (str || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as any)[m]);
 

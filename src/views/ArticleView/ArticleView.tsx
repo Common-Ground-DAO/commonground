@@ -14,10 +14,10 @@ import { useMobileLayoutContext } from "../../views/Layout/MobileLayout";
 import Article from "../../components/organisms/Article/Article";
 import Scrollable, { PositionData } from "../../components/molecules/Scrollable/Scrollable";
 
-import shortUUID from "short-uuid";
+import { createTranslator } from "short-uuid";
 
 export const shortUuidRegex = /.*([a-zA-Z0-9]{22})$/;
-const t = shortUUID();
+const t = createTranslator();
 
 type Props = {
 

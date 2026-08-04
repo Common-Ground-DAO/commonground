@@ -1,4 +1,4 @@
-> Status: verified against commit 96e828069, 2026-08-04
+> Status: verified against commit 8c0d06dd3, 2026-08-04
 
 # Authentication & Identity
 
@@ -325,8 +325,15 @@ Signup is protected by a **captcha provider abstraction** (`srv/util/captcha.ts`
   [ALTCHA](https://altcha.org) proof-of-work captcha, fail-closed. Challenges come from
   `GET /Captcha/challenge` (`srv/api/captcha.ts`), signed with an HMAC key
   (Docker secret `altcha_hmac_key` / `ALTCHA_HMAC_KEY`, otherwise generated once and shared
-  via Redis). Verification (`verifyCaptchaToken`) checks the solution and enforces single-use
-  replay protection in Redis. PoW difficulty is tuned via `ALTCHA_MAX_NUMBER`.
+  via Redis; the two HMAC secrets ALTCHA v2 needs are derived from it). Verification
+  (`verifyCaptchaToken`) checks the challenge signature, its expiry and the proof of work, and
+  enforces single-use replay protection in Redis keyed on the challenge signature. The proof of
+  work is ALTCHA v2 (`PBKDF2/SHA-256` key search): difficulty is tuned via `ALTCHA_COST`
+  (iterations per attempt, default 5000) and `ALTCHA_COUNTER_MAX` (upper bound of the answer the
+  client must find, default 4000 — the counter is drawn per challenge from
+  `[max/2, max]`). Neither variable is set in either compose file; tuning the difficulty means
+  adding it to the `api` service's environment. The v1-era `ALTCHA_MAX_NUMBER` no longer does
+  anything and logs a warning when set.
 - **`recaptcha`**: Google reCAPTCHA v2. Auto-selected when `CAPTCHA_PROVIDER` is unset but a
   secret (`google_recaptcha_secret_key` / `GOOGLE_RECAPTCHA_SECRET_KEY`) is present — this
   preserves the historical behaviour of the official instances.

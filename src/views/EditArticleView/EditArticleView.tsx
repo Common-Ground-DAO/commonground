@@ -10,10 +10,10 @@ import { useWindowSizeContext } from "../../context/WindowSizeProvider";
 import ArticleManagement from "../../components/templates/CommunityLobby/ArticleManagement/ArticleManagement";
 
 import "./EditArticleView.css";
-import shortUUID from "short-uuid";
+import { createTranslator } from "short-uuid";
 
 const shortUuidRegex = /.*([a-zA-Z0-9]{22})$/;
-const t = shortUUID();
+const t = createTranslator();
 
 type Props = {
 

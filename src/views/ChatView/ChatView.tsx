@@ -10,11 +10,11 @@ import { useGlobalDictionaryContext } from '../../context/GlobalDictionaryProvid
 import DirectMessageBar from '../../components/molecules/DirectMessageBar/DirectMessageBar';
 import ChatsMenu from '../../components/organisms/ChatsMenu/ChatsMenu';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
-import short from "short-uuid";
+import { createTranslator } from "short-uuid";
 import { useChats, useOwnUser } from 'context/OwnDataProvider';
 import MessageViewInner from 'views/MessageViewInner/MessageViewInner';
 
-const t = short();
+const t = createTranslator();
 
 export default function ChatView(props: { chatId?: string }) {
   const { chatShortUuid } = useParams<'chatShortUuid'>();

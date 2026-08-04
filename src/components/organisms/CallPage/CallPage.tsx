@@ -14,7 +14,7 @@ import { CallWidget } from './CallWidget';
 import { getUrl } from 'common/util';
 import { useMultipleUserData } from 'context/UserDataProvider';
 import MessageViewInner from 'views/MessageViewInner/MessageViewInner';
-import shortUUID from 'short-uuid';
+import { createTranslator } from 'short-uuid';
 import EmptyState from 'components/molecules/EmptyState/EmptyState';
 import Button from 'components/atoms/Button/Button';
 import { CallType, PredefinedRole } from 'common/enums';
@@ -28,7 +28,7 @@ import ReactionPicker from './ReactionPicker/ReactionPicker';
 import { useSnackbarContext } from 'context/SnackbarContext';
 
 dayjs.extend(relativeTime);
-const short = shortUUID();
+const short = createTranslator();
 
 const CallPage: React.FC = () => {
   const { community, calls, ownRoles } = useLoadedCommunityContext();

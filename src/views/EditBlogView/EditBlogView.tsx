@@ -10,10 +10,10 @@ import Scrollable from "../../components/molecules/Scrollable/Scrollable";
 import { useLoadedProfileContext } from 'context/ProfileProvider';
 import { getUrl } from "common/util";
 import { shortUuidRegex } from "views/ArticleView/ArticleView";
-import shortUUID from "short-uuid";
+import { createTranslator } from "short-uuid";
 import UserProfileDetails from "components/organisms/UserProfileDetails/UserProfileDetails";
 
-const t = shortUUID();
+const t = createTranslator();
 
 export default function EditBlogView() {
     const navigate = useNavigate();

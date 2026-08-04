@@ -21,7 +21,7 @@ import TextChannel from 'components/organisms/TextChannel/TextChannel';
 import { getUrl } from 'common/util';
 import { useConnectionContext } from 'context/ConnectionProvider';
 import { isElementOverlappingViewport } from 'hooks/useOnScreen';
-import shortUUID from 'short-uuid';
+import { createTranslator } from 'short-uuid';
 import NotificationBanner from 'components/molecules/NotificationBanner/NotificationBanner';
 import { useOwnUser } from 'context/OwnDataProvider';
 import { useMultipleUserData } from 'context/UserDataProvider';
@@ -32,7 +32,7 @@ import { BETWEEN_LOADS_TIMEOUT } from 'components/molecules/GenericMessageList/S
 import { useCommunityJoinedContext } from 'context/CommunityJoinedProvider';
 import { useSidebarDataDisplayContext } from 'context/SidebarDataDisplayProvider';
 
-const t = shortUUID();
+const t = createTranslator();
 
 export default function NotificationsBrowser() {
   const navigate = useNavigate();

@@ -4,7 +4,7 @@
 
 import express from "express";
 import redisManager from '../redis';
-import UAParser from "ua-parser-js";
+import { UAParser } from "ua-parser-js";
 import {
   randomString
 } from "../util";

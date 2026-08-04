@@ -11,10 +11,10 @@ import CallItem from './CallItem';
 import StartCallButton from '../StartCallButton/StartCallButton';
 import Scrollable from '../Scrollable/Scrollable';
 import { useCommunitySidebarContext } from 'components/organisms/CommunityViewSidebar/CommunityViewSidebarContext';
-import short from "short-uuid";
+import { createTranslator } from "short-uuid";
 import config from 'common/config';
 
-const t = short();
+const t = createTranslator();
 
 interface CallListProps {
 }

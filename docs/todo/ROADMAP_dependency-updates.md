@@ -8,6 +8,18 @@
 **Created**: 2026-08-04. Living document — update checkboxes and notes as work
 progresses; delete the file when the workstream is done (lifecycle per AGENTS.md).
 
+> **RESTACK DONE (2026-08-04, second agent context).** Decision 11 is executed:
+> the stack now runs `develop → hardening → waves 0…3 → wave 4a`, every branch
+> was rebased in order and its gates re-run green (frontend: typecheck / lint /
+> test / build / check:html-rewrite per frontend branch; srv: tsc + jest per
+> backend branch; at the top: in-container `update_backend` rebuild + live
+> nginx→api→pg smoke). Decisions 12 and 13 are executed as commits on the
+> wave-2b / wave-2a branches. Tree equality against the pre-restack stack was
+> verified — the only content deltas are the intended ones (see "Restack
+> record" below the branch table). The HANDOVER block below is kept for
+> context; its three open work items 11/12/13 are done, wave 4 remains the
+> open work.
+>
 > **HANDOVER STATE (2026-08-04, end of the first agent context).**
 > Waves **0, 1, 1.5, 2 and 3 are complete**: implemented, gated, reviewed by a
 > fresh context per wave, and the review findings fixed (each wave's note below
@@ -108,18 +120,23 @@ them, don't re-litigate them.
     waves, and the rest of the stack rebases onto it. The protection has to be in
     effect for the remaining waves, not after them. Practically: rebase branches
     1–9 onto the hardening branch, keep their order, then continue wave 4 on top.
+    **Done (2026-08-04)** — see the restack record at the branch table.
 12. **Drop `typeorm-extension` and its orphans.** Its only consumer is
     `srv/tests/testhelper.ts`, whose spec (`accounts.spec.ts`) was deleted in
     wave 1a because it never compiled — so delete `tests/testhelper.ts` and
     `tests/datasource.ts` with the dependency. That also removes the last nested
     `reflect-metadata` 0.1.14, leaving exactly one copy. The backend suite starts
     fresh anyway (`ipPrefix` + `saveImage` are the only real specs).
+    **Done (2026-08-04)** as a commit on the wave-2b branch; verified tsc clean,
+    jest 20/20, one `reflect-metadata` in lockfile and tree.
 13. **Remove the three inert `REDIS_LEGACY_MODE=true` lines** from
     `docker/docker-compose.yml` (api :119, cg-builder :324) and
     `docker/docker-compose.selfhost.yml` (api :186). Cosmetic, no behaviour
     change — the backend has ignored the variable since node-redis 6 /
     connect-redis 10. Fold into the wave-2a branch if the restack makes that
     easy, otherwise its own commit.
+    **Done (2026-08-04)** as a commit on the wave-2a branch, incl. truing up
+    `docs/realtime` + `docs/infrastructure`.
 
 ## Execution conventions (all waves)
 
@@ -146,29 +163,49 @@ them, don't re-litigate them.
 
 ## Branch / stacking order (update as branches are cut)
 
-**Merge order is now hardening-first** (decision 11). The branches were built as a
-linear stack in wave order with the hardening branch near the top; the restack
-below is the first job of the next session.
+**Restacked 2026-08-04 (decision 11 executed).** The stack is now built in
+merge order: `develop → 1 → 2 → … → 11`. Each branch was rebased in this order
+and its verification gates re-run on the new base (see the restack record
+below).
 
 | Merge | Branch | State |
 |---|---|---|
-| 1 | `chore/yarn-supply-chain-hardening` | ready — **merge first**, everything else rebases onto it |
-| 2 | `chore/deps-wave0-frontend` | ready |
-| 3 | `chore/deps-wave0-backend` | ready |
-| 4 | `chore/deps-wave1a-backend` | ready |
-| 5 | `chore/deps-wave1b-frontend` | ready |
-| 6 | `chore/deps-wave15-webauthn` | ready — maintainer passkey pass wanted before merge |
-| 7 | `chore/deps-wave2a-backend-infra` | ready — also carries decision 13 (drop the `REDIS_LEGACY_MODE` lines) if the restack makes that convenient |
-| 8 | `chore/deps-wave2b-small-majors` | ready — also carries decision 12 (drop `typeorm-extension` + the two orphaned test files) |
-| 9 | `chore/deps-wave2c-frontend-sw` | ready |
-| 10 | `chore/deps-wave3-web3` | ready — largest manual-test surface |
-| 11 | `chore/deps-wave4a-dnd` | **WIP, not mergeable** (see wave 4a) |
+| 1 | `chore/yarn-supply-chain-hardening` | ready — merges first; the whole stack sits on it |
+| 2 | `chore/deps-wave0-frontend` | ready — gates re-run green |
+| 3 | `chore/deps-wave0-backend` | ready — gates re-run green |
+| 4 | `chore/deps-wave1a-backend` | ready — gates re-run green |
+| 5 | `chore/deps-wave1b-frontend` | ready — gates re-run green |
+| 6 | `chore/deps-wave15-webauthn` | ready — gates re-run green; maintainer passkey pass wanted before merge |
+| 7 | `chore/deps-wave2a-backend-infra` | ready — now carries decision 13 (the `REDIS_LEGACY_MODE` lines are gone) |
+| 8 | `chore/deps-wave2b-small-majors` | ready — now carries decision 12 (`typeorm-extension` + orphans dropped; exactly one `reflect-metadata` left) |
+| 9 | `chore/deps-wave2c-frontend-sw` | ready — gates re-run green |
+| 10 | `chore/deps-wave3-web3` | ready — gates re-run green + in-container rebuild + live smoke; largest manual-test surface |
+| 11 | `chore/deps-wave4a-dnd` | in progress (see wave 4a) |
 
-As built, the branches are stacked in the order 2…10 → 1 → 11, i.e. the hardening
-branch sits on top of wave 3 and 4a on top of that. Restacking means rebasing
-2…10 onto 1 and keeping their relative order; each branch's own gates should be
-re-run after its rebase, since the hardening changes the Yarn version and the
-install-script policy underneath them.
+**Restack record (2026-08-04).** Tree equality of the restacked stack top
+against the pre-restack stack top was verified with `git diff` — the only
+deltas are intended:
+
+- **sharp install-script exemption**: on the new base the hardening branch sits
+  below wave 1a, where sharp is still 0.30 and needs its install script for the
+  libvips binary. The hardening branch therefore allowlists
+  `dependenciesMeta.sharp.built: true` (verified functional: 0.30.6/0.30.7
+  build and encode), and the wave-1a sharp commit removes the entry again
+  (0.35 installs prebuilt `@img/*`, verified without scripts).
+- **`terser` 5.49.0** (the cooldown-compliant resolution the hardening branch
+  originally introduced via its `yarn up -R terser` verification) is now
+  resolved at wave 0a, where terser first moves; every later branch keeps it.
+- **`dnd-core` removal moved to wave 4a** where it belongs: the original
+  hardening commit accidentally carried it (a leak from the aborted wave-4a
+  subagent's working tree). The hardening branch no longer touches it.
+- Lockfiles are format 10 (Yarn 4.17.1) from the hardening branch upward; the
+  per-wave lockfile conflicts were resolved by keeping the wave's resolutions
+  and re-running `yarn install` (no re-resolution — decision 10 intact).
+- Known blemish, docs-only: the `docs/infrastructure` status line inside the
+  wave-0-frontend review-fixes commit references SHA `ff0f70311`, an
+  intermediate commit that was rewritten away during the restack (a stray tsc
+  emit had to be stripped). Later commits overwrite the status line; the final
+  tree is correct.
 
 Nothing has been pushed. All branches are local.
 
@@ -766,11 +803,9 @@ untouched via `git diff`.
       `client.legacy()` on an existing client, which we do not need), and
       connect-redis 10 talks to the promise API directly. The session client is
       an ordinary client now and the three callback branches in
-      `RedisManager.get/set/del` are deleted. **Maintainer decision pending**:
-      `REDIS_LEGACY_MODE=true` is still set in `docker/docker-compose.yml`
-      (**api** at :119 and **cg-builder** at :324 — not wsapi, which never set
-      it) and `docker/docker-compose.selfhost.yml` (:186, api); it is inert and
-      can be dropped whenever convenient. `docs/realtime` and
+      `RedisManager.get/set/del` are deleted. The three inert
+      `REDIS_LEGACY_MODE=true` compose lines are **removed by a follow-up
+      commit on this branch** (decision 13, 2026-08-04). `docs/realtime` and
       `docs/infrastructure` were corrected in this PR.
     - **New `srv/redis/client.ts` is the single `createClient` call site and
       pins `RESP: 2`.** node-redis 6 flipped the default protocol to RESP3
@@ -1013,8 +1048,9 @@ untouched via `git diff`.
       not have (no `peerDependenciesMeta`), which is a lot of tree for dead
       code. There is no 2.x on reflect-metadata 0.2, and even 3.0.0 still pins
       0.1.13. **Decided (decision 12): take (a)** — drop `typeorm-extension` and
-      delete `tests/testhelper.ts` + `tests/datasource.ts`. Not done yet; it is
-      one of the open work items at the handover.
+      delete `tests/testhelper.ts` + `tests/datasource.ts`. **Done (2026-08-04)**
+      as a follow-up commit on this branch: exactly one `reflect-metadata`
+      (0.2.2) remains in lockfile and tree, tsc clean, jest 20/20.
     - No deep imports of `reflect-metadata/*` anywhere, so v0.2's new `exports`
       map (which blocks `require('reflect-metadata/package.json')`) is inert.
   - [x] **altcha 2.3.0 → 3.2.1 + altcha-lib 1.4.1 → 2.3.2 as a pair** — see the

@@ -1,6 +1,6 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit 41b7a11aa, 2026-08-04
+> Status: verified against commit 4a9754f8f, 2026-08-04
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 

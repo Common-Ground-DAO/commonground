@@ -1,6 +1,6 @@
 # Real-time & WebRTC Documentation
 
-> Status: verified against commit 81cf60a37, 2026-08-04
+> Status: verified against commit 91efa7c82, 2026-08-04
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 

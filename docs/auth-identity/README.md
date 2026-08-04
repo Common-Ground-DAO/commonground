@@ -1,4 +1,4 @@
-> Status: verified against commit 2827452f4, 2026-08-04
+> Status: verified against commit 40f4a0b0f, 2026-08-04
 
 # Authentication & Identity
 

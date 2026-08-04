@@ -212,6 +212,41 @@ deltas are intended:
 
 Nothing has been pushed. All branches are local.
 
+**Restack record #2 (2026-08-05, onto develop 6f1b23fa1).** The maintainer's
+collaborator pushed five PRs to develop (#41–#45: corepack instead of
+yarnPath for issue #40, the 64-char call-secret validator, sharp ^0.33.5 for
+the job-runner crash loop, the native-clients roadmap, P-256 device keys).
+The whole stack was rebased onto that, bottom-first, gates re-run per branch
+(same scope as restack #1). Real conflicts were confined to five files; the
+substantive integrations:
+
+- **The hardening branch adopts develop's corepack mechanism** instead of
+  re-introducing `yarnPath` (which points at a gitignored binary — exactly
+  issue #40): no yarnPath anywhere, `packageManager` is the single version
+  source, the `commonground/node` image's corepack pre-fetch moves
+  4.1.0 → 4.17.1, the four "Missing .yarn directory" repair blocks in
+  updateBackend/updateFrontend/selfhost.sh are deleted, and the pipelines
+  drop `yarn set version` in favour of plain `corepack enable`. **Dev-host
+  note (maintainer): run `corepack enable` once** — without it the shell
+  falls back to a global yarn 1.22 (this session used `corepack yarn`
+  explicitly throughout).
+- **The dependenciesMeta allowlists are now born minimal in the hardening
+  commit** (root: esbuild; srv: bcrypt, mediasoup, puppeteer, unrs-resolver):
+  the final-gate proof that the four node-gyp-build natives load their
+  prebuilds without scripts moved from a tip fix into the source, and the
+  sharp exemption is unnecessary from the start because develop's base is
+  already sharp 0.33 (prebuilt @img/*). Wave 1a's sharp commit is now
+  0.33 → 0.35.3 and no longer touches the allowlist.
+- Florian's sharp ^0.33.5 is the same crash-loop fix wave 0b diagnosed; the
+  1a bump supersedes it (verified: 0.33.5 through waves 0b–1a-pre-sharp,
+  0.35.3 after, both load and encode).
+- The wsapi call-secret change and the P-256 device-key validator merged
+  cleanly (no wave touches those regions; the P-384 web-client path our
+  verification scripts use is unchanged).
+- Doc status lines were re-mapped to restack-2 SHAs (the restack-1 blemish
+  list is obsolete; all thirteen `> Status:` hashes are now reachable from
+  the stack tip).
+
 ## Supply-chain hardening (out-of-band, 2026-08-04)
 
 Not part of the original plan. On the day this workstream ran, the

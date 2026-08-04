@@ -7711,8 +7711,8 @@ __metadata:
     d3: "npm:^7.9.0"
     dayjs: "npm:^1.10.7"
     decimal.js: "npm:^10.4.3"
-    dexie: "npm:4.0.8"
-    dexie-react-hooks: "npm:1.1.7"
+    dexie: "npm:4.4.4"
+    dexie-react-hooks: "npm:4.4.0"
     dnd-core: "npm:^16.0.1"
     emoji-picker-react: "npm:^4.9.2"
     emoji-regex: "npm:^10.2.1"
@@ -8481,21 +8481,20 @@ __metadata:
   languageName: node
   linkType: hard
 
-"dexie-react-hooks@npm:1.1.7":
-  version: 1.1.7
-  resolution: "dexie-react-hooks@npm:1.1.7"
+"dexie-react-hooks@npm:4.4.0":
+  version: 4.4.0
+  resolution: "dexie-react-hooks@npm:4.4.0"
   peerDependencies:
-    "@types/react": ">=16"
-    dexie: ^3.2 || ^4.0.1-alpha
+    dexie: ">=4.2.0-alpha.1 <5.0.0"
     react: ">=16"
-  checksum: 10c0/3ff38e715a52bff9132b483963246ea5372a282d9257c8c2bf8891c522fa0d761d1e362bb352eb63386f49ea9a55c52e1bcc5cce2019deb1eceba40d8a88631d
+  checksum: 10c0/78c8dfb294868e805efa888e2ea88fa3489f9883fcaaa3c744540f06f7d2d904dd2e0b9e616038fb366e4d2f3d9f80bf27442e2a702e3bbe8731ff7ecaedf3dc
   languageName: node
   linkType: hard
 
-"dexie@npm:4.0.8":
-  version: 4.0.8
-  resolution: "dexie@npm:4.0.8"
-  checksum: 10c0/d35a817d986c334a2de5f1a0d5ef373b3d9464de7b520f9af50c00ea2f974386632a3f949add83ba1fce9e929908d96db19726377f641f4768c137a554969a2d
+"dexie@npm:4.4.4":
+  version: 4.4.4
+  resolution: "dexie@npm:4.4.4"
+  checksum: 10c0/bad17d50ca69a5fc440d8c191ed2034831e0d7d3946068429b560ed96a89fad368f6d63422846f29446dabf570cba61a851e559918e76c766e816d13153dc670
   languageName: node
   linkType: hard
 

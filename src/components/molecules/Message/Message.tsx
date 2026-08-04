@@ -10,7 +10,7 @@ import MessageToolTip from "./MessageTooltip/MessageTooltip";
 import ReactionsDisplay from "./ReactionsDisplay/ReactionsDisplay";
 import ReplyContentRenderer from "./ReplyContentRenderer/ReplyContentRenderer";
 import ReactDOM from "react-dom";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence } from "motion/react";
 import {
   useFloating,
   useInteractions,

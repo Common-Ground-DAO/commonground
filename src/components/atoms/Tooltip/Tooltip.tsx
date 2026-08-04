@@ -23,7 +23,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import './Tooltip.css';
 import { useGlobalDictionaryContext } from "../../../context/GlobalDictionaryProvider";
 import { randomString } from "../../../util";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion } from "motion/react";
 
 export type PopoverProps = {
   placement: Placement;

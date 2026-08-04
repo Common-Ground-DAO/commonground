@@ -181,7 +181,7 @@ below).
 | 9 | `chore/deps-wave2c-frontend-sw` | ready — gates re-run green |
 | 10 | `chore/deps-wave3-web3` | ready — gates re-run green + in-container rebuild + live smoke; largest manual-test surface |
 | 11 | `chore/deps-wave4a-dnd` | ready — finished WIP + review fixes, functionally verified headlessly (see wave 4a) |
-| 12 | `chore/deps-wave4b-motion` | implemented, review pending (see wave 4b) |
+| 12 | `chore/deps-wave4b-motion` | ready — reviewed, findings fixed (see wave 4b) |
 
 **Restack record (2026-08-04).** Tree equality of the restacked stack top
 against the pre-restack stack top was verified with `git diff` — the only
@@ -1543,10 +1543,46 @@ untouched via `git diff`.
     screen-reader pass over the new positional announcements, and the visual
     polish points above (in-place transform vs rbd's floating clone,
     especially inside the scrolling community sidebar).
-- [ ] **PR 4b**: framer-motion 7 → `motion` v12 (3 direct usage files) and
+- [x] **PR 4b**: framer-motion 7 → `motion` v12 (3 direct usage files) and
   react-modal-sheet 2 → 5 (peer-depends on motion v12) in one PR. Also unblocks the
   CG-ID-entry bundle-bloat item in TODO.md (framer-motion is its biggest chunk —
   re-measure after).
+  - Done 2026-08-04, branch `chore/deps-wave4b-motion` (Opus subagent
+    implemented, fresh-context review + fixes after). Resolved: motion 12.43.0
+    (published 7d3h before install — passed the cooldown legitimately),
+    react-modal-sheet 5.6.0. `framer-motion` stays in the tree by upstream
+    design (motion/react re-exports it; single copy, no direct imports);
+    `@motionone/*`, `@emotion/is-prop-valid`, the `@swc` helpers and the
+    react-aria/react-stately subtree left the lockfile. `@types/react-motion`
+    (dead — no runtime package, no imports) dropped.
+  - The 3 motion files needed only the `motion/react` import; the sheet needed
+    the v5 named export, `detent='content'` (verified byte-identical sizing to
+    v2's `content-height`), `Sheet.Scroller` folded into `Sheet.Content`, and
+    two deliberate props: `avoidKeyboard={false}` (v5's keyboard avoidance
+    would double-compensate against WindowSizeProvider's `--visualHeight`
+    mechanism on both the Chromium and the iOS path) and — review finding —
+    `dragVelocityThreshold={500}` (v5 raised the flick-dismiss threshold to
+    1200 px/s; 500 keeps v2's swipe-to-close feel).
+  - Review verdict: no blocker; the CSS-override survival claim (all 8 files,
+    incl. the `:first-child/:last-child` structural selectors) was verified
+    against the v5 DOM, the keyless-`AnimatePresence`-child exit path still
+    animates, no duplicate motion/framer-motion resolutions. Review notes
+    accepted as upstream deltas: ~50ms open latency (v5 polls for its
+    container), backdrop fade now tracks the sheet's Y position instead of a
+    200ms tween.
+  - **Bundle regression, not the hoped-for win**: total raw JS +52,975 B
+    (+0.47%); the CG-ID entry closure grew 801,571 → 835,990 B (+4.3%) because
+    motion 12 is simply bigger than framer-motion 7. The TODO.md CG-ID item
+    was re-measured (its actual fix — the `src/util/index.tsx` barrel dragging
+    Tooltip into the mini-app — is untouched); `LazyMotion`/`motion/react-m`
+    noted there as the size lever if wanted.
+  - Headless smoke (27 assertions green): Tooltip fade/spring/positioning +
+    exit unmount, Popover open/close, and the sheet on a touch viewport —
+    mount on tap, content detent, CSS overrides landing, backdrop tap close,
+    drag-down close. **Manual (maintainer)**: Message hover toolbar (same
+    pattern, not reachable headlessly), the `noDefaultScrollable`/
+    `hideMobileHandler`/`floatingMode`/`footerActions` sheet variants, swipe
+    feel on a real device, and anything virtual-keyboard on real mobile.
 - [ ] **PR 4c**: slate + slate-history + slate-react to the current 0.x line (≥ first
   React-19-compatible slate-react). Editor is core functionality — Fable implements
   this itself, thorough manual matrix (marks, links, mentions, paste, mobile).

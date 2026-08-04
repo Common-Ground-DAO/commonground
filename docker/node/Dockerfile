@@ -11,7 +11,7 @@ RUN apt update && \
 # access or a writable per-user cache.
 ENV COREPACK_HOME=/usr/local/share/corepack
 RUN corepack enable && \
-    corepack install -g yarn@4.1.0 && \
+    corepack install -g yarn@4.17.1 && \
     chmod -R a+rX "$COREPACK_HOME"
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh

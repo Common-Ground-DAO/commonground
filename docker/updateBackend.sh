@@ -26,12 +26,6 @@ docker_compose stop wsapi api onchain nginx mediasoup memberlist hardhat job-run
 docker_compose rm -f
 docker_compose build cg-builder
 
-if [ ! -d ../srv/.yarn ]
-then
-  printf "\n---\n--- Missing srv/.yarn directory, setting yarn to version 4.1.0 \n---\n"
-  docker_compose run --rm cg-builder bash -c "sed -i 's/yarnPath: .*//g' srv/.yarnrc.yml && cd srv && yarn set version 4.1.0"
-  checkError
-fi
 
 docker_compose build --no-cache nginx
 checkError
@@ -61,7 +55,7 @@ then
   then
     docker_compose run --rm -T cg-builder bash -c "cd srv && yarn"
   fi
-  docker_compose run --rm -T cg-builder bash -c "cd srv && npx web-push generate-vapid-keys --json > ../docker/vapid_keys.json"
+  docker_compose run --rm -T cg-builder bash -c "cd srv && npx --no web-push generate-vapid-keys --json > ../docker/vapid_keys.json"
 fi
 
 printf "\n---\n--- Building backend\n---\n"
@@ -87,6 +81,6 @@ cd ../docker
 
 printf "\n---\n--- Deploying contracts\n---\n"
 sleep 3
-docker_compose run --rm -T cg-builder bash -c "cd contracts && yarn && npx hardhat run --network cgstack scripts/deploy.ts"
+docker_compose run --rm -T cg-builder bash -c "cd contracts && yarn && npx --no hardhat run --network cgstack scripts/deploy.ts"
 
 ./logs.sh

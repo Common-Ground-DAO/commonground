@@ -80,7 +80,7 @@ then
   then
     docker_compose run --rm -T cg-builder bash -c "cd srv && yarn"
   fi
-  docker_compose run --rm -T cg-builder bash -c "cd srv && npx web-push generate-vapid-keys --json > ../docker/vapid_keys.json"
+  docker_compose run --rm -T cg-builder bash -c "cd srv && npx --no web-push generate-vapid-keys --json > ../docker/vapid_keys.json"
 fi
 
 printf "\n---\n--- Building backend\n---\n"
@@ -103,6 +103,6 @@ checkError
 
 printf "\n---\n--- Deploying contracts\n---\n"
 sleep 3
-docker_compose run --rm -T cg-builder bash -c "cd contracts && yarn && npx hardhat run --network cgstack scripts/deploy.ts"
+docker_compose run --rm -T cg-builder bash -c "cd contracts && yarn && npx --no hardhat run --network cgstack scripts/deploy.ts"
 
 ./logs.sh

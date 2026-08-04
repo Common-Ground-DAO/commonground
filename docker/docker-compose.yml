@@ -284,7 +284,7 @@ services:
     build:
       context: ./hardhat
     image: cryptogram/hardhat
-    command: npx hardhat node
+    command: npx --no hardhat node
     user: hardhat
     ports:
       - ${EXTERNAL_LISTEN_IP}:8545:8545

@@ -79,7 +79,7 @@ function CgIdLogin({
       console.log("options", options);
       step = 1;
 
-      const result = await startAuthentication(options, false);
+      const result = await startAuthentication({ optionsJSON: options });
       console.log("result", result);
       step = 2;
     

@@ -76,6 +76,15 @@
 - [ ] **`role_gated_files` + `GET /gated-videos/:filename` / `GET /gated-files/:filename`**
   — their only content producers were the wizard data-room elements removed in Phase 2;
   the table has no create path in code. Removal candidate.
+- [ ] **Passkey ceremony foot-guns in the CGID flow** (2026-08-04, found in the
+  wave-1.5 dependency review; pre-existing, unchanged by the simplewebauthn 13
+  migration): (a) `srv/validators/api/cgid.ts` requires `authenticatorAttachment`
+  in both verify-response schemas although the WebAuthn spec makes it optional and
+  `@simplewebauthn/browser` emits `undefined` for unknown values — an authenticator
+  that omits it fails the whole ceremony at the Joi layer; make it `.optional()`.
+  (b) `src/cgid/home.tsx` calls `startRegistration`/`startAuthentication` outside
+  its `try`, so a user cancel becomes an unhandled rejection (login.tsx and
+  createPasskey.tsx do it correctly inside).
 - [ ] **Drop the `@types/react-router-dom` devDep** (2026-08-04, dependency-update
   wave 0a) — it is the v5 types package, while the app runs react-router-dom v6, which
   ships its own types. Typecheck passes with it installed today, but it is vestigial

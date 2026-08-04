@@ -95,6 +95,8 @@ progresses; delete the file when the workstream is done (lifecycle per AGENTS.md
    **Ready for review.**
 3. `chore/deps-wave1a-backend` — stacked on 2. **Ready for review.**
 4. `chore/deps-wave1b-frontend` — stacked on 3. **Ready for review.**
+5. `chore/deps-wave15-webauthn` — stacked on 4. **Ready for review**
+   (maintainer passkey pass wanted before merge, see the wave-1.5 note).
 
 ## Wave 0 — lockfile refresh within existing ranges (2 PRs)
 
@@ -534,12 +536,57 @@ untouched via `git diff`.
 
 ## Wave 1.5 — WebAuthn (1 PR, auth-critical: Fable implements, interim review mandatory)
 
-- [ ] `@simplewebauthn/browser` + `@simplewebauthn/server` 10 → 13; **drop
+- [x] `@simplewebauthn/browser` + `@simplewebauthn/server` 10 → 13; **drop
   `@simplewebauthn/types`** (deprecated, merged into the main packages in v11).
   Breaking changes to check: v11 renamed the verify-response option shapes, v12/13
   tightened `AuthenticatorTransport` and dropped Node <20 (we're on 24). Passkey
   registration + login + CGID flows need a manual pass by the maintainer before
   merge — flag this explicitly when presenting the PR.
+  - Done 2026-08-04 (Fable directly), branch `chore/deps-wave15-webauthn`.
+    server 13.3.2 / browser 13.3.0. The actual breaking surface (verified against
+    the release notes and the installed sources):
+    - v11 restructured `verifyRegistrationResponse().registrationInfo` —
+      `credentialID`/`credentialPublicKey`/`counter` moved into
+      `registrationInfo.credential` as `id`/`publicKey`/`counter` — and renamed
+      `verifyAuthenticationResponse`'s `authenticator` option to `credential`
+      (WebAuthnCredential shape). **Our own `passkeys.data` JSONB field names are
+      unchanged — stored passkeys are not affected**, only the mapping in
+      `srv/api/cgid.ts`.
+    - v11 changed the browser signatures to `startRegistration({ optionsJSON })` /
+      `startAuthentication({ optionsJSON, useBrowserAutofill })` (4 call sites).
+    - v13 retired the types package — imports moved to `@simplewebauthn/server`
+      (4 srv files) and `@simplewebauthn/browser` (`src/common/types/api/cgid.d.ts`).
+      **Review catch**: that fifth file is ALSO an srv file (`srv/common` is a
+      symlink into `src/common`, and srv's tsconfig includes it) — inside the
+      container build there is no parent node_modules, `skipLibCheck` swallowed
+      the unresolved import, and the passkey API types silently became `any` on
+      exactly the migrated surface. Fixed by declaring `@simplewebauthn/browser`
+      (zero-dep) in srv devDependencies, as the old types package deliberately was.
+    - Only wire-format delta of the whole migration (review-measured, v10 vs v13
+      side by side): v13's `generateRegistrationOptions` appends `hints: []` to
+      the options JSON. Benign — WebIDL ignores unknown dictionary members, and
+      an empty hints list is a no-op — but it does reach the browser and the
+      stored `debugData`.
+    - v13's `attestationType` change ('indirect' removed) doesn't touch us ('none').
+    - `requireUserVerification` defaults verified **identical** (true) in v10.0.1
+      and v13.3.2 sources — no silent auth-policy change.
+    - CJS interop verified: srv compiles to CJS; `require('@simplewebauthn/server')`
+      works on Node 24 (require-esm).
+  - **Headless E2E of the full ceremony ran green** against the rebuilt dev stack
+    (update_backend + update_frontend, both in-container gates green): puppeteer +
+    CDP virtual authenticator (ctap2/internal, resident key, UV) driving the real
+    CG ID app at `index_cgid.html#/` — registration (attestation verify + row
+    stored), authentication (assertion verify + counter update persisted, which
+    throws on failure), and a second authentication after the counter bump. Script:
+    scratchpad `passkey-e2e.mjs` (session-temporary, not committed).
+  - Audit: the `@simplewebauthn/types` deprecation moderate is gone from **both**
+    workspaces (srv now 1 finding: puppeteer → 2a; root 5, all owned by 2c/3/4a/4d
+    + truffle).
+  - **Maintainer manual pass still wanted before merge** (the virtual authenticator
+    can't cover real devices): passkey login with an existing real passkey
+    (pre-migration row!), passkey creation from the main app's CGID popup flow
+    (`/create/:frontendRequestId` + `postEventToOpenerWindow`), and a cross-device
+    (hybrid transport) attempt.
 
 ## Wave 2 — independent majors (3 PRs)
 
@@ -567,7 +614,9 @@ untouched via `git diff`.
   (options renamed), node-cron 3 → 4 (optional — skip if API churn outweighs value),
   mime-types 2 → 3, reflect-metadata 0.1 → 0.2 (verify TypeORM compat note; since
   wave 0, typeorm 0.3.31 already loads a nested reflect-metadata 0.2.2 next to the
-  hoisted 0.1.14 — verified interoperable, but the bump should dedupe to one copy),
+  hoisted 0.1.14 — verified interoperable, but the bump should dedupe to one copy;
+  since wave 1.5, @simplewebauthn/server 13 eagerly loads a third nested 0.2.x via
+  @peculiar/x509 → tsyringe),
   altcha 2 → 3 + altcha-lib 1 → 2 **as a pair** (widget and server lib must agree
   on the challenge format — test the PoW flow end to end).
 - [ ] **PR 2c (frontend, service worker)**: workbox `6.5.4` → `^7.4` (precaching +

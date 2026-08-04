@@ -2077,15 +2077,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/cookie-signature@npm:^1.1.2":
-  version: 1.1.2
-  resolution: "@types/cookie-signature@npm:1.1.2"
-  dependencies:
-    "@types/node": "npm:*"
-  checksum: 10c0/0a40248f23da1258f29c3f6fc846cb2487962ab8e5ff6be76bd4967edb5963220c8de069aa49f08e6920376ab46f70b822bd5133e0b1998a059fc7677c415a8d
-  languageName: node
-  linkType: hard
-
 "@types/cookie@npm:^0.6.0":
   version: 0.6.0
   resolution: "@types/cookie@npm:0.6.0"
@@ -3598,13 +3589,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"cookie@npm:0.4.2":
-  version: 0.4.2
-  resolution: "cookie@npm:0.4.2"
-  checksum: 10c0/beab41fbd7c20175e3a2799ba948c1dcc71ef69f23fe14eeeff59fc09f50c517b0f77098db87dbb4c55da802f9d86ee86cdc1cd3efd87760341551838d53fca2
-  languageName: node
-  linkType: hard
-
 "cookie@npm:0.7.2, cookie@npm:~0.7.1, cookie@npm:~0.7.2":
   version: 0.7.2
   resolution: "cookie@npm:0.7.2"
@@ -3741,7 +3725,6 @@ __metadata:
     "@types/connect-redis": "npm:^0.0.17"
     "@types/cookie": "npm:^0.6.0"
     "@types/cookie-parser": "npm:^1.4.2"
-    "@types/cookie-signature": "npm:^1.1.2"
     "@types/cors": "npm:^2.8.12"
     "@types/debug": "npm:^4.1.7"
     "@types/express": "npm:^4.17.13"
@@ -3769,9 +3752,8 @@ __metadata:
     bcrypt: "npm:^5.1.0"
     bufferutil: "npm:^4.0.7"
     connect-redis: "npm:^6.0.0"
-    cookie: "npm:0.4.2"
+    cookie: "npm:0.7.2"
     cookie-parser: "npm:^1.4.6"
-    cookie-signature: "npm:1.0.6"
     cors: "npm:^2.8.5"
     dayjs: "npm:^1.10.7"
     debug: "npm:^4.3.4"

@@ -814,8 +814,25 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
           own #1413: an out-of-flow input scrolls the page when focused). Here
           the input is a direct child of a `flex flex-col gap-2` container, so
           in flow it becomes a zero-height flex item and adds one 8px gap above
-          the composer. Putting it back out of flow restores the old layout. */}
-      <input {...getInputProps({ style: { position: 'absolute' } })} />
+          the composer. Putting it back out of flow restores the old layout.
+          CAUTION: getInputProps spreads the passed props AFTER its defaults, so
+          a partial `style` REPLACES the library's hiding style wholesale (a
+          bare `position: absolute` left a fully visible native file widget
+          floating over the composer). The library's hidden style is therefore
+          reproduced here in full, plus the out-of-flow position. */}
+      <input {...getInputProps({
+        style: {
+          border: 0,
+          display: 'block',
+          height: 0,
+          margin: 0,
+          opacity: 0,
+          overflow: 'hidden',
+          padding: 0,
+          width: 0,
+          position: 'absolute',
+        },
+      })} />
       {isDragActive && <div className='message-field-drop-tip'>
         <ImageIcon />
         <span>Drop your files here</span>

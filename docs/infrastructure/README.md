@@ -1,4 +1,4 @@
-> Status: verified against commit 0f1d72d66, 2026-08-03
+> Status: verified against commit 42c829000, 2026-08-04
 
 # Common Ground Infrastructure Documentation
 
@@ -206,6 +206,44 @@ Single network: `cryptogram` (attachable, bridge). All services communicate over
 
 The dev build scripts live in `docker/` and are invoked through `run.sh`.
 
+### Package-manager hardening
+
+Both workspaces pin **Yarn 4.17.1** and configure two supply-chain controls in
+`.yarnrc.yml` (root and `srv/`). They were added on 2026-08-04, the day the
+"Shai-Hulud: Here We Go Again" npm worm poisoned ~440 packages (keyv, cacheable,
+flat-cache, file-entry-cache and others) by publishing versions whose
+`preinstall` hook ran on install alone. This repository was never in range of an
+affected version, but both controls would have made it structurally impossible:
+
+- **`enableScripts: false`** — no dependency may run install/build scripts.
+  Packages that genuinely need to build opt in explicitly via
+  `dependenciesMeta.<pkg>.built: true` in `package.json`. Current allowlist —
+  root: `esbuild`; `srv/`: `bcrypt`, `mediasoup`, `puppeteer`,
+  `unrs-resolver`. The four `node-gyp-build` natives (`bufferutil`,
+  `utf-8-validate`, `keccak`, `secp256k1`) and `sharp` (≥0.33 installs the
+  prebuilt `@img/*` packages) are deliberately NOT allowlisted: they load
+  their shipped prebuilds without ever running an install script (verified in
+  both workspaces, and `contracts/` runs the same natives with scripts off).
+  Everything else that ships an install script here does
+  nothing but print a message (`es5-ext`, `web3`, `web3-bzz`, `web3-shh`) or has
+  a pure-JS fallback (`bigint-buffer`) and is
+  deliberately left disabled — Yarn logs a `YN0004` warning for each, which is
+  expected output, not a problem. Yarn ≥4.2 defaults this to `false`; the
+  setting is written out anyway so the intent survives a version change.
+- **`npmMinimalAgeGate: 1w`** — a version published less than a week ago is not
+  considered for installation. Supply-chain waves of this kind are detected and
+  purged within hours, so package age filters them out; `yarn npm audit` does
+  **not** — during this attack no GHSA advisory existed for the highest-traffic
+  poisoned packages. The gate applies to new resolutions only; it never
+  downgrades what the lockfile already pins. Its cost is that an urgent security
+  fix is delayed too — the escape hatch is `yarn up --no-time-gate <pkg>`, to be
+  used deliberately and justified in the PR.
+
+Yarn 4.1.0 had neither (its `enableScripts` default was `true`, contrary to what
+the current yarnpkg.com docs say — the pinned binary is the authority), which is
+why the version moved as part of the same change. The upgrade changed the
+lockfile metadata format (8 → 10) but **no resolved version**.
+
 ### Full Build: `docker/build.sh` (`./run.sh build_full`)
 
 The complete build pipeline, for first-time setup or full rebuilds.
@@ -213,7 +251,7 @@ The complete build pipeline, for first-time setup or full rebuilds.
 **Steps (in order):**
 
 1. **Stop and clean:** `docker compose down --remove-orphans`, then `docker compose build cg-builder`.
-2. **Ensure Yarn 4.1.0:** if `.yarn` / `srv/.yarn` are missing, run `yarn set version 4.1.0` inside the builder.
+2. **Ensure Yarn 4.17.1:** if `.yarn` / `srv/.yarn` are missing, run `yarn set version 4.17.1` inside the builder. (Both workspaces pin the same version in `packageManager`; the backend image ignores `yarnPath` and lets corepack resolve from there.)
 3. **Generate SSL certificates:** compare `LOCAL_CERTIFICATE_IP` with the stored `certificate_ip`; if changed, regenerate root CA and server certs.
 4. **Clear `backend/dist/` and `nginx/dist/`**, then install frontend dependencies (`docker compose run --rm cg-builder yarn`).
 5. **Generate random build ID:** a random base64 string is written into `src/common/random_build_id.ts` for cache-busting / new-build detection.

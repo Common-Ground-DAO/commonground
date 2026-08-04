@@ -28,8 +28,8 @@ docker_compose build cg-builder
 
 if [ ! -d ../srv/.yarn ]
 then
-  printf "\n---\n--- Missing srv/.yarn directory, setting yarn to version 4.1.0 \n---\n"
-  docker_compose run --rm cg-builder bash -c "sed -i 's/yarnPath: .*//g' srv/.yarnrc.yml && cd srv && yarn set version 4.1.0"
+  printf "\n---\n--- Missing srv/.yarn directory, setting yarn to version 4.17.1 \n---\n"
+  docker_compose run --rm cg-builder bash -c "sed -i 's/yarnPath: .*//g' srv/.yarnrc.yml && cd srv && yarn set version 4.17.1"
   checkError
 fi
 

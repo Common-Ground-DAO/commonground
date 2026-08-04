@@ -99,5 +99,19 @@
   "scripts": {
     "tests": "jest"
   },
-  "packageManager": "yarn@4.1.0"
+  "dependenciesMeta": {
+    "bcrypt": {
+      "built": true
+    },
+    "mediasoup": {
+      "built": true
+    },
+    "puppeteer": {
+      "built": true
+    },
+    "unrs-resolver": {
+      "built": true
+    }
+  },
+  "packageManager": "yarn@4.17.1"
 }

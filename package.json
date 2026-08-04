@@ -133,5 +133,10 @@
     "vitest": "^4.1.10",
     "workbox-build": "6.5.4"
   },
-  "packageManager": "yarn@4.1.0"
+  "dependenciesMeta": {
+    "esbuild": {
+      "built": true
+    }
+  },
+  "packageManager": "yarn@4.17.1"
 }

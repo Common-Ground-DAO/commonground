@@ -25,20 +25,6 @@ printf "\n---\n--- Stopping containers & cleaning build environment\n---\n"
 docker_compose down --remove-orphans
 docker_compose build cg-builder
 
-if [ ! -d ../.yarn ]
-then
-  printf "\n---\n--- Missing .yarn directory, setting yarn to version 4.1.0 \n---\n"
-  docker_compose run --rm cg-builder bash -c "sed -i 's/yarnPath: .*//g' .yarnrc.yml && yarn set version 4.1.0"
-  checkError
-fi
-
-if [ ! -d ../srv/.yarn ]
-then
-  printf "\n---\n--- Missing srv/.yarn directory, setting yarn to version 4.1.0 \n---\n"
-  docker_compose run --rm cg-builder bash -c "sed -i 's/yarnPath: .*//g' srv/.yarnrc.yml && cd srv && yarn set version 4.1.0"
-  checkError
-fi
-
 printf "\n---\n--- Generating certificates\n---\n"
 if [ -f nginx/certs/nginx_certs/certificate_ip ]
 then

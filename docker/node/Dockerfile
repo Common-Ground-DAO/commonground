@@ -5,6 +5,14 @@ WORKDIR /cg
 RUN apt update && \
     apt -y upgrade && \
     apt install -y python3 python3-pip gosu
+# Yarn 4 via corepack (package.json "packageManager" pins the exact version).
+# The release is pre-fetched into a world-readable COREPACK_HOME so the
+# non-root builder user (uid from BUILDER_UID) can run it without network
+# access or a writable per-user cache.
+ENV COREPACK_HOME=/usr/local/share/corepack
+RUN corepack enable && \
+    corepack install -g yarn@4.1.0 && \
+    chmod -R a+rX "$COREPACK_HOME"
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh
 ENTRYPOINT [ "/entrypoint.sh" ]

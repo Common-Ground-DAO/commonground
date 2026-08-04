@@ -65,8 +65,11 @@ const common = {
   ItemUrl,
   ItemUrlNullable: Joi.alternatives().try(ItemUrl, Joi.equal(null)),
   JsonWebKey: Joi.object({
-    alg: Joi.equal("ES384"), // is present on firefox only
-    crv: Joi.equal("P-384").required(),
+    alg: Joi.valid("ES256", "ES384"), // is present on firefox only
+    // P-384 is what the web client generates; P-256 is additionally accepted
+    // for native clients whose hardware keystores only support it (iOS Secure
+    // Enclave). Verification derives curve and hash from the stored key.
+    crv: Joi.valid("P-256", "P-384").required(),
     ext: Joi.equal(true).required(),
     key_ops: Joi.array().length(1).items(Joi.equal("verify")).required(),
     kty: Joi.equal("EC").required(),

@@ -126,7 +126,7 @@ class NewsletterHelper {
                 WHERE "userId" = %L AND "sentAt" > NOW() - INTERVAL '7 days'
             `, userId)
         );
-        return result.rowCount > 0;
+        return (result.rowCount ?? 0) > 0;
     }
 
     public async createNewsletterEntries(newsletterId: number): Promise<{userId: string, email: string}[]> {

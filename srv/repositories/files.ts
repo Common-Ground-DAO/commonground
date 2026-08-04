@@ -11,9 +11,11 @@ import {
   S3Client,
   S3ClientConfig
 } from "@aws-sdk/client-s3";
-import { parseUrl } from "@aws-sdk/url-parser";
-import { Hash } from "@aws-sdk/hash-node";
-import { HttpRequest } from "@aws-sdk/protocol-http";
+// The `@aws-sdk/{url-parser,hash-node,protocol-http}` packages were retired in
+// favour of their `@smithy/*` successors; `formatUrl` stayed on the AWS side.
+import { parseUrl } from "@smithy/url-parser";
+import { Hash } from "@smithy/hash-node";
+import { HttpRequest } from "@smithy/protocol-http";
 import { formatUrl } from "@aws-sdk/util-format-url";
 import sharp, { Blend } from 'sharp';
 import crypto from "crypto";

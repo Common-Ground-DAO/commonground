@@ -74,7 +74,7 @@ async function endEmptyCalls() {
         SET "endedAt" = now(), "updatedAt" = NOW()
       WHERE id = ANY(SELECT id FROM end_calls)
     `);
-    if (result.rowCount > 0) {
+    if ((result.rowCount ?? 0) > 0) {
       console.log(`endEmptyCalls ended ${result.rowCount} empty calls`);
     }
   } catch (e) {

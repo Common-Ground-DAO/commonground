@@ -92,6 +92,7 @@ progresses; delete the file when the workstream is done (lifecycle per AGENTS.md
 1. `chore/deps-wave0-frontend` — off `develop`; carries the roadmap-creation docs
    commit. **Ready for review.**
 2. `chore/deps-wave0-backend` — stacked on 1 (roadmap lives there). Merge after 1.
+   **Ready for review.**
 
 ## Wave 0 — lockfile refresh within existing ranges (2 PRs)
 
@@ -164,11 +165,83 @@ untouched via `git diff`.
     package is now a separate copy from react-router's vendored one) and a general
     smoke of the wallet/login flows, a call, the editor, charts and the emoji picker —
     the `VENDOR_GROUPS` change moves chunk boundaries, which no build-time check covers.
-- [ ] **PR 0b (backend)**: same in `/srv`. Expected: axios 1.19, typeorm 0.3.x-latest
+- [x] **PR 0b (backend)**: same in `/srv`. Expected: axios 1.19, typeorm 0.3.x-latest
   (SQL-injection fixes), express 4.21, ws 8.21, pg 8.22, express-fileupload 1.5.2,
   AWS SDK current. While here: re-check whether `srv/util/axios.ts` still needs its
   `keepAlive: false` workaround on Node 24 + axios 1.19 (absorbed from TODO.md —
   either drop the workaround or update its comment).
+  - Branch `chore/deps-wave0-backend`, stacked on `chore/deps-wave0-frontend`.
+    Lockfile produced with `yarn up -R '*' '@*/*'` (both patterns, per the 0a note).
+    Audit: **20 high → 3, 23 moderate → 3, 4 low → 1.** Everything that survives is
+    already owned by a later wave: `ip` SSRF (no fix exists → replaced in 1a),
+    sharp 0.30.7 ×2 (libwebp CVE-2023-4863 + the 2026 libvips CVEs → 1a),
+    multer 1.4.5-lts.2 EOL notice (→ 1a), puppeteer 22 EOL notice (→ 2a),
+    `@simplewebauthn/types` deprecation (→ 1.5), cookie 0.4.2 out-of-bounds chars
+    (exact pin, investigated in 1a).
+  - Resolved: axios 1.6.7→1.19.0, typeorm 0.3.17→0.3.31, express 4.17.3→4.22.2,
+    ws 8.5.0→8.21.2, pg 8.7.3→8.22.0, express-fileupload 1.3.1→1.5.2,
+    `@aws-sdk/*` 3.1x→3.1102.0, joi 17.7→17.13.4, redis 4.0.4→4.7.1,
+    puppeteer 22.2→22.15, express-session 1.17→1.19, multer …lts.1→lts.2,
+    ip 1.1.8→1.1.9. Unmoved by design (exact pins / `^0.x`): socket.io 4.7.1,
+    `@socket.io/redis-adapter` 8.2.1, ethers 6.7.1, cookie 0.4.2,
+    cookie-signature 1.0.6, sharp 0.30.7, connect-redis 6.1.3, mediasoup 3.23.2.
+  - Four fallout fixes were needed; none optional (`package.json` had to change —
+    the `yarn up` itself left it untouched, `git diff` confirmed, the edits below
+    are the follow-up):
+    1. **AWS SDK phantom dependencies.** `repositories/files.ts` imported
+       `@aws-sdk/{url-parser,hash-node,protocol-http,util-format-url}`, none of them
+       declared and all four gone from the 3.1102 dependency tree. The first three
+       moved to `@smithy/*` (added as explicit deps: `@smithy/url-parser` ^4,
+       `@smithy/hash-node` ^4, `@smithy/protocol-http` ^5); `formatUrl` is still an
+       AWS package (`@aws-sdk/util-format-url` ^3.972.42, added explicitly). The
+       high-level `getSignedUrl` helper is *not* a substitute — `getSignedUrls()`
+       mutates the `HttpRequest` (port, query, path) before formatting.
+    2. **`resolutions: { "@types/express": "4", "@types/express-serve-static-core": "4" }`.**
+       `@types/express-session`, `-ws` and `-fileupload` all depend on
+       `@types/express@*`, which now resolves to 5.x and hoisted
+       `@types/express-serve-static-core@5` over the v4 copy — two incompatible
+       `Request` types, exactly the `@types/react` failure mode from 0a. Drop the
+       pin when Express 5 is picked up (out of scope, decision 7).
+    3. **`rowCount` is `number | null`** in `@types/pg` ≥8.11 (7 call sites in
+       `jobs/callUpdateEmitter`, `repositories/{articles,communities×2,communityEvents,emails,newsletter}`)
+       — guarded with `?? 0`.
+    4. **express-session 1.19 types** widened `SessionOptions['cookie']` to
+       `CookieOptions | ((req) => CookieOptions)`, so `sessionOptions.cookie!.domain`
+       no longer type-checks; `util/express.ts` now keeps the cookie options in
+       their own `session.CookieOptions` binding.
+  - **`keepAlive: false` in `srv/util/axios.ts` stays.** Evidence (2026-08-04):
+    nodejs/node#47130 was closed **as not planned** (2024-07-22, "known limitation");
+    nodejs/node#55170 (Node 20.18.0) only narrowed the race window; axios/axios#6113
+    still collects reproductions on Node 22.12 with axios 1.9, and the axios
+    maintainer's own advice there (2025-08-27) is this exact agent pair. The axios
+    1.7→1.19 changelog fixes keep-alive *listener leaks* (#10788, #10576), not the
+    pooling bug. The comment now records this; the real exit is axios' fetch/undici
+    adapter, not a version bump.
+  - Verification: `./run.sh update_backend` green (docker available; the in-container
+    `yarn tsc` is the gate — it caught all four fallout classes above), full stack
+    healthy, `POST /api/v2/Community/getCommunityList` returns real rows over
+    nginx→api→pg, session cookie issued through connect-redis, joi rejects a bad
+    body. `./run.sh build_full` smoke run as well. Interactive login / message-send
+    remain the maintainer's part.
+  - **The jest gate could not be met, and not because of the config.**
+    `srv/tests/accounts.spec.ts` (unchanged since the initial commit) imports
+    `../entities/accounts` and an `Account` active-record class that do not exist in
+    this repo — the entity is `entities/user-accounts.ts` / `UserAccount`, with no
+    `save()`/`getAccount()`. So the backend has **zero runnable tests**; pointing
+    `jest.config.js` at `.ts` (wave 2a) will surface a failing suite, not a green one.
+    `@types/jest` is also missing. Wave 2a should either rewrite the spec against
+    `UserAccount` or delete it and start the backend suite from scratch.
+  - Two non-blocking observations for later waves:
+    - `memberlist` now logs `DeprecationWarning: Calling client.query() when the
+      client is already executing a query … removed in pg@9.0` — real overlapping-query
+      code, worth fixing before any pg 9 bump.
+    - `job-runner` can crash-loop `premiumRenewal` with sharp's
+      `Module did not self-register`. **Pre-existing, not caused by this wave** —
+      reproduced identically on the unchanged lockfile (sharp 0.30.6) with a
+      two-sequential-`worker_threads` repro: sharp <0.33 is not reload-safe, so a
+      short-lived worker that loads sharp (e.g. `emailNotifications`) poisons the
+      next worker that does. Order-dependent, which is why it does not fire on every
+      boot. **sharp ≥0.33 fixes it — fold this into the wave-1a sharp bump.**
 
 ## Wave 1 — targeted security bumps the ranges can't reach (2 PRs)
 

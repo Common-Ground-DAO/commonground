@@ -254,7 +254,7 @@ class EmailHelper {
         `;
         let result = await pool.query(query, [userId]);
 
-        if (result.rowCount > 0) {
+        if ((result.rowCount ?? 0) > 0) {
             return result.rows[0].verificationCode;
         }
 

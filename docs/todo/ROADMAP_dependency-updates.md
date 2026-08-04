@@ -94,6 +94,7 @@ progresses; delete the file when the workstream is done (lifecycle per AGENTS.md
 2. `chore/deps-wave0-backend` — stacked on 1 (roadmap lives there). Merge after 1.
    **Ready for review.**
 3. `chore/deps-wave1a-backend` — stacked on 2. **Ready for review.**
+4. `chore/deps-wave1b-frontend` — stacked on 3. **Ready for review.**
 
 ## Wave 0 — lockfile refresh within existing ranges (2 PRs)
 
@@ -422,13 +423,114 @@ untouched via `git diff`.
     connects, upgrades to websocket and receives `buildId`.
   - Not verifiable headlessly (maintainer): interactive login, message send,
     a voice call, and a browser-side reconnect/presence pass.
-- [ ] **PR 1b (frontend)**:
-  - [ ] socket.io-client `4.7.1` → `4.8.3` (stay in sync with server; reconnect smoke)
-  - [ ] dexie `4.0.8` → `4.4.x`, dexie-react-hooks `1.1.7` → `4.4.x` (verify the
-    changelog first — the hooks major looks like version alignment with dexie 4,
-    confirm no API break)
-  - [ ] drop `@types/confusing-browser-globals` (absorbed from TODO.md — no tsconfig
-    project covers its only would-be consumer)
+- [x] **PR 1b (frontend)** — branch `chore/deps-wave1b-frontend`, stacked on
+  `chore/deps-wave1a-backend`. **Audit: 0 high / 6 moderate → unchanged.** All six
+  are deprecation notices owned by later waves (`@simplewebauthn/types` → 1.5,
+  `@floating-ui/react-dom-interactions` → 2c, `@metamask/sdk` → 3,
+  react-beautiful-dnd → 4a, recharts → 4d) plus `@truffle/hdwallet-provider`. The
+  react-router-dom advisory stays absent — the wave-0a 6.30.1 `resolutions` hold
+  is doing its job.
+  - [x] socket.io-client `4.7.1` → `4.8.3` (exact pin kept)
+    - **The bump deduplicates the package.** `@metamask/sdk` 0.1.0 already
+      depended on `socket.io-client@^4.5.1`, which resolved to 4.8.3, so the tree
+      carried two copies; the lockfile now collapses them and drops the second
+      `engine.io-client` 6.5.4, `ws` 8.17.1 and `debug` 4.3.7. Confirmed in the
+      build: only `connection.js` still contains socket.io/engine.io sources.
+    - `src/data/appstate/webSocket.ts` is the only consumer and its surface is
+      unchanged in 4.8: `io()` with `transports`/`reconnection`/
+      `reconnectionDelayMax`/`path`, the `connect` / `connect_error` /
+      `disconnect` listeners, emit-with-ack, `onAny`, `disconnect()` and
+      `connected`/`disconnected`. 4.8's additions (WebTransport, connection state
+      recovery) are opt-in and unused.
+    - **Reconnect smoke run headlessly against the live 1a stack** through nginx,
+      11/11 green: polling connect → websocket upgrade, `cgPing` ack round-trip
+      (0 ms drift), `getSignableSecret` ack, server-pushed `buildId`, a genuine
+      transport drop (closing the underlying websocket, not `engine.close()`) →
+      `reason: 'transport close'` → automatic reconnect with a new socket id and
+      a re-emitted `buildId`, `cgPing` ack after reconnect, a websocket-only
+      client (the dev-mode transport list), and `reason: 'io client disconnect'`
+      on an explicit `disconnect()`. Note for future smokes: `wsapi.ts`
+      disconnects any non-bot socket without a session cookie, so the script
+      first fetches a real `cg_dev.sid` from the API and passes it via
+      `extraHeaders` **and** `transportOptions.websocket.extraHeaders`.
+  - [x] dexie `4.0.8` → `4.4.4`, dexie-react-hooks `1.1.7` → `4.4.0` (exact pins
+    kept; 4.4.0 is the current hooks release — the hooks package does not track
+    dexie's patch level)
+    - **The hooks major is a version-alignment release — confirmed, but from the
+      published sources, not the release notes** (which say nothing about it).
+      Diffing 1.1.7 against 4.4.0, the entire delta in the pre-existing API is:
+      `useLiveQuery` calls `Dexie.liveQuery(querier)` instead of the bare
+      `liveQuery(querier)` (same function via the namespace — it fixes a
+      Vite/Vinxi named-export resolution bug in production builds, #2162), and
+      `useObservable`'s inline `subscribe()` return type was extracted into an
+      exported `AnySubscription` alias of identical shape. `usePermissions` is
+      untouched. Everything else is additive (`useDocument` for Y.js,
+      `useSuspendingLiveQuery`, `useSuspendingObservable`). What actually makes it
+      a major: `peerDependencies` moved from `dexie: ^3.2 || ^4.0.1-alpha` to
+      `dexie: >=4.2.0-alpha.1 <5.0.0` (dexie 3 support dropped) and the
+      `@types/react` peer was removed. All 90 `useLiveQuery` call sites are
+      unaffected — no code changes were needed anywhere.
+    - **The `cache` option did not change.** There is no stable dexie 4.1: the
+      4.1.x line was beta-only with experimental Y.js support, superseded by
+      4.2.0, which extracted it into the separate `y-dexie` addon (we use
+      neither). The defaulting logic is byte-equivalent between 4.0.8 and 4.4.4 —
+      cache active unless `'disabled'`, results frozen only under
+      `cache: 'immutable'`. `abstractDatabase.ts:37` and
+      `chunkedDatabase.ts:142` set `'immutable'` explicitly; only `unique.ts`
+      uses the default. 4.4.4 moved the cloned-mode isolation clone from write
+      time to read time (`freezeResults ? result : deepClone(result)`), so the two
+      immutable databases still clone nothing — no per-read cost on the message
+      lists.
+    - **One real behavior change, in our favour**: 4.4.3 changed
+      `Collection.sortBy()` from `a.sort()` to `a.slice().sort()` so it no longer
+      sorts a frozen cache array in place. Both our `sortBy` sites
+      (`data/databases/messages.ts:135` and `:180`) sit outside any liveQuery
+      querier — the two queriers that exist (`chunkedDatabase.ts:645` `.get()`,
+      `itemList.ts:407` `.toArray()`) never sort — so results were never frozen
+      there and the fix removes a latent hazard for the in-place
+      `messages.reverse()` at `messages.ts:185` rather than fixing a live bug.
+      The same commit swapped sortBy's comparator from raw `<`/`>` to dexie's
+      `cmp()`; only mixed-type keys sort differently, and both sites sort `Date`
+      fields (`ChunkType.end`, `DexieMessage.createdDate`), for which `cmp()`
+      reduces to the identical comparison.
+    - 4.2.1's external-DB-closure change does not reach us: the only
+      `db.close()` calls (`data/util/device.ts`) are on a raw `IDBDatabase`, not
+      a Dexie instance. `Observable` / `Subscription` / `liveQuery` / `Dexie` /
+      `Dexie.Table` are exported unchanged (type shapes diff clean).
+    - **Verified against both builds on `fake-indexeddb`**, replaying the real
+      call shapes: `sortBy` + in-place `reverse()` under `cache: 'immutable'`,
+      cache pollution after a `sortBy`, `Date` sort order, and liveQuery
+      emissions in default *and* immutable cache mode. Every result is identical
+      on 4.0.8 and 4.4.4.
+  - [x] drop `@types/confusing-browser-globals` (absorbed from TODO.md)
+    - Claim re-verified: the **runtime** `confusing-browser-globals` stays — it is
+      imported at `eslint.config.mjs:37` and spread into `no-restricted-globals`
+      at `:67`. The types package is unreachable three times over: no `.ts`/`.tsx`
+      file imports it, `eslint.config.mjs` is in neither tsconfig's `include`
+      (`tsconfig.json` covers `src`, `tsconfig.node.json` the vite configs +
+      `tools/*.mjs`), and both tsconfigs set an explicit `compilerOptions.types`
+      allowlist, so ambient `@types/` auto-inclusion is off entirely.
+  - Gate: `yarn typecheck && yarn lint && yarn test && yarn build &&
+    yarn check:html-rewrite` all green after every step — 0 lint errors, the
+    unchanged 645 pre-existing warnings, 4/4 tests.
+  - Bundle (raw JS, no sourcemaps), measured against the branch base rather than
+    the 0a note: **10,819,170 → 10,822,058 bytes (+2.9 KB, +0.03%)** — flat.
+    `community.js` +2.7 KB is dexie 4.4; `connection.js` 87.3 → 61.2 KB because
+    the `vite-plugin-node-polyfills` buffer shim (27 KB) split out into its own
+    shared chunk (53 → 54 chunks) once the socket.io dedup made it a shared
+    dependency. `vendor-web3` and the CG ID entry are untouched.
+  - **Not verifiable headlessly (maintainer)**: the multi-tab / offline behavior
+    the data layer builds on dexie — the `BroadcastChannel` active/passive tab
+    handoff in `webSocket.ts`, IndexedDB persistence across a reload, and the
+    offline→online catch-up path. Plus the standing socket.io manual flag from
+    wave 1a: a **voice-call smoke** (calls run over protoo/mediasoup, but the
+    call signalling UI is driven by socket.io events) and a browser-side
+    reconnect/presence pass.
+  - Observation for a later wave (not acted on here): `MessageDatabase`
+    (`src/data/databases/messages.ts`) is imported by `data/index.ts` and
+    `appstate/login.ts`, but `getMessages()` / `getLatestMessages()` — the only
+    `sortBy` users in the codebase — have **no callers**. Looks superseded by
+    `chunkedDatabase`; worth a dead-code check.
 
 ## Wave 1.5 — WebAuthn (1 PR, auth-critical: Fable implements, interim review mandatory)
 

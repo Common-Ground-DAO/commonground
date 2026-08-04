@@ -4302,13 +4302,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/confusing-browser-globals@npm:^1":
-  version: 1.0.3
-  resolution: "@types/confusing-browser-globals@npm:1.0.3"
-  checksum: 10c0/65aa3a176b695d5a724aba800d5f7027e9f825a39ab9742ac51addb926f0f2ddfdc719e962bdd82c18cc858bc6daa5b283362c8773303ee9fc06a8360fe93049
-  languageName: node
-  linkType: hard
-
 "@types/d3-array@npm:*, @types/d3-array@npm:^3.0.3":
   version: 3.2.2
   resolution: "@types/d3-array@npm:3.2.2"
@@ -7685,7 +7678,6 @@ __metadata:
     "@tsconfig/node24": "npm:24.0.4"
     "@types/audioworklet": "npm:^0.0.23"
     "@types/canvas-confetti": "npm:^1.6.4"
-    "@types/confusing-browser-globals": "npm:^1"
     "@types/d3": "npm:^7.4.3"
     "@types/dom-screen-wake-lock": "npm:^1.0.2"
     "@types/lodash": "npm:^4.14.182"
@@ -7711,8 +7703,8 @@ __metadata:
     d3: "npm:^7.9.0"
     dayjs: "npm:^1.10.7"
     decimal.js: "npm:^10.4.3"
-    dexie: "npm:4.0.8"
-    dexie-react-hooks: "npm:1.1.7"
+    dexie: "npm:4.4.4"
+    dexie-react-hooks: "npm:4.4.0"
     dnd-core: "npm:^16.0.1"
     emoji-picker-react: "npm:^4.9.2"
     emoji-regex: "npm:^10.2.1"
@@ -7748,7 +7740,7 @@ __metadata:
     slate-history: "npm:^0.100.0"
     slate-react: "npm:^0.106.0"
     slugify: "npm:^1.6.6"
-    socket.io-client: "npm:4.7.1"
+    socket.io-client: "npm:4.8.3"
     stream-browserify: "npm:^3.0.0"
     styled-components: "npm:^6.1.8"
     tailwindcss: "npm:^3.1.6"
@@ -8257,18 +8249,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"debug@npm:~4.3.1, debug@npm:~4.3.2":
-  version: 4.3.7
-  resolution: "debug@npm:4.3.7"
-  dependencies:
-    ms: "npm:^2.1.3"
-  peerDependenciesMeta:
-    supports-color:
-      optional: true
-  checksum: 10c0/1471db19c3b06d485a622d62f65947a19a23fbd0dd73f7fd3eafb697eec5360cde447fb075919987899b1a2096e85d35d4eb5a4de09a57600ac9cf7e6c8e768b
-  languageName: node
-  linkType: hard
-
 "decamelize@npm:^1.2.0":
   version: 1.2.0
   resolution: "decamelize@npm:1.2.0"
@@ -8493,21 +8473,20 @@ __metadata:
   languageName: node
   linkType: hard
 
-"dexie-react-hooks@npm:1.1.7":
-  version: 1.1.7
-  resolution: "dexie-react-hooks@npm:1.1.7"
+"dexie-react-hooks@npm:4.4.0":
+  version: 4.4.0
+  resolution: "dexie-react-hooks@npm:4.4.0"
   peerDependencies:
-    "@types/react": ">=16"
-    dexie: ^3.2 || ^4.0.1-alpha
+    dexie: ">=4.2.0-alpha.1 <5.0.0"
     react: ">=16"
-  checksum: 10c0/3ff38e715a52bff9132b483963246ea5372a282d9257c8c2bf8891c522fa0d761d1e362bb352eb63386f49ea9a55c52e1bcc5cce2019deb1eceba40d8a88631d
+  checksum: 10c0/78c8dfb294868e805efa888e2ea88fa3489f9883fcaaa3c744540f06f7d2d904dd2e0b9e616038fb366e4d2f3d9f80bf27442e2a702e3bbe8731ff7ecaedf3dc
   languageName: node
   linkType: hard
 
-"dexie@npm:4.0.8":
-  version: 4.0.8
-  resolution: "dexie@npm:4.0.8"
-  checksum: 10c0/d35a817d986c334a2de5f1a0d5ef373b3d9464de7b520f9af50c00ea2f974386632a3f949add83ba1fce9e929908d96db19726377f641f4768c137a554969a2d
+"dexie@npm:4.4.4":
+  version: 4.4.4
+  resolution: "dexie@npm:4.4.4"
+  checksum: 10c0/bad17d50ca69a5fc440d8c191ed2034831e0d7d3946068429b560ed96a89fad368f6d63422846f29446dabf570cba61a851e559918e76c766e816d13153dc670
   languageName: node
   linkType: hard
 
@@ -8817,19 +8796,6 @@ __metadata:
   dependencies:
     once: "npm:^1.4.0"
   checksum: 10c0/b0701c92a10b89afb1cb45bf54a5292c6f008d744eb4382fa559d54775ff31617d1d7bc3ef617575f552e24fad2c7c1a1835948c66b3f3a4be0a6c1f35c883d8
-  languageName: node
-  linkType: hard
-
-"engine.io-client@npm:~6.5.1":
-  version: 6.5.4
-  resolution: "engine.io-client@npm:6.5.4"
-  dependencies:
-    "@socket.io/component-emitter": "npm:~3.1.0"
-    debug: "npm:~4.3.1"
-    engine.io-parser: "npm:~5.2.1"
-    ws: "npm:~8.17.1"
-    xmlhttprequest-ssl: "npm:~2.0.0"
-  checksum: 10c0/ef220f9875d6a43bade906bd9b61118e812474bbe46e80f38c92dca238484170daf92d51e58bbade6433c29ffb5ba329f4864c5609f2e33c5e31041b1f8ad672
   languageName: node
   linkType: hard
 
@@ -16110,19 +16076,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"socket.io-client@npm:4.7.1":
-  version: 4.7.1
-  resolution: "socket.io-client@npm:4.7.1"
-  dependencies:
-    "@socket.io/component-emitter": "npm:~3.1.0"
-    debug: "npm:~4.3.2"
-    engine.io-client: "npm:~6.5.1"
-    socket.io-parser: "npm:~4.2.4"
-  checksum: 10c0/dd62d265cb40e60cedb8be2affb6d47066260046d1a35b4a36f4739bd61f97ad8f68df1b16d8cea6637836ba1908fc48c179511b5ab1384c9bc3d09e555043bd
-  languageName: node
-  linkType: hard
-
-"socket.io-client@npm:^4.5.1":
+"socket.io-client@npm:4.8.3, socket.io-client@npm:^4.5.1":
   version: 4.8.3
   resolution: "socket.io-client@npm:4.8.3"
   dependencies:
@@ -18874,21 +18828,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"ws@npm:~8.17.1":
-  version: 8.17.1
-  resolution: "ws@npm:8.17.1"
-  peerDependencies:
-    bufferutil: ^4.0.1
-    utf-8-validate: ">=5.0.2"
-  peerDependenciesMeta:
-    bufferutil:
-      optional: true
-    utf-8-validate:
-      optional: true
-  checksum: 10c0/f4a49064afae4500be772abdc2211c8518f39e1c959640457dcee15d4488628620625c783902a52af2dd02f68558da2868fd06e6fd0e67ebcd09e6881b1b5bfe
-  languageName: node
-  linkType: hard
-
 "ws@npm:~8.21.0":
   version: 8.21.2
   resolution: "ws@npm:8.21.2"
@@ -18937,13 +18876,6 @@ __metadata:
     parse-headers: "npm:^2.0.0"
     xtend: "npm:^4.0.0"
   checksum: 10c0/b73b6413b678846c422559cbc0afb2acb34c3a75b4c3bbee1f258e984255a8b8d65c1749b51691278bbdc28781782950d77a759ef5a9adf7774bed2f5dabc954
-  languageName: node
-  linkType: hard
-
-"xmlhttprequest-ssl@npm:~2.0.0":
-  version: 2.0.0
-  resolution: "xmlhttprequest-ssl@npm:2.0.0"
-  checksum: 10c0/b64ab371459bd5e3a4827e3c7535759047d285fd310aea6fd028973d547133f3be0d473c1fdae9f14d89bf509267759198ae1fbe89802079a7e217ddd990d734
   languageName: node
   linkType: hard
 

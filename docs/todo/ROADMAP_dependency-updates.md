@@ -1608,11 +1608,31 @@ untouched via `git diff`.
     cause, not this wave. Message send end-to-end stays on the maintainer's
     manual list (it was API-smoke-verified against the built stack in the
     earlier waves).
+  - **Fresh-context review (2026-08-04): no blocker.** The reviewer replayed
+    the app's actual operation sequences (24 executable parity cases covering
+    every Editor/Transforms/Range/history call site in the editor surface) on
+    0.103 vs 0.126 — zero diffs; audited every component under `<Slate>` for
+    the 0.116 subscription rework (all subscribe or run off EditField state;
+    no `decorate` exists, so decoration purity is moot); probed the CustomTypes
+    under `skipLibCheck` (nothing degraded to `any`); confirmed single copies,
+    `immer` gone, srv unaffected. Review fixes applied on this branch:
+    `useSelected({ suppressThrow: true })` at the three element sites (0.116
+    runs findPath inside the selector — a stale element could otherwise trip
+    the EditField error boundary) and `docs/frontend` now lists `slate-dom`.
+    Accepted notes: `vendor-editor` +32 kB raw (genuine upstream growth, no
+    duplicates — the chunk is eager, so it is initial-load weight); editor
+    nodes are no longer deep-frozen (immer left — accidental mutation would
+    now corrupt silently instead of throwing; nothing mutates today).
   - **Manual (maintainer)**: a real editing pass in the article editor
     (marks, links via the toolbar link input, images) and the chat (mentions,
     paste incl. screenshots, send), on desktop **and mobile** — 0.107–0.110
     reworked Android/IME input handling wholesale, which no headless test
-    covers; plus emoji picker insertion and message *editing*.
+    covers; plus emoji picker insertion and message *editing*. Review
+    additions: **toggling a mark on a long expanded selection near the
+    viewport edge** (0.120 made the editor auto-scroll to the selection focus
+    on expanded selections, where 0.106 never scrolled — check the composer/
+    article scroll position doesn't jump, incl. mobile with the keyboard
+    open), and **deleting an image/embed in the article editor**.
 - [ ] **PR 4d**: react/react-dom/@types 18 → 19 flip + recharts 2 → 3 (React-19
   support) + fallout fixes (types churn: `JSX.Element` namespace, ref callbacks,
   `useRef` argument requirement). Check react-google-recaptcha and remaining

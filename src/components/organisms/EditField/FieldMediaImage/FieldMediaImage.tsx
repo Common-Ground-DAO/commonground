@@ -20,7 +20,7 @@ import { Spinner } from '@phosphor-icons/react';
 
 const FieldMediaImage: React.FC<RenderElementProps & { element: ImageElement }> = (props) => {
   const editor = useSlate();
-  const selected = useSelected();
+  const selected = useSelected({ suppressThrow: true });
   const focused = useFocused();
 
   const imageUrl = useSignedUrl(props.element.imageId);

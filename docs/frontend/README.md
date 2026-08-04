@@ -1,6 +1,6 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit 2cc2c77dc, 2026-08-04
+> Status: verified against commit 41b7a11aa, 2026-08-04
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -718,6 +718,8 @@ article/:articleUri       -> BlogView
 
 The `EditField` organism is the primary rich text input for messages and articles. It uses:
 - `slate` (core editor model)
+- `slate-dom` (the DOM layer slate-react ≥0.111 split out and peer-requires —
+  a required direct dependency, and part of the `vendor-editor` chunk group)
 - `slate-react` (React bindings: `Slate`, `Editable`, `withReact`)
 - `slate-history` (`withHistory` for undo/redo)
 

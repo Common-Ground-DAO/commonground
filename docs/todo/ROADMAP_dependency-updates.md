@@ -19,6 +19,12 @@ progresses; delete the file when the workstream is done (lifecycle per AGENTS.md
 > (`6ed66775a`) that **must not be merged as is** — see the wave-4a note. 4b, 4c
 > and 4d have not been started. The Final gate has not been run.
 >
+> **Six open questions were answered by the maintainer at the handover** — see
+> "Maintainer decisions, round 2". Three of them are concrete work items that are
+> *not* done yet: restack hardening-first (11), drop `typeorm-extension` and its
+> two orphaned test files (12), remove the three `REDIS_LEGACY_MODE` lines (13),
+> plus a separate small PR routing the MetaMask button through RainbowKit (9).
+>
 > Nothing has ever been pushed. All branches are local; the maintainer pushes and
 > merges. Whoever picks this up: read the "Execution conventions", the
 > "Supply-chain hardening" section and the branch list, in that order.
@@ -79,6 +85,42 @@ progresses; delete the file when the workstream is done (lifecycle per AGENTS.md
    consolidation planned), Truffle/Hardhat tooling (Hardhat 2.29 bump stays a
    TODO.md item).
 
+## Maintainer decisions, round 2 (2026-08-04, after waves 0–3 + hardening)
+
+Answered interactively at the handover point. All six are **settled** — implement
+them, don't re-litigate them.
+
+8. **The `react-router-dom` 6.30.1 hold stays.** `resolutions` keeps us in front
+   of GHSA-jjmj-jmhj-qwj2 at the cost of the 6.30.2–6.30.4 patches. The pin
+   dissolves whenever react-router 7 is picked up (still out of scope, still a
+   TODO.md forward note).
+9. **The MetaMask-without-extension path gets restored via RainbowKit**, not by
+   reviving `@metamask/sdk`. Route `signatureHelper.connectMetamask()` /
+   `WalletsEditor/WalletSelectModal`'s MetaMask button through RainbowKit's own
+   `metaMaskWallet` connector, which does mobile deep-linking. **Own small PR**,
+   not folded into a dependency wave. Update the TODO.md entry when it lands.
+10. **The 13 pre-cooldown packages stay as resolved.** All were individually
+    checked against the campaign and are clean; the next refresh picks them up
+    under the gate. Do *not* re-resolve them — it would invalidate the wave-0…3
+    verification for no security gain. (Includes `puppeteer` 25.5.0, the only one
+    published inside the attack window, whose installer was read in full.)
+11. **`chore/yarn-supply-chain-hardening` merges FIRST**, ahead of the dependency
+    waves, and the rest of the stack rebases onto it. The protection has to be in
+    effect for the remaining waves, not after them. Practically: rebase branches
+    1–9 onto the hardening branch, keep their order, then continue wave 4 on top.
+12. **Drop `typeorm-extension` and its orphans.** Its only consumer is
+    `srv/tests/testhelper.ts`, whose spec (`accounts.spec.ts`) was deleted in
+    wave 1a because it never compiled — so delete `tests/testhelper.ts` and
+    `tests/datasource.ts` with the dependency. That also removes the last nested
+    `reflect-metadata` 0.1.14, leaving exactly one copy. The backend suite starts
+    fresh anyway (`ipPrefix` + `saveImage` are the only real specs).
+13. **Remove the three inert `REDIS_LEGACY_MODE=true` lines** from
+    `docker/docker-compose.yml` (api :119, cg-builder :324) and
+    `docker/docker-compose.selfhost.yml` (api :186). Cosmetic, no behaviour
+    change — the backend has ignored the variable since node-redis 6 /
+    connect-redis 10. Fold into the wave-2a branch if the restack makes that
+    easy, otherwise its own commit.
+
 ## Execution conventions (all waves)
 
 - One branch per PR, branched off `develop` (or stacked on the previous unmerged
@@ -104,23 +146,31 @@ progresses; delete the file when the workstream is done (lifecycle per AGENTS.md
 
 ## Branch / stacking order (update as branches are cut)
 
-1. `chore/deps-wave0-frontend` — off `develop`; carries the roadmap-creation docs
-   commit. **Ready for review.**
-2. `chore/deps-wave0-backend` — stacked on 1 (roadmap lives there). Merge after 1.
-   **Ready for review.**
-3. `chore/deps-wave1a-backend` — stacked on 2. **Ready for review.**
-4. `chore/deps-wave1b-frontend` — stacked on 3. **Ready for review.**
-5. `chore/deps-wave15-webauthn` — stacked on 4. **Ready for review**
-   (maintainer passkey pass wanted before merge, see the wave-1.5 note).
-6. `chore/deps-wave2a-backend-infra` — stacked on 5. **Ready for review.**
-7. `chore/deps-wave2b-small-majors` — stacked on 6. **Ready for review.**
-8. `chore/deps-wave2c-frontend-sw` — stacked on 7. **Ready for review.**
-9. `chore/deps-wave3-web3` — stacked on 8. **Ready for review** (large manual
-   test surface, see the wave-3 note).
-10. `chore/yarn-supply-chain-hardening` — stacked on 9, but **independent of the
-    dependency waves** (touches `.yarnrc.yml`, `dependenciesMeta`, the Yarn
-    binary, `docker/*.sh`, docs). Merge it early if the stack is reordered.
-11. `chore/deps-wave4a-dnd` — stacked on 10. **WIP, not reviewable yet** (see 4a).
+**Merge order is now hardening-first** (decision 11). The branches were built as a
+linear stack in wave order with the hardening branch near the top; the restack
+below is the first job of the next session.
+
+| Merge | Branch | State |
+|---|---|---|
+| 1 | `chore/yarn-supply-chain-hardening` | ready — **merge first**, everything else rebases onto it |
+| 2 | `chore/deps-wave0-frontend` | ready |
+| 3 | `chore/deps-wave0-backend` | ready |
+| 4 | `chore/deps-wave1a-backend` | ready |
+| 5 | `chore/deps-wave1b-frontend` | ready |
+| 6 | `chore/deps-wave15-webauthn` | ready — maintainer passkey pass wanted before merge |
+| 7 | `chore/deps-wave2a-backend-infra` | ready — also carries decision 13 (drop the `REDIS_LEGACY_MODE` lines) if the restack makes that convenient |
+| 8 | `chore/deps-wave2b-small-majors` | ready — also carries decision 12 (drop `typeorm-extension` + the two orphaned test files) |
+| 9 | `chore/deps-wave2c-frontend-sw` | ready |
+| 10 | `chore/deps-wave3-web3` | ready — largest manual-test surface |
+| 11 | `chore/deps-wave4a-dnd` | **WIP, not mergeable** (see wave 4a) |
+
+As built, the branches are stacked in the order 2…10 → 1 → 11, i.e. the hardening
+branch sits on top of wave 3 and 4a on top of that. Restacking means rebasing
+2…10 onto 1 and keeping their relative order; each branch's own gates should be
+re-run after its rebase, since the hardening changes the Yarn version and the
+install-script policy underneath them.
+
+Nothing has been pushed. All branches are local.
 
 ## Supply-chain hardening (out-of-band, 2026-08-04)
 
@@ -174,14 +224,14 @@ tsc + 20 tests green, stack healthy.
 checked for publish date, not just `yarn npm audit` — the gate now does that
 automatically for anything under a week old.
 
-**Open, for the maintainer**: 13 packages resolved *before* the cooldown existed
+**Settled (decision 10) — leave them as resolved.** 13 packages resolved *before* the cooldown existed
 are younger than a week (the AWS SDK set and typescript-eslint 8.66.0 of 3 Aug,
 `ws` 8.21.2, `undici`, `jose`, `nanoid`, `hono`, `terser`, `electron-to-chromium`,
 `node-releases`, the rolldown bindings, and `puppeteer`/`@puppeteer/browsers` of
 4 Aug). All were checked individually against the campaign and are clean. Whether
-to re-resolve them under the gate for consistency — which means re-running the
-wave-0…3 verification — is a call worth making deliberately; doing nothing means
-the next refresh picks them up naturally.
+to re-resolve them under the gate for consistency — which would mean re-running
+the wave-0…3 verification — was decided against: no security gain, and the next
+refresh picks them up under the gate anyway.
 
 ## Wave 0 — lockfile refresh within existing ranges (2 PRs)
 
@@ -202,7 +252,8 @@ untouched via `git diff`.
     react-router-dom 6.30.4 is in the range of GHSA-jjmj-jmhj-qwj2 (open redirect →
     XSS, moderate, >=6.30.2 <=6.30.4). There is **no fixed 6.x release** — the fix is
     react-router 7.13, and v7 is out of scope (decision 7). **Resolved conservatively
-    (2026-08-04, agent decision, maintainer may override)**: `resolutions` holds
+    (2026-08-04, agent decision, **confirmed by the maintainer** — decision 8)**:
+    `resolutions` holds
     react-router-dom at 6.30.1, which predates the vulnerable range — security
     posture stays no worse than before the refresh. The pin dissolves whenever the
     deferred react-router-7 workstream lands; drop it from `package.json` then.
@@ -934,7 +985,9 @@ untouched via `git diff`.
       ^0.2.2 — but 3.x adds a **required** `@faker-js/faker >=8.4.1` peer we do
       not have (no `peerDependenciesMeta`), which is a lot of tree for dead
       code. There is no 2.x on reflect-metadata 0.2, and even 3.0.0 still pins
-      0.1.13. **Maintainer decision.**
+      0.1.13. **Decided (decision 12): take (a)** — drop `typeorm-extension` and
+      delete `tests/testhelper.ts` + `tests/datasource.ts`. Not done yet; it is
+      one of the open work items at the handover.
     - No deep imports of `reflect-metadata/*` anywhere, so v0.2's new `exports`
       map (which blocks `require('reflect-metadata/package.json')`) is inert.
   - [x] **altcha 2.3.0 → 3.2.1 + altcha-lib 1.4.1 → 2.3.2 as a pair** — see the
@@ -1340,8 +1393,9 @@ untouched via `git diff`.
     install-modal / deep-link flow, so dropping it removes the
     no-extension-MetaMask path from `WalletSelectModal`. The removal stands (0.1.0
     is deprecated and RainbowKit's own MetaMask connector covers mobile
-    deep-linking), but it is a functional change, not a no-op — flagged for the
-    maintainer, recorded in TODO.md.
+    deep-linking), but it is a functional change, not a no-op. **Resolved by the
+    maintainer (decision 9): restore the path via RainbowKit's `metaMaskWallet`
+    connector in its own small PR** — do not revive `@metamask/sdk`.
   - **Not fixed, recorded as notes** (behavioural deltas inherent to viem 2):
     `formatUnits` drops trailing `.0`; `parseUnits` silently rounds
     over-precise input where ethers 5 threw (makes `TokenRuleEditor`'s

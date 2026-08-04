@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import { useMemo } from "react";
 import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
 
@@ -18,7 +19,7 @@ type Props = {
     loadingAmount?: number;
     viewAllText?: string;
     onViewAllClick?: () => void;
-    emptyState?: JSX.Element;
+    emptyState?: React.JSX.Element;
     isLoading?: boolean;
 
     hideAuthors?: boolean;
@@ -65,7 +66,7 @@ export default function ContentSlider(props: Props) {
     const content = useMemo(() => {
         if (!isLoading && filteredItems.length === 0 && props.emptyState) return props.emptyState;
 
-        const getContentItem = (item: API.User.getArticleList.Response[0] | API.Community.getArticleList.Response[0]): JSX.Element => {
+        const getContentItem = (item: API.User.getArticleList.Response[0] | API.Community.getArticleList.Response[0]): React.JSX.Element => {
             return <div className="flex flex-col gap-4" key={item.article.articleId}>
                 <ArticleCardV2
                     article={item}

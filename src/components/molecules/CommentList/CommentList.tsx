@@ -58,7 +58,7 @@ export default function CommentList(props: Props) {
   const editFieldRef = useRef<React.ElementRef<typeof EditFieldThree>>(null);
   const [messageStateLocalStorage, setMessageStateLocalStorage] = useLocalStorage<undefined | Descendant[]>(undefined, `_message_state_of_channel_${channelId}`);
   const [, setContentCommentReadState] = useLocalStorage<ReadLatestArticleCommentsState>({}, 'content-comment-read-state');
-  const messageDataRef = useRef<undefined | Descendant[]>();
+  const messageDataRef = useRef<undefined | Descendant[]>(undefined);
   const messageDataUpdateRef = useRef<any>(null);
   const loadingPreviousRef = useRef<Promise<void> | null>(null);
   const initializingItemListRef = useRef<Promise<void> | null>(null);

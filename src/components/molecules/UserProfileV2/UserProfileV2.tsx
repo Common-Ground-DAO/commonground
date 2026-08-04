@@ -272,7 +272,7 @@ const UserProfileV2: React.FC<Props> = (props) => {
   }, [cgAccount, detailedData?.detailledProfiles, selectedAccount]);
 
   const chipActions = useMemo(() => {
-    const result: JSX.Element[] = [];
+    const result: React.JSX.Element[] = [];
     if (!user.isBot && !isEditMode && isSelf && showEditControls && selectedAccount !== user.displayAccount) {
       result.push(<Button
         key='setAsMain'
@@ -311,7 +311,7 @@ const UserProfileV2: React.FC<Props> = (props) => {
   }, [isEditMode, isSelf, selectedAccount, showEditControls, updateCgData, updateDisplayAccount, user.displayAccount, user.isBot]);
 
   const addAccountOptions = useMemo(() => {
-    const result: JSX.Element[] = [];
+    const result: React.JSX.Element[] = [];
 
     if (!user.accounts.find(acc => acc.type === 'cg')) {
       result.push(<ListItem

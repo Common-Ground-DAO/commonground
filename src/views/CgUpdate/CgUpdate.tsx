@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import './CgUpdate.css';
 import { useConnectionContext } from "../../context/ConnectionProvider";
 
@@ -19,7 +20,7 @@ export default function CgUpdate(props: { view: "reload" | "releaseNotes", finis
     }
   }
 
-  let content: JSX.Element | undefined;
+  let content: React.JSX.Element | undefined;
   if (view === "reload") {
     content = (
       <>

@@ -474,7 +474,7 @@ const Splash: React.FC = () => {
   // become visible in the next or previous step
   const renderedStepItems = useMemo(() => {
     console.log('step', step);
-    const components: JSX.Element[] = [];
+    const components: React.JSX.Element[] = [];
 
     if (step === 'start' || step === 'login' || step === 'create') {
       let itemStep = 0;
@@ -586,7 +586,7 @@ const Splash: React.FC = () => {
         itemStep = 2;
       }
 
-      let innerComponent: JSX.Element | null = null;
+      let innerComponent: React.JSX.Element | null = null;
       if (step === 'create-other-option' || step === 'login-other-option' || step === 'create-profile-setup' || step === 'login-finished') {
         // render inner component in the steps where it is visible
         // in the beginning of the animation

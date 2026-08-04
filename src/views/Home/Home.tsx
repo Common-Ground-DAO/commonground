@@ -300,7 +300,7 @@ const PostsAndEvents: React.FC<{ articleAmount: number; mode: 'all' | 'following
 }
 
 export const PostAndEventsButton: React.FC<{
-  icon: JSX.Element;
+  icon: React.JSX.Element;
   text: string;
   active: boolean;
   onClick: () => void;

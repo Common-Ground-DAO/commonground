@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { DndContext, DragEndEvent } from "@dnd-kit/core";
@@ -160,7 +161,7 @@ function CommunityItem(props: CommunityItemProps) {
   }, [channels]);
 
   const communityIconContent = useMemo(() => {
-    let premiumIcon: JSX.Element | undefined = undefined;
+    let premiumIcon: React.JSX.Element | undefined = undefined;
     if (!community.official && !!community.premium && dayjs(community.premium.activeUntil).isAfter(dayjs())) {
       const tier = community.premium.featureName;
       premiumIcon = <Tooltip

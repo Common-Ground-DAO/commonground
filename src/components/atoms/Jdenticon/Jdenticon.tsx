@@ -34,7 +34,7 @@ export default function Jdenticon(props: Props) {
   const imageId = !!profile ? profile.imageId : defaultImageId || null;
   const imageUrl = useSignedUrl(imageId);
 
-  let statusIndicator: JSX.Element | undefined = undefined;
+  let statusIndicator: React.JSX.Element | undefined = undefined;
   const status = onlineStatus || user?.onlineStatus;
   if (!hideStatus && status !== undefined && status !== 'offline') {
     const statusLabel = user?.isBot

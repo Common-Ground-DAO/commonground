@@ -26,7 +26,7 @@ type Props = {
   isSelf: boolean;
   isFollower: boolean;
   isFollowed: boolean;
-  addAccountsDropdownRef: React.RefObject<PopoverHandle>;
+  addAccountsDropdownRef: React.RefObject<PopoverHandle | null>;
   toggleFollow: () => void;
   showEditControls?: boolean;
   channelId?: string;

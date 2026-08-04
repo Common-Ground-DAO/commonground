@@ -459,7 +459,7 @@ export default function Message(props: Props) {
   return returnValue;
 }
 
-const ReplyIndicator: React.FC<{ show: boolean, divRef: React.RefObject<HTMLDivElement> }> = ({ show, divRef }) => {
+const ReplyIndicator: React.FC<{ show: boolean, divRef: React.RefObject<HTMLDivElement | null> }> = ({ show, divRef }) => {
   useEffect(() => {
     const current = divRef.current;
     if (current) {

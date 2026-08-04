@@ -19,7 +19,7 @@ export type PositionData = {
 
 type Props = {
   mode: 'limited' | 'unlimited';
-  title?: JSX.Element;
+  title?: React.JSX.Element;
   className?: string;
   positionCallback?: (data: PositionData) => void;
 }

@@ -23,9 +23,9 @@ export type TagVariant = "success" | "info" | "safe" | "warning" | "error" | "da
 
 export interface TagProps {
     label?: string;
-    iconLeft?: JSX.Element;
-    iconRight?: JSX.Element;
-    tooltipContent?: string | JSX.Element;
+    iconLeft?: React.JSX.Element;
+    iconRight?: React.JSX.Element;
+    tooltipContent?: string | React.JSX.Element;
     tooltipPlacement?: Placement;
     className?: string;
     variant?: TagVariant;

@@ -17,7 +17,7 @@ const AnimatedTabPage: React.FC<React.PropsWithChildren<Props>> = (props) => {
   } = props;
   const [fullyHidden, setFullyHidden] = useState(true);
   const [isAnimating, setIsAnimating] = useState<'in' | 'out' | null>();
-  const fullyHiddenTimout = useRef<any>();
+  const fullyHiddenTimout = useRef<any>(undefined);
 
   // Start going in if should be visible
   if (propsVisible && isAnimating !== 'in') {

@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import './OwnCommunitiesBrowser.css';
 import { useNavigate } from "react-router-dom";
 import EmptyState from "../../components/molecules/EmptyState/EmptyState";
@@ -27,7 +28,7 @@ import { isActiveButton } from 'components/organisms/Menu/ExpandedMenu/ExpandedM
 
 type Properties = {
   isExpanded: boolean;
-  contentRef: React.RefObject<HTMLDivElement>;
+  contentRef: React.RefObject<HTMLDivElement | null>;
 }
 
 export default function OwnCommunitiesBrowser(props: Properties) {
@@ -269,7 +270,7 @@ function SortableCommunityCard(props: SortableCommunityCardProps) {
 }
 
 type MobileMenuOptionProps = {
-  icon: JSX.Element;
+  icon: React.JSX.Element;
   text: string;
   active?: boolean;
   onClick: () => void;

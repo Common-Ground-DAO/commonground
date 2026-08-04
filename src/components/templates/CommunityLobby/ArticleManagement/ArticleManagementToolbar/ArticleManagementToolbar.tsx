@@ -33,8 +33,8 @@ type ArticleData = Omit<Models.BaseArticle.DetailView, "articleId" | "creatorId"
 
 type Props = {
     saveState: 'init' | 'saving' | 'saved' | 'deleting' | 'deleted' | 'published' | 'unpublished' | 'error';
-    articleDataRef: React.RefObject<ArticleData>;
-    itemArticleRef: React.RefObject<ItemArticleType>;
+    articleDataRef: React.RefObject<ArticleData | null>;
+    itemArticleRef: React.RefObject<ItemArticleType | null>;
     setRolePermissions: (rolePermissions: Models.Community.CommunityArticlePermission[]) => void;
     publishArticle: () => Promise<void>;
     unpublishArticle: () => Promise<void>;

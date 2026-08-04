@@ -8,7 +8,7 @@ import ToggleInputField from "../inputs/ToggleInputField/ToggleInputField";
 import './OptionToggle.css';
 
 type OptionToggleProps = {
-  title: string | JSX.Element;
+  title: string | React.JSX.Element;
   description: string;
   isToggled: boolean;
   onToggle: (value: boolean) => void;

@@ -16,8 +16,8 @@ type Props = {
   useDesktopSlider?: boolean;
   loadingGhostCount?: number;
   isLoading?: boolean;
-  extraCards?: JSX.Element;
-  scrollableRef?: React.RefObject<HTMLDivElement>;
+  extraCards?: React.JSX.Element;
+  scrollableRef?: React.RefObject<HTMLDivElement | null>;
   useLargeCards?: boolean;
   loadMore?: () => void;
 };

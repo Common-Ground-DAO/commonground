@@ -15,7 +15,7 @@ type Props = {
   currentFile: File |undefined;
   setFile: (file: File | undefined) => void;
   originalFileUrl?: string;
-  extraElement?: JSX.Element;
+  extraElement?: React.JSX.Element;
 };
 
 const ProfilePhotoField: React.FC<Props> = (props) => {

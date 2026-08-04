@@ -8,7 +8,7 @@ import './BookmarkButton.css';
 type Props = {
   active: boolean;
   onClick: () => void;
-  icon: JSX.Element;
+  icon: React.JSX.Element;
 }
 
 const BookmarkButton: React.FC<Props> = ({ active, onClick, icon }) => {

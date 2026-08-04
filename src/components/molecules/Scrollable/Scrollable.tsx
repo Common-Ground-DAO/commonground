@@ -39,7 +39,7 @@ export type ScrollableHandle = {
   scrollToElementId: (elementId: string) => void;
   lockScrollForNextUpdate: (options: ScrollLockOptions) => void;
   forceUpdate: () => void;
-  contentRef: React.RefObject<HTMLDivElement>;
+  contentRef: React.RefObject<HTMLDivElement | null>;
 };
 
 type ScrollableProps = React.PropsWithChildren<{
@@ -57,7 +57,7 @@ type ScrollableProps = React.PropsWithChildren<{
   topAndBottomThreshold?: number;
   positionCallback?: (data: PositionData) => void;
   innerId?: string;
-  rootDivRef?: React.RefObject<HTMLDivElement>;
+  rootDivRef?: React.RefObject<HTMLDivElement | null>;
   alwaysVisible?: boolean;
 }>;
 
@@ -99,21 +99,21 @@ const Scrollable: React.ForwardRefRenderFunction<ScrollableHandle, ScrollablePro
   const mouseOccurredRef = useRef<boolean>(false);
 
   const visibleRef = useRef<boolean>(!hideOnNoScroll);
-  const hideTimeoutRef = useRef<any>();
-  const barRectRef = useRef<{ top: number, left: number, width: number, height: number }>();
+  const hideTimeoutRef = useRef<any>(undefined);
+  const barRectRef = useRef<{ top: number, left: number, width: number, height: number }>(undefined);
   const proximityRef = useRef<boolean>(false);
   const grabbedRef = useRef<boolean>(false);
   const grabbedReleasedRef = useRef<boolean>(false);
   const resetHideTimeoutRef = useRef<boolean>(false);
-  const previousYRef = useRef<number>();
-  const nextYRef = useRef<number>();
+  const previousYRef = useRef<number>(undefined);
+  const nextYRef = useRef<number>(undefined);
   const lastKnownContentHeightRef = useRef<number>(0);
   const lastKnownScrollTopRef = useRef<number>(0);
   const nextMutationScrollLockedRef = useRef<ScrollLockOptions | undefined>(undefined);
   const scrollIsAtBottomRef = useRef<boolean>(true);
   const executeAutoScrollRef = useRef<boolean>(autoScroll);
   const dateLockScrollRef = useRef<{ timestamp: string, top: number, element: HTMLElement } | undefined>(undefined);
-  const updateBarFnRef = useRef<(time: number) => void>();
+  const updateBarFnRef = useRef<(time: number) => void>(undefined);
   const animationFrameScheduledRef = useRef<boolean>(false);
   const preventScrollRef = useRef<boolean>(false);
   const mountedRef = useRef<boolean>(true);

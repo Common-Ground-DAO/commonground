@@ -17,7 +17,7 @@ type Props = {
   floatingMode?: boolean;
 
   overrideZIndex?: number;
-  footerActions?: JSX.Element;
+  footerActions?: React.JSX.Element;
 }
 
 const BottomSliderModal: React.FC<React.PropsWithChildren<Props>> = (props) => {

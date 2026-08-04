@@ -36,7 +36,7 @@ type Props = {
     communityPermissions: Readonly<Set<Common.CommunityPermission>>;
   };
   hideEndButton?: boolean;
-  emptyState?: JSX.Element;
+  emptyState?: React.JSX.Element;
   showCount?: boolean;
   useLargeHeader?: boolean;
   hideHeader?: boolean;
@@ -89,12 +89,12 @@ const ArticleExplorer: React.FC<Props> = (props) => {
   const [contentReadState,] = useLocalStorage<ReadArticlesState>({}, 'content-read-state');
   const dataStateState = activeContentFilter === 'draft' ? dataState.draftState : dataState.state;
   const endOfListRef = useRef<HTMLDivElement>(null);
-  const communityIdRef = useRef<string | undefined>();
-  const tagsRef = useRef<string[] | undefined>();
-  const followingRef = useRef<boolean | undefined>();
+  const communityIdRef = useRef<string | undefined>(undefined);
+  const tagsRef = useRef<string[] | undefined>(undefined);
+  const followingRef = useRef<boolean | undefined>(undefined);
   const { loginState } = useConnectionContext();
   const lastLoginStateRef = useRef<Common.LoginState>(loginState);
-  const fetchTimeoutRef = useRef<any>();
+  const fetchTimeoutRef = useRef<any>(undefined);
 
   const isEditor = useMemo(() => {
     return communityData?.communityPermissions.has('COMMUNITY_MANAGE_ARTICLES') || false;

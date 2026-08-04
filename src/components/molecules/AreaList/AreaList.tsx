@@ -58,7 +58,7 @@ export function AreaList(props: Props) {
     </div>}
     */
 
-    const areaElements = areas.reduce<JSX.Element[]>((agg, area) => {
+    const areaElements = areas.reduce<React.JSX.Element[]>((agg, area) => {
       const areaChannels = channels.filter(ch => ch.areaId === area.id);
       // Check if area contains channels. If not, then
       // only show the (empty) area if the user has permissions
@@ -119,7 +119,7 @@ function AccessRuleModal(props: { accessrules: Models.Community.AccessRules, are
     load();
   }, [accessrules]);
 
-  const ruleData: JSX.Element[] = [];
+  const ruleData: React.JSX.Element[] = [];
   if (!!contractData) {
     ruleData.push(
       <ContractDetails rule={accessrules.rule1} contracts={contractData} />

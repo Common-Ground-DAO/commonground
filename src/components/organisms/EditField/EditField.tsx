@@ -942,7 +942,7 @@ const Leaf: React.FC<RenderLeafProps> = React.memo((props) => {
   }
 });
 
-export const Portal: React.FC<{ children?: JSX.Element }> = React.memo(({ children }) => {
+export const Portal: React.FC<{ children?: React.JSX.Element }> = React.memo(({ children }) => {
   return typeof document === 'object' ? ReactDOM.createPortal(children, document.body) : null;
 });
 

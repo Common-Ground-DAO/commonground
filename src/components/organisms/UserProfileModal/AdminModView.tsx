@@ -26,7 +26,7 @@ type Props = {
     onWarnReasonChange?: (reason: Common.Content.WarnReason) => void;
     onMuteDurationChange?: (duration: Common.Content.DurationOption) => void;
     onBanDurationChange?: (duration: Common.Content.DurationOption) => void;
-    closeButtonRef?: React.RefObject<HTMLButtonElement>;
+    closeButtonRef?: React.RefObject<HTMLButtonElement | null>;
 }
 
 export default function AdminModView(props: Props) {

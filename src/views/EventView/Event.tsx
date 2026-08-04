@@ -291,7 +291,7 @@ const Event: React.FC<Props> = (props) => {
   }, [event, community, navigate]);
 
   const content = useMemo(() => {
-    let header: JSX.Element | null = null;
+    let header: React.JSX.Element | null = null;
     if (isLive || gatedState) header = <div className='flex items-center gap-2'>
       {isLive && <Tag
         variant='live'
@@ -455,7 +455,7 @@ const Event: React.FC<Props> = (props) => {
       </div>
     </div>;
 
-    let agenda: JSX.Element | null = null;
+    let agenda: React.JSX.Element | null = null;
     const isAgendaEmpty = event?.description.content.length === 0 ||
       (event?.description.content.length === 1 && event.description.content[0].type === 'text' && event.description.content[0].value.length === 0);
 

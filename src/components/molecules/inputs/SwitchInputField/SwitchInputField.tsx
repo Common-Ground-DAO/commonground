@@ -2,13 +2,14 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import Button from "../../../atoms/Button/Button";
 import "./SwitchInputField.css";
 
 type SwitchOption = {
     value: string;
-    iconLeft?: JSX.Element;
-    iconRight?: JSX.Element;
+    iconLeft?: React.JSX.Element;
+    iconRight?: React.JSX.Element;
     text?: string;
 }
 

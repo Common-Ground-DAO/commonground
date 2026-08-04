@@ -38,7 +38,7 @@ const AudienceList: React.FC<Props> = () => {
   }, [audienceArray, raisedHands]);
 
   const audienceCards = useMemo(() => {
-    const result: Record<string, JSX.Element> = {};
+    const result: Record<string, React.JSX.Element> = {};
     for (const peer of sortedAudienceByHandRaised) {
       const actualUser = allUsers?.find(u => u.id === peer.id);
       if (actualUser) {

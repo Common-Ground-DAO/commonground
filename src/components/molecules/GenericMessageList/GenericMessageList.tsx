@@ -86,7 +86,7 @@ export default function GenericMessageList(props: Props) {
   const [hideNotificationBanner, setHideNotificationBanner] = useState(false);
   const editFieldRef = useRef<React.ElementRef<typeof EditFieldThree>>(null);
   const [messageStateLocalStorage, setMessageStateLocalStorage] = useLocalStorage<undefined | Descendant[]>(undefined, `_message_state_of_channel_${channelId}`);
-  const messageDataRef = useRef<undefined | Descendant[]>();
+  const messageDataRef = useRef<undefined | Descendant[]>(undefined);
   const messageDataUpdateRef = useRef<any>(null);
   const scrollableRef = useRef<ScrollableHandle>(null);
   const scrollableInnerRef = useRef<HTMLDivElement>(null);
@@ -97,8 +97,8 @@ export default function GenericMessageList(props: Props) {
   const [itemList, setItemList] = useState<Models.ItemList.ItemList<Models.Message.Message> | null>(null);
 
   const [targetFocusId, _setTargetFocusId] = useState<string | undefined>(props.messageIdFocus);
-  const lastFocusedIdRef = useRef<string | undefined>();
-  const lastScrollToMessageRef = useRef<string | undefined>();
+  const lastFocusedIdRef = useRef<string | undefined>(undefined);
+  const lastScrollToMessageRef = useRef<string | undefined>(undefined);
 
   const setTargetFocusId = useCallback((id: string | undefined) => {
     lastFocusedIdRef.current = undefined;

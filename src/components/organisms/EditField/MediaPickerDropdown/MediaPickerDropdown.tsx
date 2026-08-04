@@ -63,7 +63,7 @@ const MediaPickerDropdown: React.FC<Props> = (props) => {
         accept={config.ACCEPTED_IMAGE_FORMATS}
         name="image-uploader"
         ref={inputFileRef}
-        onInput={handleMediaChange}
+        onChange={handleMediaChange}
         style={{ display: "none" }}
       />
       <Dropdown

@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import Button from "../../atoms/Button/Button";
 import AddEmojiIcon from '../../../components/atoms/icons/20/AddEmoji.svg?react';
 import "./EmojiPickerTooltip.css";
@@ -15,7 +16,7 @@ type Props = {
     onEmojiClick: (value: string) => void;
     isTooltipOpen?: (isSticky: boolean) => void;
     placement?: Placement;
-    triggerContent?: JSX.Element;
+    triggerContent?: React.JSX.Element;
 }
 
 export default function EmojiPickerTooltip(props: Props) {

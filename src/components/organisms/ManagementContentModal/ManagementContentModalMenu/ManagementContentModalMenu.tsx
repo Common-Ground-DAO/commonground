@@ -2,13 +2,14 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import { createSearchParams, useNavigate } from "react-router-dom";
 import { useManagementContentModalContext } from "../ManagementContentModalContext";
 import "./ManagementContentModalMenu.css";
 import SettingsButton from "components/molecules/SettingsButton/SettingsButton";
 
 type Props = {
-    items: string[] | JSX.Element[];
+    items: string[] | React.JSX.Element[];
 }
 
 export default function ManagementContentModalMenu(props: Props) {
@@ -19,7 +20,7 @@ export default function ManagementContentModalMenu(props: Props) {
     </div>)
 }
 
-export function ManagementContentModalMenuItem(props: { text: string | JSX.Element, url: string, disabled?: boolean; leftElement?: JSX.Element }) {
+export function ManagementContentModalMenuItem(props: { text: string | React.JSX.Element, url: string, disabled?: boolean; leftElement?: React.JSX.Element }) {
     const navigate = useNavigate();
     const { activeModalContent, modalSearchParameter } = useManagementContentModalContext();
     const { text, url, disabled, leftElement } = props;

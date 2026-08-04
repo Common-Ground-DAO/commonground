@@ -7,11 +7,11 @@ import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
 import "./ListItem.css";
 
 type Props = {
-    title: JSX.Element | string;
+    title: React.JSX.Element | string;
     subtitle?: string;
-    description?: string | JSX.Element;
-    icon?: JSX.Element | null;
-    iconRight?: JSX.Element | null;
+    description?: string | React.JSX.Element;
+    icon?: React.JSX.Element | null;
+    iconRight?: React.JSX.Element | null;
     disabled?: boolean;
     selected?: boolean;
     onClick?: () => void;

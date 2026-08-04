@@ -63,7 +63,7 @@ const BroadcastCards: React.FC<Props> = ({ mobileCollapsed }) => {
     }, [broadcastersArray, spotlightedPeer, activeSpeaker]);
 
     const broadcasterCards = useMemo(() => {
-        const result: Record<string, JSX.Element> = {};
+        const result: Record<string, React.JSX.Element> = {};
         for (const peer of sortedBroadcastersByPriority) {
             const actualUser = allUsers?.find(u => u.id === peer.id);
             if (actualUser) {

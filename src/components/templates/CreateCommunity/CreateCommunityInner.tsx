@@ -178,7 +178,7 @@ const CreateCommunityInner: React.FC<Props> = ({ onCancel, onSuccess }) => {
     }
   }
 
-  let errorEl: JSX.Element | undefined;
+  let errorEl: React.JSX.Element | undefined;
   if (error !== '') {
     errorEl = (
       <Tag variant="error" label={error} />

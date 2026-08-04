@@ -177,7 +177,7 @@ const HistoryPayment: React.FC<HistoryPaymentProps> = ({ transaction }) => {
   const { data, amount, communityId, createdAt } = transaction;
   const community = useCommunityListView(data.type === 'user-donate-community' ? (communityId || undefined) : undefined);
 
-  let content: JSX.Element;
+  let content: React.JSX.Element;
   let sign: '+' | '-' | '' = '';
   let datePrefix = '';
   if (data.type === 'user-donate-community') {

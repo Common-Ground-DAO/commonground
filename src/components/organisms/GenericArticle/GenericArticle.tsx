@@ -79,7 +79,7 @@ const GenericArticle: React.FC<Props> = ({ article, itemArticle, url, isLoading,
     });
   }, [article, setContentReadState]);
 
-  let content: JSX.Element;
+  let content: React.JSX.Element;
   // Loading
   if (isLoading) {
     content = <div className='articleViewLoading'>
@@ -100,7 +100,7 @@ const GenericArticle: React.FC<Props> = ({ article, itemArticle, url, isLoading,
     // Actual article
     const publishedDate = itemArticle?.published;
 
-    let sectionEnd: JSX.Element | null = null;
+    let sectionEnd: React.JSX.Element | null = null;
 
     if (!sidebarMode) {
       sectionEnd = <Button role='secondary' className='section-end-button' onClick={goBack} text='Back' />;

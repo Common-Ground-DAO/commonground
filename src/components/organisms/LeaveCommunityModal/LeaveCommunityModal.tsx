@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import Button from "../../../components/atoms/Button/Button";
 import Modal from "../../atoms/Modal/Modal";
 
@@ -30,7 +31,7 @@ export default function LeaveCommunityModal(props: Props) {
       showSnackbar({type: 'info', text: `You left ${community.title}`});
     }
 
-    const content: JSX.Element | null = open ? (
+    const content: React.JSX.Element | null = open ? (
       <Modal headerText={`Leave ${community.title}`} close={onClose}>
         <div className="modal-inner">
           <p>Are you sure you want to leave {community.title}? You will lose roles and any member status you have earned, but may rejoin at any time.</p>

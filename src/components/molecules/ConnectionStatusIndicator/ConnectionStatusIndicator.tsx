@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import SyncIcon from '../../../components/atoms/icons/16/Sync.svg?react';
@@ -19,7 +20,7 @@ export default function ConnectionStatusIndicator() {
   const { webSocketState, serviceWorkerState, onlineState, finishInstallation, visibilityState } = useConnectionContext();
   const { setUpdateOnNavigate } = useNavigationContext();
   const { call } = useCallContext();
-  const visibilityTimeoutRef = useRef<any>();
+  const visibilityTimeoutRef = useRef<any>(undefined);
 
   const [ state, _setState ] = useState<"hidden" | "offline" | "updated" | "updating" | "connecting" | "connected" | "disconnected">("hidden");
   const preRenderState = useRef<typeof state>(state);
@@ -108,7 +109,7 @@ export default function ConnectionStatusIndicator() {
     }
   }, [webSocketState, onlineState, serviceWorkerState, clearTimeouts, setState, state]);
 
-  let content: JSX.Element;
+  let content: React.JSX.Element;
   if (state === "connected") {
     content = (
       <div className="cg-connection-indicator-content">

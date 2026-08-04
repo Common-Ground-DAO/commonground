@@ -30,7 +30,7 @@ const NavigationContext = React.createContext<NavigationContextState>({
 });
 
 export function SuspenseRouter({ basename, children, window: propsWindow }: BrowserRouterProps) {
-  let historyRef = useRef<BrowserHistory>();
+  let historyRef = useRef<BrowserHistory>(undefined);
   const { finishInstallation } = useConnectionContext();
   const [isPending, startTransition] = useTransition();
   const [isDirty, setDirty] = useState(false);

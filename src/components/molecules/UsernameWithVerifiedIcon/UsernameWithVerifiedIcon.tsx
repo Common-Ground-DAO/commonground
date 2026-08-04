@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import { getDisplayName } from "../../../util";
 
 import { Tooltip } from "../../../components/atoms/Tooltip/Tooltip";
@@ -23,12 +24,12 @@ export default function UsernameWithVerifiedIcon(props: Properties) {
     const { userId, userData, disableTooltip } = props;
 
     const userName = !!userId && !!userData ? getDisplayName(userData) : userId;
-    const verifiedIcon: JSX.Element | null = useMemo(() => {
+    const verifiedIcon: React.JSX.Element | null = useMemo(() => {
         if (!userData?.premiumFeatures) {
             return null;
         }
 
-        let icon: JSX.Element | null = null;
+        let icon: React.JSX.Element | null = null;
         if (userData.premiumFeatures.some(f => f.featureName === UserPremiumFeatureName.SUPPORTER_2 && new Date(f.activeUntil) > new Date())) {
             icon = <SupporterIcon type="gold" size={20} />;
         }
@@ -54,7 +55,7 @@ export default function UsernameWithVerifiedIcon(props: Properties) {
 
     }, [userData?.premiumFeatures, disableTooltip]);
 
-    let content: JSX.Element;
+    let content: React.JSX.Element;
     if (!userId) {
         content = <SkeletonLine minWidth={80} maxWidth={120} />;
     }

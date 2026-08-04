@@ -16,7 +16,7 @@ import { checkCommunityRequirements } from 'common/util';
 
 type Props = {
   community: Models.Community.DetailView | undefined;
-  iconLeft?: JSX.Element;
+  iconLeft?: React.JSX.Element;
   text?: string;
   className?: string;
   onSuccess?: () => void;

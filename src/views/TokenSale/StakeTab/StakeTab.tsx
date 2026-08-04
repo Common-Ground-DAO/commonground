@@ -76,7 +76,7 @@ const PositionRow: React.FC<{
   </div>;
 };
 
-const StakeTab: React.FC<{ comingSoon: JSX.Element }> = ({ comingSoon }) => {
+const StakeTab: React.FC<{ comingSoon: React.JSX.Element }> = ({ comingSoon }) => {
   const ownUser = useOwnUser();
   const { showSnackbar } = useSnackbarContext();
 

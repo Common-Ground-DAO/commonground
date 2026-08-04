@@ -43,9 +43,9 @@ export function areElementsIntersecting(el1: HTMLElement, el2: HTMLElement, comp
 }
 
 
-export default function useOnScreen(ref: React.RefObject<HTMLDivElement>, rootRef: React.RefObject<HTMLDivElement>, callback: () => void, triggerDelayedCheckDependencies: any[] = []) {
+export default function useOnScreen(ref: React.RefObject<HTMLDivElement | null>, rootRef: React.RefObject<HTMLDivElement | null>, callback: () => void, triggerDelayedCheckDependencies: any[] = []) {
   const [observer, setObserver] = React.useState<IntersectionObserver | null>(null);
-  const timeoutRef = React.useRef<any>();
+  const timeoutRef = React.useRef<any>(undefined);
   const intersectionTriggeredRef = React.useRef(false);
   const callbackRef: React.MutableRefObject<() => void> = React.useRef(callback);
   callbackRef.current = callback;

@@ -9,11 +9,11 @@ import './SettingsListItem.css';
 
 type Props = {
   onClick: () => void;
-  text: JSX.Element | string;
+  text: React.JSX.Element | string;
   number?: string;
   selected?: boolean;
-  iconLeft?: JSX.Element;
-  rightElement?: JSX.Element;
+  iconLeft?: React.JSX.Element;
+  rightElement?: React.JSX.Element;
 }
 
 const SettingsListItem: React.FC<Props> = ({ number, onClick, text, selected, rightElement, iconLeft = null }) => {

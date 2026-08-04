@@ -224,11 +224,11 @@ const MemberListByRole: React.FC<ListByRoleProps> = React.memo(({ channelId, cha
   const readerStart = writerStart + memberList.writerCount;
   const offlineStart = readerStart + memberList.readerCount;
 
-  const adminElements: JSX.Element[] = [];
-  const moderatorElements: JSX.Element[] = [];
-  const writerElements: JSX.Element[] = [];
-  const readerElements: JSX.Element[] = [];
-  const offlineElements: JSX.Element[] = [];
+  const adminElements: React.JSX.Element[] = [];
+  const moderatorElements: React.JSX.Element[] = [];
+  const writerElements: React.JSX.Element[] = [];
+  const readerElements: React.JSX.Element[] = [];
+  const offlineElements: React.JSX.Element[] = [];
 
   const offsetLimitSum = offset + limit;
   const offlineSubtract = Math.max(offlineStart, offset);
@@ -238,7 +238,7 @@ const MemberListByRole: React.FC<ListByRoleProps> = React.memo(({ channelId, cha
 
   // gapCounter is used to add placeholder elements to the list to keep the scroll position
   let gapCounter = 0;
-  let groupForNextGapElement: JSX.Element[] = adminElements;
+  let groupForNextGapElement: React.JSX.Element[] = adminElements;
   const injectGapElement = (currentIndex: number) => {
     if (gapCounter > 0) {
       groupForNextGapElement.push(

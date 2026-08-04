@@ -22,7 +22,7 @@ const CommunityHeaderSimple: React.FC<Props> = () => {
   const { tier } = useCommunityPremiumTier(community.premium);
 
   const communityHeader = React.useMemo(() => {
-    let communityIconList: JSX.Element[] = [];
+    let communityIconList: React.JSX.Element[] = [];
     const hasPremiumVisibility = !!tier;
 
     if (hasPremiumVisibility) {

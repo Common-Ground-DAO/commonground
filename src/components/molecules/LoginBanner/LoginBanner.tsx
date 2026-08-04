@@ -42,7 +42,7 @@ const useHalfHidden = () => {
     }
   }, [ref]);
 
-  return [isSticky, ref] as [boolean, React.RefObject<HTMLDivElement>];
+  return [isSticky, ref] as [boolean, React.RefObject<HTMLDivElement | null>];
 }
 
 const LoginBanner: React.FC<Props> = ({ stickyMode }) => {

@@ -14,7 +14,7 @@ interface TagSuggestionsDropdownProps {
   generalTags: PredefinedTag[];
   onSelectTag: (tagName: string) => void;
   showDropdown: boolean;
-  inputRef: React.RefObject<HTMLInputElement>; // For positioning if needed, though DaisyUI might handle it
+  inputRef: React.RefObject<HTMLInputElement | null>; // For positioning if needed, though DaisyUI might handle it
   selectedTags: string[];
   filteredSuggestions: PredefinedTag[];
   setFilteredSuggestions: (suggestions: PredefinedTag[]) => void;

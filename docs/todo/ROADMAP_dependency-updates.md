@@ -1034,12 +1034,19 @@ untouched via `git diff`.
     survives; the major is the react `>=18` peer bump.
   - [x] **yet-another-react-lightbox 2.6 → 3.32.2** — one call site. The only
     breaking change that reaches us is `carousel.padding`, narrowed from a CSS
-    shorthand to a single `LengthOrPercentage`, so the desktop `'2% 5%'` collapses
-    to **`'2%'`**: CSS percentage padding resolves against container *width*, so
-    keeping `'5%'` would have turned a ~38px top/bottom gutter on a 1920px
-    viewport into ~96px and shrunk the image; `'2%'` only widens it horizontally.
-    **Worth a maintainer eyeball.** Everything else passes through unchanged, and
-    all four `yarl__` hooks `FullscreenImageModal.css` overrides still exist in v3.
+    shorthand to a single `LengthOrPercentage`, so the desktop `'2% 5%'` no longer
+    type-checks and becomes **`'2%'`**. Interim review, 2026-08-04: my original
+    reasoning here (2% vertical / 5% horizontal, "only widens horizontally") was
+    **wrong** — v2's parser already did `parseInt('2% 5%')` → 2 and wrote a single
+    all-sides value, so the desktop lightbox has always rendered 2% on all four
+    sides. The new value is byte-identical at runtime; there is nothing to eyeball.
+    All four `yarl__` hooks `FullscreenImageModal.css` overrides still exist in v3.
+    **The review did find a real v3 regression the bump missed**: v3 compares
+    `slides` by identity and dispatches an `update` that resets `currentIndex`
+    back to `index`, where v2 read `index` only at open — with the unmemoised
+    `slides` array, any re-render (a window resize, via `useWindowSizeContext`)
+    snapped the carousel back to the originally clicked image. Fixed by memoising
+    `slides` (and keying the `plugins` memo on `slides.length`).
   - [x] **react-dropzone 14.2 → 20.0.0** — one call site (`EditField`).
     `rootRef`, `getRootProps`/`getInputProps`, `isDragActive`, `onDrop` and
     `noClick` survive all six majors; `useFsAccessApi` is irrelevant because
@@ -1047,11 +1054,25 @@ untouched via `git diff`.
     by default** and hangs off `getRootProps`, so a screenshot pasted into the
     Slate `<Editable>` inside the dropzone root would have been attached twice —
     once by `handlePaste`, once by the bubbled dropzone handler. Fixed with
-    `noPaste: true`. Node floor ≥22 (image is 24).
+    `noPaste: true`. Node floor ≥22 (image is 24). Interim review found a second
+    one: **v20 stopped absolutely positioning the hidden input** (upstream #1413
+    — an out-of-flow input scrolls the page when focused), and that input is a
+    direct child of the composer's `flex flex-col gap-2` container, so in flow it
+    became a zero-height flex item and added an 8px gap above every message,
+    comment and article composer. Restored with an explicit
+    `getInputProps({ style: { position: 'absolute' } })`.
   - [x] **@giphy/react-components 9.2 → 10.1.2** (+ `@giphy/js-fetch-api` 5.3 →
-    5.8) — a pure peer-range major. Every `.d.ts` under `dist/` is byte-identical
-    between 9.8.0 and 10.1.2 apart from doc comments and import order; the peer
-    range moves react `16.10.2 - 18` → `18 - 19`. `@giphy/js-types` stays 5.1.0.
+    5.8). The peer range moves react `16.10.2 - 18` → `18 - 19`, and **every prop
+    we pass is unchanged** — but the "pure peer-range major, `.d.ts` byte-identical"
+    claim I first wrote here is **false** (interim review): v10 removed
+    `fetchPriority`/`useTransform` and, more importantly, **rewrote the `Grid`
+    layout engine** from an absolutely-positioned masonry to CSS flex columns with
+    `gap`, dropping the inline `width` on `.giphy-grid`. We use none of the removed
+    props and the DOM change is contained, but `GiphyPicker.css`'s
+    `width: fit-content !important` existed to beat that inline width — **the Giphy
+    picker wants a browser look** (added to the manual list below).
+    `@giphy/js-types` moved 5.0.0 → 5.1.0 and is a phantom dependency (imported by
+    three files, declared by none) — noted in TODO.md.
   - Gate: `yarn typecheck && yarn lint && yarn test && yarn build &&
     yarn check:html-rewrite` green after every step — 0 lint errors, the unchanged
     645 pre-existing warnings, 4/4 tests.
@@ -1085,10 +1106,18 @@ untouched via `git diff`.
       toolbar (incl. the delay group on a long message list), user popovers,
       dropdowns, the emoji-picker tooltip, and the `mouseleave*` close modes —
       the synthetic-hover smoke proves positioning, not feel.
-    - **image lightbox framing on desktop** after the `'2% 5%'` → `'2%'` padding
-      collapse.
+    - ~~image lightbox framing on desktop~~ — retired: the review proved the
+      padding value is identical at runtime (see the lightbox note above). What
+      *is* worth a look instead: **swiping through a multi-image lightbox while
+      resizing / rotating** (the memoised `slides` fix), and the **user popover's
+      fade-out** (the `hasBeenPositioned` latch).
+    - **the Giphy picker** in a browser — v10 rewrote the Grid's layout from
+      absolute masonry to flex columns, and `GiphyPicker.css`'s
+      `width: fit-content !important` was written against the old inline width.
     - **paste-a-screenshot into the composer** (that `noPaste: true` really does
-      leave exactly one attachment) and drag & drop onto the message field.
+      leave exactly one attachment) and drag & drop onto the message field; while
+      there, check the composer's vertical spacing (the hidden-input
+      `position: absolute` restoration).
 
 ## Wave 3 — web3 stack (1–2 PRs)
 

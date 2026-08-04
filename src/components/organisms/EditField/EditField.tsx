@@ -810,7 +810,12 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
   const linkPreview = attachments.find(att => att.type === 'linkPreview');
   return (
     <div {...getRootProps({ className: props.overrideClassName || `message-field${isMobile && isFocused ? ' message-field-expanded' : ''}` })}>
-      <input {...getInputProps()} />
+      {/* react-dropzone 20 stopped absolutely positioning the hidden input (its
+          own #1413: an out-of-flow input scrolls the page when focused). Here
+          the input is a direct child of a `flex flex-col gap-2` container, so
+          in flow it becomes a zero-height flex item and adds one 8px gap above
+          the composer. Putting it back out of flow restores the old layout. */}
+      <input {...getInputProps({ style: { position: 'absolute' } })} />
       {isDragActive && <div className='message-field-drop-tip'>
         <ImageIcon />
         <span>Drop your files here</span>

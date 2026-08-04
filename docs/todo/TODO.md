@@ -85,6 +85,14 @@
   (b) `src/cgid/home.tsx` calls `startRegistration`/`startAuthentication` outside
   its `try`, so a user cancel becomes an unhandled rejection (login.tsx and
   createPasskey.tsx do it correctly inside).
+- [ ] **`@giphy/js-types` is a phantom dependency** (2026-08-04, dependency-update
+  wave-2 review) — imported directly by `MessageAttachments.tsx`, `GiphyPicker.tsx`
+  and `useAttachments.tsx`, declared in no `package.json`; it only resolves because
+  two `@giphy` packages depend on it as `"*"`, and it silently moved 5.0.0 → 5.1.0
+  during the wave. Declare it explicitly.
+- [ ] **`srv/tsconfig.json`'s `include` does not cover `tests/`** (2026-08-04,
+  dependency-update wave-2 review) — so `npx tsc --noEmit`, the backend's typecheck
+  gate, never checks the spec files; only ts-jest does, at test time. Add `tests/*.ts`.
 - [ ] **Drop the `@types/react-router-dom` devDep** (2026-08-04, dependency-update
   wave 0a) — it is the v5 types package, while the app runs react-router-dom v6, which
   ships its own types. Typecheck passes with it installed today, but it is vestigial

@@ -146,17 +146,28 @@ const UserProfilePopover = forwardRef<UserTooltipHandle, Props>((props, ref) => 
     }
   }), [onOpenChange]);
 
+  // `isPositioned` goes false again the moment `open` does, but AnimatePresence
+  // keeps this element mounted through its exit animation — gating visibility on
+  // `isPositioned` alone would hide the popover instantly instead of fading it
+  // out. Latch it for the lifetime of one open cycle: hidden only before the
+  // first placement.
+  const [hasBeenPositioned, setHasBeenPositioned] = useState(false);
+  useEffect(() => {
+    if (isPositioned) setHasBeenPositioned(true);
+    else if (open) setHasBeenPositioned(false);
+  }, [isPositioned, open]);
+
   const floatingStyle: React.CSSProperties = useMemo(() => ({
     position: strategy,
     top: y,
     left: x,
-    visibility: isPositioned ? "visible" : "hidden",
+    visibility: isPositioned || hasBeenPositioned ? "visible" : "hidden",
     zIndex: 600,
     boxSizing: "border-box",
     maxHeight: `calc(100vh - ${2 * padding}px)`,
     paddingLeft: `${padding}px`,
     paddingRight: `${padding}px`,
-  }), [strategy, x, y, isPositioned, padding]);
+  }), [strategy, x, y, isPositioned, hasBeenPositioned, padding]);
 
   const content = (
     <>

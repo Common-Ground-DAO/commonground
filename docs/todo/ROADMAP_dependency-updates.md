@@ -8,6 +8,39 @@
 **Created**: 2026-08-04. Living document — update checkboxes and notes as work
 progresses; delete the file when the workstream is done (lifecycle per AGENTS.md).
 
+> **RESTACK DONE (2026-08-04, second agent context).** Decision 11 is executed:
+> the stack now runs `develop → hardening → waves 0…3 → wave 4a`, every branch
+> was rebased in order and its gates re-run green (frontend: typecheck / lint /
+> test / build / check:html-rewrite per frontend branch; srv: tsc + jest per
+> backend branch; at the top: in-container `update_backend` rebuild + live
+> nginx→api→pg smoke). Decisions 12 and 13 are executed as commits on the
+> wave-2b / wave-2a branches. Tree equality against the pre-restack stack was
+> verified — the only content deltas are the intended ones (see "Restack
+> record" below the branch table). The HANDOVER block below is kept for
+> context; its three open work items 11/12/13 are done, wave 4 remains the
+> open work.
+>
+> **HANDOVER STATE (2026-08-04, end of the first agent context).**
+> Waves **0, 1, 1.5, 2 and 3 are complete**: implemented, gated, reviewed by a
+> fresh context per wave, and the review findings fixed (each wave's note below
+> records what the review caught). An out-of-band **supply-chain hardening** PR
+> also landed — read that section before running any install, because the rules
+> for adding packages changed.
+>
+> **Wave 4 is open.** Its first PR exists only as an explicitly-marked WIP commit
+> (`6ed66775a`) that **must not be merged as is** — see the wave-4a note. 4b, 4c
+> and 4d have not been started. The Final gate has not been run.
+>
+> **Six open questions were answered by the maintainer at the handover** — see
+> "Maintainer decisions, round 2". Three of them are concrete work items that are
+> *not* done yet: restack hardening-first (11), drop `typeorm-extension` and its
+> two orphaned test files (12), remove the three `REDIS_LEGACY_MODE` lines (13),
+> plus a separate small PR routing the MetaMask button through RainbowKit (9).
+>
+> Nothing has ever been pushed. All branches are local; the maintainer pushes and
+> merges. Whoever picks this up: read the "Execution conventions", the
+> "Supply-chain hardening" section and the branch list, in that order.
+
 ---
 
 ## Evidence base (audited 2026-08-04)
@@ -64,6 +97,47 @@ progresses; delete the file when the workstream is done (lifecycle per AGENTS.md
    consolidation planned), Truffle/Hardhat tooling (Hardhat 2.29 bump stays a
    TODO.md item).
 
+## Maintainer decisions, round 2 (2026-08-04, after waves 0–3 + hardening)
+
+Answered interactively at the handover point. All six are **settled** — implement
+them, don't re-litigate them.
+
+8. **The `react-router-dom` 6.30.1 hold stays.** `resolutions` keeps us in front
+   of GHSA-jjmj-jmhj-qwj2 at the cost of the 6.30.2–6.30.4 patches. The pin
+   dissolves whenever react-router 7 is picked up (still out of scope, still a
+   TODO.md forward note).
+9. **The MetaMask-without-extension path gets restored via RainbowKit**, not by
+   reviving `@metamask/sdk`. Route `signatureHelper.connectMetamask()` /
+   `WalletsEditor/WalletSelectModal`'s MetaMask button through RainbowKit's own
+   `metaMaskWallet` connector, which does mobile deep-linking. **Own small PR**,
+   not folded into a dependency wave. Update the TODO.md entry when it lands.
+10. **The 13 pre-cooldown packages stay as resolved.** All were individually
+    checked against the campaign and are clean; the next refresh picks them up
+    under the gate. Do *not* re-resolve them — it would invalidate the wave-0…3
+    verification for no security gain. (Includes `puppeteer` 25.5.0, the only one
+    published inside the attack window, whose installer was read in full.)
+11. **`chore/yarn-supply-chain-hardening` merges FIRST**, ahead of the dependency
+    waves, and the rest of the stack rebases onto it. The protection has to be in
+    effect for the remaining waves, not after them. Practically: rebase branches
+    1–9 onto the hardening branch, keep their order, then continue wave 4 on top.
+    **Done (2026-08-04)** — see the restack record at the branch table.
+12. **Drop `typeorm-extension` and its orphans.** Its only consumer is
+    `srv/tests/testhelper.ts`, whose spec (`accounts.spec.ts`) was deleted in
+    wave 1a because it never compiled — so delete `tests/testhelper.ts` and
+    `tests/datasource.ts` with the dependency. That also removes the last nested
+    `reflect-metadata` 0.1.14, leaving exactly one copy. The backend suite starts
+    fresh anyway (`ipPrefix` + `saveImage` are the only real specs).
+    **Done (2026-08-04)** as a commit on the wave-2b branch; verified tsc clean,
+    jest 20/20, one `reflect-metadata` in lockfile and tree.
+13. **Remove the three inert `REDIS_LEGACY_MODE=true` lines** from
+    `docker/docker-compose.yml` (api :119, cg-builder :324) and
+    `docker/docker-compose.selfhost.yml` (api :186). Cosmetic, no behaviour
+    change — the backend has ignored the variable since node-redis 6 /
+    connect-redis 10. Fold into the wave-2a branch if the restack makes that
+    easy, otherwise its own commit.
+    **Done (2026-08-04)** as a commit on the wave-2a branch, incl. truing up
+    `docs/realtime` + `docs/infrastructure`.
+
 ## Execution conventions (all waves)
 
 - One branch per PR, branched off `develop` (or stacked on the previous unmerged
@@ -89,19 +163,140 @@ progresses; delete the file when the workstream is done (lifecycle per AGENTS.md
 
 ## Branch / stacking order (update as branches are cut)
 
-1. `chore/deps-wave0-frontend` — off `develop`; carries the roadmap-creation docs
-   commit. **Ready for review.**
-2. `chore/deps-wave0-backend` — stacked on 1 (roadmap lives there). Merge after 1.
-   **Ready for review.**
-3. `chore/deps-wave1a-backend` — stacked on 2. **Ready for review.**
-4. `chore/deps-wave1b-frontend` — stacked on 3. **Ready for review.**
-5. `chore/deps-wave15-webauthn` — stacked on 4. **Ready for review**
-   (maintainer passkey pass wanted before merge, see the wave-1.5 note).
-6. `chore/deps-wave2a-backend-infra` — stacked on 5. **Ready for review.**
-7. `chore/deps-wave2b-small-majors` — stacked on 6. **Ready for review.**
-8. `chore/deps-wave2c-frontend-sw` — stacked on 7. **Ready for review.**
-9. `chore/deps-wave3-web3` — stacked on 8. **Ready for review** (large manual
-   test surface, see the wave-3 note).
+**Restacked 2026-08-04 (decision 11 executed).** The stack is now built in
+merge order: `develop → 1 → 2 → … → 11`. Each branch was rebased in this order
+and its verification gates re-run on the new base (see the restack record
+below).
+
+| Merge | Branch | State |
+|---|---|---|
+| 1 | `chore/yarn-supply-chain-hardening` | ready — merges first; the whole stack sits on it |
+| 2 | `chore/deps-wave0-frontend` | ready — gates re-run green |
+| 3 | `chore/deps-wave0-backend` | ready — gates re-run green |
+| 4 | `chore/deps-wave1a-backend` | ready — gates re-run green |
+| 5 | `chore/deps-wave1b-frontend` | ready — gates re-run green |
+| 6 | `chore/deps-wave15-webauthn` | ready — gates re-run green; maintainer passkey pass wanted before merge |
+| 7 | `chore/deps-wave2a-backend-infra` | ready — now carries decision 13 (the `REDIS_LEGACY_MODE` lines are gone) |
+| 8 | `chore/deps-wave2b-small-majors` | ready — now carries decision 12 (`typeorm-extension` + orphans dropped; exactly one `reflect-metadata` left) |
+| 9 | `chore/deps-wave2c-frontend-sw` | ready — gates re-run green |
+| 10 | `chore/deps-wave3-web3` | ready — gates re-run green + in-container rebuild + live smoke; largest manual-test surface |
+| 11 | `chore/deps-wave4a-dnd` | ready — finished WIP + review fixes, functionally verified headlessly (see wave 4a) |
+| 12 | `chore/deps-wave4b-motion` | implemented, review pending (see wave 4b) |
+
+**Restack record (2026-08-04).** Tree equality of the restacked stack top
+against the pre-restack stack top was verified with `git diff` — the only
+deltas are intended:
+
+- **sharp install-script exemption**: on the new base the hardening branch sits
+  below wave 1a, where sharp is still 0.30 and needs its install script for the
+  libvips binary. The hardening branch therefore allowlists
+  `dependenciesMeta.sharp.built: true` (verified functional: 0.30.6/0.30.7
+  build and encode), and the wave-1a sharp commit removes the entry again
+  (0.35 installs prebuilt `@img/*`, verified without scripts).
+- **`terser` 5.49.0** (the cooldown-compliant resolution the hardening branch
+  originally introduced via its `yarn up -R terser` verification) is now
+  resolved at wave 0a, where terser first moves; every later branch keeps it.
+- **`dnd-core` removal moved to wave 4a** where it belongs: the original
+  hardening commit accidentally carried it (a leak from the aborted wave-4a
+  subagent's working tree). The hardening branch no longer touches it.
+- Lockfiles are format 10 (Yarn 4.17.1) from the hardening branch upward; the
+  per-wave lockfile conflicts were resolved by keeping the wave's resolutions
+  and re-running `yarn install` (no re-resolution — decision 10 intact).
+- Known blemish, docs-only: the `docs/infrastructure` status line inside the
+  wave-0-frontend review-fixes commit references SHA `ff0f70311`, an
+  intermediate commit that was rewritten away during the restack (a stray tsc
+  emit had to be stripped). Later commits overwrite the status line; the final
+  tree is correct.
+
+Nothing has been pushed. All branches are local.
+
+## Supply-chain hardening (out-of-band, 2026-08-04)
+
+Not part of the original plan. On the day this workstream ran, the
+**"Shai-Hulud: Here We Go Again"** npm worm poisoned ~440 packages (keyv,
+cacheable, flat-cache, file-entry-cache, `@ornikar`/`@servicetitan`/`@qlik`/…),
+first malicious publish ~09:35 UTC. It executed from a `preinstall` hook, so an
+install alone was enough. Every wave above resolved and installed packages
+straight through that window.
+
+**We were not affected** — verified, not assumed: `keyv` 4.5.4 (poisoned: 6.0.0),
+`file-entry-cache` 8.0.0 (11.1.6), `flat-cache` 4.0.1 (6.1.24),
+`cacheable-request` 7.0.4 (13.0.20); zero packages from any of the nine victim
+orgs in any of the three lockfiles; and all **1,191 name@version pairs this
+workstream newly resolved** were checked against the registry's publish dates —
+the only one published inside the attack window is `puppeteer` 25.5.0 (09:47
+UTC), whose `install.mjs` was read in full and is the stock 1,242-byte Google
+installer. Local IOC sweep clean (no `setup.mjs`, no 727 KB `Math_Symbol.js` —
+the one present is the legitimate 1,074-byte Unicode table —, no preinstall
+scripts anywhere in either `node_modules`, no `gh-token-monitor` persistence, no
+`.vscode/tasks.json`). **No credential rotation warranted.**
+
+Two things made that pure luck rather than defence, and both are now fixed on
+branch `chore/yarn-supply-chain-hardening`:
+
+- Yarn 4.1.0's `enableScripts` default is **`true`** (the pinned binary says
+  `default:!0`; yarnpkg.com's docs claim `false` — they describe a newer Yarn).
+  A poisoned `preinstall` would have run.
+- `yarn npm audit`, the per-wave gate, was **blind to this**: no GHSA advisory
+  existed for the highest-traffic poisoned packages while the attack ran.
+
+**What the hardening does** (details in `docs/infrastructure` §2):
+`enableScripts: false` in both workspaces with an explicit
+`dependenciesMeta.<pkg>.built: true` allowlist (root: esbuild + 4 natives; srv:
+those plus bcrypt, mediasoup, puppeteer, unrs-resolver), and
+**`npmMinimalAgeGate: 1w`** — a native package cooldown. Both required moving
+Yarn **4.1.0 → 4.17.1**, which is where those settings exist (and where
+`enableScripts` already defaults to `false`); pnpm was considered and is
+unnecessary. The upgrade changed the lockfile metadata format (8 → 10) but **no
+resolved version**.
+
+Verified: cooldown functional (`yarn up -R terser` resolves 5.49.0 of 8 July
+instead of 5.49.1 published today 07:12 UTC); allowlist functional in the
+**image build** — bcrypt, mediasoup and puppeteer's Chromium are all present in
+the rebuilt containers, contracts still deploy (their natives fall back to the
+JS implementations), and a social-preview render goes end to end through
+nginx → api → Chromium → sharp (512×268 JPEG). Full frontend gate green, srv
+tsc + 20 tests green, stack healthy.
+
+**Follow-up audit (same day): four more install paths, one unprotected.** The
+first pass only covered the two main workspaces. A sweep of every way a package
+can be installed here found:
+
+- **`docker/hardhat/Dockerfile` ran a bare `yarn`** — in a node image that is the
+  bundled **Yarn 1.22**, which has no `enableScripts` and no cooldown at all —
+  against a `package.json` with **no lockfile**. The Hardhat dev-chain image
+  therefore resolved a large toolchain to whatever was newest at build time and
+  executed every lifecycle script in it. Fixed: corepack + `packageManager:
+  yarn@4.17.1` + its own `.yarnrc.yml`. No allowlist needed (the contracts
+  workspace already proved the toolchain installs and deploys with scripts off).
+- **Both Azure pipelines `cp` a secure file OVER the repo's `.yarnrc.yml`**, so
+  CI discarded the hardening silently on every staging and production build.
+  They now re-append both settings after the copy.
+- **Four `yarn set version 4.1.0` bootstraps** survived in `updateFrontend.sh`,
+  `selfhost.sh` and the two pipelines. This is not cosmetic: 4.1.0 **hard-errors**
+  on the unknown `npmMinimalAgeGate` key, so those paths would have broken.
+- **Five `npx` call sites** all resolve locally today, but npx silently downloads
+  and runs a missing package. They pass `--no` now, which makes that a loud
+  failure (verified in both directions).
+
+Coverage is now complete: every `package.json` in the repo resolves to a
+`.yarnrc.yml` carrying both controls — root and `srv/` directly, `contracts/` by
+Yarn's directory walk, `docker/hardhat/node/` by its own. Verified by rebuilding
+the hardhat image (dev chain answers `eth_blockNumber`), redeploying the
+contracts, and running both npx tools.
+
+**Consequence for the remaining waves**: every newly added package must also be
+checked for publish date, not just `yarn npm audit` — the gate now does that
+automatically for anything under a week old.
+
+**Settled (decision 10) — leave them as resolved.** 13 packages resolved *before* the cooldown existed
+are younger than a week (the AWS SDK set and typescript-eslint 8.66.0 of 3 Aug,
+`ws` 8.21.2, `undici`, `jose`, `nanoid`, `hono`, `terser`, `electron-to-chromium`,
+`node-releases`, the rolldown bindings, and `puppeteer`/`@puppeteer/browsers` of
+4 Aug). All were checked individually against the campaign and are clean. Whether
+to re-resolve them under the gate for consistency — which would mean re-running
+the wave-0…3 verification — was decided against: no security gain, and the next
+refresh picks them up under the gate anyway.
 
 ## Wave 0 — lockfile refresh within existing ranges (2 PRs)
 
@@ -122,7 +317,8 @@ untouched via `git diff`.
     react-router-dom 6.30.4 is in the range of GHSA-jjmj-jmhj-qwj2 (open redirect →
     XSS, moderate, >=6.30.2 <=6.30.4). There is **no fixed 6.x release** — the fix is
     react-router 7.13, and v7 is out of scope (decision 7). **Resolved conservatively
-    (2026-08-04, agent decision, maintainer may override)**: `resolutions` holds
+    (2026-08-04, agent decision, **confirmed by the maintainer** — decision 8)**:
+    `resolutions` holds
     react-router-dom at 6.30.1, which predates the vulnerable range — security
     posture stays no worse than before the refresh. The pin dissolves whenever the
     deferred react-router-7 workstream lands; drop it from `package.json` then.
@@ -608,11 +804,9 @@ untouched via `git diff`.
       `client.legacy()` on an existing client, which we do not need), and
       connect-redis 10 talks to the promise API directly. The session client is
       an ordinary client now and the three callback branches in
-      `RedisManager.get/set/del` are deleted. **Maintainer decision pending**:
-      `REDIS_LEGACY_MODE=true` is still set in `docker/docker-compose.yml`
-      (**api** at :119 and **cg-builder** at :324 — not wsapi, which never set
-      it) and `docker/docker-compose.selfhost.yml` (:186, api); it is inert and
-      can be dropped whenever convenient. `docs/realtime` and
+      `RedisManager.get/set/del` are deleted. The three inert
+      `REDIS_LEGACY_MODE=true` compose lines are **removed by a follow-up
+      commit on this branch** (decision 13, 2026-08-04). `docs/realtime` and
       `docs/infrastructure` were corrected in this PR.
     - **New `srv/redis/client.ts` is the single `createClient` call site and
       pins `RESP: 2`.** node-redis 6 flipped the default protocol to RESP3
@@ -854,7 +1048,10 @@ untouched via `git diff`.
       ^0.2.2 — but 3.x adds a **required** `@faker-js/faker >=8.4.1` peer we do
       not have (no `peerDependenciesMeta`), which is a lot of tree for dead
       code. There is no 2.x on reflect-metadata 0.2, and even 3.0.0 still pins
-      0.1.13. **Maintainer decision.**
+      0.1.13. **Decided (decision 12): take (a)** — drop `typeorm-extension` and
+      delete `tests/testhelper.ts` + `tests/datasource.ts`. **Done (2026-08-04)**
+      as a follow-up commit on this branch: exactly one `reflect-metadata`
+      (0.2.2) remains in lockfile and tree, tsc clean, jest 20/20.
     - No deep imports of `reflect-metadata/*` anywhere, so v0.2's new `exports`
       map (which blocks `require('reflect-metadata/package.json')`) is inert.
   - [x] **altcha 2.3.0 → 3.2.1 + altcha-lib 1.4.1 → 2.3.2 as a pair** — see the
@@ -1260,8 +1457,9 @@ untouched via `git diff`.
     install-modal / deep-link flow, so dropping it removes the
     no-extension-MetaMask path from `WalletSelectModal`. The removal stands (0.1.0
     is deprecated and RainbowKit's own MetaMask connector covers mobile
-    deep-linking), but it is a functional change, not a no-op — flagged for the
-    maintainer, recorded in TODO.md.
+    deep-linking), but it is a functional change, not a no-op. **Resolved by the
+    maintainer (decision 9): restore the path via RainbowKit's `metaMaskWallet`
+    connector in its own small PR** — do not revive `@metamask/sdk`.
   - **Not fixed, recorded as notes** (behavioural deltas inherent to viem 2):
     `formatUnits` drops trailing `.0`; `parseUnits` silently rounds
     over-precise input where ethers 5 threw (makes `TokenRuleEditor`'s
@@ -1284,11 +1482,67 @@ untouched via `git diff`.
 
 ## Wave 4 — React 19 (est. 4 PRs, sequential)
 
-- [ ] **PR 4a**: replace `react-beautiful-dnd` (dead, no React 19) in its 6 usage
+- [x] **PR 4a**: replace `react-beautiful-dnd` (dead, no React 19) in its 6 usage
   sites (`ChannelManagement` tree ×3, `GroupsMenu`, `MultiEntryField`,
   `OwnCommunitiesBrowser`). Target library: agent evaluates `@dnd-kit` vs Atlassian
   `pragmatic-drag-and-drop` against the actual DnD patterns used, then commits to
   one. Drop `@types/react-beautiful-dnd`.
+  - **Done 2026-08-04** (second agent context): the aborted subagent's WIP was
+    **finished, not discarded** — inspection showed it translated rbd's
+    semantics faithfully (the order-persistence helpers are byte-identical to
+    the rbd version, warts included). Resolved: @dnd-kit/core 6.3.1, sortable
+    10.0.0, utilities 3.2.2 (all 2023/2024 publishes, individually
+    date-checked). `dnd-core` (unused since the initial commit) is dropped here
+    too — the restack moved its accidental removal out of the hardening commit.
+  - **Library choice (argued in the migration commit):** @dnd-kit over
+    Atlassian pragmatic-drag-and-drop because every usage site is a sortable
+    list (five flat + the nested area→channel tree) and dnd-kit's sortable
+    preset + first-class KeyboardSensor map 1:1 onto rbd's model — pragmatic
+    ships raw adapters and leaves sortable/keyboard semantics to be hand-built.
+    Shared `useDragSensors` reproduces rbd's ergonomics (5px sloppy-click,
+    120ms touch long-press, Space/arrows/Esc keymap).
+  - **Fresh-context review (mandatory for wave 4) ran and earned its keep**:
+    2 blockers — the flex gaps between rows/blocks were dead zones
+    (`pointerWithin`-only hit testing): an area dropped in a gap silently
+    snapped back, a channel dropped in a gap fell through to the container's
+    append semantics — plus real should-fixes: `closestCenter` on the flat
+    lists turned drops anywhere on the page into reorders (rbd cancelled),
+    wrong sorting strategy for variable-height rows, default screen-reader
+    announcements reading raw UUIDs, sensor options defeating `useSensor`
+    memoization (new `listeners` per render), missing keyboard-activator
+    registration (Space on a focused descendant lifted the row). All fixed:
+    collision detection now follows rbd's list-first model (container by
+    pointer → row by pointer → row by dragged-rect overlap → container;
+    outside = cancel), `rectSortingStrategy` on non-uniform lists, positional
+    announcements fed by per-item `data.label`, hoisted sensor options,
+    activator refs, rbd-style hover tint, and a ~row-height drop zone for
+    empty areas during a channel drag.
+  - **Functionally verified headlessly against the real app** (puppeteer,
+    API-bootstrapped user/community/areas/channels, every assertion checked
+    against the persisted API state): mouse reorder within an area, mouse
+    cross-area move, mouse area reorder, keyboard drags (area, channel,
+    cross-area), Escape cancel without persistence, plain click still
+    expands/collapses (no drag hijack), **drops in the inter-row and
+    inter-block gaps land at the right slot** (the review's blockers, now
+    regression-tested), drops far outside every target cancel, and the live
+    region announces positions ("channel chan-two was moved to position 1
+    of 2"). Gate green after every commit (typecheck / lint 0 errors / test /
+    build / check:html-rewrite).
+  - **Known, accepted deviations from rbd** (review notes, not fixed by
+    design): no `DragOverlay`, so the dragged row is transformed in place and
+    can be clipped by scrolling ancestors (rbd floated a `position: fixed`
+    clone); `.dragging-over` styling on the flat lists derives from hover now
+    but the dimming itself is unchanged. Both are visual-feel items on the
+    maintainer's manual list.
+  - Docs: no `docs/` statement mentioned react-beautiful-dnd; the
+    `VENDOR_GROUPS` comment in vite.config.ts was rewritten with the
+    migration (`vendor-dnd` now matches `@dnd-kit/`).
+  - **Manual (maintainer, not verifiable headlessly)**: drag *feel* on a real
+    touch device (the 120ms long-press lift vs. scrolling the sidebar — the
+    MouseSensor/TouchSensor split is what keeps a swipe scrolling), a real
+    screen-reader pass over the new positional announcements, and the visual
+    polish points above (in-place transform vs rbd's floating clone,
+    especially inside the scrolling community sidebar).
 - [ ] **PR 4b**: framer-motion 7 → `motion` v12 (3 direct usage files) and
   react-modal-sheet 2 → 5 (peer-depends on motion v12) in one PR. Also unblocks the
   CG-ID-entry bundle-bloat item in TODO.md (framer-motion is its biggest chunk —

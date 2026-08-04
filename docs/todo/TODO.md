@@ -92,8 +92,9 @@
   injected its own provider and ran the install-modal / mobile deep-link flow.
   That dependency was 0.1.0 (deprecated, superseded by MetaMask Connect) and is
   dropped; on a mobile browser without the extension the path now throws
-  "Please install MetaMask!". Decide: route this button through RainbowKit's own
-  MetaMask connector (which does deep-link), or leave it extension-only.
+  "Please install MetaMask!". **Decided 2026-08-04: route this button through
+  RainbowKit's own `metaMaskWallet` connector** (which does mobile deep-linking) —
+  do not revive `@metamask/sdk`. Own small PR, not part of a dependency wave.
 - [ ] **`signatureHelper.metamaskSignData` and `recoverSigner` have no callers**
   (2026-08-04, dependency-update wave-3 review) — with them, the
   `@metamask/eth-sig-util` dependency is unreachable too. Verify and delete.

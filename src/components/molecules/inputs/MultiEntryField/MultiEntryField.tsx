@@ -3,9 +3,12 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { DotsSixVertical, Minus, Plus } from '@phosphor-icons/react';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import './MultiEntryField.css';
-import { DragDropContext, Draggable, DropResult, Droppable } from 'react-beautiful-dnd';
+import { DndContext, DragEndEvent } from '@dnd-kit/core';
+import { rectSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { dragAnnouncements, listCollisionDetection, useDragSensors } from 'hooks/useDragSensors';
 import Button from 'components/atoms/Button/Button';
 import TextAreaField from '../TextAreaField/TextAreaField';
 
@@ -17,6 +20,9 @@ type Props = {
   disallowEmpty: boolean;
 }
 
+/** Stable within a drag: `entries` only changes on drop or on an edit. */
+const entryId = (entry: string, index: number) => `${entry}_${index}`;
+
 const MultiEntryField: React.FC<Props> = (props) => {
   const {
     entries,
@@ -26,78 +32,77 @@ const MultiEntryField: React.FC<Props> = (props) => {
     disallowEmpty
   } = props;
   const [autoFocusIndex, setAutoFocusIndex] = useState<number | null>(null);
-  const dragType = `entry-fields-${newEntryBtnText}`;
+  const [draggingOver, setDraggingOver] = useState(false);
+  const sensors = useDragSensors();
 
-  const onDragEnd = useCallback(async (result: DropResult) => {
-    const { type, destination, source } = result;
-    if (type === dragType) {
-      const changedLocation = !!source && !!destination && destination.droppableId === source.droppableId && destination.index !== source.index;
-      if (changedLocation) {
-        const newEntries = [...entries];
-        const [element] = newEntries.splice(source.index, 1);
-        newEntries.splice(destination.index, 0, element);
-        setEntries(newEntries);
-      }
+  const entryIds = useMemo(() => entries.map(entryId), [entries]);
+
+  const onDragEnd = useCallback((event: DragEndEvent) => {
+    setDraggingOver(false);
+    const { active, over } = event;
+    if (!over || active.id === over.id) {
+      return;
     }
-  }, [dragType, entries, setEntries]);
+    const sourceIndex = entryIds.indexOf(String(active.id));
+    const destinationIndex = entryIds.indexOf(String(over.id));
+    if (sourceIndex < 0 || destinationIndex < 0 || sourceIndex === destinationIndex) {
+      return;
+    }
+    const newEntries = [...entries];
+    const [element] = newEntries.splice(sourceIndex, 1);
+    newEntries.splice(destinationIndex, 0, element);
+    setEntries(newEntries);
+  }, [entries, entryIds, setEntries]);
 
   return (<div className='flex flex-col gap-1 cg-text-main'>
-    <DragDropContext onDragEnd={onDragEnd}>
-      <Droppable
-        droppableId='entry-fields'
-        type={dragType}
-      >
-        {(provided, snapshot) => (
-          <div
-            {...provided.droppableProps}
-            ref={provided.innerRef}
-            className={`multi-entry-field-container flex flex-col gap-1 ${snapshot.isDraggingOver ? ' dragging-over' : ''}`}
+    <DndContext
+      sensors={sensors}
+      collisionDetection={listCollisionDetection}
+      accessibility={{ announcements: dragAnnouncements }}
+      onDragStart={() => setDraggingOver(true)}
+      // rbd's isDraggingOver was on only while hovering the list, not for the
+      // whole drag — with the cancel-outside collision rule, `over` tracks it.
+      onDragOver={event => setDraggingOver(!!event.over)}
+      onDragCancel={() => setDraggingOver(false)}
+      onDragEnd={onDragEnd}
+    >
+      <SortableContext items={entryIds} strategy={rectSortingStrategy}>
+        <div
+          className={`multi-entry-field-container flex flex-col gap-1 ${draggingOver ? ' dragging-over' : ''}`}
+        >
+          {entries.map((entry, index) => <SortableEntry
+            key={index}
+            id={entryIds[index]}
+            index={index}
           >
-            {entries.map((entry, index) => <Draggable
-              draggableId={`${entry}_${index}`}
-              index={index}
-              key={index}
-            >
-              {(provided, snapshot) => (<div
-                {...provided.draggableProps}
-                ref={provided.innerRef}
-                className='flex items-center gap-2'
-              >
-                <div {...provided.dragHandleProps} className='flex p-2'>
-                  <DotsSixVertical className='w-4 h-4 cg-text-secondary' />
-                </div>
-                <div className='entry-field-content'>
-                  <Minus weight='duotone' className='w-6 h-6 cg-text-secondary cursor-pointer' onClick={() => {
+            <div className='entry-field-content'>
+              <Minus weight='duotone' className='w-6 h-6 cg-text-secondary cursor-pointer' onClick={() => {
+                const newEntries = [...entries];
+                newEntries.splice(index, 1);
+                setEntries(newEntries);
+              }} />
+              <div className='flex-col gap-1 w-full'>
+                <TextAreaField
+                  inputClassName='multi-entry-text-input'
+                  autoGrow
+                  autoFocus={autoFocusIndex === index}
+                  value={entry}
+                  placeholder={`${newEntryBtnText} ${index + 1}`}
+                  maxLetters={180}
+                  onChange={value => {
                     const newEntries = [...entries];
-                    newEntries.splice(index, 1);
+                    newEntries[index] = value;
                     setEntries(newEntries);
-                  }} />
-                  <div className='flex-col gap-1 w-full'>
-                    <TextAreaField 
-                      inputClassName='multi-entry-text-input'
-                      autoGrow
-                      autoFocus={autoFocusIndex === index}
-                      value={entry}
-                      placeholder={`${newEntryBtnText} ${index + 1}`}
-                      maxLetters={180}
-                      onChange={value => {
-                        const newEntries = [...entries];
-                        newEntries[index] = value;
-                        setEntries(newEntries);
-                      }}
-                    />
-                    {disallowEmpty && entry.length === 0 && <span className='cg-text-warning'>This field cannot be empty</span>}
-                  </div>
-                </div>
+                  }}
+                />
+                {disallowEmpty && entry.length === 0 && <span className='cg-text-warning'>This field cannot be empty</span>}
               </div>
-              )}
-            </Draggable>
-            )}
-            {provided.placeholder}
-          </div>
-        )}
-      </Droppable>
-    </DragDropContext>
+            </div>
+          </SortableEntry>
+          )}
+        </div>
+      </SortableContext>
+    </DndContext>
     {entries.length < limit && <Button
       role='textual'
       className='w-fit'
@@ -109,6 +114,30 @@ const MultiEntryField: React.FC<Props> = (props) => {
       }}
     />}
   </div>);
+}
+
+/** One row: the handle is the grip icon only, so the textarea stays selectable. */
+function SortableEntry(props: React.PropsWithChildren<{ id: string; index: number }>) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
+    useSortable({ id: props.id, data: { label: `entry ${props.index + 1}` } });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        position: 'relative',
+        zIndex: isDragging ? 5000 : undefined,
+      }}
+      className='flex items-center gap-2'
+    >
+      <div ref={setActivatorNodeRef} {...attributes} {...listeners} className='flex p-2'>
+        <DotsSixVertical className='w-4 h-4 cg-text-secondary' />
+      </div>
+      {props.children}
+    </div>
+  );
 }
 
 export default React.memo(MultiEntryField);

@@ -150,9 +150,14 @@ const VENDOR_GROUPS: Readonly<Record<string, readonly string[]>> = {
   'vendor-emoji': ['emoji-picker-react', 'flairup'],
   // The Slate editor and the two leaf helpers only Slate pulls in.
   'vendor-editor': ['slate', 'slate-react', 'slate-history', 'slate-dom', 'is-hotkey', 'direction'],
-  // react-beautiful-dnd ships its own redux store; nothing else in the app uses
-  // redux, so the three move together.
-  'vendor-dnd': ['react-beautiful-dnd', 'react-redux', 'redux', 'css-box-model'],
+  // Drag & drop. `@dnd-kit/core` + `sortable` + `utilities` + `accessibility`
+  // are one interlocking island (sortable is built on core's context and both
+  // re-export through utilities), and they are reached eagerly from the sidebar
+  // and the community-settings views alike. Nothing else lives here any more:
+  // react-beautiful-dnd's redux store — the reason `react-redux`, `redux` and
+  // `css-box-model` used to be in this group — left the tree with it, and
+  // dnd-kit has no runtime dependency beyond `tslib` (`vendor-shared`).
+  'vendor-dnd': ['@dnd-kit/'],
 };
 
 /** Virtual helper modules rollup and Vite generate; see `manualChunks`. */

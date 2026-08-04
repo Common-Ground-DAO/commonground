@@ -267,10 +267,19 @@ untouched via `git diff`.
   - [ ] socket.io `4.7.1` → `4.8.3` (exact pin kept), `@socket.io/redis-adapter`
     `8.2.1` → `8.3.0`, check `@socket.io/redis-emitter` + `socket.io-adapter`
     compatibility matrix
-  - [ ] **replace `ip`**: rewrite the v4/v6 classification + IPv6 /56 prefix
+  - [x] **replace `ip`**: rewrite the v4/v6 classification + IPv6 /56 prefix
     extraction in `srv/util/rateLimit.ts` on `node:net` (`isIPv4`/`isIPv6`) +
     manual prefix parse or `ipaddr.js`; delete the dependency and `@types/ip`;
     add unit tests (v4, v6 prefix grouping, mapped v4, invalid input)
+    - Done 2026-08-04 (Fable directly): pure logic extracted to
+      `srv/util/ipPrefix.ts` (no redis import → unit-testable), `ip`/`@types/ip`
+      removed, 11 tests in `srv/tests/ipPrefix.spec.ts` (run via ts-jest CLI
+      override until 2a fixes `jest.config.js`; `@types/jest` pulled forward from
+      2a). Two deliberate behavior changes, both documented in the code: v6
+      prefix keys are now zero-padded per byte (the old unpadded hex could
+      collide across prefixes — unrelated /56s could share a bucket; old keys
+      age out within the window), and `::ffff:a.b.c.d` now keys on the embedded
+      IPv4 instead of failing the request with INVALID_REQUEST.
   - [ ] cookie `0.4.2` → current + cookie-signature `1.0.6`: first **investigate why
     the exact pins exist** (likely express-session cookie-format compat — a
     cookie-signature bump may invalidate existing sessions). Bump what is safe,

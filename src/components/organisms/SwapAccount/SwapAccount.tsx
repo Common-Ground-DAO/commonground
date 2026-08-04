@@ -58,7 +58,7 @@ export default function SwapAccount() {
     //     }
     // }
 
-    // let errorDiv: JSX.Element | undefined;
+    // let errorDiv: React.JSX.Element | undefined;
     // if (error !== undefined) {
     //     errorDiv = (
     //         <div className="text-red-900 mb-4">

@@ -45,7 +45,7 @@ const UserTooltip = forwardRef<UserTooltipHandle, React.PropsWithChildren<Props>
     open: openTooltip
   }), [openTooltip]);
 
-  // let triggerContent: JSX.Element;
+  // let triggerContent: React.JSX.Element;
   // if (!isMessageTooltip) {
   //   triggerContent = (<>
   //     <button className="user-trigger-btn" style={{ pointerEvents: 'auto' }}>

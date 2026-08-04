@@ -183,7 +183,7 @@ below).
 | 11 | `chore/deps-wave4a-dnd` | ready — finished WIP + review fixes, functionally verified headlessly (see wave 4a) |
 | 12 | `chore/deps-wave4b-motion` | ready — reviewed, findings fixed (see wave 4b) |
 | 13 | `chore/deps-wave4c-slate` | ready — reviewed (no blocker), findings fixed (see wave 4c) |
-| 14 | `chore/deps-wave4d-react19` | implemented + verified against the built stack, review pending (see wave 4d) |
+| 14 | `chore/deps-wave4d-react19` | ready — reviewed (no blocker), findings fixed (see wave 4d) |
 
 **Restack record (2026-08-04).** Tree equality of the restacked stack top
 against the pre-restack stack top was verified with `git diff` — the only
@@ -1655,9 +1655,19 @@ untouched via `git diff`.
     inputs moving `onInput` → `onChange` (React 19 retyped onInput to the new
     InputEvent type; for file inputs it is the same DOM event).
   - recharts 3: the single call site (LockDurationSlider) uses no changed API.
-    The chart itself is behind the wallet-gated staking form and was not
-    reachable headlessly — **manual: open the stake form and check the
-    lock-duration curve renders** (recharts 3 rewrote the rendering engine).
+    **The chart is verified pixel-identical** (review, 2026-08-04): the exact
+    chart was bundled twice — recharts 2.15.4 + React 18 vs recharts 3.10.1 +
+    React 19 — and rendered headlessly to byte-identical PNGs (same area path,
+    same ReferenceDot position, same ticks). No manual chart check needed.
+    Two review fixes applied on this branch: `react-is: "19"` became a direct
+    dependency (recharts 3 demoted it to a peer; the surviving nested 16.13.1
+    copy cannot recognize React-19 elements, which would silently disable
+    fragment flattening in future charts), and the `vendor-charts` group now
+    lists recharts 3's actual runtime (the Redux set + es-toolkit) instead of
+    the departed recharts-scale/react-smooth. Review notes accepted: the v3
+    chart svg gains `role="application" tabindex="0"` (a new tab stop in the
+    stake form); `React.ElementRef`/`MutableRefObject` are deprecated-but-
+    working aliases in @types/react 19 — left for a later cleanup.
   - **Runtime verification against the built stack over nginx** (not the dev
     server): the complete wave-4a drag suite (13 checks incl. keyboard drags,
     gap drops, cancel-outside, positional announcements) and the wave-4c
@@ -1670,8 +1680,11 @@ untouched via `git diff`.
     srv 0. The react-beautiful-dnd and recharts notices are gone.
   - **Manual (maintainer)**: a general React-19 smoke of the app (the flip
     touches every component; the headless suites cover the two riskiest
-    surfaces but not calls/wallet/plugins UI), the stake-form chart above, and
-    a PWA/service-worker update cycle on the built app.
+    surfaces but not calls/wallet/plugins UI), the ALTCHA captcha widget on an
+    ALTCHA-configured instance (React 19 assigns the custom element's
+    `challenge` as a property instead of an attribute — verified equivalent
+    against the real widget, but a live-instance look costs nothing), and a
+    PWA/service-worker update cycle on the built app.
 - react-router stays on the v6 line (v7 out of scope).
 
 ## Final gate

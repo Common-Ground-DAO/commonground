@@ -7866,6 +7866,7 @@ __metadata:
     react-dropzone: "npm:^20.0.0"
     react-google-recaptcha: "npm:^3.1.0"
     react-icons: "npm:^5.3.0"
+    react-is: "npm:19"
     react-markdown: "npm:^9.0.3"
     react-modal-sheet: "npm:^5"
     react-router-dom: "npm:^6.0.2"
@@ -14785,6 +14786,13 @@ __metadata:
   peerDependencies:
     react: "*"
   checksum: 10c0/cc5ae92e61ef9d8fc83cb3f3ac2710deab9174c5831bdaf2a94b099acfc91074a60d4b3adfd3165dcb9b21799ca6c760b3f4f6596d75198c1ed2ea44240818c8
+  languageName: node
+  linkType: hard
+
+"react-is@npm:19":
+  version: 19.2.8
+  resolution: "react-is@npm:19.2.8"
+  checksum: 10c0/ed5322c84efe035c8fc814b1614ff5ca7fb8c2872a7c045197daf99f9b1bd68f32a2c79ffcbcfcff2fc5d93924ff9f9447400898f5b1534e6302bb0736a257f0
   languageName: node
   linkType: hard
 

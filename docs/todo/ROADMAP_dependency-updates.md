@@ -98,6 +98,7 @@ progresses; delete the file when the workstream is done (lifecycle per AGENTS.md
 5. `chore/deps-wave15-webauthn` — stacked on 4. **Ready for review**
    (maintainer passkey pass wanted before merge, see the wave-1.5 note).
 6. `chore/deps-wave2a-backend-infra` — stacked on 5. **Ready for review.**
+7. `chore/deps-wave2b-small-majors` — stacked on 6. **Ready for review.**
 
 ## Wave 0 — lockfile refresh within existing ranges (2 PRs)
 
@@ -745,17 +746,191 @@ untouched via `git diff`.
     behaviour after the session-store swap, and a social-preview image
     (`/preview/...` GET routes) rendered by the new Chromium in a real browser
     context.
-- [ ] **PR 2b (cross-workspace small majors)**: ua-parser-js 1 → 2 in **both**
-  workspaces (AGPL dual-license is fine for us; `getResult()` API shape changed),
-  @hapi/tlds 1 → 2 (data-only), short-uuid 4 → 6, open-graph-scraper 5 → 6
-  (options renamed), node-cron 3 → 4 (optional — skip if API churn outweighs value),
-  mime-types 2 → 3, reflect-metadata 0.1 → 0.2 (verify TypeORM compat note; since
-  wave 0, typeorm 0.3.31 already loads a nested reflect-metadata 0.2.2 next to the
-  hoisted 0.1.14 — verified interoperable, but the bump should dedupe to one copy;
-  since wave 1.5, @simplewebauthn/server 13 eagerly loads a third nested 0.2.x via
-  @peculiar/x509 → tsyringe),
-  altcha 2 → 3 + altcha-lib 1 → 2 **as a pair** (widget and server lib must agree
-  on the challenge format — test the PoW flow end to end).
+- [x] **PR 2b (cross-workspace small majors)** — branch
+  `chore/deps-wave2b-small-majors`, stacked on `chore/deps-wave2a-backend-infra`.
+  **Audit unchanged: srv 0 findings, root 5** (all moderate deprecation notices
+  owned by later waves: @floating-ui/react-dom-interactions → 2c, @metamask/sdk
+  → 3, react-beautiful-dnd → 4a, recharts → 4d, plus @truffle/hdwallet-provider).
+  - [x] **ua-parser-js 1 → 2 in both workspaces**; `@types/ua-parser-js` dropped
+    from both (v2 ships its own types).
+    - API: v2 exports the parser as a **named** export (`export = UAParser`
+      namespace), so all six call sites move to
+      `import { UAParser } from 'ua-parser-js'`. The result shape (`browser` /
+      `os` / `device` / `engine` / `cpu`) is unchanged, as is calling the module
+      as a function.
+    - **One real behaviour change, and it was a live bug**: v2 renames the
+      mobile builds of the desktop browsers — Android Chrome now reports
+      `"Mobile Chrome"` (Android Firefox `"Mobile Firefox"`, Chrome on iOS
+      `"Mobile Chrome"`). `NotificationProvider.getCurrentPwaStatus()` compared
+      `browser.name === "Chrome"`, so every Android Chrome user would have been
+      sent to `Android_OpenWithChrome` instead of the PWA install prompt. It now
+      accepts both spellings. Differential-tested over 11 real UA strings: the
+      other diffs are `os.name` `"Mac OS"` → `"macOS"` and Linux losing its
+      bogus `os.version` (`"x86_64"`), both of which only reach the display-only
+      `deviceOS` string stored on `devices`. iOS/iPadOS Safari, Samsung
+      Internet, desktop Chrome/Edge/Firefox and every `device.type` are
+      identical.
+    - The `vendor-shared` chunk assignment still holds (package name unchanged)
+      and `cg:assert-cgid-entry-chunks` passes. **The bundle now carries two
+      copies** (2.0.10 direct + 1.0.41 nested under RainbowKit 1.3, which pins
+      `^1.0.37`); `packageNameOf` uses `lastIndexOf`, so both land in
+      `vendor-shared` (100.06 kB). **Wave 3's RainbowKit 2 bump should collapse
+      it — re-check there.**
+    - Note: `src/hooks/useUserAgent.ts` has **no callers**. Left in place, but
+      it is a dead-code candidate (same class as the `MessageDatabase` finding
+      in 1b).
+  - [x] **short-uuid 4 → 6** in both workspaces — 17 call sites.
+    - Two breaking changes: the **callable default export is gone**
+      (`shortUUID()` → `createTranslator()`, all 17 files) and
+      `translator.new()` was removed in favour of `.generate()` (2 sites,
+      `MediaPickerDropdown` + `EmbedModal`).
+    - **No URL breakage**: the default alphabet is still flickrBase58 and
+      `maxLength` still 22. Differential-tested v4.2.2 vs v6.0.3 over 20 000
+      random UUIDs — **0 `fromUUID` mismatches**, both directions of `toUUID`
+      round-trip, and the malformed-input behaviour is byte-identical
+      (same throw for non-alphabet characters, same all-zero UUID for `""`,
+      same padded results for short strings). Every existing article/chat/call/
+      user short link keeps resolving.
+  - [x] **open-graph-scraper 5.2.3 → 6.12.0** (exact pin kept) — one call site,
+    `getUrlPreview` in `srv/api/messages.ts`.
+    - We only ever pass `{ url }`, so none of v6's option renames (the `got` →
+      `fetch` switch, `downloadLimit` removal, `headers`/`retry`/
+      `followAllRedirects` folded into `fetchOptions`) apply.
+    - v6 normalises `ogImage` to `ImageObject[]`; the `string` and
+      single-object branches are removed.
+    - **Error semantics are unchanged and were already surprising**: v5 *and*
+      v6 both **reject** with a plain `{error, result, response}` object rather
+      than resolving with `error: true`, so the `if (metadataResult.error)`
+      guard has always been unreachable for real failures. Left as-is
+      (defensive, and fixing the error mapping is not a dependency change) —
+      worth a look if the URL-preview error response ever needs to be
+      `INVALID_REQUEST` rather than `UNKNOWN`.
+  - [x] **node-cron 3 → 4** (not skipped — there is no churn to speak of) +
+    **drop `@types/node-cron`** (v4 ships its own).
+    - One call site, `cron.schedule(expression, fn)` in `srv/jobs.ts`, whose
+      signature is unchanged; `schedule()` still starts the task immediately
+      (v4's `createTask()` is the non-starting variant). All four cron
+      expressions still validate, and a smoke run fired 3 times in 2.5 s on a
+      per-second pattern. Node floor ≥20 (image is 24).
+  - [x] **mime-types: dropped, not bumped.** `mime-types` + `@types/mime-types`
+    were dependencies with **zero importers** — grepping every tracked file in
+    `srv/` for `mime` finds only `mimeType` string literals (mediasoup codec
+    config, sharp output metadata, message image records).
+  - [x] **reflect-metadata `^0.1.13` → `^0.2.2`** (srv).
+    - **Runtime dedupe achieved, lockfile dedupe not quite.** The hoisted copy
+      is now 0.2.2 — the version typeorm 0.3.31 and @simplewebauthn/server 13
+      (via @peculiar/x509 → tsyringe) were already nesting next to the old
+      0.1.14 — so the backend loads exactly one copy where it used to load two.
+      Verified in the built image: `find` shows 0.2.2 hoisted and 0.1.14 **only**
+      under `typeorm-extension/node_modules`, `emitDecoratorMetadata` still
+      resolves (`design:type` on `UserAccount.userId/type/displayName`), and
+      typeorm's metadata storage registers all **37 tables / 325 columns**.
+    - The last `^0.1.13` consumer is **`typeorm-extension` 2.8.1**, a
+      devDependency imported only by `tests/testhelper.ts` — which has no
+      importers of its own (it is the scaffolding of the `accounts.spec.ts`
+      wave 1a deleted). Nothing loads it, but the Dockerfile's bare `yarn`
+      installs devDependencies, so the copy is physically in the image. Two
+      ways to collapse it, neither taken here: **(a)** drop `typeorm-extension`
+      and delete `tests/testhelper.ts` + `tests/datasource.ts` (a closed,
+      unreferenced island from the initial commit) — clean, but it removes
+      DB-test scaffolding a future backend suite might want; **(b)** bump
+      `typeorm-extension` to 3.9.0, which does depend on reflect-metadata
+      ^0.2.2 — but 3.x adds a **required** `@faker-js/faker >=8.4.1` peer we do
+      not have (no `peerDependenciesMeta`), which is a lot of tree for dead
+      code. There is no 2.x on reflect-metadata 0.2, and even 3.0.0 still pins
+      0.1.13. **Maintainer decision.**
+    - No deep imports of `reflect-metadata/*` anywhere, so v0.2's new `exports`
+      map (which blocks `require('reflect-metadata/package.json')`) is inert.
+  - [x] **altcha 2.3.0 → 3.2.1 + altcha-lib 1.4.1 → 2.3.2 as a pair** — see the
+    commit message for the full API delta. The headline: **altcha 3 speaks only
+    ALTCHA's v2 proof of work** (a PBKDF2 key search instead of v1's
+    "hash the salt with every number up to `maxNumber`"), confirmed by reading
+    the widget bundle — there is no `maxnumber`/`challengeurl` left in it. The
+    server therefore had to move to altcha-lib's v2 API in the same change.
+    - **altcha-lib 2 ships a CommonJS build**, so the untyped
+      `import("altcha-lib")` shim v1 forced on us is gone: `createChallenge`,
+      `verifySolution`, `randomInt` and `deriveKey`
+      (`altcha-lib/algorithms/pbkdf2`) are static, typed imports that compile
+      and `require()` cleanly from the CJS backend.
+    - v2 needs **two** HMAC secrets (challenge signature + derived-key
+      signature). Both are derived from the single configured secret with
+      `HMAC(master, "altcha:v2:<label>")`, so `ALTCHA_HMAC_KEY` / the
+      `altcha_hmac_key` docker secret / the Redis-shared fallback all keep
+      working unchanged, without reusing one key for two purposes.
+    - Payload shape changed from a flat object with a `challenge` **string** to
+      `{challenge: {parameters, signature}, solution: {counter, derivedKey,
+      time}}`; it is decoded and shape-checked before verification.
+      **Replay protection now keys on the challenge signature** (an HMAC over
+      parameters carrying a random nonce and salt, verified before it is used
+      as a key) instead of v1's challenge hash.
+    - **`ALTCHA_MAX_NUMBER` is retired** — it has no v2 equivalent, and silently
+      ignoring it would leave an operator believing the captcha is harder than
+      it is, so it logs a warning when set. Difficulty is now `ALTCHA_COST`
+      (PBKDF2 iterations per attempt, default 5000) × `ALTCHA_COUNTER_MAX`
+      (default 4000; the answer is drawn per challenge from `[max/2, max]`).
+      `docs/auth-identity` §6 trued up, status line bumped. **No compose
+      change was needed** — neither compose file ever set `ALTCHA_MAX_NUMBER`.
+    - **The defaults are measured.** Driving the real widget in headless Chrome
+      (16 cores): ~0.44 ms per counter step at cost 5000. altcha-lib's own
+      suggested range (counter 5000–10000) measured **2.7 s and 4.2 s** — a
+      visible regression against the ~1 s v1 was tuned for, and multiples of
+      that on a phone. `ALTCHA_COUNTER_MAX = 4000` measures **1.0 s**
+      (programmatic) / **1.5 s** (checkbox path, which includes the widget's
+      500 ms `minDuration` floor and the challenge fetch). Even so it is ~15M
+      PBKDF2/SHA-256 iterations expected against v1's ~250k bare SHA-256 —
+      **more** proof of work than before, at the old UX.
+    - Frontend: `challengeurl` → `challenge` (v3 merged `challengeurl` and
+      `challengejson`). The `statechange` event still dispatches
+      `{state, payload}`, so `AltchaWidget`'s contract with `CaptchaModal` and
+      `SetupProfile` is untouched, and no CSS overrides exist to break. The
+      `altcha-widget-element` alias + stub `.d.ts` stay: v3 moved the
+      `react/jsx-runtime` augmentation out of the default types entry into
+      `altcha/types/react`, so the hazard is narrower, but the alias is what
+      keeps it out for good.
+    - **PoW flow tested end to end against the running stack**, not simulated:
+      a challenge from the real compiled `createCaptchaChallenge()` inside the
+      `api` container → served to a real altcha 3 widget in headless Chrome →
+      solved (both the programmatic `verify()` and the real checkbox click) →
+      the widget's payload handed back to the real `verifyCaptchaToken()` in
+      the container, against the real Redis. **Accepted exactly once.** The
+      rejection matrix is green too: replay, tampered `derivedKey`, tampered
+      challenge signature, lowered `cost`, expired challenge, the widget's
+      `test: true` payload, a v1-shaped payload (stale widget → fails closed)
+      and garbage/empty tokens.
+    - **Not covered headlessly (maintainer)**: the dev stack has a reCAPTCHA
+      secret configured, so `CAPTCHA_PROVIDER` resolves to `recaptcha` there and
+      `GET /Captcha/challenge` 404s — the HTTP route was exercised by shape
+      (`api/captcha.ts` only JSON-serialises `createCaptchaChallenge()`), not
+      over nginx. Wanted on an ALTCHA instance: the registration form
+      (`SetupProfile`) and the trust-score `CaptchaModal` in a real browser,
+      including the v3 widget's **refactored CSS** in light and dark mode and on
+      a phone, and a low-end-mobile solve time sanity check.
+  - [x] **@hapi/tlds 1 → 2: SKIPPED**, deliberately, in both workspaces.
+    - 2.0.0 is **ESM-only** (`"type": "module"`, `exports: {".":
+      "./dist/index.mjs"}` — the v1 dual CJS/ESM build is gone) and requires
+      Node ≥22. It also **ships a broken `types` field**: it points at
+      `./dist/index.d.ts`, and the tarball contains `index.d.mts`.
+    - srv would actually survive it: TS 5.9 under `nodenext` allows
+      `require(ESM)` and Node 24 executes it — verified, `tsc --noEmit` clean
+      and `require('@hapi/tlds')` returns the set. **The root workspace does
+      not**: `tsconfig.json` sets `moduleResolution: "node"` (node10), which
+      reads `main`/`types` rather than `exports`, so
+      `src/common/validators.ts` fails with TS2307. Fixing that means changing
+      the frontend's module resolution wholesale — far outside a dependency
+      bump — and splitting the two workspaces across majors is worse, since
+      `srv/common` is a symlink into `src/common`.
+    - **Zero payoff either way**: the data is identical. v1.1.7 and v2.0.0 both
+      expose a 1437-entry lowercase `Set`, with the same first entries.
+      Revisit when the frontend moves to `moduleResolution: bundler`.
+  - Verification gate: root `yarn typecheck && yarn lint && yarn test &&
+    yarn build && yarn check:html-rewrite` green after every step (0 errors,
+    the unchanged 645 pre-existing warnings, 4/4 tests); srv `npx tsc --noEmit`
+    clean after every step and `yarn tests` **20/20**;
+    `./run.sh update_backend` green three times (after reflect-metadata, after
+    the altcha rewrite, and with the tuned difficulty defaults), stack healthy
+    each time. Live smokes: `getCommunityList` over nginx (joi still rejects a
+    bad body), typeorm entity metadata inside the image, and the full ALTCHA
+    PoW round trip above.
 - [ ] **PR 2c (frontend, service worker)**: workbox `6.5.4` → `^7.4` (precaching +
   routing + build in lockstep). Own PR because the SW drives PWA install, push and
   multi-tab coordination; needs a manual push-notification + update-flow test.

@@ -60,9 +60,19 @@ jest.mock('../util/postgres', () => ({
 jest.mock('../repositories/users', () => ({ __esModule: true, default: {} }));
 jest.mock('../repositories/communities', () => ({ __esModule: true, default: {} }));
 
+// The NSFW gate has its own spec (imageFilter.spec.ts); here it is mocked so
+// these tests don't need model weights — plus a few tests below pin the
+// contract between saveImage and the gate (ordering, arguments, skip flag).
+const assertImageAllowed = jest.fn<Promise<void>, any[]>().mockResolvedValue(undefined);
+jest.mock('../moderation/imageFilter', () => ({
+  __esModule: true,
+  default: { assertImageAllowed: (...args: any[]) => assertImageAllowed(...args) },
+}));
+
 import sharp from 'sharp';
 import crypto from 'crypto';
 import fileHelper from '../repositories/files';
+import errors from '../common/errors';
 import { PutObjectCommand, ListBucketsCommand } from '@aws-sdk/client-s3';
 
 async function makePng(width: number, height: number): Promise<Buffer> {
@@ -80,6 +90,8 @@ describe('fileHelper.saveImage', () => {
   beforeEach(() => {
     putObjectInputs.length = 0;
     poolQuery.mockClear();
+    assertImageAllowed.mockClear();
+    assertImageAllowed.mockResolvedValue(undefined);
     s3Send.mockReset();
     // ListBuckets first, then PutObject
     s3Send.mockImplementation(async (command: any) => {
@@ -194,6 +206,41 @@ describe('fileHelper.saveImage', () => {
 
     expect(putObjectInputs).toHaveLength(0);
     expect(s3Send).not.toHaveBeenCalled();
+  });
+
+  it('runs the NSFW gate on the stored bytes before anything reaches S3', async () => {
+    const png = await makePng(300, 300);
+
+    await fileHelper.saveImage('user-2', { type: 'articleImage' } as any, png, { width: 100, height: 100 });
+
+    expect(assertImageAllowed).toHaveBeenCalledTimes(1);
+    const [storedBuffer, sourceBuffer, moderationContext] = assertImageAllowed.mock.calls[0];
+    // classified bytes are exactly what gets uploaded; the cache key is the source
+    expect(storedBuffer.equals(putObjectInputs[0].Body)).toBe(true);
+    expect(sourceBuffer.equals(png)).toBe(true);
+    expect(moderationContext).toEqual({ uploadType: 'articleImage', userId: 'user-2' });
+  });
+
+  it('stores nothing when the gate rejects', async () => {
+    assertImageAllowed.mockRejectedValueOnce(new Error(errors.server.IMAGE_CONTENT_REJECTED));
+    const png = await makePng(120, 120);
+
+    await expect(
+      fileHelper.saveImage(null, { type: 'userProfileImage' } as any, png, { width: 110, height: 110 }),
+    ).rejects.toThrow(errors.server.IMAGE_CONTENT_REJECTED);
+
+    expect(s3Send).not.toHaveBeenCalled();
+    expect(putObjectInputs).toHaveLength(0);
+    expect(poolQuery).not.toHaveBeenCalled();
+  });
+
+  it('skips the gate for derived images (skipModeration)', async () => {
+    const png = await makePng(90, 90);
+
+    await fileHelper.saveImage(null, { type: 'userProfileImage' } as any, png, undefined, { skipModeration: true });
+
+    expect(assertImageAllowed).not.toHaveBeenCalled();
+    expect(putObjectInputs).toHaveLength(1);
   });
 
   it('exposes PutObjectCommand from the mocked SDK (guards the mock itself)', () => {

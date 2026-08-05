@@ -42,6 +42,7 @@ const errors = {
     RATE_LIMIT_EXCEEDED: "RATE_LIMIT_EXCEEDED",
     LIMIT_EXCEEDED: "LIMIT_EXCEEDED",
     FILESIZE_EXCEEDED: "FILESIZE_EXCEEDED",
+    IMAGE_CONTENT_REJECTED: "IMAGE_CONTENT_REJECTED",
     EMAIL_VALIDATION_FAILED: "EMAIL_VALIDATION_FAILED",
     CALL_LIMIT_EXCEEDED: "CALL_LIMIT_EXCEEDED",
     BROADCASTERS_LIMIT_EXCEEDED: "BROADCASTERS_LIMIT_EXCEEDED",
@@ -71,6 +72,7 @@ const errors = {
   client: {
     LOGIN_REQUIRED: "This action requires a login",
     UPLOAD_SIZE_LIMIT: "Maximum upload size exceeded",
+    IMAGE_CONTENT_REJECTED: "This image appears to contain explicit content and was not uploaded",
     NICKNAME_TAKEN: "This nickname is already taken",
     NOT_FOUND: "Not found",
     TIMEOUT: "Action timed out",

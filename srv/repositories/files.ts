@@ -34,6 +34,7 @@ import userHelper from "./users";
 import communityHelper from "./communities";
 import pool from "../util/postgres";
 import urlConfig from '../util/urls';
+import imageFilter from "../moderation/imageFilter";
 
 const s3_secret = dockerSecret('s3_secret') || process.env.S3_SECRET as string;
 const s3_signedUrlExpiration = 7 * 24 * 60 * 60; // 7 days
@@ -41,6 +42,10 @@ const s3_signedUrlExpiration = 7 * 24 * 60 * 60; // 7 days
 type SaveIntoS3Options = {
   withoutEnlargement?: boolean;
   animated?: boolean;
+  /** Skip the NSFW check for internally derived images whose source was
+   * already classified: the social-preview compositions and the old
+   * re-encoding migrations. Never set this for externally provided bytes. */
+  skipModeration?: boolean;
 }
 
 // IMAGE FUNCTIONS
@@ -362,6 +367,20 @@ class FileHelper {
       resized = originalImage.rotate().webp(webpOptions);
     }
     resizedBuffer = await resized.toBuffer();
+
+    // NSFW gate — must run before anything reaches S3. Classifies a 224px
+    // normalization of the *source* buffer (so small+large variants of one
+    // upload agree and classify once); with `animated` set, frames beyond
+    // frame 0 are scanned too (randomly sampled above the frame cap — see
+    // MAX_FRAMES_SCANNED in the moderation module).
+    if (!options.skipModeration) {
+      await imageFilter.assertImageAllowed(imageBuffer, {
+        uploadType: uploadOptions.type,
+        userId,
+        animated: options.animated || false,
+      });
+    }
+
     const newMetadata = await sharp(resizedBuffer).metadata();
     const fileId = crypto.createHash('sha256').update(resizedBuffer).digest('hex');
 
@@ -549,7 +568,8 @@ class FileHelper {
         throw new Error(errors.server.NOT_FOUND);
       }
       const composedImage = await fileHelper.composeProfileImage(buffer);
-      const previewImage = await fileHelper.saveImage(userId, { type: 'userProfileImage' }, composedImage);
+      // source image passed the filter when it was stored
+      const previewImage = await fileHelper.saveImage(userId, { type: 'userProfileImage' }, composedImage, undefined, { skipModeration: true });
       await userHelper.updateUser(userId, { previewImageId: previewImage.fileId });
     } catch (e) {
       console.log("Error: could not update user profile social preview image", e);
@@ -574,7 +594,8 @@ class FileHelper {
         throw new Error(errors.server.NOT_FOUND);
       }
       const composedImage = await fileHelper.composeCommunityImage(buffer);
-      const previewImage = await fileHelper.saveImage(userId, { type: 'communityLogoSmall' }, composedImage);
+      // source image passed the filter when it was stored
+      const previewImage = await fileHelper.saveImage(userId, { type: 'communityLogoSmall' }, composedImage, undefined, { skipModeration: true });
       await communityHelper.updateCommunity({ id: communityId, previewImageId: previewImage.fileId });
     } catch (e) {
       console.log("Error: could not update community social preview image", e);

@@ -15,6 +15,7 @@ import { ReactEditor, useSlate } from 'slate-react';
 import { Editor, Transforms } from 'slate';
 import { isCurrentNodeEmptyParagraph } from '../EditField.helpers';
 import config from 'common/config';
+import { checkImageBeforeUpload } from 'moderation/checkImageBeforeUpload';
 
 import './MediaPickerDropdown.css';
 
@@ -24,7 +25,13 @@ type Props = {
 
 const randomIdGen = createTranslator();
 
-export function addImageMedia(editor: Editor, file: File) {
+/**
+ * Async since the NSFW pre-check: a file the user declines in the confirmation
+ * dialog never becomes an image node, so it never reaches the upload.
+ */
+export async function addImageMedia(editor: Editor, file: File) {
+  if (!await checkImageBeforeUpload(file)) return;
+
   const elementId = randomIdGen.generate();
 
   if (isCurrentNodeEmptyParagraph(editor)) {
@@ -43,13 +50,17 @@ const MediaPickerDropdown: React.FC<Props> = (props) => {
 
   const handleMediaChange = React.useCallback(async (ev: React.ChangeEvent<HTMLInputElement>) => {
     setTimeout(() => ReactEditor.focus(editor), 10);
-    if (!ev.target.files || ev.target.files.length === 0) {
-      return;
-    }
+    // Read the file and clear the input *before* any await: `ev.target` is not
+    // safe to touch afterwards, and leaving the value set would make re-picking
+    // the same file after a "Cancel" in the pre-check dialog fire no change
+    // event at all.
+    const input = ev.target;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
 
     // Creates node with file candidate, node will try to load  and validate image by itself
-    const file = ev.target.files[0];
-    addImageMedia(editor, file);
+    await addImageMedia(editor, file);
   }, [editor]);
 
   const openMediaPicker = React.useCallback(() => {

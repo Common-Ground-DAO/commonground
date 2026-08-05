@@ -25,7 +25,7 @@ const AttachmentDropdown: React.FC<Props> = ({ setAttachments, setAttachmentErro
   const inputFileRef = useRef<HTMLInputElement>(null);
   const [isOpen, setOpen] = useState(false);
 
-  const handleChatMediaChange = React.useCallback((ev: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChatMediaChange = React.useCallback(async (ev: React.ChangeEvent<HTMLInputElement>) => {
     setTimeout(() => {
       setLockFocus(false);
       onPick();
@@ -35,9 +35,11 @@ const AttachmentDropdown: React.FC<Props> = ({ setAttachments, setAttachmentErro
     }
 
     const files = Array.from(ev.target.files);
-    addFiles(setAttachments, setAttachmentError, files, attachmentLimit);
-
+    // Reset before awaiting `addFiles` (which is async since the NSFW
+    // pre-check), so picking the same file again still fires a change event.
     ev.target.value = '';
+
+    await addFiles(setAttachments, setAttachmentError, files, attachmentLimit);
   }, [attachmentLimit, onPick, setAttachmentError, setAttachments, setLockFocus]);
 
   const onUploadImageClick = React.useCallback(() => {

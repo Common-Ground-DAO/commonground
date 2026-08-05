@@ -40,7 +40,7 @@ export class processSocialPreviewImages1665664796167 implements MigrationInterfa
                         try {
                             const composedImage = await fileHelper.composeCommunityImage(buffer);
                             if (composedImage) {
-                                const previewImage = await fileHelper.saveImage(null, { type: "communityLogoSmall" }, composedImage);
+                                const previewImage = await fileHelper.saveImage(null, { type: "communityLogoSmall" }, composedImage, undefined, { skipModeration: true });
                                 await queryRunner.query(`
                                     UPDATE groups
                                     SET preview_image_id = $2
@@ -91,7 +91,7 @@ export class processSocialPreviewImages1665664796167 implements MigrationInterfa
                         try {
                             const composedImage = await fileHelper.composeProfileImage(buffer);
                             if (composedImage) {
-                                const previewImage = await fileHelper.saveImage(null, { type: "communityLogoSmall" }, composedImage);
+                                const previewImage = await fileHelper.saveImage(null, { type: "communityLogoSmall" }, composedImage, undefined, { skipModeration: true });
                                 await queryRunner.query(`
                                     UPDATE accounts
                                     SET preview_image_id = $2

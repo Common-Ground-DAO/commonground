@@ -18,6 +18,8 @@ import { useSignedUrl } from 'hooks/useSignedUrl';
 import fileApi from 'data/api/file';
 import CommunityCard from 'components/molecules/CommunityCard/CommunityCard';
 import { useCommunityListView } from 'context/CommunityListViewProvider';
+import { useSnackbarContext } from 'context/SnackbarContext';
+import { imageUploadErrorText, notifyIfImageRejected } from 'moderation/imageUploadError';
 import TagInputField from 'components/molecules/inputs/TagInputField/TagInputField';
 
 type Props = {
@@ -28,6 +30,7 @@ type Props = {
 }
 
 const PluginEditor: React.FC<Props> = (props) => {
+  const { showSnackbar } = useSnackbarContext();
   const { isCreating, currentPlugin, setCurrentPlugin, onDeletePlugin } = props;
   const { community, roles } = useLoadedCommunityContext();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -45,11 +48,19 @@ const PluginEditor: React.FC<Props> = (props) => {
 
   const setAppstoreImage = async (data?: File) => {
     if (!data) return;
-    const response = await fileApi.uploadImage({
-      type: 'pluginAppstoreImage',
-    }, data);
+    try {
+      const response = await fileApi.uploadImage({
+        type: 'pluginAppstoreImage',
+      }, data);
 
-    setCurrentPlugin(oldPlugin => oldPlugin ? ({ ...oldPlugin, imageId: response.imageId }) : undefined);
+      setCurrentPlugin(oldPlugin => oldPlugin ? ({ ...oldPlugin, imageId: response.imageId }) : undefined);
+    } catch (e) {
+      // `ImageUploadField` calls this without awaiting, so an uncaught
+      // rejection here would be invisible to the user.
+      if (!notifyIfImageRejected(e)) {
+        showSnackbar({ type: 'warning', text: imageUploadErrorText(e, 'Could not upload the image') });
+      }
+    }
   }
 
   return <div className='flex flex-col gap-8'>

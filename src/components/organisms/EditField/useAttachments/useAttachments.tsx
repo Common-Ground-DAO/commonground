@@ -16,6 +16,14 @@ export type InMemoryAttachment = Models.Message.Attachment & {
   event?: Models.Community.Event;
   tentativeFile?: File;
   state?: 'INITIAL' | 'LOADING' | 'LOADED';
+  /**
+   * Set while the NSFW pre-check is still running for this file (see
+   * `AttachmentDropdown.helpers.ts`). The tile is rendered immediately so the
+   * pick is visible, but `MediaAttachment` must not start uploading yet, and
+   * `EditField`'s `areAttachmentsLoaded` treats it as busy so a message sent
+   * during the check cannot silently drop the attachment.
+   */
+  precheckPending?: boolean;
   originalUrl?: string;
   giphyGif?: IGif;
 };

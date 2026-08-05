@@ -12,6 +12,7 @@ import TextAreaField from 'components/molecules/inputs/TextAreaField/TextAreaFie
 import userApi from 'data/api/user';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import fileApi from 'data/api/file';
+import { imageUploadErrorText, notifyIfImageRejected } from 'moderation/imageUploadError';
 import Button from 'components/atoms/Button/Button';
 import _ from 'lodash';
 import ToggleText from 'components/molecules/ToggleText/ToggleText';
@@ -123,18 +124,23 @@ const ProfilePage: React.FC<Props> = (props) => {
         if (hasOwnDataUpdate) await userApi.updateOwnData(userDataRequest);
 
         let photoUpdateSuccess = true;
+        let photoUpdateError: string | undefined;
         if (userPhoto) {
           try {
             await fileApi.uploadImage({ type: 'userProfileImage' }, userPhoto);
           }
           catch (e) {
             photoUpdateSuccess = false;
+            // A rejected image already has the shared modal up; leaving
+            // `photoUpdateError` unset suppresses the duplicate snackbar
+            // without claiming the profile update fully succeeded.
+            if (!notifyIfImageRejected(e)) photoUpdateError = imageUploadErrorText(e, 'Image update failed');
           }
         }
 
         if (hasOwnDataUpdate || hasProfileUpdate || userPhoto) {
           if (!photoUpdateSuccess) {
-            showSnackbar({ type: 'warning', text: 'Image update failed' });
+            if (photoUpdateError) showSnackbar({ type: 'warning', text: photoUpdateError });
           }
           else {
             showSnackbar({ type: 'info', text: 'Profile updated' });

@@ -26,11 +26,14 @@ import ImageUploadField from "components/molecules/inputs/ImageUploadField/Image
 import ManagementHeader2 from "components/molecules/ManagementHeader2/ManagementHeader2";
 import { useNavigationContext } from "components/SuspenseRouter/SuspenseRouter";
 import FloatingSaveOptions from "../FloatingSaveOptions/FloatingSaveOptions";
+import { useSnackbarContext } from "context/SnackbarContext";
+import { imageUploadErrorText, notifyIfImageRejected } from "moderation/imageUploadError";
 
 type Props = {
 };
 
 const CommunityManagement: React.FC<Props> = (props: Props) => {
+  const { showSnackbar } = useSnackbarContext();
   const navigate = useNavigate();
   const { isMobile } = useWindowSizeContext();
   const { community } = useLoadedCommunityContext();
@@ -137,28 +140,39 @@ const CommunityManagement: React.FC<Props> = (props: Props) => {
     }
     await data.community.updateCommunity(community.id, communityUpdates);
 
-    if (selectedImage) {
-      await fileApi.uploadImage({
-        type: 'communityLogoSmall',
-        communityId: community.id
-      }, selectedImage);
-    }
+    // `FloatingSaveOptions` wires this straight to an onClick without awaiting,
+    // so an upload rejection (e.g. the NSFW filter's IMAGE_CONTENT_REJECTED)
+    // would otherwise escape as an unhandled rejection and tell the user
+    // nothing.
+    try {
+      if (selectedImage) {
+        await fileApi.uploadImage({
+          type: 'communityLogoSmall',
+          communityId: community.id
+        }, selectedImage);
+      }
 
-    if (selectedSidebarImage) {
-      await fileApi.uploadImage({
-        type: 'communityLogoLarge',
-        communityId: community.id
-      }, selectedSidebarImage);
-    }
+      if (selectedSidebarImage) {
+        await fileApi.uploadImage({
+          type: 'communityLogoLarge',
+          communityId: community.id
+        }, selectedSidebarImage);
+      }
 
-    if (selectedHeader) {
-      await fileApi.uploadImage({
-        type: 'communityHeaderImage',
-        communityId: community.id
-      }, selectedHeader);
+      if (selectedHeader) {
+        await fileApi.uploadImage({
+          type: 'communityHeaderImage',
+          communityId: community.id
+        }, selectedHeader);
+      }
+    } catch (e) {
+      if (!notifyIfImageRejected(e)) {
+        showSnackbar({ type: 'warning', text: imageUploadErrorText(e, 'Could not upload the image') });
+      }
+      return;
     }
     setDirty(false);
-  }, [community.id, descError, description, links, nameError, selectedHeader, selectedImage, selectedSidebarImage, setDirty, shortDescription, tags, title]);
+  }, [community.id, descError, description, links, nameError, selectedHeader, selectedImage, selectedSidebarImage, setDirty, shortDescription, showSnackbar, tags, title]);
 
   const updateTags = React.useCallback((newTags: string[]) => {
     setDirty(true);

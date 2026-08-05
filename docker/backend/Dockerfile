@@ -1,4 +1,10 @@
 FROM node:24.18-bookworm
+# NSFW classification model, pinned revision + sha256-verified (the runtime
+# loads it from /models/nsfw and never touches the network). First layers on
+# purpose: they depend on nothing but the script, so source changes don't
+# re-download 87 MB from huggingface.co on every build.
+COPY download_model.sh /tmp/download_model.sh
+RUN sh /tmp/download_model.sh /models/nsfw && rm /tmp/download_model.sh
 COPY ./dist /dist
 WORKDIR /dist
 RUN apt-get update &&\
@@ -8,7 +14,14 @@ RUN sed -i 's/yarnPath: .*//g' /dist/.yarnrc.yml && \
     corepack enable && \
     yarn &&\
     yarn tsc && \
-    rm /dist/.yarnrc.yml
+    rm /dist/.yarnrc.yml && \
+    # onnxruntime-node ships all platforms' prebuilt binaries and the
+    # transformers dependency tree includes the browser-only onnxruntime-web —
+    # drop the ~290 MB that can never run in this linux node image (verified:
+    # classification works without onnxruntime-web in the node runtime)
+    rm -rf /dist/node_modules/onnxruntime-node/bin/napi-v6/darwin \
+           /dist/node_modules/onnxruntime-node/bin/napi-v6/win32 \
+           /dist/node_modules/onnxruntime-web
 RUN apt-get remove -y build-essential python3-pip &&\
     apt-get clean &&\
     apt-get autoremove --yes &&\

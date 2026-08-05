@@ -9,6 +9,8 @@ import errors from "../../../common/errors";
 import Jdenticon from "../../../components/atoms/Jdenticon/Jdenticon";
 import Button from "../../../components/atoms/Button/Button";
 import config from "../../../common/config";
+import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
+import { notifyIfImageRejected } from "moderation/imageUploadError";
 import { useNavigate } from "react-router-dom";
 import { getUrl } from 'common/util';
 
@@ -33,16 +35,28 @@ export default function UserProfilePhoto(props: Props) {
 
   const handleImageChange = async (ev: React.ChangeEvent<HTMLInputElement>) => {
     ev.stopPropagation();
-    if (ev.target.files && ev.target.files.length === 1) {
-      if (ev.target.files[0].size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
+    // Read the file and clear the input *before* any await: `ev.target` is not
+    // safe to touch afterwards, and leaving the value set would make re-picking
+    // the same file after a "Cancel" in the pre-check dialog fire no change
+    // event at all.
+    const input = ev.target;
+    const files = input.files;
+    const file = files && files.length === 1 ? files[0] : undefined;
+    input.value = '';
+    if (file) {
+      if (file.size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
         setError(errors.client.UPLOAD_SIZE_LIMIT);
       } else {
+        if (!await checkImageBeforeUpload(file)) return;
         try {
-          await fileApi.uploadImage({ type: 'userProfileImage' }, ev.target.files[0]);
+          await fileApi.uploadImage({ type: 'userProfileImage' }, file);
           setError(undefined);
         } catch (err) {
           console.error(err);
-          setError("An unknown error has occurred");
+          // The rejection is reported by the shared modal, so the inline error
+          // is cleared instead of repeating it in a second place.
+          if (notifyIfImageRejected(err)) setError(undefined);
+          else setError("An unknown error has occurred");
         }
       }
     }

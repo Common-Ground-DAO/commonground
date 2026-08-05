@@ -3,10 +3,11 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal';
+import { createPortal } from 'react-dom';
 import Button from 'components/atoms/Button/Button';
-import { useWindowSizeContext } from './WindowSizeProvider';
 import { registerSuspiciousImageConfirm } from 'moderation/suspiciousImageDialog';
+
+import './SuspiciousImageModalProvider.css';
 
 /**
  * Hosts the "this image may be explicit" confirmation.
@@ -18,13 +19,45 @@ import { registerSuspiciousImageConfirm } from 'moderation/suspiciousImageDialog
  * It is a warning, never a block. The client classifier is ~90% accurate, so a
  * hard stop here would silently strand legitimate uploads; "Upload anyway"
  * always exists, and the server still gets the final say.
+ *
+ * ## Why this does not use `ScreenAwareModal` / `Modal`
+ *
+ * Every picker that can trigger this dialog lives *inside* another modal
+ * (Create Community, Schedule Event, user settings, the bot editor …), so the
+ * confirmation is always a nested modal, and both shared modal hosts break in
+ * that position:
+ *
+ * - `ScreenAwareModal` renders a `BottomSliderModal` on mobile, which portals
+ *   into `document.body` at `z-index: 1000` — underneath `#modal-root-anchor`
+ *   (10000) and its `.modal-root` (10100). The dialog would be painted below
+ *   the parent modal's backdrop and receive no pointer events, so nothing could
+ *   ever answer the promise and the picked file would be lost with no feedback.
+ * - `Modal` mutates the *shared* `#modal-root-anchor` on mount and resets it on
+ *   unmount. Closing a nested modal therefore strips the backdrop off the
+ *   parent modal that is still open (`CreateCommunityModal` works around this
+ *   with `noBackground` + its own overlay).
+ *
+ * A two-button confirmation is not worth either risk, so it renders into its
+ * own portal node on `document.body`, with its own backdrop and a z-index above
+ * every modal layer in the app. See `SuspiciousImageModalProvider.css`.
  */
 export function SuspiciousImageModalProvider(props: React.PropsWithChildren<{}>) {
-  const { isMobile } = useWindowSizeContext();
   // A queue, not a single slot: a multi-file drop checks its files one after
   // another, and a second suspicious file must not lose its resolver.
   const queueRef = useRef<((proceed: boolean) => void)[]>([]);
   const [isOpen, setIsOpen] = useState(false);
+  const [portalNode] = useState(() => {
+    const node = document.createElement('div');
+    node.id = 'suspicious-image-dialog-root';
+    return node;
+  });
+
+  useEffect(() => {
+    document.body.appendChild(portalNode);
+    return () => {
+      portalNode.remove();
+    };
+  }, [portalNode]);
 
   useEffect(() => {
     registerSuspiciousImageConfirm(
@@ -52,20 +85,49 @@ export function SuspiciousImageModalProvider(props: React.PropsWithChildren<{}>)
   // Closing by backdrop/escape is a cancel: the safer of the two answers.
   const onClose = useCallback(() => answer(false), [answer]);
 
+  // Captured on the way down, and swallowed: while this dialog is up it is the
+  // topmost thing on screen, so Escape must answer *it* and not also close the
+  // modal underneath (`ManagementContentModal` for one listens on `document`
+  // and would not recognise this dialog as "inside" a modal).
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key !== 'Escape') return;
+      ev.stopImmediatePropagation();
+      ev.preventDefault();
+      onClose();
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [isOpen, onClose]);
+
   return (
     <>
       {props.children}
-      <ScreenAwareModal title="Sensitive content?" isOpen={isOpen} onClose={onClose}>
-        <div className={`flex flex-col gap-4${isMobile ? ' p-4 pb-16' : ' p-4'}`}>
-          <p className="cg-text-main">
-            This image may contain inappropriate content. Upload it anyway?
-          </p>
-          <div className="btnList justify-end gap-4">
-            <Button text="Cancel" role="secondary" onClick={onClose} />
-            <Button text="Upload anyway" role="primary" onClick={() => answer(true)} />
-          </div>
-        </div>
-      </ScreenAwareModal>
+      {isOpen &&
+        createPortal(
+          <div className="suspicious-image-dialog-backdrop" onClick={onClose}>
+            <div
+              className="suspicious-image-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="suspicious-image-dialog-title"
+              onClick={(ev) => ev.stopPropagation()}
+            >
+              <div id="suspicious-image-dialog-title" className="cg-heading-3">
+                Sensitive content?
+              </div>
+              <p className="cg-text-main">
+                This image may contain inappropriate content. Upload it anyway?
+              </p>
+              <div className="btnList justify-end gap-4">
+                <Button text="Cancel" role="secondary" onClick={onClose} />
+                <Button text="Upload anyway" role="primary" onClick={() => answer(true)} />
+              </div>
+            </div>
+          </div>,
+          portalNode,
+        )}
     </>
   );
 }

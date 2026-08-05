@@ -24,6 +24,7 @@ import { isImageContentRejected } from 'moderation/imageUploadError';
 import { UniversalProfileStatus, UniversalProfileSignButton } from '../UniversalProfileSign/UniversalProfileSign';
 import { useUniversalProfile } from 'context/UniversalProfileProvider';
 import { useUserOnboardingContext } from 'context/UserOnboarding';
+import { useSnackbarContext } from 'context/SnackbarContext';
 import { CAPTCHA_MISCONFIGURED_TEXT, useCaptchaProvider } from 'context/CaptchaContext';
 
 type ButtonProps = {
@@ -48,6 +49,7 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
   const [usernameError, setUsernameError] = useState('');
   const [userPhoto, setUserPhoto] = useState<File | undefined>();
   const [genericError, setGenericError] = useState<string>('');
+  const { showSnackbar } = useSnackbarContext();
   const { provider: captchaProvider, resolved: captchaResolved, misconfigured: captchaMisconfigured } = useCaptchaProvider();
   // dev skips captcha server-side, "off" is an explicit opt-out; both pre-fill
   // a placeholder token so the create button is not blocked.
@@ -200,10 +202,16 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
         await data.user.createUser({ ...createUserData, recaptchaToken });
         if (userPhoto && createUserData.useCgProfile) {
           await fileApi.uploadImage({ type: 'userProfileImage' }, userPhoto).catch(e => {
+            // The account already exists at this point, so onboarding has to
+            // continue: keeping the user on this panel would only offer them a
+            // "create account" button that can no longer succeed. That rules
+            // out `setGenericError` — `createFinished()` below slides this
+            // panel off screen in the same render, so anything rendered inside
+            // it is never seen. A snackbar outlives the step change.
             console.error("Error uploading user image", e);
-            // The account exists at this point, so onboarding continues either
-            // way — but a rejected image must not vanish without a word.
-            if (isImageContentRejected(e)) setGenericError(errors.client.IMAGE_CONTENT_REJECTED);
+            if (isImageContentRejected(e)) {
+              showSnackbar({ type: 'warning', text: errors.client.IMAGE_CONTENT_REJECTED, durationSeconds: 10 });
+            }
           });
         }
         createFinished();
@@ -216,7 +224,7 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
       }
     }
     setButtonState(oldState => ({ ...oldState, loading: false }));
-  }, [createUserData, profileLockedIn, setButtonState, luksoData, twitterData, farcasterData, setProfileLockedIn, recaptchaToken, userPhoto, createFinished]);
+  }, [createUserData, profileLockedIn, setButtonState, luksoData, twitterData, farcasterData, setProfileLockedIn, recaptchaToken, userPhoto, createFinished, showSnackbar]);
 
   useEffect(() => {
     if (buttonState.clicked) {

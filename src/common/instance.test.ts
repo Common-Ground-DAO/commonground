@@ -37,7 +37,7 @@ describe('getInstanceConfig', () => {
       appUrl: 'https://chat.example.org///',
       captchaProvider: 'altcha',
       activeChains: ['ethereum', 'base'],
-      features: { calls: false, email: true },
+      features: { calls: false, email: true, imageFilter: false },
     });
 
     expect(config).toEqual({
@@ -45,7 +45,7 @@ describe('getInstanceConfig', () => {
       appUrl: 'https://chat.example.org',
       captchaProvider: 'altcha',
       activeChains: ['ethereum', 'base'],
-      features: { calls: false, email: true },
+      features: { calls: false, email: true, imageFilter: false },
     });
   });
 
@@ -56,7 +56,7 @@ describe('getInstanceConfig', () => {
       cgidUrl: '/relative',
       captchaProvider: 'none',
       activeChains: ['ok', 'NOT OK', 42],
-      features: { calls: 'yes', somethingElse: true },
+      features: { calls: 'yes', imageFilter: 'false', somethingElse: true },
       walletConnectProjectId: '../../etc/passwd',
       unknownKey: 'dropped',
     });

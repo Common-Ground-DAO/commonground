@@ -193,9 +193,12 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
     });
   }, [setAttachments]);
 
+  // `precheckPending` counts as busy: sending while the NSFW pre-check is still
+  // running would drop the attachment (it has no imageId yet) and clear the
+  // list out from under `addFiles`.
   const areAttachmentsLoaded = React.useMemo(() => {
     if (!!attachments) {
-      const foundLoadingAttachment = attachments.find((attachment) => attachment.state === 'LOADING');
+      const foundLoadingAttachment = attachments.find((attachment) => attachment.state === 'LOADING' || attachment.precheckPending);
       return !foundLoadingAttachment;
     }
     return true;

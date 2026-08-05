@@ -64,7 +64,12 @@ const AttachmentButton: React.FC<Props> = (props) => {
 
   const { updateAttachment, setIsLoadedState } = props;
   React.useEffect(() => {
-    if (!requestStarted) {
+    // `precheckPending` means the NSFW pre-check has not answered for this file
+    // yet — the tile is already on screen (spinner and all), but uploading now
+    // would defeat the point of asking. `addFiles` either clears the flag, at
+    // which point this effect runs again and uploads, or removes the
+    // attachment altogether.
+    if (!requestStarted && !props.precheckPending) {
       setRequestStarted(true);
 
       const uploadFunc = async (file: File) => {
@@ -81,7 +86,7 @@ const AttachmentButton: React.FC<Props> = (props) => {
         uploadFunc(props.tentativeFile);
       }
     }
-  }, [updateAttachment, props.tentativeFile, requestStarted]);
+  }, [updateAttachment, props.tentativeFile, props.precheckPending, requestStarted]);
 
   const fileUrl = React.useMemo(() => {
     if (props.tentativeFile) {

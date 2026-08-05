@@ -28,14 +28,19 @@ export default function ImageUploadField(props: Props) {
   const [error, setError] = useState<string>();
 
   const handleImageChange = async (ev: React.ChangeEvent<HTMLInputElement>) => {
+    // Read the file and clear the input *before* any await: `ev.target` is not
+    // safe to touch afterwards, and leaving the value set would make re-picking
+    // the same file after a "Cancel" in the pre-check dialog fire no change
+    // event at all.
+    const input = ev.target;
+    const file = input.files?.[0];
+    input.value = '';
     if (onChange) {
-      if (!ev.target.files || ev.target.files.length === 0) {
+      if (!file) {
         onChange(undefined);
-      } else if (ev.target.files[0].size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
+      } else if (file.size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
         setError(errors.client.UPLOAD_SIZE_LIMIT);
       } else {
-        // Read before awaiting: the input is reset on the next open.
-        const file = ev.target.files[0];
         if (!await checkImageBeforeUpload(file)) return;
         try {
           onChange(file);

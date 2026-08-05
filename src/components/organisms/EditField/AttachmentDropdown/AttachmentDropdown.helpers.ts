@@ -7,10 +7,22 @@ import { InMemoryAttachment } from "../useAttachments/useAttachments";
 
 /**
  * Async since the NSFW pre-check: every image runs through
- * `checkImageBeforeUpload` before it becomes an attachment, and files the user
- * declines in the confirmation dialog are dropped. Sequential rather than
+ * `checkImageBeforeUpload` before it is uploaded, and files the user declines
+ * in the confirmation dialog are dropped again. Sequential rather than
  * `Promise.all` on purpose — the dialog can only ask about one image at a time,
  * and the model load is shared anyway.
+ *
+ * The attachments are added to state *synchronously*, in `precheckPending`
+ * state, and only then checked. Waiting for the check before touching state
+ * would leave the composer showing nothing at all for as long as the check
+ * takes (up to a 4.4 MB model download on the first image of a session), which
+ * both invites duplicate picks and lets a message be sent in the meantime —
+ * the send would clear `attachments`, and the pending update would then land on
+ * the emptied list and attach the image to the *next* message.
+ *
+ * `tentativeFile` identity, not `imageId`, is what pairs a verdict back to its
+ * tile: `imageId` starts out as the file name, which two picked files can
+ * share.
  */
 export async function addFiles(
   setAttachments: React.Dispatch<React.SetStateAction<InMemoryAttachment[]>>,
@@ -18,13 +30,9 @@ export async function addFiles(
   files: File[],
   attachmentLimit: number
 ) {
-  const acceptedFiles: File[] = [];
-  for (const file of files) {
-    if (await checkImageBeforeUpload(file)) acceptedFiles.push(file);
-  }
-  if (acceptedFiles.length === 0) return;
+  if (files.length === 0) return;
 
-  const newAttachments: InMemoryAttachment[] = acceptedFiles.map(file => ({ imageId: file.name, largeImageId: '', type: 'image', tentativeFile: file, state: 'INITIAL' }));
+  const newAttachments: InMemoryAttachment[] = files.map(file => ({ imageId: file.name, largeImageId: '', type: 'image', tentativeFile: file, state: 'INITIAL', precheckPending: true }));
   setAttachments(oldAttachments => {
     const attachmentList = [...oldAttachments, ...newAttachments];
     if (attachmentList.length > attachmentLimit) {
@@ -32,4 +40,11 @@ export async function addFiles(
     }
     return attachmentList.slice(0, attachmentLimit);
   });
+
+  for (const file of files) {
+    const accepted = await checkImageBeforeUpload(file);
+    setAttachments(oldAttachments => accepted
+      ? oldAttachments.map(att => att.tentativeFile === file ? { ...att, precheckPending: false } : att)
+      : oldAttachments.filter(att => att.tentativeFile !== file));
+  }
 }

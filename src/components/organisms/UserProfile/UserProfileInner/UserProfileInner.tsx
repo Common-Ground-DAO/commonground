@@ -68,7 +68,13 @@ export default function UserProfileInner(props: Props & {
   }, [closeTray, navigate, user]);
 
   const handleImageChange = useCallback(async (ev: React.ChangeEvent<HTMLInputElement>) => {
-    const file = ev.target.files?.[0];
+    // Read the file and clear the input *before* any await: `ev.target` is not
+    // safe to touch afterwards, and leaving the value set would make re-picking
+    // the same file after a "Cancel" in the pre-check dialog fire no change
+    // event at all.
+    const input = ev.target;
+    const file = input.files?.[0];
+    input.value = '';
     if (!file) return;
     if (file.size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
       showSnackbar({ type: 'warning', text: errors.client.UPLOAD_SIZE_LIMIT });

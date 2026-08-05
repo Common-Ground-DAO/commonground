@@ -50,12 +50,16 @@ const MediaPickerDropdown: React.FC<Props> = (props) => {
 
   const handleMediaChange = React.useCallback(async (ev: React.ChangeEvent<HTMLInputElement>) => {
     setTimeout(() => ReactEditor.focus(editor), 10);
-    if (!ev.target.files || ev.target.files.length === 0) {
-      return;
-    }
+    // Read the file and clear the input *before* any await: `ev.target` is not
+    // safe to touch afterwards, and leaving the value set would make re-picking
+    // the same file after a "Cancel" in the pre-check dialog fire no change
+    // event at all.
+    const input = ev.target;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
 
     // Creates node with file candidate, node will try to load  and validate image by itself
-    const file = ev.target.files[0];
     await addImageMedia(editor, file);
   }, [editor]);
 

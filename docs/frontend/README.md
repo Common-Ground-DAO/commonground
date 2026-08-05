@@ -746,9 +746,15 @@ A courtesy check that warns **before** upload; it never blocks.
   path where a `File` enters upload state: the four picker molecules
   (`ImageUploadField`, `HeaderImageUpload`, `CommunityLogoUpload`,
   `ProfilePhotoField`), the four inline `<input type=file>` components
-  (`UserProfileInner`, `UserProfileV2`, `RolePhoto`, `UserProfilePhoto`), and
+  (`UserProfileInner`, `UserProfileV2`, `RolePhoto`, `UserProfilePhoto`),
   the two EditField funnels `addFiles` / `addImageMedia` (covering file
-  picker, drag & drop and paste for chat attachments and Slate inline images).
+  picker, drag & drop and paste for chat attachments and Slate inline
+  images), and the `FieldMediaImage` "Replace" input. Chat attachments render
+  immediately in a `precheckPending` state — the upload starts (and the send
+  button unblocks) only once the check clears; declined files are removed.
+  The confirm dialog renders into its own portal node above every modal
+  layer (nested-modal safe; see the rationale in
+  `SuspiciousImageModalProvider.tsx`).
 - **Gating:** returns immediately when `config.IMAGE_FILTER_ENABLED` is false
   (instance config `features.imageFilter`) or the file is not a raster image —
   before any code is fetched. The classifier itself

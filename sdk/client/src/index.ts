@@ -14,6 +14,47 @@ export {
   type AltchaSolution,
 } from "./captcha/altcha.js";
 export { AuthApi, type RegisterOptions, type AuthSession } from "./auth/api.js";
+export {
+  CommunityApi,
+  MessageApi,
+  ChatApi,
+  SocialGraphApi,
+  type CreateCommunityOptions,
+  type SendMessageOptions,
+} from "./social/api.js";
+export {
+  textBody,
+  type MessageBody,
+  type MessageContentNode,
+  type MessageAccess,
+  type MessageAttachment,
+  type ApiMessage,
+  type Channel,
+  type CommunityDetailView,
+  type CommunityListView,
+  type Chat,
+} from "./social/types.js";
+export {
+  RealtimeClient,
+  CLIENT_EVENT_NAMES,
+  type RealtimeOptions,
+  type ReceivedEvent,
+  type ClientEventMap,
+  type ClientEventName,
+} from "./realtime/socket.js";
+export { SyncStore } from "./realtime/store.js";
+export type {
+  CliMessageEvent,
+  CliCommunityEvent,
+  CliChannelEvent,
+  CliChatEvent,
+  CliMembershipEvent,
+  CliMyRolesEvent,
+  CliNotificationEvent,
+  CliUserData,
+  CliUserOwnData,
+  CliChannelLastRead,
+} from "./realtime/events.js";
 export type {
   OwnData,
   UserData,

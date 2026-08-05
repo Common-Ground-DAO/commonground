@@ -58,6 +58,14 @@ branch as reviewable commits.
   on next login (password login mints a new device implicitly). Pinned by
   r1-identity "logout ends the session and soft-deletes the device".
 
+- **F-07 — No same-device echo for own writes.** Message events (and the
+  creator's `cliCommunityEvent`) exclude the DEVICE that performed the REST
+  write (`emitMessageEvents(..., {deviceIds:[user.deviceId]})`): the REST
+  response is that device's echo. Other devices of the same user receive the
+  events normally. A native client must apply its own writes from the REST
+  response, never wait for the socket echo. Pinned by r2-realtime
+  "send/edit/delete echo to the user's OTHER device".
+
 ## Boundaries (out of SDK scope by design)
 
 - **B-01 — Passkeys.** WebAuthn ceremonies need a platform authenticator API;

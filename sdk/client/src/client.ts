@@ -10,16 +10,37 @@
 import { HttpTransport, type HttpTransportOptions } from "./transport/http.js";
 import { fetchInstanceConfig, type InstanceConfig } from "./instance.js";
 import { AuthApi } from "./auth/api.js";
+import { ChatApi, CommunityApi, MessageApi, SocialGraphApi } from "./social/api.js";
+import { RealtimeClient, type RealtimeOptions } from "./realtime/socket.js";
+import { SyncStore } from "./realtime/store.js";
 
 export interface CommonGroundClientOptions extends HttpTransportOptions {}
 
 export class CommonGroundClient {
   readonly transport: HttpTransport;
   readonly auth: AuthApi;
+  readonly communities: CommunityApi;
+  readonly messages: MessageApi;
+  readonly chats: ChatApi;
+  readonly social: SocialGraphApi;
 
   constructor(options: CommonGroundClientOptions) {
     this.transport = new HttpTransport(options);
     this.auth = new AuthApi(this.transport);
+    this.communities = new CommunityApi(this.transport);
+    this.messages = new MessageApi(this.transport);
+    this.chats = new ChatApi(this.transport);
+    this.social = new SocialGraphApi(this.transport);
+  }
+
+  /** New realtime connection sharing this client's session cookie. */
+  realtime(options: RealtimeOptions = {}): RealtimeClient {
+    return new RealtimeClient(this.transport, options);
+  }
+
+  /** New empty sync store (hydrate from a login response, attach realtime). */
+  store(): SyncStore {
+    return new SyncStore();
   }
 
   get baseUrl(): string {

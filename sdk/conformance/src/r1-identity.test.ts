@@ -34,7 +34,7 @@ describe.runIf(MUTATIONS_ENABLED)("Identity & sessions", () => {
 
   it("password login authenticates and mints a NEW device", async () => {
     const { session } = await registerUser("pwlogin");
-    const alias = (session.response.ownData.accounts[0] as { displayName?: string }).displayName!;
+    const alias = session.response.ownData.accounts[0].displayName!;
 
     const fresh = newClient();
     const loggedIn = await fresh.auth.loginWithPassword(alias, TEST_PASSWORD);

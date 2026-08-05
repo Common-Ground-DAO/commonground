@@ -26,7 +26,8 @@ export interface ProfileItem {
   [extra: string]: unknown;
 }
 
-/** Public profile card (Models.User.Data). */
+/** Public profile card (Models.User.Data). No index signature: it would make
+ * TS's Omit erase the named members (string index absorbs every key). */
 export interface UserData {
   id: string;
   isBot: boolean;
@@ -41,7 +42,6 @@ export interface UserData {
   followingCount: number;
   followerCount: number;
   tags: string[] | null;
-  [extra: string]: unknown;
 }
 
 /** The logged-in user's own record (Models.User.OwnData). */

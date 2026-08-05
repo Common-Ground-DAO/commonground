@@ -23,6 +23,12 @@ export interface HttpTransportOptions {
   fetch?: typeof fetch;
   /** Extra headers sent on every request (e.g. bot `authorization`). */
   headers?: Record<string, string>;
+  /** Route base under the origin. Default "/api/v2"; bot clients use
+   * "/api/bot/v1" (nginx rewrites it to the /BotV1 router). */
+  apiBasePath?: string;
+  /** When false, never attach the cookie jar (bot bearer auth forbids
+   * co-sending a cookie). Default true. */
+  useCookies?: boolean;
 }
 
 type Envelope<T> =
@@ -34,21 +40,29 @@ export class HttpTransport {
   readonly jar = new CookieJar();
   private readonly fetchImpl: typeof fetch;
   private readonly extraHeaders: Record<string, string>;
+  private readonly apiBasePath: string;
+  private readonly useCookies: boolean;
 
   constructor(options: HttpTransportOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.fetchImpl = options.fetch ?? fetch;
     this.extraHeaders = options.headers ?? {};
+    this.apiBasePath = (options.apiBasePath ?? "/api/v2").replace(/\/+$/, "");
+    this.useCookies = options.useCookies ?? true;
+  }
+
+  private cookieHeaderOrUndefined(): string | undefined {
+    return this.useCookies ? this.jar.cookieHeader() : undefined;
   }
 
   /** POST /api/v2/<route> and unwrap the {status,data|error} envelope. */
   async call<TResponse, TRequest = unknown>(route: string, body?: TRequest): Promise<TResponse> {
-    const url = `${this.baseUrl}/api/v2/${route}`;
+    const url = `${this.baseUrl}${this.apiBasePath}/${route}`;
     const headers: Record<string, string> = {
       "content-type": "application/json",
       ...this.extraHeaders,
     };
-    const cookie = this.jar.cookieHeader();
+    const cookie = this.cookieHeaderOrUndefined();
     if (cookie) headers.cookie = cookie;
 
     let response: Response;
@@ -85,9 +99,9 @@ export class HttpTransport {
    * {status:"ERROR"} envelope, but success is the BARE result object.
    */
   async callMultipart<TResponse>(route: string, form: FormData): Promise<TResponse> {
-    const url = `${this.baseUrl}/api/v2/${route}`;
+    const url = `${this.baseUrl}${this.apiBasePath}/${route}`;
     const headers: Record<string, string> = { ...this.extraHeaders };
-    const cookie = this.jar.cookieHeader();
+    const cookie = this.cookieHeaderOrUndefined();
     if (cookie) headers.cookie = cookie;
 
     let response: Response;
@@ -113,9 +127,9 @@ export class HttpTransport {
 
   /** GET a bare-JSON route (no envelope): Captcha/*, Instance/config. */
   async getJson<T>(route: string): Promise<T> {
-    const url = `${this.baseUrl}/api/v2/${route}`;
+    const url = `${this.baseUrl}${this.apiBasePath}/${route}`;
     const headers: Record<string, string> = { ...this.extraHeaders };
-    const cookie = this.jar.cookieHeader();
+    const cookie = this.cookieHeaderOrUndefined();
     if (cookie) headers.cookie = cookie;
 
     let response: Response;

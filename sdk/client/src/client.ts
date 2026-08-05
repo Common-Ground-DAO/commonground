@@ -15,6 +15,7 @@ import { FileApi } from "./files/api.js";
 import { NotificationApi } from "./notifications/api.js";
 import { ProfileApi } from "./profile/api.js";
 import { CallApi } from "./calls/api.js";
+import { BotManagementApi } from "./bot/api.js";
 import { RealtimeClient, type RealtimeOptions } from "./realtime/socket.js";
 import { SyncStore } from "./realtime/store.js";
 
@@ -31,6 +32,8 @@ export class CommonGroundClient {
   readonly notifications: NotificationApi;
   readonly profile: ProfileApi;
   readonly calls: CallApi;
+  /** Session-side bot management (create/own bots, issue tokens). */
+  readonly bots: BotManagementApi;
 
   constructor(options: CommonGroundClientOptions) {
     this.transport = new HttpTransport(options);
@@ -43,6 +46,7 @@ export class CommonGroundClient {
     this.notifications = new NotificationApi(this.transport);
     this.profile = new ProfileApi(this.transport);
     this.calls = new CallApi(this.transport);
+    this.bots = new BotManagementApi(this.transport);
   }
 
   /** New realtime connection sharing this client's session cookie. */

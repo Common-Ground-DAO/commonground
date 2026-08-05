@@ -88,6 +88,20 @@ branch as reviewable commits.
   columns to the SELECT (they exist on `calls`), or drop them from the type.
   Pinned by r4-calls "getCall omits the call-server fields its type promises".
 
+- **F-11 — A freshly-created community bot cannot post.** `Bot/create` with
+  `ownerType:"community"` returns success and lists the community in the bot's
+  `communityIds`, but the bot ends up with **no role** in that community. So
+  when it posts, `assertActiveCommunityAccess → _assertBotInstalled` (which
+  requires the predefined Member role) rejects with `NOT_ALLOWED` —
+  `createMessage` never even reaches the channel-permission check. The Member
+  role *does* grant `CHANNEL_WRITE` (a human member posts fine, R2), so the
+  bot is one missing membership row away from working. Either `_installMembership`
+  isn't landing the row for this path, or an explicit install step is expected
+  that `create` implies but doesn't perform. Pinned by r6-bot "a freshly-created
+  community bot cannot yet post"; the test flips to a success round-trip when
+  the server side is fixed. (The bearer surface itself — token issuance,
+  `whoami`, `scopes/list`, realtime handshake — is fully proven.)
+
 ## Boundaries (out of SDK scope by design)
 
 - **B-01 — Passkeys.** WebAuthn ceremonies need a platform authenticator API;

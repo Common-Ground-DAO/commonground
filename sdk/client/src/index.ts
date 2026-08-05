@@ -65,6 +65,16 @@ export {
   type ProtooClientOptions,
   type ProtooNotification,
 } from "./calls/protoo.js";
+export {
+  BotManagementApi,
+  BotClient,
+  type CreateBotOptions,
+  type BotOwnerType,
+  type BotView,
+  type IssuedToken,
+  type BotClientOptions,
+  type BotIdentity,
+} from "./bot/api.js";
 export type {
   CliMessageEvent,
   CliCommunityEvent,

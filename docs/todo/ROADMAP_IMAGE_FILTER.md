@@ -121,9 +121,11 @@ Backend env vars (read in `srv/common/config.ts`):
   free")~~ — **revised after the Phase-1 review**: that plan classified only
   frame 0 while `{ animated: true }` types store *every* frame (a benign
   frame 0 could smuggle explicit later frames), and which size variant got
-  classified was nondeterministic. The gate now classifies a deterministic
-  224px normalization of the **source** buffer; animated stores are scanned
-  frame by frame (evenly sampled, ≤ 16 frames, early exit on the first frame
+  classified was nondeterministic. The gate now classifies a 224px
+  normalization of the **source** buffer; animated stores are scanned frame
+  by frame (≤ 16 frames — **randomly** sampled above the cap, always incl.
+  first and last, since the full-review found a deterministic sample gives an
+  uploader the exact list of unchecked frames; early exit on the first frame
   over the threshold). Static stores still check only frame 0 — later frames
   never persist there.
 - Add an options flag (e.g. `skipModeration`) for internal, derived images:
@@ -148,7 +150,7 @@ Backend env vars (read in `srv/common/config.ts`):
 without throwing (it bypasses the `baseConnector.ajax` logic that converts
 `status === 'ERROR'` into a thrown `Error`). Fix it to inspect the response and throw
 `Error(result.error)` like `baseConnector` does — otherwise rejections never reach the
-UI. All 19 callsites (15 files) funnel through this one method, so this is the single
+UI. All 20 callsites (16 files) funnel through this one method, so this is the single
 place to fix.
 
 ### 1.5 Logging
@@ -249,7 +251,7 @@ references only) — nothing to do there.
 - [x] `src/moderation/imagePrecheck.ts` (lazy chunk, WebGL, Porn/Hentai ≥ 0.85,
       15 s timeout, all failures resolve 'ok')
 - [x] Warning/confirm dialog on client suspicion (`SuspiciousImageModalProvider`,
-      queue-based, never a hard block); server rejection surfaced at all 19
+      queue-based, never a hard block); server rejection surfaced at all 20
       `uploadImage` callsites via `imageUploadError.ts`
 - [x] Gate on instance-config flag (`features.imageFilter` →
       `config.IMAGE_FILTER_ENABLED`, checked before the dynamic import)

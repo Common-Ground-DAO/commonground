@@ -168,7 +168,15 @@ function nodeEnv(name: string): string | undefined {
 
 function parseModerationThreshold(raw: string | undefined): number {
   const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 && parsed <= 1 ? parsed : 0.8;
+  if (Number.isFinite(parsed) && parsed > 0 && parsed <= 1) {
+    return parsed;
+  }
+  // never silently ignore a value the operator explicitly set (a common slip
+  // is "80" meaning percent — valid values are (0, 1])
+  if (raw) {
+    console.warn(`Invalid IMAGE_MODERATION_THRESHOLD "${raw}" — using default 0.8`);
+  }
+  return 0.8;
 }
 
 const config = {

@@ -287,6 +287,9 @@ files for a server-independent restore.
 | `CG_ENABLE_CALLS` | `true` | no `mediasoup` container; the instance config ships `features.calls: false`, so both call entry points hide: the community sidebar (`CallList` / `StartCallButton`) and the event path (`ScheduleEventModal` offers only `external` events, `AttendEventButton` drops "Start Event" / "Join now"). Ports 4443/tcp and 40000–40099/udp are unused |
 | `CG_ENABLE_BLOCKCHAIN` | `true` | no `onchain` container; `CG_ENABLE_BLOCKCHAIN=false` also reaches the `api` process, where `OnchainHelper` fails fast with `SERVICE_UNAVAILABLE` instead of waiting out the 10 s HTTP timeout per request |
 
+Both default to on, so an `.env.selfhost` generated before these switches
+existed keeps the full stack.
+
 A third switch, `CG_ENABLE_IMAGE_FILTER` (default `true`), is not a Compose
 profile: it disables the server-side NSFW image filter inside the `api` and
 `onchain` services (`IMAGE_MODERATION_ENABLED`) and ships
@@ -294,10 +297,7 @@ profile: it disables the server-side NSFW image filter inside the `api` and
 the client-side pre-upload warning. `CG_IMAGE_FILTER_THRESHOLD` and
 `CG_IMAGE_FILTER_MODEL_PATH` tune the reject threshold and swap in another
 Transformers.js-layout classifier (see
-[docs/backend](../backend/README.md#srvmoderationimagefilterts--nsfw-image-gate)).
-
-Both default to on, so an `.env.selfhost` generated before these switches
-existed keeps the full stack. `up`, `down` and `update` run with
+[docs/backend](../backend/README.md#srvmoderationimagefilterts--nsfw-image-gate)). `up`, `down` and `update` run with
 `--remove-orphans`, which is what actually retires a container after its switch
 is flipped off.
 

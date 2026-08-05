@@ -91,10 +91,8 @@ describe('imageFilter.assertImageAllowed', () => {
       imageFilter.assertImageAllowed(image, context),
     ).resolves.toBeUndefined();
     expect(pipelineMock).toHaveBeenCalledTimes(2);
-  });
 
-  it('configures the runtime for local-only model loading', () => {
-    // set by the load in the previous test
+    // the successful load configured the runtime for local-only models
     expect(transformersEnv.allowRemoteModels).toBe(false);
     expect(transformersEnv.localModelPath).toBe('/models');
   });
@@ -182,13 +180,62 @@ describe('imageFilter.assertImageAllowed', () => {
     expect(classifyMock).toHaveBeenCalledTimes(1);
   });
 
-  it('scans every frame of an animated source', async () => {
+  it('scans every frame of an animated source (and really extracts distinct frames)', async () => {
     setScores([{ label: 'normal', score: 1 }]);
     const animated = await animatedImage(3);
 
     await imageFilter.assertImageAllowed(animated, { ...context, animated: true });
 
     expect(classifyMock).toHaveBeenCalledTimes(3);
+    // the blobs handed to the model must be three DIFFERENT frames — a
+    // regression that ignores the page argument would send frame 0 thrice
+    const blobs: Blob[] = rawImageReadMock.mock.calls.map(([blob]) => blob);
+    expect(blobs).toHaveLength(3);
+    const reds = await Promise.all(blobs.map(async (blob) => {
+      const stats = await sharp(Buffer.from(await blob.arrayBuffer())).stats();
+      return Math.round(stats.channels[0].mean);
+    }));
+    expect(new Set(reds).size).toBe(3);
+  });
+
+  it('caps the scan and always includes the first and last frame', async () => {
+    setScores([{ label: 'normal', score: 1 }]);
+    const animated = await animatedImage(24);
+
+    await imageFilter.assertImageAllowed(animated, { ...context, animated: true });
+
+    // 16-frame cap (randomly sampled above the cap)
+    expect(classifyMock).toHaveBeenCalledTimes(16);
+    const blobs: Blob[] = rawImageReadMock.mock.calls.map(([blob]) => blob);
+    const reds = await Promise.all(blobs.map(async (blob) => {
+      const stats = await sharp(Buffer.from(await blob.arrayBuffer())).stats();
+      return Math.round(stats.channels[0].mean);
+    }));
+    // animatedImage colors frame i with r = (base + i*40) % 256 — first and
+    // last frame must always be part of the sample (webp encoding shifts
+    // colors slightly, so match with tolerance)
+    const expectedFirst = reds.some(r => Math.abs(r - ((colorCounter - 1) * 31) % 256) <= 3);
+    const expectedLast = reds.some(r => Math.abs(r - (((colorCounter - 1) * 31 + 23 * 40) % 256)) <= 3);
+    expect(expectedFirst).toBe(true);
+    expect(expectedLast).toBe(true);
+  });
+
+  it('never runs more than two classifications concurrently', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    classifyMock.mockImplementation(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      inFlight--;
+      return [{ label: 'normal', score: 1 }];
+    });
+    const images = await Promise.all(Array.from({ length: 5 }, () => uniqueImage()));
+
+    await Promise.all(images.map((image) => imageFilter.assertImageAllowed(image, context)));
+
+    expect(classifyMock).toHaveBeenCalledTimes(5);
+    expect(maxInFlight).toBeLessThanOrEqual(2);
   });
 
   it('rejects when a later frame is over the threshold (benign frame 0)', async () => {
@@ -240,6 +287,20 @@ describe('imageFilter.assertImageAllowed', () => {
     await imageFilter.assertImageAllowed(animated, { ...context, animated: true });
     expect(classifyMock).toHaveBeenCalledTimes(3);
   });
+
+  it('evicts the oldest cache entry beyond 128 sources', async () => {
+    setScores([{ label: 'normal', score: 1 }]);
+    const first = await uniqueImage();
+
+    await imageFilter.assertImageAllowed(first, context);
+    for (let i = 0; i < 128; i++) {
+      await imageFilter.assertImageAllowed(await uniqueImage(), context);
+    }
+    // the first entry has been evicted — classifying it again is a miss
+    await imageFilter.assertImageAllowed(first, context);
+
+    expect(classifyMock).toHaveBeenCalledTimes(130);
+  }, 30000);
 
   it('is a no-op when IMAGE_MODERATION_ENABLED=false', async () => {
     process.env.IMAGE_MODERATION_ENABLED = 'false';

@@ -15,10 +15,13 @@ RUN sed -i 's/yarnPath: .*//g' /dist/.yarnrc.yml && \
     yarn &&\
     yarn tsc && \
     rm /dist/.yarnrc.yml && \
-    # onnxruntime-node ships all platforms' prebuilt binaries — drop the
-    # ~160 MB of darwin/win32 that can never run in this linux image
+    # onnxruntime-node ships all platforms' prebuilt binaries and the
+    # transformers dependency tree includes the browser-only onnxruntime-web —
+    # drop the ~290 MB that can never run in this linux node image (verified:
+    # classification works without onnxruntime-web in the node runtime)
     rm -rf /dist/node_modules/onnxruntime-node/bin/napi-v6/darwin \
-           /dist/node_modules/onnxruntime-node/bin/napi-v6/win32
+           /dist/node_modules/onnxruntime-node/bin/napi-v6/win32 \
+           /dist/node_modules/onnxruntime-web
 RUN apt-get remove -y build-essential python3-pip &&\
     apt-get clean &&\
     apt-get autoremove --yes &&\

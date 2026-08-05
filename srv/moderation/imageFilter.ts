@@ -42,10 +42,14 @@ const CLASSIFY_TOP_K = 20;
  * per-frame decode cost and makes the classified bytes deterministic). */
 const CLASSIFY_SIZE = 224;
 
-/** Frames scanned per animated image, evenly spaced across the animation
- * (always including the first and last frame). A cap, not a promise to see
- * every frame — at ~20 ms per frame a full scan of long GIFs would be an
- * easy CPU-exhaustion vector. */
+/** Frames scanned per animated image. A cap, not a promise to see every
+ * frame — at ~20 ms per frame a full scan of long GIFs would be an easy
+ * CPU-exhaustion vector. Beyond the cap the scanned set is RANDOM (always
+ * including the first and last frame): a deterministic sample would hand an
+ * uploader the exact list of unchecked frames to hide content in, while a
+ * random sample catches a mostly-explicit animation with near certainty.
+ * The cost is that verdicts for >16-frame animations are not reproducible
+ * across re-uploads. */
 const MAX_FRAMES_SCANNED = 16;
 
 /** Concurrent classification jobs (whole images, not frames). Inference and
@@ -109,7 +113,9 @@ let activeJobs = 0;
 const jobQueue: (() => void)[] = [];
 
 async function withClassificationSlot<T>(job: () => Promise<T>): Promise<T> {
-  if (activeJobs >= MAX_CONCURRENT_CLASSIFICATIONS) {
+  // loop, not if: a woken waiter must re-check — a job whose continuation
+  // was already scheduled can otherwise barge past it to MAX+1
+  while (activeJobs >= MAX_CONCURRENT_CLASSIFICATIONS) {
     await new Promise<void>((resolve) => jobQueue.push(resolve));
   }
   activeJobs++;
@@ -154,14 +160,15 @@ function getClassifier(): Promise<Classifier> {
   return classifierPromise;
 }
 
-/** Evenly spaced frame indices, always including first and last. */
+/** Frame indices to scan: everything up to the cap, otherwise first + last
+ * + a random sample of the rest (see MAX_FRAMES_SCANNED). */
 function sampleFrameIndices(pages: number, maxFrames: number): number[] {
   if (pages <= maxFrames) {
     return Array.from({ length: pages }, (_, i) => i);
   }
-  const indices = new Set<number>();
-  for (let i = 0; i < maxFrames; i++) {
-    indices.add(Math.round((i * (pages - 1)) / (maxFrames - 1)));
+  const indices = new Set<number>([0, pages - 1]);
+  while (indices.size < maxFrames) {
+    indices.add(crypto.randomInt(1, pages - 1));
   }
   return [...indices].sort((a, b) => a - b);
 }
@@ -182,7 +189,10 @@ async function classifyFrame(
   imageBuffer: Buffer,
   page: number | undefined,
 ): Promise<LabelScore[]> {
+  // .rotate() applies the EXIF orientation, so the classifier sees the same
+  // upright pixels saveImage stores (its pipeline rotates too)
   const frame = await sharp(imageBuffer, page === undefined ? {} : { page })
+    .rotate()
     .resize(CLASSIFY_SIZE, CLASSIFY_SIZE, { fit: "inside" })
     .webp()
     .toBuffer();

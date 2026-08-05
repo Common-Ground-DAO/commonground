@@ -59,12 +59,12 @@ classifier baked into the backend Docker image (int8/`q8` export of
   images, Twitter/Farcaster avatars). Derived images whose source was
   already classified (social-preview compositions, old re-encoding
   migrations) pass `skipModeration: true`.
-- **What is classified:** a deterministic 224px normalization of the
-  *source* buffer (fit-inside, webp), so size variants of one upload agree
+- **What is classified:** a 224px normalization of the *source* buffer
+  (fit-inside, EXIF-rotated, webp), so size variants of one upload agree
   with each other and with the dedup cache. Uploads stored with
-  `animated: true` are scanned frame by frame (evenly sampled up to 16
-  frames incl. first and last, early exit once a frame is over the
-  threshold) — a benign frame 0 cannot smuggle explicit later frames.
+  `animated: true` are scanned frame by frame (up to 16 frames — **randomly**
+  sampled above the cap, always incl. first and last, so the unchecked set is
+  not attacker-predictable; early exit once a frame is over the threshold).
   Statically stored images check frame 0 only, matching what persists.
   Classification concurrency is bounded (2 jobs; ORT intra-op threads
   capped at 2) so upload bursts can't starve the shared libuv pool.

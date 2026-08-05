@@ -368,10 +368,11 @@ class FileHelper {
     }
     resizedBuffer = await resized.toBuffer();
 
-    // NSFW gate — must run before anything reaches S3. Classifies a
-    // deterministic normalization of the *source* buffer (so small+large
-    // variants of one upload agree and classify once); with `animated` set,
-    // every stored frame is in scope, not just frame 0.
+    // NSFW gate — must run before anything reaches S3. Classifies a 224px
+    // normalization of the *source* buffer (so small+large variants of one
+    // upload agree and classify once); with `animated` set, frames beyond
+    // frame 0 are scanned too (randomly sampled above the frame cap — see
+    // MAX_FRAMES_SCANNED in the moderation module).
     if (!options.skipModeration) {
       await imageFilter.assertImageAllowed(imageBuffer, {
         uploadType: uploadOptions.type,

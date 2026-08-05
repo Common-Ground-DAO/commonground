@@ -22,9 +22,10 @@ fetch() {
   out="$DEST/$1"
   echo "download_model: fetching $1"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL --retry 3 "$url" -o "$out"
+    # timeouts so a stalled connection fails the build instead of hanging it
+    curl -fsSL --retry 3 --connect-timeout 15 --max-time 600 "$url" -o "$out"
   else
-    wget -q "$url" -O "$out"
+    wget -q --timeout=15 --tries=3 "$url" -O "$out"
   fi
   echo "$2  $out" | sha256sum -c - >/dev/null || {
     echo "download_model: sha256 mismatch for $1" >&2

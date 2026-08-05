@@ -222,6 +222,14 @@ Calls on mobile (v1.1)                          ~6-8 weeks per platform
 the desktop app runs stable in production use.** Phase 0 proceeds in parallel
 with Electron — it is server-side and does not compete for the same work.
 
+**Revised 2026-08-05: the headless reference client comes first.** Phase 2's
+conformance suite is pulled forward and expanded into its own workstream —
+[ROADMAP_REFERENCE_CLIENT.md](ROADMAP_REFERENCE_CLIENT.md) — which also
+delivers this roadmap's Phase 0 contract artifacts in executable form. The
+Electron shell is deliberately paused (no rush on desktop, maintainer
+2026-08-05); it will live in a separate `commonground-desktop` repository when
+it starts. Mobile gating unchanged.
+
 ## Rules
 
 - Phase 0 API artifacts live in `docs/api/` and are normative once merged —

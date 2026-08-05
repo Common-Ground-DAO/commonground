@@ -203,7 +203,9 @@ const config = {
   COMMUNITY_CONTRACT_CHAIN: 'xdai',
   FRACTAL_TEXT: "I authorize Common Ground (EqjSwxLh1Q8ZZpXXE7gBwxFVvYIZxhZuG0ykhTvxFsE) to get a proof from Fractal that:\n- I passed KYC level uniqueness+wallet" as const,
   FRACTAL_SIGNER: '0xacD08d6714ADba531beFF582e6FD5DA1AFD6bc65' as const,
-  ACCEPTED_IMAGE_FORMATS: 'image/png, image/jpeg, image/gif, image/webp, image/avif, image/tiff, image/svg' as const,
+  // note: SVG's MIME type is image/svg+xml — the bare image/svg here meant
+  // the file dialog never actually offered SVGs
+  ACCEPTED_IMAGE_FORMATS: 'image/png, image/jpeg, image/gif, image/webp, image/avif, image/tiff, image/svg+xml' as const,
   MINIMUM_REPORTS_TO_FLAG_PLUGIN: 3 as const,
 
   COMMUNITY_CREATION_ARTICLE_DEV: undefined, // only use for testing, never commit an id here because it would break "clean" dev envs

@@ -1,7 +1,8 @@
 # Common Ground Backend Documentation
 
 > Status: verified against commit 0f1d72d66, 2026-08-03; rate-limit section
-> against the 2026-08-04 dependency-update wave 1a.
+> against the 2026-08-04 dependency-update wave 1a; image-moderation sections
+> against the feat/image-filter branch, 2026-08-05.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -43,6 +44,49 @@ Configures external service credentials. It is frozen and exported as an immutab
 On import, it also initializes:
 - `mailchimpClient.setConfig(...)` with the Mailchimp credentials
 - `sgMail.setApiKey(...)` with the SendGrid key
+
+### `srv/moderation/imageFilter.ts` — NSFW image gate
+
+Server-side, authoritative NSFW filter for every image that enters object
+storage. Runs **in-process** via `@huggingface/transformers` +
+`onnxruntime-node` (no Python, no sidecar) against a ViT-base image
+classifier baked into the backend Docker image (int8/`q8` export of
+`Falconsai/nsfw_image_detection`, ~87 MB, loaded from `/models/nsfw`).
+
+- **Hook point:** `fileHelper.saveImage()` (`srv/repositories/files.ts`),
+  after sharp normalization and **before** the S3 `PutObject` — the single
+  choke point for direct uploads *and* the server-side URL ingests (URL
+  previews, LUKSO LSP3 profile images, Twitter/Farcaster avatars). Derived
+  images whose source was already classified (social-preview compositions,
+  old re-encoding migrations) pass `skipModeration: true`.
+- **Processes:** runs in `api` and (for chain-triggered LSP3 images)
+  `onchain`. Neither process has an async startup sequence, so the pipeline
+  loads lazily on the first classification (~100 ms) and is cached; the
+  onchain process only pays the ~300 MB RSS after its first hit.
+- **Dedup:** a small promise-LRU keyed by the sha256 of the *source* buffer —
+  upload types that store small+large variants of one source classify once,
+  including when both run concurrently.
+- **Verdict:** the scores of the labels `nsfw`/`porn`/`hentai`/`explicit`
+  (case-insensitive; covers swapped-in models) are summed; above
+  `IMAGE_MODERATION_THRESHOLD` the upload fails with
+  `IMAGE_CONTENT_REJECTED`. Rejections are logged (upload type, scores,
+  userId if present, process name — never image data). URL-ingest callers
+  already wrap `saveImage()` in try/catch and proceed without an image.
+- **Fail-closed:** when classification itself fails (model directory missing
+  or unreadable), the image is **not** stored and the caller gets `INTERNAL`.
+  A failed model load is retried on the next classification.
+- **Config** (env vars, parsed in the shared config): `IMAGE_MODERATION_ENABLED`
+  (default `true`), `IMAGE_MODERATION_MODEL_PATH` (default `/models/nsfw`;
+  any Transformers.js-layout classifier with `config.json`,
+  `preprocessor_config.json` and `onnx/model_quantized.onnx` works — models
+  exported without `preprocessor_config.json`, e.g. from timm, silently
+  produce garbage), `IMAGE_MODERATION_THRESHOLD` (default `0.8`). The
+  enabled-flag is advertised to the frontend as `features.imageFilter` via
+  the instance config, gating the client-side pre-upload warning.
+- The runtime never fetches models from the network
+  (`env.allowRemoteModels = false`); weights are downloaded at image build
+  time from a pinned HF revision with sha256 verification
+  (`docker/backend/download_model.sh`).
 
 ### `src/common/config.ts` (shared config)
 
@@ -308,7 +352,10 @@ A subset of message routes is also reachable over the Bot API v1 surface (see be
 
 ### `srv/api/files.ts` -- File Upload Routes
 
-- `POST /uploadImage` -- Multipart image upload (handled directly via Express)
+- `POST /uploadImage` -- Multipart image upload (handled directly via Express).
+  Every stored variant passes the NSFW gate (see
+  [`srv/moderation/imageFilter.ts`](#srvmoderationimagefilterts--nsfw-image-gate));
+  rejected content answers `{ status: 'ERROR', error: 'IMAGE_CONTENT_REJECTED' }`.
 - `/getSignedUrls` -- Get pre-signed S3 URLs for file access
 
 ### `srv/api/search.ts` -- Search Routes
@@ -861,6 +908,9 @@ The `db: Pool | PoolClient` parameter pattern enables functions to work both sta
 
 **`srv/repositories/files.ts`** -- `fileHelper`
 - S3 storage operations (upload, download, signed URLs)
+- `saveImage()` runs the NSFW gate on the normalized buffer before the S3
+  upload (`srv/moderation/imageFilter.ts`); internal derived images opt out
+  via `skipModeration`
 - Image processing with `sharp` (resize, convert to JPEG/WebP, hexagonal crops for profile images)
 - Preview image generation (community previews, user previews)
 - Composite image creation for social previews

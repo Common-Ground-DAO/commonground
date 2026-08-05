@@ -1,6 +1,7 @@
 # Common Ground Deployment
 
-> Status: verified against commit 6e7975641, 2026-08-04
+> Status: verified against commit 6e7975641, 2026-08-04; image-filter
+> additions against the feat/image-filter branch, 2026-08-05
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -68,7 +69,7 @@ There are two injection paths that produce the same shape:
 The nginx hook is driven by `CG_*` env passed to the container in
 `docker-compose.selfhost.yml` (`CG_APP_URL`, `CG_DEPLOYMENT`, `CG_CGID_URL`,
 `CG_RECAPTCHA_SITE_KEY`, `CG_ACTIVE_CHAINS`, the `CG_FEATURE_*` capability
-booleans, `CG_ENABLE_CALLS`, `CG_GIPHY_API_KEY`,
+booleans, `CG_ENABLE_CALLS`, `CG_ENABLE_IMAGE_FILTER`, `CG_GIPHY_API_KEY`,
 `CG_WALLETCONNECT_PROJECT_ID`). It skips injection
 if `CG_APP_URL` is unset, and skips files that already contain
 `__CG_INSTANCE__`.
@@ -85,7 +86,7 @@ Defined and validated in `src/common/instance.ts` (`InstanceConfig`). Fields:
 | `recaptchaSiteKey` | reCAPTCHA v2 site key (empty disables the default key) |
 | `captchaProvider` | active captcha provider (`altcha` / `recaptcha` / `off`) |
 | `activeChains` | chain keys this instance offers (subset of `AVAILABLE_CHAINS`) |
-| `features` | capability flags `{ email, twitterAuth, calls }` — the first two derived from configured secrets, `calls` from whether the mediasoup service is deployed |
+| `features` | capability flags `{ email, twitterAuth, calls, imageFilter }` — the first two derived from configured secrets, `calls` from whether the mediasoup service is deployed, `imageFilter` from whether the server-side NSFW filter is enabled (gates the client pre-upload warning) |
 | `giphyApiKey` | Giphy key (empty hides the GIF picker) |
 | `walletConnectProjectId` | WalletConnect Cloud project id |
 
@@ -285,6 +286,15 @@ files for a server-independent restore.
 |---|---|---|
 | `CG_ENABLE_CALLS` | `true` | no `mediasoup` container; the instance config ships `features.calls: false`, so both call entry points hide: the community sidebar (`CallList` / `StartCallButton`) and the event path (`ScheduleEventModal` offers only `external` events, `AttendEventButton` drops "Start Event" / "Join now"). Ports 4443/tcp and 40000–40099/udp are unused |
 | `CG_ENABLE_BLOCKCHAIN` | `true` | no `onchain` container; `CG_ENABLE_BLOCKCHAIN=false` also reaches the `api` process, where `OnchainHelper` fails fast with `SERVICE_UNAVAILABLE` instead of waiting out the 10 s HTTP timeout per request |
+
+A third switch, `CG_ENABLE_IMAGE_FILTER` (default `true`), is not a Compose
+profile: it disables the server-side NSFW image filter inside the `api` and
+`onchain` services (`IMAGE_MODERATION_ENABLED`) and ships
+`features.imageFilter: false` in the instance config, which also turns off
+the client-side pre-upload warning. `CG_IMAGE_FILTER_THRESHOLD` and
+`CG_IMAGE_FILTER_MODEL_PATH` tune the reject threshold and swap in another
+Transformers.js-layout classifier (see
+[docs/backend](../backend/README.md#srvmoderationimagefilterts--nsfw-image-gate)).
 
 Both default to on, so an `.env.selfhost` generated before these switches
 existed keeps the full stack. `up`, `down` and `update` run with

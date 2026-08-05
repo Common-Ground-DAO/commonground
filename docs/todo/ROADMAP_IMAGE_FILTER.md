@@ -207,16 +207,30 @@ references only) — nothing to do there.
 ## Task checklist
 
 ### Phase 1 — Server
-- [ ] Add `@huggingface/transformers` + sharp resolution in `srv/`
-- [ ] Backend image build: bake model (pinned revision + sha256), prune onnxruntime-node
-- [ ] `srv/moderation/imageFilter.ts` (lazy load, LRU, thresholds from config)
-- [ ] Hook in `saveImage()` + `skipModeration` for derived images/migrations
-- [ ] Graceful handling in the five URL-ingest paths
-- [ ] `IMAGE_MODERATION_*` env vars + instance-config flag + `docker/.env` template entry
-- [ ] `IMAGE_CONTENT_REJECTED` in `errors.server`
-- [ ] Fix `uploadImage()` to throw on `{status:'ERROR'}` responses
-- [ ] Rejection logging; verify api **and** onchain processes
-- [ ] Test with known-NSFW and safe images; verify Docker build on Node 24
+- [x] Add `@huggingface/transformers` + sharp resolution in `srv/`
+- [x] Backend image build: bake model (pinned revision + sha256), prune onnxruntime-node
+      (note: onnxruntime-node 1.24.3 no longer ships CUDA/TensorRT providers —
+      pruning is darwin+win32, ~160 MB)
+- [x] `srv/moderation/imageFilter.ts` (lazy load, LRU, thresholds from config)
+- [x] Hook in `saveImage()` + `skipModeration` for derived images/migrations
+- [x] Graceful handling in the five URL-ingest paths (all five already wrap
+      `saveImage()` in try/catch and proceed without an image — verified, no
+      code change needed)
+- [x] `IMAGE_MODERATION_*` env vars + instance-config flag + `docker/.env` template entry
+      (**open**: the `docker/.env` lines themselves — the file is
+      permission-protected in this environment; maintainer adds them by hand)
+- [x] `IMAGE_CONTENT_REJECTED` in `errors.server`
+- [x] Fix `uploadImage()` to throw on `{status:'ERROR'}` responses
+- [x] Rejection logging; verify api **and** onchain processes (api: e2e via
+      `/File/uploadImage`; onchain: in-container classification smoke test)
+- [x] Verified in the Docker stack on Node 24: harmless upload accepted at the
+      default threshold, rejected end-to-end (`IMAGE_CONTENT_REJECTED` +
+      structured log) with `IMAGE_MODERATION_THRESHOLD=0.0001` injected,
+      accepted again after reset. No NSFW imagery used or added; scores of the
+      pinned q8 model on generated harmless images: ≤ 0.008 nsfw for flat
+      colors/gradients/drawings/noise/text, 0.10 worst case for a 110 px
+      flat skin-tone crop — comfortably under the 0.8 threshold. A manual
+      spot check with real material stays with the maintainer pre-merge.
 
 ### Phase 2 — Client
 - [ ] Add `nsfwjs` + trimmed tfjs packages; host MobileNetV2 shards in `public/models/nsfw/`

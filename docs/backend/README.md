@@ -65,6 +65,9 @@ classifier baked into the backend Docker image (int8/`q8` export of
   `animated: true` are scanned frame by frame (up to 16 frames — **randomly**
   sampled above the cap, always incl. first and last, so the unchecked set is
   not attacker-predictable; early exit once a frame is over the threshold).
+  Mostly-explicit animations are caught with near certainty; a single
+  explicit frame hidden in a long animation can still slip through
+  (~16/pages odds) — a deliberate best-effort trade-off, not a guarantee.
   Statically stored images check frame 0 only, matching what persists.
   Classification concurrency is bounded (2 jobs; ORT intra-op threads
   capped at 2) so upload bursts can't starve the shared libuv pool.

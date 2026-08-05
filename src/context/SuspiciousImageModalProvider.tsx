@@ -88,17 +88,45 @@ export function SuspiciousImageModalProvider(props: React.PropsWithChildren<{}>)
   // Captured on the way down, and swallowed: while this dialog is up it is the
   // topmost thing on screen, so Escape must answer *it* and not also close the
   // modal underneath (`ManagementContentModal` for one listens on `document`
-  // and would not recognise this dialog as "inside" a modal).
+  // and would not recognise this dialog as "inside" a modal). Tab is confined
+  // to the dialog for the same reason — otherwise focus keeps walking the
+  // parent modal's controls behind the backdrop and Enter would activate them
+  // with the confirmation still unanswered.
+  const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!isOpen) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    // aria-modal container is focusable itself; initial focus goes to the
+    // safe answer (Cancel = first button)
+    dialogRef.current?.querySelector<HTMLElement>('button')?.focus();
     const onKeyDown = (ev: KeyboardEvent) => {
-      if (ev.key !== 'Escape') return;
-      ev.stopImmediatePropagation();
-      ev.preventDefault();
-      onClose();
+      if (ev.key === 'Escape') {
+        ev.stopImmediatePropagation();
+        ev.preventDefault();
+        onClose();
+        return;
+      }
+      if (ev.key === 'Tab') {
+        const buttons = dialogRef.current?.querySelectorAll<HTMLElement>('button');
+        if (!buttons || buttons.length === 0) return;
+        const first = buttons[0];
+        const last = buttons[buttons.length - 1];
+        const active = document.activeElement;
+        // cycle within the dialog; also recapture focus that escaped it
+        if (ev.shiftKey && (active === first || !dialogRef.current?.contains(active))) {
+          ev.preventDefault();
+          last.focus();
+        } else if (!ev.shiftKey && (active === last || !dialogRef.current?.contains(active))) {
+          ev.preventDefault();
+          first.focus();
+        }
+      }
     };
     document.addEventListener('keydown', onKeyDown, true);
-    return () => document.removeEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      previouslyFocused?.focus?.();
+    };
   }, [isOpen, onClose]);
 
   return (
@@ -108,6 +136,7 @@ export function SuspiciousImageModalProvider(props: React.PropsWithChildren<{}>)
         createPortal(
           <div className="suspicious-image-dialog-backdrop" onClick={onClose}>
             <div
+              ref={dialogRef}
               className="suspicious-image-dialog"
               role="dialog"
               aria-modal="true"

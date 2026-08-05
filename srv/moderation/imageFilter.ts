@@ -48,6 +48,9 @@ const CLASSIFY_SIZE = 224;
  * including the first and last frame): a deterministic sample would hand an
  * uploader the exact list of unchecked frames to hide content in, while a
  * random sample catches a mostly-explicit animation with near certainty.
+ * A single explicit frame hidden in a long animation can still slip through
+ * (~16/pages odds per upload) — accepted, consistent with the best-effort
+ * filter philosophy (see the roadmap); community moderation covers the rest.
  * The cost is that verdicts for >16-frame animations are not reproducible
  * across re-uploads. */
 const MAX_FRAMES_SCANNED = 16;

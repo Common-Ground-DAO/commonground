@@ -150,7 +150,7 @@ Backend env vars (read in `srv/common/config.ts`):
 without throwing (it bypasses the `baseConnector.ajax` logic that converts
 `status === 'ERROR'` into a thrown `Error`). Fix it to inspect the response and throw
 `Error(result.error)` like `baseConnector` does — otherwise rejections never reach the
-UI. All 20 callsites (16 files) funnel through this one method, so this is the single
+UI. All 20 callsites (15 files) funnel through this one method, so this is the single
 place to fix.
 
 ### 1.5 Logging

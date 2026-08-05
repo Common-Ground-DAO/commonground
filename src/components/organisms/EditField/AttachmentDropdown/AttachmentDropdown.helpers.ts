@@ -33,15 +33,27 @@ export async function addFiles(
   if (files.length === 0) return;
 
   const newAttachments: InMemoryAttachment[] = files.map(file => ({ imageId: file.name, largeImageId: '', type: 'image', tentativeFile: file, state: 'INITIAL', precheckPending: true }));
+  // files cut off by the attachment limit must not be pre-checked either —
+  // a confirmation dialog about an image that is not in the composer answers
+  // nothing. Assigned (not appended) inside the updater so a double-invoked
+  // updater stays idempotent.
+  let attachedFiles: File[] = [];
   setAttachments(oldAttachments => {
     const attachmentList = [...oldAttachments, ...newAttachments];
     if (attachmentList.length > attachmentLimit) {
       setAttachmentError(`Whoa there, only ${attachmentLimit} attachments allowed at once 😳`);
     }
-    return attachmentList.slice(0, attachmentLimit);
+    const kept = attachmentList.slice(0, attachmentLimit);
+    attachedFiles = newAttachments.filter(att => kept.includes(att)).map(att => att.tentativeFile!);
+    return kept;
   });
 
-  for (const file of files) {
+  // Sequential on purpose (beyond the dialog UX): EditField keys attachment
+  // tiles by list index, so removing a declined file mid-list remounts the
+  // tiles after it. That is only safe while those tiles are still
+  // precheckPending (no upload started) — which sequential checking
+  // guarantees and a Promise.all would not.
+  for (const file of attachedFiles) {
     const accepted = await checkImageBeforeUpload(file);
     setAttachments(oldAttachments => accepted
       ? oldAttachments.map(att => att.tentativeFile === file ? { ...att, precheckPending: false } : att)

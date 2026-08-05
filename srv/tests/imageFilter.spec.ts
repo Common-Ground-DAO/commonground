@@ -72,25 +72,35 @@ function setScores(scores: { label: string; score: number }[]) {
 describe('imageFilter.assertImageAllowed', () => {
   beforeEach(() => {
     classifyMock.mockReset();
+    // benign default so a stray classification never yields `undefined`
+    // scores — tests override per case
+    setScores([{ label: 'normal', score: 1 }]);
     rawImageReadMock.mockClear();
     pipelineMock.mockClear();
   });
 
   it('fails closed with INTERNAL when the model cannot load, then retries the load', async () => {
+    // isolated module instance: the shared one may already hold a loaded
+    // classifier if another test ran first (--randomize safety)
+    let isolated: typeof imageFilter | undefined;
+    jest.isolateModules(() => {
+      isolated = require('../moderation/imageFilter').default;
+    });
+    const loadsBefore = pipelineMock.mock.calls.length;
     pipelineMock.mockRejectedValueOnce(new Error('model directory missing'));
     const image = await uniqueImage();
 
     await expect(
-      imageFilter.assertImageAllowed(image, context),
+      isolated!.assertImageAllowed(image, context),
     ).rejects.toThrow(errors.server.INTERNAL);
 
     // the failed load and the failed verdict are not cached: the next call
     // loads again and succeeds
     setScores([{ label: 'normal', score: 0.99 }, { label: 'nsfw', score: 0.01 }]);
     await expect(
-      imageFilter.assertImageAllowed(image, context),
+      isolated!.assertImageAllowed(image, context),
     ).resolves.toBeUndefined();
-    expect(pipelineMock).toHaveBeenCalledTimes(2);
+    expect(pipelineMock.mock.calls.length - loadsBefore).toBe(2);
 
     // the successful load configured the runtime for local-only models
     expect(transformersEnv.allowRemoteModels).toBe(false);

@@ -51,6 +51,20 @@ export {
   type PushSubscriptionInput,
 } from "./notifications/api.js";
 export { ProfileApi, type UpdateOwnDataPatch, type UserSearchHit } from "./profile/api.js";
+export {
+  CallApi,
+  CallSignalingSession,
+  type Call,
+  type CallType,
+  type StartCallOptions,
+  type JoinResult,
+} from "./calls/api.js";
+export {
+  ProtooClient,
+  ProtooError,
+  type ProtooClientOptions,
+  type ProtooNotification,
+} from "./calls/protoo.js";
 export type {
   CliMessageEvent,
   CliCommunityEvent,

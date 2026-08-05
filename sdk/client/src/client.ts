@@ -14,6 +14,7 @@ import { ChatApi, CommunityApi, MessageApi, SocialGraphApi } from "./social/api.
 import { FileApi } from "./files/api.js";
 import { NotificationApi } from "./notifications/api.js";
 import { ProfileApi } from "./profile/api.js";
+import { CallApi } from "./calls/api.js";
 import { RealtimeClient, type RealtimeOptions } from "./realtime/socket.js";
 import { SyncStore } from "./realtime/store.js";
 
@@ -29,6 +30,7 @@ export class CommonGroundClient {
   readonly files: FileApi;
   readonly notifications: NotificationApi;
   readonly profile: ProfileApi;
+  readonly calls: CallApi;
 
   constructor(options: CommonGroundClientOptions) {
     this.transport = new HttpTransport(options);
@@ -40,6 +42,7 @@ export class CommonGroundClient {
     this.files = new FileApi(this.transport);
     this.notifications = new NotificationApi(this.transport);
     this.profile = new ProfileApi(this.transport);
+    this.calls = new CallApi(this.transport);
   }
 
   /** New realtime connection sharing this client's session cookie. */

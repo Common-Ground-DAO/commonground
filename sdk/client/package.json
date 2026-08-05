@@ -23,10 +23,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "socket.io-client": "4.8.3"
+    "socket.io-client": "4.8.3",
+    "ws": "8.21.1"
   },
   "devDependencies": {
     "@types/node": "^24",
+    "@types/ws": "8.18.1",
     "typescript": "5.9.3"
   }
 }

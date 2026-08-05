@@ -80,6 +80,14 @@ branch as reviewable commits.
   transport does); wrapping the success path server-side would restore
   uniformity at the cost of a web-client change.
 
+- **F-10 — `getCall` response type overpromises.** `API.Community.getCall.
+  Response` declares `callServerId` and `communityId`, but
+  `communityHelper.getCall`'s SQL selects neither (srv/repositories/
+  communities.ts) — both come back `undefined` at runtime. A typed native
+  client trusting the `.d.ts` would silently read undefined. Fix: add the two
+  columns to the SELECT (they exist on `calls`), or drop them from the type.
+  Pinned by r4-calls "getCall omits the call-server fields its type promises".
+
 ## Boundaries (out of SDK scope by design)
 
 - **B-01 — Passkeys.** WebAuthn ceremonies need a platform authenticator API;

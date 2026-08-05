@@ -39,8 +39,11 @@ export function newClient(): CommonGroundClient {
 }
 
 export function uniqueName(tag: string): string {
-  // cg displayName: /^[a-z0-9_-]{3,30}$/i — prefix + tag + 6 hex.
-  return `${FIXTURE_PREFIX}${tag}-${randomBytes(3).toString("hex")}`.slice(0, 30);
+  // cg displayName: /^[a-z0-9_-]{3,30}$/i. The random suffix must survive the
+  // 30-char cap (else long tags collide), so truncate the TAG, not the tail.
+  const suffix = `-${randomBytes(3).toString("hex")}`; // 7 chars
+  const room = 30 - FIXTURE_PREFIX.length - suffix.length;
+  return `${FIXTURE_PREFIX}${tag.slice(0, Math.max(1, room))}${suffix}`;
 }
 
 export function uniqueEmail(tag: string): string {

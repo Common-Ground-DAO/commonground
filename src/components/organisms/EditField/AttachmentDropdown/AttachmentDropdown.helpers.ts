@@ -33,20 +33,30 @@ export async function addFiles(
   if (files.length === 0) return;
 
   const newAttachments: InMemoryAttachment[] = files.map(file => ({ imageId: file.name, largeImageId: '', type: 'image', tentativeFile: file, state: 'INITIAL', precheckPending: true }));
-  // files cut off by the attachment limit must not be pre-checked either —
+  // Files cut off by the attachment limit must not be pre-checked either —
   // a confirmation dialog about an image that is not in the composer answers
-  // nothing. Assigned (not appended) inside the updater so a double-invoked
-  // updater stays idempotent.
-  let attachedFiles: File[] = [];
-  setAttachments(oldAttachments => {
-    const attachmentList = [...oldAttachments, ...newAttachments];
-    if (attachmentList.length > attachmentLimit) {
-      setAttachmentError(`Whoa there, only ${attachmentLimit} attachments allowed at once 😳`);
-    }
-    const kept = attachmentList.slice(0, attachmentLimit);
-    attachedFiles = newAttachments.filter(att => kept.includes(att)).map(att => att.tentativeFile!);
-    return kept;
-  });
+  // nothing. The kept-set is only known inside the updater, and React runs
+  // updaters at render time, NOT at the setAttachments() call — reading a
+  // closure variable right after the call sees nothing (that exact mistake
+  // shipped once and froze every attachment in precheckPending). So the
+  // updater hands the kept-set out through a promise. resolve() is idempotent,
+  // so a double-invoked updater is harmless. The race is a backstop for the
+  // pathological case that the updater never runs (unmount before render):
+  // then every file is checked — a superfluous dialog beats a stuck upload.
+  const attachedFiles = await Promise.race([
+    new Promise<File[]>((resolve) => {
+      setAttachments(oldAttachments => {
+        const attachmentList = [...oldAttachments, ...newAttachments];
+        if (attachmentList.length > attachmentLimit) {
+          setAttachmentError(`Whoa there, only ${attachmentLimit} attachments allowed at once 😳`);
+        }
+        const kept = attachmentList.slice(0, attachmentLimit);
+        resolve(newAttachments.filter(att => kept.includes(att)).map(att => att.tentativeFile!));
+        return kept;
+      });
+    }),
+    new Promise<File[]>((resolve) => setTimeout(() => resolve(files), 1000)),
+  ]);
 
   // Sequential on purpose (beyond the dialog UX): EditField keys attachment
   // tiles by list index, so removing a declined file mid-list remounts the

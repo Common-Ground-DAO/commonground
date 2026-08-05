@@ -1,394 +1,242 @@
 # Roadmap: NSFW Image Filter
 
-> Prevent upload of pornographic and other inappropriate images via client-side pre-screening and server-side enforcement using **nsfwjs**.
+> Block upload/storage of pornographic images via a server-side classifier (authoritative,
+> in-process ONNX) plus a client-side pre-upload warning (nsfwjs).
+> Rewritten 2026-08-05 after code audit + web research; supersedes the earlier
+> nsfwjs/`@tensorflow/tfjs-node` plan, which is not viable (see Decisions).
 
-## Overview
+## Decisions (2026-08-05)
 
-Two-layer approach:
-
-1. **Server-side (authoritative)** — nsfwjs running on Node.js blocks inappropriate images before they reach S3. This is the safety gate and cannot be bypassed.
-2. **Client-side (UX)** — nsfwjs running in the browser gives instant feedback before the upload even starts. Convenience layer only.
-
-All image uploads already flow through a single backend endpoint (`POST /File/uploadImage` in `srv/api/files.ts`) and a single frontend API method (`FileApiConnector.uploadImage()` in `src/data/api/file.ts`), so the insertion points are minimal.
-
----
+1. **Server-side is the safety gate** and runs **in-process** in Node via
+   `@huggingface/transformers` (v4) + `onnxruntime-node`. No Python, no sidecar.
+   - The original plan (nsfwjs + `@tensorflow/tfjs-node`) is dead: tfjs-node 4.22.0
+     crashes on Node ≥ 23 at first inference (`util.isNullOrUndefined` removed from
+     Node; the tfjs fix was merged 2025-04 but never released). TensorFlow.js is
+     effectively unmaintained (last stable release 2024-10, 4 npm vulns incl. 1
+     critical in tfjs-node's dependency chain). The pure-JS tfjs fallback works but
+     is ~20× slower than ONNX at lower accuracy — rejected.
+2. **Model: `onnx-community/nsfw_image_detection-ONNX`** (automated ONNX conversion of
+   `Falconsai/nsfw_image_detection`, ViT-base 224px, Apache-2.0), **int8 (`q8`)**.
+   Measured on desktop CPU: 84 MB on disk, ~16 ms/image incl. sharp preprocessing,
+   ~250–370 MB process RSS, barely degraded on 2 cores.
+   - Filter philosophy: **block clearly pornographic content with near-zero false
+     positives.** Falconsai scores ~98% on explicit material and ~99% on neutral, but
+     only ~31% on "mild/suggestive" (Freepik cross-eval) — that miss is **accepted
+     deliberately**; suggestive-content policy stays with community moderation.
+3. **One lightweight variant only** — no heavy/VLM cascade. The escape hatch is
+   swappability: the model is selected via env var, so self-hosters (AGPLv3) can mount
+   any Transformers.js-compatible ONNX image classifier or disable the filter entirely.
+4. **Model weights are baked into the backend Docker image at build time** (pinned HF
+   revision + sha256 check during build; weights are not committed to git). Runtime
+   does no network access (`env.allowRemoteModels = false`).
+5. **Client-side: nsfwjs 4.x + MobileNetV2**, self-hosted shards, as a pre-upload
+   **warning — never a hard block** (user can proceed; the server decides).
+   tfjs staleness is acceptable in the browser (frozen inference pipeline, no native
+   bindings, WebGL works back to ~2015 devices). Browser ViT via Transformers.js was
+   rejected: 50–90 MB downloads and multi-second CPU inference on older devices
+   without WebGPU — incompatible with the "don't overwhelm old devices" requirement.
+6. **Enforcement point is `fileHelper.saveImage()`** (`srv/repositories/files.ts`),
+   not the upload endpoint. Rationale: the code audit found five server-side paths
+   that ingest images from **external URLs** and would bypass an endpoint-level check
+   (URL previews, LUKSO LSP3 profile images — one of them in the **onchain process** —
+   Farcaster pfp, Twitter avatar). `saveImage()` is the single choke point for all of
+   them.
 
 ## Dependencies
 
-### Server
+### Server (`srv/package.json`)
 
 ```bash
-yarn add nsfwjs @tensorflow/tfjs-node
+yarn add @huggingface/transformers   # pulls onnxruntime-node
 ```
 
-- `nsfwjs` — NSFW classification model (~5 classes: Porn, Hentai, Sexy, Drawing, Neutral)
-- `@tensorflow/tfjs-node` — native TensorFlow.js backend for fast inference (~100-200ms/image)
+- `sharp` is already present (`^0.35.x`). `@huggingface/transformers` depends on
+  `sharp ^0.34.x` → add a yarn resolution so we don't ship two sharp copies.
+- Docker image size: `onnxruntime-node` unpacks at ~513 MB (macOS/Windows binaries +
+  302 MB CUDA provider). Prune in the backend image build — verified safe:
+  ```bash
+  rm -rf node_modules/onnxruntime-node/bin/napi-v6/{darwin,win32}
+  rm -f  node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_{cuda,tensorrt}.so
+  # → ~53 MB
+  ```
+- Total image weight added: ~150 MB (pruned runtime + q8 model).
+- Note: the hardened yarn config (install scripts disabled) is fine here —
+  `onnxruntime-node` ships prebuilt Node-API v6 binaries, no postinstall build.
 
-> **Fallback**: If `@tensorflow/tfjs-node` causes native build issues in Docker, swap to `@tensorflow/tfjs` (pure JS, ~500-800ms/image, zero native deps). The nsfwjs API is identical regardless of backend.
-
-### Client (browser)
+### Client (root `package.json`)
 
 ```bash
-yarn add nsfwjs @tensorflow/tfjs
+yarn add nsfwjs @tensorflow/tfjs-core @tensorflow/tfjs-backend-webgl @tensorflow/tfjs-converter
 ```
 
-- `@tensorflow/tfjs` — browser-native TensorFlow.js (WebGL accelerated, no native deps)
-- `nsfwjs` — same package, works in both environments
+- Import via `nsfwjs/core` (not the bundle entry) + the trimmed tfjs packages
+  (~170 KB gzip JS total), **not** the `@tensorflow/tfjs` meta package.
+- MobileNetV2 graph-model shards (~2.6 MB) self-hosted under `public/models/nsfw/`.
+  The nginx CSP `connect-src` allowlist blocks third-party model CDNs anyway;
+  self-hosting also keeps selfhost/airgapped instances working.
+- Vite: load via dynamic `import()` on first file selection so it becomes an isolated
+  lazy chunk; keep tfjs **out** of `VENDOR_GROUPS`/`manualChunks`.
 
-### Docker considerations
+## Configuration
 
-If using `@tensorflow/tfjs-node`, the Dockerfile (`docker/backend/Dockerfile`) may need:
+Backend env vars (read in `srv/common/config.ts`):
 
-```dockerfile
-# Only if tfjs-node native build fails without it
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential python3 \
-    && rm -rf /var/lib/apt/lists/*
-```
+| Var | Default | Meaning |
+|---|---|---|
+| `IMAGE_MODERATION_ENABLED` | `true` | master switch for the server-side filter |
+| `IMAGE_MODERATION_MODEL_PATH` | baked-in path (e.g. `/models/nsfw`) | directory with `config.json`, `preprocessor_config.json`, `onnx/model_quantized.onnx` — swap to use a different classifier |
+| `IMAGE_MODERATION_THRESHOLD` | `0.8` | reject when `nsfw` probability exceeds this |
 
-The backend image is `node:24.18-bookworm` (Node 24 on Debian Bookworm, since 2026-08-03), which typically has these already. Test by running `yarn add @tensorflow/tfjs-node` inside the builder container first — and note that the Node 24 bump makes the native-build question worth re-checking from scratch: `@tensorflow/tfjs-node` has historically lagged new Node majors in prebuilt-binary availability, so the pure-JS fallback noted above may well be the likelier path.
-
-### No external services required
-
-- No API keys
-- No cloud calls
-- No costs
-- Model file (~10MB) ships with the nsfwjs package
-
----
+- Selfhost: surface the switch in `docker/.env` template (naming consistent with the
+  existing `CG_ENABLE_*` pattern).
+- Expose the enabled-flag through the instance config (`serverconfig`) so the client
+  only downloads/runs its pre-check when the instance actually filters.
+- Swapping models: any image-classification model in Transformers.js layout works
+  out of the box. Models exported from timm (e.g. Marqo ViT-tiny, OwenElliott
+  SwiftFormer) ship **without** `preprocessor_config.json` and silently produce
+  garbage unless preprocessing is replicated by hand — document this caveat for
+  self-hosters.
 
 ## Phase 1: Server-Side Enforcement
 
-This is the critical path — everything else is optional UX improvement.
+### 1.1 Moderation module
 
-### 1.1 Create the moderation module
+**New:** `srv/moderation/imageFilter.ts`
 
-**New file:** `srv/moderation/nsfwDetector.ts`
+- **Lazy load with promise cache** — `srv/api.ts` has no async init sequence
+  (`app.listen` happens as an import side effect of `srv/util/express.ts`), so there
+  is no place to `await` a startup load. First classification triggers the load
+  (~100 ms warm) and caches the pipeline.
+- Runs in **two processes**: `api` (uploads, URL previews, OAuth avatars) and
+  `onchain` (LUKSO LSP3 events). Lazy loading means the onchain process only pays the
+  RAM after its first classification.
+- Small in-memory LRU keyed by sha256 of the input buffer: several upload types call
+  `saveImage()` twice per request (small + large variant of the same source buffer);
+  the LRU makes that one classification, not two.
 
-```typescript
-import * as tf from '@tensorflow/tfjs-node';
-import * as nsfwjs from 'nsfwjs';
+### 1.2 Hook in `fileHelper.saveImage()`
 
-let model: nsfwjs.NSFWJS | null = null;
+- Classify the decoded/normalized buffer (post-sharp — the buffer at that point is
+  always WebP, so SVG rasterization and animated-GIF first-frame handling come for
+  free), **before** the S3 `PutObject`.
+- Add an options flag (e.g. `skipModeration`) for internal, derived images:
+  the social-preview compositions (`updateUserPreview`/`updateCommunityPreview` —
+  their sources were already classified) and the old re-encoding migrations.
+- The check must **not** require a session/user id (the profile-image upload type is
+  usable pre-auth; the URL-preview and onchain paths have no uploading user either).
 
-/**
- * Load the NSFW model once at server startup.
- * Call this from the server init sequence.
- */
-export async function loadNSFWModel(): Promise<void> {
-  tf.enableProdMode();
-  model = await nsfwjs.load();
-  console.log('[moderation] NSFW model loaded');
-}
+### 1.3 Error propagation
 
-export interface NSFWResult {
-  rejected: boolean;
-  reason?: string;
-  scores?: Record<string, number>;
-}
+- Add `IMAGE_CONTENT_REJECTED` to `errors.server` in `srv/common/errors.ts` —
+  **required**, otherwise `handleError` (`srv/api/util.ts`) swallows unknown messages
+  as `UNKNOWN`. Note: the API answers errors with **HTTP 200** and
+  `{ status: 'ERROR', error: '<CODE>' }`; there is no 422 pattern in this codebase.
+- For the URL-fetch ingest paths, rejection must not break the surrounding flow
+  (e.g. a rejected LSP3/Twitter/Farcaster avatar → proceed without image; a rejected
+  URL-preview image → preview without thumbnail).
 
-// Thresholds — tune these based on testing
-const THRESHOLDS = {
-  Porn: 0.80,
-  Hentai: 0.80,
-  Sexy: 0.90,
-};
+### 1.4 Fix `FileApiConnector.uploadImage()` error handling
 
-/**
- * Classify an image buffer. Returns whether it should be rejected.
- * The buffer should be a decoded image (JPEG/PNG/WebP).
- */
-export async function classifyImage(imageBuffer: Buffer): Promise<NSFWResult> {
-  if (!model) {
-    throw new Error('[moderation] NSFW model not loaded');
-  }
+`src/data/api/file.ts` uses raw `axios.post` and today returns server error bodies
+without throwing (it bypasses the `baseConnector.ajax` logic that converts
+`status === 'ERROR'` into a thrown `Error`). Fix it to inspect the response and throw
+`Error(result.error)` like `baseConnector` does — otherwise rejections never reach the
+UI. All 19 callsites (15 files) funnel through this one method, so this is the single
+place to fix.
 
-  // Decode image buffer to a 3D tensor
-  const decodedImage = tf.node.decodeImage(imageBuffer, 3);
+### 1.5 Logging
 
-  try {
-    const predictions = await model.classify(decodedImage as tf.Tensor3D);
-
-    const scores: Record<string, number> = {};
-    for (const p of predictions) {
-      scores[p.className] = p.probability;
-    }
-
-    for (const [className, threshold] of Object.entries(THRESHOLDS)) {
-      if ((scores[className] ?? 0) > threshold) {
-        return {
-          rejected: true,
-          reason: `Image classified as potentially inappropriate (${className})`,
-          scores,
-        };
-      }
-    }
-
-    return { rejected: false, scores };
-  } finally {
-    decodedImage.dispose();
-  }
-}
-```
-
-### 1.2 Load the model at server startup
-
-**File:** `srv/api.ts` (or wherever the Express app initializes)
-
-```typescript
-import { loadNSFWModel } from './moderation/nsfwDetector';
-
-// During server initialization, after other setup:
-await loadNSFWModel();
-```
-
-### 1.3 Add the check to the upload pipeline
-
-**File:** `srv/repositories/files.ts`
-
-The check goes **after** Sharp has decoded/resized the image buffer, **before** the S3 upload. This way nsfwjs gets a clean, normalized image.
-
-```typescript
-import { classifyImage } from '../moderation/nsfwDetector';
-
-// Inside the image processing function, after Sharp resize:
-const result = await classifyImage(processedBuffer);
-if (result.rejected) {
-  throw new AppError('IMAGE_CONTENT_REJECTED', result.reason);
-}
-
-// Then continue with S3 upload...
-```
-
-### 1.4 Add the error code
-
-**File:** `srv/common/errors.ts`
-
-```typescript
-IMAGE_CONTENT_REJECTED: {
-  status: 422,
-  message: 'This image was rejected because it may contain inappropriate content.',
-}
-```
-
-### 1.5 Verify the HTTP response
-
-The frontend already handles error responses from `uploadImage`. The new 422 response with `IMAGE_CONTENT_REJECTED` will propagate naturally through axios error handling.
-
----
+Log rejections (no image data): upload type, scores, userId if present, process name.
+The existing user-report feature (`srv/api/report.ts`) is a natural neighbor for
+future moderation tooling, but out of scope here.
 
 ## Phase 2: Client-Side Pre-Screening
 
-### 2.1 Create the browser moderation module
+### 2.1 Browser module
 
-**New file:** `src/moderation/nsfwDetector.ts`
+**New:** `src/moderation/imagePrecheck.ts`
 
-```typescript
-import * as nsfwjs from 'nsfwjs';
+- Lazy dynamic import + model load on first file selection; `tf.enableProdMode()`;
+  WebGL backend with WASM/CPU fallback; run in main thread (WebGL workers are fragile
+  in Safari, and the GPU does the work anyway — a 100–300 ms hiccup on upload is fine).
+- Model from `/models/nsfw/model.json` (self-hosted shards); optional IndexedDB
+  caching via `model.save('indexeddb://…')` — plain HTTP caching of the shards is
+  likely sufficient.
+- High-precision thresholds: warn only on Porn/Hentai ≥ ~0.85; ignore Sexy/Drawing.
+  Client and server models differ — the client is a courtesy check, not a mirror.
 
-let model: nsfwjs.NSFWJS | null = null;
-let modelLoading: Promise<nsfwjs.NSFWJS> | null = null;
+### 2.2 UX
 
-const THRESHOLDS = {
-  Porn: 0.80,
-  Hentai: 0.80,
-  Sexy: 0.90,
-};
+- In `uploadImage()` (or a thin wrapper the callsites use): when the pre-check trips,
+  show a **confirmation dialog** — "this image may contain inappropriate content;
+  upload anyway?" — user may proceed. Never hard-block on the client: MobileNetV2 is
+  ~90% accurate and silent false positives would strand legitimate uploads.
+- On server rejection (`IMAGE_CONTENT_REJECTED`), show
+  `showSnackbar({ type: 'warning', text: … })` (note the object signature).
+- Only activate when the instance config says the server filter is enabled.
 
-/**
- * Lazy-load the model on first use.
- * Subsequent calls return the cached model.
- */
-async function getModel(): Promise<nsfwjs.NSFWJS> {
-  if (model) return model;
-  if (!modelLoading) {
-    modelLoading = nsfwjs.load().then((m) => {
-      model = m;
-      return m;
-    });
-  }
-  return modelLoading;
-}
+## Phase 3: Hardening & cleanup
 
-/**
- * Check a File object before upload.
- * Returns true if the image is safe, false if it should be rejected.
- */
-export async function isImageSafe(file: File): Promise<boolean> {
-  const m = await getModel();
+- **Giphy**: GIFs are never stored server-side (client loads straight from Giphy CDN),
+  so they can't pass the filter by design. Set an explicit `rating: 'g'` on
+  `gf.trending()` / `gf.search()` calls instead of relying on the API default.
+- **`ACCEPTED_IMAGE_FORMATS`** (`src/common/config.ts`) lists `image/svg` — the
+  correct MIME is `image/svg+xml`, so the file-dialog filter for SVG likely never
+  worked. Fix while in the area.
+- Make thresholds configurable (server env done in Phase 1; client via config).
+- Monitor rejection rates before considering threshold changes.
+- Update docs in the same PRs: `docs/infrastructure/` (env vars, image build),
+  `docs/backend/` (moderation module), `docs/frontend/` (pre-check), selfhost README
+  (switch + model swapping).
 
-  const img = new Image();
-  const url = URL.createObjectURL(file);
+## Coverage map (from the 2026-08-05 code audit)
 
-  try {
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error('Failed to load image'));
-      img.src = url;
-    });
+| Ingest path | Where | Covered by |
+|---|---|---|
+| All client uploads (incl. Slate paste/drop, chat attachments, bot avatars via web UI) | `POST /File/uploadImage` → `saveImage()` | saveImage hook |
+| URL-preview images | `srv/api/messages.ts` (`getUrlPreview`) | saveImage hook |
+| LUKSO LSP3 profile image (login-triggered) | `srv/api/user.ts` | saveImage hook |
+| LUKSO LSP3 profile image (chain-event-triggered) | `srv/onchain/generic.ts` — **onchain process** | saveImage hook (lazy load there) |
+| Farcaster pfp / Twitter avatar | `srv/api/accounts.ts`, `srv/api/user.ts` | saveImage hook |
+| Derived social previews, migrations | `srv/repositories/files.ts`, `srv/migrations/` | `skipModeration` flag |
+| Giphy GIFs | never stored — client ↔ Giphy CDN | `rating: 'g'` (Phase 3) |
 
-    const predictions = await m.classify(img);
+Bot API v1 and the plugin system have no upload endpoints (JSON + `imageId`
+references only) — nothing to do there.
 
-    for (const p of predictions) {
-      const threshold = THRESHOLDS[p.className as keyof typeof THRESHOLDS];
-      if (threshold && p.probability > threshold) {
-        return false; // Rejected
-      }
-    }
+## Task checklist
 
-    return true; // Safe
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-```
+### Phase 1 — Server
+- [ ] Add `@huggingface/transformers` + sharp resolution in `srv/`
+- [ ] Backend image build: bake model (pinned revision + sha256), prune onnxruntime-node
+- [ ] `srv/moderation/imageFilter.ts` (lazy load, LRU, thresholds from config)
+- [ ] Hook in `saveImage()` + `skipModeration` for derived images/migrations
+- [ ] Graceful handling in the five URL-ingest paths
+- [ ] `IMAGE_MODERATION_*` env vars + instance-config flag + `docker/.env` template entry
+- [ ] `IMAGE_CONTENT_REJECTED` in `errors.server`
+- [ ] Fix `uploadImage()` to throw on `{status:'ERROR'}` responses
+- [ ] Rejection logging; verify api **and** onchain processes
+- [ ] Test with known-NSFW and safe images; verify Docker build on Node 24
 
-### 2.2 Integrate into the central upload function
-
-**File:** `src/data/api/file.ts` — `FileApiConnector.uploadImage()`
-
-```typescript
-import { isImageSafe } from '../../moderation/nsfwDetector';
-
-// At the top of uploadImage(), before the axios call:
-const safe = await isImageSafe(file);
-if (!safe) {
-  throw new ImageContentRejectedError(
-    'This image was rejected because it may contain inappropriate content.'
-  );
-}
-```
-
-Define `ImageContentRejectedError` in `src/common/errors.ts` as a simple custom Error subclass so callers can distinguish it from network errors.
-
-### 2.3 Show error toasts
-
-Since all upload callsites already catch errors from `uploadImage()`, add handling for the new error type. This can be done centrally or per-component.
-
-**Central approach** — in `FileApiConnector.uploadImage()` itself:
-
-```typescript
-try {
-  // ... existing upload logic
-} catch (error) {
-  if (error instanceof ImageContentRejectedError) {
-    // Re-throw so the caller can show the toast
-    throw error;
-  }
-  // Handle server-side rejection (422 IMAGE_CONTENT_REJECTED)
-  if (error?.response?.data?.error === 'IMAGE_CONTENT_REJECTED') {
-    throw new ImageContentRejectedError(
-      'This image was rejected because it may contain inappropriate content.'
-    );
-  }
-  throw error;
-}
-```
-
-**In upload components** — every component that calls `uploadImage()` already has error handling. Add:
-
-```typescript
-} catch (error) {
-  if (error instanceof ImageContentRejectedError) {
-    showSnackbar('warning', error.message);
-    return;
-  }
-  // ... existing error handling
-}
-```
-
-**Affected components** (all in `src/components/`):
-
-| Component | File |
-|-----------|------|
-| Profile photo | `molecules/inputs/ProfilePhotoField.tsx` |
-| Image upload field | `molecules/inputs/ImageUploadField.tsx` |
-| Community logo | `molecules/inputs/CommunityLogoUpload.tsx` |
-| Header image | `molecules/inputs/HeaderImageUpload.tsx` |
-| Chat attachments | `organisms/EditField/EditField.tsx` |
-| Article content images | `organisms/EditField/FieldMediaImage.tsx` |
-| Role photo | `molecules/RolePhoto.tsx` |
-| User profile photo | `organisms/UserProfile/UserProfileInner.tsx` |
-
-All of these use the existing `SnackbarContext` (`showSnackbar('warning', message)`) for error display. The toast shows at the bottom of the screen, auto-dismisses after 6 seconds (configured in `config.SNACKBAR_DURATION`).
-
----
-
-## Phase 3: Tuning & Hardening
-
-### 3.1 Threshold tuning
-
-Start with conservative thresholds (see above), then adjust based on false positive reports:
-
-| Class | Starting Threshold | Notes |
-|-------|-------------------|-------|
-| Porn | 0.80 | Core target — should be strict |
-| Hentai | 0.80 | Drawn explicit content |
-| Sexy | 0.90 | Higher threshold to avoid false positives on swimwear etc. |
-| Drawing | — | Not filtered (non-explicit art) |
-| Neutral | — | Not filtered |
-
-Consider making thresholds configurable via `srv/common/config.ts` (server) and `src/common/config.ts` (client) so they can be adjusted without code changes.
-
-### 3.2 Logging & monitoring
-
-Log all rejections server-side (without storing the image) for monitoring false positive rates:
-
-```typescript
-if (result.rejected) {
-  console.warn('[moderation] Image rejected', {
-    userId,
-    uploadType,
-    scores: result.scores,
-    reason: result.reason,
-  });
-}
-```
-
-### 3.3 GIF handling
-
-nsfwjs classifies single frames. For animated GIFs:
-- Extract the first frame using Sharp (`.gif({ progressive: false }).toBuffer()`) before classification
-- This is already partially handled since Sharp processes the image before nsfwjs sees it
-
-### 3.4 Performance considerations
-
-- **Server**: Model loads once at startup (~2-3 seconds, ~200MB RAM). Classification is ~100-200ms with tfjs-node, ~500-800ms with pure JS. Negligible compared to Sharp processing + S3 upload.
-- **Client**: Model is ~10MB downloaded once and cached by the browser. Classification is ~50-200ms with WebGL. First load may take 1-2 seconds.
-- **No caching needed**: Images are identified by SHA256 hash; duplicate uploads already skip reprocessing in the existing code.
-
-### 3.5 SVG bypass prevention
-
-SVGs are in `ACCEPTED_IMAGE_FORMATS` but nsfwjs cannot classify SVGs (they're XML, not pixel data). Options:
-- Rasterize SVGs with Sharp before classification (`sharp(buffer).png().toBuffer()`)
-- Or remove SVG from accepted upload formats if not needed
-
----
-
-## Task Checklist
-
-### Phase 1 — Server (safety-critical)
-- [ ] Install `nsfwjs` and `@tensorflow/tfjs-node` (or `@tensorflow/tfjs` as fallback)
-- [ ] Create `srv/moderation/nsfwDetector.ts`
-- [ ] Load model at server startup in `srv/api.ts`
-- [ ] Add classification check in `srv/repositories/files.ts` after Sharp, before S3
-- [ ] Add `IMAGE_CONTENT_REJECTED` error code to `srv/common/errors.ts`
-- [ ] Test with known NSFW and safe images
-- [ ] Verify Docker build works with tfjs-node (fall back to pure JS if needed)
-- [ ] Add rejection logging
-
-### Phase 2 — Client (UX improvement)
-- [ ] Install `nsfwjs` and `@tensorflow/tfjs` (browser build)
-- [ ] Create `src/moderation/nsfwDetector.ts`
-- [ ] Add pre-upload check in `FileApiConnector.uploadImage()`
-- [ ] Create `ImageContentRejectedError` in `src/common/errors.ts`
-- [ ] Add snackbar warning in all upload components (8 components — see list above)
-- [ ] Handle server-side 422 responses as fallback (in case client check is bypassed or thresholds differ)
-- [ ] Test across upload types: profile pic, banner, article header, chat attachment, etc.
+### Phase 2 — Client
+- [ ] Add `nsfwjs` + trimmed tfjs packages; host MobileNetV2 shards in `public/models/nsfw/`
+- [ ] `src/moderation/imagePrecheck.ts` (lazy chunk, WebGL, high-precision thresholds)
+- [ ] Warning/confirm dialog on client suspicion; snackbar on server rejection
+- [ ] Gate on instance-config flag
+- [ ] Test across upload types incl. Slate paste/drop and chat attachments; test on a low-end device
 
 ### Phase 3 — Hardening
-- [ ] Tune thresholds based on real-world testing
-- [ ] Make thresholds configurable via config
-- [ ] Handle SVG classification (rasterize or exclude format)
-- [ ] Handle animated GIF classification (first frame extraction)
-- [ ] Add monitoring/alerting for rejection rates
+- [ ] Giphy `rating: 'g'`
+- [ ] Fix `image/svg` → `image/svg+xml` in `ACCEPTED_IMAGE_FORMATS`
+- [ ] Threshold monitoring/tuning
+- [ ] Documentation updates (infrastructure, backend, frontend, selfhost)
+
+## Non-goals
+
+- **Heavy/VLM moderation cascade** (multi-category guards, GPU sidecars). Out of
+  scope; the env-var model swap is the extension point for operators who want more.
+- **CSAM detection.** ML classifiers are the wrong tool; the industry standard is
+  perceptual-hash matching against curated databases (e.g. Project Arachnid Shield,
+  PhotoDNA) with attached legal/reporting processes. That is a separate
+  legal/compliance workstream, tracked outside this roadmap.
+- Text, video, or audio moderation.

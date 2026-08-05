@@ -6,6 +6,7 @@ import { Editor, Node, Transforms } from "slate";
 import { ImageElement } from "../EditField.helpers";
 import config from "../../../../common/config";
 import fileApi from "data/api/file";
+import { imageUploadErrorText } from "moderation/imageUploadError";
 
 export const validateAndUpdateImage = async (editor: Editor, file: File, id: string): Promise<string | undefined> =>  {
     if (file.size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
@@ -29,10 +30,7 @@ export const validateAndUpdateImage = async (editor: Editor, file: File, id: str
           at: []
         });
       } catch (err: any) {
-        if (err instanceof Error) {
-          return err.message;
-        }
-        return "An unknown error has occurred, please try again";
+        return imageUploadErrorText(err, "An unknown error has occurred, please try again");
       }
     }
 }

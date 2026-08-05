@@ -11,6 +11,8 @@ import { Popover } from '../../../components/atoms/Tooltip/Tooltip';
 import FullscreenImageModal from '../../../components/atoms/FullscreenImageModal/FullscreenImageModal';
 import config from '../../../common/config';
 import fileApi from 'data/api/file';
+import errors from '../../../common/errors';
+import { isImageContentRejected } from 'moderation/imageUploadError';
 import { Spinner } from '@phosphor-icons/react';
 
 type Props = InMemoryAttachment & {
@@ -40,6 +42,9 @@ async function uploadImage(file: File): Promise<UploadImageResult> {
       }, file);
       return { ok: true, imageId, largeImageId };
     } catch (err: any) {
+      if (isImageContentRejected(err)) {
+        return { ok: false, error: errors.client.IMAGE_CONTENT_REJECTED };
+      }
       return { ok: false, error: 'An unknown error has occurred, please try again' };
     }
   }

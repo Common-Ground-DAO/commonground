@@ -9,6 +9,8 @@ import errors from "../../../common/errors";
 import Jdenticon from "../../../components/atoms/Jdenticon/Jdenticon";
 import Button from "../../../components/atoms/Button/Button";
 import config from "../../../common/config";
+import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
+import { isImageContentRejected } from "moderation/imageUploadError";
 import { useNavigate } from "react-router-dom";
 import { getUrl } from 'common/util';
 
@@ -37,12 +39,17 @@ export default function UserProfilePhoto(props: Props) {
       if (ev.target.files[0].size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
         setError(errors.client.UPLOAD_SIZE_LIMIT);
       } else {
+        // Read before awaiting: the input is reset on the next open.
+        const file = ev.target.files[0];
+        if (!await checkImageBeforeUpload(file)) return;
         try {
-          await fileApi.uploadImage({ type: 'userProfileImage' }, ev.target.files[0]);
+          await fileApi.uploadImage({ type: 'userProfileImage' }, file);
           setError(undefined);
         } catch (err) {
           console.error(err);
-          setError("An unknown error has occurred");
+          setError(isImageContentRejected(err)
+            ? errors.client.IMAGE_CONTENT_REJECTED
+            : "An unknown error has occurred");
         }
       }
     }

@@ -8,6 +8,7 @@ import CameraPlusIcon from "../../../../components/atoms/icons/24/CameraPlusIcon
 import Button from "../../../../components/atoms/Button/Button";
 import config from "../../../../common/config";
 import { useWindowSizeContext } from "../../../../context/WindowSizeProvider";
+import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
 
 import "./CommunityLogoUpload.css";
 
@@ -23,15 +24,18 @@ export default function CommunityLogoUpload(props: Props) {
     const inputRef = createRef<HTMLInputElement>();
     const [ error, setError ] = useState<string>();
 
-    const handleImageChange = (ev: React.ChangeEvent<HTMLInputElement>) => {
+    const handleImageChange = async (ev: React.ChangeEvent<HTMLInputElement>) => {
       if (onChange) {
         if (!ev.target.files || ev.target.files.length === 0) {
           onChange(undefined);
         } else if (ev.target.files[0].size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
           setError(errors.client.UPLOAD_SIZE_LIMIT);
         } else {
+          // Read before awaiting: the input is reset on the next open.
+          const file = ev.target.files[0];
+          if (!await checkImageBeforeUpload(file)) return;
           try {
-            onChange(ev.target.files[0]);
+            onChange(file);
             setError(undefined);
           } catch (err){
             setError("An unknown error has occurred");

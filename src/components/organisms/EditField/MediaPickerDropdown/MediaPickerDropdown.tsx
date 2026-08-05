@@ -15,6 +15,7 @@ import { ReactEditor, useSlate } from 'slate-react';
 import { Editor, Transforms } from 'slate';
 import { isCurrentNodeEmptyParagraph } from '../EditField.helpers';
 import config from 'common/config';
+import { checkImageBeforeUpload } from 'moderation/checkImageBeforeUpload';
 
 import './MediaPickerDropdown.css';
 
@@ -24,7 +25,13 @@ type Props = {
 
 const randomIdGen = createTranslator();
 
-export function addImageMedia(editor: Editor, file: File) {
+/**
+ * Async since the NSFW pre-check: a file the user declines in the confirmation
+ * dialog never becomes an image node, so it never reaches the upload.
+ */
+export async function addImageMedia(editor: Editor, file: File) {
+  if (!await checkImageBeforeUpload(file)) return;
+
   const elementId = randomIdGen.generate();
 
   if (isCurrentNodeEmptyParagraph(editor)) {
@@ -49,7 +56,7 @@ const MediaPickerDropdown: React.FC<Props> = (props) => {
 
     // Creates node with file candidate, node will try to load  and validate image by itself
     const file = ev.target.files[0];
-    addImageMedia(editor, file);
+    await addImageMedia(editor, file);
   }, [editor]);
 
   const openMediaPicker = React.useCallback(() => {

@@ -7,6 +7,7 @@ import React, { createRef, useMemo, useState } from 'react'
 import Button from 'components/atoms/Button/Button';
 import config from 'common/config';
 import errors from 'common/errors';
+import { checkImageBeforeUpload } from 'moderation/checkImageBeforeUpload';
 
 import './ProfilePhotoField.css';
 import { XCircleIcon } from '@heroicons/react/24/solid';
@@ -31,7 +32,10 @@ const ProfilePhotoField: React.FC<Props> = (props) => {
       if (ev.target.files[0].size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
         setError(errors.client.UPLOAD_SIZE_LIMIT);
       } else {
-        setFile(ev.target.files[0]);
+        // Read before awaiting: the input is reset on the next open.
+        const file = ev.target.files[0];
+        if (!await checkImageBeforeUpload(file)) return;
+        setFile(file);
       }
     }
   }

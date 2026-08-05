@@ -18,6 +18,7 @@ import communityApi from 'data/api/community';
 import { useMultipleCommunityListViews } from 'context/CommunityListViewProvider';
 import type { PageType } from '../UserSettingsModalContent';
 import errors from 'common/errors';
+import { isImageContentRejected } from 'moderation/imageUploadError';
 
 const MAX_USERNAME = 30;
 const MAX_DESCRIPTION = 2000;
@@ -259,7 +260,9 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, onDisabled, setPage }
       const message = (e as Error).message;
       showSnackbar({
         type: 'warning',
-        text: message === errors.server.EXISTS_ALREADY ? 'Username is already taken' : message || 'Could not save bot',
+        text: isImageContentRejected(e)
+          ? errors.client.IMAGE_CONTENT_REJECTED
+          : message === errors.server.EXISTS_ALREADY ? 'Username is already taken' : message || 'Could not save bot',
       });
     } finally {
       setSaving(false);

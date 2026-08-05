@@ -24,6 +24,8 @@ import config from "common/config";
 import { useSnackbarContext } from "context/SnackbarContext";
 import errors from "common/errors";
 import fileApi from "data/api/file";
+import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
+import { isImageContentRejected } from "moderation/imageUploadError";
 import { useSignedUrl } from "hooks/useSignedUrl";
 import UserPosts from "./UserPosts";
 
@@ -73,10 +75,17 @@ export default function UserProfileInner(props: Props & {
       return;
     }
 
+    if (!await checkImageBeforeUpload(file)) return;
+
     try {
       await fileApi.uploadImage({ type: 'userBannerImage' }, file);
     } catch (e: any) {
-      showSnackbar({ type: 'warning', text: `Something went wrong, code error: ${e.message}` });
+      showSnackbar({
+        type: 'warning',
+        text: isImageContentRejected(e)
+          ? errors.client.IMAGE_CONTENT_REJECTED
+          : `Something went wrong, code error: ${e.message}`,
+      });
     }
   }, [showSnackbar]);
 

@@ -7,6 +7,8 @@ import React, { createRef, useState } from "react";
 import fileApi from "data/api/file";
 import errors from "../../../common/errors";
 import config from "../../../common/config";
+import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
+import { isImageContentRejected } from "moderation/imageUploadError";
 import { useSignedUrl } from "hooks/useSignedUrl";
 import { UserCircle } from "@phosphor-icons/react";
 
@@ -33,13 +35,18 @@ const RolePhoto: React.FC<Props> = (props: Props) => {
       if (ev.target.files[0].size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
         setError(errors.client.UPLOAD_SIZE_LIMIT);
       } else {
+        // Read before awaiting: the input is reset on the next open.
+        const file = ev.target.files[0];
+        if (!await checkImageBeforeUpload(file)) return;
         try {
-          const result = await fileApi.uploadImage({ type: 'roleImage', roleId, communityId }, ev.target.files[0]);
+          const result = await fileApi.uploadImage({ type: 'roleImage', roleId, communityId }, file);
           setImageId?.(result.imageId);
           setError(undefined);
         } catch (err) {
           console.error(err);
-          setError("An unknown error has occurred");
+          setError(isImageContentRejected(err)
+            ? errors.client.IMAGE_CONTENT_REJECTED
+            : "An unknown error has occurred");
         }
       }
     }

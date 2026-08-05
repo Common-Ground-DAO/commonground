@@ -20,6 +20,7 @@ import { useDarkModeContext } from 'context/DarkModeProvider';
 import errors from 'common/errors';
 import data from 'data';
 import fileApi from 'data/api/file';
+import { isImageContentRejected } from 'moderation/imageUploadError';
 import { UniversalProfileStatus, UniversalProfileSignButton } from '../UniversalProfileSign/UniversalProfileSign';
 import { useUniversalProfile } from 'context/UniversalProfileProvider';
 import { useUserOnboardingContext } from 'context/UserOnboarding';
@@ -198,7 +199,12 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
       try {
         await data.user.createUser({ ...createUserData, recaptchaToken });
         if (userPhoto && createUserData.useCgProfile) {
-          await fileApi.uploadImage({ type: 'userProfileImage' }, userPhoto).catch(e => console.error("Error uploading user image", e));
+          await fileApi.uploadImage({ type: 'userProfileImage' }, userPhoto).catch(e => {
+            console.error("Error uploading user image", e);
+            // The account exists at this point, so onboarding continues either
+            // way — but a rejected image must not vanish without a word.
+            if (isImageContentRejected(e)) setGenericError(errors.client.IMAGE_CONTENT_REJECTED);
+          });
         }
         createFinished();
       } catch (e: any) {

@@ -32,6 +32,8 @@ import SimpleLink from 'components/atoms/SimpleLink/SimpleLink';
 import config from 'common/config';
 import errors from 'common/errors';
 import fileApi from 'data/api/file';
+import { checkImageBeforeUpload } from 'moderation/checkImageBeforeUpload';
+import { imageUploadErrorText } from 'moderation/imageUploadError';
 import { useAsyncMemo } from 'hooks/useAsyncMemo';
 import { useNavigate } from 'react-router-dom';
 import { getUrl } from 'common/util';
@@ -163,10 +165,17 @@ const UserProfileV2: React.FC<Props> = (props) => {
       if (ev.target.files[0].size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
         showSnackbar({ type: 'warning', text: errors.client.UPLOAD_SIZE_LIMIT });
       } else {
+        // Read before awaiting: the input is reset on the next open.
+        const file = ev.target.files[0];
+        if (!await checkImageBeforeUpload(file)) return;
         try {
-          await fileApi.uploadImage({ type: 'userProfileImage' }, ev.target.files[0]);
+          await fileApi.uploadImage({ type: 'userProfileImage' }, file);
         } catch (err) {
           console.error(err);
+          showSnackbar({
+            type: 'warning',
+            text: imageUploadErrorText(err, 'Could not upload your profile picture'),
+          });
         }
       }
     }

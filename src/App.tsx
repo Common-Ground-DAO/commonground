@@ -90,6 +90,7 @@ import UserInfoManager from 'components/atoms/UserInfoManager/UserInfoManager';
 import { PluginDetailsModalProvider } from 'context/PluginDetailsModalProvider';
 import { IsolationModeProvider } from 'context/IsolationModeProvider';
 import { ReportModalProvider } from 'context/ReportModalProvider';
+import { SuspiciousImageModalProvider } from 'context/SuspiciousImageModalProvider';
 
 dayjs.extend(utc);
 dayjs.extend(isToday);
@@ -304,6 +305,7 @@ function Inner() {
       <UserSettingsProvider>
       <CommunityModerationProvider>
       <ReportModalProvider>
+      <SuspiciousImageModalProvider>
       <SidebarDataDisplayProvider>
       <PluginDetailsModalProvider>
       <UniversalProfileProvider>
@@ -329,6 +331,7 @@ function Inner() {
       </UniversalProfileProvider>
       </PluginDetailsModalProvider>
       </SidebarDataDisplayProvider>
+      </SuspiciousImageModalProvider>
       </ReportModalProvider>
       </CommunityModerationProvider>
       </UserSettingsProvider>

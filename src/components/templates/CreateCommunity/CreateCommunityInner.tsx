@@ -21,6 +21,7 @@ import { useLoggedInOwnUser } from "context/OwnDataProvider";
 import { useSnackbarContext } from "context/SnackbarContext";
 import data from "data";
 import fileApi from "data/api/file";
+import { imageUploadErrorText } from "moderation/imageUploadError";
 import { getUrl } from 'common/util';
 import Tag from "components/atoms/Tag/Tag";
 import ImageUploadField from "components/molecules/inputs/ImageUploadField/ImageUploadField";
@@ -172,7 +173,7 @@ const CreateCommunityInner: React.FC<Props> = ({ onCancel, onSuccess }) => {
         onSuccess?.();
       }
       catch (e) {
-        setError(e instanceof Error ? e.message : 'An unknown error occurred');
+        setError(imageUploadErrorText(e, 'An unknown error occurred'));
         setSaving(false);
       }
     }

@@ -16,6 +16,8 @@
 #   CG_FEATURE_TWITTER    "true" if Twitter/X auth is configured
 #   CG_ENABLE_CALLS       "false" hides the call UI (mediasoup not deployed);
 #                         anything else (incl. unset) means calls are on
+#   CG_ENABLE_IMAGE_FILTER "false" when the backend runs without the NSFW
+#                         image filter; skips the client-side pre-check too
 #   CG_GIPHY_API_KEY      Giphy key; empty hides the GIF picker
 #   CG_WALLETCONNECT_PROJECT_ID  WalletConnect Cloud project id
 set -e
@@ -37,7 +39,7 @@ bool() { [ "$1" = "true" ] && echo "true" || echo "false"; }
 # opt-out flag: only an explicit "false" disables the feature, so an instance
 # that never sets the variable keeps calls
 optout() { [ "$1" = "false" ] && echo "false" || echo "true"; }
-cfg="$cfg,\"features\":{\"email\":$(bool "$CG_FEATURE_EMAIL"),\"twitterAuth\":$(bool "$CG_FEATURE_TWITTER"),\"calls\":$(optout "${CG_ENABLE_CALLS:-}")}"
+cfg="$cfg,\"features\":{\"email\":$(bool "$CG_FEATURE_EMAIL"),\"twitterAuth\":$(bool "$CG_FEATURE_TWITTER"),\"calls\":$(optout "${CG_ENABLE_CALLS:-}"),\"imageFilter\":$(optout "${CG_ENABLE_IMAGE_FILTER:-}")}"
 cfg="$cfg,\"giphyApiKey\":\"$CG_GIPHY_API_KEY\""
 if [ -n "$CG_WALLETCONNECT_PROJECT_ID" ]; then
   cfg="$cfg,\"walletConnectProjectId\":\"$CG_WALLETCONNECT_PROJECT_ID\""

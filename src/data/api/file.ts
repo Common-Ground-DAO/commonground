@@ -22,6 +22,14 @@ class FileApiConnector extends BaseApiConnector {
       form,
       { withCredentials: true },
     );
+    // this endpoint answers success with the bare payload and errors with
+    // { status: 'ERROR', error } at HTTP 200 — since we bypass
+    // baseConnector.ajax here, its error mapping has to be replicated, or
+    // rejections (e.g. IMAGE_CONTENT_REJECTED) never reach the UI
+    const result = responseData.data as { status?: string; error?: string };
+    if (result?.status === 'ERROR') {
+      throw new Error(result.error || 'Unknown API Response Error');
+    }
     return responseData.data;
   }
 

@@ -8,7 +8,15 @@ RUN sed -i 's/yarnPath: .*//g' /dist/.yarnrc.yml && \
     corepack enable && \
     yarn &&\
     yarn tsc && \
-    rm /dist/.yarnrc.yml
+    rm /dist/.yarnrc.yml && \
+    # onnxruntime-node ships all platforms' prebuilt binaries — drop the
+    # ~160 MB of darwin/win32 that can never run in this linux image
+    rm -rf /dist/node_modules/onnxruntime-node/bin/napi-v6/darwin \
+           /dist/node_modules/onnxruntime-node/bin/napi-v6/win32
+# NSFW classification model, pinned revision + sha256-verified (the runtime
+# loads it from /models/nsfw and never touches the network)
+COPY download_model.sh /tmp/download_model.sh
+RUN sh /tmp/download_model.sh /models/nsfw && rm /tmp/download_model.sh
 RUN apt-get remove -y build-essential python3-pip &&\
     apt-get clean &&\
     apt-get autoremove --yes &&\

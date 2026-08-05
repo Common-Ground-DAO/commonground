@@ -157,6 +157,20 @@ function resolveActiveChains(): ChainIdentifier[] {
 
 const ACTIVE_CHAINS: ChainIdentifier[] = resolveActiveChains();
 
+// backend-only env vars (browser builds fall back to the defaults; the
+// browser decides via IMAGE_FILTER_ENABLED below, never via these)
+function nodeEnv(name: string): string | undefined {
+  if ('process' in that && 'env' in that.process) {
+    return that.process.env[name];
+  }
+  return undefined;
+}
+
+function parseModerationThreshold(raw: string | undefined): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= 1 ? parsed : 0.8;
+}
+
 const config = {
   // general settings
   APP_VERSION: APP_VERSION,
@@ -178,6 +192,13 @@ const config = {
   ONCHAIN_QUERY_TIMEOUT: 15000 as const,
   WEBSOCKET_RECONNECT_COOLDOWN: 15000 as const,
   IMAGE_UPLOAD_SIZE_LIMIT: 8388608 as const,
+  // server-side NSFW filter (srv/moderation/imageFilter.ts): master switch,
+  // model directory (Transformers.js layout: config.json,
+  // preprocessor_config.json, onnx/model_quantized.onnx) and the nsfw
+  // probability above which an image is rejected
+  IMAGE_MODERATION_ENABLED: nodeEnv('IMAGE_MODERATION_ENABLED') !== 'false',
+  IMAGE_MODERATION_MODEL_PATH: nodeEnv('IMAGE_MODERATION_MODEL_PATH') || '/models/nsfw',
+  IMAGE_MODERATION_THRESHOLD: parseModerationThreshold(nodeEnv('IMAGE_MODERATION_THRESHOLD')),
   COMMUNITY_CONTRACT: '0x64d27cBcA4eD4B21Ee5F1f396059B22E9B46c96C',
   COMMUNITY_CONTRACT_CHAIN: 'xdai',
   FRACTAL_TEXT: "I authorize Common Ground (EqjSwxLh1Q8ZZpXXE7gBwxFVvYIZxhZuG0ykhTvxFsE) to get a proof from Fractal that:\n- I passed KYC level uniqueness+wallet" as const,
@@ -303,6 +324,9 @@ const config = {
   // voice/video calls need the mediasoup service; self-hosters can leave it
   // undeployed, in which case the call UI is hidden instead of failing
   CALLS_ENABLED: instance?.features?.calls ?? true,
+  // whether this instance runs the server-side NSFW image filter; the client
+  // only loads its pre-upload warning model when the server actually filters
+  IMAGE_FILTER_ENABLED: instance?.features?.imageFilter ?? true,
   // per-instance third-party keys (CG defaults are locked to the official domains)
   GIPHY_API_KEY: instance?.giphyApiKey ?? (instance ? '' : 'ir89rjdyvl6GNuHNHO71QldCPQzSAjI4'),
   WALLETCONNECT_PROJECT_ID: instance?.walletConnectProjectId ?? 'a58ac26ec0960773dad148a0585ef011',

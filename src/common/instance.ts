@@ -35,6 +35,8 @@ export type InstanceConfig = {
     twitterAuth?: boolean;
     /** false when the instance runs without the mediasoup service (voice/video calls). */
     calls?: boolean;
+    /** false when the instance disables the server-side NSFW image filter (skips the client pre-check too). */
+    imageFilter?: boolean;
   };
   /** Giphy API key for this instance; empty disables the GIF picker. */
   giphyApiKey?: string;
@@ -78,7 +80,7 @@ export function getInstanceConfig(): InstanceConfig | undefined {
   }
   if (raw.features && typeof raw.features === 'object') {
     cfg.features = {};
-    for (const key of ['email', 'twitterAuth', 'calls'] as const) {
+    for (const key of ['email', 'twitterAuth', 'calls', 'imageFilter'] as const) {
       if (typeof raw.features[key] === 'boolean') {
         cfg.features[key] = raw.features[key];
       }

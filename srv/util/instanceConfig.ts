@@ -44,6 +44,8 @@ function buildInstanceConfig(): InstanceConfig {
     // opt-out: only an explicit "false" (no mediasoup service deployed) hides
     // the call UI, so instances that never set the variable keep calls
     calls: process.env.CG_ENABLE_CALLS !== "false",
+    // mirrors config.IMAGE_MODERATION_ENABLED (srv/moderation/imageFilter.ts)
+    imageFilter: process.env.IMAGE_MODERATION_ENABLED !== "false",
     email: configured(dockerSecret("sendgrid_api") || process.env.SENDGRID_API_KEY),
     twitterAuth:
       configured(dockerSecret("twitter_api_v1_key") || process.env.TWITTER_API_KEY) &&

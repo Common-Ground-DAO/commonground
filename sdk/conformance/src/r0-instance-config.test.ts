@@ -51,7 +51,10 @@ describe("Instance/config", () => {
   it("is served with no-store caching", async () => {
     const response = await fetch(`${BASE_URL}/api/v2/Instance/config`);
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("no-store");
+    // The app sets no-store; nginx appends its blanket no-cache on API routes,
+    // so through the proxy this reads "no-store, no-cache". Assert the
+    // contract-relevant part: the response is marked non-storable.
+    expect(response.headers.get("cache-control")).toContain("no-store");
     expect(response.headers.get("content-type")).toContain("application/json");
   });
 

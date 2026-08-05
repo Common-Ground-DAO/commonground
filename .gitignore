@@ -36,5 +36,6 @@ dbdump*
 
 # self-hosting: generated instance credentials and internal certs
 docker/.env.selfhost
+docker/.env.conformance
 docker/s3_config/s3.selfhost.json
 docker/selfhost/certs/

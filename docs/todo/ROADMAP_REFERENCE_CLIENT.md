@@ -50,6 +50,18 @@ Design rules:
 - Findings that need server changes become small PRs against this repo (the
   instance-config endpoint is the first known one) and get recorded here.
 
+## Branch & deployment policy (maintainer, 2026-08-05)
+
+- All workstream code lives on **`feat/reference-client`** (branched from
+  develop 2026-08-05). **No merging to develop without the maintainer's
+  explicit go** — the branch accumulates reviewable commits and merges develop
+  in regularly to stay current. Roadmap/doc updates about the workstream still
+  land on develop as normal docs PRs.
+- The branch **may be deployed to the reference instance (cg.mogged.eu) at any
+  time** for live checks — same deploy flow as develop, just checked out to the
+  branch. The instance is the workstream's live test bed; deploys back to
+  develop-head whenever needed.
+
 ## Phases
 
 ### Phase R0 — scaffolding + first server gap (~2-3 days)

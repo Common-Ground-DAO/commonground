@@ -32,7 +32,7 @@ export interface DevicePublicJwk {
 /** Serializable form of a device identity (KEEP PRIVATE — contains d). */
 export interface DeviceKeyExport {
   crv: DeviceCurve;
-  privateJwk: JsonWebKey;
+  privateJwk: webcrypto.JsonWebKey;
   publicJwk: DevicePublicJwk;
 }
 
@@ -41,9 +41,9 @@ const hashFor = (curve: DeviceCurve) => (curve === "P-256" ? "SHA-256" : "SHA-38
 export class DeviceKey {
   private constructor(
     readonly curve: DeviceCurve,
-    private readonly privateKey: CryptoKey,
+    private readonly privateKey: webcrypto.CryptoKey,
     readonly publicJwk: DevicePublicJwk,
-    private readonly privateJwk: JsonWebKey,
+    private readonly privateJwk: webcrypto.JsonWebKey,
   ) {}
 
   static async generate(curve: DeviceCurve = "P-384"): Promise<DeviceKey> {

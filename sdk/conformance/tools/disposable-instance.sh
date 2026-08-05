@@ -159,6 +159,13 @@ case "${1:-}" in
     generate_env
     generate_support_files
     compose up -d
+    echo "waiting for migrations..."
+    if ! compose wait migrate-db >/dev/null 2>&1 || \
+       [ "$(docker inspect -f '{{.State.ExitCode}}' cg-conformance-migrate-db-1)" != "0" ]; then
+      echo "migrate-db failed:" >&2
+      compose logs migrate-db | tail -20 >&2
+      exit 1
+    fi
     wait_for_api
     echo "run the suite with: CG_BASE_URL=http://127.0.0.1:${HTTP_PORT} yarn test"
     ;;

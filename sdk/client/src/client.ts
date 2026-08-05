@@ -7,21 +7,19 @@
  * makes this the reference for native clients).
  */
 
-import { HttpTransport } from "./transport/http.js";
+import { HttpTransport, type HttpTransportOptions } from "./transport/http.js";
 import { fetchInstanceConfig, type InstanceConfig } from "./instance.js";
+import { AuthApi } from "./auth/api.js";
 
-export interface CommonGroundClientOptions {
-  /** Instance origin, e.g. "https://cg.mogged.eu". */
-  baseUrl: string;
-  /** Override fetch (tests, instrumentation). */
-  fetch?: typeof fetch;
-}
+export interface CommonGroundClientOptions extends HttpTransportOptions {}
 
 export class CommonGroundClient {
   readonly transport: HttpTransport;
+  readonly auth: AuthApi;
 
   constructor(options: CommonGroundClientOptions) {
     this.transport = new HttpTransport(options);
+    this.auth = new AuthApi(this.transport);
   }
 
   get baseUrl(): string {

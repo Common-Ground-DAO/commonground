@@ -33,7 +33,7 @@ import config from 'common/config';
 import errors from 'common/errors';
 import fileApi from 'data/api/file';
 import { checkImageBeforeUpload } from 'moderation/checkImageBeforeUpload';
-import { imageUploadErrorText } from 'moderation/imageUploadError';
+import { imageUploadErrorText, notifyIfImageRejected } from 'moderation/imageUploadError';
 import { useAsyncMemo } from 'hooks/useAsyncMemo';
 import { useNavigate } from 'react-router-dom';
 import { getUrl } from 'common/util';
@@ -178,10 +178,12 @@ const UserProfileV2: React.FC<Props> = (props) => {
           await fileApi.uploadImage({ type: 'userProfileImage' }, file);
         } catch (err) {
           console.error(err);
-          showSnackbar({
-            type: 'warning',
-            text: imageUploadErrorText(err, 'Could not upload your profile picture'),
-          });
+          if (!notifyIfImageRejected(err)) {
+            showSnackbar({
+              type: 'warning',
+              text: imageUploadErrorText(err, 'Could not upload your profile picture'),
+            });
+          }
         }
       }
     }

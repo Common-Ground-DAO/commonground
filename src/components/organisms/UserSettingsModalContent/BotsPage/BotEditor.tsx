@@ -18,7 +18,7 @@ import communityApi from 'data/api/community';
 import { useMultipleCommunityListViews } from 'context/CommunityListViewProvider';
 import type { PageType } from '../UserSettingsModalContent';
 import errors from 'common/errors';
-import { isImageContentRejected } from 'moderation/imageUploadError';
+import { notifyIfImageRejected } from 'moderation/imageUploadError';
 
 const MAX_USERNAME = 30;
 const MAX_DESCRIPTION = 2000;
@@ -257,13 +257,14 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, onDisabled, setPage }
       showSnackbar({ type: 'info', text: isEdit ? 'Bot updated' : 'Bot created' });
       onSaved(saved);
     } catch (e) {
-      const message = (e as Error).message;
-      showSnackbar({
-        type: 'warning',
-        text: isImageContentRejected(e)
-          ? errors.client.IMAGE_CONTENT_REJECTED
-          : message === errors.server.EXISTS_ALREADY ? 'Username is already taken' : message || 'Could not save bot',
-      });
+      // The image rejection gets the shared modal; everything else stays a snackbar.
+      if (!notifyIfImageRejected(e)) {
+        const message = (e as Error).message;
+        showSnackbar({
+          type: 'warning',
+          text: message === errors.server.EXISTS_ALREADY ? 'Username is already taken' : message || 'Could not save bot',
+        });
+      }
     } finally {
       setSaving(false);
     }

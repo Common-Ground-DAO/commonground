@@ -16,8 +16,7 @@ import communityApi from 'data/api/community';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';
 import ImageUploadField from 'components/molecules/inputs/ImageUploadField/ImageUploadField';
 import fileApi from 'data/api/file';
-import errors from 'common/errors';
-import { isImageContentRejected } from 'moderation/imageUploadError';
+import { notifyIfImageRejected } from 'moderation/imageUploadError';
 import ToggleInputField from 'components/molecules/inputs/ToggleInputField/ToggleInputField';
 import RolePermissionToggle, { PermissionType } from 'components/molecules/RolePermissionToggle/RolePermissionToggle';
 import { PredefinedRole } from 'common/enums';
@@ -240,12 +239,12 @@ const ScheduleEventModal: React.FC<Props> = (props) => {
         onClose();
       }
     } catch (e: any) {
-      showSnackbar({
-        type: 'warning',
-        text: isImageContentRejected(e)
-          ? errors.client.IMAGE_CONTENT_REJECTED
-          : `Something went wrong, code error: ${e.message}`,
-      });
+      if (!notifyIfImageRejected(e)) {
+        showSnackbar({
+          type: 'warning',
+          text: `Something went wrong, code error: ${e.message}`,
+        });
+      }
     } finally {
       setIsSending(false);
     }

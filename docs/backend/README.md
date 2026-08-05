@@ -52,6 +52,11 @@ storage. Runs **in-process** via `@huggingface/transformers` +
 `onnxruntime-node` (no Python, no sidecar) against a ViT-base image
 classifier baked into the backend Docker image (int8/`q8` export of
 `Falconsai/nsfw_image_detection`, ~87 MB, loaded from `/models/nsfw`).
+The model is strong on photographic explicit content and deliberately tuned
+for near-zero false positives; **drawn/anime explicit content (hentai) is a
+known weak spot** of this classifier — a documented, accepted limitation
+(community moderation covers it; evaluating a hentai-capable swap model is
+tracked in `docs/todo/TODO.md`).
 
 - **Hook point:** `fileHelper.saveImage()` (`srv/repositories/files.ts`),
   **before** the S3 `PutObject` — the single choke point for direct uploads

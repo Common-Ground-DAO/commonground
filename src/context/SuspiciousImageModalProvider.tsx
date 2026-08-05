@@ -5,20 +5,31 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Button from 'components/atoms/Button/Button';
-import { registerSuspiciousImageConfirm } from 'moderation/suspiciousImageDialog';
+import errors from 'common/errors';
+import {
+  registerImageRejectedNotice,
+  registerSuspiciousImageConfirm,
+} from 'moderation/suspiciousImageDialog';
 
 import './SuspiciousImageModalProvider.css';
 
 /**
- * Hosts the "this image may be explicit" confirmation.
+ * Hosts both image-moderation dialogs:
+ *
+ * - the *pre-upload* "this image may be explicit" confirmation, and
+ * - the *post-upload* "the server rejected this image" notice.
  *
  * Mounted once at app root (next to `ReportModalProvider`) and driven
  * imperatively, because the callers are `<input onChange>` handlers and helper
  * functions rather than components — see `moderation/suspiciousImageDialog.ts`.
  *
- * It is a warning, never a block. The client classifier is ~90% accurate, so a
- * hard stop here would silently strand legitimate uploads; "Upload anyway"
- * always exists, and the server still gets the final say.
+ * The confirmation is a warning, never a block. The client classifier is ~90%
+ * accurate, so a hard stop there would silently strand legitimate uploads;
+ * "Upload anyway" always exists, and the server still gets the final say. The
+ * notice is the other end of that sentence: when the server does say no, every
+ * upload surface says so the same way, in a dialog the user cannot walk past —
+ * it replaces a per-site mix of snackbars and inline error tags that manual
+ * testing showed people miss.
  *
  * ## Why this does not use `ScreenAwareModal` / `Modal`
  *
@@ -41,11 +52,24 @@ import './SuspiciousImageModalProvider.css';
  * own portal node on `document.body`, with its own backdrop and a z-index above
  * every modal layer in the app. See `SuspiciousImageModalProvider.css`.
  */
+
+/**
+ * One queue for both dialogs, so they can never stack on top of each other:
+ * a multi-file drop can ask about file 2 while file 1's upload is already
+ * coming back rejected. A `confirm` entry owes its caller an answer, a
+ * `rejected` entry owes nothing and only has to be dismissed.
+ */
+type DialogEntry =
+  | { kind: 'confirm'; resolve: (proceed: boolean) => void }
+  | { kind: 'rejected' };
+
 export function SuspiciousImageModalProvider(props: React.PropsWithChildren<{}>) {
   // A queue, not a single slot: a multi-file drop checks its files one after
   // another, and a second suspicious file must not lose its resolver.
-  const queueRef = useRef<((proceed: boolean) => void)[]>([]);
-  const [isOpen, setIsOpen] = useState(false);
+  const queueRef = useRef<DialogEntry[]>([]);
+  // Mirrors `queueRef.current[0]?.kind` into render. `undefined` = nothing open.
+  const [currentKind, setCurrentKind] = useState<DialogEntry['kind'] | undefined>(undefined);
+  const isOpen = currentKind !== undefined;
   const [portalNode] = useState(() => {
     const node = document.createElement('div');
     node.id = 'suspicious-image-dialog-root';
@@ -60,29 +84,38 @@ export function SuspiciousImageModalProvider(props: React.PropsWithChildren<{}>)
   }, [portalNode]);
 
   useEffect(() => {
+    const enqueue = (entry: DialogEntry) => {
+      // Notices coalesce: dropping four files that all come back rejected is
+      // one piece of news, not four identical dialogs to click through. A
+      // `confirm` is never collapsed — each one owns a file's fate.
+      if (entry.kind === 'rejected' && queueRef.current.some((e) => e.kind === 'rejected')) return;
+      queueRef.current.push(entry);
+      setCurrentKind(queueRef.current[0].kind);
+    };
     registerSuspiciousImageConfirm(
-      () =>
-        new Promise<boolean>((resolve) => {
-          queueRef.current.push(resolve);
-          setIsOpen(true);
-        }),
+      () => new Promise<boolean>((resolve) => enqueue({ kind: 'confirm', resolve })),
     );
+    registerImageRejectedNotice(() => enqueue({ kind: 'rejected' }));
     return () => {
       registerSuspiciousImageConfirm(undefined);
+      registerImageRejectedNotice(undefined);
       // Nothing is left to answer the pending questions; let them through
-      // rather than dropping the files silently.
+      // rather than dropping the files silently. Queued notices are simply
+      // dropped — there is nobody waiting on them.
       const pending = queueRef.current;
       queueRef.current = [];
-      for (const resolve of pending) resolve(true);
+      for (const entry of pending) if (entry.kind === 'confirm') entry.resolve(true);
     };
   }, []);
 
   const answer = useCallback((proceed: boolean) => {
-    queueRef.current.shift()?.(proceed);
-    setIsOpen(queueRef.current.length > 0);
+    const entry = queueRef.current.shift();
+    if (entry?.kind === 'confirm') entry.resolve(proceed);
+    setCurrentKind(queueRef.current[0]?.kind);
   }, []);
 
-  // Closing by backdrop/escape is a cancel: the safer of the two answers.
+  // Closing by backdrop/escape is a cancel for the confirmation (the safer of
+  // the two answers) and a plain dismiss for the notice.
   const onClose = useCallback(() => answer(false), [answer]);
 
   // Captured on the way down, and swallowed: while this dialog is up it is the
@@ -94,10 +127,10 @@ export function SuspiciousImageModalProvider(props: React.PropsWithChildren<{}>)
   // with the confirmation still unanswered.
   const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!isOpen) return;
+    if (!currentKind) return;
     const previouslyFocused = document.activeElement as HTMLElement | null;
     // aria-modal container is focusable itself; initial focus goes to the
-    // safe answer (Cancel = first button)
+    // safe answer (Cancel = first button; the notice only has "OK")
     dialogRef.current?.querySelector<HTMLElement>('button')?.focus();
     const onKeyDown = (ev: KeyboardEvent) => {
       if (ev.key === 'Escape') {
@@ -127,7 +160,10 @@ export function SuspiciousImageModalProvider(props: React.PropsWithChildren<{}>)
       document.removeEventListener('keydown', onKeyDown, true);
       previouslyFocused?.focus?.();
     };
-  }, [isOpen, onClose]);
+    // Keyed on the *kind*, so swapping between the two dialogs re-runs initial
+    // focus; a second entry of the same kind reuses the button that is already
+    // focused.
+  }, [currentKind, onClose]);
 
   return (
     <>
@@ -144,14 +180,22 @@ export function SuspiciousImageModalProvider(props: React.PropsWithChildren<{}>)
               onClick={(ev) => ev.stopPropagation()}
             >
               <div id="suspicious-image-dialog-title" className="cg-heading-3">
-                Sensitive content?
+                {currentKind === 'rejected' ? 'Image not uploaded' : 'Sensitive content?'}
               </div>
               <p className="cg-text-main">
-                This image may contain inappropriate content. Upload it anyway?
+                {currentKind === 'rejected'
+                  ? errors.client.IMAGE_CONTENT_REJECTED
+                  : 'This image may contain inappropriate content. Upload it anyway?'}
               </p>
               <div className="btnList justify-end gap-4">
-                <Button text="Cancel" role="secondary" onClick={onClose} />
-                <Button text="Upload anyway" role="primary" onClick={() => answer(true)} />
+                {currentKind === 'rejected' ? (
+                  <Button text="OK" role="primary" onClick={onClose} />
+                ) : (
+                  <>
+                    <Button text="Cancel" role="secondary" onClick={onClose} />
+                    <Button text="Upload anyway" role="primary" onClick={() => answer(true)} />
+                  </>
+                )}
               </div>
             </div>
           </div>,

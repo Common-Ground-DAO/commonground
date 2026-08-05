@@ -19,7 +19,7 @@ import fileApi from 'data/api/file';
 import CommunityCard from 'components/molecules/CommunityCard/CommunityCard';
 import { useCommunityListView } from 'context/CommunityListViewProvider';
 import { useSnackbarContext } from 'context/SnackbarContext';
-import { imageUploadErrorText } from 'moderation/imageUploadError';
+import { imageUploadErrorText, notifyIfImageRejected } from 'moderation/imageUploadError';
 import TagInputField from 'components/molecules/inputs/TagInputField/TagInputField';
 
 type Props = {
@@ -57,7 +57,9 @@ const PluginEditor: React.FC<Props> = (props) => {
     } catch (e) {
       // `ImageUploadField` calls this without awaiting, so an uncaught
       // rejection here would be invisible to the user.
-      showSnackbar({ type: 'warning', text: imageUploadErrorText(e, 'Could not upload the image') });
+      if (!notifyIfImageRejected(e)) {
+        showSnackbar({ type: 'warning', text: imageUploadErrorText(e, 'Could not upload the image') });
+      }
     }
   }
 

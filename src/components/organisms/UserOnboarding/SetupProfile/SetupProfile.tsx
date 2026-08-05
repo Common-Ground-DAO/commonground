@@ -20,11 +20,10 @@ import { useDarkModeContext } from 'context/DarkModeProvider';
 import errors from 'common/errors';
 import data from 'data';
 import fileApi from 'data/api/file';
-import { isImageContentRejected } from 'moderation/imageUploadError';
+import { notifyIfImageRejected } from 'moderation/imageUploadError';
 import { UniversalProfileStatus, UniversalProfileSignButton } from '../UniversalProfileSign/UniversalProfileSign';
 import { useUniversalProfile } from 'context/UniversalProfileProvider';
 import { useUserOnboardingContext } from 'context/UserOnboarding';
-import { useSnackbarContext } from 'context/SnackbarContext';
 import { CAPTCHA_MISCONFIGURED_TEXT, useCaptchaProvider } from 'context/CaptchaContext';
 
 type ButtonProps = {
@@ -49,7 +48,6 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
   const [usernameError, setUsernameError] = useState('');
   const [userPhoto, setUserPhoto] = useState<File | undefined>();
   const [genericError, setGenericError] = useState<string>('');
-  const { showSnackbar } = useSnackbarContext();
   const { provider: captchaProvider, resolved: captchaResolved, misconfigured: captchaMisconfigured } = useCaptchaProvider();
   // dev skips captcha server-side, "off" is an explicit opt-out; both pre-fill
   // a placeholder token so the create button is not blocked.
@@ -207,11 +205,11 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
             // "create account" button that can no longer succeed. That rules
             // out `setGenericError` — `createFinished()` below slides this
             // panel off screen in the same render, so anything rendered inside
-            // it is never seen. A snackbar outlives the step change.
+            // it is never seen. The shared modal outlives the step change (it
+            // lives in its own portal at app root) and, unlike the snackbar it
+            // replaces, cannot be missed while the next step animates in.
             console.error("Error uploading user image", e);
-            if (isImageContentRejected(e)) {
-              showSnackbar({ type: 'warning', text: errors.client.IMAGE_CONTENT_REJECTED, durationSeconds: 10 });
-            }
+            notifyIfImageRejected(e);
           });
         }
         createFinished();
@@ -224,7 +222,7 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
       }
     }
     setButtonState(oldState => ({ ...oldState, loading: false }));
-  }, [createUserData, profileLockedIn, setButtonState, luksoData, twitterData, farcasterData, setProfileLockedIn, recaptchaToken, userPhoto, createFinished, showSnackbar]);
+  }, [createUserData, profileLockedIn, setButtonState, luksoData, twitterData, farcasterData, setProfileLockedIn, recaptchaToken, userPhoto, createFinished]);
 
   useEffect(() => {
     if (buttonState.clicked) {

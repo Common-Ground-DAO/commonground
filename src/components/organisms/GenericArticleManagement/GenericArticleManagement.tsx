@@ -19,7 +19,7 @@ import TextAreaField from "../../molecules/inputs/TextAreaField/TextAreaField";
 import { useMobileLayoutContext } from "../../../views/Layout/MobileLayout";
 
 import fileApi from "data/api/file";
-import { imageUploadErrorText } from "moderation/imageUploadError";
+import { imageUploadErrorText, notifyIfImageRejected } from "moderation/imageUploadError";
 import { useSnackbarContext } from "context/SnackbarContext";
 import ArticleBackupModal, { useArticleBackup } from "../../templates/CommunityLobby/ArticleManagement/ArticleBackupModal";
 import dayjs from "dayjs";
@@ -391,7 +391,9 @@ const GenericArticleManagement: React.FC<Props> = (props) => {
       } catch (err) {
         // `ImageUploadField` calls this without awaiting, so an uncaught
         // rejection here would be invisible to the user.
-        showSnackbar({ type: 'warning', text: imageUploadErrorText(err, 'Could not upload the image') });
+        if (!notifyIfImageRejected(err)) {
+          showSnackbar({ type: 'warning', text: imageUploadErrorText(err, 'Could not upload the image') });
+        }
         return;
       }
       if (!!imageId) {

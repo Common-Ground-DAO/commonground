@@ -10,7 +10,7 @@ import Jdenticon from "../../../components/atoms/Jdenticon/Jdenticon";
 import Button from "../../../components/atoms/Button/Button";
 import config from "../../../common/config";
 import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
-import { isImageContentRejected } from "moderation/imageUploadError";
+import { notifyIfImageRejected } from "moderation/imageUploadError";
 import { useNavigate } from "react-router-dom";
 import { getUrl } from 'common/util';
 
@@ -53,9 +53,10 @@ export default function UserProfilePhoto(props: Props) {
           setError(undefined);
         } catch (err) {
           console.error(err);
-          setError(isImageContentRejected(err)
-            ? errors.client.IMAGE_CONTENT_REJECTED
-            : "An unknown error has occurred");
+          // The rejection is reported by the shared modal, so the inline error
+          // is cleared instead of repeating it in a second place.
+          if (notifyIfImageRejected(err)) setError(undefined);
+          else setError("An unknown error has occurred");
         }
       }
     }

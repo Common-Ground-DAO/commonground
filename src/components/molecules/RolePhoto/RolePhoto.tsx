@@ -8,7 +8,7 @@ import fileApi from "data/api/file";
 import errors from "../../../common/errors";
 import config from "../../../common/config";
 import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
-import { isImageContentRejected } from "moderation/imageUploadError";
+import { notifyIfImageRejected } from "moderation/imageUploadError";
 import { useSignedUrl } from "hooks/useSignedUrl";
 import { UserCircle } from "@phosphor-icons/react";
 
@@ -50,9 +50,10 @@ const RolePhoto: React.FC<Props> = (props: Props) => {
           setError(undefined);
         } catch (err) {
           console.error(err);
-          setError(isImageContentRejected(err)
-            ? errors.client.IMAGE_CONTENT_REJECTED
-            : "An unknown error has occurred");
+          // The rejection is reported by the shared modal, so the inline error
+          // is cleared instead of repeating it in a second place.
+          if (notifyIfImageRejected(err)) setError(undefined);
+          else setError("An unknown error has occurred");
         }
       }
     }

@@ -11,8 +11,7 @@ import { Popover } from '../../../components/atoms/Tooltip/Tooltip';
 import FullscreenImageModal from '../../../components/atoms/FullscreenImageModal/FullscreenImageModal';
 import config from '../../../common/config';
 import fileApi from 'data/api/file';
-import errors from '../../../common/errors';
-import { isImageContentRejected } from 'moderation/imageUploadError';
+import { notifyIfImageRejected } from 'moderation/imageUploadError';
 import { Spinner } from '@phosphor-icons/react';
 
 type Props = InMemoryAttachment & {
@@ -23,6 +22,8 @@ type Props = InMemoryAttachment & {
 
 type UploadImageResult = {
   ok: false,
+  /** The server refused the image; the shared modal has already said so. */
+  rejected?: true,
   error?: string
 } | {
   ok: true,
@@ -42,9 +43,9 @@ async function uploadImage(file: File): Promise<UploadImageResult> {
       }, file);
       return { ok: true, imageId, largeImageId };
     } catch (err: any) {
-      if (isImageContentRejected(err)) {
-        return { ok: false, error: errors.client.IMAGE_CONTENT_REJECTED };
-      }
+      // A rejection is final: the tile gets removed rather than parked in the
+      // error state, so no `error` text is returned for it.
+      if (notifyIfImageRejected(err)) return { ok: false, rejected: true };
       return { ok: false, error: 'An unknown error has occurred, please try again' };
     }
   }
@@ -63,6 +64,24 @@ const AttachmentButton: React.FC<Props> = (props) => {
   const imageUrl = useSignedUrl(imageId);
 
   const { updateAttachment, setIsLoadedState } = props;
+
+  // `removeAttachment` is rebuilt on every render of `EditField` (it closes
+  // over `setAttachments` and the imageId), so it is read through a ref: the
+  // upload effect below must not restart because the parent re-rendered.
+  const removeAttachmentRef = React.useRef(props.removeAttachment);
+  React.useEffect(() => {
+    removeAttachmentRef.current = props.removeAttachment;
+  });
+
+  // The upload outlives this component whenever the user hits "Remove" (or
+  // sends) while it is in flight. Set on mount rather than at declaration so a
+  // StrictMode remount flips it back to `true`.
+  const mountedRef = React.useRef(true);
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
   React.useEffect(() => {
     // `precheckPending` means the NSFW pre-check has not answered for this file
     // yet — the tile is already on screen (spinner and all), but uploading now
@@ -76,8 +95,16 @@ const AttachmentButton: React.FC<Props> = (props) => {
         const result = await uploadImage(file);
         if (result.ok) {
           updateAttachment(result.imageId, result.largeImageId);
-          setError('');
-        } else {
+          if (mountedRef.current) setError('');
+        } else if (result.rejected) {
+          // The modal is up; the tile itself goes away instead of staying in
+          // the composer as an error thumbnail the user has to hover to
+          // understand and then remove by hand. Removing is a `setAttachments`
+          // call on the *parent*, so it is safe from here even though it
+          // unmounts this component — and it is a no-op if the attachment is
+          // already gone.
+          removeAttachmentRef.current();
+        } else if (mountedRef.current) {
           setError(result.error || '');
         }
       }

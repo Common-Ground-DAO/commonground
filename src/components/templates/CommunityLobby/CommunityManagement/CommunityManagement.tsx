@@ -27,7 +27,7 @@ import ManagementHeader2 from "components/molecules/ManagementHeader2/Management
 import { useNavigationContext } from "components/SuspenseRouter/SuspenseRouter";
 import FloatingSaveOptions from "../FloatingSaveOptions/FloatingSaveOptions";
 import { useSnackbarContext } from "context/SnackbarContext";
-import { imageUploadErrorText } from "moderation/imageUploadError";
+import { imageUploadErrorText, notifyIfImageRejected } from "moderation/imageUploadError";
 
 type Props = {
 };
@@ -166,7 +166,9 @@ const CommunityManagement: React.FC<Props> = (props: Props) => {
         }, selectedHeader);
       }
     } catch (e) {
-      showSnackbar({ type: 'warning', text: imageUploadErrorText(e, 'Could not upload the image') });
+      if (!notifyIfImageRejected(e)) {
+        showSnackbar({ type: 'warning', text: imageUploadErrorText(e, 'Could not upload the image') });
+      }
       return;
     }
     setDirty(false);

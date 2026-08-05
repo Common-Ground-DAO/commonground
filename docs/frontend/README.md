@@ -774,10 +774,13 @@ A courtesy check that warns **before** upload; it never blocks.
   `src/moderation/suspiciousImageDialog.ts`, same imperative pattern as
   `ReportModalProvider`); "Upload anyway" always proceeds.
 - **Server rejections:** `FileApiConnector.uploadImage` throws
-  `Error('IMAGE_CONTENT_REJECTED')` on the filter's `{status:'ERROR'}` reply;
-  callsites map it to a friendly message via
-  `src/moderation/imageUploadError.ts` (snackbar or inline error per local
-  idiom).
+  `Error('IMAGE_CONTENT_REJECTED')` on the filter's `{status:'ERROR'}` reply.
+  Every callsite runs `notifyIfImageRejected()`
+  (`src/moderation/imageUploadError.ts`), which shows one shared
+  rejection-notice dialog hosted by the same provider as the pre-upload
+  confirm (queued, never stacked; repeated rejections coalesce). Chat
+  attachments additionally remove the rejected tile from the composer;
+  generic (non-rejection) upload errors keep each site's local handling.
 
 ### Markdown Rendering (`react-markdown`)
 

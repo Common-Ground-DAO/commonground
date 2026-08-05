@@ -1,0 +1,32 @@
+{
+  "name": "@commonground/client",
+  "version": "0.1.0",
+  "description": "Headless TypeScript reference client for Common Ground instances. Node >= 24, zero browser APIs.",
+  "license": "SEE LICENSE IN ../../LICENSE",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "socket.io-client": "4.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "5.9.3"
+  }
+}

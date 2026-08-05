@@ -1,0 +1,23 @@
+{
+  "name": "@commonground/conformance",
+  "version": "0.1.0",
+  "description": "Conformance suite driving @commonground/client against a Common Ground instance.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@commonground/client": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

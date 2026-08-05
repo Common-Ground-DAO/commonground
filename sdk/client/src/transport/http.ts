@@ -79,6 +79,38 @@ export class HttpTransport {
     throw new TransportError("response is not an API envelope", route, response.status);
   }
 
+  /**
+   * POST multipart/form-data (the one non-JSON route: File/uploadImage).
+   * Asymmetric envelope (FINDINGS F-09): errors arrive as the standard
+   * {status:"ERROR"} envelope, but success is the BARE result object.
+   */
+  async callMultipart<TResponse>(route: string, form: FormData): Promise<TResponse> {
+    const url = `${this.baseUrl}/api/v2/${route}`;
+    const headers: Record<string, string> = { ...this.extraHeaders };
+    const cookie = this.jar.cookieHeader();
+    if (cookie) headers.cookie = cookie;
+
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, { method: "POST", headers, body: form, redirect: "manual" });
+    } catch (e) {
+      throw new TransportError(`network error: ${(e as Error).message}`, route);
+    }
+    this.jar.storeFrom(response.headers.getSetCookie());
+    let body: (Envelope<TResponse> & Partial<TResponse>) | TResponse;
+    try {
+      body = (await response.json()) as typeof body;
+    } catch {
+      throw new TransportError("response is not JSON", route, response.status);
+    }
+    const maybeEnvelope = body as Envelope<TResponse>;
+    if (maybeEnvelope.status === "ERROR") {
+      throw new ApiError(maybeEnvelope.error, route, response.status);
+    }
+    if (maybeEnvelope.status === "OK") return (maybeEnvelope as { data?: TResponse }).data as TResponse;
+    return body as TResponse;
+  }
+
   /** GET a bare-JSON route (no envelope): Captcha/*, Instance/config. */
   async getJson<T>(route: string): Promise<T> {
     const url = `${this.baseUrl}/api/v2/${route}`;

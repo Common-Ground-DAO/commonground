@@ -94,9 +94,11 @@ EOF
 
 generate_support_files() {
   # The compose file bind-mounts these; a fresh checkout doesn't have them.
-  if [ ! -f "$DOCKER_DIR/s3_config/s3.selfhost.json" ]; then
-    mkdir -p "$DOCKER_DIR/s3_config"
-    cat > "$DOCKER_DIR/s3_config/s3.selfhost.json" <<EOF
+  # The s3 config embeds S3_SECRET, so it is regenerated with every env (its
+  # own file — docker-compose.conformance.yml remaps the seaweed mount — so a
+  # real selfhost s3.selfhost.json in the same checkout is never touched).
+  mkdir -p "$DOCKER_DIR/s3_config"
+  cat > "$DOCKER_DIR/s3_config/s3.conformance.json" <<EOF
 {
   "identities": [
     {
@@ -113,7 +115,6 @@ generate_support_files() {
   ]
 }
 EOF
-  fi
   if [ ! -f "$DOCKER_DIR/vapid_keys.json" ]; then
     # Web-push VAPID pair (P-256, base64url raw keys — what web-push expects).
     node - > "$DOCKER_DIR/vapid_keys.json" <<'EOF'

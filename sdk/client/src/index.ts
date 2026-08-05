@@ -43,6 +43,14 @@ export {
   type ClientEventName,
 } from "./realtime/socket.js";
 export { SyncStore } from "./realtime/store.js";
+export { FileApi, type UploadType, type UploadOptions, type UploadResult, type SignedUrl } from "./files/api.js";
+export {
+  NotificationApi,
+  type ApiNotification,
+  type NotificationType,
+  type PushSubscriptionInput,
+} from "./notifications/api.js";
+export { ProfileApi, type UpdateOwnDataPatch, type UserSearchHit } from "./profile/api.js";
 export type {
   CliMessageEvent,
   CliCommunityEvent,

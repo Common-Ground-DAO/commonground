@@ -66,6 +66,20 @@ branch as reviewable commits.
   response, never wait for the socket echo. Pinned by r2-realtime
   "send/edit/delete echo to the user's OTHER device".
 
+- **F-08 — `getUnreadCount` returns a string.** The SQL COUNT is passed
+  through unconverted, so `data` is `"3"` where the ambient type says
+  `number`. The web client survives via implicit coercion; typed native
+  clients won't. SDK normalizes with `Number()`; server-side `Number(...)`
+  in the handler would fix the contract.
+
+- **F-09 — `File/uploadImage` has an asymmetric envelope.** Success responds
+  with the bare `UploadResponse` (`{imageId}` — `res.send(result)`), while
+  failures go through `handleError` and arrive as the standard
+  `{status:"ERROR"}` envelope. Every other RPC wraps success in
+  `{status:"OK", data}`. Clients must special-case this one route (the SDK
+  transport does); wrapping the success path server-side would restore
+  uniformity at the cost of a web-client change.
+
 ## Boundaries (out of SDK scope by design)
 
 - **B-01 — Passkeys.** WebAuthn ceremonies need a platform authenticator API;

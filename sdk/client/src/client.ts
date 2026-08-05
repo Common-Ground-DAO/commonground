@@ -11,6 +11,9 @@ import { HttpTransport, type HttpTransportOptions } from "./transport/http.js";
 import { fetchInstanceConfig, type InstanceConfig } from "./instance.js";
 import { AuthApi } from "./auth/api.js";
 import { ChatApi, CommunityApi, MessageApi, SocialGraphApi } from "./social/api.js";
+import { FileApi } from "./files/api.js";
+import { NotificationApi } from "./notifications/api.js";
+import { ProfileApi } from "./profile/api.js";
 import { RealtimeClient, type RealtimeOptions } from "./realtime/socket.js";
 import { SyncStore } from "./realtime/store.js";
 
@@ -23,6 +26,9 @@ export class CommonGroundClient {
   readonly messages: MessageApi;
   readonly chats: ChatApi;
   readonly social: SocialGraphApi;
+  readonly files: FileApi;
+  readonly notifications: NotificationApi;
+  readonly profile: ProfileApi;
 
   constructor(options: CommonGroundClientOptions) {
     this.transport = new HttpTransport(options);
@@ -31,6 +37,9 @@ export class CommonGroundClient {
     this.messages = new MessageApi(this.transport);
     this.chats = new ChatApi(this.transport);
     this.social = new SocialGraphApi(this.transport);
+    this.files = new FileApi(this.transport);
+    this.notifications = new NotificationApi(this.transport);
+    this.profile = new ProfileApi(this.transport);
   }
 
   /** New realtime connection sharing this client's session cookie. */

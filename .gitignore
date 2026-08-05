@@ -38,4 +38,5 @@ dbdump*
 docker/.env.selfhost
 docker/.env.conformance
 docker/s3_config/s3.selfhost.json
+docker/s3_config/s3.conformance.json
 docker/selfhost/certs/

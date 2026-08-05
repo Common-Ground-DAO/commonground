@@ -16,6 +16,10 @@ services:
   nginx:
     ports:
       - "127.0.0.1:${CONFORMANCE_HTTP_PORT:-18080}:80"
+  seaweed:
+    volumes: !override
+      - seaweedfs-data:/data
+      - ./s3_config/s3.conformance.json:/etc/seaweedfs/s3.json:ro
   mediasoup:
     ports: !override
       # signaling-only: protoo WSS, no RTC media port range on the host

@@ -233,17 +233,30 @@ references only) — nothing to do there.
       spot check with real material stays with the maintainer pre-merge.
 
 ### Phase 2 — Client
-- [ ] Add `nsfwjs` + trimmed tfjs packages; host MobileNetV2 shards in `public/models/nsfw/`
-- [ ] `src/moderation/imagePrecheck.ts` (lazy chunk, WebGL, high-precision thresholds)
-- [ ] Warning/confirm dialog on client suspicion; snackbar on server rejection
-- [ ] Gate on instance-config flag
-- [ ] Test across upload types incl. Slate paste/drop and chat attachments; test on a low-end device
+- [x] Add `nsfwjs` + trimmed tfjs packages; host MobileNetV2 shards in `public/models/nsfw/`
+      (deviation: `mobilenet_v2_mid` **graph** model, 4.4 MB — the 2.6 MB
+      `mobilenet_v2` is a Keras *layers* model and would force `tfjs-layers`
+      into the bundle; `tfjs-backend-cpu` added as lazily imported fallback;
+      `@tensorflow/tfjs` meta package aliased to a re-export stub in
+      vite.config.ts because `nsfwjs/core` imports it)
+- [x] `src/moderation/imagePrecheck.ts` (lazy chunk, WebGL, Porn/Hentai ≥ 0.85,
+      15 s timeout, all failures resolve 'ok')
+- [x] Warning/confirm dialog on client suspicion (`SuspiciousImageModalProvider`,
+      queue-based, never a hard block); server rejection surfaced at all 19
+      `uploadImage` callsites via `imageUploadError.ts`
+- [x] Gate on instance-config flag (`features.imageFilter` →
+      `config.IMAGE_FILTER_ENABLED`, checked before the dynamic import)
+- [ ] Test across upload types incl. Slate paste/drop and chat attachments;
+      test on a low-end device — **manual, pre-merge** (typecheck/lint/prod
+      build verified incl. chunking; no browser run yet)
 
 ### Phase 3 — Hardening
-- [ ] Giphy `rating: 'g'`
-- [ ] Fix `image/svg` → `image/svg+xml` in `ACCEPTED_IMAGE_FORMATS`
-- [ ] Threshold monitoring/tuning
-- [ ] Documentation updates (infrastructure, backend, frontend, selfhost)
+- [x] Giphy `rating: 'g'`
+- [x] Fix `image/svg` → `image/svg+xml` in `ACCEPTED_IMAGE_FORMATS`
+- [ ] Threshold monitoring/tuning — **post-merge operations** (watch the
+      `imageFilter: rejected image` logs before changing 0.8/0.85)
+- [x] Documentation updates (infrastructure, backend, frontend, deployment,
+      selfhost)
 
 ## Non-goals
 

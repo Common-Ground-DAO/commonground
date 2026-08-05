@@ -1,6 +1,7 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit 4a9754f8f, 2026-08-04
+> Status: verified against commit 4a9754f8f, 2026-08-04; NSFW pre-check
+> section against the feat/image-filter branch, 2026-08-05
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -733,6 +734,44 @@ Custom features built on Slate:
 - **Emoji**: Emoji picker via `EmojiPickerTooltip`.
 - **Link previews**: Automatic URL preview generation via `LinkPreview` / `LinkPreviewSkeleton`.
 - Helper functions in `EditField.helpers.ts`: `convertToMessageBody`, `clearEditor`, `recalculateNodeTypes`, `findAndSetWordType`, etc.
+
+### NSFW Pre-Upload Check (`nsfwjs` + trimmed TensorFlow.js)
+
+The client-side half of the image filter (the server-side gate in
+`srv/moderation/imageFilter.ts` is the authority — see
+[docs/backend](../backend/README.md#srvmoderationimagefilterts--nsfw-image-gate)).
+A courtesy check that warns **before** upload; it never blocks.
+
+- **Entry point:** `src/moderation/checkImageBeforeUpload.ts` — called by every
+  path where a `File` enters upload state: the four picker molecules
+  (`ImageUploadField`, `HeaderImageUpload`, `CommunityLogoUpload`,
+  `ProfilePhotoField`), the four inline `<input type=file>` components
+  (`UserProfileInner`, `UserProfileV2`, `RolePhoto`, `UserProfilePhoto`), and
+  the two EditField funnels `addFiles` / `addImageMedia` (covering file
+  picker, drag & drop and paste for chat attachments and Slate inline images).
+- **Gating:** returns immediately when `config.IMAGE_FILTER_ENABLED` is false
+  (instance config `features.imageFilter`) or the file is not a raster image —
+  before any code is fetched. The classifier itself
+  (`src/moderation/imagePrecheck.ts`) is only ever reached via dynamic
+  `import()` and lives in its own lazy chunk; the model
+  (MobileNetV2Mid graph model, ~4.4 MB, self-hosted under
+  `public/models/nsfw/` — see the README there for pins/sha256s/licensing) is
+  fetched on first use. Nothing here may be added to `VENDOR_GROUPS`.
+- **Runtime:** trimmed tfjs (`tfjs-core` + `tfjs-converter` +
+  `tfjs-backend-webgl`, CPU backend as a lazily imported fallback chunk). The
+  `@tensorflow/tfjs` meta package is not installed; a vite `resolve.alias`
+  maps it to the re-export stub `src/moderation/tfjs.ts` for `nsfwjs/core`.
+- **Verdict → UX:** warns only on `Porn`/`Hentai` ≥ 0.85; every internal
+  failure resolves `'ok'` (never break an upload). A suspicious verdict opens
+  the queue-based confirm dialog hosted by
+  `src/context/SuspiciousImageModalProvider.tsx` (module-level bridge in
+  `src/moderation/suspiciousImageDialog.ts`, same imperative pattern as
+  `ReportModalProvider`); "Upload anyway" always proceeds.
+- **Server rejections:** `FileApiConnector.uploadImage` throws
+  `Error('IMAGE_CONTENT_REJECTED')` on the filter's `{status:'ERROR'}` reply;
+  callsites map it to a friendly message via
+  `src/moderation/imageUploadError.ts` (snackbar or inline error per local
+  idiom).
 
 ### Markdown Rendering (`react-markdown`)
 

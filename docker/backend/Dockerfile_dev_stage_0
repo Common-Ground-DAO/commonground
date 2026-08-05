@@ -3,6 +3,11 @@ RUN mkdir /dist
 RUN apt-get update &&\
     apt-get install -y build-essential python3 python3-pip &&\
     apt-get install -y ca-certificates fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgbm1 libgcc1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 lsb-release wget xdg-utils
+# NSFW classification model, pinned revision + sha256-verified (the runtime
+# loads it from /models/nsfw and never touches the network). Before the
+# dependency layers so a dependency change doesn't re-download 87 MB.
+COPY download_model.sh /tmp/download_model.sh
+RUN sh /tmp/download_model.sh /models/nsfw && rm /tmp/download_model.sh
 COPY dist/package.json /dist
 COPY dist/yarn.lock /dist
 COPY dist/.yarnrc.yml /dist
@@ -14,10 +19,6 @@ RUN sed -i 's/yarnPath: .*//g' /dist/.yarnrc.yml && \
     # ~160 MB of darwin/win32 that can never run in this linux image
     rm -rf /dist/node_modules/onnxruntime-node/bin/napi-v6/darwin \
            /dist/node_modules/onnxruntime-node/bin/napi-v6/win32
-# NSFW classification model, pinned revision + sha256-verified (the runtime
-# loads it from /models/nsfw and never touches the network)
-COPY download_model.sh /tmp/download_model.sh
-RUN sh /tmp/download_model.sh /models/nsfw && rm /tmp/download_model.sh
 RUN apt-get remove -y build-essential python3-pip &&\
     apt-get clean &&\
     apt-get autoremove --yes &&\

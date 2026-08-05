@@ -368,14 +368,15 @@ class FileHelper {
     }
     resizedBuffer = await resized.toBuffer();
 
-    // NSFW gate on the normalized buffer (always webp at this point, so SVG
-    // rasterization and animated-GIF first frames are already handled) —
-    // must run before anything reaches S3. Keyed by the source buffer so
-    // small+large variants of one upload classify once.
+    // NSFW gate — must run before anything reaches S3. Classifies a
+    // deterministic normalization of the *source* buffer (so small+large
+    // variants of one upload agree and classify once); with `animated` set,
+    // every stored frame is in scope, not just frame 0.
     if (!options.skipModeration) {
-      await imageFilter.assertImageAllowed(resizedBuffer, imageBuffer, {
+      await imageFilter.assertImageAllowed(imageBuffer, {
         uploadType: uploadOptions.type,
         userId,
+        animated: options.animated || false,
       });
     }
 

@@ -116,9 +116,16 @@ Backend env vars (read in `srv/common/config.ts`):
 
 ### 1.2 Hook in `fileHelper.saveImage()`
 
-- Classify the decoded/normalized buffer (post-sharp — the buffer at that point is
-  always WebP, so SVG rasterization and animated-GIF first-frame handling come for
-  free), **before** the S3 `PutObject`.
+- Classify **before** the S3 `PutObject`. ~~Original plan: classify the
+  post-sharp per-variant buffer ("animated first-frame handling comes for
+  free")~~ — **revised after the Phase-1 review**: that plan classified only
+  frame 0 while `{ animated: true }` types store *every* frame (a benign
+  frame 0 could smuggle explicit later frames), and which size variant got
+  classified was nondeterministic. The gate now classifies a deterministic
+  224px normalization of the **source** buffer; animated stores are scanned
+  frame by frame (evenly sampled, ≤ 16 frames, early exit on the first frame
+  over the threshold). Static stores still check only frame 0 — later frames
+  never persist there.
 - Add an options flag (e.g. `skipModeration`) for internal, derived images:
   the social-preview compositions (`updateUserPreview`/`updateCommunityPreview` —
   their sources were already classified) and the old re-encoding migrations.

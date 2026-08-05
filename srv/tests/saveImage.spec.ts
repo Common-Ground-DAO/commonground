@@ -208,17 +208,25 @@ describe('fileHelper.saveImage', () => {
     expect(s3Send).not.toHaveBeenCalled();
   });
 
-  it('runs the NSFW gate on the stored bytes before anything reaches S3', async () => {
+  it('runs the NSFW gate on the source before anything reaches S3', async () => {
     const png = await makePng(300, 300);
 
     await fileHelper.saveImage('user-2', { type: 'articleImage' } as any, png, { width: 100, height: 100 });
 
     expect(assertImageAllowed).toHaveBeenCalledTimes(1);
-    const [storedBuffer, sourceBuffer, moderationContext] = assertImageAllowed.mock.calls[0];
-    // classified bytes are exactly what gets uploaded; the cache key is the source
-    expect(storedBuffer.equals(putObjectInputs[0].Body)).toBe(true);
+    const [sourceBuffer, moderationContext] = assertImageAllowed.mock.calls[0];
+    // the gate sees the source buffer, so size variants of one upload agree
     expect(sourceBuffer.equals(png)).toBe(true);
-    expect(moderationContext).toEqual({ uploadType: 'articleImage', userId: 'user-2' });
+    expect(moderationContext).toEqual({ uploadType: 'articleImage', userId: 'user-2', animated: false });
+  });
+
+  it('passes the animated flag through to the gate', async () => {
+    const png = await makePng(60, 60);
+
+    await fileHelper.saveImage('user-3', { type: 'roleImage' } as any, png, { width: 50, height: 50 }, { animated: true });
+
+    expect(assertImageAllowed).toHaveBeenCalledTimes(1);
+    expect(assertImageAllowed.mock.calls[0][1]).toEqual({ uploadType: 'roleImage', userId: 'user-3', animated: true });
   });
 
   it('stores nothing when the gate rejects', async () => {

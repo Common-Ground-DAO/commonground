@@ -54,18 +54,27 @@ classifier baked into the backend Docker image (int8/`q8` export of
 `Falconsai/nsfw_image_detection`, ~87 MB, loaded from `/models/nsfw`).
 
 - **Hook point:** `fileHelper.saveImage()` (`srv/repositories/files.ts`),
-  after sharp normalization and **before** the S3 `PutObject` — the single
-  choke point for direct uploads *and* the server-side URL ingests (URL
-  previews, LUKSO LSP3 profile images, Twitter/Farcaster avatars). Derived
-  images whose source was already classified (social-preview compositions,
-  old re-encoding migrations) pass `skipModeration: true`.
+  **before** the S3 `PutObject` — the single choke point for direct uploads
+  *and* the server-side URL ingests (URL previews, LUKSO LSP3 profile
+  images, Twitter/Farcaster avatars). Derived images whose source was
+  already classified (social-preview compositions, old re-encoding
+  migrations) pass `skipModeration: true`.
+- **What is classified:** a deterministic 224px normalization of the
+  *source* buffer (fit-inside, webp), so size variants of one upload agree
+  with each other and with the dedup cache. Uploads stored with
+  `animated: true` are scanned frame by frame (evenly sampled up to 16
+  frames incl. first and last, early exit once a frame is over the
+  threshold) — a benign frame 0 cannot smuggle explicit later frames.
+  Statically stored images check frame 0 only, matching what persists.
+  Classification concurrency is bounded (2 jobs; ORT intra-op threads
+  capped at 2) so upload bursts can't starve the shared libuv pool.
 - **Processes:** runs in `api` and (for chain-triggered LSP3 images)
   `onchain`. Neither process has an async startup sequence, so the pipeline
   loads lazily on the first classification (~100 ms) and is cached; the
   onchain process only pays the ~300 MB RSS after its first hit.
-- **Dedup:** a small promise-LRU keyed by the sha256 of the *source* buffer —
-  upload types that store small+large variants of one source classify once,
-  including when both run concurrently.
+- **Dedup:** a small promise-LRU keyed by the sha256 of the *source* buffer
+  (plus the animated flag) — upload types that store small+large variants of
+  one source classify once, including when both run concurrently.
 - **Verdict:** the scores of the labels `nsfw`/`porn`/`hentai`/`explicit`
   (case-insensitive; covers swapped-in models) are summed; above
   `IMAGE_MODERATION_THRESHOLD` the upload fails with

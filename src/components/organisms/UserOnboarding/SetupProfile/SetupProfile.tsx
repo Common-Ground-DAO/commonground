@@ -20,6 +20,7 @@ import { useDarkModeContext } from 'context/DarkModeProvider';
 import errors from 'common/errors';
 import data from 'data';
 import fileApi from 'data/api/file';
+import { notifyIfImageRejected } from 'moderation/imageUploadError';
 import { UniversalProfileStatus, UniversalProfileSignButton } from '../UniversalProfileSign/UniversalProfileSign';
 import { useUniversalProfile } from 'context/UniversalProfileProvider';
 import { useUserOnboardingContext } from 'context/UserOnboarding';
@@ -198,7 +199,18 @@ export const CreateUserStatus: React.FC<Props> = (props) => {
       try {
         await data.user.createUser({ ...createUserData, recaptchaToken });
         if (userPhoto && createUserData.useCgProfile) {
-          await fileApi.uploadImage({ type: 'userProfileImage' }, userPhoto).catch(e => console.error("Error uploading user image", e));
+          await fileApi.uploadImage({ type: 'userProfileImage' }, userPhoto).catch(e => {
+            // The account already exists at this point, so onboarding has to
+            // continue: keeping the user on this panel would only offer them a
+            // "create account" button that can no longer succeed. That rules
+            // out `setGenericError` — `createFinished()` below slides this
+            // panel off screen in the same render, so anything rendered inside
+            // it is never seen. The shared modal outlives the step change (it
+            // lives in its own portal at app root) and, unlike the snackbar it
+            // replaces, cannot be missed while the next step animates in.
+            console.error("Error uploading user image", e);
+            notifyIfImageRejected(e);
+          });
         }
         createFinished();
       } catch (e: any) {

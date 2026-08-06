@@ -365,6 +365,19 @@ export default defineConfig(({ command }) => ({
       // enters the TS program. The stub lives in
       // src/types/altcha-widget-element.d.ts.
       { find: /^altcha-widget-element$/, replacement: 'altcha' },
+      // `nsfwjs/core` imports the `@tensorflow/tfjs` meta package, which is the
+      // entire TensorFlow.js runtime (layers, every backend, the data
+      // pipeline). We run one graph model and nothing else, so that package is
+      // not installed at all and this alias hands nsfwjs a re-export of just
+      // `tfjs-core` + `tfjs-converter` instead. See src/moderation/tfjs.ts.
+      //
+      // Reachable only through the dynamic `import()` in
+      // `src/moderation/checkImageBeforeUpload.ts`, so tfjs stays a lazy chunk
+      // — which is also why it must never be added to VENDOR_GROUPS (rule 3).
+      {
+        find: /^@tensorflow\/tfjs$/,
+        replacement: path.resolve(__dirname, 'src/moderation/tfjs.ts'),
+      },
       // There used to be a `@metamask/sdk` → browser-UMD alias here. It is gone
       // with the wagmi 2 migration: the SDK is no longer a direct dependency
       // (wagmi's `metaMask` connector dynamically imports it), and 0.33's

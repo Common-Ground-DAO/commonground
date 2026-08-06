@@ -193,22 +193,27 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
     });
   }, [setAttachments]);
 
+  // `precheckPending` counts as busy: sending while the NSFW pre-check is still
+  // running would drop the attachment (it has no imageId yet) and clear the
+  // list out from under `addFiles`.
   const areAttachmentsLoaded = React.useMemo(() => {
     if (!!attachments) {
-      const foundLoadingAttachment = attachments.find((attachment) => attachment.state === 'LOADING');
+      const foundLoadingAttachment = attachments.find((attachment) => attachment.state === 'LOADING' || attachment.precheckPending);
       return !foundLoadingAttachment;
     }
     return true;
   }, [attachments]);
 
-  const onFilesDrop = React.useCallback((files: File[]) => {
+  // Async since the NSFW pre-check; react-dropzone ignores the returned
+  // promise, which is fine — nothing here depends on the drop being finished.
+  const onFilesDrop = React.useCallback(async (files: File[]) => {
     const imageFiles = files.filter(file => file.type.startsWith('image'));
     if (props.richTextMode) {
       for (const file of files) {
-        addImageMedia(editor, file);
+        await addImageMedia(editor, file);
       }
     } else {
-      addFiles(setAttachments, setAttachmentError, imageFiles, attachmentLimit);
+      await addFiles(setAttachments, setAttachmentError, imageFiles, attachmentLimit);
     }
   }, [props.richTextMode, editor, setAttachments, attachmentLimit]);
 
@@ -600,7 +605,10 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
     }
   }, [editor, filteredUsers, isEditing, isMobile, mentionIndex, mentionTargetRange, props.richTextMode, props.send, sendHandler, normalizeLinks]);
 
-  const handlePaste = React.useCallback((ev: React.ClipboardEvent<HTMLDivElement>) => {
+  // Async since the NSFW pre-check. The clipboard items are read out
+  // synchronously below, before the first await, so the event data is still
+  // alive when we touch it.
+  const handlePaste = React.useCallback(async (ev: React.ClipboardEvent<HTMLDivElement>) => {
     try {
       const items = (ev.clipboardData || ev.nativeEvent.clipboardData).items;
 
@@ -616,10 +624,10 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
       }
 
       if (!props.richTextMode && !props.disableAttachments) {
-        addFiles(setAttachments, setAttachmentError, imageFiles, attachmentLimit);
+        await addFiles(setAttachments, setAttachmentError, imageFiles, attachmentLimit);
       } else if (props.richTextMode) {
         for (const file of imageFiles) {
-          addImageMedia(editor, file);
+          await addImageMedia(editor, file);
         }
       }
 

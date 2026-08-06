@@ -281,3 +281,20 @@
   the last `@vitejs/plugin-react` supporting Vite 7 is **5.2.0** (6.x is Vite-8-only),
   and the two chunking findings above (CG ID entry closure, 11 copies of `tslib`) are
   worth revisiting under Rolldown, which changes the calculus for both.
+
+## Image filter: evaluate a hentai-capable server model
+
+Manual testing (2026-08-05) confirmed the accepted-in-roadmap gap concretely:
+Falconsai (`onnx-community/nsfw_image_detection-ONNX`, the baked-in default)
+correctly rejects photographic porn but passed a manga/hentai porn image —
+drawn explicit content is its known weak spot. Candidate with an explicit
+`hentai` class: `onnx-community/nsfw-image-detector-ONNX` (ViT,
+drawings/hentai/neutral/porn/sexy, Transformers.js layout incl.
+`model_quantized.onnx` — drop-in via `IMAGE_MODERATION_MODEL_PATH`; the
+filter's label set already sums porn+hentai). **Blocker for a default swap:**
+in a quick probe it scored `hentai: 1.000` on harmless flat skin-tone shapes —
+far away from the near-zero-false-positive bar. Next steps: broader FP
+evaluation on real photos/artwork, check further candidates, then decide
+default swap vs. documented limitation. Local eval copy staged at
+`docker/api_data/nsfw-5class/` (untracked; test with
+`IMAGE_MODERATION_MODEL_PATH=/api_data/nsfw-5class ./run.sh compose up -d api`).

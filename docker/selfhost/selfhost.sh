@@ -145,6 +145,7 @@ case "${1:-}" in
     printf "Optional services (set in .env.selfhost, both default to true):\n"
     printf "  CG_ENABLE_CALLS=false       do not run mediasoup (no voice/video calls)\n"
     printf "  CG_ENABLE_BLOCKCHAIN=false  do not run onchain (no token gating/indexing)\n"
+    printf "  CG_ENABLE_IMAGE_FILTER=false  disable the server-side NSFW image filter\n"
     exit 1
     ;;
 esac

@@ -97,6 +97,28 @@ never created (and `up` removes it if it was running before).
 Both default to `true`; leaving them out of `.env.selfhost` keeps the full
 stack, so existing instances are unaffected by an update.
 
+### NSFW image filter
+
+A third switch, `CG_ENABLE_IMAGE_FILTER` (default `true`), is not a Compose
+profile — it controls the server-side NSFW image filter that runs inside the
+`api` and `onchain` containers and rejects pornographic uploads before they
+reach object storage. The model (~87 MB, Apache-2.0) is baked into the
+backend image; no extra service, no network access at runtime. Setting it to
+`false` disables the filter and (via the instance config) the client-side
+pre-upload warning.
+
+Tuning/swapping:
+
+- `CG_IMAGE_FILTER_THRESHOLD` — NSFW probability above which an image is
+  rejected (default `0.8`).
+- `CG_IMAGE_FILTER_MODEL_PATH` — mount any Transformers.js-layout image
+  classifier into the `api` and `onchain` containers and point this at its
+  directory. It must contain `config.json`, `preprocessor_config.json` and
+  `onnx/model_quantized.onnx`; labels named `nsfw`, `porn`, `hentai` or
+  `explicit` count toward the reject score. Beware: models exported without
+  a `preprocessor_config.json` (e.g. straight from timm) load fine but
+  silently produce garbage scores.
+
 **What `CG_ENABLE_BLOCKCHAIN=false` costs in detail** — the `onchain` service
 is the only component that talks to a chain, so without it:
 

@@ -1,4 +1,5 @@
-> Status: verified against commit 8613352a4, 2026-08-04
+> Status: verified against commit 8613352a4, 2026-08-04; image-moderation
+> additions against the feat/image-filter branch, 2026-08-05
 
 # Common Ground Infrastructure Documentation
 
@@ -451,10 +452,10 @@ scripts yet; the suite is a single smoke test.
 
 ### Backend Docker Image Build (Two-Stage for Dev)
 
-- **Stage 0 (`Dockerfile_dev_stage_0`):** `FROM node:24.18-bookworm`. Installs system deps, copies `package.json` / `yarn.lock` / `.yarnrc.yml`, enables Corepack and runs `yarn`. Cached; rebuilt only when dependencies change.
+- **Stage 0 (`Dockerfile_dev_stage_0`):** `FROM node:24.18-bookworm`. Installs system deps, then (before the dependency layers, so it only rebuilds when the pin changes) runs `download_model.sh`, which fetches the NSFW classification model (~87 MB) from a **pinned HuggingFace revision** into `/models/nsfw` and verifies every file's sha256 — the build needs network access to `huggingface.co`, the runtime never does. It then copies `package.json` / `yarn.lock` / `.yarnrc.yml`, enables Corepack, runs `yarn` and prunes the darwin/win32 `onnxruntime-node` binaries plus the browser-only `onnxruntime-web` (~290 MB that can never run in the linux node image). Cached; rebuilt only when dependencies (or the model pin) change.
 - **Stage 1 (`Dockerfile_dev_stage_1`):** `FROM commonground/backend_stage_0`. Copies the full `dist/` source and runs `yarn tsc`. Rebuilt on every code change.
 
-**Production backend (`Dockerfile`):** single-stage build, `FROM node:24.18-bookworm`, installs system dependencies (build-essential, python3, Chromium libs for Puppeteer), enables Corepack and runs `yarn && yarn tsc`, then cleans up build tools. Used by the CI/CD pipelines.
+**Production backend (`Dockerfile`):** single-stage build, `FROM node:24.18-bookworm`. Its first layers bake the NSFW model into `/models/nsfw` (`download_model.sh`, pinned revision + sha256 — placed before the `COPY ./dist` layer on purpose, so source changes don't re-download 87 MB from huggingface.co); it then installs system dependencies (build-essential, python3, Chromium libs for Puppeteer), enables Corepack, runs `yarn && yarn tsc`, prunes the darwin/win32 `onnxruntime-node` binaries plus the browser-only `onnxruntime-web` and cleans up build tools. Building requires network access to `huggingface.co`; the runtime never does. Used by the CI/CD pipelines.
 
 All images stay on **Debian bookworm** deliberately: the Node 24 audit
 (2026-08) found that moving to trixie breaks the Puppeteer dependency install
@@ -550,6 +551,9 @@ Per `AGENTS.md`, `docker/.env` is tracked in the repo **as a placeholder templat
 | `CAPTCHA_PROVIDER` / `ALTCHA_HMAC_KEY` / `ALTCHA_COST` / `ALTCHA_COUNTER_MAX` | Captcha provider selection and ALTCHA proof-of-work tuning (see [docs/auth-identity](../auth-identity/README.md)). None of them are set in either compose file — add them to the `api` service to tune. |
 | `TWITTER_CALLBACK_URL` / `TWITTER_OAUTH2_CLIENT_ID` / `TWITTER_OAUTH2_CLIENT_SECRET` / `TWITTER_API_KEY` / `TWITTER_API_SECRET` | Twitter/X login. |
 | `SENDGRID_API_KEY` | SendGrid transactional email. |
+| `IMAGE_MODERATION_ENABLED` | Server-side NSFW image filter (`srv/moderation/imageFilter.ts`); consumed by the `api` and `onchain` services (with defaults when absent from `.env`). Default `true`; only the literal `false` disables it. Note: on the dev stack the *client* pre-check stays active regardless for pages served by the vite dev server (no instance-config injection there); api-served pages and the selfhost profile do propagate the switch to the browser. |
+| `IMAGE_MODERATION_THRESHOLD` | NSFW probability above which an image is rejected. Default `0.8`; invalid values fall back to the default (non-empty invalid values log a warning; an empty value — the compose default — falls back silently). |
+| `IMAGE_MODERATION_MODEL_PATH` | Model directory in the container (default `/models/nsfw`, baked into the backend image). Point at a mounted Transformers.js-layout classifier to swap models. |
 
 Additional variables consumed by the compose file when present (with defaults): the `STAKING_*` set (`STAKING_CHAIN`, `STAKING_TOKEN_ADDRESS`, `STAKING_CONTRACT_ADDRESS`, `STAKING_BASE_RATE`, `STAKING_MIN_LOCK_DAYS`, `STAKING_MAX_LOCK_DAYS`) and the bot limits (`PLATFORM_OPERATOR_USER_IDS`, `BOT_USER_OWNER_LIMIT`, `BOT_COMMUNITY_OWNER_LIMIT`, `BOT_PLATFORM_OWNER_LIMIT`, `BOT_ACTIVE_TOKEN_LIMIT`, `BOT_API_RATE_LIMIT_PER_MINUTE`, `BOT_MESSAGE_RATE_LIMIT_PER_MINUTE`). See [`docs/BOT-API.md`](../BOT-API.md) and [`docs/staking`](../staking/README.md).
 
@@ -651,6 +655,7 @@ This profile runs the **entire stack on one server** with real production semant
 - **Postgres loads the tuned `postgresql.conf`** (same `config_file` command as dev).
 - **Redis `maxmemory` is tuned small** (`${REDIS_MAXMEMORY:-1536mb}` total) instead of the dev 6 GB.
 - **`mediasoup` and `onchain` are optional**: they carry the Compose profiles `calls` and `blockchain`, which `selfhost.sh` enables from `CG_ENABLE_CALLS` / `CG_ENABLE_BLOCKCHAIN` in `.env.selfhost` (both default to `true`). See [docs/deployment §3.8](../deployment/README.md#38-optional-services-calls-and-blockchain) and `docker/SELFHOST.md`.
+- **`CG_ENABLE_IMAGE_FILTER`** (default `true`) is a plain switch, not a profile: it feeds `IMAGE_MODERATION_ENABLED` into the `api`/`onchain` services and the instance-config injection (`features.imageFilter`), which also turns off the client-side pre-upload warning. `CG_IMAGE_FILTER_THRESHOLD` / `CG_IMAGE_FILTER_MODEL_PATH` pass through to `IMAGE_MODERATION_THRESHOLD` / `IMAGE_MODERATION_MODEL_PATH`.
 - **SeaweedFS master** uses `-volumeSizeLimitMB=${SEAWEED_VOLUME_LIMIT_MB:-1024}`.
 
 ### Operation scripts

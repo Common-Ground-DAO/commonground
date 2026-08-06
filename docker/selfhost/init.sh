@@ -75,6 +75,17 @@ BUILDER_GID=$(id -g)
 CG_ENABLE_CALLS=true
 CG_ENABLE_BLOCKCHAIN=true
 
+# Server-side NSFW image filter (in-process classifier, model baked into the
+# backend image). CG_ENABLE_IMAGE_FILTER=false disables it (and the client
+# pre-upload warning). CG_IMAGE_FILTER_THRESHOLD overrides the reject
+# threshold (default 0.8 = nsfw probability). CG_IMAGE_FILTER_MODEL_PATH
+# swaps in another Transformers.js-layout classifier (mount it into the api
+# and onchain containers; it needs config.json, preprocessor_config.json and
+# onnx/model_quantized.onnx).
+CG_ENABLE_IMAGE_FILTER=true
+#CG_IMAGE_FILTER_THRESHOLD=0.8
+#CG_IMAGE_FILTER_MODEL_PATH=
+
 # bot accounts (all limits are per active owner/token; comma-separate platform operator user UUIDs)
 PLATFORM_OPERATOR_USER_IDS=
 BOT_USER_OWNER_LIMIT=5

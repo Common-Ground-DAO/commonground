@@ -1,0 +1,125 @@
+# Reference-client CI: OpenAPI drift check + conformance suite.
+#
+# Two triggers with different cost:
+#   - PRs touching srv/ or sdk/  -> fast subset (R0+R1), reuses images
+#   - nightly schedule           -> full suite (all phases) against a fresh
+#                                   disposable instance
+#
+# The conformance suite drives @commonground/client against a throwaway
+# selfhost instance (sdk/conformance/tools/disposable-instance.sh). The
+# OpenAPI drift check regenerates docs/api/openapi.json from the compiled Joi
+# validators and fails on any diff.
+
+trigger:
+  branches:
+    include:
+      - feat/reference-client
+  paths:
+    include:
+      - srv/*
+      - sdk/*
+      - docs/api/*
+
+pr:
+  branches:
+    include:
+      - develop
+  paths:
+    include:
+      - srv/*
+      - sdk/*
+
+schedules:
+  - cron: "0 3 * * *"
+    displayName: Nightly full conformance
+    branches:
+      include:
+        - feat/reference-client
+        - develop
+    always: true
+
+parameters:
+  - name: fullRun
+    type: boolean
+    default: false
+
+pool:
+  name: ubuntu-20
+
+variables:
+  # Nightly (scheduled) or explicitly requested -> full suite; PRs -> subset.
+  isFull: $[or(eq(variables['Build.Reason'], 'Schedule'), eq('${{ parameters.fullRun }}', 'true'))]
+
+steps:
+  - task: DockerInstaller@0.209.0
+    displayName: Install docker
+    inputs:
+      dockerVersion: 20.10.14
+      releaseType: stable
+
+  - task: NodeTool@0
+    displayName: Install node 24
+    inputs:
+      versionSpec: 24.x
+
+  - task: CmdLine@2
+    displayName: Build selfhost images
+    inputs:
+      script: |
+        set -euo pipefail
+        # init.sh generates .env.selfhost + support files the build needs; the
+        # conformance instance uses its own throwaway env, but the image build
+        # is shared.
+        cd docker/selfhost
+        ./init.sh conformance.invalid ci@conformance.invalid || true
+        sudo ./selfhost.sh build
+
+  - task: CmdLine@2
+    displayName: OpenAPI drift check
+    inputs:
+      script: |
+        set -euo pipefail
+        sudo ./sdk/tools/generate-openapi.sh --check
+
+  - task: CmdLine@2
+    displayName: Bring up disposable conformance instance
+    inputs:
+      script: |
+        set -euo pipefail
+        sudo -E env "PATH=$PATH" ./sdk/conformance/tools/disposable-instance.sh up
+
+  - task: CmdLine@2
+    displayName: Install SDK deps + build client
+    inputs:
+      script: |
+        set -euo pipefail
+        corepack enable
+        cd sdk
+        yarn install --immutable
+        yarn workspace @commonground/client build
+
+  - task: CmdLine@2
+    displayName: Run conformance suite
+    inputs:
+      script: |
+        set -euo pipefail
+        cd sdk/conformance
+        if [ "$(isFull)" = "True" ]; then
+          echo "Full conformance run"
+          CG_BASE_URL=http://127.0.0.1:18080 yarn test
+        else
+          echo "PR subset: R0 + R1"
+          CG_BASE_URL=http://127.0.0.1:18080 yarn vitest run \
+            src/r0-instance-config.test.ts \
+            src/r1-captcha.test.ts \
+            src/r1-identity.test.ts
+        fi
+    env:
+      CONFORMANCE_PROTOO_PORT: "14443"
+
+  - task: CmdLine@2
+    displayName: Tear down disposable instance
+    condition: always()
+    inputs:
+      script: |
+        sudo -E env "PATH=$PATH" ./sdk/conformance/tools/disposable-instance.sh down || true

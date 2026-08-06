@@ -1,0 +1,37 @@
+# Conformance-instance override — a disposable, API-only instance for the
+# SDK conformance suite (sdk/conformance/tools/disposable-instance.sh).
+#
+# Layered on top of docker-compose.selfhost.yml with its own project name and
+# env file, so its volumes and network never touch a real deployment on the
+# same host. No TLS edge: caddy is parked behind an unused profile and nginx
+# is published directly on loopback — the suite talks plain HTTP. The protoo
+# (calls signaling) port is published separately because caddy normally
+# terminates TLS for it.
+services:
+  caddy:
+    profiles: ["edge"]
+  cg-builder:
+    # API-only instance: no frontend build; the cryptogram volume stays empty
+    profiles: ["edge"]
+  nginx:
+    ports:
+      - "127.0.0.1:${CONFORMANCE_HTTP_PORT:-18080}:80"
+  seaweed:
+    volumes: !override
+      - seaweedfs-data:/data
+      - ./s3_config/s3.conformance.json:/etc/seaweedfs/s3.json:ro
+  mediasoup:
+    # DOMAIN drives both the callservers.url row and the protoo URL the
+    # client builds (wss://<url>:4443). CG_DOMAIN carries a port for the
+    # loopback instance, which would produce a malformed wss://host:port:4443
+    # — so the call server advertises a bare host here and protoo is
+    # published on its real 4443.
+    environment:
+      - DOMAIN=127.0.0.1
+    ports: !override
+      # signaling-only: protoo WSS, no RTC media port range on the host.
+      # Published on a non-default host port so it coexists with a live
+      # cg-selfhost stack (whose caddy owns 4443). The container still
+      # listens on 4443 internally; CONFORMANCE_PROTOO_PORT tells the suite
+      # which host port to dial.
+      - "127.0.0.1:${CONFORMANCE_PROTOO_PORT:-14443}:4443"

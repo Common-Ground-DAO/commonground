@@ -1,0 +1,18 @@
+{
+  "name": "@commonground/sdk-root",
+  "private": true,
+  "workspaces": [
+    "client",
+    "conformance"
+  ],
+  "scripts": {
+    "build": "yarn workspace @commonground/client build",
+    "typecheck": "yarn workspaces foreach -A run typecheck",
+    "test": "yarn workspace @commonground/conformance test",
+    "openapi": "./tools/generate-openapi.sh",
+    "openapi:check": "./tools/generate-openapi.sh --check",
+    "instance:up": "./conformance/tools/disposable-instance.sh up",
+    "instance:down": "./conformance/tools/disposable-instance.sh down"
+  },
+  "packageManager": "yarn@4.17.1"
+}

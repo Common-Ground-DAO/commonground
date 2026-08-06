@@ -32,6 +32,10 @@ break fails the same CI run that caused it.
 | Calls | protoo signaling handshake (getSignableSecret → login → caps → join); **signaling only, no media** | R4 |
 | Contract | OpenAPI generation from the Joi validators, event/protoo catalogs, versioning policy | R5 |
 | Bots | bearer-token `BotClient` (whoami, scopes, messages, realtime) — the SDK doubles as the bot library | R6 |
+| Community admin | roles (CRUD + assignment + token-gated claim), areas, channels + permissions, moderation (ban/approvals/password), events, tokens | R7 |
+| Articles | community + user posts (draft/publish, structured content), comment threads via article access | R8 |
+| Plugins | appstore discovery, install/configure/clone, and the signed plugin-runtime RPC (RSA request/response) | R9 |
+| Onchain | contract metadata, staking positions/config, Spark/points ledger + premium, wallets, token-gated role claims | R10 |
 
 ## Quick start
 
@@ -122,5 +126,11 @@ instance isn't polluted; the read-only checks still run. Set
 - Passkey and wallet/OAuth logins are out of SDK scope (they need a
   platform/browser); the SDK covers email+password and device-signature auth,
   the substrate every native client needs first.
+- Onchain *writes* (staking lock/unlock, wallet signing) happen against the
+  chain via a wallet, not the API — the SDK covers the API's indexed reads and
+  the token-gated role claim; a real chain is needed for the non-empty paths.
+- The SDK now wraps the large majority of the ~200 REST routes as typed
+  methods; anything not yet wrapped is still reachable via
+  `client.transport.call(route, body)`.
 - Packaging (npm publication, license) is pending a maintainer decision — see
   `PACKAGING.md`.

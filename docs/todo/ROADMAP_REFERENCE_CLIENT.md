@@ -1,5 +1,28 @@
 # Roadmap: Headless Reference Client + Conformance Suite
 
+> **Status update 2026-08-06: R0–R6 plus a gap-closure round (R7–R10) all
+> implemented and green** on `feat/reference-client` (not yet merged to
+> develop — awaiting maintainer review). The `sdk/` workspace
+> (`@commonground/client` + `@commonground/conformance`) now covers the large
+> majority of the ~200 REST routes; **78 conformance tests** pass against a
+> disposable instance, verified live on cg.mogged.eu.
+>
+> - R0–R6: instance config, identity/auth, realtime, files/notifications/
+>   search/profile, call signaling, contract artifacts + CI, bot bearer API.
+> - **R7 community management** (roles/areas/channels/moderation/events/
+>   tokens), **R8 articles/posts**, **R9 plugins** (incl. the signed
+>   plugin-runtime RPC), **R10 onchain** (contracts/staking/points/wallets/
+>   token-gated role claims).
+>
+> Contract artifacts (`docs/api/openapi.json` — now 167 operations, socket/
+> protoo catalogs, `VERSIONING.md`) and CI are in place. **16 contract findings**
+> in `sdk/conformance/FINDINGS.md`; **four fixed on the branch** (the
+> `Instance/config` endpoint, a selfhost first-boot migration race, a
+> `getEventParticipants` phantom-column crash, and a `pluginRequest` NPE).
+> Packaging decisions (npm/license/bot-SDK) await the maintainer —
+> `sdk/PACKAGING.md`. The phase checkboxes below are left as originally
+> written for reference.
+>
 > Status: active 2026-08-05 (maintainer approved the approach; desktop Electron
 > shell deliberately deprioritized in its favor — no rush on desktop).
 > Goal: a headless TypeScript client SDK that does everything a native client

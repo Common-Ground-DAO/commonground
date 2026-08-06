@@ -25,6 +25,22 @@ branch as reviewable commits.
   uses a real `restart: on-failure:3`. Reproduced + verified by the disposable
   conformance instance, which cold-boots the stack every time.
 
+## Fixed on this branch (continued — gap-closure round)
+
+- **F-12 — `getEventParticipants` queried a phantom column.** The SQL filtered
+  on `"leftAt" IS NULL`, but `communities_events_participants` has only
+  `eventId, userId, createdAt` (leaving an event DELETEs the row) — every call
+  errored Postgres 42703 → `UNKNOWN`. Fixed by dropping the clause
+  (srv/repositories/communityEvents.ts). Pinned by r7-community-admin.
+
+- **F-15 — `pluginRequest` userInfo/userFriends NPE before first consent.**
+  `getUserPluginPermissions` returned `result.rows[0]` (undefined when the
+  user has no `user_plugin_state` row), and the userInfo handler dereferenced
+  `.acceptedPermissions` → `TypeError` → `UNKNOWN`. So a plugin's very first
+  userInfo request crashed until the user had accepted something. Fixed to
+  default to `{acceptedPermissions: []}` (srv/repositories/plugins.ts). Pinned
+  by r9-plugins.
+
 ## Recorded (documented behavior, maintainer may want changes)
 
 - **F-03 — Rate-limit keying trusts the leftmost `X-Forwarded-For` entry.**
@@ -101,6 +117,27 @@ branch as reviewable commits.
   community bot cannot yet post"; the test flips to a success round-trip when
   the server side is fixed. (The bearer surface itself — token issuance,
   `whoami`, `scopes/list`, realtime handshake — is fully proven.)
+
+- **F-13 — `createArticle` ignores the `published` field it requires.** The
+  create validator makes `published` required (community and user articles),
+  but the INSERT never stores it — articles are always created as drafts, and
+  publishing is a separate `updateArticle`. The API asks for a value it
+  discards. Either honor `published` on create, or drop it from the create
+  validator. Pinned by r8-articles (create-then-publish flow).
+
+- **F-14 — user `updateArticle` can't update metadata without resending the
+  article.** The community variant guards its cross-field check with
+  `if (!!value.article)`, so `article` is optional; the user variant does
+  `value.userArticle.articleId !== value.article?.articleId` with no guard, so
+  publishing a user article (userArticle-only) fails `VALIDATION` unless you
+  also pass an `article` with a matching id. The SDK sends a no-op article
+  stub to work around it (articles/api.ts). Fix: guard the user check like the
+  community one.
+
+- **F-16 — `previewText` type mismatch between model and create.** The model
+  and the create validator disagree: `Models.BaseArticle.Preview.previewText`
+  is `string | null`, but the create validator requires a string ("" allowed).
+  The SDK coerces null → "" on create.
 
 ## Boundaries (out of SDK scope by design)
 

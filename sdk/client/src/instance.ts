@@ -31,6 +31,8 @@ export type InstanceConfig = {
     twitterAuth?: boolean;
     /** false when the instance runs without the mediasoup (calls) service. */
     calls?: boolean;
+    /** false when the instance disables the server-side NSFW image filter. */
+    imageFilter?: boolean;
   };
   /** Giphy API key; empty disables the GIF picker. */
   giphyApiKey?: string;

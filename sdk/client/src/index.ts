@@ -75,6 +75,68 @@ export {
   type BotClientOptions,
   type BotIdentity,
 } from "./bot/api.js";
+export {
+  CommunityAdminApi,
+  type CreateRoleOptions,
+  type CreateChannelOptions,
+  type CreateEventOptions,
+} from "./community/api.js";
+export type {
+  Role,
+  Area,
+  RoleType,
+  AssignmentRules,
+  AccessRules,
+  GatingRule,
+  CommunityPermission,
+  ChannelPermission,
+  ArticlePermission,
+  CommunityEventPermission,
+  CallPermission,
+  CommunityChannelPermission,
+  UserBanState,
+  PendingApproval,
+  CommunityEvent,
+  CommunityEventType,
+  UserBlockState,
+  CommunityApprovalState,
+  NotificationStateEntry,
+} from "./community/types.js";
+export {
+  ArticleApi,
+  textArticleContent,
+  type ArticleContent,
+  type ArticleContentNode,
+  type ArticlePreview,
+  type ArticleDetailView,
+  type CommunityArticle,
+  type UserArticle,
+  type ArticleBody,
+  type ArticleListQuery,
+} from "./articles/api.js";
+export {
+  PluginApi,
+  type PluginPermission,
+  type PluginPermissions,
+  type PluginConfig,
+  type CreatePluginOptions,
+  type CreatePluginResult,
+  type AppstorePlugin,
+  type PluginRequestData,
+} from "./plugins/api.js";
+export {
+  ContractApi,
+  StakingApi,
+  WalletApi,
+  PointsApi,
+  type ChainIdentifier,
+  type OnchainData,
+  type ContractData,
+  type StakingConfig,
+  type StakingPosition,
+  type Wallet,
+  type PremiumTransaction,
+} from "./onchain/api.js";
 export type {
   CliMessageEvent,
   CliCommunityEvent,

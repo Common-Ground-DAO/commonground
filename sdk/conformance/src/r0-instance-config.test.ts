@@ -33,7 +33,7 @@ describe("Instance/config", () => {
     }
     if (config.features !== undefined) {
       for (const key of Object.keys(config.features)) {
-        expect(["email", "twitterAuth", "calls"]).toContain(key);
+        expect(["email", "twitterAuth", "calls", "imageFilter"]).toContain(key);
         expect(typeof config.features[key as keyof typeof config.features]).toBe("boolean");
       }
     }

@@ -16,6 +16,10 @@ import { NotificationApi } from "./notifications/api.js";
 import { ProfileApi } from "./profile/api.js";
 import { CallApi } from "./calls/api.js";
 import { BotManagementApi } from "./bot/api.js";
+import { CommunityAdminApi } from "./community/api.js";
+import { ArticleApi } from "./articles/api.js";
+import { PluginApi } from "./plugins/api.js";
+import { ContractApi, StakingApi, WalletApi, PointsApi } from "./onchain/api.js";
 import { RealtimeClient, type RealtimeOptions } from "./realtime/socket.js";
 import { SyncStore } from "./realtime/store.js";
 
@@ -34,6 +38,20 @@ export class CommonGroundClient {
   readonly calls: CallApi;
   /** Session-side bot management (create/own bots, issue tokens). */
   readonly bots: BotManagementApi;
+  /** Community management: roles, areas, channels, moderation, events, tokens. */
+  readonly communityAdmin: CommunityAdminApi;
+  /** Articles/posts (community + user) and comment-thread rooms. */
+  readonly articles: ArticleApi;
+  /** Plugins: appstore, install/configure, signed plugin-runtime RPC. */
+  readonly plugins: PluginApi;
+  /** Contract metadata (public, no wallet). */
+  readonly contracts: ContractApi;
+  /** Staking positions/config (indexed reads). */
+  readonly staking: StakingApi;
+  /** Linked wallets. */
+  readonly wallets: WalletApi;
+  /** Spark/points ledger + premium purchase. */
+  readonly points: PointsApi;
 
   constructor(options: CommonGroundClientOptions) {
     this.transport = new HttpTransport(options);
@@ -47,6 +65,13 @@ export class CommonGroundClient {
     this.profile = new ProfileApi(this.transport);
     this.calls = new CallApi(this.transport);
     this.bots = new BotManagementApi(this.transport);
+    this.communityAdmin = new CommunityAdminApi(this.transport);
+    this.articles = new ArticleApi(this.transport);
+    this.plugins = new PluginApi(this.transport);
+    this.contracts = new ContractApi(this.transport);
+    this.staking = new StakingApi(this.transport);
+    this.wallets = new WalletApi(this.transport);
+    this.points = new PointsApi(this.transport);
   }
 
   /** New realtime connection sharing this client's session cookie. */

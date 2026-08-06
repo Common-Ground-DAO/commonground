@@ -321,7 +321,11 @@ class PluginHelper {
     const result = await pool.query(`
       SELECT "acceptedPermissions" FROM user_plugin_state WHERE "userId" = $1 AND "pluginId" = $2
     `, [userId, pluginId]);
-    return result.rows[0] as {
+    // No row = the user has never accepted anything for this plugin. Return an
+    // empty set rather than undefined, which callers dereference
+    // (.acceptedPermissions) — a first userInfo/userFriends pluginRequest
+    // before any acceptPluginPermissions used to NPE here.
+    return (result.rows[0] ?? { acceptedPermissions: [] }) as {
       acceptedPermissions: Models.Plugin.PluginPermission[];
     };
   }

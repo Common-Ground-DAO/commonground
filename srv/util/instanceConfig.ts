@@ -15,7 +15,7 @@ import { CAPTCHA_PROVIDER } from "./captcha";
 // (docker/nginx/inject-instance-config.sh). See src/common/instance.ts for
 // how the frontend consumes it.
 
-function buildInstanceConfig(): InstanceConfig {
+export function buildInstanceConfig(): InstanceConfig {
   let cgidUrl = process.env.CGID_URL || `${urls.APP_URL}/index_cgid.html`;
   if (!cgidUrl.includes("#")) {
     cgidUrl = `${cgidUrl.replace(/\/+$/, "")}/#`;

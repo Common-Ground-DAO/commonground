@@ -91,6 +91,10 @@ services:
       interval: 1m
       timeout: 5s
       retries: 5
+      # fast probing during startup so dependents aren't held for the full
+      # 1m interval on first boot (fresh cluster init takes several seconds)
+      start_period: 2m
+      start_interval: 2s
     stop_signal: SIGINT
     stop_grace_period: 1m
     restart: unless-stopped
@@ -141,16 +145,17 @@ services:
       - S3_SECRET=${S3_SECRET}
       - DEPLOYMENT=prod
       - BASE_URL=https://${CG_DOMAIN}
+    # Gate on a HEALTHY db: on first boot the postgres cluster initializes
+    # for several seconds, and a migrate attempt in that window dies with
+    # ECONNREFUSED. The old `deploy.restart_policy` retry was swarm-only
+    # syntax — plain compose ignored it, leaving a fresh install without a
+    # schema when the race was lost.
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     networks:
       - cryptogram
-    deploy:
-      restart_policy:
-        condition: on-failure
-        delay: 2s
-        max_attempts: 2
-        window: 60s
+    restart: on-failure:3
     command: node /dist/migrateDb.js
     stop_grace_period: 1m
 

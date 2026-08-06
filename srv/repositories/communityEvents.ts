@@ -716,12 +716,14 @@ class CommunityEventHelper {
   }
 
   public async getEventParticipants(eventId: string): Promise<API.Community.getEventParticipants.Response> {
+    // Leaving an event DELETEs the participant row (eventParticipantLeave), so
+    // there is no "leftAt" column to filter on — the table has only eventId,
+    // userId, createdAt. The stale "leftAt IS NULL" clause errored 42703.
     const result = await pool.query(`
       SELECT
         "userId"
       FROM communities_events_participants
       WHERE "eventId" = $1
-      AND "leftAt" IS NULL
     `, [eventId]);
 
     if (result.rows.length === 0) {

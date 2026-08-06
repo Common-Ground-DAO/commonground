@@ -23,6 +23,7 @@ import botRouter from './api/bots';
 import botV1Router from './api/botV1';
 import stakingRouter from './api/staking';
 import captchaRouter from './api/captcha';
+import instanceRouter from './api/instance';
 
 app.use('/Chat', chatRouter);
 app.use('/Community', communityRouter);
@@ -42,6 +43,7 @@ app.use('/Bot', botRouter);
 app.use('/BotV1', botV1Router);
 app.use('/Staking', stakingRouter);
 app.use('/Captcha', captchaRouter);
+app.use('/Instance', instanceRouter);
 app.use('/', getRoutes);
 
 const shutdown = async (code = 0) => {

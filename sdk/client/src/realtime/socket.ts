@@ -15,6 +15,7 @@
 import { io, type Socket } from "socket.io-client";
 import type { HttpTransport } from "../transport/http.js";
 import type { DeviceKey } from "../identity/deviceKey.js";
+import type { MessageAccess } from "../social/types.js";
 import { CLIENT_EVENT_NAMES, type ClientEventMap, type ClientEventName } from "./events.js";
 
 export interface RealtimeOptions {
@@ -103,6 +104,28 @@ export class RealtimeClient {
 
   logout(): void {
     this.requireSocket().emit("logout");
+  }
+
+  /**
+   * Broadcast ephemeral typing presence for a message context (channel, DM, or
+   * article comment room). Fire-and-forget: the server authorizes (WRITE for
+   * channels; membership for DMs/articles), throttles, and relays a
+   * `cliTypingEvent` to the other participants — no ack, no echo to the sender.
+   *
+   * Refresh `setTyping(access, true)` every few seconds while composing (the
+   * server collapses bursts), and call `setTyping(access, false)` on send/blur.
+   * Receivers should apply their own ~6–7s expiry so a missed stop self-heals.
+   */
+  setTyping(access: MessageAccess, isTyping: boolean): void {
+    this.requireSocket().emit("setTyping", { access, isTyping });
+  }
+
+  startTyping(access: MessageAccess): void {
+    this.setTyping(access, true);
+  }
+
+  stopTyping(access: MessageAccess): void {
+    this.setTyping(access, false);
   }
 
   onEvent(listener: Listener): () => void {

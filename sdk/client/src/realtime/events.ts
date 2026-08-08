@@ -12,7 +12,7 @@
  */
 
 import type { UserData, OwnData } from "../auth/types.js";
-import type { ApiMessage } from "../social/types.js";
+import type { ApiMessage, MessageAccess } from "../social/types.js";
 
 interface Action<TAction extends string, TData> {
   action: TAction;
@@ -100,6 +100,19 @@ export type CliCallEvent =
   | Action<"update", Record<string, unknown> & { id: string; communityId: string }>
   | Action<"delete", { id: string; communityId: string }>;
 
+/**
+ * Flat: ephemeral typing presence for a message context. The server keeps no
+ * authoritative state — `isTyping:true` is (re)sent while composing and expires
+ * on the receiver (apply a local timeout, ~6–7s); an explicit `isTyping:false`
+ * arrives on stop/disconnect. `access` echoes the context so the indicator can
+ * be routed to the right channel / chat / article.
+ */
+export interface CliTypingEvent {
+  access: MessageAccess;
+  userId: string;
+  isTyping: boolean;
+}
+
 export type CliBotScopesEvent = Record<string, unknown>;
 
 export interface CliCgIdSignResponse {
@@ -124,6 +137,7 @@ export interface ClientEventMap {
   cliUserOwnData: CliUserOwnData;
   cliWalletEvent: CliWalletEvent;
   cliCallEvent: CliCallEvent;
+  cliTypingEvent: CliTypingEvent;
   cliBotScopesEvent: CliBotScopesEvent;
   cliCgIdSignResponse: CliCgIdSignResponse;
 }
@@ -146,6 +160,7 @@ export const CLIENT_EVENT_NAMES = [
   "cliUserOwnData",
   "cliWalletEvent",
   "cliCallEvent",
+  "cliTypingEvent",
   "cliBotScopesEvent",
   "cliCgIdSignResponse",
 ] as const satisfies readonly ClientEventName[];

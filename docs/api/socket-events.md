@@ -37,7 +37,7 @@ per-channel subscribe.
 | Event | Request | Response | Proven by |
 | --- | --- | --- | --- |
 | `getSignableSecret` | — | `secret: string` (64-hex) | r2-realtime "connects…logs in" |
-| `login` | `{ secret, deviceId, base64Signature }` | `"OK"` \| `"ERROR"` | r2-realtime "connects…logs in", "bad signature rejected" |
+| `login` | `{ secret, deviceId, base64Signature }` | `"OK"` \| `"ERROR"` | r2-realtime "connects…logs in", "bad signature rejected", "no challenge / mismatched secret rejected" |
 | `logout` | — | — | (covered by HTTP logout tests) |
 | `cgPing` | — | `serverTime: number` | r2-realtime "connects…answers cgPing" |
 | `joinCommunityVisitorRoom` | `{ communityId }` | — | — |

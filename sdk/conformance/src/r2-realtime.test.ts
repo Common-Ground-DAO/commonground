@@ -54,6 +54,42 @@ describe.runIf(MUTATIONS_ENABLED)("Realtime sync", () => {
     );
   });
 
+  it("login without a server challenge is rejected, never falsely OK (#61)", async () => {
+    // Regression for a login that acked "OK" while leaving the socket anonymous:
+    // no getSignableSecret first ⇒ the socket has no signableSecret ⇒ ERROR.
+    const { client, session } = await registerUser("rt-nochallenge");
+    const realtime = client.realtime();
+    open.push(realtime);
+    await realtime.connect();
+    const bogus = "unrequested-secret-value";
+    const result = await realtime.emitWithAck("login", {
+      deviceId: session.deviceId,
+      secret: bogus,
+      base64Signature: await session.deviceKey.signSecret(bogus),
+    });
+    expect(result).toBe("ERROR");
+  });
+
+  it("login with a secret that doesn't match the challenge is rejected, then recovers (#61)", async () => {
+    const { client, session } = await registerUser("rt-mismatch");
+    const realtime = client.realtime();
+    open.push(realtime);
+    await realtime.connect();
+    // Real challenge, but log in with a DIFFERENT secret → ERROR (not OK).
+    const realSecret = (await realtime.emitWithAck("getSignableSecret")) as string;
+    expect(realSecret).toBeTruthy();
+    const wrongSecret = `${realSecret}-tampered`;
+    const bad = await realtime.emitWithAck("login", {
+      deviceId: session.deviceId,
+      secret: wrongSecret,
+      base64Signature: await session.deviceKey.signSecret(wrongSecret),
+    });
+    expect(bad).toBe("ERROR");
+    // The rejected attempt cleared partial state; a proper login still succeeds
+    // on the same socket.
+    await realtime.login(session.deviceId, session.deviceKey);
+  });
+
   it("send/edit/delete echo to the user's OTHER device (sender device excluded)", async () => {
     // Contract (srv/api/messages.ts emitMessageEvents): the sending DEVICE is
     // excluded from its own cliMessageEvent — the REST response is its echo.

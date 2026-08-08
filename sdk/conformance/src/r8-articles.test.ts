@@ -18,14 +18,14 @@ describe.runIf(MUTATIONS_ENABLED)("Articles", () => {
     const community = await client.communities.create({ title: uniqueName("art") });
     const memberRole = (community.roles as { id: string; title: string }[]).find((r) => r.title === "Member")!;
 
-    // Articles are ALWAYS created as drafts — the create handler ignores the
-    // `published` field you pass (FINDINGS F-13). Publishing is a follow-up
-    // updateArticle. So: create (draft) → publish → verify.
+    // create HONORS the published timestamp in one step (FINDINGS F-13 fixed):
+    // the create response and a fresh read both reflect the published state.
+    const published = new Date().toISOString();
     const created = await client.articles.createCommunityArticle(
       {
         communityId: community.id,
         url: uniqueName("a").toLowerCase(),
-        published: null,
+        published,
         rolePermissions: [
           { roleId: memberRole.id, roleTitle: "Member", permissions: ["ARTICLE_PREVIEW", "ARTICLE_READ"] },
         ],
@@ -42,13 +42,8 @@ describe.runIf(MUTATIONS_ENABLED)("Articles", () => {
     expect(created.article.articleId).toMatch(/^[0-9a-f-]{36}$/);
     expect(created.article.channelId).toMatch(/^[0-9a-f-]{36}$/);
     expect(created.article.creatorId).toBe(session.response.ownData.id);
-
-    const published = new Date().toISOString();
-    await client.articles.updateCommunityArticle({
-      communityId: community.id,
-      articleId: created.article.articleId,
-      published,
-    });
+    // the create response reflects the requested publish state (not null)
+    expect(new Date(created.communityArticle.published!).getTime()).toBe(new Date(published).getTime());
 
     const fetched = await client.articles.getCommunityArticle(community.id, {
       articleId: created.article.articleId,
@@ -59,6 +54,7 @@ describe.runIf(MUTATIONS_ENABLED)("Articles", () => {
     // (e.g. "...+00:00"), so compare by instant, not string.
     expect(new Date(fetched.communityArticle.published!).getTime()).toBe(new Date(published).getTime());
 
+    // published-on-create means it shows up in the default (published-only) list
     const list = await client.articles.listCommunityArticles(community.id, { limit: 10 });
     expect(list.some((a) => a.article.articleId === created.article.articleId)).toBe(true);
   });
@@ -171,8 +167,9 @@ describe.runIf(MUTATIONS_ENABLED)("Articles", () => {
     await client.articles.leaveArticleEventRoom(access);
   });
 
-  it("creates a personal (user) article and lists it", async () => {
+  it("creates a personal (user) article as a draft, then publishes it (F-14)", async () => {
     const { client, session } = await registerUser("art-user");
+    // create as a draft (published: null)...
     const created = await client.articles.createUserArticle(
       { url: uniqueName("u").toLowerCase(), published: null },
       {
@@ -185,8 +182,10 @@ describe.runIf(MUTATIONS_ENABLED)("Articles", () => {
       },
     );
     expect(created.article.articleId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(created.userArticle.published).toBeNull();
 
-    // Publish it (create makes a draft — F-13), then it appears in the list.
+    // ...publish via a userArticle-ONLY update (no article body). This used to
+    // fail VALIDATION on the user variant (F-14) — now it's accepted.
     await client.articles.updateUserArticle({
       articleId: created.article.articleId,
       published: new Date().toISOString(),

@@ -199,14 +199,11 @@ export class ArticleApi {
     userArticle: { articleId: string } & Partial<{ url: string | null; published: string | null }>,
     article?: { articleId: string } & Partial<ArticleBody>,
   ): Promise<{ userArticle: Pick<UserArticle, "updatedAt"> }> {
-    // The user updateArticle validator's custom check compares
-    // userArticle.articleId to article.articleId WITHOUT guarding for a
-    // missing article (unlike the community variant) — so `article` must
-    // always be present with a matching id, even when only publishing.
-    // Default it to a no-op stub (FINDINGS F-14).
+    // A userArticle-only update (e.g. publishing a draft) is valid on its own
+    // — the server no longer requires a matching `article` body (FINDINGS F-14).
     return this.transport.call("User/updateArticle", {
       userArticle,
-      article: article ?? { articleId: userArticle.articleId },
+      ...(article ? { article } : {}),
     });
   }
 

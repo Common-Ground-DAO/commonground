@@ -102,15 +102,28 @@ export async function initTypingCacheInvalidation(): Promise<void> {
     return;
   }
   invalidationStarted = true;
+
+  // The socket server can start before Postgres accepts connections, so retry
+  // the dedicated LISTEN connection a few times before giving up. Falling back
+  // to TTL-only is safe (correctness holds, staleness just rises to the TTL),
+  // but event-driven busting is what keeps typing authorization fresh.
   let client;
-  try {
-    client = await pool.connect();
-    await client.query('LISTEN channelrolepermissionchange');
-    await client.query('LISTEN rolechange');
-  } catch (error) {
-    invalidationStarted = false;
-    console.error('typingCache: failed to start LISTEN, relying on TTL only', error);
-    return;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      client = await pool.connect();
+      await client.query('LISTEN channelrolepermissionchange');
+      await client.query('LISTEN rolechange');
+      break;
+    } catch (error) {
+      try { client?.release(); } catch { /* ignore */ }
+      client = undefined;
+      if (attempt >= 10) {
+        invalidationStarted = false;
+        console.error('typingCache: failed to start LISTEN after retries, relying on TTL only', error);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
   }
 
   client.on('notification', (msg) => {

@@ -28,7 +28,6 @@ import { fakeHealthcheck } from './healthcheck';
 import buildId from './common/random_build_id';
 import botTokenHelper from './repositories/botTokens';
 import botHelper from './repositories/bots';
-import eventHelper from './repositories/event';
 import * as typingCache from './repositories/typingCache';
 
 import cookieParser from 'cookie-parser';
@@ -224,9 +223,16 @@ async function joinAuthenticatedRooms(
 
 const TYPING_THROTTLE_MS = 2_000;
 
+type RoomSpec = {
+  userIds?: string[];
+  roleIds?: string[];
+  communityIds?: string[];
+  articleIds?: string[];
+};
+
 type TypingScope = {
-  target: Parameters<typeof eventHelper.emit>[1];
-  except?: Parameters<typeof eventHelper.emit>[2];
+  target: RoomSpec;
+  except?: RoomSpec;
 };
 
 type TypingActiveEntry = { access: API.Messages.MessageAccess; scope: TypingScope };
@@ -277,12 +283,27 @@ async function resolveTypingScope(
   return null;
 }
 
+function typingRooms(spec: RoomSpec): string[] {
+  const rooms: string[] = [];
+  for (const id of spec.userIds ?? []) rooms.push(userRoomKey(id));
+  for (const id of spec.roleIds ?? []) rooms.push(roleRoomKey(id));
+  for (const id of spec.communityIds ?? []) rooms.push(communityRoomKey(id));
+  for (const id of spec.articleIds ?? []) rooms.push(articleRoomKey(id));
+  return rooms;
+}
+
+// Emitted from inside the socket server, so we broadcast via the local `io`
+// instance (the redis adapter still fans out cluster-wide) rather than the
+// external redis emitter, which is for out-of-process senders like the API.
 function emitTyping(access: API.Messages.MessageAccess, userId: string, isTyping: boolean, scope: TypingScope) {
-  return eventHelper.emit(
-    { type: 'cliTypingEvent', data: { access, userId, isTyping } },
-    scope.target,
-    scope.except,
-  );
+  const targetRooms = typingRooms(scope.target);
+  if (targetRooms.length === 0) return;
+  const exceptRooms = scope.except ? typingRooms(scope.except) : [];
+  const payload: Omit<Events.Typing.Typing, "type"> = { access, userId, isTyping };
+  const channel = exceptRooms.length > 0
+    ? io.to(targetRooms).except(exceptRooms)
+    : io.to(targetRooms);
+  channel.emit("cliTypingEvent", payload);
 }
 
 // Emit a stop for every context the socket was actively typing in. Used on
@@ -295,9 +316,7 @@ function flushTypingStops(socket: AppSocket) {
     return;
   }
   for (const entry of active.values()) {
-    emitTyping(entry.access, userId, false, entry.scope).catch((error) => {
-      console.error('Error flushing typing stop', error);
-    });
+    emitTyping(entry.access, userId, false, entry.scope);
   }
   active.clear();
   typingLastEmit.get(socket)?.clear();
@@ -536,7 +555,7 @@ redisManager.isReady.then(async () => {
             typingActive.set(socket, active);
           }
           active.set(channelId, { access, scope });
-          await emitTyping(access, userId, true, scope);
+          emitTyping(access, userId, true, scope);
         }
         else {
           const active = typingActive.get(socket);
@@ -547,7 +566,7 @@ redisManager.isReady.then(async () => {
             return;
           }
           active!.delete(channelId);
-          await emitTyping(entry.access, userId, false, entry.scope);
+          emitTyping(entry.access, userId, false, entry.scope);
         }
       }
       catch (e) {

@@ -8,14 +8,13 @@ declare namespace Events {
     // typing state; receivers apply a local expiry (see the client contract),
     // so a missed `isTyping: false` self-heals. `access` echoes the validated
     // MessageAccess context so clients can route the indicator to the right
-    // channel / chat / article.
+    // channel / chat / article. Flat payload (no {action,data} wrapper), like
+    // cliChannelLastRead.
     type Typing = {
       type: 'cliTypingEvent';
-      data: {
-        access: API.Messages.MessageAccess;
-        userId: string;
-        isTyping: boolean;
-      };
+      access: API.Messages.MessageAccess;
+      userId: string;
+      isTyping: boolean;
     };
 
     type Event = (

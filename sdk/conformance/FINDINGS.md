@@ -41,6 +41,23 @@ branch as reviewable commits.
   default to `{acceptedPermissions: []}` (srv/repositories/plugins.ts). Pinned
   by r9-plugins.
 
+- **F-13 — `createArticle` now honors the `published` field.** The create
+  validator required `published`, but the INSERT dropped it, so every article
+  was created as a draft regardless (the response also hard-coded
+  `published: null`). Native clients (iOS) hit this trying to publish in one
+  step. Fixed: `_createCommunityArticle`/`_createUserArticle` store the
+  requested value (`null` → draft, timestamp → published/scheduled) and the
+  handlers return the actual state. Backward-compatible — the web always sends
+  `published: null` on create and publishes via `updateArticle`. Pinned by
+  r8-articles (create-with-published + draft-then-publish).
+
+- **F-14 — user `updateArticle` accepts a userArticle-only update.** The user
+  variant's cross-field check compared `userArticle.articleId` to
+  `article.articleId` without guarding for a missing `article`, so publishing a
+  user article (userArticle only) failed `VALIDATION`. Fixed by guarding the
+  check like the community variant; the SDK's no-op stub workaround is removed.
+  Pinned by r8-articles.
+
 ## Recorded (documented behavior, maintainer may want changes)
 
 - **F-03 — Rate-limit keying trusts the leftmost `X-Forwarded-For` entry.**
@@ -117,22 +134,6 @@ branch as reviewable commits.
   community bot cannot yet post"; the test flips to a success round-trip when
   the server side is fixed. (The bearer surface itself — token issuance,
   `whoami`, `scopes/list`, realtime handshake — is fully proven.)
-
-- **F-13 — `createArticle` ignores the `published` field it requires.** The
-  create validator makes `published` required (community and user articles),
-  but the INSERT never stores it — articles are always created as drafts, and
-  publishing is a separate `updateArticle`. The API asks for a value it
-  discards. Either honor `published` on create, or drop it from the create
-  validator. Pinned by r8-articles (create-then-publish flow).
-
-- **F-14 — user `updateArticle` can't update metadata without resending the
-  article.** The community variant guards its cross-field check with
-  `if (!!value.article)`, so `article` is optional; the user variant does
-  `value.userArticle.articleId !== value.article?.articleId` with no guard, so
-  publishing a user article (userArticle-only) fails `VALIDATION` unless you
-  also pass an `article` with a matching id. The SDK sends a no-op article
-  stub to work around it (articles/api.ts). Fix: guard the user check like the
-  community one.
 
 - **F-16 — `previewText` type mismatch between model and create.** The model
   and the create validator disagree: `Models.BaseArticle.Preview.previewText`

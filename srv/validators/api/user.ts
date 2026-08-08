@@ -254,7 +254,11 @@ const userApi = {
     }).strict(true).required(),
     article: baseArticleApi._updateArticle,
   }).strict(true).custom((value, helpers) => {
-    if (value?.userArticle?.articleId !== value?.article?.articleId) {
+    // only cross-check the ids when an `article` body is actually present —
+    // updating just the userArticle (e.g. publishing) is valid on its own.
+    // The community variant already guards this; the user one did not, so a
+    // userArticle-only update wrongly failed VALIDATION.
+    if (!!value?.article && value.userArticle?.articleId !== value.article.articleId) {
       return helpers.error("any.invalid");
     }
     return value;

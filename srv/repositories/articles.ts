@@ -483,9 +483,10 @@ async function _createCommunityArticle(
     INSERT INTO communities_articles (
       "communityId",
       "articleId",
-      "url"
-    ) VALUES ($8, (SELECT "id" FROM insert_article), $9)
-    RETURNING "updatedAt", "articleId", (SELECT "id" FROM insert_channel) AS "channelId"
+      "url",
+      "published"
+    ) VALUES ($8, (SELECT "id" FROM insert_article), $9, $10)
+    RETURNING "updatedAt", "articleId", "published", (SELECT "id" FROM insert_channel) AS "channelId"
   `;
   const result = await db.query(query, [
     userId,
@@ -496,10 +497,14 @@ async function _createCommunityArticle(
     article.previewText,
     article.tags,
     communityArticle.communityId,
-    communityArticle.url
+    communityArticle.url,
+    // honor the requested publish state on create: null -> draft, a timestamp
+    // -> published/scheduled (the validator already constrains it). The INSERT
+    // used to drop this, so every create produced a draft regardless.
+    communityArticle.published ?? null
   ]);
   if (result.rows.length === 1) {
-    const row: { updatedAt: string, articleId: string; channelId: string; } = result.rows[0];
+    const row: { updatedAt: string, articleId: string; channelId: string; published: string | null; } = result.rows[0];
     const communityRoles = await communityHelper.getCommunityRoles(communityArticle.communityId, db);
     const existingRoleIds = new Set(communityRoles.map(r => r.id));
     const adminId = communityRoles.filter(r => r.title === PredefinedRole.Admin)[0].id;
@@ -931,9 +936,10 @@ async function _createUserArticle(
     INSERT INTO users_articles (
       "userId",
       "articleId",
-      "url"
-    ) VALUES ($1, (SELECT "id" FROM insert_article), $8)
-    RETURNING "updatedAt", "articleId", (SELECT "id" FROM insert_channel) AS "channelId"
+      "url",
+      "published"
+    ) VALUES ($1, (SELECT "id" FROM insert_article), $8, $9)
+    RETURNING "updatedAt", "articleId", "published", (SELECT "id" FROM insert_channel) AS "channelId"
   `;
   const result = await db.query(query, [
     userId,
@@ -943,10 +949,12 @@ async function _createUserArticle(
     article.content,
     article.previewText,
     article.tags,
-    userArticle.url
+    userArticle.url,
+    // honor the requested publish state on create (see _createCommunityArticle)
+    userArticle.published ?? null
   ]);
   if (result.rows.length === 1) {
-    return result.rows[0] as { updatedAt: string, articleId: string, channelId: string };
+    return result.rows[0] as { updatedAt: string, articleId: string, channelId: string, published: string | null };
   }
   throw new Error("Error adding article");
 }

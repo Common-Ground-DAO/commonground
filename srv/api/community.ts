@@ -1038,7 +1038,7 @@ registerPostRoute<
     const communityArticle: Models.Community.CommunityArticle = {
       ...data.communityArticle,
       articleId: result.articleId,
-      published: null,
+      published: result.published,
       updatedAt: result.updatedAt,
       sentAsNewsletter: null,
       markAsNewsletter: false,

@@ -1249,7 +1249,7 @@ registerPostRoute<
       ...data.userArticle,
       updatedAt: result.updatedAt,
       userId: user.id,
-      published: null,
+      published: result.published,
       articleId: result.articleId
     }
     return {

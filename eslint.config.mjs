@@ -49,6 +49,7 @@ export default tseslint.config(
       '.yarn/**',
       // Out of scope: separate packages with their own toolchains.
       'srv/**',
+      'sdk/**',
       'contracts/**',
       // Not source.
       'public/**',

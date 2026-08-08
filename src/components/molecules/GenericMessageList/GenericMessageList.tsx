@@ -22,6 +22,8 @@ import { useSafeCommunityContext } from 'context/CommunityProvider';
 import JoinCommunityButton from 'components/atoms/JoinCommunityButton/JoinCommunityButton';
 import channelDatabaseManager from 'data/databases/channel';
 import config from 'common/config';
+import { useTypingBroadcaster } from 'hooks/useTypingBroadcaster';
+import TypingIndicator from 'components/molecules/TypingIndicator/TypingIndicator';
 import loginManager from 'data/appstate/login';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import { ScrollableHandle } from '../../molecules/Scrollable/Scrollable';
@@ -55,6 +57,22 @@ type Props = {
 
 export const JOINCOMMUNITY_MUTED_MESSAGE = 'Join the community to chat here';
 const BOTTOM_FIXED_MENU_TOGGLE = 50;
+
+function slateHasText(nodes: Descendant[] | undefined): boolean {
+  if (!nodes) {
+    return false;
+  }
+  const collect = (node: any): string => {
+    if (typeof node?.text === 'string') {
+      return node.text;
+    }
+    if (Array.isArray(node?.children)) {
+      return node.children.map(collect).join('');
+    }
+    return '';
+  };
+  return nodes.map(collect).join('').trim().length > 0;
+}
 
 export default function GenericMessageList(props: Props) {
   const {
@@ -314,8 +332,14 @@ export default function GenericMessageList(props: Props) {
     }
   }, [itemList]);
 
+  const typingBroadcaster = useTypingBroadcaster(channelId);
+
   const changeHandler = useCallback((data: Descendant[]) => {
     messageDataRef.current = data;
+    // Don't broadcast typing while editing an existing message.
+    if (!messageToEdit) {
+      typingBroadcaster.notify(slateHasText(data));
+    }
     if (!!messageDataUpdateRef.current) {
       clearTimeout(messageDataUpdateRef.current);
     }
@@ -324,7 +348,7 @@ export default function GenericMessageList(props: Props) {
         setMessageStateLocalStorage(messageDataRef.current);
       }
     }, 2000);
-  }, [setMessageStateLocalStorage]);
+  }, [setMessageStateLocalStorage, typingBroadcaster, messageToEdit]);
 
   useEffect(() => {
     return () => {
@@ -345,6 +369,7 @@ export default function GenericMessageList(props: Props) {
     if (!itemList) {
       throw new Error("itemList is not set");
     }
+    typingBroadcaster.stop();
     if (!!messageToEdit) {
       return await editMessage(messageToEdit, body, attachments);
     }
@@ -360,7 +385,7 @@ export default function GenericMessageList(props: Props) {
         return result;
       });
     }
-  }, [createMessage, editMessage, messageToEdit, itemList, initializeItemListRecent]);
+  }, [createMessage, editMessage, messageToEdit, itemList, initializeItemListRecent, typingBroadcaster]);
 
   const scrollDownHandler = useCallback(() => {
     if (!itemList) {
@@ -418,6 +443,10 @@ export default function GenericMessageList(props: Props) {
 
   let nextInputFocusTimeoutRef = useRef<any>(undefined);
   const setInputFocused = useCallback((value: boolean) => {
+    // Blur stops typing on every platform (the mobile-only menu logic follows).
+    if (!value) {
+      typingBroadcaster.stop();
+    }
     if (!isMobile) return;
     // Delay slightly to allow field to focus on click
     clearTimeout(nextInputFocusTimeoutRef.current);
@@ -430,7 +459,7 @@ export default function GenericMessageList(props: Props) {
         distanceAccRef.current = -Infinity;
       } */
     }, 2);
-  }, [isMobile, setMenuHidden, onMobileFocus]);
+  }, [isMobile, setMenuHidden, onMobileFocus, typingBroadcaster]);
 
   useEffect(() => {
     if (!!messageToEdit) {
@@ -567,6 +596,7 @@ export default function GenericMessageList(props: Props) {
         scrollHelperRef={scrollHelperRef}
       />}
       {!hideInput && <div className='edit-container-container'>
+        <TypingIndicator channelId={channelId} />
         {editContainer}
       </div>}
     </div>

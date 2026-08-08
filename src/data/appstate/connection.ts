@@ -403,6 +403,11 @@ export class ConnectionManager {
     });
   }
 
+  /** Emit ephemeral typing presence for a message context (see webSocket.setTyping). */
+  public sendTyping(access: API.Messages.MessageAccess, isTyping: boolean) {
+    webSocketManager.setTyping(access, isTyping);
+  }
+
   /* PRIVATE HELPERS */
 
   private eventHandler = (name: string, event: any) => {

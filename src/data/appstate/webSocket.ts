@@ -658,6 +658,17 @@ class WebSocketManager {
       this._socket.cg_loggedin = 0;
     }
   }
+
+  /**
+   * Ephemeral typing presence. Fire-and-forget (no ack); the server authorizes,
+   * throttles, and relays a `cliTypingEvent` to the other participants. Only
+   * emitted when the socket is connected and authenticated.
+   */
+  public setTyping(access: API.Messages.MessageAccess, isTyping: boolean) {
+    if (!!this._socket && this._socket.connected && this._socket.cg_loggedin === 2) {
+      this._socket.emit("setTyping", { access, isTyping });
+    }
+  }
 }
 
 const webSocketManager = new WebSocketManager();

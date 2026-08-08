@@ -206,6 +206,11 @@ class ChannelDatabaseManager {
     }
   }
 
+  /** The full MessageAccess (community/chat/article variant) for a channel, if known. */
+  public getAccessForChannel(channelId: string): API.Messages.MessageAccess | undefined {
+    return this.accessByChannelId.get(channelId);
+  }
+
   public async getMessageById(
     channelId: string,
     id: string,

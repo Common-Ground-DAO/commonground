@@ -21,6 +21,9 @@ declare global {
                     data: { communityId: string },
                 ) => void,
                 "leaveCommunityVisitorRoom": () => void,
+                "setTyping": (
+                    data: API.Socket.setTyping.Request,
+                ) => void,
                 "prepareWalletRequest": (
                     callback: (requestId: string) => void,
                 ) => void,

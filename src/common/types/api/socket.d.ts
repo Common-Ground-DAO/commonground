@@ -31,6 +31,14 @@ declare global {
                 type Response = void;
             }
 
+            namespace setTyping {
+                type Request = {
+                    access: API.Messages.MessageAccess;
+                    isTyping: boolean;
+                };
+                type Response = void;
+            }
+
             namespace leaveCommunityVisitorRoom {
                 type Request = undefined;
                 type Response = void;

@@ -43,6 +43,7 @@ per-channel subscribe.
 | `joinCommunityVisitorRoom` | `{ communityId }` | — | — |
 | `leaveCommunityVisitorRoom` | — | — | — |
 | `prepareWalletRequest` | — | `requestId: string` | — |
+| `setTyping` | `{ access, isTyping }` | — (fire-and-forget, no ack) | r2-typing start/stop, unauthorized-sender rejection |
 
 ## Server → client (`cli*` events)
 
@@ -66,9 +67,32 @@ Payloads below are the object **minus `type`**. Most are
 | `cliUserOwnData` | `{ data: Partial<OwnData> }` | store-applied (R2) |
 | `cliWalletEvent` | `new` / `update` / `delete` wallet | catalog-only |
 | `cliCallEvent` | `new` / `update` / `delete` call | catalog-only (see protoo for media) |
+| `cliTypingEvent` | *flat* `{ access, userId, isTyping }` typing presence | r2-typing start/stop delivery, self-exclusion |
 | `cliBotScopesEvent` | bot token scope change | catalog-only |
 | `cliCgIdSignResponse` | `{ frontendRequestId, data }` passkey handshake | catalog-only |
 
 Client-synthesized names that are **never on the wire** (do not add wire
 listeners): `cliConnectionLost`, `cliConnectionEstablished`,
 `cliConnectionRestored`.
+
+## Typing presence (`setTyping` → `cliTypingEvent`)
+
+Ephemeral, socket-only, and **stateless on the server** — it authorizes,
+throttles, and relays; it stores nothing authoritative.
+
+- **Emit** `setTyping { access, isTyping }` where `access` is the same
+  `MessageAccess` used for messages. No ack. Refresh with `isTyping: true`
+  every few seconds while composing (the server collapses bursts, ~2s window)
+  and send `isTyping: false` on send/blur.
+- **Receive** `cliTypingEvent { access, userId, isTyping }` for other
+  participants. The sender is **never** echoed (its own user room is excluded).
+- **Authorization**: community channels require `CHANNEL_WRITE`; DMs and
+  article comment rooms require membership (be in the chat / joined via
+  `joinArticleEventRoom`); calls are unsupported. Unauthorized `setTyping` is
+  silently dropped — nothing is relayed.
+- **Expiry is the receiver's job**: apply a local timeout (~6–7s) and clear the
+  indicator if no refresh arrives, so a dropped `isTyping: false` self-heals.
+  The server also emits an explicit stop on disconnect/logout when it can.
+- **Delivery scope** mirrors messages: public channels broadcast to the
+  community room, private channels to the reader-role rooms, DMs to the other
+  participants' user rooms, articles to the article room.

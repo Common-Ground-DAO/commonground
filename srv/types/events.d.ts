@@ -13,6 +13,7 @@ declare {
             Events.Chat.Event |
             Events.Calls.Event |
             Events.Channel.Event |
+            Events.Typing.Event |
             Events.CgId.Event
         );
 

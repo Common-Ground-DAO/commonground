@@ -12,6 +12,7 @@ import {
   communityRoomKey,
   deviceRoomKey,
   expressSessionRoomKey,
+  articleRoomKey,
   botTokenRoomKey,
   dockerSecret,
 } from './util';
@@ -27,6 +28,7 @@ import { fakeHealthcheck } from './healthcheck';
 import buildId from './common/random_build_id';
 import botTokenHelper from './repositories/botTokens';
 import botHelper from './repositories/bots';
+import * as typingCache from './repositories/typingCache';
 
 import cookieParser from 'cookie-parser';
 // The manual-unsign alternative below needs `cookie-signature`, which was
@@ -212,6 +214,114 @@ async function joinAuthenticatedRooms(
   await socket.join(rooms);
 }
 
+// --- Typing presence ---------------------------------------------------------
+// Ephemeral, connection-scoped. The server holds no authoritative typing state:
+// it authorizes + throttles + relays, and receivers apply a local expiry so a
+// dropped stop self-heals. Authorization and delivery scoping reuse the cached
+// channel/chat mapping (see typingCache) and the socket's live room membership,
+// so a typing event costs a Map lookup + a set check + one room emit — no DB.
+
+const TYPING_THROTTLE_MS = 2_000;
+
+type RoomSpec = {
+  userIds?: string[];
+  roleIds?: string[];
+  communityIds?: string[];
+  articleIds?: string[];
+};
+
+type TypingScope = {
+  target: RoomSpec;
+  except?: RoomSpec;
+};
+
+type TypingActiveEntry = { access: API.Messages.MessageAccess; scope: TypingScope };
+
+// Per-socket state; WeakMaps so it is collected with the socket, no manual sweep.
+const typingLastEmit = new WeakMap<AppSocket, Map<string, number>>();
+const typingActive = new WeakMap<AppSocket, Map<string, TypingActiveEntry>>();
+
+async function resolveTypingScope(
+  socket: AppSocket,
+  access: API.Messages.MessageAccess,
+  userId: string,
+): Promise<TypingScope | null> {
+  if ('communityId' in access) {
+    const perms = await typingCache.getChannelTypingPerms(access.communityId, access.channelId);
+    // Gate on WRITE: only broadcast "composing" where the user could actually send.
+    // The sender's roles are read live from room membership (kept current by the
+    // role-change machinery), so this half of the check has no staleness.
+    const authorized = perms.writerRoleIds.some((roleId) => socket.rooms.has(roleRoomKey(roleId)));
+    if (!authorized) {
+      return null;
+    }
+    const target = perms.isPublic
+      ? { communityIds: [access.communityId] }
+      : { roleIds: perms.readerRoleIds };
+    return { target, except: { userIds: [userId] } };
+  }
+  if ('chatId' in access) {
+    const userIds = await typingCache.getChatUserIds(access.chatId);
+    if (!userIds.includes(userId)) {
+      return null;
+    }
+    const others = userIds.filter((id) => id !== userId);
+    if (others.length === 0) {
+      return null;
+    }
+    return { target: { userIds: others } };
+  }
+  if ('articleId' in access) {
+    // Membership in the article event room is the authorization: clients join it
+    // via joinArticleEventRoom, which performs the access check.
+    if (!socket.rooms.has(articleRoomKey(access.articleId))) {
+      return null;
+    }
+    return { target: { articleIds: [access.articleId] }, except: { userIds: [userId] } };
+  }
+  // Calls (callId) intentionally have no typing surface.
+  return null;
+}
+
+function typingRooms(spec: RoomSpec): string[] {
+  const rooms: string[] = [];
+  for (const id of spec.userIds ?? []) rooms.push(userRoomKey(id));
+  for (const id of spec.roleIds ?? []) rooms.push(roleRoomKey(id));
+  for (const id of spec.communityIds ?? []) rooms.push(communityRoomKey(id));
+  for (const id of spec.articleIds ?? []) rooms.push(articleRoomKey(id));
+  return rooms;
+}
+
+// Emitted from inside the socket server, so we broadcast via the local `io`
+// instance (the redis adapter still fans out cluster-wide) rather than the
+// external redis emitter, which is for out-of-process senders like the API.
+function emitTyping(access: API.Messages.MessageAccess, userId: string, isTyping: boolean, scope: TypingScope) {
+  const targetRooms = typingRooms(scope.target);
+  if (targetRooms.length === 0) return;
+  const exceptRooms = scope.except ? typingRooms(scope.except) : [];
+  const payload: Omit<Events.Typing.Typing, "type"> = { access, userId, isTyping };
+  const channel = exceptRooms.length > 0
+    ? io.to(targetRooms).except(exceptRooms)
+    : io.to(targetRooms);
+  channel.emit("cliTypingEvent", payload);
+}
+
+// Emit a stop for every context the socket was actively typing in. Used on
+// disconnect/logout so indicators clear promptly instead of waiting for the
+// receiver-side expiry. Scopes were captured at start, so no cache lookup here.
+function flushTypingStops(socket: AppSocket) {
+  const active = typingActive.get(socket);
+  const userId = socket.data.userId;
+  if (!active || !userId) {
+    return;
+  }
+  for (const entry of active.values()) {
+    emitTyping(entry.access, userId, false, entry.scope);
+  }
+  active.clear();
+  typingLastEmit.get(socket)?.clear();
+}
+
 io.use(async (socket, next) => {
   const token = socket.handshake.auth?.token;
   if (token === undefined) {
@@ -254,6 +364,11 @@ redisManager.isReady.then(async () => {
     redisManager.getClient('socketIOSub'),
     { key: 'v2:' }
   ));
+
+  // Event-driven busting for the typing-presence caches (falls back to TTL).
+  typingCache.initTypingCacheInvalidation().catch((error) => {
+    console.error("Failed to start typing cache invalidation", error);
+  });
 
   io.on("connection", async (socket) => {
     if (shuttingDown) {
@@ -401,8 +516,67 @@ redisManager.isReady.then(async () => {
       }
     });
 
+    socket.on("setTyping", async (rawData) => {
+      const userId = socket.data.userId;
+      if (!userId) {
+        return;
+      }
+      let data: API.Socket.setTyping.Request;
+      try {
+        data = await validators.API.Socket.setTyping.validateAsync(rawData);
+      }
+      catch {
+        // Malformed payload: ignore silently, this is a fire-and-forget signal.
+        return;
+      }
+      try {
+        const { access, isTyping } = data;
+        const channelId = access.channelId;
+        if (isTyping) {
+          const now = Date.now();
+          let lastEmit = typingLastEmit.get(socket);
+          if (!lastEmit) {
+            lastEmit = new Map();
+            typingLastEmit.set(socket, lastEmit);
+          }
+          const alreadyActive = typingActive.get(socket)?.has(channelId) ?? false;
+          // Collapse refresh spam: once active, re-emit at most once per window.
+          if (alreadyActive && now - (lastEmit.get(channelId) ?? 0) < TYPING_THROTTLE_MS) {
+            return;
+          }
+          const scope = await resolveTypingScope(socket, access, userId);
+          if (!scope) {
+            return;
+          }
+          lastEmit.set(channelId, now);
+          let active = typingActive.get(socket);
+          if (!active) {
+            active = new Map();
+            typingActive.set(socket, active);
+          }
+          active.set(channelId, { access, scope });
+          emitTyping(access, userId, true, scope);
+        }
+        else {
+          const active = typingActive.get(socket);
+          const entry = active?.get(channelId);
+          typingLastEmit.get(socket)?.delete(channelId);
+          if (!entry) {
+            // Wasn't typing here; nothing to stop.
+            return;
+          }
+          active!.delete(channelId);
+          emitTyping(entry.access, userId, false, entry.scope);
+        }
+      }
+      catch (e) {
+        console.error("Error during setTyping", e);
+      }
+    });
+
     socket.on("logout", () => {
       const { userId } = socket.data;
+      flushTypingStops(socket);
       delete socket.data.userId;
       delete socket.data.deviceId;
       const leavePromises: (void | Promise<void>)[] = [];
@@ -430,6 +604,7 @@ redisManager.isReady.then(async () => {
 
     socket.on("disconnect", () => {
       const { userId } = socket.data;
+      flushTypingStops(socket);
       if (!!userId && !socket.data.botTokenId) {
         const ownRoomSize = io.sockets.adapter.rooms.get(userRoomKey(userId))?.size;
         if (!ownRoomSize) {

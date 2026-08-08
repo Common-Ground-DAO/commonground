@@ -496,19 +496,28 @@ redisManager.isReady.then(async () => {
       try {
         const { signableSecret } = socket.data;
         data = await validators.API.Socket.login.validateAsync(data);
-        if (!!signableSecret && signableSecret === data.secret) {
-          const { userId } = await deviceHelper.verifyDeviceAndGetUserId(data.deviceId, signableSecret, data.base64Signature);
-          const ids = await userHelper.getUserRoleAndCommunityIds(userId);
+        // A missing or mismatched challenge means the socket is not authenticated.
+        // Never acknowledge "OK" here: doing so leaves the client believing it is
+        // logged in while the socket stays anonymous (no userId, no room joins,
+        // no presence) — silently breaking inbound events and setTyping.
+        if (!signableSecret || signableSecret !== data.secret) {
           delete socket.data.signableSecret;
-          localOnlineUsers.add(userId);
-          await joinAuthenticatedRooms(socket, {
-            userId,
-            deviceId: data.deviceId,
-            roleIds: ids.roleIds,
-            communityIds: ids.communityIds,
-          });
-          await userHelper.setUserOnlineStatus(userId, 'online');
+          callback("ERROR");
+          return;
         }
+        const { userId } = await deviceHelper.verifyDeviceAndGetUserId(data.deviceId, signableSecret, data.base64Signature);
+        const ids = await userHelper.getUserRoleAndCommunityIds(userId);
+        delete socket.data.signableSecret;
+        localOnlineUsers.add(userId);
+        await joinAuthenticatedRooms(socket, {
+          userId,
+          deviceId: data.deviceId,
+          roleIds: ids.roleIds,
+          communityIds: ids.communityIds,
+        });
+        await userHelper.setUserOnlineStatus(userId, 'online');
+        // Only acknowledge success once identity, room membership, and presence
+        // are fully established.
         callback("OK");
       } catch (e) {
         console.error("Error during login", e);

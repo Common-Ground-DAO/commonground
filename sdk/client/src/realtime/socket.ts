@@ -102,6 +102,16 @@ export class RealtimeClient {
     return (await this.requireSocket().emitWithAck("cgPing")) as number;
   }
 
+  /**
+   * Low-level request/ack passthrough for socket ops the typed methods above
+   * don't cover — and for conformance to exercise raw protocol paths (e.g. a
+   * malformed `login`). Prefer the typed methods for normal use.
+   */
+  async emitWithAck(event: string, ...args: unknown[]): Promise<unknown> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (this.requireSocket().emitWithAck as any)(event, ...args);
+  }
+
   logout(): void {
     this.requireSocket().emit("logout");
   }

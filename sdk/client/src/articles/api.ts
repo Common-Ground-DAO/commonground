@@ -91,6 +91,12 @@ export interface ArticleListQuery {
   updatedBefore?: string;
   publishedAfter?: string;
   publishedBefore?: string;
+  /** Cursor tiebreakers for deterministic paging through same-timestamp rows.
+   * Pair with the matching bound: beforeId with publishedBefore/updatedBefore
+   * (DESC), afterId with publishedAfter/updatedAfter (ASC). Take both the
+   * timestamp and articleId from the last item of the previous page. */
+  beforeId?: string;
+  afterId?: string;
   limit: number;
   tags?: string[];
   /** requires COMMUNITY_MANAGE_ARTICLES */
@@ -115,9 +121,17 @@ export class ArticleApi {
   // ---- Community articles ----
 
   async listCommunityArticles(
-    communityId: string,
+    // undefined → the global community-article feed (across all communities).
+    communityId: string | undefined,
     query: ArticleListQuery,
-    extra: { tags?: string[]; anyTags?: string[] } = {},
+    extra: {
+      /** article-level tags (articles.tags) */
+      tags?: string[];
+      anyTags?: string[];
+      /** containing-community topics (communities.tags): all / any of */
+      communityTags?: string[];
+      anyCommunityTags?: string[];
+    } = {},
   ): Promise<{ communityArticle: CommunityArticle; article: ArticlePreview }[]> {
     return this.transport.call("Community/getArticleList", { communityId, ...query, ...extra });
   }

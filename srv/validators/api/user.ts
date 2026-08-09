@@ -5,7 +5,7 @@
 import Joi from "joi";
 import { tlds } from "@hapi/tlds";
 import common from "../common";
-import baseArticleApi from "./basearticle";
+import baseArticleApi, { articleCursorPairing } from "./basearticle";
 import {
   UserProfileTypeEnum,
   UserPremiumFeatureName,
@@ -230,7 +230,7 @@ const userApi = {
     ...baseArticleApi._getArticleListRequest,
     userId: common.Uuid,
     followingOnly: Joi.equal(true),
-  }).strict(true).required(),
+  }).strict(true).custom(articleCursorPairing).required(),
 
   getArticleDetailView: Joi.object<API.User.getArticleDetailView.Request>({
     userId: common.Uuid.required(),

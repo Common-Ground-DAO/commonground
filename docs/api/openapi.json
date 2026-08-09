@@ -4076,6 +4076,20 @@
               "schema": {
                 "additionalProperties": false,
                 "properties": {
+                  "afterId": {
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    "type": "string"
+                  },
+                  "anyCommunityTags": {
+                    "items": {
+                      "maxLength": 30,
+                      "pattern": "^[a-z0-9-_ /]+$",
+                      "type": "string"
+                    },
+                    "maxItems": 50,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
                   "anyTags": {
                     "items": {
                       "maxLength": 30,
@@ -4086,9 +4100,23 @@
                     "type": "array",
                     "uniqueItems": true
                   },
+                  "beforeId": {
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    "type": "string"
+                  },
                   "communityId": {
                     "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                     "type": "string"
+                  },
+                  "communityTags": {
+                    "items": {
+                      "maxLength": 30,
+                      "pattern": "^[a-z0-9-_ /]+$",
+                      "type": "string"
+                    },
+                    "maxItems": 50,
+                    "type": "array",
+                    "uniqueItems": true
                   },
                   "drafts": {
                     "enum": [
@@ -14195,6 +14223,14 @@
               "schema": {
                 "additionalProperties": false,
                 "properties": {
+                  "afterId": {
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    "type": "string"
+                  },
+                  "beforeId": {
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    "type": "string"
+                  },
                   "drafts": {
                     "enum": [
                       true

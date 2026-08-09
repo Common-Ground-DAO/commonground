@@ -220,4 +220,111 @@ describe.runIf(MUTATIONS_ENABLED)("Articles", () => {
       ),
     ).rejects.toMatchObject({ code: "NOT_ALLOWED" });
   });
+
+  it("getArticleList pages same-published articles with no dupes/omissions (#71)", async () => {
+    const { client } = await registerUser("art-page");
+    const community = await client.communities.create({ title: uniqueName("art-page") });
+    const memberRole = (community.roles as { id: string; title: string }[]).find((r) => r.title === "Member")!;
+    // One published timestamp shared by > the 30 max page size, so a page
+    // boundary falls inside the group and needs the (published, articleId)
+    // tiebreaker to page without dupes/omissions.
+    const published = new Date(Date.now() - 60_000).toISOString();
+    const N = 35;
+    const created = await Promise.all(
+      Array.from({ length: N }, (_, i) =>
+        client.articles.createCommunityArticle(
+          {
+            communityId: community.id,
+            url: uniqueName(`p${i}`).toLowerCase(),
+            published,
+            rolePermissions: [
+              { roleId: memberRole.id, roleTitle: "Member", permissions: ["ARTICLE_PREVIEW", "ARTICLE_READ"] },
+            ],
+          },
+          {
+            title: `page ${i}`,
+            previewText: "x",
+            thumbnailImageId: null,
+            headerImageId: null,
+            content: textArticleContent("body"),
+            tags: [],
+          },
+        ),
+      ),
+    );
+    const expected = new Set(created.map((c) => c.article.articleId));
+
+    const seen: string[] = [];
+    let cursor: { publishedBefore?: string; beforeId?: string } = {};
+    for (let guard = 0; guard < 10; guard++) {
+      const page = await client.articles.listCommunityArticles(community.id, { limit: 30, ...cursor });
+      if (page.length === 0) break;
+      seen.push(...page.map((a) => a.article.articleId));
+      const last = page[page.length - 1];
+      // Server round-trips Postgres timestamptz format; normalize to canonical ISO.
+      cursor = {
+        publishedBefore: new Date(last.communityArticle.published!).toISOString(),
+        beforeId: last.article.articleId,
+      };
+      if (page.length < 30) break;
+    }
+    const ours = seen.filter((id) => expected.has(id));
+    expect(ours.length).toBe(N); // every article returned...
+    expect(new Set(ours).size).toBe(N); // ...exactly once, across the boundary
+  });
+
+  it("getArticleList filters by community topic distinctly from article tag (#72)", async () => {
+    const { client } = await registerUser("art-topics");
+    const topicA = uniqueName("topica").toLowerCase();
+    const topicB = uniqueName("topicb").toLowerCase();
+    const artTag = uniqueName("arttag").toLowerCase();
+
+    const makeArticle = async (communityTags: string[], articleTags: string[]) => {
+      const community = await client.communities.create({ title: uniqueName("t"), tags: communityTags });
+      const memberRole = (community.roles as { id: string; title: string }[]).find((r) => r.title === "Member")!;
+      const created = await client.articles.createCommunityArticle(
+        {
+          communityId: community.id,
+          url: uniqueName("u").toLowerCase(),
+          published: new Date(Date.now() - 60_000).toISOString(),
+          rolePermissions: [
+            { roleId: memberRole.id, roleTitle: "Member", permissions: ["ARTICLE_PREVIEW", "ARTICLE_READ"] },
+          ],
+        },
+        {
+          title: "t",
+          previewText: "x",
+          thumbnailImageId: null,
+          headerImageId: null,
+          content: textArticleContent("body"),
+          tags: articleTags,
+        },
+      );
+      return created.article.articleId;
+    };
+
+    // Article A: community topic A, article tag artTag. Article B: community topic B, no article tag.
+    const aId = await makeArticle([topicA], [artTag]);
+    const bId = await makeArticle([topicB], []);
+
+    // Global feed by community topic returns the article in that community only.
+    const byTopic = await client.articles.listCommunityArticles(undefined, { limit: 30 }, { anyCommunityTags: [topicA] });
+    const topicIds = byTopic.map((a) => a.article.articleId);
+    expect(topicIds).toContain(aId);
+    expect(topicIds).not.toContain(bId);
+
+    // Article-tag filter is independent of community topic and doesn't match by
+    // the community's tags.
+    const byArticleTag = await client.articles.listCommunityArticles(undefined, { limit: 30, tags: [artTag] });
+    const artIds = byArticleTag.map((a) => a.article.articleId);
+    expect(artIds).toContain(aId);
+    expect(artIds).not.toContain(bId);
+    // topicA is a COMMUNITY tag, not an article tag — filtering article tags by it finds nothing of ours.
+    const byTopicAsArticleTag = await client.articles.listCommunityArticles(undefined, { limit: 30, tags: [topicA] });
+    expect(byTopicAsArticleTag.map((a) => a.article.articleId)).not.toContain(aId);
+
+    // all-of community topics: topicB does not match the topicA article.
+    const byTopicB = await client.articles.listCommunityArticles(undefined, { limit: 30 }, { communityTags: [topicB] });
+    expect(byTopicB.map((a) => a.article.articleId)).not.toContain(aId);
+  });
 });

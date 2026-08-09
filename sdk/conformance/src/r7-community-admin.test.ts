@@ -207,6 +207,55 @@ describe.runIf(MUTATIONS_ENABLED)("Community management", () => {
     await client.communityAdmin.deleteEvent(event.id, community.id);
   });
 
+  it("getMyEvents accepts the (scheduledBefore, beforeId) cursor (#67)", async () => {
+    // Regression: the public type + repository support a beforeId cursor, but a
+    // strict validator omitted it, so any client that paginated per the contract
+    // got VALIDATION. Attend two future events so they appear in getMyEvents
+    // (selfOnly), then page with a cursor.
+    const { client, community } = await ownerWithCommunity("ca-myevents");
+    const member = memberRole(community);
+    const soon = await client.communityAdmin.createEvent({
+      type: "reminder",
+      communityId: community.id,
+      title: "soon",
+      duration: 30,
+      scheduleDate: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+      rolePermissions: [
+        { roleId: member.id, roleTitle: "Member", permissions: ["EVENT_PREVIEW", "EVENT_ATTEND"] },
+      ],
+    });
+    const later = await client.communityAdmin.createEvent({
+      type: "reminder",
+      communityId: community.id,
+      title: "later",
+      duration: 30,
+      scheduleDate: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
+      rolePermissions: [
+        { roleId: member.id, roleTitle: "Member", permissions: ["EVENT_PREVIEW", "EVENT_ATTEND"] },
+      ],
+    });
+    await client.communityAdmin.addEventParticipant(soon.id);
+    await client.communityAdmin.addEventParticipant(later.id);
+
+    // First page: default cursor (both null) — before #67 this threw VALIDATION.
+    const firstPage = await client.communityAdmin.getMyEvents();
+    const firstIds = firstPage.map((e) => e.id);
+    expect(firstIds).toContain(soon.id);
+    expect(firstIds).toContain(later.id);
+
+    // A real cursor is accepted and never re-returns the cursor item itself.
+    const nextPage = await client.communityAdmin.getMyEvents({
+      scheduledBefore: soon.scheduleDate,
+      beforeId: soon.id,
+    });
+    expect(nextPage.map((e) => e.id)).not.toContain(soon.id);
+
+    // Invalid cursor fields still reject.
+    await expect(
+      client.communityAdmin.getMyEvents({ scheduledBefore: null, beforeId: "not-a-uuid" }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+  });
+
   it("a non-manager member cannot manage roles (permission gate)", async () => {
     const { community } = await ownerWithCommunity("ca-perm");
     const { client: member } = await registerUser("ca-perm-m");

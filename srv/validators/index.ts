@@ -21,6 +21,7 @@ import SearchApi from "./api/search";
 import ReportApi from "./api/report";
 import BotApi from "./api/bot";
 import MediasoupApi from "./api/mediasoup";
+import FeedApi from "./api/feed";
 
 const validators = {
   Common,
@@ -43,6 +44,7 @@ const validators = {
     Report: ReportApi,
     Bot: BotApi,
     Mediasoup: MediasoupApi,
+    Feed: FeedApi,
   }
 }
 

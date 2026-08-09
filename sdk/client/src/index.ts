@@ -115,6 +115,17 @@ export {
   type ArticleListQuery,
 } from "./articles/api.js";
 export {
+  FeedApi,
+  type FeedPost,
+  type FeedActor,
+  type FeedCreator,
+  type FeedPostViewer,
+  type PostMedia,
+  type PostKind,
+  type PostMediaSize,
+  type GetPostListQuery,
+} from "./feed/api.js";
+export {
   PluginApi,
   type PluginPermission,
   type PluginPermissions,

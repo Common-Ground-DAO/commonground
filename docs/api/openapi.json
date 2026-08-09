@@ -9000,6 +9000,138 @@
         ]
       }
     },
+    "/api/v2/Feed/getPostList": {
+      "post": {
+        "operationId": "Feed_getPostList",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "actorTypes": {
+                    "items": {
+                      "enum": [
+                        "community",
+                        "user"
+                      ],
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "before": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "postId": {
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "publishedAt": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "postId",
+                      "publishedAt"
+                    ],
+                    "type": "object"
+                  },
+                  "limit": {
+                    "format": "int64",
+                    "maximum": 30,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "scope": {
+                    "enum": [
+                      "explore",
+                      "following"
+                    ],
+                    "type": "string"
+                  },
+                  "topics": {
+                    "items": {
+                      "maxLength": 30,
+                      "pattern": "^[a-z0-9-_ /]+$",
+                      "type": "string"
+                    },
+                    "maxItems": 50,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "verification": {
+                    "enum": [
+                      "both",
+                      "unverified",
+                      "verified"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "limit"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "Feed/getPostList",
+        "tags": [
+          "Feed"
+        ]
+      }
+    },
     "/api/v2/File/getSignedUrls": {
       "post": {
         "operationId": "Files_getSignedUrls",

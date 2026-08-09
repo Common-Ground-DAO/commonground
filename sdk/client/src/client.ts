@@ -18,6 +18,7 @@ import { CallApi } from "./calls/api.js";
 import { BotManagementApi } from "./bot/api.js";
 import { CommunityAdminApi } from "./community/api.js";
 import { ArticleApi } from "./articles/api.js";
+import { FeedApi } from "./feed/api.js";
 import { PluginApi } from "./plugins/api.js";
 import { ContractApi, StakingApi, WalletApi, PointsApi } from "./onchain/api.js";
 import { RealtimeClient, type RealtimeOptions } from "./realtime/socket.js";
@@ -42,6 +43,8 @@ export class CommonGroundClient {
   readonly communityAdmin: CommunityAdminApi;
   /** Articles/posts (community + user) and comment-thread rooms. */
   readonly articles: ArticleApi;
+  /** Unified user/community post feed (one deterministic timeline). */
+  readonly feed: FeedApi;
   /** Plugins: appstore, install/configure, signed plugin-runtime RPC. */
   readonly plugins: PluginApi;
   /** Contract metadata (public, no wallet). */
@@ -67,6 +70,7 @@ export class CommonGroundClient {
     this.bots = new BotManagementApi(this.transport);
     this.communityAdmin = new CommunityAdminApi(this.transport);
     this.articles = new ArticleApi(this.transport);
+    this.feed = new FeedApi(this.transport);
     this.plugins = new PluginApi(this.transport);
     this.contracts = new ContractApi(this.transport);
     this.staking = new StakingApi(this.transport);

@@ -38,6 +38,7 @@ const DOMAIN_TO_ROUTE = {
   Search: "Search",
   Report: "Report",
   Bot: "Bot",
+  Feed: "Feed",
 };
 
 const NON_REST_DOMAINS = new Set(["Socket", "Mediasoup", "BaseArticle"]);

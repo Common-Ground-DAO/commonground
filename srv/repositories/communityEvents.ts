@@ -144,15 +144,15 @@ async function _getEventCTE(
         )}
         ${!!data.scheduledAfter
         ? ` AND (${!!data.beforeAfterId
-              ? `(${format('ce."scheduleDate" = %L::timestamptz', data.scheduledAfter)} AND ce.id > ${format('%L::UUID', data.userId)}) OR `
+              ? `(${format('ce."scheduleDate" = %L::timestamptz', data.scheduledAfter)} AND ce.id > ${format('%L::UUID', data.beforeAfterId)}) OR `
               : ''}
             ${format('ce."scheduleDate" > %L::timestamptz', data.scheduledAfter)})`
         : ''}
         ${!!data.scheduledBefore
           ? ` AND (${!!data.beforeAfterId
-            ? `(${format('ce."scheduleDate" = %L::timestamptz', data.scheduledAfter)} AND ce.id < ${format('%L::UUID', data.userId)}) OR `
+            ? `(${format('ce."scheduleDate" = %L::timestamptz', data.scheduledBefore)} AND ce.id < ${format('%L::UUID', data.beforeAfterId)}) OR `
             : ''}
-            ${format(' AND ce."scheduleDate" < %L::timestamptz ', data.scheduledBefore)})`
+            ${format('ce."scheduleDate" < %L::timestamptz ', data.scheduledBefore)})`
           : ''}
         ${!!data.tags?.length
           ? format(' AND c."tags" @> ARRAY[%s]::varchar[]', data.tags.map(tag => format('%L', tag)).join(','))

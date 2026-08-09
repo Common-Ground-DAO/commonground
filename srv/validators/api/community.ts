@@ -506,6 +506,10 @@ const communityApi = {
 
   getMyEvents: Joi.object<API.Community.getMyEvents.Request>({
     scheduledBefore: common.DateString.allow(null),
+    // Second cursor field: tiebreaker for events sharing a scheduleDate. The
+    // public type and repository already support it; it was missing here, so a
+    // strict validator rejected any client that paginated per the contract.
+    beforeId: common.Uuid.allow(null),
   }).strict(true).required(),
 
   getUpcomingEvents: Joi.object<API.Community.getUpcomingEvents.Request>({

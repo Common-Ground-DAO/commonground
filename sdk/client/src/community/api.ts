@@ -258,6 +258,25 @@ export class CommunityAdminApi {
     return this.transport.call("Community/getEventList", { communityId });
   }
 
+  /**
+   * POST /Community/getMyEvents — the caller's own upcoming events across all
+   * their communities, newest-first. Cursor pagination: pass both fields from
+   * the last returned item to fetch the next page; `beforeId` is the tiebreaker
+   * for events that share a `scheduleDate`. The default (both null) is the first
+   * page.
+   */
+  async getMyEvents(
+    cursor: { scheduledBefore: string | null; beforeId: string | null } = {
+      scheduledBefore: null,
+      beforeId: null,
+    },
+  ): Promise<CommunityEvent[]> {
+    return this.transport.call("Community/getMyEvents", {
+      scheduledBefore: cursor.scheduledBefore,
+      beforeId: cursor.beforeId,
+    });
+  }
+
   async getEventParticipants(eventId: string): Promise<string[]> {
     return this.transport.call("Community/getEventParticipants", { eventId });
   }

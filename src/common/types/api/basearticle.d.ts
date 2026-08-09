@@ -12,6 +12,13 @@ declare global {
                 updatedBefore?: string;
                 publishedAfter?: string;
                 publishedBefore?: string;
+                // Cursor tiebreakers for the selected orderBy field, to page
+                // deterministically through rows sharing a timestamp. Pair with
+                // the matching timestamp bound: beforeId with publishedBefore/
+                // updatedBefore (DESC), afterId with publishedAfter/updatedAfter
+                // (ASC). The timestamp-only form remains valid.
+                beforeId?: string;
+                afterId?: string;
                 limit: number; // max 30, see validator
                 tags?: string[];
                 drafts?: true;

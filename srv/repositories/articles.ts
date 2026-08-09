@@ -13,6 +13,59 @@ import pool from "../util/postgres";
 import { type Pool, type PoolClient } from "pg";
 import config from "../common/config";
 
+/* Article-list pagination helpers (shared by community + user article lists).
+ *
+ * The list is ordered by the selected timestamp field (published or updatedAt),
+ * so pages must always break ties by articleId in the same direction — otherwise
+ * a page boundary inside a group sharing a timestamp duplicates or omits rows.
+ * A supplied cursor id turns the matching timestamp bound into a tuple predicate
+ * so paging continues strictly after the cursor item. `alias` is the article
+ * table alias whose "articleId"/"published"/"updatedAt" columns are used ("ca"
+ * for community articles, "ua" for user articles). */
+
+type ArticleListCursorData = {
+  orderBy?: 'updatedAt' | 'published';
+  order?: 'ASC' | 'DESC';
+  publishedBefore?: string;
+  publishedAfter?: string;
+  updatedBefore?: string;
+  updatedAfter?: string;
+  beforeId?: string | null;
+  afterId?: string | null;
+};
+
+function articleListTimeClauses(alias: string, data: ArticleListCursorData): string {
+  const orderByPublished = data.orderBy !== 'updatedAt';
+  const desc = data.order !== 'ASC';
+  const idCol = `${alias}."articleId"`;
+
+  const clause = (col: string, op: '<' | '>', value: string, id: string | null | undefined): string =>
+    id
+      ? format(`AND (${col} ${op} %L::timestamptz OR (${col} = %L::timestamptz AND ${idCol} ${op} %L::UUID))`, value, value, id)
+      : format(`AND ${col} ${op} %L::timestamptz`, value);
+
+  const parts: string[] = [];
+  if (data.publishedAfter) {
+    parts.push(clause(`${alias}."published"`, '>', data.publishedAfter, orderByPublished && !desc ? data.afterId : null));
+  }
+  if (data.publishedBefore) {
+    parts.push(clause(`${alias}."published"`, '<', data.publishedBefore, orderByPublished && desc ? data.beforeId : null));
+  }
+  if (data.updatedAfter) {
+    parts.push(clause(`${alias}."updatedAt"`, '>', data.updatedAfter, !orderByPublished && !desc ? data.afterId : null));
+  }
+  if (data.updatedBefore) {
+    parts.push(clause(`${alias}."updatedAt"`, '<', data.updatedBefore, !orderByPublished && desc ? data.beforeId : null));
+  }
+  return parts.join('\n      ');
+}
+
+function articleListOrderBy(alias: string, data: { orderBy?: 'updatedAt' | 'published'; order?: 'ASC' | 'DESC' }): string {
+  const col = data.orderBy === 'updatedAt' ? `${alias}."updatedAt"` : `${alias}."published"`;
+  const dir = data.order === 'ASC' ? 'ASC' : 'DESC';
+  return `${col} ${dir}, ${alias}."articleId" ${dir}`;
+}
+
 /* Community Content Retrieval */
 
 async function _getCommunityArticleSocialPreviewData(
@@ -193,29 +246,25 @@ async function _getCommunityArticleList(
         ArticlePermission.ARTICLE_PREVIEW
       )}
       ${!!data.tags && data.tags.length > 0
-        ? format('AND a."tags" @> ARRAY[%L]::text[]', data.tags) 
+        ? format('AND a."tags" @> ARRAY[%L]::text[]', data.tags)
         : ''}
       ${!!data.anyTags && data.anyTags.length > 0
         ? format('AND a."tags" && ARRAY[%L]::text[]', data.anyTags)
         : ''
       }
-      ${!!data.publishedAfter
-        ? format('AND ca."published" > %L::timestamptz', data.publishedAfter)
+      ${!!data.communityTags && data.communityTags.length > 0
+        ? format('AND c."tags" @> ARRAY[%L]::varchar[]', data.communityTags)
         : ''}
-      ${!!data.publishedBefore
-        ? format('AND ca."published" < %L::timestamptz', data.publishedBefore)
-        : ''}
-      ${!!data.updatedAfter
-        ? format('AND ca."updatedAt" > %L::timestamptz', data.updatedAfter)
-        : ''}
-      ${!!data.updatedBefore
-        ? format('AND ca."updatedAt" < %L::timestamptz', data.updatedBefore)
-        : ''}
+      ${!!data.anyCommunityTags && data.anyCommunityTags.length > 0
+        ? format('AND c."tags" && ARRAY[%L]::varchar[]', data.anyCommunityTags)
+        : ''
+      }
+      ${articleListTimeClauses('ca', data)}
       ${!!data.ids
         ? `AND ca."articleId" = ANY(ARRAY[${format('%L', data.ids)}]::UUID[])`
         : ''}
     GROUP BY ca."articleId", ca."communityId", a."id"
-    ORDER BY ${'orderBy' in data ? format('ca.%I', data.orderBy) : 'ca."published"'} ${data.order === 'ASC' ? 'ASC' : 'DESC'}
+    ORDER BY ${articleListOrderBy('ca', data)}
     LIMIT ${+data.limit}
   `;
 
@@ -782,18 +831,7 @@ async function _getUserArticleList(
       ${!!data.tags && data.tags.length > 0
         ? format('AND a."tags" @> ARRAY[%L]', data.tags) 
         : ''}
-      ${!!data.publishedAfter
-        ? format('AND ua."published" > %L::timestamptz', data.publishedAfter)
-        : ''}
-      ${!!data.publishedBefore
-        ? format('AND ua."published" < %L::timestamptz', data.publishedBefore)
-        : ''}
-      ${!!data.updatedAfter
-        ? format('AND ua."updatedAt" > %L::timestamptz', data.updatedAfter)
-        : ''}
-      ${!!data.updatedBefore
-        ? format('AND ua."updatedAt" < %L::timestamptz', data.updatedBefore)
-        : ''}
+      ${articleListTimeClauses('ua', data)}
       ${data.verification === "verified"
         ? 'AND u."fractalId" IS NOT NULL'
         : data.verification === "unverified"
@@ -802,7 +840,7 @@ async function _getUserArticleList(
       ${!!data.ids
         ? `AND ua."articleId" = ANY(ARRAY[${format('%L', data.ids)}]::UUID[])`
         : ''}
-    ORDER BY ${'orderBy' in data ? format('ua.%I', data.orderBy) : 'ua."published"'} ${data.order === 'ASC' ? 'ASC' : 'DESC'}
+    ORDER BY ${articleListOrderBy('ua', data)}
     LIMIT ${+data.limit}
   `;
   const result = await db.query(query);

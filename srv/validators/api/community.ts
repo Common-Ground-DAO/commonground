@@ -18,7 +18,7 @@ import {
   CommunityApprovalState,
 } from "../../common/enums";
 import common from "../common";
-import baseArticleApi from "./basearticle";
+import baseArticleApi, { articleCursorPairing } from "./basearticle";
 
 const title = Joi.string().max(255);
 const imageId = Joi.alternatives().try(
@@ -413,7 +413,9 @@ const communityApi = {
     communityId: common.Uuid,
     tags: common.Tags,
     anyTags: common.Tags,
-  }).strict(true).required(),
+    communityTags: common.Tags,
+    anyCommunityTags: common.Tags,
+  }).strict(true).custom(articleCursorPairing).required(),
 
   getArticleDetailView: Joi.object<API.Community.getArticleDetailView.Request>({
     communityId: common.Uuid.required(),

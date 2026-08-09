@@ -351,8 +351,15 @@ declare global {
             namespace getArticleList {
                 type Request = {
                     communityId?: string;
+                    // Article-level tag filters (articles.tags).
                     tags?: string[];
                     anyTags?: string[];
+                    // Containing-community topic filters (communities.tags): the
+                    // article's community must include all (communityTags) or any
+                    // (anyCommunityTags) of the selected tags. Composes with the
+                    // article-tag filters above.
+                    communityTags?: string[];
+                    anyCommunityTags?: string[];
                 } & API.BaseArticle.getArticleListRequest;
                 type Response = {
                     communityArticle: Models.Community.CommunityArticle;

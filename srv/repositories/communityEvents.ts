@@ -165,10 +165,11 @@ async function _getEventCTE(
         ${data.where ? `AND ${data.where}` : ''}
       GROUP BY ce."id"
       ORDER BY
-        ce."scheduleDate" ${data.order || 'DESC'}
-        ${(!!data.scheduledBefore || !!data.scheduledAfter)
-        ? `, ce.id ${data.order || 'DESC'}`
-        : ''}
+        ce."scheduleDate" ${data.order || 'DESC'},
+        -- Always break scheduleDate ties by id so the first page and cursor
+        -- pages share one deterministic (scheduleDate, id) ordering; otherwise a
+        -- page boundary inside a same-timestamp group duplicates or omits rows.
+        ce.id ${data.order || 'DESC'}
       ${data.limit ? `LIMIT ${data.limit}` : ''}
   `, data.params);
 

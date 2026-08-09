@@ -256,6 +256,100 @@ describe.runIf(MUTATIONS_ENABLED)("Community management", () => {
     ).rejects.toMatchObject({ code: "VALIDATION" });
   });
 
+  it("getMyEvents pages same-scheduleDate events with no dupes/omissions (#69)", async () => {
+    // Deterministic (scheduleDate, id) ordering must hold on the FIRST page too,
+    // or a boundary inside a same-timestamp group duplicates/omits rows. Uses
+    // > EVENTS_BATCH_SIZE (30) events at one timestamp so the boundary lands
+    // inside the group; the #67 test used distinct timestamps and missed this.
+    const { client, community } = await ownerWithCommunity("ca-page-desc");
+    const member = memberRole(community);
+    const scheduleDate = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+    const N = 35;
+    const created = await Promise.all(
+      Array.from({ length: N }, (_, i) =>
+        client.communityAdmin.createEvent({
+          type: "reminder",
+          communityId: community.id,
+          title: `desc-${i}`,
+          duration: 30,
+          scheduleDate,
+          rolePermissions: [
+            { roleId: member.id, roleTitle: "Member", permissions: ["EVENT_PREVIEW", "EVENT_ATTEND"] },
+          ],
+        }),
+      ),
+    );
+    // getMyEvents is participation-scoped, so attend each.
+    await Promise.all(created.map((e) => client.communityAdmin.addEventParticipant(e.id)));
+    const expected = new Set(created.map((e) => e.id));
+
+    const seen: string[] = [];
+    let cursor: { scheduledBefore: string | null; beforeId: string | null } = {
+      scheduledBefore: null,
+      beforeId: null,
+    };
+    for (let guard = 0; guard < 10; guard++) {
+      const page = await client.communityAdmin.getMyEvents(cursor);
+      if (page.length === 0) break;
+      seen.push(...page.map((e) => e.id));
+      const last = page[page.length - 1];
+      cursor = { scheduledBefore: last.scheduleDate, beforeId: last.id };
+      if (page.length < 30) break;
+    }
+    const ours = seen.filter((id) => expected.has(id));
+    expect(ours.length).toBe(N); // every event returned...
+    expect(new Set(ours).size).toBe(N); // ...exactly once, across the page boundary
+  });
+
+  it("getUpcomingEvents pages same-scheduleDate events with no dupes/omissions (#69)", async () => {
+    // Same determinism requirement on the ascending discovery cursor.
+    const { client: owner, community } = await ownerWithCommunity("ca-page-asc");
+    const member = memberRole(community);
+    const scheduleDate = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+    const N = 35;
+    const created = await Promise.all(
+      Array.from({ length: N }, (_, i) =>
+        owner.communityAdmin.createEvent({
+          type: "reminder",
+          communityId: community.id,
+          title: `asc-${i}`,
+          duration: 30,
+          scheduleDate,
+          rolePermissions: [
+            { roleId: member.id, roleTitle: "Member", permissions: ["EVENT_PREVIEW", "EVENT_ATTEND"] },
+          ],
+        }),
+      ),
+    );
+    const expected = new Set(created.map((e) => e.id));
+
+    // A member holds the predefined Member role, so `following` matches the
+    // community and the Member EVENT_PREVIEW grant makes the events visible.
+    const { client: viewer } = await registerUser("ca-page-asc-v");
+    await viewer.communities.join(community.id);
+
+    const seen: string[] = [];
+    let cursor: { scheduledAfter: string | null; afterId: string | null } = {
+      scheduledAfter: null,
+      afterId: null,
+    };
+    for (let guard = 0; guard < 10; guard++) {
+      const page = await viewer.communityAdmin.getUpcomingEvents({
+        type: "following",
+        scheduledAfter: cursor.scheduledAfter,
+        afterId: cursor.afterId,
+      });
+      if (page.length === 0) break;
+      seen.push(...page.map((e) => e.id));
+      const last = page[page.length - 1];
+      cursor = { scheduledAfter: last.scheduleDate, afterId: last.id };
+      if (page.length < 30) break;
+    }
+    const ours = seen.filter((id) => expected.has(id));
+    expect(ours.length).toBe(N);
+    expect(new Set(ours).size).toBe(N);
+  });
+
   it("a non-manager member cannot manage roles (permission gate)", async () => {
     const { community } = await ownerWithCommunity("ca-perm");
     const { client: member } = await registerUser("ca-perm-m");

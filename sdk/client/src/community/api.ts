@@ -277,6 +277,31 @@ export class CommunityAdminApi {
     });
   }
 
+  /**
+   * POST /Community/getUpcomingEvents — a discovery feed of upcoming events,
+   * oldest-first, from `verified` communities or the ones the caller is a member
+   * of (`following`). Ascending cursor pagination: pass `{ scheduledAfter,
+   * afterId }` from the last returned item; `afterId` is the same-`scheduleDate`
+   * tiebreaker.
+   */
+  async getUpcomingEvents(
+    options: {
+      type: "verified" | "following";
+      scheduledAfter?: string | null;
+      afterId?: string | null;
+      tags?: string[] | null;
+      anyTags?: string[] | null;
+    },
+  ): Promise<CommunityEvent[]> {
+    return this.transport.call("Community/getUpcomingEvents", {
+      type: options.type,
+      scheduledAfter: options.scheduledAfter ?? null,
+      afterId: options.afterId ?? null,
+      tags: options.tags ?? null,
+      anyTags: options.anyTags ?? null,
+    });
+  }
+
   async getEventParticipants(eventId: string): Promise<string[]> {
     return this.transport.call("Community/getEventParticipants", { eventId });
   }

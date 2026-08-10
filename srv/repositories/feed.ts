@@ -85,9 +85,12 @@ function buildUserArm(userId: string | undefined, data: API.Feed.getPostList.Req
       ua."published" AS "published"
     FROM users_articles ua
     INNER JOIN articles a ON ua."articleId" = a."id"
-    ${following ? format(`INNER JOIN followers f ON f."otherUserId" = ua."userId" AND f."userId" = %L::uuid`, userId) : ''}
     WHERE ua."deletedAt" IS NULL
       AND ua."published" < now()
+      ${following ? format(
+        `AND (ua."userId" = %L::uuid OR EXISTS (
+          SELECT 1 FROM followers f WHERE f."otherUserId" = ua."userId" AND f."userId" = %L::uuid
+        ))`, userId, userId) : ''}
       ${beforeClause('ua', data.before)}
       ${topicsClause(data.topics)}
     ORDER BY ua."published" DESC, ua."articleId" DESC
@@ -147,9 +150,13 @@ function buildCommunityArm(userId: string | undefined, data: API.Feed.getPostLis
       ${data.verification === 'unverified' ? 'AND (cpr."activeUntil" < now() OR cpr."activeUntil" IS NULL)' : ''}
       AND ca."deletedAt" IS NULL
       AND ca."published" < now()
+      -- The feed renders real body + media inline, so it gates on ARTICLE_READ,
+      -- not the weaker ARTICLE_PREVIEW (which would leak protected content and
+      -- offer a "Read more" the detail endpoint then rejects). Preview-only
+      -- posts simply don't appear in this body-first feed.
       AND carp."permissions" @> ${format(
         'ARRAY[%L]::"public"."communities_articles_roles_permissions_permissions_enum"[]',
-        ArticlePermission.ARTICLE_PREVIEW,
+        ArticlePermission.ARTICLE_READ,
       )}
       ${beforeClause('ca', data.before)}
       ${topicsClause(data.topics)}
@@ -191,21 +198,11 @@ async function _getPostList(
     ? `CASE WHEN page."kind" = 'user' THEN (page."actorUserId" = ${me}) ELSE ${canManage} END`
     : 'FALSE';
 
-  // Community comment gate: the article grants ARTICLE_READ to the public role or
-  // to a role the viewer holds. User posts: any logged-in user may comment.
-  const canCommentCommunity = `EXISTS (
-      SELECT 1 FROM communities_articles_roles_permissions carp_c
-      INNER JOIN roles r_c ON r_c."id" = carp_c."roleId" AND r_c."deletedAt" IS NULL
-      LEFT JOIN roles_users_users ruu_c
-        ON ruu_c."roleId" = r_c."id" AND ruu_c.claimed = TRUE AND ruu_c."userId" = ${me}
-      WHERE carp_c."communityId" = page."communityId" AND carp_c."articleId" = page."articleId"
-        AND carp_c."permissions" @> ${format('ARRAY[%L]::"public"."communities_articles_roles_permissions_permissions_enum"[]', ArticlePermission.ARTICLE_READ)}
-        AND (
-          (r_c."title" = ${format('%L', PredefinedRole.Public)} AND r_c."type" = ${format('%L', RoleType.PREDEFINED)})
-          OR ruu_c."userId" IS NOT NULL
-        )
-    )`;
-  const canCommentExpr = `CASE WHEN page."kind" = 'user' THEN ${userId ? 'TRUE' : 'FALSE'} ELSE ${canCommentCommunity} END`;
+  // Comment gate: an authenticated viewer may comment. Community posts are
+  // ARTICLE_READ-gated at emission (see buildCommunityArm) and user posts are
+  // open to logged-in users, so authentication is the remaining condition. This
+  // also fixes anonymous callers previously seeing canComment:true.
+  const canCommentExpr = userId ? 'TRUE' : 'FALSE';
 
   const query = `
     WITH page AS (

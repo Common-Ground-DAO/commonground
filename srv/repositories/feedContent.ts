@@ -49,6 +49,8 @@ function imageNodeToMedia(node: Common.Content.ArticleImage): PostMedia {
 }
 
 // Approximate rendered text length of a body node, for the truncation budget.
+// The budget is about TEXT, so zero-cost structural nodes (newline) don't
+// consume it — leading/interspersed newlines must not forfeit the text budget.
 function nodeTextLength(node: ContentNode): number {
   switch (node.type) {
     case 'text':
@@ -60,7 +62,7 @@ function nodeTextLength(node: ContentNode): number {
         ? node.value.reduce((sum, t) => sum + (t.value?.length ?? 0), 0)
         : 0;
     case 'newline':
-      return 1;
+      return 0;
     case 'articleEmbed':
       return 24; // a nominal weight so an embed-only body still terminates
     default:
@@ -74,6 +76,35 @@ function truncateString(value: string, budget: number): string {
   const lastSpace = cut.lastIndexOf(' ');
   if (lastSpace > budget * 0.6) cut = cut.slice(0, lastSpace);
   return cut.trimEnd();
+}
+
+// Shorten a single body node to `budget` characters, preserving a valid
+// structured node. Returns null when the node carries no truncatable text (a
+// newline/embed, or a text node that shrinks to empty) so the caller drops it.
+function truncateNode(node: ContentNode, budget: number): ContentNode | null {
+  if (budget <= 0) return null;
+  if (node.type === 'text' || node.type === 'link' || node.type === 'richTextLink') {
+    const value = truncateString(node.value ?? '', budget);
+    return value ? { ...node, value } : null;
+  }
+  if (node.type === 'header') {
+    const children = Array.isArray(node.value) ? node.value : [];
+    const keptChildren: Common.Content.Text[] = [];
+    let used = 0;
+    for (const child of children) {
+      const clen = child.value?.length ?? 0;
+      if (used + clen <= budget) {
+        keptChildren.push(child);
+        used += clen;
+        continue;
+      }
+      const value = truncateString(child.value ?? '', budget - used);
+      if (value) keptChildren.push({ ...child, value });
+      break;
+    }
+    return keptChildren.length ? { ...node, value: keptChildren } : null;
+  }
+  return null;
 }
 
 export type NormalizedPost = {
@@ -122,18 +153,18 @@ export function normalizePost(
   let truncated = false;
   for (const node of bodyNodes) {
     const len = nodeTextLength(node);
-    if (used > 0 && used + len > MAX_PREVIEW_CHARS) {
-      truncated = true;
-      break;
+    if (used + len <= MAX_PREVIEW_CHARS) {
+      kept.push(node);
+      used += len;
+      continue;
     }
-    // First node alone overflows the budget: keep a truncated copy and stop.
-    if (used === 0 && len > MAX_PREVIEW_CHARS && (node.type === 'text' || node.type === 'link' || node.type === 'richTextLink')) {
-      kept.push({ ...node, value: truncateString(node.value, MAX_PREVIEW_CHARS) });
-      truncated = true;
-      break;
-    }
-    kept.push(node);
-    used += len;
+    // This node overflows the remaining budget. Truncate it in place when it
+    // carries text (any text-bearing node, headers included); otherwise drop
+    // it. Either way there is more body than we kept, so mark truncated.
+    const shortened = truncateNode(node, MAX_PREVIEW_CHARS - used);
+    if (shortened) kept.push(shortened);
+    truncated = true;
+    break;
   }
 
   return { bodyPreview: { version: '2', content: kept }, isTruncated: truncated, media };

@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from "vitest";
 import { textArticleContent, type CommonGroundClient, type FeedPost, type GetPostListQuery } from "@commonground/client";
-import { MUTATIONS_ENABLED, registerUser, uniqueName } from "./fixtures.js";
+import { MUTATIONS_ENABLED, newClient, registerUser, uniqueName } from "./fixtures.js";
 
 // Tag validator: max 30 chars, [a-z0-9-_ /]. Short + unique for isolation.
 function uniqueTopic(): string {
@@ -270,6 +270,139 @@ describe.runIf(MUTATIONS_ENABLED)("Feed", () => {
     expect(unverified.some((p) => p.postId === userPost.article.articleId)).toBe(true);
     expect(verified.some((p) => p.postId === userPost.article.articleId)).toBe(true);
     expect(both.some((p) => p.postId === userPost.article.articleId)).toBe(true);
+  });
+
+  it("gates community posts on ARTICLE_READ (not PREVIEW) and never leaks protected body/media (#77)", async () => {
+    const author = await registerUser("feed-read");
+    const topic = uniqueTopic();
+    const community = await author.client.communities.create({ title: uniqueName("feedr") });
+    const roles = community.roles as { id: string; title: string }[];
+    const publicRole = roles.find((r) => r.title === "Public")!;
+
+    // Public role granted PREVIEW only — NOT readable by a preview-only viewer.
+    const previewOnly = await author.client.articles.createCommunityArticle(
+      {
+        communityId: community.id,
+        url: null,
+        published: pastIso(),
+        rolePermissions: [{ roleId: publicRole.id, roleTitle: "Public", permissions: ["ARTICLE_PREVIEW"] }],
+      },
+      { title: "preview-only", previewText: null, thumbnailImageId: null, headerImageId: null, content: textArticleContent("protected body"), tags: [topic] },
+    );
+    // Public role granted PREVIEW + READ — a public readable post.
+    const readable = await author.client.articles.createCommunityArticle(
+      {
+        communityId: community.id,
+        url: null,
+        published: pastIso(),
+        rolePermissions: [{ roleId: publicRole.id, roleTitle: "Public", permissions: ["ARTICLE_PREVIEW", "ARTICLE_READ"] }],
+      },
+      { title: "readable", previewText: null, thumbnailImageId: null, headerImageId: null, content: textArticleContent("public body"), tags: [topic] },
+    );
+
+    // Anonymous viewer: preview-only hidden, readable visible, canComment false.
+    const anon = newClient();
+    const anonFeed = await anon.feed.getPostList({ topics: [topic], limit: 10 });
+    expect(anonFeed.some((p) => p.postId === previewOnly.article.articleId)).toBe(false);
+    const anonReadable = anonFeed.find((p) => p.postId === readable.article.articleId);
+    expect(anonReadable).toBeTruthy();
+    expect(anonReadable!.viewer.canComment).toBe(false);
+
+    // Authenticated non-member: still can't see preview-only; can comment on readable.
+    const viewer = await registerUser("feed-read-v");
+    const viewerFeed = await viewer.client.feed.getPostList({ topics: [topic], limit: 10 });
+    expect(viewerFeed.some((p) => p.postId === previewOnly.article.articleId)).toBe(false);
+    const viewerReadable = viewerFeed.find((p) => p.postId === readable.article.articleId);
+    expect(viewerReadable).toBeTruthy();
+    expect(viewerReadable!.viewer.canComment).toBe(true);
+  });
+
+  it("following scope includes the viewer's own user posts (#78)", async () => {
+    const viewer = await registerUser("feed-own");
+    const followed = await registerUser("feed-own-f");
+    const stranger = await registerUser("feed-own-s");
+    const topic = uniqueTopic();
+
+    const ownPost = await viewer.client.articles.createUserArticle(
+      { url: null, published: pastIso() },
+      { title: "mine", previewText: null, thumbnailImageId: null, headerImageId: null, content: textArticleContent("my own post"), tags: [topic] },
+    );
+    const followedPost = await followed.client.articles.createUserArticle(
+      { url: null, published: pastIso() },
+      { title: "followed", previewText: null, thumbnailImageId: null, headerImageId: null, content: textArticleContent("followed post"), tags: [topic] },
+    );
+    const strangerPost = await stranger.client.articles.createUserArticle(
+      { url: null, published: pastIso() },
+      { title: "stranger", previewText: null, thumbnailImageId: null, headerImageId: null, content: textArticleContent("stranger post"), tags: [topic] },
+    );
+
+    await viewer.client.social.follow(followed.session.response.ownData.id);
+
+    const feed = await viewer.client.feed.getPostList({ scope: "following", topics: [topic], limit: 10 });
+    expect(feed.some((p) => p.postId === ownPost.article.articleId)).toBe(true); // own post present
+    expect(feed.some((p) => p.postId === followedPost.article.articleId)).toBe(true); // followed present
+    expect(feed.some((p) => p.postId === strangerPost.article.articleId)).toBe(false); // unfollowed absent
+
+    // A draft of the viewer's own must still be excluded from following.
+    const ownDraft = await viewer.client.articles.createUserArticle(
+      { url: null, published: null },
+      { title: "mydraft", previewText: null, thumbnailImageId: null, headerImageId: null, content: textArticleContent("wip"), tags: [topic] },
+    );
+    const feed2 = await viewer.client.feed.getPostList({ scope: "following", topics: [topic], limit: 10 });
+    expect(feed2.some((p) => p.postId === ownDraft.article.articleId)).toBe(false);
+  });
+
+  it("truncates an oversized header and a body behind leading newlines, bounded and flagged (#76)", async () => {
+    const { client } = await registerUser("feed-trunc2");
+    const topic = uniqueTopic();
+
+    // A single header whose text exceeds the ~600 budget: bounded + isTruncated.
+    const bigHeader = "H".repeat(900);
+    const headerPost = await client.articles.createUserArticle(
+      { url: null, published: pastIso() },
+      {
+        title: "hdr",
+        previewText: null,
+        thumbnailImageId: null,
+        headerImageId: null,
+        content: { version: "2", content: [{ type: "header", value: [{ type: "text", value: bigHeader }] }] },
+        tags: [topic],
+      },
+    );
+
+    // Leading newlines then an oversized text node: the text must NOT vanish.
+    const bigText = "word ".repeat(300).trim();
+    const newlinePost = await client.articles.createUserArticle(
+      { url: null, published: pastIso() },
+      {
+        title: "nl",
+        previewText: null,
+        thumbnailImageId: null,
+        headerImageId: null,
+        content: { version: "2", content: [{ type: "newline" }, { type: "newline" }, { type: "text", value: bigText }] },
+        tags: [topic],
+      },
+    );
+
+    const feed = await client.feed.getPostList({ topics: [topic], limit: 10 });
+
+    const hdr = feed.find((p) => p.postId === headerPost.article.articleId)!;
+    expect(hdr.isTruncated).toBe(true);
+    const hdrNodes = hdr.bodyPreview.version === "2" ? hdr.bodyPreview.content : [];
+    const header = hdrNodes.find((n) => n.type === "header") as { type: "header"; value: { value: string }[] } | undefined;
+    expect(header).toBeTruthy();
+    const headerLen = header!.value.reduce((s, t) => s + (t.value?.length ?? 0), 0);
+    expect(headerLen).toBeGreaterThan(0);
+    expect(headerLen).toBeLessThanOrEqual(600);
+
+    const nl = feed.find((p) => p.postId === newlinePost.article.articleId)!;
+    expect(nl.isTruncated).toBe(true);
+    const nlNodes = nl.bodyPreview.version === "2" ? nl.bodyPreview.content : [];
+    const textLen = nlNodes
+      .filter((n) => n.type === "text")
+      .reduce((s, n) => s + ((n as { value?: string }).value?.length ?? 0), 0);
+    expect(textLen).toBeGreaterThan(0); // body did not vanish behind the newlines
+    expect(textLen).toBeLessThanOrEqual(600); // and stayed bounded
   });
 
   it("anonymous following scope returns an empty list", async () => {

@@ -405,6 +405,70 @@ describe.runIf(MUTATIONS_ENABLED)("Feed", () => {
     expect(textLen).toBeLessThanOrEqual(600); // and stayed bounded
   });
 
+  it("structurally bounds bodyPreview independent of the text budget (#80)", async () => {
+    const { client } = await registerUser("feed-bound");
+    const topic = uniqueTopic();
+
+    // Thousands of zero-cost newline nodes: text budget never trips, but the
+    // structural bound must keep the preview tiny and flag it.
+    const newlineBomb = await client.articles.createUserArticle(
+      { url: null, published: pastIso() },
+      {
+        title: "nlbomb",
+        previewText: null,
+        thumbnailImageId: null,
+        headerImageId: null,
+        content: { version: "2", content: Array.from({ length: 3000 }, () => ({ type: "newline" })) },
+        tags: [topic],
+      },
+    );
+
+    // A header with many (under-budget) children: exercises the header-child cap.
+    const fatHeader = await client.articles.createUserArticle(
+      { url: null, published: pastIso() },
+      {
+        title: "fathdr",
+        previewText: null,
+        thumbnailImageId: null,
+        headerImageId: null,
+        content: { version: "2", content: [{ type: "header", value: Array.from({ length: 20 }, () => ({ type: "text", value: "x" })) }] },
+        tags: [topic],
+      },
+    );
+
+    // A normal multi-paragraph post must stay intact and untruncated.
+    const normal = await client.articles.createUserArticle(
+      { url: null, published: pastIso() },
+      {
+        title: "normal",
+        previewText: null,
+        thumbnailImageId: null,
+        headerImageId: null,
+        content: { version: "2", content: [{ type: "text", value: "Paragraph one." }, { type: "newline" }, { type: "newline" }, { type: "text", value: "Paragraph two." }] },
+        tags: [topic],
+      },
+    );
+
+    const feed = await client.feed.getPostList({ topics: [topic], limit: 10 });
+
+    const nl = feed.find((p) => p.postId === newlineBomb.article.articleId)!;
+    const nlNodes = nl.bodyPreview.version === "2" ? nl.bodyPreview.content : [];
+    expect(nlNodes.length).toBeLessThanOrEqual(4); // bounded, not 3000
+    expect(nl.isTruncated).toBe(true);
+
+    const hdr = feed.find((p) => p.postId === fatHeader.article.articleId)!;
+    const hdrNodes = hdr.bodyPreview.version === "2" ? hdr.bodyPreview.content : [];
+    const header = hdrNodes.find((n) => n.type === "header") as { value: unknown[] } | undefined;
+    expect(header).toBeTruthy();
+    expect(header!.value.length).toBeLessThanOrEqual(12); // header children bounded
+    expect(hdr.isTruncated).toBe(true);
+
+    const norm = feed.find((p) => p.postId === normal.article.articleId)!;
+    const normNodes = norm.bodyPreview.version === "2" ? norm.bodyPreview.content : [];
+    expect(norm.isTruncated).toBe(false); // normal formatting intact
+    expect(normNodes.filter((n) => n.type === "text").length).toBe(2); // both paragraphs kept
+  });
+
   it("anonymous following scope returns an empty list", async () => {
     const anon = await registerUser("feed-anon").then((r) => r.client);
     await anon.auth.logout();

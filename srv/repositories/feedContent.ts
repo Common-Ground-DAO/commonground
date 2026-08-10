@@ -10,13 +10,19 @@
  *   - media[]: every inline articleImage (in document order), preceded by the
  *     legacy cover image if present. Media is ALWAYS complete regardless of body
  *     truncation, so a truncated card still shows all the post's images.
- *   - bodyPreview: the media-stripped body, truncated at a node boundary once it
- *     exceeds the character budget (an oversized leading text node is truncated
- *     in place). isTruncated is true only when body TEXT was cut — the signal
- *     for the client to fetch full detail on "Read more". Media extraction never
- *     sets it. */
+ *   - bodyPreview: the media-stripped body, bounded two independent ways — a
+ *     ~600-char TEXT budget (governs readable content) AND a structural bound on
+ *     node/child count (governs response size, so a valid post of e.g. 100k
+ *     zero-cost newline nodes can't inflate the feed). Consecutive newlines are
+ *     collapsed to at most two and leading/trailing runs dropped. isTruncated is
+ *     set whenever text is cut OR structural content is omitted/collapsed — the
+ *     signal for the client to fetch full detail on "Read more". Media extraction
+ *     never sets it. */
 
-const MAX_PREVIEW_CHARS = 600;
+const MAX_PREVIEW_CHARS = 600;     // readable-text budget
+const MAX_PREVIEW_NODES = 40;      // structural bound: retained body nodes
+const MAX_HEADER_CHILDREN = 12;    // retained children within one header
+const MAX_CONSECUTIVE_NEWLINES = 2; // collapse blank-line runs to at most this
 
 type Content = Models.BaseArticle.Content;
 type ContentNode = Models.BaseArticle.ContentElementV2;
@@ -92,6 +98,7 @@ function truncateNode(node: ContentNode, budget: number): ContentNode | null {
     const keptChildren: Common.Content.Text[] = [];
     let used = 0;
     for (const child of children) {
+      if (keptChildren.length >= MAX_HEADER_CHILDREN) break; // structural cap
       const clen = child.value?.length ?? 0;
       if (used + clen <= budget) {
         keptChildren.push(child);
@@ -105,6 +112,15 @@ function truncateNode(node: ContentNode, budget: number): ContentNode | null {
     return keptChildren.length ? { ...node, value: keptChildren } : null;
   }
   return null;
+}
+
+// Bound a header's child count independently of the text budget — a header can
+// hold thousands of zero-length children that never trip the char budget.
+function sanitizeHeader(node: ContentNode): { node: ContentNode; capped: boolean } {
+  if (node.type !== 'header' || !Array.isArray(node.value) || node.value.length <= MAX_HEADER_CHILDREN) {
+    return { node, capped: false };
+  }
+  return { node: { ...node, value: node.value.slice(0, MAX_HEADER_CHILDREN) }, capped: true };
 }
 
 export type NormalizedPost = {
@@ -151,21 +167,53 @@ export function normalizePost(
   const kept: ContentNode[] = [];
   let used = 0;
   let truncated = false;
+  let hadContent = false;
+  let newlineRun = 0; // consecutive newlines buffered at the tail
+
+  // Emit buffered newlines between content, collapsed to the run limit. Leading
+  // runs (before any content) are dropped; a run longer than the limit counts as
+  // omitted structural content.
+  const flushNewlines = () => {
+    if (hadContent) {
+      const emit = Math.min(newlineRun, MAX_CONSECUTIVE_NEWLINES);
+      for (let i = 0; i < emit && kept.length < MAX_PREVIEW_NODES; i++) kept.push({ type: 'newline' });
+      if (newlineRun > emit) truncated = true;
+    } else if (newlineRun > MAX_CONSECUTIVE_NEWLINES) {
+      truncated = true; // a large leading/all-blank run bounded away
+    }
+    newlineRun = 0;
+  };
+
   for (const node of bodyNodes) {
-    const len = nodeTextLength(node);
-    if (used + len <= MAX_PREVIEW_CHARS) {
-      kept.push(node);
-      used += len;
+    if (node.type === 'newline') {
+      newlineRun++;
       continue;
     }
-    // This node overflows the remaining budget. Truncate it in place when it
-    // carries text (any text-bearing node, headers included); otherwise drop
-    // it. Either way there is more body than we kept, so mark truncated.
-    const shortened = truncateNode(node, MAX_PREVIEW_CHARS - used);
-    if (shortened) kept.push(shortened);
-    truncated = true;
-    break;
+
+    const len = nodeTextLength(node);
+    if (used + len > MAX_PREVIEW_CHARS) {
+      flushNewlines();
+      const shortened = truncateNode(node, MAX_PREVIEW_CHARS - used);
+      if (shortened && kept.length < MAX_PREVIEW_NODES) kept.push(shortened);
+      truncated = true;
+      break;
+    }
+
+    flushNewlines();
+    if (kept.length >= MAX_PREVIEW_NODES) {
+      truncated = true; // structural bound: this node (and any after) omitted
+      break;
+    }
+
+    const { node: sanitized, capped } = sanitizeHeader(node);
+    if (capped) truncated = true;
+    kept.push(sanitized);
+    used += len;
+    hadContent = true;
   }
+  // A trailing newline run is dropped (cosmetic); but an all-newline body still
+  // needs to signal that its (blank) content was bounded away.
+  if (!hadContent && newlineRun > MAX_CONSECUTIVE_NEWLINES) truncated = true;
 
   return { bodyPreview: { version: '2', content: kept }, isTruncated: truncated, media };
 }

@@ -12,6 +12,7 @@ import errors from "../common/errors";
 import { UserProfileTypeEnum } from "../common/enums";
 import Validators from "../validators";
 import userHelper, { CreateUserAccountData } from "../repositories/users";
+import suggestedUsersHelper from "../repositories/suggestedUsers";
 import walletHelper from "../repositories/wallets";
 import deviceHelper from "../repositories/device";
 import communityHelper from "../repositories/communities";
@@ -1000,6 +1001,24 @@ registerPostRoute<
     return await userHelper.getUserDataByIds(data.userIds, user?.id);
   },
   { limit: '1mb' },
+);
+
+registerPostRoute<
+  API.User.getSuggestedUsers.Request,
+  API.User.getSuggestedUsers.Response
+>(
+  userRouter,
+  '/getSuggestedUsers',
+  Validators.API.User.getSuggestedUsers,
+  async (request, response, data) => {
+    const { user } = request.session;
+    // Viewer-aware discovery — authenticated only. Anonymous popular fallback
+    // can be added additively later if a signed-out surface needs it.
+    if (!user) {
+      throw new Error(errors.server.LOGIN_REQUIRED);
+    }
+    return await suggestedUsersHelper.getSuggestedUsers(user.id, data);
+  },
 );
 
 registerPostRoute<

@@ -50,7 +50,15 @@ export {
   type NotificationType,
   type PushSubscriptionInput,
 } from "./notifications/api.js";
-export { ProfileApi, type UpdateOwnDataPatch, type UserSearchHit } from "./profile/api.js";
+export {
+  ProfileApi,
+  type UpdateOwnDataPatch,
+  type UserSearchHit,
+  type SuggestedUser,
+  type SuggestedUsersPage,
+  type SuggestionReason,
+  type SuggestionReasonType,
+} from "./profile/api.js";
 export {
   CallApi,
   CallSignalingSession,

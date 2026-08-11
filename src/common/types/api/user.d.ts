@@ -217,6 +217,41 @@ declare global {
                 type Response = Models.User.Data[];
             }
 
+            // Viewer-aware "people to discover". Authenticated only. Returns
+            // lightweight ids + a suggestion reason; clients hydrate profiles
+            // through getUserData. Ranking is a deterministic heuristic:
+            // shared-community members > follow-of-follows > globally-popular
+            // fallback, ordered by a composite score with a stable userId
+            // tiebreaker so keyset pagination cannot duplicate/omit.
+            namespace getSuggestedUsers {
+                type SuggestionReasonType =
+                    'sharedCommunity' |
+                    'followedByFollowing' |
+                    'popular';
+                type SuggestionReason = {
+                    type: SuggestionReasonType;
+                    // Present for 'sharedCommunity' — always a community the
+                    // viewer belongs to, so it reveals nothing the viewer's own
+                    // membership doesn't already expose.
+                    communityId?: string;
+                    // shared-community count (sharedCommunity) or
+                    // follow-of-follows count (followedByFollowing).
+                    mutualCount?: number;
+                };
+                type SuggestedUser = {
+                    userId: string;
+                    reason: SuggestionReason;
+                };
+                type Request = {
+                    limit: number; // 1..50, see validator
+                    cursor?: string; // opaque keyset cursor from a prior nextCursor
+                };
+                type Response = {
+                    users: SuggestedUser[];
+                    nextCursor: string | null;
+                };
+            }
+
             namespace getUserProfileDetails {
                 type Request = {
                     userId: string;

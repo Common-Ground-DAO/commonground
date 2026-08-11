@@ -26,6 +26,26 @@ export interface UserSearchHit {
   matchedAccountTypes?: ProfileItemType[];
 }
 
+export type SuggestionReasonType = "sharedCommunity" | "followedByFollowing" | "popular";
+
+export interface SuggestionReason {
+  type: SuggestionReasonType;
+  /** Present for "sharedCommunity" — always a community the viewer belongs to. */
+  communityId?: string;
+  /** shared-community count, or follow-of-follows count. */
+  mutualCount?: number;
+}
+
+export interface SuggestedUser {
+  userId: string;
+  reason: SuggestionReason;
+}
+
+export interface SuggestedUsersPage {
+  users: SuggestedUser[];
+  nextCursor: string | null;
+}
+
 export class ProfileApi {
   constructor(private readonly transport: HttpTransport) {}
 
@@ -41,6 +61,20 @@ export class ProfileApi {
   /** Public profile cards for user ids. */
   async getUserData(userIds: string[]): Promise<UserData[]> {
     return this.transport.call("User/getUserData", { userIds });
+  }
+
+  /**
+   * POST /User/getSuggestedUsers — viewer-aware "people to discover"
+   * (authenticated). Returns lightweight ids + a suggestion reason; hydrate
+   * profiles via getUserData. Ranking: shared-community members >
+   * follow-of-follows > globally-popular fallback, deterministically paged by an
+   * opaque keyset cursor. Excludes self, bots, deleted, and already-followed.
+   */
+  async getSuggestedUsers(options: { limit: number; cursor?: string }): Promise<SuggestedUsersPage> {
+    return this.transport.call("User/getSuggestedUsers", {
+      limit: options.limit,
+      ...(options.cursor ? { cursor: options.cursor } : {}),
+    });
   }
 
   async getUserProfileDetails(userId: string): Promise<{

@@ -14763,6 +14763,87 @@
         ]
       }
     },
+    "/api/v2/User/getSuggestedUsers": {
+      "post": {
+        "operationId": "User_getSuggestedUsers",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "cursor": {
+                    "type": "string"
+                  },
+                  "limit": {
+                    "format": "int64",
+                    "maximum": 50,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "limit"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "User/getSuggestedUsers",
+        "tags": [
+          "User"
+        ]
+      }
+    },
     "/api/v2/User/getUserCommunityIds": {
       "post": {
         "operationId": "User_getUserCommunityIds",

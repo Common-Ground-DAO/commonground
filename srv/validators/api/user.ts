@@ -190,6 +190,11 @@ const userApi = {
     userIds: Joi.array().items(common.Uuid).min(1).unique(),
   }).required().strict(true),
 
+  getSuggestedUsers: Joi.object<API.User.getSuggestedUsers.Request>({
+    limit: Joi.number().integer().min(1).max(50).required(),
+    cursor: Joi.string(),
+  }).required().strict(true),
+
   getUserProfileDetails: Joi.object<API.User.getUserProfileDetails.Request>({
     userId: common.Uuid.required(),
   }).required().strict(true),

@@ -10,8 +10,9 @@ import { type Pool, type PoolClient } from "pg";
 
 /* Viewer-aware suggested users ("people to discover").
  *
- * A deterministic heuristic, no ML. Candidate pool is bounded (not a full-table
- * score) = union of three sources relative to the viewer:
+ * A deterministic heuristic, no ML. Candidate pool is PROVABLY BOUNDED (not a
+ * full-table score, and not an unbounded aggregation over the viewer's graph)
+ * = union of three sources relative to the viewer:
  *   1. members of the viewer's communities (shared-community signal)
  *   2. follow-of-follows: users followed by the people the viewer follows
  *   3. a globally-popular fallback (top by followerCount) so a viewer with a
@@ -21,6 +22,22 @@ import { type Pool, type PoolClient } from "pg";
  * (score DESC, userId ASC) with a keyset cursor so pagination can't duplicate or
  * omit. Excludes the viewer, deleted/bot/platform-banned users, and users the
  * viewer already follows.
+ *
+ * SCALE BOUNDING (#84): the two graph-driven arms are hard-capped BEFORE scoring
+ * so a viewer in a huge community — or following broad-graph accounts — can't
+ * make a small request process a large intermediate set:
+ *   - only the viewer's MAX_VIEWER_COMMUNITIES smallest communities are
+ *     considered (small shared communities are also higher-signal than a
+ *     100k-member one), and at most MAX_MEMBERS_PER_COMMUNITY members are
+ *     sampled from each (deterministically, by userId);
+ *   - only MAX_VIEWER_FOLLOWS of the viewer's follows are considered, and at
+ *     most MAX_FOLLOWS_PER_FOLLOWEE follows are sampled from each;
+ *   - each arm's grouped output is then capped to CANDIDATE_CAP.
+ * So the scored pool is <= 2*CANDIDATE_CAP + POPULAR_POOL_SIZE rows regardless
+ * of graph size. Every cap has a deterministic ORDER BY, so the keyset-paged
+ * sequence stays stable. The trade-off — the arms SAMPLE rather than exhaust a
+ * very large community/follow graph — is acceptable for discovery and invisible
+ * within normal graph sizes.
  *
  * "Shared community" is by definition a community the viewer belongs to, so the
  * reason's communityId reveals nothing the viewer's own membership doesn't
@@ -36,6 +53,14 @@ const MUTUAL_FOLLOW_WEIGHT = 1_000;
 const POPULARITY_CAP = 999;
 // How many globally-popular users to admit into the candidate pool as fallback.
 const POPULAR_POOL_SIZE = 200;
+// Per-arm input bounds (see SCALE BOUNDING above). Products bound the rows each
+// arm feeds into aggregation: shared <= 50*100, fof <= 100*100.
+const MAX_VIEWER_COMMUNITIES = 50;
+const MAX_MEMBERS_PER_COMMUNITY = 100;
+const MAX_VIEWER_FOLLOWS = 100;
+const MAX_FOLLOWS_PER_FOLLOWEE = 100;
+// Cap on each graph arm's grouped candidate output before the union.
+const CANDIDATE_CAP = 500;
 
 type SuggestedUserRow = {
   userId: string;
@@ -89,41 +114,79 @@ async function _getSuggestedUsers(
 
   const query = `
     WITH viewer_communities AS (
-      SELECT DISTINCT r."communityId"
+      -- The viewer's smallest communities, capped. Small shared communities are
+      -- both cheaper and higher-signal than a huge one everyone is in.
+      SELECT r."communityId"
       FROM roles_users_users ruu
       INNER JOIN roles r ON r."id" = ruu."roleId"
+      INNER JOIN communities c ON c."id" = r."communityId"
       WHERE ruu."userId" = ${format('%L::uuid', userId)}
         AND ruu.claimed = TRUE
         AND ${memberRole}
+        AND c."deletedAt" IS NULL
+      ORDER BY c."memberCount" ASC, r."communityId" ASC
+      LIMIT ${MAX_VIEWER_COMMUNITIES}
+    ),
+    -- Bounded per-community member sample (deterministic by userId), so one huge
+    -- community can't blow up the shared aggregation input.
+    shared_raw AS (
+      SELECT vc."communityId", m."userId"
+      FROM viewer_communities vc
+      CROSS JOIN LATERAL (
+        SELECT ruu2."userId"
+        FROM roles_users_users ruu2
+        INNER JOIN roles r2 ON r2."id" = ruu2."roleId"
+        WHERE r2."communityId" = vc."communityId"
+          AND ruu2.claimed = TRUE
+          AND r2."title" = ${format('%L', PredefinedRole.Member)}
+          AND r2."type" = ${format('%L', RoleType.PREDEFINED)}
+          AND r2."deletedAt" IS NULL
+        ORDER BY ruu2."userId" ASC
+        LIMIT ${MAX_MEMBERS_PER_COMMUNITY}
+      ) m
+    ),
+    -- 1. Shared-community candidates: members of the viewer's communities, with
+    -- how many communities they share and one representative shared community.
+    shared AS (
+      SELECT "userId",
+        COUNT(DISTINCT "communityId")::int AS "sharedCommunities",
+        MIN("communityId"::text) AS "sharedCommunityId"
+      FROM shared_raw
+      GROUP BY "userId"
+      ORDER BY COUNT(DISTINCT "communityId") DESC, "userId" ASC
+      LIMIT ${CANDIDATE_CAP}
     ),
     viewer_follows AS (
       SELECT f."otherUserId" AS "userId"
       FROM followers f
       WHERE f."userId" = ${format('%L::uuid', userId)}
         AND f."deletedAt" IS NULL
+      ORDER BY f."otherUserId" ASC
+      LIMIT ${MAX_VIEWER_FOLLOWS}
     ),
-    -- 1. Shared-community candidates: members of the viewer's communities, with
-    -- how many communities they share and one representative shared community.
-    shared AS (
-      SELECT ruu."userId" AS "userId",
-        COUNT(DISTINCT r."communityId")::int AS "sharedCommunities",
-        MIN(r."communityId"::text) AS "sharedCommunityId"
-      FROM roles_users_users ruu
-      INNER JOIN roles r ON r."id" = ruu."roleId"
-      INNER JOIN viewer_communities vc ON vc."communityId" = r."communityId"
-      WHERE ruu.claimed = TRUE
-        AND ${memberRole}
-      GROUP BY ruu."userId"
+    -- Bounded per-followee sample so a followed broad-graph account can't blow
+    -- up the follow-of-follows input.
+    fof_raw AS (
+      SELECT vf."userId" AS "viaUserId", ff."userId"
+      FROM viewer_follows vf
+      CROSS JOIN LATERAL (
+        SELECT f2."otherUserId" AS "userId"
+        FROM followers f2
+        WHERE f2."userId" = vf."userId"
+          AND f2."deletedAt" IS NULL
+        ORDER BY f2."otherUserId" ASC
+        LIMIT ${MAX_FOLLOWS_PER_FOLLOWEE}
+      ) ff
     ),
     -- 2. Follow-of-follows: users followed by the people the viewer follows,
     -- and by how many of them.
     fof AS (
-      SELECT f2."otherUserId" AS "userId",
-        COUNT(DISTINCT f2."userId")::int AS "mutualFollows"
-      FROM followers f2
-      INNER JOIN viewer_follows vf ON vf."userId" = f2."userId"
-      WHERE f2."deletedAt" IS NULL
-      GROUP BY f2."otherUserId"
+      SELECT "userId",
+        COUNT(DISTINCT "viaUserId")::int AS "mutualFollows"
+      FROM fof_raw
+      GROUP BY "userId"
+      ORDER BY COUNT(DISTINCT "viaUserId") DESC, "userId" ASC
+      LIMIT ${CANDIDATE_CAP}
     ),
     -- 3. Globally-popular fallback pool.
     popular AS (

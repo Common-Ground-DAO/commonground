@@ -73,6 +73,35 @@ describe.runIf(MUTATIONS_ENABLED)("Suggested users", () => {
     }
   });
 
+  it("stays deterministic across repeated paging over a shared community (#84 bounding)", async () => {
+    // A community with several co-members exercises the bounded shared arm. The
+    // per-community sample + keyset must yield the SAME ordered sequence on a
+    // repeat, and never duplicate within a full paginated walk.
+    const viewer = await registerUser("sug-bound-v");
+    const community = await viewer.client.communities.create({ title: uniqueName("sugb") });
+    for (let i = 0; i < 5; i++) {
+      const m = await registerUser(`sug-bound-m${i}`);
+      await m.client.communities.join(community.id);
+    }
+
+    const walk = async () => {
+      const seen: string[] = [];
+      let cursor: string | undefined = undefined;
+      for (let guard = 0; guard < 20; guard++) {
+        const page = await viewer.client.profile.getSuggestedUsers({ limit: 3, cursor });
+        seen.push(...page.users.map((u) => u.userId));
+        if (!page.nextCursor || page.users.length === 0) break;
+        cursor = page.nextCursor;
+      }
+      return seen;
+    };
+
+    const first = await walk();
+    const second = await walk();
+    expect(new Set(first).size).toBe(first.length); // no dup within a walk
+    expect(second).toEqual(first); // stable ordering across repeated paging
+  });
+
   it("paginates deterministically with no duplicates or omissions across pages", async () => {
     // A viewer sharing a community with several others: enough candidates to page.
     const viewer = await registerUser("sug-page-v");

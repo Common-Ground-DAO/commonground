@@ -337,6 +337,12 @@ const config = {
   // whether this instance runs the server-side NSFW image filter; the client
   // only loads its pre-upload warning model when the server actually filters
   IMAGE_FILTER_ENABLED: instance?.features?.imageFilter ?? true,
+  // the server's own IMAGE_MODERATION_THRESHOLD, so the browser pre-check
+  // warns at the confidence this instance actually rejects at (see
+  // src/moderation/imagePrecheck.ts). The fallback matches
+  // parseModerationThreshold's default above; a client that never received an
+  // instance config is an official deployment, which runs the default.
+  IMAGE_FILTER_THRESHOLD: instance?.imageFilterThreshold ?? 0.8,
   // per-instance third-party keys (CG defaults are locked to the official domains)
   GIPHY_API_KEY: instance?.giphyApiKey ?? (instance ? '' : 'ir89rjdyvl6GNuHNHO71QldCPQzSAjI4'),
   WALLETCONNECT_PROJECT_ID: instance?.walletConnectProjectId ?? 'a58ac26ec0960773dad148a0585ef011',

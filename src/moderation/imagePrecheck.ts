@@ -32,15 +32,26 @@ const MODEL_URL = '/models/nsfw/model.json';
 const MODEL_INPUT_SIZE = 224;
 
 /**
- * Warn only on `Porn`/`Hentai` at this confidence or above.
+ * Classes that count towards the suspicion score.
  *
- * Tuned for precision, not recall: MobileNetV2 is ~90% accurate and a false
- * positive here means a legitimate upload gets an accusatory dialog. `Sexy`,
+ * Still biased towards precision — MobileNetV2 is ~90% accurate and a false
+ * positive here means a legitimate upload gets an accusatory dialog — but a
+ * little less so than the old single-class ≥ 0.85 rule: summing against a 0.8
+ * default fires on cases that rule missed. That is the intended direction
+ * (a dialog the user can click through, in exchange for fewer images that pass
+ * here and are then refused by the server), and `Sexy`,
  * `Drawing` and `Neutral` are ignored entirely — `Sexy` in particular fires on
  * beachwear and gym photos. Missed borderline content is the server's problem,
  * and after that community moderation's.
+ *
+ * Their probabilities are **summed**, mirroring `nsfwScore()` in
+ * `srv/moderation/imageFilter.ts`. The two models stay different — this is
+ * nsfwjs/MobileNetV2, the server runs a ViT — so verdicts can still diverge,
+ * but the aggregation no longer does: an image the server scores as a
+ * confident 0.9 nsfw, and which this model splits 0.5 `Porn` / 0.45 `Hentai`
+ * because it cannot decide which kind it is, now trips both instead of only
+ * the server.
  */
-const SUSPICION_THRESHOLD = 0.85;
 const FLAGGED_CLASSES: ReadonlySet<PredictionType['className']> = new Set(['Porn', 'Hentai']);
 
 /**
@@ -55,8 +66,14 @@ export type PrecheckVerdict = 'ok' | 'suspicious';
 
 /**
  * Module singleton: the promise, not the model, so concurrent first calls (a
- * multi-file drop) share one load, and so a failed load is remembered as failed
- * instead of being retried per file.
+ * multi-file drop) share one load.
+ *
+ * Cleared again when that load fails, mirroring `getClassifier()` on the
+ * server. Caching the rejection was the tidier-looking option, but it meant one
+ * flaky shard fetch silently disabled early warnings for the entire life of the
+ * page — the user keeps uploading, every check answers `'ok'` without ever
+ * having run, and nothing says so. A retry costs at most one wasted request per
+ * selected file, and only while the model is genuinely unreachable.
  */
 let modelPromise: Promise<NSFWJS> | undefined;
 
@@ -80,12 +97,17 @@ async function selectBackend(): Promise<void> {
 
 function loadModel(): Promise<NSFWJS> {
   if (!modelPromise) {
-    modelPromise = (async () => {
+    const pending = (async () => {
       // Drops shape/dtype assertions and the WebGL debug paths.
       tf.enableProdMode();
       await selectBackend();
       return load(MODEL_URL, { size: MODEL_INPUT_SIZE, type: 'graph' });
     })();
+    modelPromise = pending;
+    pending.catch(() => {
+      // only drop our own attempt — a later call may already have replaced it
+      if (modelPromise === pending) modelPromise = undefined;
+    });
   }
   return modelPromise;
 }
@@ -133,14 +155,21 @@ function decodeToCanvas(file: File): Promise<HTMLCanvasElement | undefined> {
   });
 }
 
-function isSuspicious(predictions: PredictionType[]): boolean {
-  return predictions.some(
-    (prediction) =>
-      FLAGGED_CLASSES.has(prediction.className) && prediction.probability >= SUSPICION_THRESHOLD,
+/** Exported for tests — pure, and the one place the verdict is actually decided. */
+export function isSuspicious(predictions: PredictionType[], threshold: number): boolean {
+  const score = predictions.reduce(
+    (total, prediction) =>
+      FLAGGED_CLASSES.has(prediction.className) ? total + prediction.probability : total,
+    0,
   );
+  // `>` not `>=`, matching the server's `nsfwScore(...) > threshold`: a
+  // threshold of 1 must mean "never warn" on both sides, not "warn on a
+  // perfect score here but not there"
+  return score > threshold;
 }
 
-function withTimeout<T>(promise: Promise<T>, fallback: T): Promise<T> {
+/** Exported for tests. */
+export function withTimeout<T>(promise: Promise<T>, fallback: T): Promise<T> {
   return new Promise<T>((resolve) => {
     const timer = setTimeout(() => resolve(fallback), TOTAL_TIMEOUT_MS);
     promise.then(
@@ -159,10 +188,15 @@ function withTimeout<T>(promise: Promise<T>, fallback: T): Promise<T> {
 /**
  * Classifies one already-selected file. Never rejects, never throws.
  *
+ * `threshold` is this instance's server-side `IMAGE_MODERATION_THRESHOLD`,
+ * passed in rather than read from `common/config` so this module stays free of
+ * app imports — it is a lazily fetched chunk, and its only dependency should be
+ * the classifier.
+ *
  * Callers should go through `checkImageBeforeUpload()` instead of calling this
  * directly — it owns the instance-config gate and the confirmation dialog.
  */
-export function checkImageFile(file: File): Promise<PrecheckVerdict> {
+export function checkImageFile(file: File, threshold: number): Promise<PrecheckVerdict> {
   return withTimeout(
     (async (): Promise<PrecheckVerdict> => {
       const canvas = await decodeToCanvas(file);
@@ -171,7 +205,7 @@ export function checkImageFile(file: File): Promise<PrecheckVerdict> {
       // Default topk is 5 = every class the model has; the two we care about
       // are always in there.
       const predictions = await model.classify(canvas);
-      return isSuspicious(predictions) ? 'suspicious' : 'ok';
+      return isSuspicious(predictions, threshold) ? 'suspicious' : 'ok';
     })(),
     'ok',
   );

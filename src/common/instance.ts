@@ -38,6 +38,15 @@ export type InstanceConfig = {
     /** false when the instance disables the server-side NSFW image filter (skips the client pre-check too). */
     imageFilter?: boolean;
   };
+  /**
+   * NSFW probability at which this instance's server-side filter rejects an
+   * image (IMAGE_MODERATION_THRESHOLD, 0 < t <= 1). Forwarded so the client
+   * pre-check warns on the same content the server would turn down instead of
+   * against a hardcoded guess. Public by necessity — the pre-check runs in the
+   * browser — and harmless: the filter is best-effort by design, and knowing
+   * the number helps nobody who could not simply probe for it.
+   */
+  imageFilterThreshold?: number;
   /** Giphy API key for this instance; empty disables the GIF picker. */
   giphyApiKey?: string;
   /** WalletConnect Cloud project id for this instance (origin-allowlisted upstream). */
@@ -85,6 +94,14 @@ export function getInstanceConfig(): InstanceConfig | undefined {
         cfg.features[key] = raw.features[key];
       }
     }
+  }
+  if (
+    typeof raw.imageFilterThreshold === 'number' &&
+    Number.isFinite(raw.imageFilterThreshold) &&
+    raw.imageFilterThreshold > 0 &&
+    raw.imageFilterThreshold <= 1
+  ) {
+    cfg.imageFilterThreshold = raw.imageFilterThreshold;
   }
   if (typeof raw.giphyApiKey === 'string') {
     cfg.giphyApiKey = raw.giphyApiKey;

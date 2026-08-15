@@ -30,7 +30,9 @@ export async function checkImageBeforeUpload(file: File): Promise<boolean> {
 
   try {
     const { checkImageFile } = await import('./imagePrecheck');
-    if ((await checkImageFile(file)) === 'ok') return true;
+    // the server's own threshold, so lowering IMAGE_MODERATION_THRESHOLD makes
+    // the browser warn earlier too instead of leaving it on a hardcoded value
+    if ((await checkImageFile(file, config.IMAGE_FILTER_THRESHOLD)) === 'ok') return true;
   } catch {
     // Chunk failed to load (offline, stale deploy). Not the user's problem.
     return true;

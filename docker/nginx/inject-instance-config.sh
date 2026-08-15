@@ -18,6 +18,8 @@
 #                         anything else (incl. unset) means calls are on
 #   CG_ENABLE_IMAGE_FILTER "false" when the backend runs without the NSFW
 #                         image filter; skips the client-side pre-check too
+#   CG_IMAGE_FILTER_THRESHOLD  the backend's IMAGE_MODERATION_THRESHOLD, so the
+#                         browser pre-check warns where the server rejects
 #   CG_GIPHY_API_KEY      Giphy key; empty hides the GIF picker
 #   CG_WALLETCONNECT_PROJECT_ID  WalletConnect Cloud project id
 set -e
@@ -40,6 +42,17 @@ bool() { [ "$1" = "true" ] && echo "true" || echo "false"; }
 # that never sets the variable keeps calls
 optout() { [ "$1" = "false" ] && echo "false" || echo "true"; }
 cfg="$cfg,\"features\":{\"email\":$(bool "$CG_FEATURE_EMAIL"),\"twitterAuth\":$(bool "$CG_FEATURE_TWITTER"),\"calls\":$(optout "${CG_ENABLE_CALLS:-}"),\"imageFilter\":$(optout "${CG_ENABLE_IMAGE_FILTER:-}")}"
+# Emitted unquoted as a JSON number, so a non-numeric value would turn the whole
+# injected object into a syntax error and take every instance setting with it —
+# hence the shape check. Out-of-range values are left to the frontend's own
+# validation, which falls back to the same 0.8 default the backend does.
+if [ -n "${CG_IMAGE_FILTER_THRESHOLD:-}" ]; then
+  if printf '%s' "$CG_IMAGE_FILTER_THRESHOLD" | grep -Eq '^[0-9]*\.?[0-9]+$'; then
+    cfg="$cfg,\"imageFilterThreshold\":$CG_IMAGE_FILTER_THRESHOLD"
+  else
+    echo "inject-instance-config: ignoring non-numeric CG_IMAGE_FILTER_THRESHOLD '$CG_IMAGE_FILTER_THRESHOLD'"
+  fi
+fi
 cfg="$cfg,\"giphyApiKey\":\"$CG_GIPHY_API_KEY\""
 if [ -n "$CG_WALLETCONNECT_PROJECT_ID" ]; then
   cfg="$cfg,\"walletConnectProjectId\":\"$CG_WALLETCONNECT_PROJECT_ID\""

@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import crypto from "crypto";
+import os from "os";
 import path from "path";
 import sharp from "sharp";
 import config from "../common/config";
@@ -19,7 +20,11 @@ import errors from "../common/errors";
 // LUKSO LSP3, Twitter/Farcaster avatars). That means this module runs in two
 // processes — api and onchain — neither of which has an async startup
 // sequence to await a model load in, so the pipeline is loaded lazily on
-// first classification and cached as a promise.
+// first classification and cached as a promise. api additionally kicks off a
+// fire-and-forget warmUp() at boot (see below), so a broken model surfaces in
+// the startup log instead of in the first user's upload; onchain keeps the
+// purely lazy load on purpose (its ingest paths degrade rather than fail, and
+// warming would cost it the model's RSS for nothing).
 //
 // What gets classified is a deterministic 224px normalization of the SOURCE
 // buffer (not the per-variant resized output): small+large variants of one
@@ -58,8 +63,30 @@ const MAX_FRAMES_SCANNED = 16;
 /** Concurrent classification jobs (whole images, not frames). Inference and
  * the sharp frame decodes share the libuv threadpool with bcrypt and the
  * upload pipeline itself — unbounded concurrency would let an upload burst
- * starve password logins on small selfhost machines. */
-const MAX_CONCURRENT_CLASSIFICATIONS = 2;
+ * starve password logins on small selfhost machines.
+ *
+ * Each job asks ORT for `intraOpNumThreads: 2`, so half the cores is the point
+ * where the classifier saturates the machine; the floor of 2 keeps the old
+ * behavior on 1-2 core boxes and the ceiling of 6 leaves headroom for the rest
+ * of the process (HTTP, sharp resizes, bcrypt) on large ones. */
+function resolveMaxConcurrentClassifications(): number {
+  // availableParallelism honors cgroup CPU limits; cpus().length does not, and
+  // containers are the normal deployment
+  const cores = os.availableParallelism?.() ?? os.cpus().length;
+  return Math.max(2, Math.min(6, Math.floor(cores / 2)));
+}
+
+export const MAX_CONCURRENT_CLASSIFICATIONS = resolveMaxConcurrentClassifications();
+
+/** Requests allowed to wait for a slot before the gate sheds load.
+ *
+ * The queue used to be unbounded, which made the 2-wide semaphore an
+ * amplifier: every waiter holds its source buffer (up to
+ * IMAGE_UPLOAD_SIZE_LIMIT) and an open connection for as long as it waits, so
+ * a sustained upload burst turned into unbounded memory and latency. Beyond
+ * this depth callers get SERVICE_UNAVAILABLE — a retryable "busy", explicitly
+ * not the fail-closed INTERNAL that a real classification failure produces. */
+export const MAX_QUEUED_CLASSIFICATIONS = MAX_CONCURRENT_CLASSIFICATIONS * 8;
 
 const SCORE_CACHE_SIZE = 128;
 
@@ -111,11 +138,33 @@ function cacheSet(key: string, value: Promise<ClassificationVerdict>) {
 // api.js / onchain.js / migrateDb.js — for rejection logs
 const processName = path.basename(process.argv[1] || "unknown", ".js");
 
+/** Thrown when the classification queue is saturated. Distinct from every
+ * other failure in here so assertImageAllowed can answer "busy, try again"
+ * instead of the fail-closed INTERNAL — a shed request is a capacity problem,
+ * not a broken moderation setup. */
+class ClassificationBusyError extends Error {
+  constructor() {
+    super("classification queue saturated");
+    this.name = "ClassificationBusyError";
+  }
+}
+
 // minimal FIFO semaphore for MAX_CONCURRENT_CLASSIFICATIONS
 let activeJobs = 0;
 const jobQueue: (() => void)[] = [];
 
 async function withClassificationSlot<T>(job: () => Promise<T>): Promise<T> {
+  // Admission control on entry only. There is no await between the check and
+  // the push below, so arrivals cannot race the queue past the cap; a waiter
+  // that is woken and has to queue again skips the check on purpose — it has
+  // already waited longest, and shedding it in favour of a fresh arrival would
+  // be both unfair and a way to starve requests indefinitely.
+  if (
+    activeJobs >= MAX_CONCURRENT_CLASSIFICATIONS &&
+    jobQueue.length >= MAX_QUEUED_CLASSIFICATIONS
+  ) {
+    throw new ClassificationBusyError();
+  }
   // loop, not if: a woken waiter must re-check — a job whose continuation
   // was already scheduled can otherwise barge past it to MAX+1
   while (activeJobs >= MAX_CONCURRENT_CLASSIFICATIONS) {
@@ -294,6 +343,14 @@ async function assertImageAllowed(
   try {
     verdict = await verdictPromise;
   } catch (e) {
+    if (e instanceof ClassificationBusyError) {
+      // load shedding, not a broken gate: no image was stored either way, but
+      // the caller can retry this one
+      console.warn(
+        `imageFilter: shedding load (uploadType=${context.uploadType}, process=${processName}, active=${activeJobs}, queued=${jobQueue.length})`,
+      );
+      throw new Error(errors.server.SERVICE_UNAVAILABLE);
+    }
     console.error(
       `imageFilter: classification failed (uploadType=${context.uploadType}, process=${processName})`,
       e,
@@ -322,8 +379,76 @@ async function assertImageAllowed(
   }
 }
 
+/**
+ * Loads the classifier and runs one throwaway classification, so a
+ * misconfigured model is reported at boot instead of by the first user who
+ * tries to upload a picture.
+ *
+ * Worth the extra inference over a bare pipeline load: it is the only way to
+ * catch a model directory that loads but cannot actually classify (missing
+ * preprocessor_config.json, a quantized ONNX file that is not there under the
+ * `q8` dtype, an incompatible label set). It also primes the ORT session, so
+ * the first real upload does not pay the ~1 s cold start.
+ *
+ * Never throws and never blocks the caller's startup — api fires it and
+ * forgets it (onchain deliberately does not; see srv/onchain.ts). Every upload
+ * path waits on the same cached load either way, so warming only moves the
+ * cost earlier, it does not duplicate it.
+ *
+ * Deliberately NOT wired into the container
+ * healthcheck: a broken model breaks image uploads, while an unhealthy
+ * container gets restart-looped, which would take chat, calls and login down
+ * with it. A loud startup error is the proportionate signal; the lazy load in
+ * getClassifier() still retries per request, so fixing a mount needs no
+ * restart.
+ */
+async function warmUp(): Promise<boolean> {
+  if (!config.IMAGE_MODERATION_ENABLED) {
+    console.log(
+      `imageFilter: disabled (IMAGE_MODERATION_ENABLED=false, process=${processName}) — images are stored unchecked`,
+    );
+    return true;
+  }
+  try {
+    const probe = await sharp({
+      create: { width: CLASSIFY_SIZE, height: CLASSIFY_SIZE, channels: 3, background: { r: 127, g: 127, b: 127 } },
+    })
+      .png()
+      .toBuffer();
+    const verdict = await classifySource(probe, false);
+    if (verdict.scores.length === 0) {
+      throw new Error("classifier returned no labels");
+    }
+    if (!verdict.scores.some(({ label }) => NSFW_LABELS.has(label.toLowerCase()))) {
+      // Not fatal — a swapped-in model may legitimately name its classes
+      // differently — but it means nsfwScore() can only ever return 0, i.e.
+      // the gate would pass everything. Operators need to see that.
+      console.warn(
+        `imageFilter: model at ${config.IMAGE_MODERATION_MODEL_PATH} reports none of the known nsfw labels ` +
+          `(got: ${verdict.scores.map(({ label }) => label).join(", ")}). Nothing will ever be rejected — ` +
+          `extend NSFW_LABELS or pick a model whose labels match.`,
+      );
+    }
+    console.log(
+      `imageFilter: ready (model=${config.IMAGE_MODERATION_MODEL_PATH}, threshold=${config.IMAGE_MODERATION_THRESHOLD}, ` +
+        `maxConcurrent=${MAX_CONCURRENT_CLASSIFICATIONS}, process=${processName})`,
+    );
+    return true;
+  } catch (e) {
+    console.error(
+      `imageFilter: MODEL UNAVAILABLE (path=${config.IMAGE_MODERATION_MODEL_PATH}, process=${processName}). ` +
+        `Image moderation is enabled, so EVERY image upload will fail with INTERNAL until this is fixed. ` +
+        `Check that the directory exists and holds config.json, preprocessor_config.json and ` +
+        `onnx/model_quantized.onnx, or set IMAGE_MODERATION_ENABLED=false to store images unchecked.`,
+      e,
+    );
+    return false;
+  }
+}
+
 const imageFilter = {
   assertImageAllowed,
+  warmUp,
 };
 
 export default imageFilter;

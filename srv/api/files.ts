@@ -14,6 +14,8 @@ import { CommunityPermission } from "../common/enums";
 import communityHelper from "../repositories/communities";
 import bodyParser from "body-parser";
 import eventHelper from "../repositories/event";
+import ipRateLimitHandler from "../util/rateLimit";
+import config from "../common/config";
 
 const fileRouter = express.Router();
 const uploadHandler = multer({
@@ -23,8 +25,54 @@ const uploadHandler = multer({
   },
 });
 
+/**
+ * Uploads are the most expensive thing this API does per request: each one
+ * buffers up to 8 MB in memory and then occupies a slot in the NSFW
+ * classifier's bounded semaphore (srv/moderation/imageFilter.ts). Without a
+ * limit, one client could hold the gate saturated and every other user's
+ * uploads behind it.
+ *
+ * Counted **per account** whenever there is a session, and only per IP for the
+ * pre-auth profile-picture upload (the one type this route serves without a
+ * login). Uploading is a routine action, not a once-per-lifetime one like
+ * account creation, so IP-only keying would pool a whole CGNAT or campus
+ * network into one bucket and let a busy community lock itself out.
+ *
+ * Both ceilings sit far above human use — a 10-image drag into the composer, a
+ * community setup that writes three logos, an article full of inline pictures
+ * all fit comfortably — so they only bite on automation.
+ */
+const uploadImageRateLimiter = ipRateLimitHandler({
+  windowMs: 1000 * 60, // 1 min
+  identity: (req) => req.session?.user?.id,
+  limit_identity: 40,
+  // anonymous: pre-auth profile pictures only, so a much tighter budget
+  limit_v4_v6_64: 10,
+  limit_v6_56: 30,
+  limit_v6_48: 60,
+});
+
+/**
+ * Runs before body-parser and multer on purpose: a shed request must not have
+ * buffered its 8 MB first, which is the whole point of limiting here.
+ *
+ * Skipped on dev deployments like the account-creation limiter. Only the
+ * anonymous branch actually needs the escape hatch — that one keys on
+ * X-Forwarded-For and treats a missing header as an invalid request, which a
+ * backend reached without nginx in front would trip on every upload — but a dev
+ * instance has no reason to throttle either branch.
+ */
+const enforceUploadRateLimit: express.RequestHandler = (req, res, next) => {
+  if (config.DEPLOYMENT === 'dev') {
+    next();
+    return;
+  }
+  uploadImageRateLimiter(req, res).then(() => next(), (e) => handleError(res, e));
+};
+
 fileRouter.post(
   '/uploadImage',
+  enforceUploadRateLimit,
   bodyParser.text({ type: '/' }),
   uploadHandler.single('uploaded'),
   async (req, res) => {

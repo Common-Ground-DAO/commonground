@@ -16,6 +16,7 @@ import twitterRouter from './api/twitter';
 import cgIdRouter from './api/cgid';
 import accountsRouter from './api/accounts';
 import { fakeHealthcheck } from './healthcheck';
+import imageFilter from './moderation/imageFilter';
 import pluginRouter from './api/plugins';
 import searchRouter from './api/search';
 import reportRouter from './api/report';
@@ -53,6 +54,11 @@ const shutdown = async (code = 0) => {
 }
 
 fakeHealthcheck();
+
+// Fire-and-forget: reports a broken NSFW model in the startup log rather than
+// letting it surface as failing uploads later (it never rejects, and every
+// upload path waits on the same cached load anyway).
+void imageFilter.warmUp();
 
 process.on("SIGTERM", () => shutdown());
 process.on("unhandledRejection", (reason, promise) => {

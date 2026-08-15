@@ -25,7 +25,7 @@ import { useSnackbarContext } from "context/SnackbarContext";
 import errors from "common/errors";
 import fileApi from "data/api/file";
 import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
-import { notifyIfImageRejected } from "moderation/imageUploadError";
+import { isUploadTemporarilyRefused, notifyIfImageRejected } from "moderation/imageUploadError";
 import { useSignedUrl } from "hooks/useSignedUrl";
 import UserPosts from "./UserPosts";
 
@@ -89,7 +89,11 @@ export default function UserProfileInner(props: Props & {
       if (!notifyIfImageRejected(e)) {
         showSnackbar({
           type: 'warning',
-          text: `Something went wrong, code error: ${e.message}`,
+          // a rate-limited or shed upload is a plain "try again", not a code
+          // error the user should be shown
+          text: isUploadTemporarilyRefused(e)
+            ? errors.client.UPLOAD_BUSY
+            : `Something went wrong, code error: ${e.message}`,
         });
       }
     }

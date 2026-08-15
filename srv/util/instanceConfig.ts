@@ -51,6 +51,9 @@ export function buildInstanceConfig(): InstanceConfig {
       configured(dockerSecret("twitter_api_v1_key") || process.env.TWITTER_API_KEY) &&
       configured(dockerSecret("twitter_api_v1_secret") || process.env.TWITTER_API_SECRET),
   };
+  // so the browser pre-check warns at the confidence this server rejects at,
+  // instead of at a hardcoded one that ignores IMAGE_MODERATION_THRESHOLD
+  instance.imageFilterThreshold = config.IMAGE_MODERATION_THRESHOLD;
   if (typeof process.env.CG_GIPHY_API_KEY === "string") {
     instance.giphyApiKey = process.env.CG_GIPHY_API_KEY;
   }

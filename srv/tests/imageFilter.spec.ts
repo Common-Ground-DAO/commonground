@@ -28,7 +28,10 @@ jest.mock('@huggingface/transformers', () => ({
 }));
 
 import sharp from 'sharp';
-import imageFilter from '../moderation/imageFilter';
+import imageFilter, {
+  MAX_CONCURRENT_CLASSIFICATIONS,
+  MAX_QUEUED_CLASSIFICATIONS,
+} from '../moderation/imageFilter';
 import errors from '../common/errors';
 
 const context = { uploadType: 'userProfileImage', userId: 'user-1' };
@@ -230,7 +233,7 @@ describe('imageFilter.assertImageAllowed', () => {
     expect(expectedLast).toBe(true);
   });
 
-  it('never runs more than two classifications concurrently', async () => {
+  it('never runs more classifications concurrently than the resolved limit', async () => {
     let inFlight = 0;
     let maxInFlight = 0;
     classifyMock.mockImplementation(async () => {
@@ -240,12 +243,72 @@ describe('imageFilter.assertImageAllowed', () => {
       inFlight--;
       return [{ label: 'normal', score: 1 }];
     });
-    const images = await Promise.all(Array.from({ length: 5 }, () => uniqueImage()));
+    const count = MAX_CONCURRENT_CLASSIFICATIONS + 3;
+    const images = await Promise.all(Array.from({ length: count }, () => uniqueImage()));
 
     await Promise.all(images.map((image) => imageFilter.assertImageAllowed(image, context)));
 
-    expect(classifyMock).toHaveBeenCalledTimes(5);
-    expect(maxInFlight).toBeLessThanOrEqual(2);
+    expect(classifyMock).toHaveBeenCalledTimes(count);
+    expect(maxInFlight).toBeLessThanOrEqual(MAX_CONCURRENT_CLASSIFICATIONS);
+    // more than one at a time, or the gate would serialize every upload
+    expect(maxInFlight).toBeGreaterThan(1);
+  });
+
+  it('sheds load with SERVICE_UNAVAILABLE once the wait queue is full', async () => {
+    let release: (() => void) | undefined;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    classifyMock.mockImplementation(async () => {
+      await blocked;
+      return [{ label: 'normal', score: 1 }];
+    });
+
+    // fill every slot and the whole queue, then ask for one more
+    const count = MAX_CONCURRENT_CLASSIFICATIONS + MAX_QUEUED_CLASSIFICATIONS;
+    const images = await Promise.all(Array.from({ length: count + 1 }, () => uniqueImage()));
+    const accepted = images.slice(0, count).map((image) =>
+      imageFilter.assertImageAllowed(image, context));
+    // give the accepted calls a turn so they are actually queued, not pending
+    // on their own hashing/metadata work
+    await new Promise((resolve) => setImmediate(resolve));
+
+    await expect(imageFilter.assertImageAllowed(images[count], context))
+      .rejects.toThrow(errors.server.SERVICE_UNAVAILABLE);
+
+    release!();
+    // allSettled, not all: the filler verdicts are irrelevant, but every one of
+    // them must be drained before the next test reuses the shared classify mock
+    await Promise.allSettled(accepted);
+    // and the gate takes work again once the burst drains
+    await expect(imageFilter.assertImageAllowed(images[count], context)).resolves.toBeUndefined();
+  });
+
+  it('does not store a shed request in the dedup cache', async () => {
+    // a SERVICE_UNAVAILABLE is a capacity answer, not a verdict — caching it
+    // would make the retry of a perfectly fine image fail forever
+    let release: (() => void) | undefined;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    classifyMock.mockImplementation(async () => {
+      await blocked;
+      return [{ label: 'nsfw', score: 0.95 }];
+    });
+
+    const count = MAX_CONCURRENT_CLASSIFICATIONS + MAX_QUEUED_CLASSIFICATIONS;
+    const filler = await Promise.all(Array.from({ length: count }, () => uniqueImage()));
+    const shed = await uniqueImage();
+    const accepted = filler.map((image) => imageFilter.assertImageAllowed(image, context));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    await expect(imageFilter.assertImageAllowed(shed, context))
+      .rejects.toThrow(errors.server.SERVICE_UNAVAILABLE);
+
+    release!();
+    // allSettled, not all: the filler verdicts are irrelevant, but every one of
+    // them must be drained before the next test reuses the shared classify mock
+    await Promise.allSettled(accepted);
+
+    // re-classified rather than answered from a cached rejection
+    await expect(imageFilter.assertImageAllowed(shed, context))
+      .rejects.toThrow(errors.server.IMAGE_CONTENT_REJECTED);
   });
 
   it('rejects when a later frame is over the threshold (benign frame 0)', async () => {
@@ -311,6 +374,89 @@ describe('imageFilter.assertImageAllowed', () => {
 
     expect(classifyMock).toHaveBeenCalledTimes(130);
   }, 30000);
+
+  describe('warmUp', () => {
+    // The boot probe: srv/api.ts fires it so a misconfigured model shows up in
+    // the startup log instead of in the first user's upload (onchain
+    // deliberately does not — see the comment there). It must report rather
+    // than throw — an entry point that crashed on a broken moderation model
+    // would take the whole instance down over image uploads.
+    it('loads and really classifies, so a model that loads but cannot infer is caught', async () => {
+      let isolated: typeof imageFilter | undefined;
+      jest.isolateModules(() => {
+        isolated = require('../moderation/imageFilter').default;
+      });
+      setScores([{ label: 'normal', score: 1 }]);
+
+      await expect(isolated!.warmUp()).resolves.toBe(true);
+      expect(pipelineMock).toHaveBeenCalled();
+      expect(classifyMock).toHaveBeenCalled();
+    });
+
+    it('reports false instead of throwing when the model cannot load', async () => {
+      let isolated: typeof imageFilter | undefined;
+      jest.isolateModules(() => {
+        isolated = require('../moderation/imageFilter').default;
+      });
+      pipelineMock.mockRejectedValueOnce(new Error('model directory missing'));
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      try {
+        await expect(isolated!.warmUp()).resolves.toBe(false);
+        expect(errorSpy).toHaveBeenCalled();
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it('reports false when the classifier answers with no labels at all', async () => {
+      let isolated: typeof imageFilter | undefined;
+      jest.isolateModules(() => {
+        isolated = require('../moderation/imageFilter').default;
+      });
+      setScores([]);
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      try {
+        await expect(isolated!.warmUp()).resolves.toBe(false);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it('warns when the model knows none of the labels the gate scores on', async () => {
+      // nsfwScore() can only ever return 0 for such a model, i.e. the gate
+      // silently passes everything — the one failure mode a loading model hides
+      let isolated: typeof imageFilter | undefined;
+      jest.isolateModules(() => {
+        isolated = require('../moderation/imageFilter').default;
+      });
+      setScores([{ label: 'cat', score: 0.9 }, { label: 'dog', score: 0.1 }]);
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      try {
+        await expect(isolated!.warmUp()).resolves.toBe(true);
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('none of the known nsfw labels'));
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('does not touch the model when moderation is disabled', async () => {
+      process.env.IMAGE_MODERATION_ENABLED = 'false';
+      try {
+        let isolated: typeof imageFilter | undefined;
+        jest.isolateModules(() => {
+          isolated = require('../moderation/imageFilter').default;
+        });
+
+        await expect(isolated!.warmUp()).resolves.toBe(true);
+        expect(pipelineMock).not.toHaveBeenCalled();
+      } finally {
+        delete process.env.IMAGE_MODERATION_ENABLED;
+      }
+    });
+  });
 
   it('is a no-op when IMAGE_MODERATION_ENABLED=false', async () => {
     process.env.IMAGE_MODERATION_ENABLED = 'false';

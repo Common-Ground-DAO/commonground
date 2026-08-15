@@ -257,6 +257,15 @@ app.listen(4000);
 
 fakeHealthcheck();
 
+// Deliberately no imageFilter.warmUp() here, unlike srv/api.ts. This process
+// stores images too (LSP3 avatar ingests in onchain/generic.ts), but those
+// callers already treat a classification failure as "proceed without an
+// image", so a broken model degrades instead of breaking — and warming would
+// cost this process the ~300 MB model RSS at boot even on instances whose
+// chain events never carry a profile image. The api process reports the same
+// model from the same path, which is where the hard failure (every upload
+// returning INTERNAL) actually lives.
+
 process.on("SIGTERM", async () => {
   process.exit(0);
 });

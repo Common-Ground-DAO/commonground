@@ -20,17 +20,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
   imageFilterEnabled: true,
+  imageFilterThreshold: 0.8,
   precheckModuleEvaluated: false,
   verdict: 'ok' as 'ok' | 'suspicious',
   precheckThrows: false,
   confirmCalls: 0,
   confirmAnswer: true,
+  /** threshold the gate handed to the classifier on the last call */
+  thresholdSeen: undefined as number | undefined,
 }));
 
 vi.mock('common/config', () => ({
   default: {
     get IMAGE_FILTER_ENABLED() {
       return state.imageFilterEnabled;
+    },
+    get IMAGE_FILTER_THRESHOLD() {
+      return state.imageFilterThreshold;
     },
   },
 }));
@@ -39,7 +45,8 @@ vi.mock('./imagePrecheck', () => {
   // Runs on import, not on call: this is the "the heavy chunk was fetched" flag.
   state.precheckModuleEvaluated = true;
   return {
-    checkImageFile: async () => {
+    checkImageFile: async (_file: File, threshold: number) => {
+      state.thresholdSeen = threshold;
       if (state.precheckThrows) throw new Error('chunk unavailable');
       return state.verdict;
     },
@@ -67,10 +74,12 @@ function file(type: string, name = 'file') {
 
 beforeEach(() => {
   state.imageFilterEnabled = true;
+  state.imageFilterThreshold = 0.8;
   state.verdict = 'ok';
   state.precheckThrows = false;
   state.confirmCalls = 0;
   state.confirmAnswer = true;
+  state.thresholdSeen = undefined;
 });
 
 describe('checkImageBeforeUpload', () => {
@@ -105,6 +114,18 @@ describe('checkImageBeforeUpload', () => {
     await expect(check(file('image/jpeg', 'photo.jpg'))).resolves.toBe(true);
     expect(state.precheckModuleEvaluated).toBe(true);
     expect(state.confirmCalls).toBe(0);
+  });
+
+  it('hands the classifier this instance\'s server-side threshold', async () => {
+    // the point of shipping it: an operator who tightens
+    // IMAGE_MODERATION_THRESHOLD gets an earlier browser warning too, rather
+    // than a client that keeps warning at a hardcoded value the server left
+    // behind
+    state.imageFilterThreshold = 0.5;
+
+    await check(file('image/jpeg', 'photo.jpg'));
+
+    expect(state.thresholdSeen).toBe(0.5);
   });
 
   it('passes when the classifier itself blows up — it may never cost a user an upload', async () => {

@@ -4,7 +4,11 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import errors from 'common/errors';
-import { notifyIfImageRejected } from './imageUploadError';
+import {
+  imageUploadErrorText,
+  isUploadTemporarilyRefused,
+  notifyIfImageRejected,
+} from './imageUploadError';
 import { registerImageRejectedNotice } from './suspiciousImageDialog';
 
 /**
@@ -46,5 +50,40 @@ describe('notifyIfImageRejected', () => {
     registerImageRejectedNotice(undefined);
 
     expect(() => notifyIfImageRejected(new Error(errors.server.IMAGE_CONTENT_REJECTED))).not.toThrow();
+  });
+});
+
+/**
+ * The upload path can refuse for capacity reasons too — the route's rate limit
+ * and the classifier shedding load. Those are wire enums; without a mapping the
+ * user reads `RATE_LIMIT_EXCEEDED` in a snackbar. Unlike a content rejection
+ * they are transient, so they must NOT claim the rejection modal.
+ */
+describe('transient upload refusals', () => {
+  it.each([errors.server.RATE_LIMIT_EXCEEDED, errors.server.SERVICE_UNAVAILABLE])(
+    'recognises %s as retryable',
+    (code) => {
+      expect(isUploadTemporarilyRefused(new Error(code))).toBe(true);
+      expect(imageUploadErrorText(new Error(code), 'fallback')).toBe(errors.client.UPLOAD_BUSY);
+    },
+  );
+
+  it('does not route them through the content-rejection modal', () => {
+    expect(notifyIfImageRejected(new Error(errors.server.RATE_LIMIT_EXCEEDED))).toBe(false);
+    expect(notifyIfImageRejected(new Error(errors.server.SERVICE_UNAVAILABLE))).toBe(false);
+    expect(notices).toBe(0);
+  });
+
+  it('leaves a content rejection and unrelated errors alone', () => {
+    expect(isUploadTemporarilyRefused(new Error(errors.server.IMAGE_CONTENT_REJECTED))).toBe(false);
+    expect(isUploadTemporarilyRefused(new Error('Failed to fetch'))).toBe(false);
+    expect(isUploadTemporarilyRefused(undefined)).toBe(false);
+  });
+
+  it('still prefers the rejection text and otherwise the raw message', () => {
+    expect(imageUploadErrorText(new Error(errors.server.IMAGE_CONTENT_REJECTED), 'fallback'))
+      .toBe(errors.client.IMAGE_CONTENT_REJECTED);
+    expect(imageUploadErrorText(new Error('Failed to fetch'), 'fallback')).toBe('Failed to fetch');
+    expect(imageUploadErrorText(undefined, 'fallback')).toBe('fallback');
   });
 });

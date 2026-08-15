@@ -23,7 +23,7 @@ import BotEditor from 'components/organisms/UserSettingsModalContent/BotsPage/Bo
 import BotBadge from 'components/atoms/BotBadge/BotBadge';
 import Jdenticon from 'components/atoms/Jdenticon/Jdenticon';
 import errors from 'common/errors';
-import { notifyIfImageRejected } from 'moderation/imageUploadError';
+import { imageUploadErrorText, notifyIfImageRejected } from 'moderation/imageUploadError';
 
 const BOT_USERNAME_MAX_LENGTH = 30;
 const INSTALLABLE_PAGE_SIZE = 25;
@@ -155,7 +155,11 @@ const CreateCommunityBotModal: React.FC<{
         const message = (e as Error).message;
         showSnackbar({
           type: 'warning',
-          text: message === errors.server.EXISTS_ALREADY ? 'Username is already taken' : message || 'Could not create bot',
+          text: message === errors.server.EXISTS_ALREADY
+            ? 'Username is already taken'
+            // maps the upload path's transient refusals; falls through to the
+            // raw message for everything else, as before
+            : imageUploadErrorText(e, 'Could not create bot'),
         });
       }
     } finally {

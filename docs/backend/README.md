@@ -2,7 +2,7 @@
 
 > Status: verified against commit 0f1d72d66, 2026-08-03; rate-limit section
 > against the 2026-08-04 dependency-update wave 1a; image-moderation sections
-> against the feat/image-filter branch, 2026-08-05.
+> against the fix/image-filter-review-53 branch, 2026-08-15.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -74,12 +74,37 @@ tracked in `docs/todo/TODO.md`).
   explicit frame hidden in a long animation can still slip through
   (~16/pages odds) — a deliberate best-effort trade-off, not a guarantee.
   Statically stored images check frame 0 only, matching what persists.
-  Classification concurrency is bounded (2 jobs; ORT intra-op threads
-  capped at 2) so upload bursts can't starve the shared libuv pool.
+- **What is *not* classified:** the stored crops. Classification runs on a
+  fit-inside normalization of the source while `saveImage` stores `fit:
+  "cover"` crops, so edge content is judged but cropped away, and a
+  whole-frame score diluted by benign filler can pass while the visible
+  centre crop is explicit. Accepted deliberately: classifying per variant
+  would break the dedup cache and make the verdict depend on which variant
+  ran first. Partly inherent to any whole-image classifier; community
+  moderation covers the residue.
+- **Load bounds:** concurrency is `max(2, min(6, cores / 2))` jobs (ORT
+  intra-op threads capped at 2), so the gate uses at most half a machine and
+  still keeps the original 2-wide behavior on small selfhost boxes. Waiting
+  requests are capped at 8× that; beyond it callers get `SERVICE_UNAVAILABLE`
+  (retryable, distinct from the fail-closed `INTERNAL`) instead of queueing
+  unboundedly with their source buffers held in memory. `POST
+  /File/uploadImage` additionally carries a per-IP rate limit (40/min per
+  IPv4 or IPv6 /64, skipped on `dev` deployments), applied before body
+  parsing so a shed request never buffers its payload.
 - **Processes:** runs in `api` and (for chain-triggered LSP3 images)
   `onchain`. Neither process has an async startup sequence, so the pipeline
   loads lazily on the first classification (~100 ms) and is cached; the
-  onchain process only pays the ~300 MB RSS after its first hit.
+  onchain process only pays the ~300 MB RSS after its first hit — which is
+  why only `api` fires the non-blocking `imageFilter.warmUp()` at boot, the
+  onchain ingest paths degrading to "no image" on failure rather than
+  breaking. The warm-up loads the model *and*
+  runs one throwaway classification, logging `imageFilter: ready` or a
+  `MODEL UNAVAILABLE` error with remediation hints — a model that loads but
+  cannot infer, or one whose labels the gate does not score on (which would
+  silently pass everything), is reported there rather than by the first user
+  who uploads a picture. Deliberately not wired into the container
+  healthcheck: a broken model breaks uploads, whereas an unhealthy container
+  gets restart-looped and would take chat, calls and login down with it.
 - **Dedup:** a small promise-LRU keyed by the sha256 of the *source* buffer
   (plus the animated flag) — upload types that store small+large variants of
   one source classify once, including when both run concurrently.
@@ -99,7 +124,10 @@ tracked in `docs/todo/TODO.md`).
   exported without `preprocessor_config.json`, e.g. from timm, silently
   produce garbage), `IMAGE_MODERATION_THRESHOLD` (default `0.8`). The
   enabled-flag is advertised to the frontend as `features.imageFilter` via
-  the instance config, gating the client-side pre-upload warning.
+  the instance config, gating the client-side pre-upload warning; the
+  threshold itself ships alongside it as `imageFilterThreshold`, so the
+  browser pre-check warns at the confidence this instance actually rejects
+  at instead of at a hardcoded one.
 - The runtime never fetches models from the network
   (`env.allowRemoteModels = false`); weights are downloaded at image build
   time from a pinned HF revision with sha256 verification

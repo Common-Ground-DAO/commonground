@@ -73,6 +73,9 @@ const errors = {
     LOGIN_REQUIRED: "This action requires a login",
     UPLOAD_SIZE_LIMIT: "Maximum upload size exceeded",
     IMAGE_CONTENT_REJECTED: "This image appears to contain explicit content and was not uploaded",
+    // upload rate limit hit, or the NSFW gate is shedding load — both are
+    // transient and both mean the same thing to the person waiting
+    UPLOAD_BUSY: "Too many uploads at the moment — please try again shortly",
     NICKNAME_TAKEN: "This nickname is already taken",
     NOT_FOUND: "Not found",
     TIMEOUT: "Action timed out",

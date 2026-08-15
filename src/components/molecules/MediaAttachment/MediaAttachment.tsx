@@ -11,7 +11,7 @@ import { Popover } from '../../../components/atoms/Tooltip/Tooltip';
 import FullscreenImageModal from '../../../components/atoms/FullscreenImageModal/FullscreenImageModal';
 import config from '../../../common/config';
 import fileApi from 'data/api/file';
-import { notifyIfImageRejected } from 'moderation/imageUploadError';
+import { imageUploadErrorText, notifyIfImageRejected } from 'moderation/imageUploadError';
 import { Spinner } from '@phosphor-icons/react';
 
 type Props = InMemoryAttachment & {
@@ -33,8 +33,9 @@ type UploadImageResult = {
 
 async function uploadImage(file: File): Promise<UploadImageResult> {
   if (file.size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
-    // Warn error, over upload limit
-    return { ok: false, error: 'Images must have at most 5MB in size' };
+    // derived from the limit rather than written out — the hardcoded "5MB" here
+    // had been wrong since the limit moved to 8 MB
+    return { ok: false, error: `Images must have at most ${config.IMAGE_UPLOAD_SIZE_LIMIT / (1024 * 1024)}MB in size` };
   } else {
     try {
       // Upload, get image id
@@ -46,7 +47,7 @@ async function uploadImage(file: File): Promise<UploadImageResult> {
       // A rejection is final: the tile gets removed rather than parked in the
       // error state, so no `error` text is returned for it.
       if (notifyIfImageRejected(err)) return { ok: false, rejected: true };
-      return { ok: false, error: 'An unknown error has occurred, please try again' };
+      return { ok: false, error: imageUploadErrorText(err, 'An unknown error has occurred, please try again') };
     }
   }
 }

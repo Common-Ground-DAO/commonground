@@ -1,7 +1,7 @@
 # Common Ground Deployment
 
 > Status: verified against commit 6e7975641, 2026-08-04; image-filter
-> additions against the feat/image-filter branch, 2026-08-05
+> additions against the fix/image-filter-review-53 branch, 2026-08-15
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -87,6 +87,7 @@ Defined and validated in `src/common/instance.ts` (`InstanceConfig`). Fields:
 | `captchaProvider` | active captcha provider (`altcha` / `recaptcha` / `off`) |
 | `activeChains` | chain keys this instance offers (subset of `AVAILABLE_CHAINS`) |
 | `features` | capability flags `{ email, twitterAuth, calls, imageFilter }` — the first two derived from configured secrets, `calls` from whether the mediasoup service is deployed, `imageFilter` from whether the server-side NSFW filter is enabled (gates the client pre-upload warning) |
+| `imageFilterThreshold` | this instance's `IMAGE_MODERATION_THRESHOLD` (0 < t ≤ 1, default `0.8`), so the browser pre-check warns at the confidence the server actually rejects at; ignored when `features.imageFilter` is false |
 | `giphyApiKey` | Giphy key (empty hides the GIF picker) |
 | `walletConnectProjectId` | WalletConnect Cloud project id |
 

@@ -1,7 +1,7 @@
 # Common Ground Frontend Documentation
 
 > Status: verified against commit 4a9754f8f, 2026-08-04; NSFW pre-check
-> section against the feat/image-filter branch, 2026-08-05
+> section against the fix/image-filter-review-53 branch, 2026-08-15
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -767,8 +767,17 @@ A courtesy check that warns **before** upload; it never blocks.
   `tfjs-backend-webgl`, CPU backend as a lazily imported fallback chunk). The
   `@tensorflow/tfjs` meta package is not installed; a vite `resolve.alias`
   maps it to the re-export stub `src/moderation/tfjs.ts` for `nsfwjs/core`.
-- **Verdict → UX:** warns only on `Porn`/`Hentai` ≥ 0.85; every internal
-  failure resolves `'ok'` (never break an upload). A suspicious verdict opens
+- **Verdict → UX:** the `Porn` and `Hentai` probabilities are **summed** and
+  compared against this instance's own `IMAGE_MODERATION_THRESHOLD`, shipped
+  to the browser as `imageFilterThreshold` (default `0.8`) — the same
+  aggregation and the same knob the server uses, so tightening the server
+  threshold moves the browser warning with it. The two models still differ
+  (MobileNetV2 here, ViT server-side), so verdicts can diverge; the
+  aggregation no longer does. `Sexy`/`Drawing`/`Neutral` are ignored
+  entirely. Every internal failure resolves `'ok'` (never break an upload),
+  and a failed model load is retried on the next file rather than
+  remembered — one flaky fetch used to disable warnings for the whole page
+  session. A suspicious verdict opens
   the queue-based confirm dialog hosted by
   `src/context/SuspiciousImageModalProvider.tsx` (module-level bridge in
   `src/moderation/suspiciousImageDialog.ts`, same imperative pattern as
@@ -781,6 +790,14 @@ A courtesy check that warns **before** upload; it never blocks.
   confirm (queued, never stacked; repeated rejections coalesce). Chat
   attachments additionally remove the rejected tile from the composer;
   generic (non-rejection) upload errors keep each site's local handling.
+  `imageUploadErrorText()` additionally maps the two *transient* refusals —
+  `RATE_LIMIT_EXCEEDED` from the upload route's rate limit and
+  `SERVICE_UNAVAILABLE` from the classifier shedding load — to one
+  "try again shortly" message (`isUploadTemporarilyRefused()` exposes the same
+  test for callsites that build their own text), so those wire enums do not
+  reach a snackbar verbatim. Sites that only ever show a generic
+  "unknown error" (`RolePhoto`, `UserProfilePhoto`) keep it; they have no text
+  channel worth differentiating.
 
 ### Markdown Rendering (`react-markdown`)
 

@@ -1,5 +1,5 @@
 > Status: verified against commit 8613352a4, 2026-08-04; image-moderation
-> additions against the feat/image-filter branch, 2026-08-05
+> additions against the fix/image-filter-review-53 branch, 2026-08-15
 
 # Common Ground Infrastructure Documentation
 
@@ -551,7 +551,7 @@ Per `AGENTS.md`, `docker/.env` is tracked in the repo **as a placeholder templat
 | `CAPTCHA_PROVIDER` / `ALTCHA_HMAC_KEY` / `ALTCHA_COST` / `ALTCHA_COUNTER_MAX` | Captcha provider selection and ALTCHA proof-of-work tuning (see [docs/auth-identity](../auth-identity/README.md)). None of them are set in either compose file — add them to the `api` service to tune. |
 | `TWITTER_CALLBACK_URL` / `TWITTER_OAUTH2_CLIENT_ID` / `TWITTER_OAUTH2_CLIENT_SECRET` / `TWITTER_API_KEY` / `TWITTER_API_SECRET` | Twitter/X login. |
 | `SENDGRID_API_KEY` | SendGrid transactional email. |
-| `IMAGE_MODERATION_ENABLED` | Server-side NSFW image filter (`srv/moderation/imageFilter.ts`); consumed by the `api` and `onchain` services (with defaults when absent from `.env`). Default `true`; only the literal `false` disables it. Note: on the dev stack the *client* pre-check stays active regardless for pages served by the vite dev server (no instance-config injection there); api-served pages and the selfhost profile do propagate the switch to the browser. |
+| `IMAGE_MODERATION_ENABLED` | Server-side NSFW image filter (`srv/moderation/imageFilter.ts`); consumed by the `api` and `onchain` services (with defaults when absent from `.env`). Default `true`; only the literal `false` disables it. The `api` service probes the model at boot — look for `imageFilter: ready` (or a `MODEL UNAVAILABLE` error) in *its* startup log to tell a working setup from one where every upload will fail; `onchain` loads the model lazily and logs nothing at boot by design. Note: on the dev stack the *client* pre-check stays active regardless for pages served by the vite dev server (no instance-config injection there); api-served pages and the selfhost profile do propagate the switch to the browser. |
 | `IMAGE_MODERATION_THRESHOLD` | NSFW probability above which an image is rejected. Default `0.8`; invalid values fall back to the default (non-empty invalid values log a warning; an empty value — the compose default — falls back silently). |
 | `IMAGE_MODERATION_MODEL_PATH` | Model directory in the container (default `/models/nsfw`, baked into the backend image). Point at a mounted Transformers.js-layout classifier to swap models. |
 

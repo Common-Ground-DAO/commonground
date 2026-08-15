@@ -192,7 +192,8 @@ future moderation tooling, but out of scope here.
 - **`ACCEPTED_IMAGE_FORMATS`** (`src/common/config.ts`) lists `image/svg` — the
   correct MIME is `image/svg+xml`, so the file-dialog filter for SVG likely never
   worked. Fix while in the area.
-- Make thresholds configurable (server env done in Phase 1; client via config).
+- Make thresholds configurable (server env done in Phase 1; client via config —
+  done in the review follow-up below).
 - Monitor rejection rates before considering threshold changes.
 - Update docs in the same PRs: `docs/infrastructure/` (env vars, image build),
   `docs/backend/` (moderation module), `docs/frontend/` (pre-check), selfhost README
@@ -266,6 +267,83 @@ references only) — nothing to do there.
       `imageFilter: rejected image` logs before changing 0.8/0.85)
 - [x] Documentation updates (infrastructure, backend, frontend, deployment,
       selfhost)
+
+## Review follow-up (2026-08-15, GitHub issue #53)
+
+External review of the merged filter. No correctness or security bug was found;
+the items were reliability/consistency refinements. Outcome:
+
+- [x] **S1 — boot-time model probe.** `imageFilter.warmUp()` loads the pipeline
+      *and* runs one throwaway classification, fired non-blocking from `srv/api.ts`
+      only — `onchain` keeps the purely lazy load, since its ingest paths degrade
+      to "no image" instead of failing and warming would cost that process the
+      model's ~300 MB RSS at boot for nothing. Logs `imageFilter: ready`, a
+      `MODEL UNAVAILABLE` error
+      with remediation hints, or a warning when the model's labels don't intersect
+      `NSFW_LABELS` (a model that loads but can only ever score 0 — the one failure
+      the old lazy load hid completely). **Not** wired into the container
+      healthcheck on purpose: a broken model breaks uploads, an unhealthy container
+      gets restart-looped and takes chat/calls/login with it. The lazy path still
+      retries per request, so fixing a mount needs no restart.
+- [x] **S2 — load bounds.** `MAX_CONCURRENT_CLASSIFICATIONS` now scales as
+      `max(2, min(6, cores / 2))` (`os.availableParallelism()`, so cgroup limits
+      count); the wait queue is capped at 8× that and sheds with
+      `SERVICE_UNAVAILABLE` — deliberately *not* the fail-closed `INTERNAL`, and
+      deliberately not cached, so a retry of a fine image still gets classified.
+      Admission is checked on entry only, so a woken waiter is never shed in
+      favour of a fresh arrival (it can still lose the *slot* to one that resumes
+      first in the same microtask drain — at most one requeue, and both bounds
+      still hold exactly). `POST /File/uploadImage` gained a rate limit placed
+      **before** body-parser and multer, so a shed request never buffers its 8 MB:
+      40/min **per account**, and 10/min per IP for the one upload type this route
+      serves without a login (pre-auth profile pictures). Per-account keying
+      because uploading is routine — IP-only would pool a whole CGNAT or campus
+      network into one bucket. Skipped on `dev` deployments like the
+      account-creation limiter (the anonymous branch keys on `X-Forwarded-For`,
+      which a backend reached without nginx does not have).
+- [ ] **S3 — source vs. stored crop.** Reviewed and **accepted as-is**; the
+      trade-off is now written down in `docs/backend/`. Classifying per variant
+      would break the source-keyed dedup cache and make the verdict depend on which
+      variant happened to run first. Revisit only if banner-shaped false negatives
+      actually show up in the rejection logs.
+- [x] **C1 — client threshold follows the server.** `imageFilterThreshold` ships
+      through the instance config — via `buildInstanceConfig()` for backend-rendered
+      pages **and** via `docker/nginx/inject-instance-config.sh` for the statically
+      served ones, which is the path the selfhost profile actually uses (the value
+      is emitted as a bare JSON number, so the script shape-checks it first:
+      a non-numeric one would break the whole injected object). The browser check
+      compares against it instead of
+      a hardcoded `0.85`, and **sums** `Porn` + `Hentai` the way `nsfwScore()` sums
+      its labels server-side (an image split 0.5/0.45 between the two now trips on
+      both sides, not just the server). Comparison is `>` on both sides, so a
+      threshold of 1 means "never warn" consistently. Different models still
+      disagree sometimes — that part is structural.
+- [x] **C2 — retry after a failed model load.** `modelPromise` is cleared on
+      rejection, mirroring `getClassifier()`. Caching the rejection meant one flaky
+      shard fetch silently disabled early warnings for the life of the page.
+- [x] **C3 — pre-check coverage.** Re-checked and found to be a **false positive**:
+      all nine flagged files reach a `File` exclusively through
+      `ImageUploadField` / `HeaderImageUpload` / `ProfilePhotoField`, which already
+      run the check at selection time. Every `<input type="file">` in `src/` (11)
+      plus the composer's paste and drop paths route through
+      `checkImageBeforeUpload`. The review had grepped `fileApi.uploadImage`
+      call sites — the *upload* moment — while the check belongs at the
+      *selection* moment one layer up. No code change.
+- [ ] **C4 — main-thread CPU fallback.** Accepted as-is (bounded by the 15 s
+      timeout, fails open, only reached on browsers without WebGL).
+- [x] **C5 — tests for `imagePrecheck.ts`.** `src/moderation/imagePrecheck.test.ts`:
+      14 cases over `isSuspicious` (summing, ignored classes, threshold handling,
+      exclusive comparison), `withTimeout`, and `checkImageFile` (retry-after-failure,
+      single load per session, fail-open on undecodable input and on inference
+      errors). tfjs/nsfwjs are mocked; the DOM surface `decodeToCanvas` uses is
+      stubbed rather than pulling in jsdom.
+- [x] **Noticed in passing:** the chat composer's "at most 5MB" message is now
+      derived from `IMAGE_UPLOAD_SIZE_LIMIT` (it had been wrong since the limit
+      became 8 MB). The `CommunityModerationContext` FIXMEs are unrelated to image
+      moderation and stay in `TODO.md`.
+
+Server suite: 28 tests (`srv/tests/imageFilter.spec.ts`); client: 33 in
+`src/moderation/*.test.ts` (43 in the full vitest run).
 
 ## Non-goals
 

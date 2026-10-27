@@ -90,7 +90,7 @@ services:
       - cryptogram
     shm_size: '256m'
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -h 127.0.0.1"]
       interval: 1m
       timeout: 5s
       retries: 5
@@ -150,9 +150,10 @@ services:
       - BASE_URL=https://${CG_DOMAIN}
     # Gate on a HEALTHY db: on first boot the postgres cluster initializes
     # for several seconds, and a migrate attempt in that window dies with
-    # ECONNREFUSED. The old `deploy.restart_policy` retry was swarm-only
-    # syntax — plain compose ignored it, leaving a fresh install without a
-    # schema when the race was lost.
+    # ECONNREFUSED. The `deploy.restart_policy` retry alone does not cover
+    # that window: compose maps it to a plain `on-failure:N` restart and
+    # ignores its delay, so the few retries can all fire before postgres is
+    # up, leaving a fresh install without a schema.
     depends_on:
       db:
         condition: service_healthy

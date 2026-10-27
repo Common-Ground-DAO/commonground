@@ -31,6 +31,15 @@ if [ "${1:-}" = "--tls-internal" ]; then
   shift
 fi
 
+# --tls-internal is only recognised first; anything else that looks like an
+# option would silently end up in .env.selfhost as a domain, email or IP
+for arg in "$@"; do
+  if [ "${arg#-}" != "$arg" ] && [ "$arg" != "-" ]; then
+    echo "Unknown or misplaced option: $arg"
+    usage
+  fi
+done
+
 CG_DOMAIN="${1:-}"
 CG_ACME_EMAIL="${2:-}"
 CG_ID_DOMAIN="${3:-id.${CG_DOMAIN}}"
@@ -273,6 +282,17 @@ else
   chmod 644 selfhost/certs/server.crt
   chmod 600 selfhost/certs/server.key
   echo "Wrote selfhost/certs/ (internal cert for the caddy->mediasoup hop)"
+fi
+
+# an existing .env.selfhost was left untouched, so its mode is the one that
+# applies, not the flag of this run
+EXISTING_TLS_MODE=$(grep '^CG_TLS_MODE=' .env.selfhost | cut -d= -f2 || true)
+EXISTING_TLS_MODE="${EXISTING_TLS_MODE:-acme}"
+if [ "$EXISTING_TLS_MODE" != "$CG_TLS_MODE" ]; then
+  echo
+  echo "Note: the existing .env.selfhost uses CG_TLS_MODE=${EXISTING_TLS_MODE}; this run's"
+  echo "      setting was not applied. Edit .env.selfhost to switch (see SELFHOST.md)."
+  CG_TLS_MODE="$EXISTING_TLS_MODE"
 fi
 
 echo

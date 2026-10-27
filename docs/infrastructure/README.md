@@ -44,9 +44,8 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Volumes:**
   - `pgdata:/var/lib/postgresql/data` — persistent database storage
   - `./db/postgresql.conf:/etc/postgresql/postgresql.conf` — the tuned config. It is a full Postgres 14 default file with only three settings changed: `listen_addresses='*'`, `max_connections=200`, `maintenance_work_mem=64MB`.
-- **Healthcheck:** `pg_isready -U postgres` every 1m, probed every 2s during a 2m `start_period` so `migrate-db` (which waits for `service_healthy`) isn't held for a full minute on first boot. Same in both compose files.
+- **Health check:** `pg_isready -U postgres -h 127.0.0.1`, interval 1m, timeout 5s, 5 retries; probed every 2s during a 2m `start_period` so `migrate-db` (which waits for `service_healthy`) isn't held for a full minute on first boot. It probes over TCP on purpose: on first boot the image's init runs a temporary server that answers on the unix socket only, and a socket probe would report healthy before the real server listens. Same in both compose files.
 - **Environment:** `POSTGRES_DB=postgres`, `POSTGRES_USER=postgres`, `POSTGRES_PASSWORD` (from `PG_SU_PASSWORD`), `PG_WRITER_PASSWORD`, `PG_READER_PASSWORD`
-- **Health check:** `pg_isready -U postgres`, interval 1m, timeout 5s, 5 retries
 - **Shared memory:** 256 MB (`shm_size`)
 - **Stop behavior:** SIGINT with 1-minute grace period
 - **Restart:** `unless-stopped`

@@ -66,8 +66,11 @@ Caddy issue every certificate from its own local CA instead:
 ```
 
 - `--tls-internal` writes `CG_TLS_MODE=internal` to `.env.selfhost` (default:
-  `acme`). An existing install switches by editing that line and running
+  `acme`). An existing install switches by editing that line — or adding it,
+  in an `.env.selfhost` written before the switch existed — and running
   `./selfhost/selfhost.sh up`, which recreates the `caddy` container.
+  Switching back to `acme` also needs a real `CG_ACME_EMAIL`; with an empty
+  one Caddy refuses its config and keeps restarting.
 - `-` stands in for the ACME email, which this mode does not use.
 - The fourth argument (the IP) is **required** here: it becomes
   `MEDIASOUP_ANNOUNCED_IP`, the address browsers send call media to, so it must
@@ -95,8 +98,9 @@ private key — never hand that out). Copy the certificate out of the container:
 ./selfhost/selfhost.sh compose cp caddy:/data/caddy/pki/authorities/local/root.crt /tmp/cg-root.crt
 ```
 
-(Use an absolute destination — `selfhost.sh` runs from `docker/`.) Then trust
-it on every client machine:
+(Use an absolute destination — `selfhost.sh` runs from `docker/`.) Then copy
+it to every client machine (e.g. `scp server:/tmp/cg-root.crt .`) and trust it
+there; the commands below expect `cg-root.crt` in the current directory:
 
 - **Debian/Ubuntu:** `sudo cp cg-root.crt /usr/local/share/ca-certificates/cg-test-root.crt && sudo update-ca-certificates`
   (the file name must end in `.crt`)

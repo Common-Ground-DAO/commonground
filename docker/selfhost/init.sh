@@ -112,7 +112,7 @@ BUILDER_GID=$(id -g)
 # entirely (selfhost.sh translates these into compose profiles):
 #   CG_ENABLE_CALLS=false      no mediasoup container -> no voice/video calls.
 #     The call UI is hidden via the instance config, ports 4443/tcp and
-#     40000-40099/udp are not needed. Everything else is unaffected.
+#     40000-40099/udp+tcp are not needed. Everything else is unaffected.
 #   CG_ENABLE_BLOCKCHAIN=false no onchain container -> no token-gated roles,
 #     no balance/staking indexing, no Spark purchases, no LUKSO UP login.
 #     Wallet login (EVM/SIWE) keeps working; the affected API calls fail fast
@@ -284,6 +284,6 @@ if [ "$CG_TLS_MODE" = "internal" ]; then
 else
   echo "  1. Point DNS A/AAAA records for ${CG_DOMAIN} and ${CG_ID_DOMAIN} to ${CG_PUBLIC_IP}"
 fi
-echo "  2. Open ports 80, 443, 4443 (tcp) and 40000-40099 (udp) in your firewall"
+echo "  2. Open ports 80, 443 (tcp+udp), 4443 (tcp) and 40000-40099 (udp+tcp) in your firewall"
 echo "  3. Run: ./selfhost/selfhost.sh build"
 echo "  4. Run: ./selfhost/selfhost.sh up"

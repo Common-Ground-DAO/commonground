@@ -307,8 +307,13 @@ services:
     networks:
       - cryptogram
     command: ["node", "/dist/mediasoup.js"]
+    # WebRTC media (srv/mediasoup/config.ts): worker n's WebRtcServer listens
+    # on 40000+n over UDP *and* TCP — TCP is the ICE fallback for clients
+    # whose network blocks UDP. With MEDIASOUP_USE_WEBRTC_SERVER=false each
+    # transport takes its own port from the whole 40000-40099 range instead.
     ports:
       - "40000-40099:40000-40099/udp"
+      - "40000-40099:40000-40099/tcp"
     stop_grace_period: 30s
     restart: unless-stopped
 

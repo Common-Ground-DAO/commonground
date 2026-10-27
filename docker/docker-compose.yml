@@ -217,6 +217,12 @@ services:
       - MEDIASOUP_DISABLE_LIBURING=${MEDIASOUP_DISABLE_LIBURING}
     volumes:
       - "./nginx/certs:/dist/mediasoup/certs"
+    # the `mediasoup` DB role (and its password) is created by a migration, so
+    # on a fresh database the first connection fails until migrate-db is done
+    # — and with restart "no" the container would stay dead
+    depends_on:
+      migrate-db:
+        condition: service_completed_successfully
     networks:
       - cryptogram
     command: ["node", "/dist/mediasoup.js"]

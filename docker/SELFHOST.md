@@ -7,14 +7,17 @@ processing).
 
 The self-host profile differs from the dev setup (`run.sh`): real TLS via
 Let's Encrypt, production semantics on your own domain, generated secrets,
-and no dev-chain/test-contract services.
+and no dev-chain/test-contract services. For a LAN/VM test instance without
+public DNS, see [Local test instance](#local-test-instance-no-public-dns).
 
 ## Prerequisites
 
 - A Linux server with Docker + Docker Compose v2, ports **80, 443, 4443
-  (tcp)** and **40000–40099 (udp)** reachable from the internet (the last two
-  only if you run voice/video calls — see
-  [Optional services](#optional-services-calls-blockchain))
+  (tcp)** and **40000–40099 (udp and tcp)** reachable from the internet (the
+  last two only if you run voice/video calls — see
+  [Optional services](#optional-services-calls-blockchain)). Run the scripts
+  as a user in the `docker` group or as root; the builder container runs with
+  the uid/gid of whoever ran `init.sh`.
 - A domain with two DNS records pointing at the server:
   - `chat.example.org` — the app itself
   - `id.chat.example.org` — the CG ID passkey app (**must** be a separate
@@ -48,6 +51,100 @@ Operating:
 ./selfhost/selfhost.sh update       # git pull + rebuild + restart
 ./selfhost/selfhost.sh down         # stop
 ```
+
+## Local test instance (no public DNS)
+
+Let's Encrypt can only issue certificates for names that resolve publicly to
+your server. For a test instance on a LAN or a local VM — e.g. to exercise
+passkey login on the CG ID origin, uploads and calls in a real browser — let
+Caddy issue every certificate from its own local CA instead:
+
+```bash
+./selfhost/init.sh --tls-internal cg.test - id.cg.test 192.168.122.44
+./selfhost/selfhost.sh build
+./selfhost/selfhost.sh up
+```
+
+- `--tls-internal` writes `CG_TLS_MODE=internal` to `.env.selfhost` (default:
+  `acme`). An existing install switches by editing that line and running
+  `./selfhost/selfhost.sh up`, which recreates the `caddy` container.
+- `-` stands in for the ACME email, which this mode does not use.
+- The fourth argument (the IP) is **required** here: it becomes
+  `MEDIASOUP_ANNOUNCED_IP`, the address browsers send call media to, so it must
+  be the address they reach the machine at — its LAN IP, not the public IP
+  `init.sh` would otherwise detect.
+- Pick names under a TLD that never resolves publicly, such as `.test`.
+
+### Name resolution
+
+There is no DNS for these names, so every **client** machine needs them in its
+hosts file (`/etc/hosts` on Linux/macOS,
+`C:\Windows\System32\drivers\etc\hosts` on Windows):
+
+```
+192.168.122.44  cg.test id.cg.test
+```
+
+### Trusting Caddy's root certificate
+
+On its first start Caddy creates its CA in the `caddy-data` volume, at
+`/data/caddy/pki/authorities/local/root.crt` (next to `root.key`, the CA's
+private key — never hand that out). Copy the certificate out of the container:
+
+```bash
+./selfhost/selfhost.sh compose cp caddy:/data/caddy/pki/authorities/local/root.crt /tmp/cg-root.crt
+```
+
+(Use an absolute destination — `selfhost.sh` runs from `docker/`.) Then trust
+it on every client machine:
+
+- **Debian/Ubuntu:** `sudo cp cg-root.crt /usr/local/share/ca-certificates/cg-test-root.crt && sudo update-ca-certificates`
+  (the file name must end in `.crt`)
+- **Fedora/RHEL:** `sudo cp cg-root.crt /etc/pki/ca-trust/source/anchors/ && sudo update-ca-trust`
+- **macOS:** `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain cg-root.crt`
+- **Windows** (elevated prompt): `certutil -addstore -f Root cg-root.crt`
+- **Firefox** keeps its own certificate store: Settings → Privacy & Security →
+  Certificates → View Certificates → Authorities → Import…, then tick "Trust
+  this CA to identify websites".
+- **Chrome/Chromium on Linux** read the NSS database in `~/.pki/nssdb`; if the
+  system store is not enough, import there:
+  `certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n "CG test root" -i cg-root.crt`
+  (`certutil` is in `libnss3-tools`).
+
+Trust the **root**, don't click through certificate warnings: Caddy's leaf
+certificates live only 12 hours (the intermediate is short-lived too, and both
+are renewed automatically), a warning exception would be needed separately for
+port 4443 (call signalling), and Chromium-based browsers refuse passkeys and
+service workers on a connection with certificate errors. The root itself is valid for about ten
+years.
+
+### Reusing one root across reinstalls
+
+Every fresh `caddy-data` volume (new VM, `down -v`) gets a new root, which
+means importing it everywhere again. To keep one root, save `root.crt` **and**
+`root.key` from the first install and seed them into the new volume before
+Caddy first starts — Caddy then loads that root and issues a fresh
+intermediate and leaf certificates from it:
+
+```bash
+# once, on the first install (root.key is a CA key: keep it private)
+mkdir -p -m 700 /root/cg-ca
+./selfhost/selfhost.sh compose cp caddy:/data/caddy/pki/authorities/local/root.crt /root/cg-ca/root.crt
+./selfhost/selfhost.sh compose cp caddy:/data/caddy/pki/authorities/local/root.key /root/cg-ca/root.key
+
+# on every reinstall: after init.sh, before the first `up`
+mkdir -p /tmp/cg-ca-seed/caddy/pki/authorities/local
+cp /root/cg-ca/root.crt /root/cg-ca/root.key /tmp/cg-ca-seed/caddy/pki/authorities/local/
+./selfhost/selfhost.sh compose create caddy        # creates the container and its volumes, doesn't start it
+./selfhost/selfhost.sh compose cp /tmp/cg-ca-seed/caddy caddy:/data/
+rm -rf /tmp/cg-ca-seed
+./selfhost/selfhost.sh up
+```
+
+If Caddy already started with a fresh volume, run `./selfhost/selfhost.sh down`
+and `docker volume rm cg-selfhost_caddy-data` first. Seeding the volume keeps
+the Caddyfile unchanged; Caddy's `pki` global option could point at the files
+instead, but would need them mounted into the container on every install.
 
 ## How instance identity works
 
@@ -91,7 +188,7 @@ never created (and `up` removes it if it was running before).
 
 | Switch | Off means | What still works |
 |---|---|---|
-| `CG_ENABLE_CALLS=false` | no `mediasoup` container | everything except voice/video calls. The call UI is hidden through the instance config — the sidebar start-call button and call list, and in the events UI the Group Call / Broadcast event types and the "Start Event" / "Join now" buttons (events themselves stay, as external-link events). Nobody is offered a call that cannot happen. Ports 4443/tcp and 40000–40099/udp are then unused. |
+| `CG_ENABLE_CALLS=false` | no `mediasoup` container | everything except voice/video calls. The call UI is hidden through the instance config — the sidebar start-call button and call list, and in the events UI the Group Call / Broadcast event types and the "Start Event" / "Join now" buttons (events themselves stay, as external-link events). Nobody is offered a call that cannot happen. Ports 4443/tcp and 40000–40099/udp+tcp are then unused. |
 | `CG_ENABLE_BLOCKCHAIN=false` | no `onchain` container | wallet login (EVM/SIWE), communities, messaging, events, bots, premium/Spark balances that already exist. |
 
 Both default to `true`; leaving them out of `.env.selfhost` keeps the full
@@ -327,4 +424,4 @@ users just log in again after a restart.
 | 80 | tcp | HTTP → HTTPS redirect, ACME |
 | 443 | tcp+udp | app + CG ID (HTTPS/HTTP3) |
 | 4443 | tcp | call signalling (wss) — only with `CG_ENABLE_CALLS=true` |
-| 40000–40099 | udp | WebRTC media (voice/video) — only with `CG_ENABLE_CALLS=true` |
+| 40000–40099 | udp+tcp | WebRTC media (voice/video); TCP is the fallback for clients whose network blocks UDP — only with `CG_ENABLE_CALLS=true` |

@@ -23,6 +23,10 @@ services:
       interval: 1m
       timeout: 5s
       retries: 5
+      # fast probing during startup so dependents aren't held for the full
+      # 1m interval on first boot (fresh cluster init takes several seconds)
+      start_period: 2m
+      start_interval: 2s
     ports:
       - 127.0.0.1:5432:5432
     stop_signal: SIGINT
@@ -93,8 +97,13 @@ services:
       - S3_SECRET=${S3_SECRET}
       - DEPLOYMENT=${DEPLOYMENT}
       - BASE_URL=${BASE_URL}
+    # Gate on a HEALTHY db (same as docker-compose.selfhost.yml): on a fresh
+    # volume postgres initializes for several seconds, migrateDb.js does not
+    # retry, and the restart policy's immediate retries are spent before the
+    # db accepts connections — leaving no schema and no `mediasoup` role.
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     networks:
       - cryptogram
     deploy:

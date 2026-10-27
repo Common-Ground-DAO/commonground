@@ -1,8 +1,9 @@
 # Self-hosted, single-server production deployment of Common Ground.
 #
 # Differences from the dev compose file (docker-compose.yml):
-#   - caddy terminates TLS (Let's Encrypt) for the app, the CG ID subdomain
-#     and mediasoup call signalling
+#   - caddy terminates TLS for the app, the CG ID subdomain and mediasoup
+#     call signalling — Let's Encrypt by default, or its own local CA with
+#     CG_TLS_MODE=internal (LAN/test instances without public DNS)
 #   - nginx is built from Dockerfile_selfhost (real domains, instance-config
 #     injection, parameterized CSP)
 #   - DEPLOYMENT=prod: full production semantics on any domain
@@ -34,6 +35,7 @@ services:
       - CG_DOMAIN=${CG_DOMAIN}
       - CG_ID_DOMAIN=${CG_ID_DOMAIN}
       - CG_ACME_EMAIL=${CG_ACME_EMAIL}
+      - CG_TLS_MODE=${CG_TLS_MODE:-acme}
     volumes:
       - ./selfhost/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

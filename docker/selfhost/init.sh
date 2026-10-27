@@ -4,22 +4,55 @@
 #   - generates docker/s3_config/s3.selfhost.json (matching S3 secret)
 #   - generates a self-signed cert for the internal caddy->mediasoup hop
 #
-# Usage: ./init.sh <domain> <acme-email> [id-domain] [public-ip]
+# Usage: ./init.sh [--tls-internal] <domain> <acme-email> [id-domain] [public-ip]
 #   e.g.: ./init.sh chat.example.org admin@example.org
+#
+#   --tls-internal  local/LAN test instance without public DNS: Caddy issues
+#                   all certificates from its own local CA instead of Let's
+#                   Encrypt (CG_TLS_MODE=internal). The ACME email is unused —
+#                   pass "-" — and the public IP must be given explicitly
+#                   (the address browsers reach the machine at, e.g. its LAN IP):
+#     ./init.sh --tls-internal cg.test - id.cg.test 192.168.122.44
 #
 # Safe to re-run: existing files are never overwritten.
 set -euo pipefail
 cd "${0%/*}/.."   # docker/
+
+usage() {
+  echo "Usage: $0 [--tls-internal] <domain> <acme-email> [id-domain] [public-ip]"
+  echo "  e.g. $0 chat.example.org admin@example.org"
+  echo "       $0 --tls-internal cg.test - id.cg.test 192.168.122.44   (local test instance)"
+  exit 1
+}
+
+CG_TLS_MODE=acme
+if [ "${1:-}" = "--tls-internal" ]; then
+  CG_TLS_MODE=internal
+  shift
+fi
 
 CG_DOMAIN="${1:-}"
 CG_ACME_EMAIL="${2:-}"
 CG_ID_DOMAIN="${3:-id.${CG_DOMAIN}}"
 CG_PUBLIC_IP="${4:-}"
 
-if [ -z "$CG_DOMAIN" ] || [ -z "$CG_ACME_EMAIL" ]; then
-  echo "Usage: $0 <domain> <acme-email> [id-domain] [public-ip]"
-  echo "  e.g. $0 chat.example.org admin@example.org"
-  exit 1
+if [ -z "$CG_DOMAIN" ]; then
+  usage
+fi
+
+if [ "$CG_TLS_MODE" = "internal" ]; then
+  # no ACME account in internal mode; "-" is the placeholder for "none"
+  if [ "$CG_ACME_EMAIL" = "-" ]; then
+    CG_ACME_EMAIL=""
+  fi
+  # public-IP detection would announce the WAN address of the router in
+  # front of a LAN test machine, and calls would never connect
+  if [ -z "$CG_PUBLIC_IP" ]; then
+    echo "--tls-internal needs the IP browsers reach this machine at as the 4th argument."
+    usage
+  fi
+elif [ -z "$CG_ACME_EMAIL" ] || [ "$CG_ACME_EMAIL" = "-" ]; then
+  usage
 fi
 
 if [ -z "$CG_PUBLIC_IP" ]; then
@@ -44,7 +77,17 @@ else
 
 CG_DOMAIN=${CG_DOMAIN}
 CG_ID_DOMAIN=${CG_ID_DOMAIN}
+# Where Caddy gets its TLS certificates from:
+#   acme      Let's Encrypt (default). Both domains need public DNS records
+#             pointing here, and ports 80/443 must be reachable from the
+#             internet. CG_ACME_EMAIL is the ACME account contact.
+#   internal  Caddy's own local CA, for LAN/test instances without public DNS.
+#             Browsers only accept it after trusting Caddy's root certificate
+#             (SELFHOST.md, "Local test instance"); CG_ACME_EMAIL is unused.
+CG_TLS_MODE=${CG_TLS_MODE}
 CG_ACME_EMAIL=${CG_ACME_EMAIL}
+# address WebRTC media (calls) is announced at — must be reachable by every
+# caller: the server's public IP, or its LAN IP for a local test instance
 CG_PUBLIC_IP=${CG_PUBLIC_IP}
 
 PG_SU_PASSWORD=$(rand 24)
@@ -234,7 +277,13 @@ fi
 
 echo
 echo "Initialization complete. Next steps:"
-echo "  1. Point DNS A/AAAA records for ${CG_DOMAIN} and ${CG_ID_DOMAIN} to ${CG_PUBLIC_IP}"
+if [ "$CG_TLS_MODE" = "internal" ]; then
+  echo "  1. On every client machine, map ${CG_DOMAIN} and ${CG_ID_DOMAIN} to ${CG_PUBLIC_IP}"
+  echo "     (/etc/hosts or local DNS), and after the first start trust Caddy's root"
+  echo "     certificate there — see SELFHOST.md, \"Local test instance\""
+else
+  echo "  1. Point DNS A/AAAA records for ${CG_DOMAIN} and ${CG_ID_DOMAIN} to ${CG_PUBLIC_IP}"
+fi
 echo "  2. Open ports 80, 443, 4443 (tcp) and 40000-40099 (udp) in your firewall"
 echo "  3. Run: ./selfhost/selfhost.sh build"
 echo "  4. Run: ./selfhost/selfhost.sh up"

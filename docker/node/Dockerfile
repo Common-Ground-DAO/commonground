@@ -16,8 +16,14 @@ RUN corepack enable && \
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh
 ENTRYPOINT [ "/entrypoint.sh" ]
+# The builder runs as the host user that owns the checkout (BUILDER_UID/GID,
+# written by init.sh / set in docker/.env), so files it writes into the
+# bind-mounted repo keep the right owner. Only create the group/user when the
+# image does not already have one with that id: 1000 is the base image's
+# `node` user, 0 is root (operator running the self-host build as root), and
+# other low ids collide with Debian system groups (e.g. macOS' gid 20).
 ARG BUILDER_UID=1000
 ARG BUILDER_GID=1000
-RUN if [ ! "$BUILDER_GID" = "1000" ]; then groupadd --gid $BUILDER_GID cg_env; fi
-RUN if [ ! "$BUILDER_UID" = "1000" ]; then useradd --uid $BUILDER_UID --gid $BUILDER_GID --create-home cg_env; fi
-RUN chown -R $BUILDER_UID:$BUILDER_GID /cg /builder-cache
+RUN if ! getent group "$BUILDER_GID" >/dev/null; then groupadd --gid "$BUILDER_GID" cg_env; fi
+RUN if ! getent passwd "$BUILDER_UID" >/dev/null; then useradd --uid "$BUILDER_UID" --gid "$BUILDER_GID" --create-home cg_env; fi
+RUN chown -R "$BUILDER_UID:$BUILDER_GID" /cg /builder-cache

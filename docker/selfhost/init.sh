@@ -60,6 +60,8 @@ S3_SECRET=${S3_SECRET_GEN}
 REDIS_MAXMEMORY=1536mb
 SEAWEED_VOLUME_LIMIT_MB=1024
 MEDIASOUP_DISABLE_LIBURING=true
+# uid/gid the frontend builder container runs as, so files it writes into the
+# checkout keep their owner (0/0 when init.sh ran as root — that works too)
 BUILDER_UID=$(id -u)
 BUILDER_GID=$(id -g)
 

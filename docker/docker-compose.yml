@@ -19,10 +19,14 @@ services:
       - cryptogram
     shm_size: '256m'
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -h 127.0.0.1"]
       interval: 1m
       timeout: 5s
       retries: 5
+      # fast probing during startup so dependents aren't held for the full
+      # 1m interval on first boot (fresh cluster init takes several seconds)
+      start_period: 2m
+      start_interval: 2s
     ports:
       - 127.0.0.1:5432:5432
     stop_signal: SIGINT
@@ -93,8 +97,13 @@ services:
       - S3_SECRET=${S3_SECRET}
       - DEPLOYMENT=${DEPLOYMENT}
       - BASE_URL=${BASE_URL}
+    # Gate on a HEALTHY db (same as docker-compose.selfhost.yml): on a fresh
+    # volume postgres initializes for several seconds, migrateDb.js does not
+    # retry, and the restart policy's immediate retries are spent before the
+    # db accepts connections — leaving no schema and no `mediasoup` role.
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     networks:
       - cryptogram
     deploy:
@@ -217,6 +226,12 @@ services:
       - MEDIASOUP_DISABLE_LIBURING=${MEDIASOUP_DISABLE_LIBURING}
     volumes:
       - "./nginx/certs:/dist/mediasoup/certs"
+    # the `mediasoup` DB role (and its password) is created by a migration, so
+    # on a fresh database the first connection fails until migrate-db is done
+    # — and with restart "no" the container would stay dead
+    depends_on:
+      migrate-db:
+        condition: service_completed_successfully
     networks:
       - cryptogram
     command: ["node", "/dist/mediasoup.js"]

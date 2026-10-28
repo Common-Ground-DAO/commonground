@@ -1,5 +1,7 @@
 > Status: verified against commit 8613352a4, 2026-08-04; image-moderation
-> additions against the fix/image-filter-review-53 branch, 2026-08-15
+> additions against the fix/image-filter-review-53 branch, 2026-08-15; local
+> TLS mode, call ports, root builds and startup ordering against commit
+> a5633d5be (+ fix/selfhost-local-test), 2026-10-27
 
 # Common Ground Infrastructure Documentation
 
@@ -8,7 +10,7 @@ This document covers the full infrastructure stack for Common Ground, a Discord 
 There are two deployment shapes, each with its own compose file:
 
 - **Dev / internal stack** — `docker/docker-compose.yml`, driven by `run.sh`. Includes a local Hardhat dev chain and test-contract deployment; TLS is self-signed; `DEPLOYMENT` is configurable.
-- **Self-hosted single-server production** — `docker/docker-compose.selfhost.yml`, driven by `docker/selfhost/selfhost.sh`. Caddy terminates real Let's Encrypt TLS, `DEPLOYMENT=prod` on any domain, no dev chain, secrets are generated. See [section 7](#7-self-hosted-single-server-deployment).
+- **Self-hosted single-server production** — `docker/docker-compose.selfhost.yml`, driven by `docker/selfhost/selfhost.sh`. Caddy terminates real Let's Encrypt TLS (or, for LAN/test instances, TLS from its own local CA), `DEPLOYMENT=prod` on any domain, no dev chain, secrets are generated. See [section 7](#7-self-hosted-single-server-deployment).
 
 ---
 
@@ -42,8 +44,8 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Volumes:**
   - `pgdata:/var/lib/postgresql/data` — persistent database storage
   - `./db/postgresql.conf:/etc/postgresql/postgresql.conf` — the tuned config. It is a full Postgres 14 default file with only three settings changed: `listen_addresses='*'`, `max_connections=200`, `maintenance_work_mem=64MB`.
+- **Health check:** `pg_isready -U postgres -h 127.0.0.1`, interval 1m, timeout 5s, 5 retries; probed every 2s during a 2m `start_period` so `migrate-db` (which waits for `service_healthy`) isn't held for a full minute on first boot. It probes over TCP on purpose: on first boot the image's init runs a temporary server that answers on the unix socket only, and a socket probe would report healthy before the real server listens. Same in both compose files.
 - **Environment:** `POSTGRES_DB=postgres`, `POSTGRES_USER=postgres`, `POSTGRES_PASSWORD` (from `PG_SU_PASSWORD`), `PG_WRITER_PASSWORD`, `PG_READER_PASSWORD`
-- **Health check:** `pg_isready -U postgres`, interval 1m, timeout 5s, 5 retries
 - **Shared memory:** 256 MB (`shm_size`)
 - **Stop behavior:** SIGINT with 1-minute grace period
 - **Restart:** `unless-stopped`
@@ -98,9 +100,10 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Command:** `node /dist/mediasoup.js`
 - **Ports:**
   - `${EXTERNAL_LISTEN_IP}:4443:4443/tcp` — HTTPS signaling
-  - `${EXTERNAL_LISTEN_IP}:40000-40099:40000-40099/udp` — RTP media transport (100 UDP ports)
+  - `${EXTERNAL_LISTEN_IP}:40000-40099:40000-40099/udp` — RTP media transport (100 UDP ports). mediasoup also listens on TCP `40000+n` (ICE-TCP fallback, see [docs/realtime](../realtime/README.md#mediasoup-configuration)); the dev stack does not publish that, the self-host stack does.
 - **Volumes:** `./nginx/certs:/dist/mediasoup/certs` — SSL certificates for DTLS (uses `nginx_certs/server-complete.pem` + `key.pem`)
 - **Key environment variables:** `DB_TYPE=mediasoup`, `PG_PASSWORD` (from `PG_MEDIASOUP_PASSWORD`), `MEDIASOUP_ANNOUNCED_IP`, `DOMAIN`, `DEBUG=mediasoup*`, `INTERACTIVE=false`, `MEDIASOUP_DISABLE_LIBURING`, `LOCAL_CERTIFICATE_IP`
+- **Depends on:** `migrate-db` with `condition: service_completed_successfully` — the `mediasoup` DB role is created by a migration (`1689160339881-addMediasoupRole`), so on a fresh database an earlier start fails with `password authentication failed for user "mediasoup"`. Same in the self-host stack.
 - **Restart:** `"no"` — does not auto-restart in the dev stack.
 
 #### `onchain`
@@ -114,8 +117,8 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Image:** `cryptogram/backend`
 - **Purpose:** Database migration runner. Executes on startup to apply pending schema migrations (and provisions the mediasoup DB role).
 - **Command:** `node /dist/migrateDb.js`
-- **Depends on:** `db`
-- **Restart policy:** on failure, max 2 attempts, 2-second delay, 60-second window. Does not run persistently.
+- **Depends on:** `db` with `condition: service_healthy` — `migrateDb.js` does not retry its connection, and on a fresh volume postgres initializes for several seconds.
+- **Restart policy:** `deploy.restart_policy` on failure, max 2 attempts (Compose v2 maps it to the container's `on-failure:2`; the 2-second delay and 60-second window are Swarm-only). Does not run persistently. `mediasoup` waits for it to complete successfully.
 - **Key environment variables:** `PG_SU_PASSWORD`, `PG_SU_NAME=postgres`, `PG_MEDIASOUP_PASSWORD`, `REDIS_PASSWORD`, `S3_SECRET`, `DEPLOYMENT`, `BASE_URL`
 
 #### `seaweed` (SeaweedFS)
@@ -157,7 +160,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 #### `cg-builder`
 - **Image:** `commonground/node` (built from `docker/node/`)
 - **Purpose:** Build container. Not a running service — invoked via `docker compose run` to execute build commands (yarn install, type-check/lint/`vite build`, backend `tsc` compile, contract deployment). Mounts the entire project directory.
-- **User:** `${BUILDER_UID}:${BUILDER_GID}` (matches host user to avoid permission issues)
+- **User:** `${BUILDER_UID}:${BUILDER_GID}` (matches host user to avoid permission issues). The image (`docker/node/Dockerfile`) creates a `cg_env` group/user only for ids the `node:24.18-bookworm` base doesn't already have, so `1000` (the base's `node` user), `0` (root — e.g. a self-host operator building as root) and ids that collide with Debian system groups all build.
 - **Volumes:** `../:/cg`, `builder-cache:/builder-cache` (persistent yarn cache)
 - **Default command:** `echo "Not running interactive, exiting..."` (always invoked with explicit commands)
 
@@ -538,7 +541,7 @@ Per `AGENTS.md`, `docker/.env` is tracked in the repo **as a placeholder templat
 | `DEPLOYMENT` | `dev` \| `staging` \| `prod`. Controls feature flags, chain config, CSP, session cookie names. |
 | `BASE_URL` | Base URL of the application (absolute URLs in emails/redirects). |
 | `S3_SECRET` | Secret key for the SeaweedFS S3 API / presigned-URL signing. |
-| `BUILDER_UID` / `BUILDER_GID` | Host UID/GID for the builder container (avoids mounted-volume permission issues). |
+| `BUILDER_UID` / `BUILDER_GID` | Host UID/GID for the builder container (avoids mounted-volume permission issues). `0` (root) is accepted. |
 | `RECALCULATE_BALANCES_AND_ROLES` | If `true`, recomputes all token balances/roles on `onchain` startup. |
 | `MEDIASOUP_DISABLE_LIBURING` | Disables io_uring in mediasoup (workaround for some kernels/containers). |
 | `LOCAL_CERTIFICATE_IP` | IP baked into self-signed certs. Empty = no certs generated; set a LAN IP for multi-device testing. |
@@ -648,7 +651,7 @@ This profile runs the **entire stack on one server** with real production semant
 ### How it differs from the dev stack
 
 - **Distinct Compose project name** (`name: cg-selfhost`), so its containers and volumes never collide with the dev stack even in the same directory.
-- **Caddy** (`caddy:2-alpine`) fronts everything and obtains/renews **Let's Encrypt** certificates automatically for the app domain, the CG ID domain, and mediasoup call signalling (port 4443).
+- **Caddy** (`caddy:2-alpine`) fronts everything and obtains/renews **Let's Encrypt** certificates automatically for the app domain, the CG ID domain, and mediasoup call signalling (port 4443) — or, with `CG_TLS_MODE=internal`, issues all three from its own local CA (LAN/test instances without public DNS).
 - **nginx** is built from `Dockerfile_selfhost` (real domains, parameterized CSP, instance-config injection) instead of the dev image.
 - **`DEPLOYMENT=prod`** on any domain — full production behaviour without hardcoding `app.cg`.
 - **No `hardhat` dev chain, no test-contract deployment.**
@@ -660,20 +663,22 @@ This profile runs the **entire stack on one server** with real production semant
 
 ### Operation scripts
 
-- **`docker/selfhost/init.sh <domain> <acme-email> [id-domain] [public-ip]`** — one-time bootstrap. Idempotent (never overwrites existing files). It:
-  - Auto-detects the public IP (via ipify) if not supplied.
+- **`docker/selfhost/init.sh [--tls-internal] <domain> <acme-email> [id-domain] [public-ip]`** — one-time bootstrap. Idempotent (never overwrites existing files). It:
+  - Auto-detects the public IP (via ipify) if not supplied; a supplied IP (e.g. a LAN address) is used as-is.
+  - `--tls-internal` writes `CG_TLS_MODE=internal` instead of `acme`, accepts `-` for the then-unused ACME email, and requires the IP argument.
   - Generates `docker/.env.selfhost` with fresh random secrets (`openssl rand`) — all DB/Redis/S3 credentials, resource-tuning defaults sized for 16 GB, bot limits, and a fully-commented set of optional-integration keys. Written `chmod 600`.
   - Generates `docker/s3_config/s3.selfhost.json` with an S3 secret matching the generated `S3_SECRET` (`chmod 600`).
-  - Generates a self-signed cert in `docker/selfhost/certs/` for the internal caddy→mediasoup hop only (clients only ever see the Let's Encrypt cert).
+  - Generates a self-signed cert in `docker/selfhost/certs/` for the internal caddy→mediasoup hop only (clients only ever see Caddy's cert).
   - The generated `.env.selfhost` prefills the RPC endpoints with **free public JSON-RPC URLs** and `CG_ACTIVE_CHAINS=eth,arbitrum,xdai,base,matic,lukso`, so token-gating works out of the box.
 - **`docker/selfhost/selfhost.sh <cmd>`** — build/operate wrapper. Requires `.env.selfhost`; runs Compose with `--env-file .env.selfhost -f docker-compose.selfhost.yml`. Commands: `build`, `up`, `down`, `logs [service]`, `ps`, `stats`, `compose <args>`, `update` (git pull + rebuild + restart). It sets `COMPOSE_PROFILES` from the `CG_ENABLE_CALLS` / `CG_ENABLE_BLOCKCHAIN` switches and runs `up`/`down`/`update` with `--remove-orphans`, so a service whose switch was flipped off is actually removed. The `build` command mirrors `build.sh` (same type-check/lint/build/check chain, same `NODE_OPTIONS=--max-old-space-size=4096`) and builds the nginx image from `Dockerfile_selfhost`. Sourcemaps ship here too — see [Frontend build steps](#frontend-build-steps).
 
 ### Caddy (`docker/selfhost/Caddyfile`)
 
-Env-driven (`CG_DOMAIN`, `CG_ID_DOMAIN`, `CG_ACME_EMAIL`):
+Env-driven (`CG_DOMAIN`, `CG_ID_DOMAIN`, `CG_ACME_EMAIL`, `CG_TLS_MODE`):
+- The global options block does `import tls_mode_{$CG_TLS_MODE:acme}`: snippet `tls_mode_acme` sets `email {$CG_ACME_EMAIL}` (Let's Encrypt — the adapted JSON is identical to the pre-switch Caddyfile), `tls_mode_internal` sets `local_certs` + `skip_install_trust` (every site from Caddy's local CA; root in the `caddy-data` volume under `/data/caddy/pki/authorities/local/`). Any other value fails at startup. Compose passes `CG_TLS_MODE=${CG_TLS_MODE:-acme}`, so an `.env.selfhost` without the key stays on ACME.
 - `{$CG_DOMAIN}` and `{$CG_ID_DOMAIN}` → `reverse_proxy nginx:80` (zstd/gzip).
 - `{$CG_DOMAIN}:4443` → `reverse_proxy https://mediasoup:4443` with `tls_insecure_skip_verify` (the internal hop trusts mediasoup's self-signed cert).
-- Ports published: `80`, `443` (tcp+udp, HTTP/3), `4443` (tcp). WebRTC media UDP `40000–40099` is published directly by the mediasoup container.
+- Ports published: `80`, `443` (tcp+udp, HTTP/3), `4443` (tcp). WebRTC media `40000–40099` (UDP and TCP) is published directly by the mediasoup container.
 
 ### Instance identity injection
 
@@ -706,4 +711,4 @@ Off by default. To enable, deploy your own non-custodial `CgStaking` contract (`
 
 ### Backups & firewall
 
-State lives in two named volumes: `pgdata` (database) and `seaweedfs-data` (uploaded media). Redis is intentionally unpersisted (sessions/ephemeral only). Ports to open: `80/tcp` (ACME + HTTPS redirect), `443/tcp+udp` (app + CG ID, HTTP/3), `4443/tcp` (call signalling), `40000–40099/udp` (WebRTC media).
+State lives in two named volumes: `pgdata` (database) and `seaweedfs-data` (uploaded media). Redis is intentionally unpersisted (sessions/ephemeral only). Ports to open: `80/tcp` (ACME + HTTPS redirect), `443/tcp+udp` (app + CG ID, HTTP/3), `4443/tcp` (call signalling), `40000–40099/udp+tcp` (WebRTC media; TCP is the fallback for UDP-blocking client networks).

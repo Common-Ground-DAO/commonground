@@ -1,9 +1,29 @@
 # TLS terminator for self-hosted Common Ground.
-# Caddy obtains and renews Let's Encrypt certificates automatically for
-# CG_DOMAIN and CG_ID_DOMAIN (both must point to this server in DNS).
+#
+# CG_TLS_MODE (from .env.selfhost) picks where the certificates come from:
+#   acme     (default) Caddy obtains and renews Let's Encrypt certificates
+#            for CG_DOMAIN and CG_ID_DOMAIN — both must point to this server
+#            in public DNS and port 80/443 must be reachable from the internet.
+#   internal Caddy issues every certificate from its own local CA (root in
+#            the caddy-data volume, /data/caddy/pki/authorities/local/). For
+#            local/LAN test instances without public DNS; browsers only
+#            accept it once that root is trusted — see SELFHOST.md.
+# Any other value fails at startup ("File to import not found").
+
+(tls_mode_acme) {
+	email {$CG_ACME_EMAIL}
+}
+
+(tls_mode_internal) {
+	# every site, including the :4443 call-signalling one, gets a cert from
+	# the local CA; don't try to install that root into the container's own
+	# trust store (pointless — the browsers that need it are elsewhere)
+	local_certs
+	skip_install_trust
+}
 
 {
-	email {$CG_ACME_EMAIL}
+	import tls_mode_{$CG_TLS_MODE:acme}
 }
 
 # main app
@@ -19,7 +39,7 @@
 }
 
 # mediasoup call signalling (wss). The internal hop uses mediasoup's
-# self-signed certificate; clients only ever see the Let's Encrypt one.
+# self-signed certificate; clients only ever see Caddy's certificate.
 {$CG_DOMAIN}:4443 {
 	reverse_proxy https://mediasoup:4443 {
 		transport http {

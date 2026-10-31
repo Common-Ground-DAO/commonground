@@ -9,7 +9,9 @@
 > 2026-10-31; image pins, Node 26 / trixie, Yarn 4.18.1, immutable installs and
 > verified binary downloads against commit 5f73578, 2026-10-31; email (SMTP
 > variables, `mailpit` dev service, selfhost `mail` relay and bounce receiver),
-> Redis cache roles and `MEDIASOUP_TRUST_PROXY` against commit e44dac1, 2026-10-31
+> Redis cache roles and `MEDIASOUP_TRUST_PROXY` against commit e44dac1, 2026-10-31;
+> PostgreSQL 18 (`db` image, volume layout, `postgresql.conf`, init roles, major
+> upgrades) against commit ff0da06, 2026-10-31
 
 # Common Ground Infrastructure Documentation
 
@@ -43,20 +45,24 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 ### Active Services
 
 #### `db` (PostgreSQL)
-- **Image:** `cryptogram/db` (custom build from `docker/db/`)
-- **Base image:** `postgres:14-alpine` line, exact tag + digest pinned in `docker/db/Dockerfile` (major upgrade to 18: roadmap item F3)
+- **Image:** `cryptogram/db:18` (custom build from `docker/db/`; the tag names the Postgres major, so a leftover 14 image — `cryptogram/db:latest` — is never started on the 18 mount path, where it would initialize an empty cluster in an anonymous volume)
+- **Base image:** `postgres:18-alpine` line, exact tag + digest pinned in `docker/db/Dockerfile`
 - **Purpose:** Primary relational database. Stores all application data: users, communities, messages, channels, contracts, etc.
 - **Port:** `127.0.0.1:5432:5432` (localhost only)
 - **Command:** `postgres -c config_file=/etc/postgresql/postgresql.conf`. This explicit `config_file` flag is required — without it Postgres ignores the mounted `postgresql.conf` and runs on image defaults (this was a real bug: the config was mounted but never loaded).
-- **Init script:** `docker/db/init.sh` runs on first startup via `docker-entrypoint-initdb.d`. Creates the `cryptogram` database plus the `writer` and `reader` login roles with passwords from `PG_WRITER_PASSWORD` / `PG_READER_PASSWORD`. Skips creation if the `cryptogram` database already exists. (The mediasoup DB role is provisioned separately by the migration runner, which receives `PG_MEDIASOUP_PASSWORD`.)
+- **Init script:** `docker/db/init.sh` runs on first startup via `docker-entrypoint-initdb.d` (only when the data directory is empty). Creates the `cryptogram` database plus the `writer`, `reader` and `mediasoup` login roles with passwords from `PG_WRITER_PASSWORD` / `PG_READER_PASSWORD` / `PG_MEDIASOUP_PASSWORD` (the `mediasoup` role only when that variable is set). It grants nothing — table privileges come from the migrations. Skips creation if the `cryptogram` database already exists. Since all application roles exist right after initialization, a fresh cluster can take a `pg_restore` of an existing database as well as the migration chain ([docs/database](../database/README.md#restoring-a-postgresql-14-database-into-18)); migration `1689160339881-addMediasoupRole` creates the `mediasoup` role only where it is still missing (`PG_MEDIASOUP_PASSWORD` empty at initialization). A SQL error in `init.sh` fails the first start (`ON_ERROR_STOP`); the cluster is then incomplete, so remove the volume before retrying.
 - **Volumes:**
-  - `pgdata:/var/lib/postgresql/data` — persistent database storage
-  - `./db/postgresql.conf:/etc/postgresql/postgresql.conf` — the tuned config. It is a full Postgres 14 default file with only three settings changed: `listen_addresses='*'`, `max_connections=200`, `maintenance_work_mem=64MB`.
+  - `pgdata:/var/lib/postgresql` — persistent database storage. Postgres 18 images keep the cluster in a major-version subdirectory: `PGDATA=/var/lib/postgresql/18/docker` (the image default, not overridden).
+  - `./db/postgresql.conf:/etc/postgresql/postgresql.conf` — the tuned config, a short file that lists only the settings that differ from the PostgreSQL 18 defaults (each with its reason): `listen_addresses='*'`, `max_connections=200`, `shared_buffers=1GB`, `effective_cache_size=4GB`, `work_mem=8MB`, `maintenance_work_mem=256MB`, `random_page_cost=1.1`, `jit=off`, `max_wal_size=2GB`, `log_lock_waits=on`. Sized for the 16 GB self-host reference machine. Because the file replaces the one `initdb` writes into the data directory, nothing from that one applies — until F3 this meant the PostgreSQL 14 setup ran with the compiled-in `shared_buffers` of **8 MB**. `TimeZone` (`GMT`) and `default_text_search_config` (`pg_catalog.simple`) stay at the compiled-in defaults, exactly as before. `listen_addresses='*'` covers only the container's own interfaces (loopback + the compose network); the dev stack publishes the port on the host's `127.0.0.1`, the self-host stack not at all, and the image's `pg_hba.conf` requires a SCRAM password for every login from outside the container (socket and loopback inside the container are `trust`).
 - **Health check:** `pg_isready -U postgres -h 127.0.0.1`, interval 1m, timeout 5s, 5 retries; probed every 2s during a 2m `start_period` so `migrate-db` (which waits for `service_healthy`) isn't held for a full minute on first boot. It probes over TCP on purpose: on first boot the image's init runs a temporary server that answers on the unix socket only, and a socket probe would report healthy before the real server listens. Same in both compose files.
-- **Environment:** `POSTGRES_DB=postgres`, `POSTGRES_USER=postgres`, `POSTGRES_PASSWORD` (from `PG_SU_PASSWORD`), `PG_WRITER_PASSWORD`, `PG_READER_PASSWORD`
+- **Environment:** `POSTGRES_DB=postgres`, `POSTGRES_USER=postgres`, `POSTGRES_PASSWORD` (from `PG_SU_PASSWORD`), `PG_WRITER_PASSWORD`, `PG_READER_PASSWORD`, `PG_MEDIASOUP_PASSWORD`
 - **Shared memory:** 256 MB (`shm_size`)
 - **Stop behavior:** SIGINT with 1-minute grace period
 - **Restart:** `unless-stopped`
+- **Postgres major upgrades:** a data volume written by another major version does not start. Until 2026-10-31 both stacks ran PostgreSQL 14 with the volume mounted at `/var/lib/postgresql/data`, so an existing `pgdata` volume holds a 14 cluster at its root. The 18 entrypoint finds it and exits without touching the old cluster (it only adds an empty `18/docker` directory), printing `Error: in 18+, these Docker images are configured to store database data in a format which is compatible with "pg_ctlcluster" … there appears to be PostgreSQL data in: /var/lib/postgresql`. The container restarts in a loop (`unless-stopped`), `migrate-db` and everything behind it never start, and `docker compose up` (`./run.sh up`, `./run.sh build_full`, `./selfhost/selfhost.sh up`) stops with `dependency failed to start: container <project>-db-1 is unhealthy`; `compose logs db` shows the error above. There is no automatic upgrade path:
+  - **Dev stack:** dev data is disposable — drop the volume and rebuild. Every checkout on a machine shares the volume `docker_pgdata` (compose project `docker`, see `docker/ensureEnv.sh`), so this resets the dev database of all of them: `./run.sh down && docker volume rm docker_pgdata && ./run.sh build_full`. `docker/.env` stays as it is; its passwords are applied to the new cluster. The old image can go afterwards: `docker rmi cryptogram/db:latest`.
+  - **Data you want to keep** (e.g. a self-host instance created before 2026-10-31): dump with the old version **before** updating, then restore into the fresh 18 cluster — the steps are in [docs/database](../database/README.md#restoring-a-postgresql-14-database-into-18) (`pg_dump -Fc` / `pg_restore`), and [SELFHOST.md](../../docker/SELFHOST.md#postgresql-18) has the self-host sequence.
+  - The next major upgrade (19+) will find this cluster under `18/docker` and refuse the same way; the layout leaves room for a `pg_upgrade --link` into a sibling directory then.
 
 #### `redis`
 - **Image:** `redis:6.2-alpine` line, exact tag + digest pinned in the compose files (replacement by Valkey: roadmap item F4)
@@ -111,7 +117,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
   - `${EXTERNAL_LISTEN_IP}:40000-40099:40000-40099/udp` — RTP media transport (100 UDP ports). mediasoup also listens on TCP `40000+n` (ICE-TCP fallback, see [docs/realtime](../realtime/README.md#mediasoup-configuration)); the dev stack does not publish that, the self-host stack does.
 - **Volumes:** `./nginx/certs:/dist/mediasoup/certs` — SSL certificates for DTLS (uses `nginx_certs/server-complete.pem` + `key.pem`)
 - **Key environment variables:** `DB_TYPE=mediasoup`, `PG_PASSWORD` (from `PG_MEDIASOUP_PASSWORD`), `MEDIASOUP_ANNOUNCED_IP`, `DOMAIN`, `DEBUG=mediasoup*`, `INTERACTIVE=false`, `MEDIASOUP_DISABLE_LIBURING`, `LOCAL_CERTIFICATE_IP`
-- **Depends on:** `migrate-db` with `condition: service_completed_successfully` — the `mediasoup` DB role is created by a migration (`1689160339881-addMediasoupRole`), so on a fresh database an earlier start fails with `password authentication failed for user "mediasoup"`. Same in the self-host stack.
+- **Depends on:** `migrate-db` with `condition: service_completed_successfully` — the tables and the `mediasoup` role's table privileges come from the migrations, and the role itself where `docker/db/init.sh` did not create it (`1689160339881-addMediasoupRole`), so an earlier start fails. Same in the self-host stack.
 - **Restart:** `"no"` — does not auto-restart in the dev stack.
 
 #### `onchain`
@@ -123,7 +129,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 
 #### `migrate-db`
 - **Image:** `cryptogram/backend`
-- **Purpose:** Database migration runner. Executes on startup to apply pending schema migrations (and provisions the mediasoup DB role).
+- **Purpose:** Database migration runner. Executes on startup to apply pending schema migrations (and creates the mediasoup DB role if `docker/db/init.sh` has not).
 - **Command:** `node /dist/migrateDb.js`
 - **Depends on:** `db` with `condition: service_healthy` — `migrateDb.js` does not retry its connection, and on a fresh volume postgres initializes for several seconds.
 - **Restart policy:** `deploy.restart_policy` on failure, max 2 attempts (Compose v2 maps it to the container's `on-failure:2`; the 2-second delay and 60-second window are Swarm-only). Does not run persistently. `mediasoup` waits for it to complete successfully.
@@ -607,7 +613,7 @@ The same applies to **checking out any commit from before the change** (an old b
 
 `git stash` works too, but `git stash pop` after the pull ends in a modify/delete conflict on `docker/.env` (the file is back with your values, marked unmerged) and keeps the stash entry: run `git reset -q -- docker/.env && git stash drop` afterwards. A restored old `docker/.env` keeps the dev passwords that were public on GitHub — acceptable on localhost (`EXTERNAL_LISTEN_IP=127.0.0.1`); before switching to LAN mode, rotate them, which needs a fresh `pgdata` volume (`./run.sh down && docker volume rm docker_pgdata`, then delete `docker/.env` and `s3.json` and rerun).
 
-Password consumers on a fresh stack: `PG_SU_PASSWORD` initializes the postgres superuser (`POSTGRES_PASSWORD`, applied only when the `pgdata` volume is first created) and is the login of `migrate-db` and `cg-builder`; `PG_WRITER_PASSWORD`/`PG_READER_PASSWORD` become the `writer`/`reader` roles in `docker/db/init.sh` (same first-init caveat; no dev service connects as `reader`), `writer` is used by `api`, `wsapi`, `memberlist`, `job-runner` and `onchain`; `PG_MEDIASOUP_PASSWORD` is set on the `mediasoup` role by migration `1689160339881-addMediasoupRole` (run by `migrate-db`) and used by `mediasoup`; `REDIS_PASSWORD` is redis' `--requirepass` and every backend client's password; `S3_SECRET` must equal the `s3.json` secret key.
+Password consumers on a fresh stack: `PG_SU_PASSWORD` initializes the postgres superuser (`POSTGRES_PASSWORD`, applied only when the `pgdata` volume is first created) and is the login of `migrate-db` and `cg-builder`; `PG_WRITER_PASSWORD`/`PG_READER_PASSWORD` become the `writer`/`reader` roles in `docker/db/init.sh` (same first-init caveat; no dev service connects as `reader`), `writer` is used by `api`, `wsapi`, `memberlist`, `job-runner` and `onchain`; `PG_MEDIASOUP_PASSWORD` becomes the `mediasoup` role in `docker/db/init.sh` (same first-init caveat; migration `1689160339881-addMediasoupRole`, run by `migrate-db`, creates it only if missing) and is used by `mediasoup`; `REDIS_PASSWORD` is redis' `--requirepass` and every backend client's password; `S3_SECRET` must equal the `s3.json` secret key.
 
 The table describes purpose; `.env.example` has the defaults.
 

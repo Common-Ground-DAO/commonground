@@ -476,8 +476,10 @@ Defaults in `.env.selfhost` are sized for a 16 GB machine:
 - `SEAWEED_VOLUME_LIMIT_MB=1024` — SeaweedFS volume chunk size
 - mediasoup spawns one media worker per CPU core
 
-Postgres loads `docker/db/postgresql.conf`; tune `shared_buffers` etc. there
-for larger instances.
+Postgres loads `docker/db/postgresql.conf`, sized for the same 16 GB machine
+(`shared_buffers=1GB`, `effective_cache_size=4GB`, `work_mem=8MB`; every
+setting is commented there). Raise `shared_buffers` and
+`effective_cache_size` for larger instances, lower them for smaller ones.
 
 > **Upgrading from a release that ran three Redis instances** (`redis-sessions`,
 > `redis-socketio`, `redis-data`): they are replaced by a single `redis`
@@ -567,6 +569,59 @@ Spark accrues only for positions staked from wallets linked to a user account,
 never retroactively; the accrual job credits balances every few hours. Rate
 changes apply prospectively and never claw back credited Spark.
 
+## PostgreSQL 18
+
+The database runs PostgreSQL 18 (before 2026-10-31: 14). A PostgreSQL 14 volume
+does not start on 18: `up` fails with `dependency failed to start: container
+cg-selfhost-db-1 is unhealthy`, and `./selfhost/selfhost.sh logs db` shows
+`Error: in 18+, these Docker images are configured to store database data in a
+format …`. The old data stays untouched.
+
+**On an instance that still runs PostgreSQL 14, do not use
+`./selfhost/selfhost.sh update`** for the release that brings PostgreSQL 18: it
+pulls, builds and then fails at `up` as above. Follow these steps instead (they
+include the update); later updates work as usual. To keep the data, dump and
+restore:
+
+```bash
+# 1. before `git pull` (old compose file + old image), with nothing else running
+./selfhost/selfhost.sh down
+./selfhost/selfhost.sh compose up -d --wait db
+./selfhost/selfhost.sh compose exec -T db pg_dump -U postgres -Fc cryptogram > ~/cryptogram-pg14.pgc
+./selfhost/selfhost.sh down
+
+# 2. update, then check which roles the dump needs (uses the new cryptogram/db:18
+#    image); expected: postgres, writer, reader, mediasoup — anything else, see
+#    docs/database/README.md before going on
+git pull && ./selfhost/selfhost.sh build
+docker run --rm -i cryptogram/db:18 pg_restore --schema-only -f - < ~/cryptogram-pg14.pgc \
+  | grep -E '^(ALTER .*OWNER TO|GRANT|REVOKE)' | grep -oE '(TO|FROM) [^;]+' | sort -u
+
+# 3. replace the volume (from here on the dump is the only copy); the fresh
+#    cluster gets all roles. initdb logs "WARNING: no usable system locales were
+#    found" — benign on Alpine/musl.
+docker volume rm cg-selfhost_pgdata
+./selfhost/selfhost.sh compose up -d --wait db
+
+# 4. restore (compose cp needs an absolute source path), refresh planner
+#    statistics, start; migrate-db applies newer migrations
+./selfhost/selfhost.sh compose cp "$HOME/cryptogram-pg14.pgc" db:/tmp/cryptogram.pgc
+./selfhost/selfhost.sh compose exec db pg_restore -U postgres -d cryptogram --exit-on-error -j 4 /tmp/cryptogram.pgc
+./selfhost/selfhost.sh compose exec db rm /tmp/cryptogram.pgc
+./selfhost/selfhost.sh compose exec db vacuumdb -U postgres -d cryptogram --analyze-in-stages
+./selfhost/selfhost.sh up
+```
+
+Already updated? Take step 1's dump with a throwaway PostgreSQL 14 container on
+the volume (after `down`): `docker run -d --name pg14-dump -v
+cg-selfhost_pgdata:/var/lib/postgresql/data
+postgres:14.23-alpine@sha256:f1341c01408dc7278e9d365ed4f860cd3f87dd16b4464ac326fc0f422083a579`,
+wait for `docker exec pg14-dump pg_isready`, then `docker exec pg14-dump
+pg_dump -U postgres -Fc cryptogram > ~/cryptogram-pg14.pgc` and
+`docker rm -f pg14-dump`. Keep the dump until the instance runs normally; if
+`pg_restore` stops, see `docs/database/README.md` ("Restoring a PostgreSQL 14
+database into 18").
+
 ## Backups
 
 All state lives in two named Docker volumes:
@@ -581,7 +636,7 @@ DKIM key and the outgoing mail queue. Back up at least the key
 Example database backup:
 
 ```bash
-./selfhost/selfhost.sh compose exec db pg_dump -U postgres cryptogram | gzip > backup.sql.gz
+./selfhost/selfhost.sh compose exec -T db pg_dump -U postgres cryptogram | gzip > backup.sql.gz
 ```
 
 For the media volume the blessed baseline is **stop → snapshot → start**:

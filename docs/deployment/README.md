@@ -9,7 +9,8 @@
 > 69999fa20 (chore/env-template), 2026-10-31; digest-pinned images, Node 26 /
 > trixie builder and Yarn 4.18.1 against commit 5f73578, 2026-10-31; email
 > (SMTP, `mail` relay profile, `mail-dns`, bounce receiver, §3.9) and
-> `MEDIASOUP_TRUST_PROXY` against commit e44dac1, 2026-10-31
+> `MEDIASOUP_TRUST_PROXY` against commit e44dac1, 2026-10-31; PostgreSQL 18
+> (`db` row, §3.7 note, §5) against commit ff0da06, 2026-10-31
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -226,7 +227,7 @@ which sits on two networks of its own: `mail-relay` (`internal: true`; only
 |---|---|---|
 | `caddy` | `caddy:2-alpine` line (exact tag + digest in the compose file) | TLS terminator; publishes `80`, `443` (tcp+udp), `4443`; obtains/renews Let's Encrypt certs, or issues them from its local CA (`CG_TLS_MODE=internal`) |
 | `nginx` | `cryptogram/nginx-selfhost` (built from `Dockerfile_selfhost`) | static frontend + reverse proxy to API/wsapi/S3; injects instance config; sets CSP |
-| `db` | `cryptogram/db` (Postgres) | primary database; loads tuned `postgresql.conf`; healthcheck; `shm_size 256m` |
+| `db` | `cryptogram/db:18` (PostgreSQL 18, `postgres:18-alpine` line; exact tag + digest in `docker/db/Dockerfile`) | primary database; `pgdata` mounted at `/var/lib/postgresql` (cluster in `18/docker`); init script creates the database and the `writer`/`reader`/`mediasoup` roles; loads tuned `postgresql.conf`; healthcheck; `shm_size 256m` |
 | `redis` | `redis:6.2-alpine` line (exact tag + digest in the compose file) | one instance for sessions, the Socket.IO adapter and app data; password-protected, `--save ""` (unpersisted), no eviction policy, `maxmemory` tuned |
 | `seaweed` | `chrislusf/seaweedfs` 4.x (exact tag + digest in the compose file) | SeaweedFS object storage — one all-in-one `weed server` (master + volume + filer + S3 gateway, aliased `s3.local`); only the S3 port 8333 is consumed by other services |
 | `migrate-db` | `cryptogram/backend` | one-shot DB migration (`migrateDb.js`); starts once `db` is healthy, `restart: on-failure:3` |
@@ -234,7 +235,7 @@ which sits on two networks of its own: `mail-relay` (`internal: true`; only
 | `wsapi` | `cryptogram/backend` | Socket.IO / real-time server (`wsapi.js`) |
 | `memberlist` | `cryptogram/backend` | member-list worker (`memberlist.js`) |
 | `job-runner` | `cryptogram/backend` | scheduled jobs incl. Spark accrual (`jobs.js`) |
-| `mediasoup` | `cryptogram/backend` | WebRTC media (`mediasoup.js`); publishes `40000-40099` over UDP **and** TCP (each worker's `WebRtcServer` listens on `40000+n` for both; TCP is the ICE fallback for UDP-blocking networks); uses the internal self-signed cert and `MEDIASOUP_ANNOUNCED_IP=CG_PUBLIC_IP`. Starts only after `migrate-db` completed successfully — its `mediasoup` DB role is created by a migration (`1689160339881-addMediasoupRole`). Compose profile `calls` — optional, see [3.8](#38-optional-services-calls-and-blockchain) |
+| `mediasoup` | `cryptogram/backend` | WebRTC media (`mediasoup.js`); publishes `40000-40099` over UDP **and** TCP (each worker's `WebRtcServer` listens on `40000+n` for both; TCP is the ICE fallback for UDP-blocking networks); uses the internal self-signed cert and `MEDIASOUP_ANNOUNCED_IP=CG_PUBLIC_IP`. Starts only after `migrate-db` completed successfully — the `mediasoup` DB role comes from `docker/db/init.sh`, but its table privileges come from the migrations. Compose profile `calls` — optional, see [3.8](#38-optional-services-calls-and-blockchain) |
 | `onchain` | `cryptogram/backend` | blockchain indexer / balance & role listener (`onchain.js`); receives all `QUIKNODE_*`/RPC and staking env. Compose profile `blockchain` — optional, see [3.8](#38-optional-services-calls-and-blockchain) |
 | `mail` | `foxcpp/maddy:0.9.6` (pinned by digest) | send-only SMTP relay: accepts the app's mail on `mail-relay` port 587, DKIM-signs, queues and delivers to the recipients' MX. No published port. Compose profile `mail` — optional, see [3.9](#39-email-smtp-and-the-mail-relay) |
 | `cg-builder` | `commonground/node` | build-only helper container (not a runtime service) |
@@ -309,6 +310,15 @@ private key should be kept (a new key means publishing a new DKIM record; the
 queued mail in it is short-lived). Redis is intentionally unpersisted (sessions
 and ephemeral data only). See `docker/SELFHOST.md` for an example `pg_dump`
 command.
+
+A `pgdata` volume from before 2026-10-31 holds a PostgreSQL 14 cluster, which
+the 18 image refuses to start (the `db` container restart-loops and `up` fails
+on the unhealthy dependency). Its data moves over by `pg_dump -Fc` with 14 and
+`pg_restore` into a fresh 18 volume — `docker/SELFHOST.md` ("PostgreSQL 18")
+has the sequence; there is no in-place upgrade. cg.box itself starts from a
+restore of the production dump into a fresh 18 cluster (roadmap G5). The
+commands, their pre-flight checks and what was and was not verified are in
+[docs/database](../database/README.md#restoring-a-postgresql-14-database-into-18).
 
 Since the 3-to-1 SeaweedFS consolidation, blobs and filer metadata live in the
 same `/data` tree, so a filesystem snapshot of the single `seaweedfs-data`
@@ -508,7 +518,11 @@ machine:
 - mediasoup spawns one media worker per CPU core (see
   [`docs/realtime/`](../realtime/)).
 
-Postgres tuning lives in `docker/db/postgresql.conf`. The reference guide
+Postgres tuning lives in `docker/db/postgresql.conf` (not in `.env.selfhost`),
+sized for the same 16 GB machine: `shared_buffers=1GB`,
+`effective_cache_size=4GB`, `work_mem=8MB`, `maintenance_work_mem=256MB`,
+`max_connections=200`, `jit=off` (full list and reasons in the file and in
+[docs/infrastructure §1](../infrastructure/README.md#db-postgresql)). The reference guide
 `docker/SELFHOST.md` reports the stack idling at well under 2 GB, with RAM mostly
 consumed under load (calls, many users, image processing) — treat this as an
 operator observation rather than a code-verified figure.

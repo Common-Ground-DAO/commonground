@@ -1,7 +1,8 @@
 # Database Documentation
 
 > Status: verified against commit a3ab0dcc4, 2026-08-01; `email_bounces` against commit
-> e44dac1, 2026-10-31
+> e44dac1, 2026-10-31; database roles and the PostgreSQL 18 server against commit
+> ff0da06, 2026-10-31
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -1318,20 +1319,134 @@ try {
 
 ### Database Roles
 
-Migrations grant table permissions to two PostgreSQL roles:
-- `writer`: Gets `ALL PRIVILEGES` on new tables
-- `reader`: Gets `SELECT` on new tables
+Four login roles exist in every cluster:
 
-These roles are referenced in migration files but the role creation itself is handled outside of TypeORM migrations (likely in Docker/infrastructure setup).
+| Role | Created by | Privileges | Used by |
+|---|---|---|---|
+| `postgres` | the image entrypoint (`POSTGRES_PASSWORD` = `PG_SU_PASSWORD`) | superuser, owns every object | `migrate-db`, `cg-builder` (migration tooling) |
+| `writer` | `docker/db/init.sh` (`PG_WRITER_PASSWORD`) | `ALL PRIVILEGES` on every table except `logging` (`INSERT` only); `USAGE, SELECT` on `migrations_id_seq` | api, wsapi, memberlist, job-runner, onchain |
+| `reader` | `docker/db/init.sh` (`PG_READER_PASSWORD`) | `SELECT` on every table except `logging` (`INSERT` only); `USAGE, SELECT` on `migrations_id_seq` | no service today |
+| `mediasoup` | `docker/db/init.sh` (`PG_MEDIASOUP_PASSWORD`); migration `1689160339881-addMediasoupRole` creates it only if it is missing (`PG_MEDIASOUP_PASSWORD` empty at initialization) | `SELECT` on seven tables, `INSERT`/`UPDATE` on `calls`, `callmembers`, `callservers` (`1689160339881`, `1689184137878`, `1689258457796`, `1690444603969`) | mediasoup |
 
-Additionally, trigram indexes (`pg_trgm`) are used for fuzzy/partial matching:
-- `idx_communities_title_gin_trgm` - Fuzzy search on community titles
-- `idx_user_accounts_displayName_gin_trgm` - Fuzzy search on display names
+`init.sh` runs only when the official image initializes an empty data directory.
+It creates the `cryptogram` database and the three application roles but grants
+nothing: every table privilege comes from the migrations, which run as `postgres`.
+Every migration that creates a new table must therefore grant `writer` and
+`reader` (and `mediasoup` where the call server needs it).
 
-### Database Roles
+Because the roles exist right after initialization, a fresh cluster can take
+either the full migration chain or a `pg_restore` of an existing database whose
+ACLs name these roles (see [below](#restoring-a-postgresql-14-database-into-18)).
 
-The PostgreSQL database uses two application-level roles with different privilege levels:
-- **`writer`**: Full CRUD access (`GRANT ALL PRIVILEGES ON ALL TABLES`)
-- **`reader`**: Read-only access (`GRANT SELECT ON ALL TABLES`)
+On PostgreSQL 18 the `writer` grant `ALL PRIVILEGES` also includes `MAINTAIN`
+(new in 17: `VACUUM`, `ANALYZE`, `REINDEX`, `REFRESH MATERIALIZED VIEW`, `LOCK
+TABLE` on those tables). Since PostgreSQL 15, `PUBLIC` no longer has `CREATE` on
+schema `public`; no application role needs it — the app runs no DDL outside
+migrations.
 
-Every migration that creates a new table must grant appropriate permissions to both roles.
+### PostgreSQL server
+
+PostgreSQL **18** (`postgres:18-alpine` line; exact tag + digest pinned in
+`docker/db/Dockerfile`), configured by `docker/db/postgresql.conf` — see
+[docs/infrastructure §1](../infrastructure/README.md#db-postgresql) for the image,
+the volume layout and major upgrades. Database `cryptogram`: `UTF8`, libc locale
+`en_US.utf8` — on Alpine that is musl, whose collation is plain code-point order
+(`A B Z _x a b e é`), not the linguistic order of glibc's `en_US.utf8`. Fresh 18
+clusters have data checksums on (the 18 `initdb` default).
+
+The migration chain produces the same schema on 18 as on 14 (same tables,
+indexes, triggers, role privileges and extensions; TypeORM's `schema:log`
+reports the same statements on both). TypeORM 0.3.31 and node-postgres 8.22
+(`srv/yarn.lock`) need no changes. The remaining `pg_dump --schema-only`
+differences are version noise:
+
+- 18 records `NOT NULL` as named constraints; columns created under an older
+  name keep the old constraint name (e.g. `CONSTRAINT areas_name_not_null` on
+  `areas.title`). A database restored from a dump gets default names instead.
+  Nothing in the app or in TypeORM refers to these names.
+- `writer` grants show as `GRANT ALL` (includes `MAINTAIN`, see above).
+- Schema `public` is owned by `pg_database_owner` with `USAGE` for `PUBLIC`
+  (14: owner `postgres`, `CREATE` for `PUBLIC`).
+- `pgcrypto` is at extension version 1.4 (14: 1.3; adds `fips_mode()`).
+
+#### Restoring a PostgreSQL 14 database into 18
+
+This is the cg.box import path (roadmap G5). What has been tried: a 14.23
+database **built by this repository's own migrations** (three migrations
+behind, synthetic rows, all objects owned by `postgres`, created by the
+Alpine-based `docker/db` image) restored cleanly into a fresh 18 cluster with
+the commands below; row counts matched table by table, `migrate-db` then
+applied the missing migrations, and the result equals a freshly migrated 18
+schema except for the `NOT NULL` constraint names above. A real production
+dump has not been restored yet.
+
+TODO(verify) against the production database before move day:
+
+- server version and platform: `SELECT version()` (`-musl` = Alpine like ours,
+  `-gnu` = glibc);
+- object owners and roles: the pre-flight below; production may own its
+  objects as `cryptoadmin`, the code default when `PG_SU_NAME` is unset
+  (`srv/util/datasource.ts:20`);
+- extensions: `SELECT extname, extversion FROM pg_extension` (expected
+  `plpgsql`, `pgcrypto`, `pg_trgm`);
+- locale/collation: `SELECT datcollate, datctype FROM pg_database WHERE
+  datname = 'cryptogram'` (on the 18 side add `datlocprovider`, which 14
+  lacks; ours is `c` = libc). If production runs on glibc,
+  text sorts differently after the move (musl orders by code point, so
+  uppercase before lowercase and accents last): compare `ORDER BY` output of a
+  text column, e.g. `SELECT title FROM communities ORDER BY title LIMIT 200`,
+  on both sides. Indexes are rebuilt by the restore, so nothing is corrupted —
+  only the order users see can change.
+
+```bash
+# on the old server: custom-format dump with its own (14) pg_dump
+docker exec <old-db-container> pg_dump -U postgres -Fc cryptogram > ~/cryptogram-pg14.pgc
+
+# pre-flight, after `selfhost.sh build` (which creates the cryptogram/db:18
+# image): every role the dump assigns ownership or privileges to
+docker run --rm -i cryptogram/db:18 pg_restore --schema-only -f - < ~/cryptogram-pg14.pgc \
+  | grep -E '^(ALTER .*OWNER TO|GRANT|REVOKE)' | grep -oE '(TO|FROM) [^;]+' | sort -u
+#   expected: postgres, writer, reader, mediasoup. Roles that only
+#   own objects: restore with --no-owner (everything is then owned by postgres,
+#   as on a fresh install). Roles that receive grants: create them after the
+#   db is up and before pg_restore, e.g.
+#   ./selfhost/selfhost.sh compose exec db psql -U postgres -c 'CREATE ROLE cryptoadmin NOLOGIN'
+
+# new stack: start only the db; init.sh creates cryptogram, writer, reader, mediasoup
+# (initdb logs "WARNING: no usable system locales were found" — benign on
+# Alpine/musl, the cluster still uses en_US.utf8)
+./selfhost/selfhost.sh compose up -d --wait db
+# compose cp needs an absolute source path (selfhost.sh runs in docker/)
+./selfhost/selfhost.sh compose cp "$HOME/cryptogram-pg14.pgc" db:/tmp/cryptogram.pgc
+./selfhost/selfhost.sh compose exec db pg_restore -U postgres -d cryptogram --exit-on-error -j 4 /tmp/cryptogram.pgc
+./selfhost/selfhost.sh compose exec db rm /tmp/cryptogram.pgc
+./selfhost/selfhost.sh compose exec db vacuumdb -U postgres -d cryptogram --analyze-in-stages   # planner statistics right away
+./selfhost/selfhost.sh up      # migrate-db applies the migrations the dump lacks
+```
+
+For a self-host instance on PostgreSQL 14, `docker/SELFHOST.md`
+([PostgreSQL 18](../../docker/SELFHOST.md#postgresql-18)) has the same steps in
+order, including the update itself.
+
+**If `pg_restore` stops** (`--exit-on-error`; with `-j` there is no single
+transaction, so the database is left partially restored): fix the cause — e.g.
+`role "mediasoup" does not exist` when `PG_MEDIASOUP_PASSWORD` was empty at
+initialization — then recreate the empty database and run the restore again.
+Roles are cluster-wide and survive this:
+
+```bash
+./selfhost/selfhost.sh compose exec db psql -U postgres -c 'DROP DATABASE cryptogram' -c "CREATE DATABASE cryptogram ENCODING 'utf8'"
+```
+
+(Tried with the role-missing case: the second restore succeeded.)
+
+Notes:
+
+- The dump carries no roles and no passwords; the roles get the passwords from
+  the new `.env.selfhost`.
+- Dump with the **old server's own** `pg_dump` (14) as shown. A `pg_dump` 18 run
+  against the 14 server also restored cleanly in the test, but carries over
+  14's schema-`public` settings (owner `postgres`, `CREATE` for `PUBLIC`) and
+  the explicit pre-17 privilege lists instead of `GRANT ALL`.
+- `--no-owner` was not part of the test (the test dump's objects were all owned
+  by `postgres`).

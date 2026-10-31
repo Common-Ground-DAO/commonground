@@ -67,8 +67,11 @@ export async function fetchLinkPreview(url: string): Promise<InMemoryAttachment 
         return null;
       }
     } else {
-      // Add external preview attachment
-      const preview = await messageApi.getUrlPreview({ url });
+      // Add external preview attachment. A link typed without a scheme
+      // ("example.org") is fetched as https; `originalUrl` keeps what was typed,
+      // since parseLinks matches the preview against the editor text.
+      const fetchUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `https://${url}`;
+      const preview = await messageApi.getUrlPreview({ url: fetchUrl });
       if (preview.title) {
         return {
           type: 'linkPreview',

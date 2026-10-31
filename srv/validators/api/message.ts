@@ -139,7 +139,7 @@ const messageApi = {
   }).strict(true).required(),
 
   getUrlPreview: Joi.object({
-    url: Joi.string().required(),
+    url: Joi.string().max(2048).required(),
   }).strict(true).required(),
 
   joinArticleEventRoom: Joi.object<API.Messages.joinArticleEventRoom.Request>({

@@ -381,7 +381,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/loadUpdates` -- Load message updates since a timestamp
 - `/setReaction`, `/unsetReaction` -- Message reactions
 - `/setChannelLastRead` -- Mark channel as read
-- `/getUrlPreview` -- Get URL preview metadata (Open Graph scrape of a client-supplied URL). The route fetches the page itself with size/time/redirect limits and passes the HTML to `open-graph-scraper` as `ogs({ html })`. The preview image is stored through `saveImage()`, i.e. it passes the NSFW gate.
+- `/getUrlPreview` -- Get URL preview metadata (Open Graph scrape of a client-supplied URL, at most 2048 chars). Requires a session. Results are cached for 1 h in Redis under `urlpreview:<sha256(url)>`; cache misses are rate-limited per account (30/min). The page (≤ 1 MB, `text/*` or XHTML) and the `og:image` (≤ 8 MB, `image/*`) are fetched through `safeFetch` (see `srv/util/safeFetch.ts` below) and the HTML is passed to `open-graph-scraper` as `ogs({ html })`. Title and description are cut to 2000 chars; the returned `url` is the page's `og:url` only if that is an http(s) URL of at most 2048 chars, otherwise the requested URL. Previews larger than 8 KB serialized are returned but not cached. The preview image is stored through `saveImage()`, i.e. it passes the NSFW gate.
 - `/joinArticleEventRoom`, `/leaveArticleEventRoom` -- Join/leave article real-time rooms
 
 Every route that takes an access object (`communityId`, `chatId`, `callId`, or `articleId` with `articleCommunityId`/`articleUserId`, each together with `channelId`) runs `_checkAccessOrThrow`, which first checks that `channelId` is the channel of the named community, chat, call or article (`messageHelper.isChannelInAccessScope`) and then evaluates the permissions for that scope. An article access must name the article's community or user. Deleted community channels, chats and articles do not match; a user article that is not published yet only matches for its author. Message edits and reaction removal additionally filter on `access.channelId` in SQL.
@@ -1293,6 +1293,17 @@ Derives application URLs from `BASE_URL` env var or deployment settings:
 ### `srv/util/memberListHelpers.ts` -- Member List Binary Conversion
 
 Converts member lists between binary (UTF-16LE encoded UUIDs) and standard UUID string format. Used for efficient member list storage/transmission in Redis.
+
+### `srv/util/safeFetch.ts` -- Outbound fetch of user-supplied URLs
+
+`safeFetch(url, { maxBytes, timeoutMs?, maxRedirects?, acceptContentType?, headers? })` is the GET used for URLs that come from users or third-party data. It uses `node:http(s)` directly (no axios, no proxy environment, no keep-alive):
+
+- only `http:`/`https:`, no credentials in the URL;
+- host names are resolved by a custom `lookup` at connect time and rejected if *any* resolved address is not public unicast (private, loopback, link-local incl. metadata services, CGN, multicast, reserved and documentation ranges; IPv6 ULA, link-local, multicast, Teredo; v4-mapped, NAT64 and 6to4 addresses are judged by the embedded IPv4); IP literals are checked before connecting (`isPublicAddress`);
+- redirects (default 5) are followed manually and every hop is checked again; the bodies of redirect and error responses are not read, their connections are closed;
+- one deadline (default 10 s) covers all hops; the decoded body (gzip/deflate/br) is capped at `maxBytes`; `acceptContentType` gets the bare media type.
+
+Errors are `SafeFetchError` with a `code` (`INVALID_URL`, `BLOCKED_ADDRESS`, `TOO_MANY_REDIRECTS`, `TOO_LARGE`, `TIMEOUT`, `BAD_STATUS`, `BAD_CONTENT_TYPE`, `NETWORK`). `fetchRemoteImage(url, headers?)` wraps it for images handed to `saveImage()` (8 MiB, `image/*`). Users in `api`: `/getUrlPreview`, and the profile pictures fetched during LUKSO, Twitter and Farcaster sign-up/login. The onchain LSP3 image fetch (`srv/onchain/generic.ts`) and web-push delivery do not use it yet. Tests: `srv/tests/safeFetch.spec.ts`.
 
 ### `srv/util/axios.ts` -- Axios Instance
 

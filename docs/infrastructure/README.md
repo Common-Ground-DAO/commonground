@@ -63,7 +63,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Purpose:** one instance serves all three historical roles, with pairwise disjoint key prefixes:
   - user session store (`express-session` / `connect-redis`, `sess:`)
   - pub/sub adapter for Socket.IO (`v2:`), distributing real-time events across backend instances
-  - general-purpose cache (rate limiting, bot presence, captcha, user data)
+  - general-purpose cache (rate limiting, bot presence, captcha, user data, plugin replay keys, URL-preview cache)
 - Until 2026-08-01 this was three identically configured instances (`redis-sessions`, `redis-socketio`, `redis-data`); the split was mechanical, never load-bearing. `maxmemory` is now the shared budget for all of it.
 - **Backend connection:** `srv/redis/index.ts` resolves `process.env.REDIS_URL || 'redis://redis:6379'`, password from the Docker secret `redis_password` or `REDIS_PASSWORD`, and hands both to `srv/redis/client.ts` — the only file that calls `createClient`, and where `RESP: 2` is pinned. Neither compose file sets `REDIS_URL`; it exists for deployments that run Redis somewhere else.
 

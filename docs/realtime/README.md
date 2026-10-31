@@ -694,7 +694,7 @@ The system uses **one Redis instance** (`redis:6379`, override with `REDIS_URL`)
 |---|---|---|
 | `session` | `sess:` | Express session storage |
 | `socketIOPub`, `socketIOSub` | `v2:` (pub/sub only) | Socket.IO adapter pub/sub |
-| `data` | `ud:`, `us:`, `online-user-addresses`, `ratelimit:`, `bot-*`, `captcha:`, `pluginRequest:`, `tmp:` | User online status, session tracking, rate limiting, captcha |
+| `data` | `ud:`, `us:`, `online-user-addresses`, `ratelimit:`, `bot-*`, `captcha:`, `pluginRequest:`, `urlpreview:`, `tmp:` | User online status, session tracking, rate limiting, captcha, plugin replay keys, URL-preview cache |
 
 Until 2026-08-01 these were three identically configured instances (`redis-sessions`, `redis-socketio`, `redis-data`). Nothing is persisted (`--save ""`) and no eviction policy is set, so sessions and the captcha HMAC key are never evicted — but a Redis restart logs everyone out.
 

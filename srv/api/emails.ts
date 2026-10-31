@@ -289,7 +289,7 @@ class EmailUtils {
                 attachments = [{
                     filename: 'invite.ics',
                     content: ics,
-                    contentType: 'text/calendar; method=REQUEST',
+                    contentType: 'text/calendar; method=PUBLISH',
                     contentDisposition: 'attachment',
                 }];
             }

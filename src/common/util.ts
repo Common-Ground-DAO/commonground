@@ -8,6 +8,7 @@ import { UserPremiumFeatureName } from "./enums";
 import errors from "./errors";
 import dayjs from "dayjs";
 import slugify from "slugify";
+import { icsJoin, icsParam, icsText } from "./ics";
 
 // mirrored in srv/validators/common.ts, change in both places
 export const itemUrlRegex = /^[a-z0-9-]{3,50}$/i;
@@ -391,37 +392,38 @@ export function checkCommunityRequirements(
   return null;
 }
 
-const icsTemplate = `BEGIN:VCALENDAR
-PRODID:CommonGround
-VERSION:2.0
-BEGIN:VEVENT
-SUMMARY:$title
-DTSTART:$timeStart
-DTEND:$timeEnd
-DTSTAMP:$timeStart
-UID:$uid
-DESCRIPTION:$description
-LOCATION:$url
-ORGANIZER;CN=$communityName:mailto:events-no-reply@app.cg
-END:VEVENT
-END:VCALENDAR`;
-
 export function dayJsToUrlFormat(time: dayjs.Dayjs) {
   // return time.toISOString();
   return time.utc().format('YYYYMMDDTHHmmss[Z]');
 }
 
 export function generateEventICSFile(baseUrl: string, community: Pick<Models.Community.ListView, "title" | "id" | "url">, event: Models.Community.Event) {
-  const eventUrl = `${baseUrl}${getUrl({ type: 'event', community, event })}`;
+  const eventUrl = encodeURI(`${baseUrl}${getUrl({ type: 'event', community, event })}`);
+  const start = dayJsToUrlFormat(dayjs(event.scheduleDate));
+  const end = dayJsToUrlFormat(dayjs(event.scheduleDate).add(event.duration, 'minutes'));
+  const host = new URL(baseUrl).hostname;
 
-  return icsTemplate
-    .replaceAll('$title', event.title)
-    .replaceAll('$timeStart', dayJsToUrlFormat(dayjs(event.scheduleDate)))
-    .replaceAll('$timeEnd', dayJsToUrlFormat(dayjs(event.scheduleDate).add(event.duration, 'minutes')))
-    .replaceAll('$uid', event.id)
-    .replaceAll('$description', encodeURI(`To see more details: ${eventUrl}`))
-    .replaceAll('$url', encodeURI(eventUrl))
-    .replaceAll('$communityName', community.title);
+  // every value is escaped where it is put into its line, so no event or
+  // community title can add, end or alter a property. METHOD:PUBLISH: the
+  // file only informs (no attendee list to reply to); the UID is globally
+  // unique via the instance host; DTSTAMP is when this file was made.
+  return icsJoin([
+    'BEGIN:VCALENDAR',
+    'PRODID:CommonGround',
+    'VERSION:2.0',
+    'METHOD:PUBLISH',
+    'BEGIN:VEVENT',
+    `SUMMARY:${icsText(event.title)}`,
+    `DTSTART:${start}`,
+    `DTEND:${end}`,
+    `DTSTAMP:${dayJsToUrlFormat(dayjs())}`,
+    `UID:${icsText(`${event.id}@${host}`)}`,
+    `DESCRIPTION:${icsText(`To see more details: ${eventUrl}`)}`,
+    `LOCATION:${icsText(eventUrl)}`,
+    `ORGANIZER;CN=${icsParam(community.title)}:mailto:events-no-reply@${host}`,
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ]);
 }
 
 const letters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";

@@ -6,44 +6,54 @@
 
 ## Operational (time-critical)
 
-- [ ] **Staging verification of the mediasoup 3.14 → 3.23 jump is still outstanding**
-  (2026-08-03, confirmed by the maintainer). The call subsystem has no automated tests,
-  so the bump was validated by code review and local builds only. Needed: a real
-  two-peer call on staging — join, produce, consume, broadcast mode, promote/demote,
-  moderation mute, reconnect, leave — plus confirming that the ICE candidates carry the
-  expected announced address after the `listenIps` → `listenInfos` migration. Target is
-  the `mediasoup_staging` inventory driven by `pipelines/build-and-deploy-beta.yml`
-  (~:181-190, "Deploy mediasoup staging"). **Must happen before the next staging/prod
-  rollout of the new images.**
 - [ ] **Confirm the maintainer's selfhost/reference instances have run the SeaweedFS
   volume cutover** (2026-08-03, storage close-out) — the procedure and
   `docker/selfhost/migrate_seaweed_volumes.sh` are documented in `docker/SELFHOST.md`;
   what is untracked is whether the maintainer's own instances have executed it. Confirm
   once, then strike.
-- [ ] **Cut the hosted Swarm stack over to the single `redis` service** — the stack files
-  in the separate infrastructure repository still publish
-  `redis-sessions`/`redis-socketio`/`redis-data`, which images built after the core-slimming
-  Phase-5 merge (2026-08-02) no longer look for. Either merge the three services into one
-  named `redis` or set `REDIS_URL` on `api`, `wsapi`, `job-runner` and `onchain`,
-  **before or together with** the next staging/prod image rollout. Details:
-  [docs/deployment](../deployment/README.md) §6. Nothing in this repo can perform or verify
-  the change.
-- [ ] **Pin the SeaweedFS image in the hosted Swarm stack, and collapse its three seaweed
-  services into one** — the compose files in this repo pin `chrislusf/seaweedfs:4.40`
-  (2026-08-02; security floor 4.34), but the Swarm stack files in the separate
-  infrastructure repository pin independently and may still ride `:latest`. Same
-  coordination as the Redis item above.
-  - The **pin** is the urgent half and stands on its own.
-  - The **topology** half is not urgent: as of 2026-08-02 both compose files here run a
-    single `seaweed` service (`weed server`, one `seaweedfs-data` volume). The application
-    is agnostic — it only ever talks to `s3.local:8333` — so the Swarm stack can keep the
-    three-service topology indefinitely as long as it pins the same image. Mirroring the
-    collapse there is a footprint/backup win (one volume ⇒ atomic snapshots), not a
-    correctness requirement.
-  - When it is mirrored, the data merge is the same one selfhost does:
-    `docker/selfhost/migrate_seaweed_volumes.sh` documents the required layout (blobs at
-    the `/data` root, filer leveldb in `filerldb2/`), though a Swarm stack will need its
-    own equivalent of the volume copy.
+- [ ] **Manual browser pass for the 2026-08 dependency waves and the image filter is
+  unconfirmed** (2026-10-31, carried over when `ROADMAP_dependency-updates.md` and
+  `ROADMAP_IMAGE_FILTER.md` were dissolved). Everything below was verified headlessly
+  (API smokes, puppeteer suites, pixel/byte diffs) but needs a real browser/device,
+  and neither roadmap recorded it as done. Natural home: the browser passes of the
+  major-version waves in `ROADMAP_cg-box.md` (P2) on the test VM. Confirm once, then
+  strike:
+  - auth: passkey login with a pre-migration passkey, passkey creation via the CG ID
+    popup, a cross-device (hybrid) attempt; every wallet login (MetaMask,
+    WalletConnect, Coinbase, Lukso UP), the deprecated mnemonic login, Farcaster;
+    the ALTCHA v3 widget on an ALTCHA-configured instance (light/dark, phone solve
+    time — overlaps the captcha manual-pass item under "Optional");
+  - web3: PaySpark end to end on a real chain (network switch, "not enough funds"),
+    staking approve → stake → unstake incl. the balance refresh, token-rule editor;
+  - UI after React 19 / floating-ui / motion / dnd-kit / slate 0.126: general smoke,
+    hover toolbar + popovers, Giphy picker layout, multi-image lightbox while
+    resizing, bottom-sheet variants and swipe feel on a phone, drag & drop on touch
+    and with a screen reader, editor marks/links/images/mentions/paste/edit on
+    desktop **and** mobile (IME), composer paste-a-screenshot (exactly one
+    attachment) and spacing;
+  - PWA install/update cycle and push notifications;
+  - calls after the mediasoup 3.14 → 3.23 jump (validated so far by code review and
+    local builds only — the call subsystem has no automated tests): a real two-peer
+    call covering join, produce, consume, broadcast mode, promote/demote, moderation
+    mute, reconnect and leave, **plus** confirming that the ICE candidates carry the
+    expected announced address after the `listenIps` → `listenInfos` migration —
+    on the test VM and again on the cg.box server (new public IP);
+  - image filter client side across upload types (incl. Slate paste/drop and chat
+    attachments) and on a low-end device; a spot check of the server gate with
+    real material.
+
+## Superseded by ROADMAP_cg-box.md (hosted Swarm retired)
+
+The hosted `app.cg` Docker Swarm stack gets no further rollouts; the hosted instance
+moves to a single self-host server (`ROADMAP_cg-box.md`). These items only concerned
+that stack — confirm and delete:
+
+- Staging verification of the mediasoup 3.14 → 3.23 jump on the Swarm
+  `mediasoup_staging` inventory (the two-peer call checklist itself, incl. the
+  announced-address check, carries over to the test VM and cg.box — see the
+  manual-pass item above).
+- Cutting the Swarm stack over to the single `redis` service (or `REDIS_URL`).
+- Pinning SeaweedFS in the Swarm stack files and collapsing its three seaweed services.
 
 ## Maintainer decisions needed
 
@@ -59,18 +69,16 @@
   Every self-hosted instance therefore takes payments for CG wallets, regardless of the
   `CG_ENABLE_BLOCKCHAIN` toggle. Decide: hide the premium purchase flow on non-official
   instances entirely, make the beneficiaries configurable, or leave as is.
+- [ ] **Publish the reference client (`@commonground/client`) to npm, and under which
+  license?** (2026-08-06, reference-client workstream) — recommendation and
+  pre-publish checklist in `sdk/PACKAGING.md`: publish under a Common Ground npm
+  scope, consider a permissive license for the SDK package alone (needs the copyright
+  holders' decision; do not publish before it is settled), keep
+  `@commonground/conformance` private. Positioning it as the official bot SDK waits on
+  finding F-11 (below).
 
 ## Cleanup candidates (small, self-contained)
 
-- [ ] **`srv/healthcheck.ts`: wire up or delete the dead real healthcheck.**
-  `startHealthcheck` (sole consumer of `checkRedis`) has zero callers — every process uses
-  `fakeHealthcheck()`. Either wire the real one up or delete the dead path; in the same
-  move, split `fakeHealthcheck` into its own module (precedent:
-  `srv/mediasoup/mediasoupHealthcheck.ts`) so `memberlist` stops opening Redis connections
-  it never uses.
-- [ ] **Drop the `docker-compose` v1 fallback in `docker/selfhost/selfhost.sh`** — v1 is
-  EOL and ignores `COMPOSE_PROFILES`, so on v1 the `calls`/`blockchain` profiles would
-  silently start neither service.
 - [ ] **`contracts/contracts/TokenSale.sol` + its deploy script** — kept in Phase 2 as the
   record of the sale that ran; decide whether git history is record enough.
 - [ ] **`role_gated_files` + `GET /gated-videos/:filename` / `GET /gated-files/:filename`**
@@ -84,7 +92,8 @@
   that omits it fails the whole ceremony at the Joi layer; make it `.optional()`.
   (b) `src/cgid/home.tsx` calls `startRegistration`/`startAuthentication` outside
   its `try`, so a user cancel becomes an unhandled rejection (login.tsx and
-  createPasskey.tsx do it correctly inside).
+  createPasskey.tsx do it correctly inside). Relevant to `ROADMAP_cg-box.md` G4
+  (passkey ceremonies move to the main origin).
 - [ ] **The legacy MetaMask connect path lost its no-extension flow** (2026-08-04,
   dependency-update wave-3 review) — `signatureHelper.connectMetamask()` (reached
   from `WalletsEditor/WalletSelectModal`, i.e. "Add wallet → MetaMask") used to
@@ -120,11 +129,6 @@
   — nothing references it; `src/views/TokenSale/TokenSale.tsx:106` uses the `.webp`. It
   ships in every build. (`public/images/tokensale_social_preview.png` **is** used, by
   `srv/api/getRoutes.ts` — do not delete that one.) Belongs to the token-sale removal.
-- [ ] **`og:site_name` in `index.html` is hardcoded to `app.cg`** (2026-08-03) — every
-  self-hosted instance ships it in its social previews. Pre-existing, unrelated to the
-  Vite migration, but it sits two lines from the meta tags that migration touched.
-  (`index_cgid.html` says `CG ID`, which is domain-neutral and fine.) Either drop the
-  tag or have the two injection paths rewrite it like the other social meta.
 - [ ] **Prune what is left of the CG ID vhost's cross-origin allowances** (2026-08-03,
   Vite workstream) — `8f90fc2b4` removed the main-origin entries that the CRA
   `PUBLIC_URL` layout needed, but two allowances of the same vintage are still there:
@@ -134,15 +138,13 @@
   rule on the main vhost (`nginx.conf:110`, `nginx_selfhost.conf:77`), which exists for
   asset loads from the CG ID origin that are same-origin since the cutover. Both are
   widenings, not breakage. Needs the same built-image check the CSP prune had.
+  Natural point: the nginx → Caddy rewrite (`ROADMAP_cg-box.md` F5), which drops the
+  CG ID vhost on cg.box but keeps it for the gateway's `id.app.cg`.
 - [ ] **`docker/updateFrontend.sh` does not refresh `docker/backend/dist/index.html`**
   (2026-08-03) — after `./run.sh update_frontend` the API keeps serving the *previous*
   build's shell (pointing at hashed assets that no longer exist) on every deep-link/share
   route until `update_backend` runs. Pre-existing, not caused by the Vite cutover; either
   copy `build/index.html` there like `build.sh` does, or document the pairing.
-- [ ] **`srv/jest.config.js` only runs compiled `.js` tests** (2026-08-03, Node 24 audit)
-  — the `ts-jest` preset is configured, but `testRegex`/`moduleFileExtensions` match `.js`
-  only, so the backend test run finds nothing until a `tsc` pass has produced output.
-  Point it at the `.ts` sources.
 - [ ] **Narrow the blanket ESLint exclusion of `srv/**`** (2026-08-03, Node 24 /
   mediasoup workstream) — `eslint.config.mjs:51` excludes the entire backend;
   `srv/mediasoup/**` was cleaned up in the mediasoup 3.23 package and could be covered
@@ -167,6 +169,35 @@
   `src/components/molecules/CaptchaModal/CaptchaModal.tsx:59` fires
   `userApi.verifyCaptcha({ token })` without `await` or `.catch()`, so a rejection is
   silently swallowed; the reCAPTCHA path below it (`:68`) awaits it.
+- [ ] **Reference-client CI triggers point at a merged branch** (2026-10-31) —
+  `pipelines/reference-client-conformance.yml` still names `feat/reference-client` in
+  its push trigger and nightly schedule. Point it at `develop`; and since
+  `ROADMAP_cg-box.md` (P7) deletes the Azure pipelines, the OpenAPI drift check and
+  the conformance suite need a new home (GitHub Actions) before that, or they stop
+  running.
+- [ ] **Triage the open conformance findings** (2026-08-06, reference-client
+  workstream) — the "Recorded" section of `sdk/conformance/FINDINGS.md` lists
+  contract mismatches and documented behaviours the maintainer may want changed.
+  Most visible: **F-11**, a freshly created community bot gets no role and cannot
+  post (pinned by `r6-bot`; the test flips once fixed).
+- [ ] **Dead-code candidates found during the dependency waves** (2026-08-04):
+  `MessageDatabase.getMessages()` / `getLatestMessages()` in
+  `src/data/databases/messages.ts` (no callers — superseded by `chunkedDatabase`?),
+  `src/hooks/useUserAgent.ts` (no callers), and `src/reportWebVitals.ts` (called only
+  in dev, without a handler — inert). Verify and delete.
+- [ ] **`htmlToImage()` does not await `page.setViewport()`** (`srv/api/util.ts`,
+  2026-08-04, puppeteer 25 bump) — the screenshot can race the viewport change. Await
+  it; this may change rendered social-preview output, so compare before/after.
+- [ ] **`getUrlPreview`'s `if (metadataResult.error)` guard is unreachable**
+  (`srv/api/messages.ts`, 2026-08-04) — open-graph-scraper (v5 and v6) *rejects* on
+  failure instead of resolving with `error: true`, so failures surface as `UNKNOWN`.
+  Map them explicitly if the route should answer `INVALID_REQUEST`.
+- [ ] **`memberlist` overlaps queries on one `pg` client** (2026-08-04) — it logs
+  `DeprecationWarning: Calling client.query() when the client is already executing a
+  query … removed in pg@9.0`. Fix before any pg 9 bump.
+- [ ] **Replace the deprecated `React.ElementRef` / `MutableRefObject` aliases**
+  (2026-08-04, React 19 wave) — still working under `@types/react` 19, ~18 uses in
+  `src/`.
 
 ## Optional / nice-to-have
 
@@ -200,8 +231,8 @@
   CG ID mini-app pays for all 11 — it is most of the +63 KB the vendor grouping cost that
   entry. `resolve.dedupe: ['tslib']` is **not** a safe fix as it stands (tslib 1 and 2 are
   not interchangeable); the fix is dependency hygiene — a yarn resolution once the
-  `@walletconnect` v1 packages are gone (the wagmi 2 migration in
-  `ROADMAP_dependency-updates.md` wave 3 removes them; re-check then).
+  `@walletconnect` v1 packages are gone (the 2026-08 wagmi 2 migration removes them;
+  re-check then).
   **Re-checked after wave 3 (2026-08-04): 11 copies → 4** (1.14.1, 2.4.0, 2.7.0,
   2.8.1). But the premise above does not hold: the WalletConnect **v1 SDK** is
   indeed gone, while the tslib-1.14.1 pin comes from WalletConnect's own
@@ -210,16 +241,12 @@
   depends on. So a blanket tslib resolution is still unsafe; what is left is
   merging the three tslib-2 copies (2.4.0 / 2.7.0 / 2.8.1), which *is* safe and
   worth a resolution on its own.
-- [ ] **Immutable caching for hashed frontend assets in nginx — own PR** (2026-08-03).
-  `^/(fonts|icons|images|static|audio|downloads)/` is capped at
-  `max-age=86400, must-revalidate` in all three nginx configs, although everything under
-  `static/` carries a content hash in its name. Long-lived `immutable` caching for the
-  hashed subset would remove a daily revalidation round trip per asset.
 - [ ] **Hardhat → 2.29.0** (2026-08-03, Node 24 audit) — the installed 2.2x line
   hard-codes `SUPPORTED_NODE_VERSIONS = ["^18.0.0","^20.0.0"]` and prints a warning on
   Node 24 (it continues; the warning shows in every `build_full` contract deploy).
   2.29.0 silences it. Two files to keep in sync: `contracts/package.json` and
   `docker/hardhat/node/package.json`. Do **not** jump to Hardhat 3 as a side effect.
+  Folded into the in-major refresh of `ROADMAP_cg-box.md` (F6).
 - [ ] **A minimal two-peer mediasoup integration test** (2026-08-03, mediasoup 3.23
   workstream) — the call subsystem has zero tests, so the 3.14→3.23 jump was validated
   by hand. A join/produce/consume smoke test would let the next mediasoup bump not rely
@@ -240,8 +267,9 @@
   segmentation — e.g. a second network joined only by `nginx`, `api` and `job-runner`.
   Hardening nice-to-have, unchanged from the pre-consolidation topology.
 - [ ] **Wire `yarn test` into the build scripts once there is a suite worth gating on**
-  (2026-08-03). Vitest is set up (`vitest.config.ts`) with a single smoke test; gating the
-  build on that would be theatre. The hook-in point is the
+  (2026-08-03). Vitest is set up (`vitest.config.ts`); the suite is still a handful of
+  unit tests (mostly the image-filter client modules), so gating the build on it
+  would be theatre. The hook-in point is the
   `yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite` chain that
   `docker/build.sh`, `docker/updateFrontend.sh`, `docker/selfhost/selfhost.sh` and both
   legacy pipelines run.
@@ -250,37 +278,53 @@
 
 - **`wsapi`-in-`api` collapse** — explicitly deferred during core slimming (2026-08-01):
   real refactor, low payoff.
-- **Bundled mail server in the stack** — decided against (2026-08-02): extra maintenance,
-  and operators who want one can run their own. The email direction is
-  bring-your-own-SMTP; see the planned email workstream below.
 - **DMs with bots** — explicitly deferred in the bot-accounts workstream (2026-07,
   "deferred, do not start"): DMs need their own authorization, consent, event,
   abuse-prevention and UI design. Nothing in the bearer allowlist or the bot socket
   contract may accidentally enable them.
 
-## Upcoming workstreams (roadmap to be written)
+## Notes for the major-version waves (ROADMAP_cg-box.md)
 
-- **Email: provider-agnostic SMTP** — replace the hard-wired SendGrid client with a
-  generic SMTP transport (swap surface is `EmailUtils.sendEmail` in `srv/api/emails.ts`
-  plus init in `srv/serverconfig.ts`, see [docs/email-notifications](../email-notifications/README.md));
-  drop the Mailchimp audience sync (local subscription flag already exists). No bundled
-  MTA (see above).
-- **Express 5** — out of scope for the 2026-08 dependency updates. Forward note:
-  `srv/package.json` pins `resolutions: { "@types/express": "4",
-  "@types/express-serve-static-core": "4" }` because `@types/express-{session,ws,fileupload}`
-  depend on `@types/express@*` → 5.x, which hoists an incompatible `Request` type next
-  to the v4 one. Whoever picks up Express 5 drops both pins.
-- **react-router 7** — out of scope for the 2026-08 dependency updates. Forward note:
-  the root `package.json` carries a **security hold** `resolutions: { "react-router-dom":
-  "6.30.1" }` — 6.30.2–6.30.4 are vulnerable to GHSA-jjmj-jmhj-qwj2 (open redirect →
-  XSS) and the only fix is v7. Whoever picks up react-router 7 must drop that pin (and
-  the then-vestigial `history` direct dependency SuspenseRouter still imports).
-- **Vite 8 (Rolldown / Oxc)** — deliberately deferred at the Vite 7 bump (2026-08-03):
-  it swaps Rollup for Rolldown and esbuild for Oxc, a bundler swap that needs its own
-  baseline measurements against a chunking setup tuned under Rollup 4. Forward notes:
-  the last `@vitejs/plugin-react` supporting Vite 7 is **5.2.0** (6.x is Vite-8-only),
-  and the two chunking findings above (CG ID entry closure, 11 copies of `tslib`) are
-  worth revisiting under Rolldown, which changes the calculus for both.
+Forward notes from the 2026-08 dependency updates, for the P2 waves of
+`ROADMAP_cg-box.md`. The current pins and their reasons are documented in
+[docs/frontend](../frontend/README.md#dependency-pins-and-constraints) and
+[docs/backend](../backend/README.md#8-dependency-notes); this list is what each
+wave has to *change*.
+
+- **TypeScript 6 (M1)** — the root `tsconfig.json` still uses
+  `moduleResolution: "node"` (node10) and `baseUrl: "src"` (backing ~1945 bare
+  imports through `vite/baseUrlResolve.ts`); TS 6 deprecates both
+  (TODO(verify) against the TS 6 release notes). Moving to `"bundler"` also
+  unblocks `@hapi/tlds` 2 (ESM-only), which has to move in both workspaces at once
+  because of the `srv/common` symlink — re-check whether its broken `types` field
+  (points at `index.d.ts`, ships `index.d.mts`) has been fixed upstream. The target
+  floor is es2020 (viem 2 BigInt literals). `srv/` is on `Node16` resolution and
+  relies on `require(ESM)` for puppeteer 25.
+- **joi 18 (M1)** — joi runs in both workspaces (`src/common/validators.ts` is
+  shared), and `docs/api/openapi.json` is generated from the validators'
+  `describe()` output: regenerate with `sdk/tools/generate-openapi.sh` and review
+  the diff — any change there is a contract change for SDK and native clients.
+- **Express 5 (M2)** — drop the `@types/express` and
+  `@types/express-serve-static-core` `"4"` resolutions in `srv/package.json`.
+- **TypeORM 1.x (M2)** — re-check its `redis` peer (today it warns against
+  node-redis 6; inert, it is only for the unused query cache) and that a single
+  `reflect-metadata` copy (0.2.2) survives; `emitDecoratorMetadata` was verified
+  by entity-metadata registration (37 tables / 325 columns at the time).
+- **react-router 7 (M3)** — drop the `react-router-dom: "6.30.1"` security-hold
+  resolution (GHSA-jjmj-jmhj-qwj2), rewrite `SuspenseRouter` off the `history`
+  package and drop that direct dependency, and drop `@types/react-router-dom` (v5
+  types, see above).
+- **Vite 8 (M3)** — swaps Rollup for Rolldown and esbuild for Oxc: take a fresh
+  baseline of the `manualChunks` vendor groups, the `assertCgidEntryChunks` guard
+  and the pinned shared modules (`tslib`, `ua-parser-js`, Vite helpers), and
+  re-check the two chunking items above (CG ID entry closure, `tslib` copies).
+  `@vitejs/plugin-react` 5.2.0 is the last release for Vite 7; 6.x is Vite-8-only
+  (the root is still on `^4`). Both `resolve.alias` entries
+  (`altcha-widget-element`, `@tensorflow/tfjs`) and the service-worker nested
+  build/precache assertion must survive.
+- **Tailwind 4 (M4)** — `postcss.config.js` runs the v3 chain
+  (`tailwindcss/nesting` → `tailwindcss` → `autoprefixer`); v4 ships its own PostCSS
+  plugin and handles nesting/prefixing itself (TODO(verify) at pickup).
 
 ## Image filter: evaluate a hentai-capable server model
 
@@ -298,3 +342,14 @@ evaluation on real photos/artwork, check further candidates, then decide
 default swap vs. documented limitation. Local eval copy staged at
 `docker/api_data/nsfw-5class/` (untracked; test with
 `IMAGE_MODERATION_MODEL_PATH=/api_data/nsfw-5class ./run.sh compose up -d api`).
+
+## Image filter: threshold monitoring
+
+- [ ] **Watch the `imageFilter: rejected image` logs before touching the thresholds**
+  (2026-08-05, image-filter workstream, post-merge operations) — the server
+  threshold (`IMAGE_MODERATION_THRESHOLD`, default 0.8) and the browser warning
+  (which follows it via `imageFilterThreshold`) were set without production data.
+  Review rejection rates and false positives once real traffic exists (on cg.box)
+  before changing either. Same evidence decides whether classifying the source
+  instead of the stored crop needs revisiting (accepted as-is in the issue-#53
+  review; see [docs/backend](../backend/README.md#srvmoderationimagefilterts--nsfw-image-gate)).

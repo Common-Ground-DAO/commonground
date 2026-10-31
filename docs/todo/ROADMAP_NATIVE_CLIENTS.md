@@ -224,7 +224,7 @@ with Electron — it is server-side and does not compete for the same work.
 
 **Revised 2026-08-05: the headless reference client comes first.** Phase 2's
 conformance suite is pulled forward and expanded into its own workstream —
-[ROADMAP_REFERENCE_CLIENT.md](ROADMAP_REFERENCE_CLIENT.md) — which also
+the headless reference client in [`sdk/`](../../sdk/README.md), merged as PR #51 — which also
 delivers this roadmap's Phase 0 contract artifacts in executable form. The
 Electron shell is deliberately paused (no rush on desktop, maintainer
 2026-08-05); it will live in a separate `commonground-desktop` repository when

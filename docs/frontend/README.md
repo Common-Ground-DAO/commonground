@@ -1,7 +1,9 @@
 # Common Ground Frontend Documentation
 
 > Status: verified against commit 4a9754f8f, 2026-08-04; NSFW pre-check
-> section against the fix/image-filter-review-53 branch, 2026-08-15
+> section against the fix/image-filter-review-53 branch, 2026-08-15; wallet,
+> motion, drag & drop and toolchain notes plus "Dependency pins and
+> constraints" against commit 935232158, 2026-10-31
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -730,7 +732,7 @@ Custom features built on Slate:
 - **Formatted text**: Bold, italic, etc. via `HoveringToolbar` (floating toolbar on text selection).
 - **Embeds**: YouTube and other embeds via `FieldEmbed`.
 - **Attachments**: Image/file attachments via drag-and-drop (`react-dropzone`), `MediaPickerDropdown`, `AttachmentDropdown`.
-- **GIF support**: Giphy integration via `GiphyPicker`.
+- **GIF support**: Giphy integration via `GiphyPicker`. GIFs load straight from Giphy's CDN and are never stored server-side, so the NSFW gate cannot see them; `gf.search()`/`gf.trending()` therefore request `rating: 'g'` explicitly instead of relying on the API default.
 - **Emoji**: Emoji picker via `EmojiPickerTooltip`.
 - **Link previews**: Automatic URL preview generation via `LinkPreview` / `LinkPreviewSkeleton`.
 - Helper functions in `EditField.helpers.ts`: `convertToMessageBody`, `clearEditor`, `recalculateNodeTypes`, `findAndSetWordType`, etc.
@@ -842,6 +844,11 @@ Blockchain wallet integration:
 - Configured chains are derived from the active-chain set (`activeChains`), which can be narrowed by the runtime instance config for self-hosted deployments (§9).
 - RPC providers: on official instances an Alchemy provider with a public fallback; on self-hosted instances keyless public RPC endpoints (per chain id) with a public fallback.
 - Used for: wallet-based login (SIWE), token-gated roles, community tokens, and **staking** (`StakeTab` reads/writes the staking contract via wagmi hooks).
+- **The wallet list is spelled out** in `getDefaultConfig({ wallets })` (injected, Safe, Rainbow, Coinbase, MetaMask, WalletConnect — the set RainbowKit 1 offered). RainbowKit 2's default set differs (it drops Coinbase Wallet for Base Account and the generic injected entry); other extensions still surface via EIP-6963 discovery.
+- **The Lukso UP login signs through the raw EIP-1193 provider on purpose.** `UniversalProfileProvider` signs the SIWE message with `eth_sign`; viem's `signMessage` would send `personal_sign` instead, which that verification path rejects. Do not "modernise" it onto viem's wallet client. `signatureHelper` also talks to `window.ethereum` directly (its `eth_signTypedData_v4` method `metamaskSignData` is dead code, see `docs/todo/TODO.md`; `getFractalSignature` uses `personal_sign`).
+- **Transaction receipts:** viem 2 defaults `waitForTransactionReceipt` to a 180 s timeout (viem 1 waited forever), so every receipt wait (`UserOnchainProvider`, `StakeTab`, `PaySpark`) passes an explicit 30-minute timeout. Raw viem calls resolve reverted transactions instead of throwing, so `UserOnchainProvider` (and `StakeTab`) check `receipt.status`; wagmi's `useWaitForTransactionReceipt` throws on a revert, which is what `PaySpark`'s `isSuccess` relies on.
+- wagmi stays on **v2** because RainbowKit 2 targets wagmi 2. Two viem copies ship: WalletConnect's `@walletconnect/utils` exact-pins its own (it loads only with the lazily split WalletConnect connector), which cannot be collapsed without force-resolving an exact transitive pin. `ethers` is not a frontend dependency but still resolves transitively (v6, via `@farcaster/auth-kit`).
+- viem behaviour that differs from the former ethers 5 code: `parseUnits` rounds over-precise input instead of throwing (see `docs/todo/TODO.md` for the token-rule editor consequence); `formatUnits` drops a trailing `.0`; `mnemonicToAccount` (deprecated mnemonic login) accepts a mnemonic with a bad BIP-39 checksum where ethers rejected it (valid mnemonics derive byte-identically); viem 2 changed several chains' default public RPCs, i.e. the second leg of every `fallback`; and Lukso UP addresses come back in whatever casing the extension returns rather than EIP-55 (backend lookups are `LOWER()`-normalised, so this is cosmetic).
 
 ### Farcaster AuthKit
 
@@ -872,8 +879,35 @@ Indirectly it also drives `react-modal-sheet` (v5 peer-depends on `motion >= 11`
 which is the bottom sheet behind `BottomSliderModal` — see `ScreenAwareModal` /
 `ScreenAwarePopover` for how mobile falls back to it.
 
+Two `react-modal-sheet` props in `BottomSliderModal` are deliberate:
+`avoidKeyboard={false}` (v5's own keyboard avoidance would double-compensate
+against `WindowSizeProvider`'s `--visualHeight` mechanism) and
+`dragVelocityThreshold={500}` (v5 raised the flick-to-dismiss threshold to
+1200 px/s; 500 keeps the earlier swipe-to-close feel).
+
 `AnimatedContainerVertical` and `AnimatedTabPage` are **not** motion-based despite
 their names — they animate with a plain CSS transition and CSS keyframes respectively.
+
+### dnd-kit (Drag & Drop)
+
+`@dnd-kit/core` + `sortable` + `utilities` replaced the dead
+`react-beautiful-dnd` in 2026-08 (React 19 blocker). Every use is a sortable
+list — `ChannelManagement` (the nested area → channel tree), `GroupsMenu`,
+`MultiEntryField`, `OwnCommunitiesBrowser` — which is why dnd-kit's sortable
+preset was chosen over Atlassian's pragmatic-drag-and-drop.
+
+- `src/hooks/useDragSensors.ts` reproduces rbd's ergonomics for all sites:
+  mouse drags start after 5 px, touch after a 120 ms long press (5 px
+  tolerance, so a swipe still scrolls), plus a keyboard sensor
+  (Space/arrows/Esc). Sensor options are hoisted constants — inline objects
+  would defeat `useSensor` memoisation.
+- Collision detection follows rbd's list-first model (container by pointer →
+  row by pointer → row by dragged-rect overlap → container); a drop outside
+  every target cancels, and drops in the gaps between rows land at the right
+  slot. Screen-reader announcements are positional, fed by per-item
+  `data.label`.
+- Known deviation from rbd: there is no `DragOverlay`, so the dragged row is
+  transformed in place and can be clipped by a scrolling ancestor.
 
 ### Other Notable Libraries
 
@@ -885,7 +919,9 @@ their names — they animate with a plain CSS transition and CSS keyframes respe
 | `react-router-dom` + `history` | Client-side routing |
 | `dayjs` | Date formatting/manipulation (with plugins: isToday, isYesterday, isTomorrow, advancedFormat, utc, timezone) |
 | `lodash` | Utility functions (debounce, isEqual, etc.) |
-| `react-dropzone` | Drag-and-drop file upload (`noPaste` is set — `EditField` has its own paste-to-attach handler) |
+| `react-dropzone` | Drag-and-drop file upload (`noPaste` is set — `EditField` has its own paste-to-attach handler). `getInputProps()` spreads caller props *after* its defaults, so the hidden input's `style` must carry the full hiding style, not just a tweak — see the CAUTION comment in `EditField.tsx` |
+| `ua-parser-js` (v2) | Device/browser detection. v2 reports the mobile builds of desktop browsers as `"Mobile Chrome"` / `"Mobile Firefox"` (also Chrome on iOS) — compare against both spellings, as `NotificationProvider` does |
+| `short-uuid` | Short IDs in URLs; existing links depend on its default flickrBase58 alphabet (see docs/backend, `getRoutes.ts`) |
 | `viem` | EVM operations (unit formatting, SIWE signing, mnemonic wallets — `ethers` left the frontend in the 2026-08 web3 wave) |
 | `boring-avatars` | Generated default avatars (the `Jdenticon` component's `marble` variant) — there is no `jdenticon` package |
 | `emoji-regex` | Large-emoji detection in message rendering |
@@ -960,17 +996,53 @@ browserslist; `vite.config.ts` duplicates the floors by hand.
 | Entry `<script>` tags | `vite/htmlEntryScripts.ts` — the shells carry no `<script src>`; the config declares which module belongs to which shell. |
 | Social preview meta | `vite/absoluteSocialMeta.ts` — makes `og:image`/`twitter:image`/`og:url` absolute when `PUBLIC_URL` is set (only the legacy Azure pipelines set it). |
 | Node polyfills | `vite-plugin-node-polyfills`, scoped to `buffer`/`stream`/`assert` + global `Buffer`, for transitive web3 dependencies only. `process` and `global` are deliberately **not** polyfilled: `src/common/` is dual-runtime (the backend consumes it through the `srv/common` symlink) and reads env through a `globalThis` indirection that must keep resolving to nothing in the browser. |
-| Dependency aliases | One exact-match `resolve.alias` entry in `vite.config.ts`, load-bearing. `altcha-widget-element` → `altcha` loads the widget bundle under a stub module name so its `.d.ts` (which augments `react/jsx-runtime` and would shadow the whole JSX namespace under @types/react 18) never enters the TS program; the stub is `src/types/altcha-widget-element.d.ts`. altcha 3 moved that augmentation out of the default types entry into `altcha/types/react`, so the hazard is narrower now, but the alias is what keeps it out for good. (A second alias pinning `@metamask/sdk` to its browser UMD file was removed in the 2026-08 wagmi-2 migration: the SDK is no longer a direct dependency — wagmi's `metaMask` connector imports it dynamically — and 0.33's `browser`/`module` fields both point at the browser ESM build, so Vite resolves it correctly unaided; measured, the precache is 60 KB smaller without the alias.) |
+| Dependency aliases | Two exact-match `resolve.alias` entries in `vite.config.ts`, both load-bearing. `@tensorflow/tfjs` → `src/moderation/tfjs.ts` is described in the NSFW pre-check section above. `altcha-widget-element` → `altcha` loads the widget bundle under a stub module name so its `.d.ts` (which augments `react/jsx-runtime` and would shadow the whole JSX namespace — first observed under @types/react 18) never enters the TS program; the stub is `src/types/altcha-widget-element.d.ts`. altcha 3 moved that augmentation out of the default types entry into `altcha/types/react`, so the hazard is narrower now, but the alias is what keeps it out for good. (An earlier third alias pinning `@metamask/sdk` to its browser UMD file was removed in the 2026-08 wagmi-2 migration: the SDK is no longer a direct dependency — wagmi's `metaMask` connector imports it dynamically — and 0.33's `browser`/`module` fields both point at the browser ESM build, so Vite resolves it correctly unaided; measured, the precache is 60 KB smaller without the alias.) |
 | Chunking | `build.rollupOptions.output.manualChunks` in `vite.config.ts`: nine vendor groups (`vendor-web3`, `vendor-icons`, `vendor-charts`, `vendor-mediasoup`, `vendor-emoji`, `vendor-editor`, `vendor-dnd`, `vendor-react`, `vendor-shared`) split what Vite's default chunking put into one ~5.4 MiB `App` chunk (a Vite 6 measurement; the groups carried over unchanged in the Vite 7 bump — same chunk set, every chunk same-size or marginally smaller). `node_modules` only — `src/` keeps the default behavior, because splitting first-party modules is what turns an import cycle into a TDZ crash. `assertCgidEntryChunks` (same file) fails the build if the CG ID entry ever statically reaches a group other than `vendor-react`/`vendor-shared`. Details and the rules the table follows: [docs/infrastructure](../infrastructure/README.md#frontend-build-steps). Changing it needs a browser pass. |
 | Sourcemaps | `build.sourcemap: true` on every build path (the app is AGPL). **JS only** — Vite/Rollup emit no `.css.map`, unlike CRA. The service worker excludes maps from the precache, so they only cost bandwidth when devtools opens them. |
 | CSS | `postcss.config.js` (`tailwindcss/nesting` → `tailwindcss` → `autoprefixer`), `tailwind.config.js`. |
-| Type-check | `yarn typecheck` — `tsc --noEmit` over `src/**` plus `tsconfig.node.json` over the Vite-side files. TypeScript 5.9 (4.5 could not even *parse* viem's TS-5 `.d.ts` files, which silently disabled semantic checking). `tsconfig.json` targets **es2018**, not es5: TS 5.5+ grammar-checks regex syntax against the target and rejects the `u` flag + `\p{…}` escapes in `src/common/validators.ts`. Nothing emits from this tsconfig — shipped output is transpiled by Vite against `build.target`, which mirrors the `browserslist` floors. |
+| Type-check | `yarn typecheck` — `tsc --noEmit` over `src/**` plus `tsconfig.node.json` over the Vite-side files. TypeScript 5.9 (4.5 could not even *parse* viem's TS-5 `.d.ts` files, which silently disabled semantic checking). `tsconfig.json` targets **es2020**: not es5, because TS 5.5+ grammar-checks regex syntax against the target and rejects the `u` flag + `\p{…}` escapes in `src/common/validators.ts`; and not es2018 any more, because viem 2 and its `ox` dependency ship `.ts` sources with BigInt literals, which tsc rejects below ES2020. Nothing emits from this tsconfig — shipped output is transpiled by Vite against `build.target`, which mirrors the `browserslist` floors. |
 | Lint | `yarn lint` — `eslint.config.mjs` (ESLint 9 flat config: typescript-eslint + react + react-hooks), calibrated to the severities the old `react-app` preset enforced. Errors fail, warnings do not. |
-| Tests | `yarn test` — Vitest (`vitest.config.ts`), one smoke test so far. |
+| Tests | `yarn test` — Vitest (`vitest.config.ts`) over `src/**/*.test.{ts,tsx}`; a small unit suite so far (instance config, the image-filter client modules, the upload connector, an EditField helper). Not part of the build scripts yet. |
 
 Neither type-check nor lint happens during `vite build`, which is why the docker
 build scripts run them as explicit steps — see
 [docs/infrastructure](../infrastructure/README.md#frontend-build-steps).
+
+### Dependency pins and constraints
+
+Constraints in the root `package.json` that are not self-explanatory. The
+2026-08 dependency refresh brought everything to a current in-major release
+(React 19, wagmi 2 / viem 2 / RainbowKit 2, slate 0.126, motion 12, dnd-kit);
+the remaining major jumps (react-router 7, Vite 8, Tailwind 4, TypeScript 6,
+joi 18) are scheduled in `docs/todo/ROADMAP_cg-box.md`.
+
+- **`resolutions`**:
+  - `@types/react` → `"19"` keeps every `@types/react@*` consumer on one copy;
+    a second copy makes components from other packages fail with `TS2786`.
+  - `react-router-dom` → `"6.30.1"` is a **security hold**: 6.30.2–6.30.4 are
+    affected by GHSA-jjmj-jmhj-qwj2 (open redirect → XSS) and there is no fixed
+    6.x release — the fix is react-router 7. Drop the pin with that upgrade.
+- **`history`** is a direct dependency because `SuspenseRouter` imports
+  `createBrowserHistory` from it; react-router 6.30 no longer depends on it,
+  so without the declaration it would be a phantom dependency.
+- **`react-is: "19"`** is direct because recharts 3 demoted it to a peer; the
+  nested 16.x copy left in the tree cannot recognise React 19 elements.
+- **`slate-dom`** is direct because slate-react ≥ 0.111 peer-requires it.
+- **`@hapi/tlds` stays on 1.x** (both workspaces — `src/common/validators.ts`
+  is shared with the backend via the `srv/common` symlink). 2.x is ESM-only
+  and its `types` field points at a file the tarball does not ship; with the
+  frontend's `moduleResolution: "node"` it does not resolve at all. The data is
+  identical, so there is nothing to gain until the frontend moves to
+  `moduleResolution: "bundler"`.
+- Exact pins are kept exact: `altcha`, `dexie`, `dexie-react-hooks`,
+  `mediasoup-client`, `protoo-client`, `socket.io-client`, `typescript`,
+  `workbox-precaching`, `workbox-routing`, and in `devDependencies`
+  `@tsconfig/node24`, `@types/node`, `truffle-flattener`, `workbox-build`.
+  `socket.io-client` moves together with the backend's exact `socket.io`
+  (likewise `protoo-client` with `protoo-server`). (`react`, `react-dom` and
+  `react-is` are pinned to the major only, `"19"`.) Ranged packages keep their range style; a security-motivated
+  bump raises the range floor to the fixed version.
+- `@types/react-router-dom` (v5 types) is vestigial — see `docs/todo/TODO.md`.
 
 ### Entry points
 

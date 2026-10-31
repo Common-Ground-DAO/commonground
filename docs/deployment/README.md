@@ -3,7 +3,8 @@
 > Status: verified against commit 6e7975641, 2026-08-04; image-filter
 > additions against the fix/image-filter-review-53 branch, 2026-08-15; local
 > TLS mode, call ports, root builds and startup ordering against commit
-> a5633d5be (+ fix/selfhost-local-test), 2026-10-27
+> a5633d5be (+ fix/selfhost-local-test), 2026-10-27; Redis-cutover note (no
+> further Swarm rollouts) against commit 935232158, 2026-10-31
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -439,7 +440,10 @@ Shared template that removes the build work directory; runs
 ### Required infra-repo cutover: one Redis instead of three
 
 > **Action item for the hosted (Swarm) deployment — must land before or with the
-> next image rollout.**
+> next image rollout.** As of 2026-10-31 no further Swarm rollouts are planned:
+> the hosted instance moves to a single self-host server instead
+> (`docs/todo/ROADMAP_cg-box.md`), so this only applies if the Swarm stack is ever
+> rolled out again.
 
 As of 2026-08-01 the backend connects to a **single** Redis instance: every
 client in `srv/redis/index.ts` resolves `process.env.REDIS_URL ||

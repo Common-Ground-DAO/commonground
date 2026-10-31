@@ -2,7 +2,8 @@
 
 > Status: verified against commit 5777032d4, 2026-08-01; the frontend wallet
 > stack (sections on `App.tsx` and `UserOnchainProvider`) re-verified against the
-> 2026-08-04 wagmi-2 migration.
+> 2026-08-04 wagmi-2 migration; the wallet-list sentence and the transports
+> bullet against commit 935232158, 2026-10-31.
 
 This document covers all blockchain-related subsystems in Common Ground: smart contracts, on-chain data reading, token-gated roles, wallet management, token staking, and the API surface connecting them. The token sale itself was removed in the Phase-2 slimming (2026-08-01) — only its contract source and its database tables remain, for auditability.
 
@@ -700,9 +701,9 @@ The app is wrapped in:
 
 - `WagmiProvider` (wagmi v2) with a config built by RainbowKit's `getDefaultConfig`, plus the `QueryClientProvider` wagmi 2 requires. Chains (`activeChains`): `mainnet, polygon, optimism, arbitrum, gnosis, bsc, fantom, avalanche, zkSync, base` (plus `hardhat` when `DEPLOYMENT === 'dev'`).
 - `RainbowKitProvider` for the wallet connection modal (supports dark/light themes).
-- Provider chain: the hosted app uses `alchemyProvider(...)` + `publicProvider()`; self-hosted instances use a `jsonRpcProvider` (public RPC per chain id) + `publicProvider()` instead — see [RPC Providers](#rpc-providers-and-running-without-paid-endpoints).
+- Transports: the hosted app uses the Alchemy endpoint with the chain's default public RPC as fallback; self-hosted instances use a keyless public RPC per chain id with the same fallback instead (details below and in [RPC Providers](#rpc-providers-and-running-without-paid-endpoints)).
 
-`getDefaultConfig` from RainbowKit sets up MetaMask, Coinbase Wallet, WalletConnect, etc. (it replaced `getDefaultWallets` + `createConfig` in RainbowKit 2). Per-chain transports are built in `App.tsx`: `fallback([http(preferred), http()])`, where *preferred* is the Alchemy endpoint (mainnet, polygon, optimism, arbitrum, base — the set wagmi 1's `alchemyProvider` covered) or, on self-hosted instances, the keyless RPC from `selfhostRpcByChainId`. The WalletConnect `projectId` comes from `config.WALLETCONNECT_PROJECT_ID` (self-hosted instances set their own via `CG_WALLETCONNECT_PROJECT_ID`, since project ids are origin-allowlisted upstream).
+`getDefaultConfig` from RainbowKit builds the wagmi config (it replaced `getDefaultWallets` + `createConfig` in RainbowKit 2), with an explicit `wallets` list — injected, Safe, Rainbow, Coinbase, MetaMask, WalletConnect, i.e. RainbowKit 1's set, because RainbowKit 2's default set differs (see docs/frontend). Per-chain transports are built in `App.tsx`: `fallback([http(preferred), http()])`, where *preferred* is the Alchemy endpoint (mainnet, polygon, optimism, arbitrum, base — the set wagmi 1's `alchemyProvider` covered) or, on self-hosted instances, the keyless RPC from `selfhostRpcByChainId`. The WalletConnect `projectId` comes from `config.WALLETCONNECT_PROJECT_ID` (self-hosted instances set their own via `CG_WALLETCONNECT_PROJECT_ID`, since project ids are origin-allowlisted upstream).
 
 ### Additional Wallet Providers
 

@@ -6,6 +6,15 @@
 
 ## Operational (time-critical)
 
+- [ ] **Pick up the two security fixes the F6 refresh had to leave to the age gate**
+  (2026-10-31) — `joi` 17.13.9 (GHSA-4528-x5fx-h6hg, published 2026-10-28, eligible
+  from 2026-11-04) in the root and `srv/`, and `follow-redirects` 1.16.2
+  (GHSA-mrwp-f3q8-3g9p, published 2026-10-25) in every lockfile that has it (root,
+  `srv/`, `contracts/`, `docker/hardhat/node/`). Raise the `joi` floor to `^17.13.9` in
+  both `package.json` files and run `yarn up -R follow-redirects` per workspace; then
+  drop both rows from "Open advisories" in `docs/infrastructure/UPDATE-POLICY.md`.
+  Neither is reachable as the code stands (see there); Renovate's weekly groups would
+  bring them too.
 - [ ] **Confirm the maintainer's selfhost/reference instances have run the SeaweedFS
   volume cutover** (2026-08-03, storage close-out) — the procedure and
   `docker/selfhost/migrate_seaweed_volumes.sh` are documented in `docker/SELFHOST.md`;
@@ -63,6 +72,12 @@ that stack — confirm and delete:
   Hardhat/Truffle toolchain (and its audit surface) out of the main repo. Decide, and
   if yes, plan the extraction (keep `contracts/staking` Foundry setup intact; the
   backend only consumes ABIs).
+- [ ] **`@openzeppelin/contracts` in `contracts/`: stay on 5.0.2 or move to 5.7.x?**
+  (2026-10-31, F6 refresh) — held because it is compiled into the repository's
+  contracts: a bump changes their bytecode, so redeploying or re-verifying the
+  deployed contracts on an explorer would no longer reproduce. Moot if `contracts/`
+  is extracted (item above). See "Held back on purpose" in
+  `docs/infrastructure/UPDATE-POLICY.md`.
 - [ ] **Premium purchases on self-hosted instances** — the Spark purchase flow (`PaySpark`)
   sends to Common Ground's own beneficiary addresses hardcoded in
   `src/common/premiumConfig.ts`, and purchases are only credited by the onchain listener.
@@ -262,12 +277,6 @@ that stack — confirm and delete:
   depends on. So a blanket tslib resolution is still unsafe; what is left is
   merging the three tslib-2 copies (2.4.0 / 2.7.0 / 2.8.1), which *is* safe and
   worth a resolution on its own.
-- [ ] **Hardhat → 2.29.0** (2026-08-03, Node 24 audit) — the installed 2.2x line
-  hard-codes `SUPPORTED_NODE_VERSIONS = ["^18.0.0","^20.0.0"]` and prints a warning on
-  Node 24 (it continues; the warning shows in every `build_full` contract deploy).
-  2.29.0 silences it. Two files to keep in sync: `contracts/package.json` and
-  `docker/hardhat/node/package.json`. Do **not** jump to Hardhat 3 as a side effect.
-  Folded into the in-major refresh of `ROADMAP_cg-box.md` (F6).
 - [ ] **A minimal two-peer mediasoup integration test** (2026-08-03, mediasoup 3.23
   workstream) — the call subsystem has zero tests, so the 3.14→3.23 jump was validated
   by hand. A join/produce/consume smoke test would let the next mediasoup bump not rely
@@ -331,8 +340,9 @@ wave has to *change*.
   node-redis 6; inert, it is only for the unused query cache) and that a single
   `reflect-metadata` copy (0.2.2) survives; `emitDecoratorMetadata` was verified
   by entity-metadata registration (37 tables / 325 columns at the time).
-- **react-router 7 (M3)** — drop the `react-router-dom: "6.30.1"` security-hold
-  resolution (GHSA-jjmj-jmhj-qwj2), rewrite `SuspenseRouter` off the `history`
+- **react-router 7 (M3)** — closes GHSA-wrjc-x8rr-h8h6 (fixed only in 7.18.0;
+  the old `6.30.1` security-hold resolution is gone since F6 — 6.30.6 fixed
+  GHSA-jjmj-jmhj-qwj2), rewrite `SuspenseRouter` off the `history`
   package and drop that direct dependency, and drop `@types/react-router-dom` (v5
   types, see above).
 - **Vite 8 (M3)** — swaps Rollup for Rolldown and esbuild for Oxc: take a fresh

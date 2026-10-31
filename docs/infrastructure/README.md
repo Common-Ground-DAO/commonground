@@ -9,7 +9,8 @@
 > 2026-10-31; image pins, Node 26 / trixie, Yarn 4.18.1, immutable installs and
 > verified binary downloads against commit 5f73578, 2026-10-31; email (SMTP
 > variables, `mailpit` dev service, selfhost `mail` relay and bounce receiver),
-> Redis cache roles and `MEDIASOUP_TRUST_PROXY` against commit e44dac1, 2026-10-31
+> Redis cache roles and `MEDIASOUP_TRUST_PROXY` against commit e44dac1, 2026-10-31;
+> git-dependency and `npx` rows of §2 against commit ff0da06, 2026-10-31
 
 # Common Ground Infrastructure Documentation
 
@@ -285,8 +286,8 @@ main workspaces:
 | backend image build | the copied `.yarnrc.yml` carries both controls (no `yarnPath` exists any more — corepack provisions the `packageManager`-pinned Yarn); verified by the `YN0004` warnings in the build output |
 | Azure pipelines | the secure-file `.yarnrc.yml` **replaces** the repo's, so the pipelines re-append both settings after copying it — see the comment there |
 | lockfile drift | every scripted install is `yarn install --immutable` (backend images, hardhat image, `docker/build.sh`, `docker/updateBackend.sh`, `docker/updateFrontend.sh`, `docker/selfhost/selfhost.sh`, `tools/*Migration.sh`, `tools/testEntities.sh`): a stale lockfile fails the build instead of resolving something unreviewed. Change dependencies with a plain `yarn install`/`yarn add` in `./run.sh shell` and commit the lockfile. |
-| git dependencies | `approvedGitRepositories` (root `.yarnrc.yml`) lists only `https://github.com/ethereumjs/ethereumjs-abi.git`, the one git dependency in any lockfile (via `@truffle/hdwallet-provider`); it was `"**"` until 2026-10-31. For `github.com` repositories Yarn fetches the commit archive over HTTPS first and only falls back to `git clone`, which is the path the allowlist guards — see [UPDATE-POLICY.md](UPDATE-POLICY.md#npm-yarn). |
-| `npx` call sites | every call (`web-push` and `hardhat` in the build scripts, `truffle-flattener` in `tools/generateFlattenedSourceCode.sh`) resolves to a declared local dependency and passes `--no`, which turns a missing package into a loud failure instead of a silent registry download-and-run |
+| git dependencies | `approvedGitRepositories` (root `.yarnrc.yml`) lists only `https://github.com/ethereumjs/ethereumjs-abi.git`, the one git dependency in any lockfile (`contracts/yarn.lock`, via `solidity-bytes-utils` → `@truffle/hdwallet-provider`); it was `"**"` until 2026-10-31. For `github.com` repositories Yarn fetches the commit archive over HTTPS first and only falls back to `git clone`, which is the path the allowlist guards — see [UPDATE-POLICY.md](UPDATE-POLICY.md#npm-yarn). |
+| `npx` call sites | every call (`web-push` and `hardhat` in the build scripts) resolves to a declared local dependency and passes `--no`, which turns a missing package into a loud failure instead of a silent registry download-and-run |
 
 **Refreshing a lockfile within the existing ranges** needs both patterns:
 `yarn up -R '*' '@*/*'`. Yarn's micromatch `*` does not cross `/`, so

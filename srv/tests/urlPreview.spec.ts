@@ -11,6 +11,8 @@
 const handlers: Record<string, (request: any, response: any, data: any) => Promise<any>> = {};
 const redisGet = jest.fn();
 const redisSet = jest.fn();
+// which client type the handler asked for; `null` simulates an unreachable cache
+const connectedClient = jest.fn();
 const rateLimiter = jest.fn();
 const safeFetchMock = jest.fn();
 const ogsMock = jest.fn();
@@ -24,8 +26,7 @@ jest.mock('../api/util', () => ({
 jest.mock('../redis', () => ({
   __esModule: true,
   default: {
-    get: (...args: any[]) => redisGet(...args),
-    getClient: () => ({ set: (...args: any[]) => redisSet(...args) }),
+    connectedClient: (...args: any[]) => connectedClient(...args),
   },
 }));
 jest.mock('../util/rateLimit', () => ({ __esModule: true, default: () => rateLimiter }));
@@ -58,6 +59,10 @@ beforeEach(() => {
   jest.clearAllMocks();
   redisGet.mockResolvedValue(null);
   redisSet.mockResolvedValue('OK');
+  connectedClient.mockReturnValue({
+    get: (...args: any[]) => redisGet(...args),
+    set: (...args: any[]) => redisSet(...args),
+  });
   rateLimiter.mockResolvedValue(undefined);
 });
 
@@ -72,7 +77,8 @@ describe('/getUrlPreview', () => {
     const cached = { title: 't', description: 'd', imageId: '', url: URL };
     redisGet.mockResolvedValue(JSON.stringify(cached));
     await expect(preview(loggedIn)).resolves.toEqual(cached);
-    expect(redisGet).toHaveBeenCalledWith('data', expect.stringMatching(/^urlpreview:[0-9a-f]{64}$/));
+    expect(connectedClient).toHaveBeenCalledWith('cache');
+    expect(redisGet).toHaveBeenCalledWith(expect.stringMatching(/^urlpreview:[0-9a-f]{64}$/));
     expect(rateLimiter).not.toHaveBeenCalled();
     expect(safeFetchMock).not.toHaveBeenCalled();
   });
@@ -97,6 +103,16 @@ describe('/getUrlPreview', () => {
       JSON.stringify(result),
       { EX: 3600 },
     );
+    expect(connectedClient).not.toHaveBeenCalledWith(expect.not.stringMatching(/^cache$/));
+  });
+
+  it('works uncached while the cache instance is unreachable', async () => {
+    connectedClient.mockReturnValue(undefined);
+    scrapes({ ogTitle: 't', ogDescription: 'd' });
+    await expect(preview(loggedIn)).resolves.toMatchObject({ title: 't', description: 'd' });
+    expect(rateLimiter).toHaveBeenCalled();
+    expect(redisGet).not.toHaveBeenCalled();
+    expect(redisSet).not.toHaveBeenCalled();
   });
 
   it.each([

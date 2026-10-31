@@ -16,10 +16,14 @@ import redisManager from "../redis";
 import notificationHelper from "./notifications";
 
 class EventHelper {
-  #io = (async () => {
-    await redisManager.isReady;
-    return new Emitter<API.Server.ClientToServerEvents>(redisManager.getClient('socketIOPub'), { key: 'v2:' });
-  })();
+  // created on first emit, so importing this module opens no connection.
+  // It does not wait for the connection: PUBLISH queues until it is up and
+  // fails after node-redis' command timeout, so an emit never blocks a
+  // request for the length of an outage.
+  #emitter: Emitter<API.Server.ClientToServerEvents> | undefined;
+  get #io() {
+    return Promise.resolve(this.#emitter ??= new Emitter<API.Server.ClientToServerEvents>(redisManager.getClient('socketIOPub'), { key: 'v2:' }));
+  }
 
   public async emit(
     event: Events.ClientEvent,

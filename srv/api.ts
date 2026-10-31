@@ -26,6 +26,7 @@ import stakingRouter from './api/staking';
 import captchaRouter from './api/captcha';
 import instanceRouter from './api/instance';
 import feedRouter from './api/feed';
+import { apiErrorHandler } from './api/util';
 
 app.use('/Chat', chatRouter);
 app.use('/Community', communityRouter);
@@ -48,6 +49,12 @@ app.use('/Captcha', captchaRouter);
 app.use('/Instance', instanceRouter);
 app.use('/Feed', feedRouter);
 app.use('/', getRoutes);
+
+// Errors handed to next() by middleware — e.g. the session store failing while
+// the Valkey state instance is unreachable, or body-parser rejecting a
+// malformed/oversized body — get the API's JSON error format instead of
+// Express' default HTML error page. Keeps a 4xx status set by the middleware.
+app.use(apiErrorHandler);
 
 const shutdown = async (code = 0) => {
   process.exit(code);

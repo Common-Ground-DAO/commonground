@@ -4,6 +4,7 @@
 
 import express from 'express';
 import redisManager from '../redis';
+import { withTimeout } from '../redis/client';
 import errors from '../common/errors';
 import { classifyForwardedIp } from './ipPrefix';
 
@@ -27,7 +28,9 @@ function countWithinWindow(
   now: number,
 ): Promise<boolean> {
   const randVal = `${now}:${Math.random().toFixed(4)}`;
-  return redisClient
+  // node-redis gives MULTI no command timeout: without withTimeout() a
+  // request would wait for the whole outage of the server
+  return withTimeout(redisClient
     .multi()
     .zAdd(key, { value: randVal, score: now })
     .expire(key, Math.floor(windowMs / 1000))
@@ -35,7 +38,7 @@ function countWithinWindow(
     .zCount(key, now - windowMs, now)
     // `execTyped()` (node-redis 5+) preserves the per-command reply types
     // of the chain; plain `exec()` now collapses them to `ReplyUnion[]`.
-    .execTyped()
+    .execTyped(), 'rate-limit MULTI')
     .then((results) => {
       const count = results[3];
       if (count <= limit) {

@@ -25,8 +25,11 @@ async function queryDb() {
 	return dbResult;
 }
 
-// All four clients talk to the same Redis instance, so one PING on the
-// non-legacy data client is enough to know Redis is reachable.
+// The state instance is the one the app cannot work without (the cache
+// instance is optional), and all its clients share one server, so one PING on
+// the data client is enough. Importing `./redis` opens no connection by itself
+// — clients connect on first use — so processes that only need
+// `fakeHealthcheck` from this module hold no Redis connection.
 async function checkRedis(): Promise<boolean> {
 	try {
 		return (await redisManager.getClient("data").ping()) === 'PONG';

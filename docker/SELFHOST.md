@@ -610,6 +610,19 @@ users just log in again after a restart.
 | 4443 | tcp | call signalling (wss) — only with `CG_ENABLE_CALLS=true` |
 | 40000–40099 | udp+tcp | WebRTC media (voice/video); TCP is the fallback for clients whose network blocks UDP — only with `CG_ENABLE_CALLS=true` |
 
+**Reserve the media ports.** 40000–40099 lies inside Linux's default range for
+outgoing connections (`net.ipv4.ip_local_port_range`, 32768–60999). If an
+outgoing connection happens to hold one of these ports when `mediasoup`
+starts, Docker cannot publish it and the container fails to start (seen on a
+test instance on 2026-10-31; afterwards it kept restarting without a network
+until recreated with `./selfhost/selfhost.sh compose up -d --force-recreate
+--no-deps mediasoup`). Reserve the range on the host once:
+
+```bash
+echo 'net.ipv4.ip_local_reserved_ports = 40000-40099' | sudo tee /etc/sysctl.d/60-cg-mediasoup.conf
+sudo sysctl --system
+```
+
 Outbound: the built-in mail relay (`CG_ENABLE_MAIL=true`) connects to port
 25 of the recipients' mail servers. Nothing listens for mail on this server.
 To make the relay the only container that can reach port 25, block outbound

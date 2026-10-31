@@ -264,7 +264,7 @@ and a browser pass on the test VM:
   worker, signed with the **old VAPID key pair** (must come with the production
   secrets); removes expired subscriptions. Old subscriptions are not usable for
   cg.box — users re-subscribe there (part of G3).
-- [ ] **G8 Mail.** SMTP via nodemailer instead of SendGrid (the swap point is
+- [x] **G8 Mail.** (done 2026-10-31: nodemailer + optional maddy relay with bounce policy, send limits, one-click unsubscribe; accepted on the test VM; real delivery to Gmail/Outlook, PTR and outbound port 25 are checked on a public server before move day, P5) SMTP via nodemailer instead of SendGrid (the swap point is
   `EmailUtils.sendEmail` in `srv/api/emails.ts` + init in `srv/serverconfig.ts`),
   Mailchimp removed. Optional send-only MTA container (compose profile `mail`,
   e.g. Postfix or Maddy): persistent queue with retries (greylisting), DKIM
@@ -282,13 +282,16 @@ and a browser pass on the test VM:
 
 - [x] **S1 Findings triage.** The private findings list is triaged against the
   new stack; whatever applies and blocks the move is fixed (tracked privately).
-  (Triage done 2026-10-31; the move-blocking fixes are on
-  `fix/hardening-batch-1`, the rest is slotted into the items above.)
+  (Triage done 2026-10-31; the move-blocking fixes were merged the same day
+  with `fix/hardening-batch-1`, the rest is slotted into the items above.)
 - [ ] **S2 Review of the new code** (gateway, transfer link, account-security
   step, passkeys on the main origin, mail) — independent security review.
 - [ ] **S3 Server hardening.** SSH key-only login, firewall (only 22, 80,
   443 tcp+udp (HTTP/3), 4443, 40000–40099 udp+tcp; note that Docker-published ports bypass ufw — publish
-  nothing else), unattended security upgrades, log rotation.
+  nothing else), unattended security upgrades, log rotation. Reserve the
+  mediasoup port range (`net.ipv4.ip_local_reserved_ports = 40000-40099`): it
+  overlaps the ephemeral port range, and a collision stops `mediasoup` from
+  starting (docker/SELFHOST.md).
 - [ ] **S4 Monitoring.** External uptime check; alerts for disk space, certificate
   expiry, container health; where alerts go.
 - [ ] **S5 DNS.** CAA record (Let's Encrypt only); lowered TTL on app.cg ahead of

@@ -44,7 +44,9 @@ id.app.cg ──┤          (develop, gateway mode)   SeaweedFS             │
    so routing lives in one place.
 3. **7-day minimum release age for every ecosystem** (npm, Docker images, apt,
    pip/Galaxy, CI). Exceptions only with explicit maintainer approval, recorded
-   with date, package/version and reason.
+   with date, package/version and reason. Amended 2026-10-31: **security fixes**
+   (an update resolving a published advisory) need only **3 days**
+   (docs/infrastructure/UPDATE-POLICY.md).
 4. **Redis → Valkey.**
 5. Images are built on the server. Prebuilt images (GitHub Actions + GHCR) and the
    Ansible management suite (Ansible in a pinned container, `cg.sh`/`cg.ps1`) come
@@ -158,12 +160,16 @@ plus reviews. Lane B starts when F1+F2 are merged.
   snapshot or exact versions. SeaweedFS and Caddy current. Yarn 4.17.1 → current
   4.x (update the `packageManager` field incl. its hash) — all under the 7-day
   rule; binary checksums as in F1.
-- [ ] **F3 PostgreSQL 14 → 18.** Time-sensitive: PostgreSQL 14 reaches end of life
-  in November 2026, and both the dev stack and the self-host profile run
-  `postgres:14-alpine` today. New image + tuned `postgresql.conf` for 18. On
-  cg.box this is a restore into a fresh cluster, no in-place upgrade. Check the
-  dev stack's upgrade path (dump/restore of the dev volume, documented).
-- [ ] **F4 Redis 6.2 → Valkey.** Sessions, socket.io adapter, cached data; verify
+- [x] **F3 PostgreSQL 14 → 18.** (done 2026-10-31: `cryptogram/db:18` on
+  postgres 18.4, rewritten `postgresql.conf`, `init.sh` creates the mediasoup
+  role; the 14 → 18 restore path is documented in docs/database and was
+  rehearsed on the test VM with identical row counts.) Scope cut by the
+  maintainer: no upgrade scripts — dev volumes are recreated, cg.box is a
+  restore into a fresh cluster. Follow-up: 18.6 once it passes the age gate.
+- [x] **F4 Redis 6.2 → Valkey.** (done 2026-10-31: Valkey 9.1.2 as a persistent
+  `noeviction` state instance plus an LRU cache instance, lazy clients with
+  error listeners and MULTI timeouts; accepted on the test VM.) Follow-up:
+  store only real sessions (docs/todo/TODO.md). Sessions, socket.io adapter, cached data; verify
   node-redis / connect-redis / `@socket.io/redis-adapter` against Valkey. Keep
   sessions safe from cache memory pressure (separate instance or eviction
   policy per use) and give every client an error listener.
@@ -187,7 +193,9 @@ plus reviews. Lane B starts when F1+F2 are merged.
   the TODO.md item on pruning the CG ID vhost's cross-origin allowances applies
   here). The hosted Swarm nginx configs are deleted together with the Swarm
   pipeline after the move (P7).
-- [ ] **F6 npm security + in-major refresh** of all workspaces under the age gate
+- [x] **F6 npm security + in-major refresh** (done 2026-10-31; remaining
+  advisories and holds in docs/infrastructure/UPDATE-POLICY.md; unused Truffle
+  devDependencies removed) of all workspaces under the age gate
   (`yarn npm audit` clean or every remaining advisory documented). Includes the
   Hardhat 2.29 bump from TODO.md ("Optional").
 - [ ] **F7 Self-host leftovers.** Build ID no longer written into the tracked
@@ -229,7 +237,11 @@ and a browser pass on the test VM:
   Socket.IO adapter key (a cookie from one origin must not work on the other);
   singleton processes (`job-runner`, `onchain`, `memberlist`) run only for
   cg.box; one env-driven CORS/origin allowlist; the login methods it exposes
-  are hardened before it goes live (S1 tracks which).
+  are hardened before it goes live (S1 tracks which). Acceptance: the gateway
+  runs with `CG_LEGACY_CGID=true` on **every** backend process, and legacy mode
+  keeps the full previous sign-up/login surface — so the server-side allowlist
+  is the only thing standing between the gateway and that surface; test it
+  against the complete route list.
 - [ ] **G2 Transfer link.** One-time token: random, stored hashed with user id,
   ~10 min expiry, single use; carried in the URL fragment
   (`https://cg.box/transfer#<token>`) so it never reaches logs or `Referer`;
@@ -291,7 +303,8 @@ and a browser pass on the test VM:
   nothing else), unattended security upgrades, log rotation. Reserve the
   mediasoup port range (`net.ipv4.ip_local_reserved_ports = 40000-40099`): it
   overlaps the ephemeral port range, and a collision stops `mediasoup` from
-  starting (docker/SELFHOST.md).
+  starting (docker/SELFHOST.md). Set `vm.overcommit_memory = 1` (Valkey
+  background saves fork).
 - [ ] **S4 Monitoring.** External uptime check; alerts for disk space, certificate
   expiry, container health; where alerts go.
 - [ ] **S5 DNS.** CAA record (Let's Encrypt only); lowered TTL on app.cg ahead of

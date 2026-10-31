@@ -45,7 +45,9 @@ export default function ChannelItem(props: Props) {
             {...attributes}
             {...listeners}
             style={{
-                transform: CSS.Transform.toString(transform),
+                // Translate only: the drop animation (derived transform) can
+                // carry a scale when a row lands in a slot of another size.
+                transform: CSS.Translate.toString(transform),
                 transition,
                 position: 'relative',
                 zIndex: isDragging ? 5000 : undefined,

@@ -6,7 +6,7 @@ import { DotsSixVertical, Minus, Plus } from '@phosphor-icons/react';
 import React, { useCallback, useMemo, useState } from 'react';
 import './MultiEntryField.css';
 import { DndContext, DragEndEvent } from '@dnd-kit/core';
-import { rectSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable';
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { dragAnnouncements, listCollisionDetection, useDragSensors } from 'hooks/useDragSensors';
 import Button from 'components/atoms/Button/Button';
@@ -66,7 +66,8 @@ const MultiEntryField: React.FC<Props> = (props) => {
       onDragCancel={() => setDraggingOver(false)}
       onDragEnd={onDragEnd}
     >
-      <SortableContext items={entryIds} strategy={rectSortingStrategy}>
+      {/* One column of auto-growing (variable-height) rows. */}
+      <SortableContext items={entryIds} strategy={verticalListSortingStrategy}>
         <div
           className={`multi-entry-field-container flex flex-col gap-1 ${draggingOver ? ' dragging-over' : ''}`}
         >
@@ -125,7 +126,8 @@ function SortableEntry(props: React.PropsWithChildren<{ id: string; index: numbe
     <div
       ref={setNodeRef}
       style={{
-        transform: CSS.Transform.toString(transform),
+        // Translate only: a scale component distorts rows of different heights.
+        transform: CSS.Translate.toString(transform),
         transition,
         position: 'relative',
         zIndex: isDragging ? 5000 : undefined,

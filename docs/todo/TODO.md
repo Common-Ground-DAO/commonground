@@ -6,15 +6,11 @@
 
 ## Operational (time-critical)
 
-- [ ] **Pick up the two security fixes the F6 refresh had to leave to the age gate**
-  (2026-10-31) — `joi` 17.13.9 (GHSA-4528-x5fx-h6hg, published 2026-10-28, eligible
-  from 2026-11-04) in the root and `srv/`, and `follow-redirects` 1.16.2
-  (GHSA-mrwp-f3q8-3g9p, published 2026-10-25) in every lockfile that has it (root,
-  `srv/`, `contracts/`, `docker/hardhat/node/`). Raise the `joi` floor to `^17.13.9` in
-  both `package.json` files and run `yarn up -R follow-redirects` per workspace; then
-  drop both rows from "Open advisories" in `docs/infrastructure/UPDATE-POLICY.md`.
-  Neither is reachable as the code stands (see there); Renovate's weekly groups would
-  bring them too.
+- [ ] **Remove the two `npmPreapprovedPackages` entries from the root `.yarnrc.yml`**
+  once they have aged past the 7-day gate (2026-10-31, first use of the 3-day
+  security-fix rule): `follow-redirects@1.16.2` from 2026-11-01, `joi@17.13.9` from
+  2026-11-04. No lockfile change needed; see the security-fix log in
+  `docs/infrastructure/UPDATE-POLICY.md`.
 - [ ] **Confirm the maintainer's selfhost/reference instances have run the SeaweedFS
   volume cutover** (2026-08-03, storage close-out) — the procedure and
   `docker/selfhost/migrate_seaweed_volumes.sh` are documented in `docker/SELFHOST.md`;

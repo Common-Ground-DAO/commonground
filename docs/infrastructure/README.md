@@ -10,7 +10,8 @@
 > verified binary downloads against commit 5f73578, 2026-10-31; email (SMTP
 > variables, `mailpit` dev service, selfhost `mail` relay and bounce receiver),
 > Redis cache roles and `MEDIASOUP_TRUST_PROXY` against commit e44dac1, 2026-10-31;
-> git-dependency and `npx` rows of §2 against commit ff0da06, 2026-10-31
+> git-dependency and `npx` rows of §2 and the age-gate bullet against commit
+> ff0da06, 2026-10-31
 
 # Common Ground Infrastructure Documentation
 
@@ -227,7 +228,7 @@ The dev build scripts live in `docker/` and are invoked through `run.sh`.
 ### Package-manager hardening
 
 The update policy as a whole — the 7-day minimum release age for every
-ecosystem, the exception log, digest pinning, the apt snapshot, verified binary
+ecosystem (3 days for security fixes), the exception and security-fix logs, digest pinning, the apt snapshot, verified binary
 downloads and Renovate — is in **[UPDATE-POLICY.md](UPDATE-POLICY.md)**. This
 section covers the Yarn side.
 
@@ -261,9 +262,11 @@ affected version, but both controls would have made it structurally impossible:
   purged within hours, so package age filters them out; `yarn npm audit` does
   **not** — during this attack no GHSA advisory existed for the highest-traffic
   poisoned packages. The gate applies to new resolutions only; it never
-  downgrades what the lockfile already pins. Its cost is that an urgent security
-  fix is delayed too — the escape hatch is `yarn up --no-time-gate <pkg>`, to be
-  used deliberately and justified in the PR.
+  downgrades what the lockfile already pins. A security fix may come in after
+  3 days through an exact-version `npmPreapprovedPackages` entry in the root
+  `.yarnrc.yml`; anything younger needs the maintainer's approval
+  (`yarn up --no-time-gate <pkg>` or the same entry) — both logged in
+  [UPDATE-POLICY.md](UPDATE-POLICY.md#security-fixes-3-days).
 
 Yarn 4.1.0 had neither (its `enableScripts` default was `true`, contrary to what
 the current yarnpkg.com docs say — the pinned binary is the authority), which is

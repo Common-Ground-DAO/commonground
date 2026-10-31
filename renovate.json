@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Common Ground update policy (docs/infrastructure/UPDATE-POLICY.md): nothing younger than 7 days, every image digest-pinned, nothing auto-merges. Runs as the Mend Renovate GitHub app.",
+  "description": "Common Ground update policy (docs/infrastructure/UPDATE-POLICY.md): nothing younger than 7 days (security fixes: 3 days), every image digest-pinned, nothing auto-merges. Runs as the Mend Renovate GitHub app.",
   "extends": [
     "config:recommended",
     "docker:pinDigests"
@@ -20,7 +20,7 @@
     "prBodyNotes": ["Re-resolves every yarn.lock within the existing version ranges. Yarn's own `npmMinimalAgeGate: 1w` (.yarnrc.yml) applies to the re-resolution; Renovate's `minimumReleaseAge` does not cover lock file maintenance (docs/infrastructure/UPDATE-POLICY.md)."]
   },
   "vulnerabilityAlerts": {
-    "minimumReleaseAge": "7 days",
+    "minimumReleaseAge": "3 days",
     "labels": ["security"]
   },
   "labels": ["dependencies"],

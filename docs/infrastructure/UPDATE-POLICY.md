@@ -1,7 +1,8 @@
-> Status: verified against commit 5f73578, 2026-10-31; "Open advisories" and
-> "Held back on purpose" against commit ff0da06, 2026-10-31
+> Status: verified against commit 5f73578, 2026-10-31; "Open advisories",
+> "Held back on purpose", the security-fix rule (3 days) and its log against
+> commit ff0da06, 2026-10-31
 
-# Update policy: 7-day minimum release age
+# Update policy: 7-day minimum release age (3 days for security fixes)
 
 This is the supply-chain policy for every third-party artifact Common Ground
 builds from or runs (roadmap decision 3, `docs/todo/ROADMAP_cg-box.md`). It
@@ -33,19 +34,42 @@ detected and purged within hours to days. Package age filters them out;
 advisory databases do not — during that attack no advisory existed for the
 highest-traffic poisoned packages while it ran.
 
-The cost is that an urgent security fix waits a week too. That is what the
-exception log is for.
+### Security fixes: 3 days
+
+**A security fix may be taken once it is at least 3 days old** (maintainer
+decision, 2026-10-31). A security fix is an update that resolves a published
+advisory (GHSA/CVE) affecting a version one of our lockfiles, images or pins
+actually resolves — the advisory's patched version, or the lowest release
+containing it. Everything else, including routine updates that happen to come
+with a fix nobody has published an advisory for, keeps the 7-day rule.
+
+Three days still filter out the typical worm wave (hours to days) while not
+leaving a published vulnerability open for a full week. Every use is logged in
+the [security-fix log](#security-fix-log) in the same change (npm: see
+[the Yarn mechanism](#npm-yarn)); Renovate opens vulnerability PRs after 3 days
+on its own (see [Renovate](#renovate)).
 
 ## Exceptions
 
-An exception is allowed **only with the maintainer's explicit approval** and is
-recorded here **in the same change** that uses it (date, exact package/version,
-reason, who approved). One row per artifact; an exception covers that version
-only, never later ones.
+Anything younger than the applicable minimum — **below 3 days for a security
+fix, below 7 days for everything else** — is an exception. It is allowed
+**only with the maintainer's explicit approval** and is recorded here **in the
+same change** that uses it (date, exact package/version, reason, who approved).
+One row per artifact; an exception covers that version only, never later ones.
 
 | Date | Package / version (ecosystem) | Reason | Approved by |
 |---|---|---|---|
 | — | — | — | — |
+
+### Security-fix log
+
+Security fixes taken under the 3-day rule (no approval needed beyond the rule;
+one row per artifact).
+
+| Date | Package / version (ecosystem) | Advisory | Published | Where | Reason / mechanism |
+|---|---|---|---|---|---|
+| 2026-10-31 | `joi` 17.13.9 (npm) | GHSA-4528-x5fx-h6hg (high) | 2026-10-28T10:04Z | root, `srv/` (floor `^17.13.9`) | quadratic split in `string().email({ multiple: true })`; not reachable today (no validator uses `multiple: true`), taken anyway as the rule's first application. `npmPreapprovedPackages` entry in the root `.yarnrc.yml` until 2026-11-04 |
+| 2026-10-31 | `follow-redirects` 1.16.2 (npm) | GHSA-mrwp-f3q8-3g9p (high) | 2026-10-25T21:32Z | root, `srv/`, `contracts/`, `docker/hardhat/node/` (lockfiles, via `yarn up -R`) | cross-realm `sensitiveHeaders` arrays; not reachable today (the code never sets `sensitiveHeaders`). `npmPreapprovedPackages` entry in the root `.yarnrc.yml` until 2026-11-01 |
 
 ## Open advisories
 
@@ -57,19 +81,15 @@ every workspace when updating this list and replace it as a whole.
 
 | Workspace | Before → after the refresh |
 |---|---|
-| root | 171 → 29 (critical 3 → 0, high 54 → 6; the unused Truffle devDependencies were removed) |
-| `srv/` | 139 → 46 (critical 5 → 2, high 65 → 22) |
+| root | 171 → 27 (critical 3 → 0, high 54 → 4; the unused Truffle devDependencies were removed) |
+| `srv/` | 139 → 44 (critical 5 → 2, high 65 → 20) |
 | `sdk/` | 28 → **0** |
-| `contracts/` | 234 → 93 (critical 12 → 2, high 91 → 29) |
-| `docker/hardhat/node/` | 43 → 43 (its lockfile was already resolved fresh on 2026-10-31) |
+| `contracts/` | 234 → 92 (critical 12 → 2, high 91 → 28) |
+| `docker/hardhat/node/` | 43 → 42 (high 15 → 14; its lockfile was already resolved fresh on 2026-10-31) |
 
-**Fixed, but younger than 7 days** — picked up by the next refresh once aged
-(see `docs/todo/TODO.md`), no exception requested:
-
-| Advisory | Severity | Package (where) | Fixed in (published) | Reachability |
-|---|---|---|---|---|
-| GHSA-4528-x5fx-h6hg | high | `joi` 17.13.8 (root, `srv/`) | 17.13.9 (2026-10-28) | quadratic split in `string().email({ multiple: true })`; no validator in `src/common/validators.ts` or `srv/validators/` uses `multiple: true` |
-| GHSA-mrwp-f3q8-3g9p | high | `follow-redirects` 1.16.1 (root, `srv/`, Hardhat tools) | 1.16.2 (2026-10-25) | cross-realm `sensitiveHeaders` arrays; the codebase never sets `sensitiveHeaders`; in the browser axios uses XHR/fetch, not follow-redirects |
+The two fixes that were still younger than 7 days (`joi` 17.13.9,
+`follow-redirects` 1.16.2) were taken under the 3-day rule — see the
+[security-fix log](#security-fix-log).
 
 **Not fixable within the current majors:**
 
@@ -147,7 +167,7 @@ every workspace when updating this list and replace it as a whole.
   deploy tooling, never part of a deployed artifact): `undici` 5.29.0 via
   `@nomicfoundation/hardhat-verify` 2 (16 advisories, high incl.
   GHSA-2m5v-pch6-74hx), `adm-zip` 0.4.16 via hardhat (7, high), `tmp` 0.0.33
-  (high GHSA-ph9p-34f9-6g65) and `follow-redirects` via `solc`,
+  (high GHSA-ph9p-34f9-6g65) via `solc`,
   `serialize-javascript` 6.0.2 (high GHSA-5c6j-r48x-rmvq), `diff` 7 and `glob`
   10 via mocha 11, `ws` 8.18.0 via `@ethersproject/providers` 5, `cookie`
   0.4.2 via `@sentry/node` 5, `uuid` 8, `@fastify/busboy` 2.1.1, plus the
@@ -178,11 +198,22 @@ Also not taken: next minor lines of 0.x packages (semver-major, e.g. slate
   (Yarn reads every `.yarnrc.yml` from the working directory up). The gate
   applies to new resolutions; it never downgrades what a lockfile already pins.
   Yarn's own default would be `1d`.
-- **Exceptions in Yarn** — either per command, `yarn add|up --no-time-gate
-  <pkg>` (the flag exists on both commands in Yarn 4.18.1), or persistently via
-  `npmPreapprovedPackages` in the relevant `.yarnrc.yml` (an array of package
-  name globs or descriptors that skip the age check). Either way the exception
-  gets a row in the log above; remove a `npmPreapprovedPackages` entry again
+- **Security fixes (3–7 days old)** — an **exact-version** entry in
+  `npmPreapprovedPackages` in the root `.yarnrc.yml` (e.g. `"joi@17.13.9"`;
+  Yarn 4.18.1 matches it as a descriptor, so only that version skips the age
+  check), with a comment naming the advisory id and the publish date; then
+  `yarn up <pkg>@<range>` / `yarn up -R <pkg>` in each affected workspace.
+  `srv/`, `sdk/`, `contracts/` and `docker/hardhat/node/` inherit the root
+  list when Yarn runs inside the checkout (none of their own files sets the
+  key); the image builds install with `--immutable` and resolve nothing, so
+  they need no entry. Add a row to the security-fix log in the same change,
+  and remove the entry once the version is 7 days old (at the latest with the
+  next lock file maintenance). Never a name glob, never a range.
+- **Exceptions in Yarn** (below 3 days for a security fix, below 7 for
+  anything else; maintainer approval required) — per command,
+  `yarn add|up --no-time-gate <pkg>` (the flag exists on both commands in Yarn
+  4.18.1), or the same exact-version `npmPreapprovedPackages` entry. Either
+  way the exception gets a row in the exception log; remove the entry again
   once the version has aged past the gate.
 - **Lockfiles everywhere, installed immutably** — every install path runs
   `yarn install --immutable`, so an install never resolves anything the
@@ -311,8 +342,20 @@ maintainer installs it on the GitHub repository) with `renovate.json` at the
 repository root:
 
 - `minimumReleaseAge: "7 days"` with `internalChecksFilter: "strict"` — no
-  branch or PR is created for a release until it is a week old (also for
-  vulnerability-alert PRs).
+  branch or PR is created for a release until it is a week old.
+- `vulnerabilityAlerts.minimumReleaseAge: "3 days"` — vulnerability-alert PRs
+  (the security-fix rule) wait 3 days instead. Precedence, checked in the
+  renovate 44.181.0 sources: each alert becomes a package rule whose `force`
+  carries the whole `vulnerabilityAlerts` object, and `mergeChildConfig`
+  re-applies `force` after every merge, so it wins over the global
+  `minimumReleaseAge` and over every `packageRules` entry; the object is
+  `mergeable`, so Renovate's own defaults for it (no schedule, immediate PR
+  creation, `rangeStrategy: update-lockfile`, `[SECURITY]` suffix) stay in
+  effect. **Caveat:** Renovate updates `yarn.lock` with the repository's Yarn
+  and `.yarnrc.yml`, so between day 3 and day 7 Yarn's own `1w` gate refuses
+  the fixed version and the PR shows a lockfile/artifact error — add the
+  exact `npmPreapprovedPackages` entry (and the log row) on the PR branch and
+  let Renovate retry. TODO(verify) on the first real vulnerability PR.
 - Docker images in Dockerfiles and compose files are kept digest-pinned
   (`docker:pinDigests`); digest refreshes and minor/patch versions arrive as
   one grouped weekly PR.
@@ -373,7 +416,7 @@ targets `develop` as well (resolve a conflict in this file in favour of
 Dependabot **alerts** are enabled for the repository: Renovate's
 `vulnerabilityAlerts` only sees advisories GitHub has raised as Dependabot
 alerts. Dependabot *security updates* (its own PRs) stay off — they would
-bypass the 7-day rule.
+bypass the 3-day security-fix minimum.
 
 Renovate 44 defaults to `minimumReleaseAgeBehaviour: timestamp-required`: a
 release without a publish timestamp counts as *not yet aged* and is held back,
@@ -388,7 +431,8 @@ and a local dry run (`--platform=local --dry-run=lookup`, docker and regex
 managers) extracted every pinned image plus `HELPER_IMAGE` and the four
 `COREPACK_VERSION` lines, skipped all locally built images, and held every
 available tag update back as pending under the 7-day rule (all of them were
-younger than a week).
+younger than a week). After `vulnerabilityAlerts.minimumReleaseAge` moved to
+`"3 days"` the validator (`--strict`, same pinned version) still passes.
 
 ## Manual update procedures
 

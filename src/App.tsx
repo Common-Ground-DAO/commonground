@@ -37,9 +37,11 @@ import {
   lightTheme,
 } from '@rainbow-me/rainbowkit';
 import {
+  braveWallet,
   coinbaseWallet,
   injectedWallet,
   metaMaskWallet,
+  rabbyWallet,
   rainbowWallet,
   safeWallet,
   walletConnectWallet,
@@ -185,8 +187,9 @@ const wagmiConfig = getDefaultConfig({
   // Spelled out rather than left to RainbowKit 2's default set, which differs
   // from RainbowKit 1's: it drops Coinbase Wallet (replacing it with Base
   // Account) and the generic injected/Brave entries. This list is the wallets
-  // RainbowKit 1's `getDefaultWallets` offered. Brave and other extensions
-  // still surface through wagmi's EIP-6963 discovery.
+  // RainbowKit 1's `getDefaultWallets` offered, plus Rabby and Brave: the
+  // modal only lists wallets that have an entry here, so an extension that is
+  // not listed does not appear in it.
   wallets: [{
     groupName: 'Recommended',
     wallets: [
@@ -195,6 +198,8 @@ const wagmiConfig = getDefaultConfig({
       rainbowWallet,
       coinbaseWallet,
       metaMaskWallet,
+      rabbyWallet,
+      braveWallet,
       walletConnectWallet,
     ],
   }],

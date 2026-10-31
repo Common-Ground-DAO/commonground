@@ -1,7 +1,9 @@
 > Status: verified against commit 8613352a4, 2026-08-04; image-moderation
 > additions against the fix/image-filter-review-53 branch, 2026-08-15; local
 > TLS mode, call ports, root builds and startup ordering against commit
-> a5633d5be (+ fix/selfhost-local-test), 2026-10-27
+> a5633d5be (+ fix/selfhost-local-test), 2026-10-27; npx/lockfile-refresh
+> notes, chunking figures, tests and the reference-client pipeline against
+> commit 935232158, 2026-10-31
 
 # Common Ground Infrastructure Documentation
 
@@ -264,7 +266,14 @@ main workspaces:
 | `docker/hardhat/node/` | **was the one unprotected path** — `docker/hardhat/Dockerfile` ran a bare `yarn`, i.e. the base image's Yarn 1.22, with no lockfile and scripts on. It now enables corepack, pins `packageManager: yarn@4.17.1`, and ships its own `.yarnrc.yml`. |
 | backend image build | the copied `.yarnrc.yml` carries both controls (no `yarnPath` exists any more — corepack provisions the `packageManager`-pinned 4.17.1); verified by the `YN0004` warnings in the build output |
 | Azure pipelines | the secure-file `.yarnrc.yml` **replaces** the repo's, so the pipelines re-append both settings after copying it — see the comment there |
-| `npx` call sites | `web-push` and `truffle-flattener` both resolve to declared local dependencies, so npx never fetches from the registry |
+| `npx` call sites | every call (`web-push` and `hardhat` in the build scripts, `truffle-flattener` in `tools/generateFlattenedSourceCode.sh`) resolves to a declared local dependency and passes `--no`, which turns a missing package into a loud failure instead of a silent registry download-and-run |
+
+**Refreshing a lockfile within the existing ranges** needs both patterns:
+`yarn up -R '*' '@*/*'`. Yarn's micromatch `*` does not cross `/`, so
+`yarn up -R '*'` alone leaves every scoped package at its old resolution.
+Before adding or bumping a package, also look at its publish date — the age
+gate enforces a week, but a package that is a week old is not automatically a
+trustworthy one.
 
 ### Full Build: `docker/build.sh` (`./run.sh build_full`)
 
@@ -387,13 +396,16 @@ prod/staging vhosts the directive did not carry `'self'` before the cutover
   chunking still emitted one ~5.6 MB app chunk, and went back down once the
   `manualChunks` vendor groups (below) capped the largest chunk at ~2.2 MiB
   (since the 2026-08 dependency refresh the largest is `vendor-web3` at
-  ~3.6 MiB — see the chunking note below — still under the cap). A
+  ~3.4 MiB — see the chunking note below — still under the cap). A
   chunk over the cap silently drops out of the precache (which costs offline
   cold start), which is what the assertion turns into a build failure. A prod
-  build currently precaches 87 entries / ~11.34 MiB (2026-08 dependency-refresh
-  measurement; Vite 7 baseline was 90 / ~10.4 MiB) — CRA's
-  content baseline was 118 / ~10.6 MiB; the entry count fell with the chunk
-  count, the bytes moved only with the dependency refresh. Excluded from the manifest:
+  build precached 158 entries / ~11.21 MiB after the 2026-08 wagmi-2
+  migration (RainbowKit 2 code-splits its wallet connectors, so the build went
+  from 54 to 126 JS chunks). Treat that as a lower bound: the explicit wallet
+  list added in the same migration's review came afterwards (~5 lazy chunks /
+  ~0.5 MiB of precache), and the later React-19 waves were not re-measured as a
+  whole — the motion 12 swap alone added ~0.5 % raw JS. The Vite 7 baseline
+  was 90 / ~10.4 MiB and CRA's content baseline 118 / ~10.6 MiB. Excluded from the manifest:
   `index_cgid.html`, sourcemaps, `LICENSE` files, `asset-manifest.json`, the
   worker itself and the verbatim `public/` copy (the fonts, call sounds and
   cross-origin-isolation shells that must be precached are added by hand in
@@ -420,11 +432,12 @@ and `App` ~1.9 MiB, with the total JS unchanged (~9.4 MiB over
 57 files instead of 86); what changed was the shape — the app's statically
 reachable closure grows by ~0.3 MiB (previously lazy-only ethers/rainbowkit
 modules land inside `vendor-web3`) and then arrives as ~24 parallel requests
-instead of one 5.4 MiB blocking one. The 2026-08 dependency refresh (wave 0 of
-the dependency-update roadmap) grew `vendor-web3` to ~3.6 MiB and the total to
-~10.4 MiB over 54 files — about half of that regression is a duplicated viem 2
-pulled in via `@safe-global/safe-apps-provider`, which the wagmi-2 wave is
-expected to collapse; re-measure there. The groups were tuned under Vite 6 /
+instead of one 5.4 MiB blocking one. The 2026-08 dependency refresh first
+grew `vendor-web3` to ~3.6 MiB (a duplicated viem pulled in by a wagmi-1
+connector); the wagmi-2 migration then brought it back to ~3.4 MiB (3.56 MB)
+with ethers 5 gone, at ~10.3 MiB total JS over 126 chunks. A second viem copy
+remains — WalletConnect core exact-pins its own, loaded only with the lazily
+split WalletConnect connector. The groups were tuned under Vite 6 /
 Rollup 4 and carried over unchanged through the Vite 7 bump (esbuild 0.25 →
 0.28): same chunk set, every chunk same-size or marginally smaller. Three rules
 keep the table safe, all three documented at the definition:
@@ -444,14 +457,18 @@ keep the table safe, all three documented at the definition:
   `commonjsHelpers.js`, `__vite-browser-external`) are pinned: an *unassigned*
   module gets absorbed into whichever group shares its reachability signature,
   and everything imports those three — which is exactly the silent regression
-  the assertion exists to catch.
+  the assertion exists to catch. The same applies to third-party packages that
+  the CG ID mini-app *and* a vendor group both import: `ua-parser-js` (direct
+  import in the mini-app, and a RainbowKit dependency) is pinned into
+  `vendor-shared` because, left unassigned, it made rollup fold the whole
+  `vendor-web3` chunk into the `index_cgid` entry.
 
 Changing the groups needs a **browser** pass — chunk boundaries change module
 initialisation order and no build-time check catches an initialisation-order
 bug.
 
 **Tests.** `yarn test` (Vitest, `vitest.config.ts`) is not part of the build
-scripts yet; the suite is a single smoke test.
+scripts yet; the suite is a small set of unit tests (`src/**/*.test.ts`).
 
 ### Backend Docker Image Build (Two-Stage for Dev)
 
@@ -585,7 +602,7 @@ Self-hosted instances additionally declare their identity at serve time via `win
 
 ## 5. CI/CD Pipelines
 
-The project uses **Azure DevOps Pipelines** (YAML). These pipelines target the CG-operated `app.cg` / `staging.app.cg` deployment (self-hosting does not use them).
+The project uses **Azure DevOps Pipelines** (YAML). The build/deploy pipelines target the CG-operated `app.cg` / `staging.app.cg` deployment (self-hosting does not use them); the reference-client pipeline is a test pipeline.
 
 ### Staging: `pipelines/build-and-deploy-beta.yml`
 
@@ -600,6 +617,19 @@ Steps: install Docker/Node/Yarn toolchain → fetch the secure `.yarnrc` (privat
 ### Clean-Up Template: `pipelines/sub-templates/clean-up.yml`
 
 Shared template that deletes the build work directory, `condition: always()`.
+
+### Reference client: `pipelines/reference-client-conformance.yml`
+
+OpenAPI drift check plus the `sdk/` conformance suite (see `sdk/README.md`).
+It builds the selfhost images, runs `sdk/tools/generate-openapi.sh --check`,
+starts a disposable API-only instance (`sdk/conformance/tools/disposable-instance.sh`,
+which layers `docker/docker-compose.conformance.yml` over the selfhost compose
+file under its own project name, env file and volumes, with nginx published
+on `127.0.0.1:18080` and no TLS edge), then runs the suite against it: the R0 +
+R1 subset on PRs into `develop` that touch `srv/` or `sdk/`, the full suite
+nightly (on `develop`). Its push trigger and one of its nightly branches
+still name the merged `feat/reference-client` branch — see
+`docs/todo/TODO.md`.
 
 ### Deployment Architecture (CG-operated prod/staging)
 

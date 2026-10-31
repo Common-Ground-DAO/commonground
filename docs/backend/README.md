@@ -2,7 +2,9 @@
 
 > Status: verified against commit 0f1d72d66, 2026-08-03; rate-limit section
 > against the 2026-08-04 dependency-update wave 1a; image-moderation sections
-> against the fix/image-filter-review-53 branch, 2026-08-15.
+> against the fix/image-filter-review-53 branch, 2026-08-15; upload rate limit,
+> `Instance` route, URL-preview note, OpenAPI drift check, axios note and §8
+> (dependency notes) against commit 935232158, 2026-10-31.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -21,6 +23,7 @@ Optional third-party services (email, Twitter auth, blockchain, staking) degrade
 5. [Validation](#5-validation)
 6. [Background Jobs](#6-background-jobs)
 7. [Utilities](#7-utilities)
+8. [Dependency Notes](#8-dependency-notes)
 
 ---
 
@@ -88,9 +91,13 @@ tracked in `docs/todo/TODO.md`).
   requests are capped at 8× that; beyond it callers get `SERVICE_UNAVAILABLE`
   (retryable, distinct from the fail-closed `INTERNAL`) instead of queueing
   unboundedly with their source buffers held in memory. `POST
-  /File/uploadImage` additionally carries a per-IP rate limit (40/min per
-  IPv4 or IPv6 /64, skipped on `dev` deployments), applied before body
-  parsing so a shed request never buffers its payload.
+  /File/uploadImage` additionally carries a rate limit (`srv/api/files.ts`):
+  40/min **per account** whenever there is a session, and — for the one upload
+  type served without a login (pre-auth profile pictures) — 10/min per IPv4
+  or IPv6 /64 (30 per /56, 60 per /48). Per-account keying is deliberate:
+  uploading is routine, and IP-only keying would pool a whole CGNAT or campus
+  network into one bucket. Skipped on `dev` deployments, and applied before
+  body parsing so a shed request never buffers its payload.
 - **Processes:** runs in `api` and (for chain-triggered LSP3 images)
   `onchain`. Neither process has an async startup sequence, so the pipeline
   loads lazily on the first classification (~100 ms) and is cached; the
@@ -132,6 +139,16 @@ tracked in `docs/todo/TODO.md`).
   (`env.allowRemoteModels = false`); weights are downloaded at image build
   time from a pinned HF revision with sha256 verification
   (`docker/backend/download_model.sh`).
+- **Scope, by design:** the filter blocks clearly pornographic content; mild
+  or suggestive imagery is deliberately left to community moderation (the
+  default model misses most of it, which is the price of near-zero false
+  positives). It is **not** a CSAM control — that needs perceptual-hash
+  matching against curated databases plus legal reporting processes, which is
+  separate compliance work. Text, video and audio are not classified. The Bot
+  API v1 and the plugin system have no upload endpoints (they reference
+  existing `imageId`s), and Giphy GIFs are never stored server-side, so none
+  of them can bypass the gate; the Giphy picker requests `rating: 'g'`
+  explicitly instead.
 
 ### `src/common/config.ts` (shared config)
 
@@ -209,6 +226,25 @@ An Express router that handles GET requests for social media previews (Open Grap
 - `GET /push-icon` -- Push notification icon
 - `GET /gated-videos/:filename` -- Role-gated video streaming
 - `GET /gated-files/:filename` -- Role-gated file downloads
+
+Short links (here and in the frontend) are `short-uuid` translations with the
+library's default flickrBase58 alphabet and 22-character length. Every shared
+article/chat/call/user link depends on that mapping staying stable — the
+2026-08 bump to short-uuid 6 was differential-tested for exactly that (0
+mismatches over 20 000 UUIDs); any future change to the alphabet or library
+breaks existing links.
+
+### `srv/api/instance.ts` -- Instance Config (mounted at `/Instance`)
+
+- `GET /config` -- the instance's public identity and capability flags as JSON:
+  the same object `buildInstanceConfig()` (`srv/util/instanceConfig.ts`)
+  injects into served HTML as `window.__CG_INSTANCE__`, typed by
+  `InstanceConfig` in `src/common/instance.ts`. Public, unauthenticated,
+  `Cache-Control: no-store`. It exists for clients that never load
+  `index.html` — native apps, bots, the reference client in `sdk/` — and is the
+  first call such a client makes; the web app keeps the HTML injection as its
+  fast path. The `Instance` prefix is in the `/api/v2/` allowlist of every
+  nginx config.
 
 ### `srv/api/community.ts` -- Community Routes
 
@@ -344,7 +380,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/loadUpdates` -- Load message updates since a timestamp
 - `/setReaction`, `/unsetReaction` -- Message reactions
 - `/setChannelLastRead` -- Mark channel as read
-- `/getUrlPreview` -- Get URL preview metadata (Open Graph scrape of a client-supplied URL)
+- `/getUrlPreview` -- Get URL preview metadata (Open Graph scrape of a client-supplied URL). The route fetches the page itself with size/time/redirect limits and passes the HTML to `open-graph-scraper` as `ogs({ html })`. The preview image is stored through `saveImage()`, i.e. it passes the NSFW gate.
 - `/joinArticleEventRoom`, `/leaveArticleEventRoom` -- Join/leave article real-time rooms
 
 A subset of message routes is also reachable over the Bot API v1 surface (see below). At module load, `messages.ts` allowlists `POST /BotV1/messages/{loadMessages, messagesById, loadUpdates, createMessage, setReaction, unsetReaction}` for bot bearer principals. When a request carries a `botPrincipal`, the handler resolves the acting user from the bot instead of the session, requires an exact `{communityId, channelId}` access target, enforces the per-token bot rate limits, and verifies the bot's active membership/policy for that community before proceeding.
@@ -1056,6 +1092,21 @@ Each API validator module exports Joi schemas matching the API request types. Fo
 
 Note: the Staking routes carry no validators (they take no meaningful request body), so there is no `validators.API.Staking` module.
 
+**The validators are also the published API contract.** `docs/api/openapi.json`
+(OpenAPI 3.1) is generated from the compiled validators by
+`sdk/tools/generate-openapi.mjs`, run inside the backend image
+(`sdk/tools/generate-openapi.sh`, i.e. `yarn openapi` in `sdk/`) — request
+bodies come from `describe()` output; responses carry the standard envelope
+with an open `data` schema, since response types are TypeScript-only. The
+output is deterministic, and `generate-openapi.sh --check` (`yarn
+openapi:check`) is the drift guard: **a validator change must be committed
+together with the regenerated `openapi.json`**, or the reference-client
+pipeline fails. A new validator domain also has to be added to the
+generator's `DOMAIN_TO_ROUTE` map, otherwise it is skipped. The hand-written
+siblings `docs/api/socket-events.md`, `docs/api/protoo-methods.md` and the
+versioning policy `docs/api/VERSIONING.md` cover what is not
+runtime-introspectable.
+
 ### Common Validators (`srv/validators/common.ts`)
 
 Reusable Joi schemas:
@@ -1242,7 +1293,7 @@ Converts member lists between binary (UTF-16LE encoded UUIDs) and standard UUID 
 
 ### `srv/util/axios.ts` -- Axios Instance
 
-Custom Axios instance that forces `keepAlive: false` on both the HTTP and HTTPS agent. It was introduced for a Node.js-20-era Axios bug ([axios#5929](https://github.com/axios/axios/issues/5929), rooted in [nodejs#47130](https://github.com/nodejs/node/issues/47130)) and has **not** been re-checked since the Node 24 bump — see `docs/todo/TODO.md`.
+Custom Axios instance that forces `keepAlive: false` on both the HTTP and HTTPS agent. It was introduced for a Node.js-20-era Axios bug ([axios#5929](https://github.com/axios/axios/issues/5929), rooted in [nodejs#47130](https://github.com/nodejs/node/issues/47130)): a pooled socket the server has already closed fails the next request with `ECONNRESET`. **Re-checked 2026-08-04 on Node 24 + axios 1.19 — still needed**: nodejs#47130 was closed as a known limitation, and the axios 1.x changelog fixes only keep-alive listener leaks, not the pooling race (sources in the code comment). Drop it only once Node changes the pooling behaviour or the backend moves to axios' fetch/undici adapter.
 
 ### `srv/util/botPrincipal.ts` -- Bot Bearer Authentication
 
@@ -1265,4 +1316,69 @@ Parses the staking feature configuration from env vars (`STAKING_CHAIN`, `STAKIN
 
 ### `srv/util/instanceConfig.ts` -- Instance Identity / Capability Flags
 
-Builds the `window.__CG_INSTANCE__` script tag injected into served `index.html` pages (share links / social previews). Declares the deployment, app/CGID URLs, active chains, and a `features` map derived from which credentials and services this server actually has (`email`, `twitterAuth`, and `calls` from `CG_ENABLE_CALLS`) so the frontend can hide features that would only fail. Optional keys (reCAPTCHA site key, Giphy key, WalletConnect project id) are included when configured.
+Builds the `window.__CG_INSTANCE__` script tag injected into served `index.html` pages (share links / social previews). Declares the deployment, app/CGID URLs, active chains, and a `features` map derived from which credentials and services this server actually has (`email`, `twitterAuth`, `calls` from `CG_ENABLE_CALLS`, `imageFilter` from `IMAGE_MODERATION_ENABLED`) so the frontend can hide features that would only fail, plus `imageFilterThreshold`. Optional keys (reCAPTCHA site key, Giphy key, WalletConnect project id) are included when configured. The same object is served as JSON by `GET /api/v2/Instance/config` (`srv/api/instance.ts`, see §2).
+
+---
+
+## 8. Dependency Notes
+
+Version constraints in `srv/package.json` that are not self-explanatory. The
+2026-08 dependency refresh brought every package to a current in-major
+release; the remaining major jumps (Express 5, TypeORM 1.x, joi 18,
+TypeScript 6) are scheduled in `docs/todo/ROADMAP_cg-box.md`.
+
+- **`resolutions`**:
+  - `@types/express` / `@types/express-serve-static-core` → `"4"`. Several
+    `@types/*` packages (`express-session`, `express-ws`, `passport`,
+    `passport-twitter`, `multer`) depend on `@types/express@*` (and
+    `@types/cookie-parser` peer-depends on it), which resolves to 5.x and hoists a second, incompatible `Request` type next
+    to the v4 one. Drop both pins with Express 5.
+  - `sharp` → `^0.35.3`: `@huggingface/transformers` (the NSFW gate) asks for
+    `^0.34`; the resolution keeps a single sharp copy in the image.
+- **Exact pins** (kept exact on purpose; bump deliberately): `socket.io`
+  (paired with the root workspace's exact `socket.io-client` — keep them on the
+  same release), `@socket.io/redis-adapter`, `mediasoup`, `protoo-server`
+  (paired with the root's exact `protoo-client`), `cookie`,
+  `open-graph-scraper`, `altcha-lib`, `ethers` (v6, backend only),
+  `@erc725/erc725.js`, `typescript`, and in `devDependencies`
+  `@tsconfig/node24` and `@types/node`.
+  `socket.io-adapter` is a direct dependency only to satisfy the redis
+  adapter's peer range; nothing imports it.
+- **`cookie` 0.7.2** is the same version `cookie-parser` depends on (one copy).
+  Its only consumer is `cookie.parse()` on the Socket.IO handshake header in
+  `wsapi.ts`. cookie 1.x is named-exports-only and 2.x is ESM-only with a
+  renamed API — not worth it for one call in a CommonJS build. There is **no**
+  `cookie-signature` dependency: `express-session` and `cookie-parser` each
+  bring their own (byte-identical signatures across 1.0.6/1.0.7); the
+  commented-out import in `wsapi.ts` records an alternative unsign path that
+  would need the dependency back.
+- **`@simplewebauthn/browser` is a devDependency of `srv/`** although nothing
+  in `srv/` runs it: `srv/common` is a symlink into `src/common`, and
+  `src/common/types/api/cgid.d.ts` imports its types. Inside the container
+  build there is no root `node_modules`, and `skipLibCheck` would silently turn
+  the passkey API types into `any` without it.
+- **ESM-only dependencies under a CommonJS build.** The backend compiles to
+  CommonJS (`moduleResolution: Node16`) and loads ESM-only packages —
+  currently `puppeteer` 25 — through Node's `require(ESM)` (Node ≥ 22.12). Keep
+  that in mind if the Node floor ever moves down. puppeteer ≥ 23 returns
+  screenshots as `Uint8Array`, hence the `Buffer.from()` in `htmlToImage()`;
+  its install script (allowlisted, see docs/infrastructure §2) downloads Chrome
+  for Testing into `/root/.cache/puppeteer`.
+- **S3 bodies must be Buffers.** Since the `@aws-sdk/*` 3.88 → 3.1102 bump (the
+  change arrived somewhere in the 3.9x line) the client rejects stream bodies of
+  unknown length, so `saveImage()` passes the materialised
+  buffer, never the Sharp instance; `tests/saveImage.spec.ts` asserts exactly
+  that. Presigning in `srv/repositories/files.ts` uses `@smithy/url-parser`,
+  `@smithy/hash-node`, `@smithy/protocol-http` and `@aws-sdk/util-format-url`
+  directly (declared explicitly — they used to be phantom `@aws-sdk/*`
+  imports); the high-level `getSignedUrl` helper is not a drop-in, because
+  `getSignedUrls()` mutates the request before formatting it.
+- **node-redis 6** (see docs/realtime for the `RESP: 2` pin) gives every
+  command a default 5 s timeout and a 30 s TCP keep-alive initial delay, so a
+  wedged Redis fails requests fast instead of hanging them. TypeORM's peer
+  warning about `redis` versions concerns its optional query cache, which this
+  codebase does not use — inert.
+- **Tests:** `yarn tests` in `srv/` runs jest 30 + ts-jest 29 (there is no
+  ts-jest 30) over `tests/*.spec.ts` directly from the TypeScript sources —
+  currently `ipPrefix`, `saveImage` and `imageFilter`. `npx tsc --noEmit` does
+  not cover `tests/` (see `docs/todo/TODO.md`).

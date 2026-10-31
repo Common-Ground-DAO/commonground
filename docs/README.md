@@ -23,6 +23,11 @@ maintaining these docs live in [AGENTS.md](../AGENTS.md) (sections "Documentatio
 | [deployment/](deployment/README.md) | Deployment matrix, selfhost profile, CI/CD |
 | [email-notifications/](email-notifications/README.md) | Email, newsletters, notification preferences |
 
+**Contract artifacts** (not a section — generated or hand-written contract files, no
+status line): [api/](api/) holds `openapi.json` (generated from the Joi validators), the
+socket-event and protoo catalogs and the versioning policy. The headless reference
+client and conformance suite that prove them live in [`sdk/`](../sdk/README.md).
+
 ## Working documents
 
 [todo/](todo/) contains living roadmap and inventory documents for ongoing workstreams

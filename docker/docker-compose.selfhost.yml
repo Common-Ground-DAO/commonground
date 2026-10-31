@@ -303,6 +303,8 @@ services:
       - DOMAIN=${CG_DOMAIN}
       - INTERACTIVE=false
       - MEDIASOUP_DISABLE_LIBURING=${MEDIASOUP_DISABLE_LIBURING:-true}
+      # signalling (4443) is only reachable through Caddy, which sets X-Forwarded-For
+      - MEDIASOUP_TRUST_PROXY=true
     volumes:
       - "./selfhost/certs:/dist/mediasoup/certs/selfhost:ro"
     # the `mediasoup` DB role (and its password) is created by a migration, so

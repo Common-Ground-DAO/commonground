@@ -7,7 +7,8 @@
 > further Swarm rollouts) against commit 935232158, 2026-10-31; dev secrets
 > (generated `docker/.env`) and `s3.selfhost.json` ownership against commit
 > 69999fa20 (chore/env-template), 2026-10-31; digest-pinned images, Node 26 /
-> trixie builder and Yarn 4.18.1 against commit 5f73578, 2026-10-31
+> trixie builder and Yarn 4.18.1 against commit 5f73578, 2026-10-31;
+> `MEDIASOUP_TRUST_PROXY` against commit e44dac1, 2026-10-31
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -240,7 +241,9 @@ different `command` entrypoints and `DB_TYPE` roles (`writer` for most,
 - `CG_DOMAIN:4443` → `reverse_proxy https://mediasoup:4443` for call
   signalling; the internal hop trusts mediasoup's self-signed certificate
   (`tls_insecure_skip_verify`) while clients only ever see Caddy's
-  certificate.
+  certificate. Because signalling only arrives through Caddy, the compose
+  file sets `MEDIASOUP_TRUST_PROXY=true` on `mediasoup`, so its per-client
+  connection limits use the address Caddy puts in `X-Forwarded-For`.
 
 `CG_TLS_MODE` (passed to the `caddy` service, default `acme`) selects one of
 two snippets that the global options block imports

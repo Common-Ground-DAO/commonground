@@ -5,7 +5,9 @@
 > against the fix/image-filter-review-53 branch, 2026-08-15; upload rate limit,
 > `Instance` route, URL-preview note, OpenAPI drift check, axios note and §8
 > (dependency notes) against commit 935232158, 2026-10-31; puppeteer browser
-> install note against commit 5f73578, 2026-10-31.
+> install note against commit 5f73578, 2026-10-31; message access scope,
+> `/deleteMessage`, `/getUrlPreview`, `safeFetch`, `/pluginRequest`,
+> user-article visibility and the test list against commit e44dac1, 2026-10-31.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -1402,5 +1404,8 @@ TypeScript 6) are scheduled in `docs/todo/ROADMAP_cg-box.md`.
   codebase does not use — inert.
 - **Tests:** `yarn tests` in `srv/` runs jest 30 + ts-jest 29 (there is no
   ts-jest 30) over `tests/*.spec.ts` directly from the TypeScript sources —
-  currently `ipPrefix`, `saveImage` and `imageFilter`. `npx tsc --noEmit` does
-  not cover `tests/` (see `docs/todo/TODO.md`).
+  currently `ipPrefix`, `saveImage`, `imageFilter`, `stakingConfig`,
+  `configuredSecret`, `onchainHelper`, `messageAccess`, `messageRepository`,
+  `safeFetch`, `urlPreview`, `pluginRequest`, `protooConnectionGate`,
+  `typingCache`, `userArticleVisibility` and `userArticleRoute`. `npx tsc --noEmit`
+  does not cover `tests/` (see `docs/todo/TODO.md`).

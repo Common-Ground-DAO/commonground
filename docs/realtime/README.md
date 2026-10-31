@@ -1,6 +1,8 @@
 # Real-time & WebRTC Documentation
 
-> Status: verified against commit 91efa7c82, 2026-08-04
+> Status: verified against commit 91efa7c82, 2026-08-04; call-server
+> connection handling (startup, ended-call check, authentication flow) and the
+> Redis key-prefix list against commit e44dac1, 2026-10-31
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -208,7 +210,7 @@ The media server is **optional at deploy time**. In the self-host profile it sit
 
 ### Startup Sequence
 
-1. `runExpressApp()` -- Creates an Express app with a `/rooms/:roomId` REST endpoint for fetching router RTP capabilities, plus a `/hello` health endpoint.
+1. `runExpressApp()` -- Creates the Express app the HTTPS server is built on. It serves no routes of its own; the server exists for the protoo WebSocket upgrade.
 2. `runWebServer()` -- Creates an HTTPS server using TLS certificates (configured via `HTTPS_CERT_FULLCHAIN` / `HTTPS_CERT_PRIVKEY` env vars). Listens on port **4443** by default.
 3. `runProtooWebSocketServer()` -- Creates a protoo WebSocket server on top of the HTTPS server for signaling. Max received frame/message size is 960 KB.
 4. `runMediasoupWorkers()` -- Spawns MediaSoup workers (one per CPU core). Each worker optionally creates a `WebRtcServer` for multiplexing transports on a single port (controlled by `MEDIASOUP_USE_WEBRTC_SERVER` env var; enabled by default).
@@ -219,7 +221,7 @@ The media server is **optional at deploy time**. In the self-host profile it sit
 
 Defined in `srv/mediasoup/config.ts`:
 
-- **Workers:** One per CPU core (`os.cpus().length`). mediasoup ≥ 3.16 removed the `disableLiburing` worker setting (it now relies on libuv's built-in io_uring), and `srv/mediasoup/config.ts` no longer defines it. `MEDIASOUP_DISABLE_LIBURING=true` survives only as a compatibility shim in `srv/mediasoup.ts` (~:180-186), which translates it into `process.env.UV_USE_IO_URING = '0'` — inherited by the spawned worker processes — unless `UV_USE_IO_URING` is already set explicitly.
+- **Workers:** One per CPU core (`os.cpus().length`). mediasoup ≥ 3.16 removed the `disableLiburing` worker setting (it now relies on libuv's built-in io_uring), and `srv/mediasoup/config.ts` no longer defines it. `MEDIASOUP_DISABLE_LIBURING=true` survives only as a compatibility shim in `srv/mediasoup.ts` (~:204-210), which translates it into `process.env.UV_USE_IO_URING = '0'` — inherited by the spawned worker processes — unless `UV_USE_IO_URING` is already set explicitly.
 - **RTC Port Range:** `MEDIASOUP_MIN_PORT` to `MEDIASOUP_MAX_PORT` (default 40000-40099)
 - **Media Codecs:**
   - `audio/opus` (48kHz, stereo)
@@ -289,7 +291,7 @@ A PostgreSQL keepalive query (`SELECT 1`) runs every 60 seconds on the LISTEN co
 
 ### Ended Call Protection
 
-When `getOrCreateRoom` is called, it checks `callHelper.getCallState(roomId)` and rejects the connection if `endedAt` is set. This prevents joining calls that have already ended in the database.
+`getOrCreateRoom` reads `callHelper.getCallState(roomId)` once, before any Room is created, and rejects the connection if the call does not exist, `endedAt` is set, or the user is neither the call creator nor allowed to join (`callHelper.hasPermissionToJoinCall`, the same rule as the `join` request); the same row provides the room parameters (call type, creator, slots, stage slots, audio-only, high quality). This prevents joining calls that have already ended in the database. If the connection that caused a Room's creation is gone before it is attached, the Room is closed again (`closeIfEmpty`). Room creation and joining are serialized per `roomId` (one `AwaitQueue` per room).
 
 ---
 
@@ -305,19 +307,25 @@ protoo is used for all WebRTC signaling between the browser and the MediaSoup se
 wss://{callServerUrl}:4443/?roomId={callId}&peerId={userId}&consumerReplicas=0&callCreator={creatorId}&callType={callType}
 ```
 
-Built by `src/util/urlFactory.ts`. `consumerReplicas` is a debugging aid inherited from the mediasoup demo (it multiplies the consumers created per producer and is fixed room-wide by whoever connects first); the server clamps it to **[0, 4]**, with `NaN` or negative values falling back to `0` (`srv/mediasoup.ts` ~:339-348).
+Built by `src/util/urlFactory.ts`. `consumerReplicas` is a debugging aid inherited from the mediasoup demo (it multiplies the consumers created per producer and is fixed room-wide by whoever connects first); the server clamps it to **[0, 4]**, with `NaN` or negative values falling back to `0` (`srv/mediasoup.ts` ~:333-343).
 
 ### Authentication Flow
 
-Before any media operations, the client must authenticate:
+`roomId` and `peerId` must be UUIDs, otherwise the WebSocket upgrade is refused (400). A new connection then goes through a login phase (`srv/mediasoup/connectionGate.ts`) **before** it is attached to a room — until it has logged in it creates no Room/Router, holds no slot and does not touch an existing peer with the same id:
 
 1. Client sends `getSignableSecret` request -> server returns a cryptographically random hex string.
 2. Client signs the secret using its device private key (`signApiSecret`).
-3. Client sends `login` request with `{ deviceId, secret, base64Signature }`.
-4. Server verifies the device and checks that `peerId === userId`.
-5. On success, `peer.data._cgAuth = true`.
+3. Client sends `login` request with `{ deviceId, secret, base64Signature }` (validated against `validators.API.Socket.login`; one attempt per secret).
+4. Server verifies the device signature and checks that `peerId === userId`. On failure it answers `"ERROR"` and closes the connection.
+5. On success the server reads the call state, gets or creates the Room and attaches the connection as an authenticated peer; only then does it answer the `login` request with `"OK"`. If joining the room fails it answers with an error response whose reason is one of `CALL_LIMIT_EXCEEDED`, `NOT_ALLOWED`, `NOT_FOUND` (no ongoing call) or `UNKNOWN`, and closes. If the user already had a peer in that room (reconnect, second tab), the previous connection is closed and replaced.
 
-All subsequent requests (except `getSignableSecret` and `login`) require `_cgAuth === true`.
+Limits of the login phase:
+
+- 5 s to complete it;
+- at most 8 messages of any kind (including binary or unparsable frames) and at most 4096 characters per message before login; any method other than `getSignableSecret`/`login` is answered with `LOGIN_REQUIRED`;
+- at most 500 connections in the login phase in total and 10 per source, where a source is an IPv4 address or an IPv6 /64; beyond that the upgrade is refused with 429. The source is the socket address, or, with `MEDIASOUP_TRUST_PROXY=true`, the last `X-Forwarded-For` entry (the one the proxy added). Only set that flag when 4443 is reachable through the proxy alone: the self-host stack sets it (Caddy in front), the dev stack, which publishes 4443 directly, does not.
+
+The room's call type (default/broadcast), creator, slots and flags are taken from the stored call (`calls` row); the `callType` and `callCreator` query parameters are not used by the server.
 
 ### Protoo Requests (Client -> Server)
 

@@ -18,17 +18,42 @@ import Room from "./mediasoup/room";
 import * as types from "mediasoup/types";
 import { fakeHealthcheck } from './mediasoup/mediasoupHealthcheck';
 import callHelper from './repositories/calls';
-import { CallType } from './common/enums';
 import { exec } from 'child_process';
 import config from './common/config';
 import errors from './common/errors';
 import pool from './util/postgres';
 import format from 'pg-format';
 import { type PoolClient } from 'pg';
+import validators from './validators';
+import deviceHelper from './repositories/device';
+import { uuidRe } from './util';
+import { authenticateProtooTransport, connectionSourceKey, PendingConnectionLimiter } from './mediasoup/connectionGate';
 
 const rooms: Map<string, Room> = new Map();
 const mediasoupWorkers: Array<types.Worker> = [];
-const queue: AwaitQueue = new AwaitQueue();
+// Room creation and joining are serialized per room, so two peers connecting
+// at the same time with the same roomId do not create two rooms.
+const roomQueues: Map<string, AwaitQueue> = new Map();
+
+/** Time a new connection gets to complete the protoo login. */
+const PROTOO_LOGIN_TIMEOUT_MS = 5_000;
+/**
+ * Connections in the login phase: in total, and per source (an IPv4 address
+ * or an IPv6 /64).
+ */
+const pendingConnections = new PendingConnectionLimiter(500, 10);
+/**
+ * Set when the call server is only reachable through a reverse proxy that
+ * sets X-Forwarded-For (the selfhost profile's Caddy). Otherwise the header is
+ * client-controlled and ignored.
+ */
+const TRUST_PROXY = process.env.MEDIASOUP_TRUST_PROXY === 'true';
+/** Errors a failed join is reported with; anything else becomes UNKNOWN. */
+const JOIN_ERROR_CODES: ReadonlySet<string> = new Set([
+    errors.server.CALL_LIMIT_EXCEEDED,
+    errors.server.NOT_ALLOWED,
+    errors.server.NOT_FOUND,
+]);
 let webServer: https.Server;
 let protooWebSocketServer: protoo.WebSocketServer;
 let expressApp: express.Express;
@@ -261,32 +286,6 @@ async function runExpressApp() {
     expressApp = express();
     expressApp.use(bodyParser.json());
 
-    /**
-     * For every API request, verify that the roomId in the path matches and
-     * existing room.
-     */
-    expressApp.param(
-        'roomId', (req: any, res: any, next, roomId: string) => {
-            // The room must exist for all API requests.
-            if (!rooms.has(roomId)) {
-                const error: any = new Error(`room with id "${roomId}" not found`);
-
-                error.status = 404;
-                throw error;
-            }
-
-            req.room = rooms.get(roomId);
-
-            next();
-        });
-    expressApp.get(
-        '/rooms/:roomId', (req: any, res: any) => {
-            const data = req.room.getRouterRtpCapabilities();
-
-            res.status(200).json(data);
-        });
-
-
     expressApp.use(cors());
 
     expressApp.use(
@@ -304,10 +303,6 @@ async function runExpressApp() {
             }
         });
 
-
-    expressApp.get('/hello', (req, res) => {
-        res.send('Hello World!');
-    });
 }
 
 async function runProtooWebSocketServer() {
@@ -328,10 +323,9 @@ async function runProtooWebSocketServer() {
         const u = new URL(info.request.url, 'http://localhost').searchParams;
         const roomId: string = u.get('roomId') as string;
         const peerId: string = u.get('peerId') as string;
-        const callType: CallType = u.get('callType') as CallType;
 
-        if (!roomId || !peerId) {
-            reject(400, 'Connection request without roomId and/or peerId');
+        if (!roomId || !peerId || !uuidRe.test(roomId) || !uuidRe.test(peerId)) {
+            reject(400, 'Connection request without valid roomId and/or peerId');
 
             return;
         }
@@ -348,73 +342,87 @@ async function runProtooWebSocketServer() {
             consumerReplicas = Math.min(4, Math.floor(consumerReplicas));
         }
 
+        const source = connectionSourceKey(
+            info.socket.remoteAddress, info.request.headers['x-forwarded-for'], TRUST_PROXY);
+        const releasePending = pendingConnections.tryAcquire(source);
+        if (!releasePending) {
+            reject(429, 'Too many pending connections');
+
+            return;
+        }
+
         console.info(
             'protoo connection request [roomId:%s, peerId:%s, address:%s, origin:%s]',
-            roomId, peerId, info.socket.remoteAddress, info.origin);
+            roomId, peerId, source, info.origin);
 
-        // Serialize this code into the queue to avoid that two peers connecting at
-        // the same time with the same roomId create two separate rooms with same
-        // roomId.
-        queue.push(async () => {
-            const existingCall = await callHelper.getCallState(roomId);
-            let { callCreator, callSlots, stageSlots, audioOnly, highQuality } = initializeCallParameters(peerId, callType, existingCall);
-            const room = await getOrCreateRoom({ roomId, consumerReplicas, callType, callCreator, callSlots, stageSlots, audioOnly, highQuality });
+        // Accept the WebSocket, then require the protoo login before the
+        // connection touches any room state.
+        let protooWebSocketTransport: protoo.WebSocketTransport;
+        try {
+            protooWebSocketTransport = accept();
+        } catch (error) {
+            releasePending();
+            console.error('accepting the protoo connection failed:%o', error);
 
-            // Accept the protoo WebSocket connection.
-            const protooWebSocketTransport = accept();
-            const consume = true;
+            return;
+        }
 
-            await room.handleProtooConnection({ peerId, consume, protooWebSocketTransport });
+        authenticateProtooTransport(protooWebSocketTransport, peerId, {
+            timeoutMs: PROTOO_LOGIN_TIMEOUT_MS,
+            verify: verifyProtooLogin,
         })
-            .catch((error: any) => {
-                console.error('room creation or room joining failed:%o', error);
+            .finally(releasePending)
+            .then(async (connection) => {
+                try {
+                    await runInRoomQueue(roomId, async () => {
+                        if (protooWebSocketTransport.closed) {
+                            throw new Error('connection closed');
+                        }
+                        const room = await getOrCreateRoom({ roomId, peerId, consumerReplicas });
+                        try {
+                            await room.handleProtooConnection({ peerId, consume: true, protooWebSocketTransport });
+                        } catch (error) {
+                            room.closeIfEmpty();
+                            throw error;
+                        }
+                    });
+                    connection.confirm();
+                }
+                catch (error: any) {
+                    console.error('room creation or room joining failed:%o', error);
 
-                reject(error);
+                    connection.refuse(JOIN_ERROR_CODES.has(error?.message) ? error.message : errors.server.UNKNOWN);
+                }
+            }, (error: any) => {
+                console.info(
+                    'protoo login failed [roomId:%s, peerId:%s, address:%s]: %s',
+                    roomId, peerId, source, error?.message);
             });
     });
 }
 
-function initializeCallParameters(
-    peerId: string, 
-    callType: CallType,
-    existingCall?: {
-        callCreator: string, 
-        slots: number, 
-        stageSlots: number, 
-        audioOnly: boolean, 
-        highQuality: boolean, 
+/** Checks a protoo `login` payload; resolves to the device owner's user id. */
+async function verifyProtooLogin(data: unknown, secret: string): Promise<string> {
+    const login: API.Socket.login.Request = await validators.API.Socket.login.validateAsync(data);
+    if (login.secret !== secret) {
+        throw new Error(errors.server.INVALID_SECRET);
     }
-) {
-    let callCreator;
-    let callSlots;
-    let stageSlots;
-    let audioOnly = false;
-    let highQuality = false;
-    if (existingCall) {
-        callCreator = existingCall.callCreator;
-        callSlots = existingCall.slots;
-        stageSlots = existingCall.stageSlots;
-        audioOnly = existingCall.audioOnly;
-        highQuality = existingCall.highQuality;
-    } else {
-        callCreator = peerId;
-        switch (callType) {
-            case CallType.BROADCAST:
-                stageSlots = config.PREMIUM.COMMUNITY_FREE.BROADCASTERS_SLOTS;
-                callSlots = config.PREMIUM.COMMUNITY_FREE.BROADCAST_STANDARD;
-                break;
-            case CallType.DEFAULT:
-                stageSlots = config.PREMIUM.COMMUNITY_FREE.BROADCASTERS_SLOTS;
-                callSlots = config.PREMIUM.COMMUNITY_FREE.CALL_STANDARD;
-                break;
+    const { userId } = await deviceHelper.verifyDeviceAndGetUserId(login.deviceId, secret, login.base64Signature);
+    return userId;
+}
 
-            default:
-                stageSlots = config.PREMIUM.COMMUNITY_FREE.BROADCASTERS_SLOTS;
-                callSlots = config.PREMIUM.COMMUNITY_FREE.CALL_STANDARD;
-                break;
-        }
+function runInRoomQueue<T>(roomId: string, task: () => Promise<T>): Promise<T> {
+    let roomQueue = roomQueues.get(roomId);
+    if (!roomQueue) {
+        roomQueue = new AwaitQueue();
+        roomQueues.set(roomId, roomQueue);
     }
-    return { callCreator, callSlots, stageSlots, audioOnly, highQuality };
+    const queue = roomQueue;
+    return queue.push(task).finally(() => {
+        if (queue.size === 0 && roomQueues.get(roomId) === queue) {
+            roomQueues.delete(roomId);
+        }
+    });
 }
 
 /**
@@ -430,29 +438,32 @@ function getMediasoupWorker() {
 }
 
 /**
- * Get a Room instance (or create one if it does not exist).
+ * Get a Room instance (or create one if it does not exist) for a call that
+ * exists and has not ended. The room's parameters come from the stored call.
  */
-async function getOrCreateRoom({ 
-        roomId, 
-        consumerReplicas, 
-        callType, 
-        callCreator, 
-        stageSlots, 
-        callSlots, 
-        audioOnly, 
-        highQuality 
-    }: { 
-        roomId: string, 
-        consumerReplicas: number, 
-        callType: CallType, 
-        callCreator?: string, 
-        stageSlots: number, 
-        callSlots: number, 
-        audioOnly: boolean, 
-        highQuality: boolean 
+async function getOrCreateRoom({
+        roomId,
+        peerId,
+        consumerReplicas,
+    }: {
+        roomId: string,
+        peerId: string,
+        consumerReplicas: number,
     }) {
+    const callState = await callHelper.getCallState(roomId);
+    if (!callState || callState.endedAt) {
+        console.info('no ongoing call for this room [roomId:%s]', roomId);
+        throw new Error(errors.server.NOT_FOUND);
+    }
+    // Same rule as the `join` request: only users who may join the call get a
+    // peer in its room.
+    if (peerId !== callState.callCreator && !(await callHelper.hasPermissionToJoinCall(peerId, roomId))) {
+        throw new Error(errors.server.NOT_ALLOWED);
+    }
+    const { callCreator, slots: callSlots, stageSlots, audioOnly, highQuality, callType } = callState;
+
     let room = rooms.get(roomId);
-    
+
     const peerLenght = room ? room._getJoinedPeers().length : 0;
 
     if (peerLenght >= callSlots) {
@@ -468,31 +479,30 @@ async function getOrCreateRoom({
         console.info('creating a new Room [roomId:%s]', roomId);
 
         const mediasoupWorker = getMediasoupWorker();
-        room = await Room.create({ mediasoupWorker, roomId, consumerReplicas, callType, callCreator, stageSlots, callSlots, audioOnly, highQuality });
+        const newRoom = await Room.create({ mediasoupWorker, roomId, consumerReplicas, callType, callCreator, stageSlots, callSlots, audioOnly, highQuality });
 
-        rooms.set(roomId, room);
-        room.on('close', async () => {
+        rooms.set(roomId, newRoom);
+        newRoom.on('close', async () => {
             try {
                 await callHelper.softEndCall(roomId);
             } catch (error) {
                 console.error('softEndCall failed', error);
             }
-            rooms.delete(roomId);
+            if (rooms.get(roomId) === newRoom) {
+                rooms.delete(roomId);
+            }
         });
-        room.on('forceClose', async () => {
+        newRoom.on('forceClose', async () => {
             try {
                 await callHelper.endCallForEveryone(roomId);
             } catch (error) {
                 console.error('endCallForEveryone failed', error);
             }
-            rooms.delete(roomId);
+            if (rooms.get(roomId) === newRoom) {
+                rooms.delete(roomId);
+            }
         });
-    }
-    
-    const callState = await callHelper.getCallState(roomId);
-    if (callState.endedAt) {
-        rooms.delete(roomId);
-        throw new Error('Call has already ended');
+        room = newRoom;
     }
 
     return room;

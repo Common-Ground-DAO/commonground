@@ -7,7 +7,8 @@
 > `docker/ensureEnv.sh`, generated `s3.json`, existing-checkout steps) and
 > `s3.selfhost.json` ownership against commit 69999fa20 (chore/env-template),
 > 2026-10-31; image pins, Node 26 / trixie, Yarn 4.18.1, immutable installs and
-> verified binary downloads against commit 5f73578, 2026-10-31
+> verified binary downloads against commit 5f73578, 2026-10-31; Redis cache
+> roles and `MEDIASOUP_TRUST_PROXY` against commit e44dac1, 2026-10-31
 
 # Common Ground Infrastructure Documentation
 
@@ -618,6 +619,7 @@ The table describes purpose; `.env.example` has the defaults.
 | `BUILDER_UID` / `BUILDER_GID` | Host UID/GID for the builder container (avoids mounted-volume permission issues). `0` (root) is accepted. |
 | `RECALCULATE_BALANCES_AND_ROLES` | If `true`, recomputes all token balances/roles on `onchain` startup. |
 | `MEDIASOUP_DISABLE_LIBURING` | Disables io_uring in mediasoup (workaround for some kernels/containers). |
+| `MEDIASOUP_TRUST_PROXY` | `true` = the call server takes the client address for its pre-login connection limits from `X-Forwarded-For`. Only for a call server reachable solely through a reverse proxy; the self-host stack sets it, the dev stack leaves it unset. |
 | `LOCAL_CERTIFICATE_IP` | IP baked into self-signed certs. Empty = no certs generated; set a LAN IP for multi-device testing. |
 | `MEDIASOUP_ANNOUNCED_IP` | IP mediasoup advertises for WebRTC ICE candidates; must be client-reachable. |
 | `EXTERNAL_LISTEN_IP` | Host port-binding interface. `127.0.0.1` = localhost only, `0.0.0.0` = all interfaces. |

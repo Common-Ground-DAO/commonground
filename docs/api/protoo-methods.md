@@ -13,8 +13,16 @@ wss://<callServerUrl>:4443/?roomId=<callId>&peerId=<userId>&consumerReplicas=<n>
 ```
 
 - Subprotocol: `protoo`.
-- `roomId` and `peerId` are **required**; `peerId` MUST equal the user id the
-  in-band login proves (`peer.id === userId`, else login answers `"ERROR"`).
+- `roomId` and `peerId` are **required** UUIDs; `peerId` MUST equal the user
+  id the in-band login proves (else login answers `"ERROR"` and the server
+  closes the connection).
+- The connection is attached to the call room only after a successful login;
+  `login` is answered `"OK"` once that has happened, or with an error response
+  (`CALL_LIMIT_EXCEEDED`, `NOT_ALLOWED`, `NOT_FOUND` for a missing or ended
+  call, otherwise `UNKNOWN`) followed by a close. The login must complete
+  within 5 s.
+- `callType` and `callCreator` are not read by the server; the room takes
+  them from the stored call.
 - `callServerUrl` comes from `startCall`'s response or the `cliCallEvent` —
   **not** from `getCall` (which returns `callServerId`; see FINDINGS F-10).
 
@@ -27,8 +35,10 @@ response err: { response: true, id, ok: false, errorCode, errorReason }
 notification: { notification: true, method, data }
 ```
 
-Any method other than `getSignableSecret` / `login` throws `LOGIN_REQUIRED`
-until the peer is authenticated.
+Any method other than `getSignableSecret` / `login` is answered with an error
+response (`LOGIN_REQUIRED`) until the peer is authenticated; more than 8
+messages, or a message over 4096 characters, before login close the
+connection.
 
 ## Signaling handshake (the reference client's boundary)
 

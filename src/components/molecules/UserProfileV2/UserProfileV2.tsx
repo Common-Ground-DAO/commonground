@@ -18,6 +18,7 @@ import TextAreaField from '../inputs/TextAreaField/TextAreaField';
 import { CheckIcon, XMarkIcon } from '@heroicons/react/20/solid';
 import userApi from 'data/api/user';
 import MultiEntryField from '../inputs/MultiEntryField/MultiEntryField';
+import { securityActionErrorMessage } from 'data/auth/authErrors';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import { validateTagTextInput } from 'common/validators';
 import ScreenAwareDropdown from 'components/atoms/ScreenAwareDropdown/ScreenAwareDropdown';
@@ -217,7 +218,11 @@ const UserProfileV2: React.FC<Props> = (props) => {
       setCurrentPage('profile');
     } catch (e) {
       console.error(e);
-      showSnackbar({ type: 'warning', text: 'Failed to add account, please try again later' });
+      // nothing to report when "Confirm it's you" was cancelled
+      const message = securityActionErrorMessage(e, 'Failed to add account, please try again later');
+      if (message) {
+        showSnackbar({ type: 'warning', text: message });
+      }
     }
   }, [setCurrentPage, showSnackbar]);
   const { attemptConnectTwitter, buttonDisabled } = useTwitterAuth(onTwitterLogin);

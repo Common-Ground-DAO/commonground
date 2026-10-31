@@ -15,6 +15,9 @@ import channelDatabaseManager from "data/databases/channel";
 import { UserProfileTypeEnum } from "common/enums";
 import getSiweMessage from "util/siwe";
 import uniqueDb from "data/databases/unique";
+import stepUpManager from "data/auth/stepUp";
+import { getAuthMode } from "data/auth/authMode";
+import { type AuthenticationResponseJSON } from "@simplewebauthn/browser";
 
 type CurrentUser = {
   userId: string;
@@ -29,8 +32,23 @@ function debugLog(...args: any[]) {
   }
 }
 
-const MNEMONIC_KEY = 'CRYPTOGRAM_USER_MNEMONIC'; // will be deprecated at some point
+// Legacy CG ID (gateway) instances only: the deprecated 12-word recovery
+// phrase some old clients kept in localStorage for a silent re-login.
+const MNEMONIC_KEY = 'CRYPTOGRAM_USER_MNEMONIC';
 const CURRENT_USER_KEY = 'CG_CURRENT_USER';
+
+export type LoginOptions =
+  { account: 'wallet' } |
+  { aliasOrEmail: string, password: string } |
+  { email: string, code: string } |
+  { account: 'twitter' } |
+  { account: 'lukso' } |
+  { account: 'farcaster' } |
+  /** passkey on this origin: the assertion is verified by User/login itself */
+  { account: 'passkey', authenticationResponse: AuthenticationResponseJSON } |
+  /** legacy CG ID popup: redeems the assertion the CG ID app verified */
+  { account: 'passkey-legacy' } |
+  { deviceId: string };
 
 class LoginManager {
   private _state: Common.LoginState = "pending";
@@ -50,7 +68,12 @@ class LoginManager {
   constructor() {
     const storageListener = (event: StorageEvent) => {
       if (event.key === CURRENT_USER_KEY) {
+        const previousUserId = this._currentUser?.userId;
         this._currentUser = JSON.parse(event.newValue || 'null');
+        if (this._currentUser?.userId !== previousUserId) {
+          // logged out (or switched account) in another tab
+          stepUpManager.clear();
+        }
         if (!!this._currentUser) {
           webSocketManager.login(this._currentUser.deviceId);
         }
@@ -91,6 +114,10 @@ class LoginManager {
         }
       }
       else {
+        if (event.data === 'loggingout' || event.data === 'anonymous') {
+          // another tab logged out
+          stepUpManager.clear();
+        }
         this.state = event.data;
       }
     };
@@ -205,7 +232,11 @@ class LoginManager {
         }
     
         const mnemonic = localStorage.getItem(MNEMONIC_KEY);
-        if (!result && !!mnemonic) {
+        if (!!mnemonic && !getAuthMode().legacyCgid) {
+          // the recovery-phrase login only exists on the legacy gateway
+          localStorage.removeItem(MNEMONIC_KEY);
+        }
+        else if (!result && !!mnemonic) {
           try {
             triedLogin = true;
             const mnemonicResult = await this.prepareMnemonicLogin(mnemonic);
@@ -266,16 +297,8 @@ class LoginManager {
     }
   }
 
-  public async login(options: 
-    { account: 'wallet' } |
-    { aliasOrEmail: string, password: string } |
-    { email: string, code: string } |
-    { account: 'twitter' } |
-    { account: 'lukso' } |
-    { account: 'farcaster' } |
-    { account: 'passkey' } |
-    { deviceId: string }
-  ) {
+  /** interactive login (or a device-key re-login with `deviceId`) */
+  public async login(options: LoginOptions) {
     return this._login(options);
   }
 
@@ -381,6 +404,7 @@ class LoginManager {
       },
     }
     const responseData = await userApi.createUser(requestData);
+    stepUpManager.markAuthenticated();
     await saveDeviceKeyPair(responseData.ownData.id, responseData.deviceId, keyPair);
     this.setCurrentUser({
       userId: responseData.ownData.id,
@@ -396,6 +420,7 @@ class LoginManager {
     if (!this.logoutPromise) {
       this.logoutPromise = new Promise<void>(async (resolve, reject) => {
         this.state = "loggingout";
+        stepUpManager.clear();
         try {
           await userApi.logout();
           webSocketManager.logout()
@@ -415,6 +440,7 @@ class LoginManager {
     return this.logoutPromise;
   }
 
+  /** legacy CG ID (gateway) instances only: the server refuses cg_evm elsewhere */
   public async prepareMnemonicLogin(mnemonic: string): Promise<API.User.prepareWalletAction.Response> {
     mnemonic = mnemonic.toLowerCase().trim().replace(/  +/, ' ');
     // Was ethers 5's `Wallet.fromMnemonic`; viem's account derivation produces
@@ -444,16 +470,7 @@ class LoginManager {
 
   // Private
 
-  private async _login(options: 
-    { account: 'wallet' } |
-    { aliasOrEmail: string, password: string } |
-    { email: string, code: string } |
-    { account: 'twitter' } |
-    { account: 'lukso' } |
-    { account: 'farcaster' } |
-    { account: 'passkey' } |
-    { deviceId: string }
-  ): Promise<API.User.login.Response> {
+  private async _login(options: LoginOptions): Promise<API.User.login.Response> {
     if (!this._loginInProgress) {
       this._loginInProgress = new Promise<API.User.login.Response>(async (resolve, reject) => {
         try {
@@ -505,6 +522,12 @@ class LoginManager {
               };
             } else if ("account" in options && options.account === "passkey") {
               loginRequest = {
+                type: 'passkey',
+                authenticationResponse: options.authenticationResponse,
+                device: { publicKey },
+              };
+            } else if ("account" in options && options.account === "passkey-legacy") {
+              loginRequest = {
                 type: 'passkey-success',
                 device: { publicKey },
               };
@@ -525,12 +548,15 @@ class LoginManager {
                 email: options.email,
                 code: options.code,
               };
-            } else {
+            } else if ("aliasOrEmail" in options) {
               loginRequest = {
-                ...options,
+                aliasOrEmail: options.aliasOrEmail,
+                password: options.password,
                 type: "password",
                 device: { publicKey },
               };
+            } else {
+              throw new Error(errors.server.INVALID_REQUEST);
             }
             if (this.state === 'loggingin') {
               responseData = await userApi.login(loginRequest);
@@ -544,6 +570,14 @@ class LoginManager {
                 userId: responseData.ownData.id,
                 deviceId: responseData.deviceId
               });
+              if (!("deviceId" in options)) {
+                // an interactive login counts as a recent authentication for
+                // sensitive actions; a device-key re-login does not
+                stepUpManager.markAuthenticated();
+              }
+              else {
+                stepUpManager.clear();
+              }
               await this.setupAfterLogin(responseData);
               this.state = "loggedin";
               resolve(responseData);

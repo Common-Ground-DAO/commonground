@@ -82,6 +82,7 @@ import { UserOnchainProvider } from 'context/UserOnchainProvider';
 import { CommunityListViewProvider } from 'context/CommunityListViewProvider';
 import { CommunityOnboardingProvider } from 'context/CommunityOnboardingProvider';
 import { PasskeyProvider } from 'context/PasskeyProvider';
+import { StepUpProvider } from 'context/StepUpProvider';
 import { EmailConfirmationProvider } from 'context/EmailConfirmationProvider';
 import { PluginIframeProvider } from 'context/PluginIframeProvider';
 import "@farcaster/auth-kit/styles.css";
@@ -123,6 +124,7 @@ const ProfileManagementView = React.lazy(() => import('views/ProfileManagementVi
 const WalletManagementView = React.lazy(() => import('views/WalletManagementView/WalletManagementView'));
 const TwitterCallbackView = React.lazy(() => import('views/TwitterCallbackView/TwitterCallbackView'));
 const VerifyEmailView = React.lazy(() => import('views/VerifyEmailView/VerifyEmailView'));
+const LoginView = React.lazy(() => import('views/LoginView/LoginView'));
 const IsolationModeToggle = React.lazy(() => import('views/IsolationModeToggle/IsolationModeToggle'));
 
 const activeChains = (config.DEPLOYMENT === 'dev'
@@ -268,6 +270,7 @@ const RoutedContent = () => {
 return <Routes>
   <Route path={'twitter-login'} element={<TwitterCallbackView />} />
   <Route path={'verify-email'} element={<VerifyEmailView />} />
+  <Route path={'login'} element={<LoginView />} />
   <Route path="*" element={routesWithLayout} />
 </Routes>
 }
@@ -290,6 +293,7 @@ function Inner() {
       <SnackbarContextProvider>
       <OwnDataProvider>
       <PasskeyProvider>
+      <StepUpProvider>
       <MobileLayoutProvider>
       <NotificationProvider>
       <CommunitySidebarProvider>
@@ -347,6 +351,7 @@ function Inner() {
       </CommunitySidebarProvider>
       </NotificationProvider>
       </MobileLayoutProvider>
+      </StepUpProvider>
       </PasskeyProvider>
       </OwnDataProvider>
       </SnackbarContextProvider>

@@ -10,13 +10,17 @@ import loginManager from 'data/appstate/login';
 import Button from "components/atoms/Button/Button";
 import { useLoginWithKeyphraseContext } from "context/LoginWithKeyphraseProvider";
 import { useWindowSizeContext } from "context/WindowSizeProvider";
-import { KeyPhraseInputType } from "../KeyPhrase/KeyPhraseConfirmation";
 
 import KeyStringRenderer from "../KeyPhrase/KeyStringRenderer";
 
 import './LoginWithKeyPhrase.css';
 
+// The deprecated 12-word recovery phrase login: legacy CG ID (gateway)
+// instances only (AuthFlow offers it under "More" there).
+
 const MNEMONIC_LENGTH = 12;
+
+export type KeyPhraseInputType = { [id: number]: string };
 
 type ButtonProps = {
     success: () => void;

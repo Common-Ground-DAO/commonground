@@ -9,6 +9,8 @@ import userApi from 'data/api/user';
 
 import './RemoveWalletModal.css';
 import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal';
+import { useSnackbarContext } from 'context/SnackbarContext';
+import { securityActionErrorMessage } from 'data/auth/authErrors';
 
 type RemoveWalletModalProps = {
   linkedWallet: Models.Wallet.Wallet;
@@ -18,14 +20,24 @@ type RemoveWalletModalProps = {
 }
 
 const RemoveWalletModal: React.FC<RemoveWalletModalProps> = ({ linkedWallet, visible, onClose, onRemoveSuccess }) => {
+  const { showSnackbar } = useSnackbarContext();
   const onCloseInternal = (ev: React.MouseEvent) => {
     ev.stopPropagation();
     onClose();
   }
 
   const removeWallet = async (ev: React.MouseEvent) => {
-    // Actually remove wallet
-    await userApi.deleteWallet({ id: linkedWallet.id });
+    // Actually remove wallet (a sign-in wallet asks "Confirm it's you" first)
+    try {
+      await userApi.deleteWallet({ id: linkedWallet.id });
+    }
+    catch (e) {
+      const message = securityActionErrorMessage(e, 'The wallet could not be disconnected');
+      if (message) {
+        showSnackbar({ type: 'warning', text: message });
+      }
+      return;
+    }
     onCloseInternal(ev);
     onRemoveSuccess?.();
   }

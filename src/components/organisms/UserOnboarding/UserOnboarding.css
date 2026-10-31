@@ -42,28 +42,10 @@
 
         height: min(var(--onboardingModalHeight), 95vh);
         min-height: min(var(--onboardingModalHeight), 95vh);
-        max-height: min(var(--onboardingModalHeight), 95vh);;
+        max-height: min(var(--onboardingModalHeight), 95vh);
         width: min(var(--onboardingModalWidth), 100vw);
         min-width: min(var(--onboardingModalWidth), 100vw);
         max-width: min(var(--onboardingModalWidth), 100vw);
-    }
-
-    &.create-profile-with-cg-profile {
-        --onboardingModalHeight: 915px;
-    }
-
-    &.create-profile-with-universal-profile {
-        --onboardingModalHeight: 860px;
-    }
-}
-
-.user-onboarding-logo {
-    width: 100px;
-    height: 100px;
-    padding: 15px;
-
-    &.dark-bg {
-        background: var(--colours-dark-950);
     }
 }
 

@@ -10,6 +10,7 @@ import TextAreaField from 'components/molecules/inputs/TextAreaField/TextAreaFie
 import ImageUploadField from 'components/molecules/inputs/ImageUploadField/ImageUploadField';
 import ToggleInputField from 'components/molecules/inputs/ToggleInputField/ToggleInputField';
 import SkeletonLine from 'components/atoms/SkeletonLine/SkeletonLine';
+import { securityActionErrorMessage } from 'data/auth/authErrors';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import { useSignedUrl } from 'hooks/useSignedUrl';
 import botApi from 'data/api/bot';
@@ -61,7 +62,9 @@ const TokenSection: React.FC<{ botUserId: string }> = ({ botUserId }) => {
       setNewName('');
       await load();
     } catch (e) {
-      showSnackbar({ type: 'warning', text: (e as Error).message || 'Could not issue token' });
+      // issuing a token asks "Confirm it's you"; no raw error codes on screen
+      const message = securityActionErrorMessage(e, 'Could not issue token');
+      if (message) showSnackbar({ type: 'warning', text: message });
     } finally {
       setIssuing(false);
     }
@@ -286,7 +289,8 @@ const BotEditor: React.FC<Props> = ({ bot, owner, onSaved, onDisabled, setPage }
       if (onDisabled) onDisabled();
       else setPage('bots');
     } catch (e) {
-      showSnackbar({ type: 'warning', text: (e as Error).message || 'Could not disable bot' });
+      const message = securityActionErrorMessage(e, 'Could not disable bot');
+      if (message) showSnackbar({ type: 'warning', text: message });
     }
   }, [bot, showSnackbar, setPage, onDisabled]);
 

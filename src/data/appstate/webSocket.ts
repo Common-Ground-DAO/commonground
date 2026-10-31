@@ -11,7 +11,7 @@ import buildId from 'common/random_build_id';
 import type { WorkerToTabMessage, TabToWorkerMessage } from 'service-worker';
 import { randomString } from '../../util';
 import { type ConnectionManager } from './connection'; 
-import cgIdApi from 'data/api/cgid';
+import userApi from 'data/api/user';
 
 const LOCAL_STORAGE_KEY = "CG_LAST_KNOWN_WS_CONNCETION";
 const _localStorageLastEventTime = parseInt(localStorage.getItem(LOCAL_STORAGE_KEY) || '0') || Date.now();
@@ -46,7 +46,7 @@ class WebSocketManager {
   constructor() {
     // keep the session alive
     setInterval(() => {
-      cgIdApi.ensureSession().catch(e => {
+      userApi.ensureSession().catch(e => {
         console.error('Error during ensureSession call in WebSocketManager', e);
       });
     }, 60_000 * 29);
@@ -84,7 +84,7 @@ class WebSocketManager {
       ] = await Promise.all([
         (await import('./serviceWorker')).default,
         (await import('./connection')).default,
-        cgIdApi.ensureSession(),
+        userApi.ensureSession(),
       ]);
 
       document.addEventListener('visibilitychange', () => {

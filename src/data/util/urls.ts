@@ -3,16 +3,20 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { getInstanceConfig } from "../../common/instance";
+import { getAuthMode } from "../auth/authMode";
 
 let APP_URL = "http://localhost:8000";
 let API_BASE_URL = "http://localhost:8000";
 let API_URL = "http://localhost:8000/api/v2"
 let WS_URL = "ws://localhost:8000";
-let CGID_URL = "http://localhost:8000/index_cgid.html/#";
+// The CG ID popup app only exists on a legacy CG ID (gateway) instance; on
+// every other instance passkeys run on this origin and CGID_URL stays empty.
+let CGID_URL = "";
 let I_AM_CGID = false;
 
 const href = window?.location?.href;
 const instance = getInstanceConfig();
+const { legacyCgid } = getAuthMode();
 
 if (instance?.appUrl) {
   // self-hosted instance: URLs are declared at serve time, not derived from
@@ -21,17 +25,20 @@ if (instance?.appUrl) {
   API_BASE_URL = APP_URL;
   API_URL = `${APP_URL}/api/v2/`;
   WS_URL = APP_URL.replace(/^http/i, "ws");
-  CGID_URL = instance.cgidUrl || `${APP_URL}/index_cgid.html/#`;
+  if (legacyCgid) {
+    CGID_URL = instance.cgidUrl || `${APP_URL}/index_cgid.html/#`;
+  }
   if (href) {
-    try {
-      const appOrigin = new URL(APP_URL).origin;
-      const cgidOrigin = new URL(CGID_URL).origin;
-      const myOrigin = new URL(href).origin;
-      I_AM_CGID =
-        (cgidOrigin !== appOrigin && myOrigin === cgidOrigin) ||
-        href.startsWith(`${APP_URL}/index_cgid.html`);
-    } catch (e) {
-      I_AM_CGID = href.startsWith(`${APP_URL}/index_cgid.html`);
+    I_AM_CGID = href.startsWith(`${APP_URL}/index_cgid.html`);
+    if (CGID_URL) {
+      try {
+        const appOrigin = new URL(APP_URL).origin;
+        const cgidOrigin = new URL(CGID_URL).origin;
+        const myOrigin = new URL(href).origin;
+        I_AM_CGID = I_AM_CGID || (cgidOrigin !== appOrigin && myOrigin === cgidOrigin);
+      } catch {
+        // keep the path-based detection
+      }
     }
   }
 }
@@ -76,7 +83,9 @@ else if (href) {
       API_BASE_URL = `${protocol}://${domain}${apiPort}`;
       API_URL = `${API_BASE_URL}/api/v2/`;
       WS_URL = `${protocol === "http" ? "ws" : "wss"}://${domain}${apiPort}`;
-      CGID_URL = `${APP_URL}/index_cgid.html${port === ":3000" ? "#" : "/#"}`;
+      if (legacyCgid) {
+        CGID_URL = `${APP_URL}/index_cgid.html${port === ":3000" ? "#" : "/#"}`;
+      }
       I_AM_CGID = href.startsWith(`${APP_URL}/index_cgid.html`);
     }
   }

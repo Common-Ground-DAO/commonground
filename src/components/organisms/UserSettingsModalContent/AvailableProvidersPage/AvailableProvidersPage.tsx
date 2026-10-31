@@ -19,6 +19,7 @@ import { useTwitterAuth } from 'hooks/useTwitterAuth';
 import userApi from 'data/api/user';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import { useUniversalProfile } from 'context/UniversalProfileProvider';
+import { securityActionErrorMessage } from 'data/auth/authErrors';
 
 type Props = {
   setPage: (pageType: PageType, callback?: () => void) => void;
@@ -40,7 +41,11 @@ const AvailableProvidersPage: React.FC<Props> = (props) => {
       setPage('home');
     } catch (e) {
       console.error(e);
-      showSnackbar({ type: 'warning', text: 'Failed to add account, please try again later' });
+      // nothing to report when "Confirm it's you" was cancelled
+      const message = securityActionErrorMessage(e, 'Failed to add account, please try again later');
+      if (message) {
+        showSnackbar({ type: 'warning', text: message });
+      }
     }
   }, [setPage, showSnackbar]);
 

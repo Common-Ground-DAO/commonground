@@ -8,6 +8,7 @@ import { PageType } from '../UserSettingsModalContent';
 import { useOwnWallets } from 'context/OwnDataProvider';
 import Button from 'components/atoms/Button/Button';
 import userApi from 'data/api/user';
+import { useStepUp } from 'context/StepUpProvider';
 import useLocalStorage from 'hooks/useLocalStorage';
 import {
   useAccount,
@@ -67,6 +68,7 @@ const PaySpark: React.FC<Props> = (props) => {
   const { setCurrentPage, lockModal } = props;
   const [sparkAmount] = useLocalStorage(0, "CHOSEN_SPARK_AMOUNT");
   const { showSnackbar } = useSnackbarContext();
+  const { ensureRecentAuth } = useStepUp();
   const { address } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const wallets = useOwnWallets();
@@ -265,6 +267,11 @@ const PaySpark: React.FC<Props> = (props) => {
 
   const linkCurrentWallet = useCallback(async () => {
     if (!isActiveAddressLinked && !!address && !!chain) {
+      // a wallet that can sign in is a new sign-in method: confirm first,
+      // before the wallet signature is prepared in the session
+      if (await ensureRecentAuth('add a wallet you can sign in with') === 'cancelled') {
+        return;
+      }
       try {
         const secret = await userApi.getSignableSecret();
         const siweMessage = getSiweMessage({ address, secret, chainId: chain.id });
@@ -294,7 +301,7 @@ const PaySpark: React.FC<Props> = (props) => {
         setWalletSignError(message);
       }
     }
-  }, [isActiveAddressLinked, address, chain, signMessageAsync, showSnackbar]);
+  }, [isActiveAddressLinked, address, chain, signMessageAsync, showSnackbar, ensureRecentAuth]);
 
   // Deliberately keyed on `address` alone. wagmi 1's `useNetwork()` synthesised
   // a chain object for *any* connected chain id; wagmi 2's `useAccount().chain`

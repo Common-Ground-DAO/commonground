@@ -1,0 +1,6 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Stub: the real Renovate config lives in renovate.json on the develop branch.",
+  "baseBranchPatterns": ["develop"],
+  "useBaseBranchConfig": "merge"
+}

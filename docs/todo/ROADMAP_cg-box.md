@@ -78,6 +78,14 @@ id.app.cg ──┤          (develop, gateway mode)   SeaweedFS             │
     Node 24 is the fallback only if mediasoup or a native module blocks.
 14. **Renovate runs as the Mend GitHub app** (free for public repos, no own
     infrastructure, opens PRs only — nothing auto-merges).
+15. **`main` stays the GitHub default branch**; `develop` is the development
+    branch, and the deployment is later made from `main` (after `develop` is
+    merged into it). Renovate therefore reads a stub `renovate.json` on `main`
+    that points it at `develop`, where the real config lives
+    (docs/infrastructure/UPDATE-POLICY.md). Dependabot alerts are on.
+16. **No hotfixes on app.cg** for issues found during this work: the
+    `production` branch stays untouched until the move.
+17. **Calls are on at cg.box launch.**
 
 ## Phases
 
@@ -134,17 +142,19 @@ plus reviews. Lane B starts when F1+F2 are merged.
 
 ### P1 — Foundation
 
-- [ ] **F1 Update policy.** Policy document in docs/infrastructure (7-day rule,
+- [x] **F1 Update policy.** (done 2026-10-31: `docs/infrastructure/UPDATE-POLICY.md`, `renovate.json`, verified binary downloads) Policy document in docs/infrastructure (7-day rule,
   exception log, mechanisms: Yarn `npmMinimalAgeGate`/`npmPreapprovedPackages`,
   Renovate `minimumReleaseAge`). Renovate config for the Mend GitHub app
   (decision 14; the maintainer installs the app). `yarn --immutable` in every Dockerfile; lockfile for
   `docker/hardhat/node`; narrow `approvedGitRepositories`. Checksums for binary
   downloads where feasible (mediasoup worker, Chrome for Testing for puppeteer,
   bcrypt prebuilds).
-- [ ] **F2 Base images and tooling.** Pin every image by version + digest. Node 26
+- [x] **F2 Base images and tooling.** (done 2026-10-31: Node 26.12.0 on trixie,
+  every image digest-pinned, apt via `snapshot.debian.org`, Yarn 4.18.1;
+  accepted on the test VM as an in-place upgrade.) Pin every image by version + digest. Node 26
   (decision 13) — verify mediasoup and the native modules (bcrypt, sharp,
-  onnxruntime) build and run. Debian base `bookworm` → `trixie`
-  (TODO(verify): bookworm's regular security support status). apt via dated
+  onnxruntime) build and run. Debian base `bookworm` → `trixie` (bookworm has
+  been on LTS only since 2026-06-11, until 2028-06-30). apt via dated
   snapshot or exact versions. SeaweedFS and Caddy current. Yarn 4.17.1 → current
   4.x (update the `packageManager` field incl. its hash) — all under the 7-day
   rule; binary checksums as in F1.
@@ -154,7 +164,9 @@ plus reviews. Lane B starts when F1+F2 are merged.
   cg.box this is a restore into a fresh cluster, no in-place upgrade. Check the
   dev stack's upgrade path (dump/restore of the dev volume, documented).
 - [ ] **F4 Redis 6.2 → Valkey.** Sessions, socket.io adapter, cached data; verify
-  node-redis / connect-redis / `@socket.io/redis-adapter` against Valkey.
+  node-redis / connect-redis / `@socket.io/redis-adapter` against Valkey. Keep
+  sessions safe from cache memory pressure (separate instance or eviction
+  policy per use) and give every client an error listener.
 - [ ] **F5 Caddy replaces nginx** (self-host + dev). Custom Caddy image carrying
   the frontend dist and the instance-config injection. Reproduce every nginx rule
   in order: `/files/` S3-presign rewrite (exact `Host <host>:8333`), `/api/v2/`
@@ -183,7 +195,7 @@ plus reviews. Lane B starts when F1+F2 are merged.
   `srv/healthcheck.ts` has no callers, every process uses `fakeHealthcheck()` —
   wire the real one up or delete it, and move `fakeHealthcheck` into its own
   module so `memberlist` stops opening Redis connections it never uses); Docker
-  log rotation; IPv6 address detection; drop the `docker-compose` v1 fallback in
+  log rotation; per-container resource limits; IPv6 address detection; drop the `docker-compose` v1 fallback in
   `selfhost.sh` (v1 ignores `COMPOSE_PROFILES`, so `calls`/`blockchain` would
   silently not start).
 - [ ] **F8 Backup / restore.** `selfhost.sh backup|restore` (or scripts):
@@ -213,7 +225,11 @@ and a browser pass on the test VM:
   transfer, `app.cg/<path>` lands on `cg.box/<path>`. Session cookie scoped to
   `.app.cg`. Because the gateway needs the CGID passkey flow for rpID `id.app.cg`,
   the CGID app can only be removed from the code base **after** the gateway is
-  gone (P7).
+  gone (P7). The gateway gets its own session secret, session-store prefix and
+  Socket.IO adapter key (a cookie from one origin must not work on the other);
+  singleton processes (`job-runner`, `onchain`, `memberlist`) run only for
+  cg.box; one env-driven CORS/origin allowlist; the login methods it exposes
+  are hardened before it goes live (S1 tracks which).
 - [ ] **G2 Transfer link.** One-time token: random, stored hashed with user id,
   ~10 min expiry, single use; carried in the URL fragment
   (`https://cg.box/transfer#<token>`) so it never reaches logs or `Referer`;
@@ -221,7 +237,8 @@ and a browser pass on the test VM:
 - [ ] **G3 Account-security step on cg.box.** A user arriving via transfer link
   (and any user without a working login method on cg.box) must add one before
   using the app: passkey on cg.box, password, or an already-linked wallet; plus a
-  verified email. A server-side password policy comes with it. Decide here whether stricter requirements against bots apply to
+  verified email. A server-side password policy comes with it, plus throttling
+  of password and email-code login and a bcrypt cost review. Decide here whether stricter requirements against bots apply to
   new sign-ups too (email verification is cheap once mail runs on our side).
 - [ ] **G4 Passkeys on the main origin + new account-creation UI.** rpID =
   cg.box host, ceremonies run in the main app (conditional UI / passkey autofill
@@ -263,8 +280,10 @@ and a browser pass on the test VM:
 
 ### P4 — Security gate (before the rehearsal is signed off)
 
-- [ ] **S1 Findings triage.** The private findings list is triaged against the
+- [x] **S1 Findings triage.** The private findings list is triaged against the
   new stack; whatever applies and blocks the move is fixed (tracked privately).
+  (Triage done 2026-10-31; the move-blocking fixes are on
+  `fix/hardening-batch-1`, the rest is slotted into the items above.)
 - [ ] **S2 Review of the new code** (gateway, transfer link, account-security
   step, passkeys on the main origin, mail) — independent security review.
 - [ ] **S3 Server hardening.** SSH key-only login, firewall (only 22, 80,
@@ -291,6 +310,8 @@ and a browser pass on the test VM:
 - [ ] One real Let's Encrypt run on a publicly reachable server (the test VM only
   exercises `tls internal`), so the ACME path is proven before move day.
 - [ ] Time the import, so move-day downtime can be announced.
+- [ ] No mail or push reaches real users during the rehearsal; the import clears
+  stored verification and one-time codes.
 - [ ] Repeat until clean; write the move-day runbook from it.
 
 ### P6 — Move
@@ -322,6 +343,8 @@ and a browser pass on the test VM:
 - Stricter sign-up requirements against bots — which, and for whom (G3).
 - Production storage backend and data volume; who produces the dump and how (G5,
   P5).
+- Server sizing: a frontend build needs ~4.2 GB on top of the running stack
+  (test VM, 2026-10-31) — enough RAM or swap, or builds with the stack stopped.
 
 ## Test infrastructure
 

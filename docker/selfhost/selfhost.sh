@@ -51,7 +51,7 @@ build() {
 
 
   printf "\n---\n--- Installing frontend dependencies\n---\n"
-  docker_compose run --rm cg-builder yarn
+  docker_compose run --rm cg-builder yarn install --immutable
   checkError
 
   buildId=$(dd if=/dev/random bs=1 count=10 status=none | base64)
@@ -79,7 +79,7 @@ build() {
   if [ ! -f vapid_keys.json ]; then
     printf "\n---\n--- Generating vapid_keys.json for web push\n---\n"
     if [ ! -d ../srv/node_modules/web-push ]; then
-      docker_compose run --rm -T cg-builder bash -c "cd srv && yarn"
+      docker_compose run --rm -T cg-builder bash -c "cd srv && yarn install --immutable"
     fi
     docker_compose run --rm -T cg-builder bash -c "cd srv && npx --no web-push generate-vapid-keys --json > ../docker/vapid_keys.json"
     checkError

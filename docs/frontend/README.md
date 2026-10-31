@@ -4,7 +4,8 @@
 > section against the fix/image-filter-review-53 branch, 2026-08-15; wallet,
 > motion, drag & drop and toolchain notes plus "Dependency pins and
 > constraints" against commit 935232158, 2026-10-31; dev env file pointer
-> against commit 64e5ab573 (chore/env-template), 2026-10-31
+> against commit 64e5ab573 (chore/env-template), 2026-10-31; builder image
+> (Node 26) against commit 5f73578, 2026-10-31
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -974,7 +975,7 @@ not 8**, on purpose: Vite 8 swaps Rollup for Rolldown and esbuild for Oxc —
 a bundler swap, not a version bump — and the chunking setup below was measured
 and tuned under Rollup 4. Vite 8 is its own later workstream with its own
 measurements; the Node floor (≥ 20.19) is the same, so the builder image
-(`node:24.18-bookworm`) already covers that jump too.
+(`node:26-trixie` since 2026-10-31) already covers that jump too.
 
 `build.target` is explicit (`BUILD_TARGET` in `vite.config.ts` — `chrome67,
 edge79, firefox68, opera54, safari14`), so Vite 7's new default target

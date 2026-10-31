@@ -6,7 +6,8 @@
 > a5633d5be (+ fix/selfhost-local-test), 2026-10-27; Redis-cutover note (no
 > further Swarm rollouts) against commit 935232158, 2026-10-31; dev secrets
 > (generated `docker/.env`) and `s3.selfhost.json` ownership against commit
-> 69999fa20 (chore/env-template), 2026-10-31
+> 69999fa20 (chore/env-template), 2026-10-31; digest-pinned images, Node 26 /
+> trixie builder and Yarn 4.18.1 against commit 5f73578, 2026-10-31
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -146,7 +147,7 @@ Safe to re-run: existing files are never overwritten. It:
    defaults, bot-account limits, blockchain RPC endpoints and empty slots for
    every optional integration. `BUILDER_UID`/`BUILDER_GID` are the invoking
    user's ids — `0` when run as root, which the builder image accepts (it only
-   creates a user/group for ids the `node:24.18-bookworm` base doesn't have).
+   creates a user/group for ids the `node:26-trixie` base doesn't have).
 3. Generates `docker/s3_config/s3.selfhost.json` with an S3 secret matching
    `.env.selfhost` for the SeaweedFS filer — owned by uid/gid `1000` (seaweed's
    in-container user) with mode `600` when run as root or uid 1000, otherwise
@@ -198,8 +199,10 @@ the CRA removal:
 `vite build` OOMs at 2048 MB and peaks at ~4 GB container RSS (≈3.9 GiB by
 `docker stats`, ≈4.1 GiB cgroup peak), and node derives its default heap from
 machine RAM — a small VPS would fail without the flag. The value was re-measured
-under Node 24 + Vite 7 inside the `node:24.18` builder image, which is what this
-path actually uses; the flag caps only the V8 heap, and the headroom is thin
+under Node 24 + Vite 7 inside the then `node:24.18` builder image; the builder
+is `node:26-trixie` since 2026-10-31 and the build passes with the same
+cap there (peak not re-measured yet). The flag caps only the V8 heap, and the
+headroom is thin
 (see [docs/infrastructure](../infrastructure/README.md#frontend-build-steps)).
 
 ### 3.3 Services (`docker-compose.selfhost.yml`)
@@ -210,11 +213,11 @@ volumes (`pgdata`, `seaweedfs-data`, `caddy-data`, `caddy-config`,
 
 | Service | Image | Role |
 |---|---|---|
-| `caddy` | `caddy:2-alpine` | TLS terminator; publishes `80`, `443` (tcp+udp), `4443`; obtains/renews Let's Encrypt certs, or issues them from its local CA (`CG_TLS_MODE=internal`) |
+| `caddy` | `caddy:2-alpine` line (exact tag + digest in the compose file) | TLS terminator; publishes `80`, `443` (tcp+udp), `4443`; obtains/renews Let's Encrypt certs, or issues them from its local CA (`CG_TLS_MODE=internal`) |
 | `nginx` | `cryptogram/nginx-selfhost` (built from `Dockerfile_selfhost`) | static frontend + reverse proxy to API/wsapi/S3; injects instance config; sets CSP |
 | `db` | `cryptogram/db` (Postgres) | primary database; loads tuned `postgresql.conf`; healthcheck; `shm_size 256m` |
-| `redis` | `redis:6.2.7-alpine` | one instance for sessions, the Socket.IO adapter and app data; password-protected, `--save ""` (unpersisted), no eviction policy, `maxmemory` tuned |
-| `seaweed` | `chrislusf/seaweedfs:4.40` (pinned) | SeaweedFS object storage — one all-in-one `weed server` (master + volume + filer + S3 gateway, aliased `s3.local`); only the S3 port 8333 is consumed by other services |
+| `redis` | `redis:6.2-alpine` line (exact tag + digest in the compose file) | one instance for sessions, the Socket.IO adapter and app data; password-protected, `--save ""` (unpersisted), no eviction policy, `maxmemory` tuned |
+| `seaweed` | `chrislusf/seaweedfs` 4.x (exact tag + digest in the compose file) | SeaweedFS object storage — one all-in-one `weed server` (master + volume + filer + S3 gateway, aliased `s3.local`); only the S3 port 8333 is consumed by other services |
 | `migrate-db` | `cryptogram/backend` | one-shot DB migration (`migrateDb.js`); starts once `db` is healthy, `restart: on-failure:3` |
 | `api` | `cryptogram/backend` | REST API (`api.js`); the image everything else reuses |
 | `wsapi` | `cryptogram/backend` | Socket.IO / real-time server (`wsapi.js`) |
@@ -409,7 +412,7 @@ exist under `pipelines/`, plus a shared clean-up template.
 ### Staging — `pipelines/build-and-deploy-beta.yml`
 
 - **Trigger:** push to the `staging` branch. **Pool:** `ubuntu-20`.
-- Installs Docker 20.10.14, Node 24.x, Yarn 4.17.1 (via corepack), plus
+- Installs Docker 20.10.14, Node 24.x, the `packageManager`-pinned Yarn (via corepack), plus
   build tooling; pulls a private `.yarnrc` as a secure file. **That secure file
   replaces the repository's `.yarnrc.yml`**, so the pipeline re-appends
   `enableScripts: false` and `npmMinimalAgeGate: 1w` after copying it — without

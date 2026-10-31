@@ -18,6 +18,25 @@ public DNS, see [Local test instance](#local-test-instance-no-public-dns).
   [Optional services](#optional-services-calls-blockchain)). Run the scripts
   as a user in the `docker` group or as root; the builder container runs with
   the uid/gid of whoever ran `init.sh`.
+- **x86_64 (amd64) for the full feature set.** The images are built on the
+  server itself. On arm64 everything builds and runs except the social preview
+  images (link cards for communities, events and plugins): they are rendered
+  by Chrome for Testing, which Google publishes for linux x64 only — the build
+  prints a warning and skips it.
+- **Kernel and calls.** The call service uses mediasoup's prebuilt media
+  worker, which mediasoup publishes per kernel major version (currently 6 and
+  7); the build picks the one matching the server's kernel (`uname -r`).
+  Kernels older than 6 (e.g. Ubuntu 22.04's 5.15, older WSL2) get the kernel 6
+  build, which the build then test-runs. A kernel newer than the pinned
+  builds stops the build with instructions — also with `CG_ENABLE_CALLS=false`,
+  since every backend service shares one image; update to a Common Ground
+  release that pins that kernel's build.
+- **Memory for builds.** The frontend build (typecheck, lint, Vite) peaks at
+  about 4.2 GB on top of whatever else runs. On an 8 GB server without swap it
+  gets OOM-killed while the stack is up (measured 2026-10-31: the running
+  stack used ~4.4 GB, `onchain` alone ~2 GB) — so `selfhost.sh update`, which
+  builds before restarting, fails there. Add swap (e.g. 4 GB) or stop the
+  stack before building (`selfhost.sh down`, then `build` and `up`).
 - A domain with two DNS records pointing at the server:
   - `chat.example.org` — the app itself
   - `id.chat.example.org` — the CG ID passkey app (**must** be a separate
@@ -313,8 +332,10 @@ for larger instances.
 > the three old containers. Everyone is logged out once: Redis is unpersisted,
 > so this is the same effect any Redis restart has.
 
-> **SeaweedFS image is pinned** (currently `chrislusf/seaweedfs:4.40`) as of
-> 2026-08-02; releases before that pulled the untagged `:latest`. If your
+> **SeaweedFS image is pinned** by version and digest (the exact tag is in
+> `docker/docker-compose.selfhost.yml`; every pulled image is pinned, see
+> `docs/infrastructure/UPDATE-POLICY.md`) since 2026-08-02; releases before
+> that pulled the untagged `:latest`. If your
 > install already runs a *newer* SeaweedFS than the pinned tag, do not let an
 > update pull it back down — keep or raise the tag locally. Treat `4.34` as
 > the security floor (2026 fixes).

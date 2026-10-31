@@ -1,0 +1,140 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Common Ground update policy (docs/infrastructure/UPDATE-POLICY.md): nothing younger than 7 days, every image digest-pinned, nothing auto-merges. Runs as the Mend Renovate GitHub app.",
+  "extends": [
+    "config:recommended",
+    "docker:pinDigests"
+  ],
+  "baseBranchPatterns": ["develop"],
+  "timezone": "Europe/Berlin",
+  "schedule": ["* 0-6 * * 1"],
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "automerge": false,
+  "platformAutomerge": false,
+  "prConcurrentLimit": 8,
+  "prHourlyLimit": 4,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["* 0-6 1 * *"],
+    "prBodyNotes": ["Re-resolves every yarn.lock within the existing version ranges. Yarn's own `npmMinimalAgeGate: 1w` (.yarnrc.yml) applies to the re-resolution; Renovate's `minimumReleaseAge` does not cover lock file maintenance (docs/infrastructure/UPDATE-POLICY.md)."]
+  },
+  "vulnerabilityAlerts": {
+    "minimumReleaseAge": "7 days",
+    "labels": ["security"]
+  },
+  "labels": ["dependencies"],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "contracts/staking/lib/**",
+    "pipelines/**"
+  ],
+  "customManagers": [
+    {
+      "description": "Helper image of the SeaweedFS volume-merge script (a docker run, not a Dockerfile or compose file)",
+      "customType": "regex",
+      "managerFilePatterns": ["/^docker/selfhost/migrate_seaweed_volumes\\.sh$/"],
+      "matchStrings": ["HELPER_IMAGE=\"(?<depName>[a-z0-9./_-]+):(?<currentValue>[^@\"]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""],
+      "datasourceTemplate": "docker",
+      "autoReplaceStringTemplate": "HELPER_IMAGE=\"{{{depName}}}:{{{newValue}}}@{{{newDigest}}}\""
+    },
+    {
+      "description": "corepack, installed from the npm tarball in the Node-based Dockerfiles (Node >= 25 no longer bundles it)",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^docker/node/Dockerfile$/",
+        "/^docker/hardhat/Dockerfile$/",
+        "/^docker/backend/Dockerfile$/",
+        "/^docker/backend/Dockerfile_dev_stage_0$/"
+      ],
+      "matchStrings": ["ARG COREPACK_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "corepack",
+      "datasourceTemplate": "npm"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Major updates are opened only after approval on the Dependency Dashboard",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "The seven deferred majors (roadmap decision 7) are done by hand in waves M1-M4 — no Renovate PRs. Drop a name from this list once its wave is merged.",
+      "matchPackageNames": [
+        "express",
+        "@types/express",
+        "@types/express-serve-static-core",
+        "react-router",
+        "react-router-dom",
+        "tailwindcss",
+        "vite",
+        "typeorm",
+        "joi",
+        "typescript"
+      ],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "Frontend (root package.json): one weekly PR for all minor/patch updates",
+      "matchFileNames": ["package.json"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "frontend non-major"
+    },
+    {
+      "description": "Backend (srv/): one weekly PR for all minor/patch updates",
+      "matchFileNames": ["srv/package.json"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "backend non-major"
+    },
+    {
+      "description": "SDK workspaces: one weekly PR for all minor/patch updates",
+      "matchFileNames": ["sdk/**"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "sdk non-major"
+    },
+    {
+      "description": "Hardhat toolchains (contracts/ and the dev chain image): one weekly PR for all minor/patch updates",
+      "matchFileNames": ["contracts/package.json", "docker/hardhat/node/package.json"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "hardhat toolchain non-major"
+    },
+    {
+      "description": "mediasoup ships its worker binary through a sha256-pinned download; the backend image build fails until the pin is updated",
+      "matchPackageNames": ["mediasoup"],
+      "groupName": "mediasoup",
+      "prBodyNotes": ["Update `MEDIASOUP_VERSION` and the hashes in `docker/backend/fetch_mediasoup_worker.sh` in this PR (`tools/update-pins.sh mediasoup <version>` prints them) — `docker/backend/check_pinned_binaries.sh` fails the backend image build until they match."]
+    },
+    {
+      "description": "puppeteer is pinned to one Chrome for Testing build installed via a sha256-pinned download; the backend image build fails until the pin is updated",
+      "matchPackageNames": ["puppeteer", "puppeteer-core"],
+      "groupName": "puppeteer",
+      "prBodyNotes": ["If puppeteer's Chrome revision changed, update `CHROME_VERSION` and `CHROME_SHA256` in `docker/backend/fetch_chrome.sh` in this PR (`tools/update-pins.sh chrome <version>` prints the sha256) — `docker/backend/check_pinned_binaries.sh` fails the backend image build until they match."]
+    },
+    {
+      "description": "Yarn (packageManager) is updated by hand: corepack's +sha512 hash and the pre-fetch in docker/node/Dockerfile must move together",
+      "matchDepNames": ["yarn"],
+      "matchManagers": ["npm"],
+      "enabled": false
+    },
+    {
+      "description": "corepack is verified against COREPACK_SHA512 next to COREPACK_VERSION; the image builds fail until the hash is updated",
+      "matchDepNames": ["corepack"],
+      "matchManagers": ["custom.regex"],
+      "groupName": "corepack",
+      "prBodyNotes": ["Update `COREPACK_SHA512` in all four Dockerfiles in this PR (`tools/update-pins.sh corepack <version>` prints it) — the `sha512sum -c` step fails the image builds until it matches."]
+    },
+    {
+      "description": "Docker base and service images: one weekly PR for digest refreshes and minor/patch versions",
+      "matchDatasources": ["docker"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pinDigest"],
+      "groupName": "docker images"
+    },
+    {
+      "description": "Images built locally from this repository's Dockerfiles (compose image: lines, FROM commonground/backend_stage_0): on no registry, nothing to look up",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["cryptogram/**", "commonground/**"],
+      "enabled": false
+    }
+  ]
+}

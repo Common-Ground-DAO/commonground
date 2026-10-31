@@ -30,7 +30,7 @@ docker_compose build cg-builder
 checkError
 
 
-docker_compose run --rm cg-builder yarn && \
+docker_compose run --rm cg-builder yarn install --immutable && \
 buildId=$(dd if=/dev/random bs=1 count=10 status=none | base64) && \
 sed -i 's#^const buildId =.*$#const buildId = "'$buildId'";#' ../src/common/random_build_id.ts && \
 docker_compose run --rm -e NODE_OPTIONS="--max-old-space-size=4096" -e DEPLOYMENT=prod cg-builder \

@@ -34,7 +34,7 @@ PREFIX="${1:-cg-selfhost}"
 SRC_VOLUME="${PREFIX}_seaweedfs-volume"
 SRC_BUCKETS="${PREFIX}_seaweedfs-buckets"
 DST="${PREFIX}_seaweedfs-data"
-HELPER_IMAGE="alpine:3.20"
+HELPER_IMAGE="alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a"
 
 volume_exists() {
   docker volume inspect "$1" >/dev/null 2>&1

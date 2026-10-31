@@ -4,7 +4,8 @@
 > against the 2026-08-04 dependency-update wave 1a; image-moderation sections
 > against the fix/image-filter-review-53 branch, 2026-08-15; upload rate limit,
 > `Instance` route, URL-preview note, OpenAPI drift check, axios note and §8
-> (dependency notes) against commit 935232158, 2026-10-31.
+> (dependency notes) against commit 935232158, 2026-10-31; puppeteer browser
+> install note against commit 5f73578, 2026-10-31.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -1361,9 +1362,17 @@ TypeScript 6) are scheduled in `docs/todo/ROADMAP_cg-box.md`.
   CommonJS (`moduleResolution: Node16`) and loads ESM-only packages —
   currently `puppeteer` 25 — through Node's `require(ESM)` (Node ≥ 22.12). Keep
   that in mind if the Node floor ever moves down. puppeteer ≥ 23 returns
-  screenshots as `Uint8Array`, hence the `Buffer.from()` in `htmlToImage()`;
-  its install script (allowlisted, see docs/infrastructure §2) downloads Chrome
-  for Testing into `/root/.cache/puppeteer`.
+  screenshots as `Uint8Array`, hence the `Buffer.from()` in `htmlToImage()`.
+  Its install script stays allowlisted (see docs/infrastructure §2) but
+  downloads nothing in the images: the backend images set
+  `PUPPETEER_SKIP_DOWNLOAD` and install the Chrome for Testing build puppeteer
+  is pinned to from a sha256-verified download (`docker/backend/fetch_chrome.sh`)
+  into `/opt/chrome`, found via `PUPPETEER_EXECUTABLE_PATH` — x86_64 only
+  (Chrome for Testing has no linux-arm64 build; elsewhere the image builds
+  without it and `htmlToImage()` fails). Debian's
+  `chromium` package is not a drop-in replacement: it crashes on launch with the
+  `--single-process` flag `htmlToImage()` passes (tested with 155 on trixie,
+  2026-10-31).
 - **S3 bodies must be Buffers.** Since the `@aws-sdk/*` 3.88 → 3.1102 bump (the
   change arrived somewhere in the 3.9x line) the client rejects stream bodies of
   unknown length, so `saveImage()` passes the materialised

@@ -25,7 +25,7 @@ name: cg-selfhost
 
 services:
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.6-alpine@sha256:d44355d3c2149dc580ce2cac735955d1c08d3d00882c30489c241aa51a5c10d9
     ports:
       - "80:80"
       - "443:443"
@@ -108,7 +108,7 @@ services:
   # cache entries and must never be evicted. REDIS_MAXMEMORY is the total
   # budget of this one instance.
   redis:
-    image: redis:6.2.7-alpine
+    image: redis:6.2.23-alpine@sha256:ec5e187c913d422cdf60f4216a5fdfb95246792c6de6fe21ff5bed75cbfc8c23
     command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory ${REDIS_MAXMEMORY:-1536mb} --save ""
     networks:
       - cryptogram
@@ -118,13 +118,13 @@ services:
   # containers: -s3 implies -filer, so this single service serves master 9333,
   # volume 8080, filer 8888 and the S3 gateway on 8333. Only 8333 (alias
   # s3.local) is consumed by anything else in the stack.
-  # -s3.port.iceberg=0 turns off the Iceberg REST catalog that 4.40 otherwise
+  # -s3.port.iceberg=0 turns off the Iceberg REST catalog that 4.40+ otherwise
   # starts on 8181 — nothing here speaks Iceberg.
   # Volume blobs and the filer leveldb (filerldb2/) share one /data volume, so a
   # filesystem snapshot of it is atomic across blobs and metadata — see
   # SELFHOST.md for the backup and the 3-to-1 upgrade procedure.
   seaweed:
-    image: chrislusf/seaweedfs:4.40
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
     command: "server -dir=/data -ip=seaweed -master.volumeSizeLimitMB=${SEAWEED_VOLUME_LIMIT_MB:-1024} -volume.max=0 -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.port.iceberg=0"
     restart: unless-stopped
     networks:

@@ -79,6 +79,27 @@ that stack — confirm and delete:
 
 ## Cleanup candidates (small, self-contained)
 
+- [ ] **`imageFilterThreshold` breaks the `r0-instance-config` conformance test**
+  (2026-10-31, found during the Node 26 conformance run; 102 of 104 tests pass).
+  `/api/v2/Instance/config` always sends `imageFilterThreshold`
+  (`srv/util/instanceConfig.ts`), the nginx injection
+  (`docker/nginx/inject-instance-config.sh`) only adds it when
+  `CG_IMAGE_FILTER_THRESHOLD` is set, and the SDK's `InstanceConfig` mirror
+  (`sdk/conformance/src/r0-instance-config.test.ts` allowlist, SDK type) does not
+  list it. Add the field to the SDK mirror and make the two sources agree on when
+  it is present.
+
+- [ ] **Community creation copies a welcome article that only exists on app.cg**
+  (2026-10-31, seen on the self-host test instance): every community creation
+  logs `null value in column "articleId" of relation
+  "communities_articles_roles_permissions"` — `config.COMMUNITY_CREATION_ARTICLE_PROD`
+  is an app.cg article id. The error is caught and creation continues. Make the
+  template article configurable per instance or skip the step when it is absent.
+
+- [ ] **`onchain` uses 1–2 GB RSS on a small self-host instance** (2026-10-31,
+  test VM) — the main reason a frontend build OOMs next to the running stack
+  (see `docker/SELFHOST.md`, "Memory for builds"). Profile and cap it.
+
 - [ ] **`contracts/contracts/TokenSale.sol` + its deploy script** — kept in Phase 2 as the
   record of the sale that ran; decide whether git history is record enough.
 - [ ] **`role_gated_files` + `GET /gated-videos/:filename` / `GET /gated-files/:filename`**

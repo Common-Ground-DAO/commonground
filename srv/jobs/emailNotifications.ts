@@ -8,6 +8,7 @@ import emailHelper from '../repositories/emails';
 import articleHelper from '../repositories/articles';
 import newsletterHelper from '../repositories/newsletter';
 import communityEventHelper from '../repositories/communityEvents';
+import { sendToAll } from '../util/sendToAll';
 
 if (isMainThread) {
     throw new Error("articleAsEmailDelivery can only be run as a worker job");
@@ -29,7 +30,12 @@ const articleNotifications = async () => {
 
             const emailPostToSend = preparedArticle.emailPost;
             if (!!emailPostToSend) {
-                await Promise.all(preparedArticle.recipients.map(user => emailUtils.sendArticleAsEmail(user, emailPostToSend)));
+                await sendToAll(
+                    `article ${article.articleId}`,
+                    preparedArticle.recipients,
+                    recipient => `user ${recipient.userId}`,
+                    recipient => emailUtils.sendArticleAsEmail(recipient, emailPostToSend, article.communityId),
+                );
             }
             await newsletterHelper.updateSentAtCommunityNewsletterStatus(article.articleId, article.communityId);
         }
@@ -61,7 +67,12 @@ const eventNotifications = async () => {
             console.log('prepared event: ', preparedEvent.event.title);
             console.log('recipients: ', event.userEmails.length);
 
-            await Promise.all(event.userEmails.map(user => emailUtils.sendEventEmail(user, preparedEvent)));
+            await sendToAll(
+                `event ${event.eventId}`,
+                event.userEmails,
+                (_, i) => `participant #${i}`,
+                email => emailUtils.sendEventEmail(email, preparedEvent),
+            );
             await communityEventHelper.markEventAsNotified(event.eventId);
         }
     } catch (error) {

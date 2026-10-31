@@ -1,6 +1,7 @@
 # Database Documentation
 
-> Status: verified against commit a3ab0dcc4, 2026-08-01
+> Status: verified against commit a3ab0dcc4, 2026-08-01; `email_bounces` against commit
+> e44dac1, 2026-10-31
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -142,6 +143,21 @@ Tracks per-user newsletter delivery status. Composite PK: `(userId, newsletterId
 | `newsletterId` | `integer` PK | |
 | `emailClicked` | `boolean` | Default `false` |
 | `sentAt` | `timestamptz(3)` | Nullable |
+
+#### `email_bounces`
+Permanent bounces reported by the selfhost mail relay (`srv/jobs/bounceReceiver.ts`; policy in [docs/email-notifications](../email-notifications/README.md#bounces)). Migration `1793453486482-addEmailBounces`. Keyed by address, not user id (a report names an address; accounts can change theirs). Rows older than 180 days are deleted by the `newsletterDelivery` job.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | `uuid` PK | `gen_random_uuid()` |
+| `address` | `varchar(320)` | Lower-cased recipient address |
+| `reportId` | `varchar(255)` | Message-ID of the bounce report; unique with `address` (`UQ_email_bounces_report_address`) |
+| `status` | `varchar(16)` | Status field, e.g. `5.0.0` |
+| `diagnostic` | `varchar(500)` | Nullable; the receiving server's answer, truncated |
+| `senderSide` | `boolean` | Default `false`; set for bounces in a burst — they never count |
+| `createdAt` | `timestamptz(3)` | Auto |
+
+Indexes: `idx_email_bounces_address_createdAt` (`address`, `createdAt`), `idx_email_bounces_createdAt`.
 
 #### `users_premium`
 User premium feature subscriptions. Composite PK: `(userId, featureName)`.
@@ -1126,6 +1142,7 @@ deletedAt!: Date | null;
 - `bot_tokens` - Retired via `revokedAt`, not deletedAt
 - `bots_platform_communities` - No timestamps at all
 - `staking_positions` - Append-only from on-chain events; unstaking sets `unstakedAt`
+- `email_bounces` - No deletedAt; rows expire after 180 days (hard delete)
 
 The `bots` table itself does use `@DeleteDateColumn` (indexed `deletedAt`) for soft deletes.
 

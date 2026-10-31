@@ -6,6 +6,7 @@ import { isMainThread } from 'worker_threads';
 import emailUtils, { emailEnabled } from '../api/emails';
 import emailHelper from '../repositories/emails';
 import newsletterHelper from '../repositories/newsletter';
+import emailBounceHelper, { BOUNCE_RETENTION_DAYS } from '../repositories/emailBounces';
 
 if (isMainThread) {
     throw new Error("newsletterDelivery can only be run as a worker job");
@@ -30,7 +31,7 @@ async function sendEmails(users: { userId: string, email: string }[], newsletter
         const posts = await emailHelper.getPostsFromFollowedCommunities(user.userId);
         console.log(`Found ${posts.length} posts for user ${user.userId}`);
         try {
-            await emailUtils.sendNewsletter(user.email, posts, generalCommunityPosts);
+            await emailUtils.sendNewsletter(user, posts, generalCommunityPosts);
             await newsletterHelper.updateSentAtNewsletterStatus(newsletterId, user.userId);
         } catch (error) {
             console.error(`Error sending email to user ${user.userId}`, error);
@@ -43,6 +44,16 @@ async function sendEmails(users: { userId: string, email: string }[], newsletter
 }
 
 (async () => {
+    // weekly housekeeping: recorded bounces are only needed for the bounce
+    // policy's look-back (srv/repositories/emailBounces.ts)
+    try {
+        const deleted = await emailBounceHelper.deleteExpired();
+        if (deleted > 0) {
+            console.log(`Deleted ${deleted} bounce record(s) older than ${BOUNCE_RETENTION_DAYS} days`);
+        }
+    } catch (error) {
+        console.error('Could not delete expired bounce records', error);
+    }
     if (!emailEnabled()) {
         console.log('Email delivery is not configured, skipping newsletter delivery');
         process.exit(0);

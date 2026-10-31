@@ -5,7 +5,10 @@
 > against the fix/image-filter-review-53 branch, 2026-08-15; upload rate limit,
 > `Instance` route, URL-preview note, OpenAPI drift check, axios note and §8
 > (dependency notes) against commit 935232158, 2026-10-31; puppeteer browser
-> install note against commit 5f73578, 2026-10-31.
+> install note against commit 5f73578, 2026-10-31; email (SMTP sending layer,
+> `emailUnsubscribe` routes, `bucket` rate-limit option and
+> `keyRateLimitHandler`, mail send limits, `bounceReceiver` job and bounce
+> policy, Mailchimp removal) against commit e44dac1, 2026-10-31.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -32,22 +35,14 @@ Optional third-party services (email, Twitter auth, blockchain, staking) degrade
 
 ### `srv/serverconfig.ts`
 
-Configures external service credentials. It is frozen and exported as an immutable object.
+Server settings read from the environment. It is frozen and exported as an immutable object. (Email/SMTP settings are not here — they are parsed by `srv/util/mailConfig.ts`, see [docs/email-notifications](../email-notifications/README.md#transport--configuration).)
 
 **Keys:**
-- `MAILCHIMP_API_KEY` -- Mailchimp marketing API key (from Docker secret `mailchimp_api` or env var; defaults to `placeholder`)
-- `MAILCHIMP_SERVER` -- Hardcoded to `us9`
-- `MAILCHIMP_DEFAULT_LIST_ID` -- Default mailing list ID (Docker secret `mailchimp_list_id` / env var)
-- `SENDGRID_API_KEY` -- SendGrid email API key (from Docker secret `sendgrid_api` or env var; defaults to `placeholder`)
 - `SESSION_COOKIE_NAME` -- `connect.sid` in prod, `cg_<deployment>.sid` otherwise
 - `PLATFORM_OPERATOR_USER_IDS` -- Frozen list of user IDs allowed to manage platform-owned bots (from `PLATFORM_OPERATOR_USER_IDS` env var, comma-separated)
 - `BOT_USER_OWNER_LIMIT` (default 5), `BOT_COMMUNITY_OWNER_LIMIT` (default 10), `BOT_PLATFORM_OWNER_LIMIT` (default 10) -- Max active bots per owner
 - `BOT_ACTIVE_TOKEN_LIMIT` (default 10) -- Max active API tokens per bot
 - `BOT_API_RATE_LIMIT_PER_MINUTE` (default 120), `BOT_MESSAGE_RATE_LIMIT_PER_MINUTE` (default 30) -- Per-token rate limits for the Bot API
-
-On import, it also initializes:
-- `mailchimpClient.setConfig(...)` with the Mailchimp credentials
-- `sgMail.setApiKey(...)` with the SendGrid key
 
 ### `srv/moderation/imageFilter.ts` — NSFW image gate
 
@@ -349,8 +344,9 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/addPreparedWallet` -- Complete wallet linking
 - `/updateWallet`, `/deleteWallet`, `/getWallets`
 
-**Newsletter:**
-- `/subscribeNewsletter`, `/unsubscribeNewsletter`
+**Newsletter / email preferences:**
+- `/subscribeNewsletter`, `/unsubscribeNewsletter` -- set the local `users.newsletter` flag
+- `GET`/`POST /emailUnsubscribe?token=…` -- one-click unsubscribe (RFC 8058) for digest and community-article mails; no login, signed token, Joi-validated, IP rate-limited, answers with small HTML pages. Registered from `srv/api/emailUnsubscribe.ts`; see [docs/email-notifications](../email-notifications/README.md#one-click-unsubscribe)
 
 **Social:**
 - `/followUser`, `/unfollowUser`
@@ -368,6 +364,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/getTransactionData` -- Get point transaction history
 - `/requestEmailVerification`, `/verifyEmail`
 - `/sendOneTimePasswordForLogin` -- OTP login
+- `/requestEmailVerification` and `/sendOneTimePasswordForLogin` are send-limited per client IP, per target address and (verification) per account -- `srv/util/mailSendLimits.ts`, numbers in [docs/email-notifications](../email-notifications/README.md#send-limits)
 
 ### `srv/api/messages.ts` -- Messaging Routes
 
@@ -499,7 +496,7 @@ Session-authenticated read-only views over on-chain staking positions. Neither r
 
 ### `srv/api/emails.ts`
 
-Not a route file. Contains email-sending utilities used by other routes. Handles SendGrid email composition for newsletters, articles, event notifications, email verification, and OTP login.
+Not a route file. The email layer: SMTP transport (nodemailer, configured by `srv/util/mailConfig.ts`), `emailEnabled()`, and the composers for newsletters, articles, event notifications, email verification and OTP login (HTML + text built locally). Details in [docs/email-notifications](../email-notifications/README.md).
 
 ---
 
@@ -952,7 +949,7 @@ The `db: Pool | PoolClient` parameter pattern enables functions to work both sta
 - User creation (complex: creates user + accounts + wallets + device in transaction)
 - Account operations: add/update/remove accounts, contract wallet management
 - Profile name and email availability checks
-- Follow/unfollow users, Mailchimp newsletter subscription
+- Follow/unfollow users, newsletter flag (`users.newsletter`, local only)
 - Premium feature purchases
 
 **`srv/repositories/communities.ts`** -- `communityHelper`
@@ -1180,12 +1177,16 @@ Located in `srv/jobs/`. All jobs are designed to run as **worker threads** (they
 ### `emailNotifications.ts`
 - **Purpose:** Sends article-as-email notifications and event-starting notifications.
 - **Two jobs in one:**
-  1. `articleNotifications` -- Finds community articles marked for email delivery, prepares them, and sends via SendGrid to newsletter subscribers.
-  2. `eventNotifications` -- Finds upcoming events that need notification, sends email reminders to participants.
+  1. `articleNotifications` -- Finds community articles marked for email delivery, prepares them, and sends them over SMTP to newsletter subscribers. Per-recipient failures are logged and skipped (`srv/util/sendToAll.ts`); the article is marked as sent either way.
+  2. `eventNotifications` -- Finds upcoming events that need notification, sends email reminders to participants (same per-recipient failure handling; the event is marked as notified either way).
 
 ### `newsletterDelivery.ts`
 - **Purpose:** Sends the weekly platform newsletter to subscribed users.
-- **Logic:** Generates a newsletter ID from the current date. Creates newsletter entries for eligible users. Sends personalized emails containing posts from followed communities plus general platform posts. Retries failed sends once.
+- **Logic:** Generates a newsletter ID from the current date. Creates newsletter entries for eligible users. Sends personalized emails containing posts from followed communities plus general platform posts. Retries failed sends once. Before that, it deletes bounce records older than 180 days (`emailBounceHelper.deleteExpired()`).
+
+### `bounceReceiver.ts`
+- **Purpose:** Receives the selfhost mail relay's bounce reports (permanent worker, started by `jobs.ts` only with `MAIL_BOUNCE_RECEIVER=true` and a relay login).
+- **Logic:** An smtp-server listener on port 2525 (`srv/util/bounceReceiverServer.ts`): connections only from the addresses the relay host (`mail`) resolves to, AUTH PLAIN with `SMTP_USER`/`SMTP_PASSWORD` (third failure closes the connection), no STARTTLS, 1 MB, 10 clients, idle and absolute session timeouts. Each message is parsed as an RFC 3464 report (`srv/util/dsn.ts`); permanent failures (`Action: failed`, 5.x.x) go to `emailBounceHelper.recordReport()` (`srv/repositories/emailBounces.ts`), which records them in `email_bounces` and applies `srv/util/bouncePolicy.ts`: unverify only after two counted bounces at least 24 h apart; bursts (more than 25 addresses per hour, or more than 10 of one domain) are flagged `senderSide`, unverify nobody there and log a `!!!` operator warning with the diagnostic texts. A database error answers 451, so the relay retries. See [docs/email-notifications](../email-notifications/README.md#bounces).
 
 ### `premiumRenewal.ts`
 - **Purpose:** Auto-renews expiring premium features for communities and users.
@@ -1256,9 +1257,11 @@ Redis-based rate limiter using sorted sets for sliding window counting.
 
 `ipRateLimitHandler(options)` -- Returns an async function that:
 1. Extracts IP from `x-forwarded-for` header (supports IPv4 and IPv6 with /48, /56, /64 subnets)
-2. Checks counts in Redis sorted sets per URL+IP combination
+2. Checks counts in Redis sorted sets per URL+IP combination (`options.bucket` replaces the URL as the counter name — needed when the query string carries per-request data, e.g. the unsubscribe token)
 3. Applies separate limits for IPv4/IPv6-64, IPv6-56, and IPv6-48 prefixes
 4. Throws `RATE_LIMIT_EXCEEDED` if any limit is breached
+
+`keyRateLimitHandler({ bucket, windowMs, limit })` -- the same sliding window on a key the caller computes (e.g. a hashed target address or an account id) instead of the IP; used by the mail send limits in `srv/util/mailSendLimits.ts`.
 
 The IP classification itself lives in `srv/util/ipPrefix.ts` (2026-08: built on
 `node:net` `isIPv4`/`isIPv6`, replacing the unmaintained `ip` package). IPv6

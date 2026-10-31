@@ -11,6 +11,7 @@ import {
   UserPremiumFeatureName,
   PremiumRenewal,
 } from "../../common/enums";
+import { UNSUBSCRIBE_TOKEN_REGEX } from "../../util/unsubscribeToken";
 
 const humanAccountTypes = Object.values(UserProfileTypeEnum)
   .filter(type => type !== UserProfileTypeEnum.BOT);
@@ -222,6 +223,19 @@ const userApi = {
   unsubscribeNewsletter: Joi.object<API.User.unsubscribeNewsletter.Request>({
     email: TldSafeEmailValidator,
   }).strict(true).required(),
+
+  // one-click unsubscribe (srv/api/emailUnsubscribe.ts): the signed token
+  // comes in the query string of the List-Unsubscribe URL. Other query keys
+  // are ignored — link rewriters and trackers append utm_* and the like.
+  emailUnsubscribeQuery: Joi.object<{ token: string }>({
+    token: Joi.string().max(200).pattern(UNSUBSCRIBE_TOKEN_REGEX).required(),
+  }).unknown(true).required(),
+
+  // RFC 8058 POST body "List-Unsubscribe=One-Click"; tolerated when absent
+  // (multipart bodies are not parsed) — the token alone authorizes
+  emailUnsubscribeBody: Joi.object<{ 'List-Unsubscribe'?: string }>({
+    'List-Unsubscribe': Joi.string().valid('One-Click'),
+  }),
 
   followUser: Joi.object<API.User.followUser.Request>({
     userId: common.Uuid.required(),

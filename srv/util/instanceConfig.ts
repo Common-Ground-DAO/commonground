@@ -8,6 +8,7 @@ import urls from "./urls";
 import { dockerSecret } from ".";
 import { CAPTCHA_PROVIDER } from "./captcha";
 import { isConfiguredSecret } from "./configuredSecret";
+import { parseMailConfig } from "./mailConfig";
 
 // Builds the <script> tag that declares this instance's identity to the
 // frontend (window.__CG_INSTANCE__). Injected into every index.html the
@@ -47,7 +48,8 @@ export function buildInstanceConfig(): InstanceConfig {
     calls: process.env.CG_ENABLE_CALLS !== "false",
     // the switch the filter itself runs on (srv/moderation/imageFilter.ts)
     imageFilter: config.IMAGE_MODERATION_ENABLED,
-    email: configured(dockerSecret("sendgrid_api") || process.env.SENDGRID_API_KEY),
+    // same rule as emailEnabled() in srv/api/emails.ts
+    email: parseMailConfig(process.env, urls.APP_HOSTNAME).enabled,
     twitterAuth:
       configured(dockerSecret("twitter_api_v1_key") || process.env.TWITTER_API_KEY) &&
       configured(dockerSecret("twitter_api_v1_secret") || process.env.TWITTER_API_SECRET),

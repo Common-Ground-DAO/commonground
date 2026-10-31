@@ -1,4 +1,5 @@
-> Status: verified against commit 91efa7c82, 2026-08-04
+> Status: verified against commit 91efa7c82, 2026-08-04; `features.email` row against
+> commit e44dac1, 2026-10-31
 
 # Common Ground - Architecture Documentation
 
@@ -524,7 +525,7 @@ All third-party integrations are optional. The server derives **capability flags
 
 | Flag | Enabled when configured |
 |------|-------------------------|
-| `email` | SendGrid API key |
+| `email` | a valid SMTP configuration (`SMTP_HOST` set; see [docs/email-notifications](../email-notifications/README.md)) |
 | `twitterAuth` | Twitter API v1 key + secret |
 | `calls` | the `mediasoup` service is deployed (opt-out flag: only an explicit `CG_ENABLE_CALLS=false` turns it off) |
 

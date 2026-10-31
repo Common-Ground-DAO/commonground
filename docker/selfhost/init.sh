@@ -26,8 +26,14 @@ usage() {
 }
 
 CG_TLS_MODE=acme
+# a real instance runs the built-in mail relay; a LAN/test instance must not
+# deliver mail to the internet, so it starts with email off
+INIT_ENABLE_MAIL=true
+INIT_SMTP_HOST=mail
 if [ "${1:-}" = "--tls-internal" ]; then
   CG_TLS_MODE=internal
+  INIT_ENABLE_MAIL=false
+  INIT_SMTP_HOST=
   shift
 fi
 
@@ -149,11 +155,40 @@ BOT_ACTIVE_TOKEN_LIMIT=10
 BOT_API_RATE_LIMIT_PER_MINUTE=120
 BOT_MESSAGE_RATE_LIMIT_PER_MINUTE=30
 
-### Optional third-party integrations — leave empty to disable the feature.
-
-# email delivery (SendGrid). Without it, email login/notifications are unavailable.
-SENDGRID_API_KEY=
+# Email (SMTP) — SELFHOST.md, "Email". Without it, email login codes,
+# email verification and notification mails are unavailable.
+#   CG_ENABLE_MAIL=true   run the built-in send-only relay (the "mail"
+#     container): it DKIM-signs and delivers straight to the recipients' mail
+#     servers over outbound port 25. Before it delivers reliably: your hoster
+#     must allow outbound port 25 (many block it by default), and the DNS
+#     records printed by ./selfhost/selfhost.sh mail-dns (SPF, DKIM, DMARC)
+#     plus a PTR record for CG_PUBLIC_IP -> MAIL_HOSTNAME must be in place.
+#     The SMTP_* values below are the app's login for this relay — keep them.
+#   CG_ENABLE_MAIL=false  no relay container. Point SMTP_* at an external
+#     SMTP server (your mail provider / a sending service) instead, or empty
+#     SMTP_HOST to run without email.
+# SMTP_SECURITY: tls (implicit TLS, usually port 465) | starttls (required,
+# usually 587) | none (no TLS — only for the internal relay).
+# Instances set up with --tls-internal start with email off (CG_ENABLE_MAIL=false,
+# empty SMTP_HOST) so a test instance never mails the internet; to try the relay
+# anyway, set CG_ENABLE_MAIL=true and SMTP_HOST=mail.
+CG_ENABLE_MAIL=${INIT_ENABLE_MAIL}
+SMTP_HOST=${INIT_SMTP_HOST}
+SMTP_PORT=587
+SMTP_SECURITY=none
+SMTP_USER=cg-app
+SMTP_PASSWORD=$(rand 24)
 EMAIL_FROM=no-reply@${CG_DOMAIN}
+EMAIL_FROM_NAME="Common Ground"
+# built-in relay only: the domain it signs for (must be the domain of
+# EMAIL_FROM), the name it greets other mail servers with (the PTR record of
+# CG_PUBLIC_IP must point to it, and it must resolve back to CG_PUBLIC_IP)
+# and the DKIM selector (the key is generated on the relay's first start)
+MAIL_DOMAIN=${CG_DOMAIN}
+MAIL_HOSTNAME=${CG_DOMAIN}
+MAIL_DKIM_SELECTOR=cg
+
+### Optional third-party integrations — leave empty to disable the feature.
 
 # Captcha (registration spam protection). The default provider is ALTCHA, a
 # self-hosted proof-of-work captcha that needs no third-party keys — leave this
@@ -215,11 +250,6 @@ TWITTER_API_KEY=
 TWITTER_API_SECRET=
 TWITTER_OAUTH2_CLIENT_ID=
 TWITTER_OAUTH2_CLIENT_SECRET=
-
-# Mailchimp (CG-updates newsletter list; without it, subscription state is
-# kept locally only)
-MAILCHIMP_API_KEY=
-MAILCHIMP_LIST_ID=
 
 # Giphy Web SDK key (https://developers.giphy.com). Without it the GIF
 # picker is hidden.
@@ -318,3 +348,10 @@ fi
 echo "  2. Open ports 80, 443 (tcp+udp), 4443 (tcp) and 40000-40099 (udp+tcp) in your firewall"
 echo "  3. Run: ./selfhost/selfhost.sh build"
 echo "  4. Run: ./selfhost/selfhost.sh up"
+if grep -q '^CG_ENABLE_MAIL=true' .env.selfhost; then
+  echo "  5. Email (built-in relay, CG_ENABLE_MAIL=true): run ./selfhost/selfhost.sh mail-dns and"
+  echo "     publish the records it prints; check that your hoster allows outbound port 25"
+  echo "     (or switch to an external SMTP server — SELFHOST.md, \"Email\")"
+else
+  echo "  5. Email is off (CG_ENABLE_MAIL / SMTP_HOST in .env.selfhost) — see SELFHOST.md, \"Email\""
+fi

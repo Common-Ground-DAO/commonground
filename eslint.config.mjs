@@ -55,6 +55,8 @@ export default tseslint.config(
       'public/**',
       'docker/**',
       'pipelines/**',
+      // Agent worktrees (full repo copies) created by Claude Code.
+      '.claude/**',
     ],
   },
 

@@ -17,7 +17,10 @@ import { createTranslator } from "short-uuid";
 import { User } from "../util/express";
 import ogs from 'open-graph-scraper';
 import fileHelper from "../repositories/files";
-import axios from "../util/axios";
+import safeFetch from "../util/safeFetch";
+import ipRateLimitHandler from "../util/rateLimit";
+import redisManager from "../redis";
+import { createHash } from "crypto";
 import articleHelper from "../repositories/articles";
 import botHelper from "../repositories/bots";
 import { allowBotRoute } from "../util/botPrincipal";
@@ -28,6 +31,48 @@ const t = createTranslator();
 /** Caps for what `/getUrlPreview` will buffer from a caller-supplied URL. */
 const URL_PREVIEW_MAX_BYTES = 1_000_000;
 const URL_PREVIEW_MAX_IMAGE_BYTES = 8_000_000;
+/** Cap for the title and description returned (and cached) per preview. */
+const URL_PREVIEW_MAX_TEXT = 2_000;
+/** Previews are cached per URL so repeated requests do not refetch. */
+const URL_PREVIEW_CACHE_SECONDS = 60 * 60;
+/** Longest URL a preview links to; matches the request validator. */
+const URL_PREVIEW_MAX_URL = 2048;
+/** Serialized previews above this size are returned but not cached. */
+const URL_PREVIEW_MAX_CACHED_BYTES = 8 * 1024;
+
+/**
+ * The page's `og:url` if it is a usable http(s) link, otherwise the URL the
+ * preview was requested for.
+ */
+function previewLink(ogUrl: string | undefined, requestUrl: string): string {
+  if (!ogUrl || ogUrl.length > URL_PREVIEW_MAX_URL) {
+    return requestUrl;
+  }
+  try {
+    const parsed = new URL(ogUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return requestUrl;
+    }
+    const href = parsed.toString();
+    return href.length <= URL_PREVIEW_MAX_URL ? href : requestUrl;
+  } catch {
+    return requestUrl;
+  }
+}
+
+/**
+ * Previews that miss the cache fetch a page and possibly an image, which then
+ * runs through image processing; the budget sits well above what typing and
+ * pasting links in the composer produces.
+ */
+const urlPreviewRateLimiter = ipRateLimitHandler({
+  windowMs: 1000 * 60, // 1 min
+  identity: (req) => req.session?.user?.id,
+  limit_identity: 30,
+  limit_v4_v6_64: 30,
+  limit_v6_56: 60,
+  limit_v6_48: 120,
+});
 
 const messagingRouter = express.Router();
 
@@ -104,6 +149,14 @@ export async function _checkAccessOrThrow(access: { channelId: string, articleId
 export async function _checkAccessOrThrow(access: { channelId: string, chatId: string }, userId?: string): Promise<void>;
 export async function _checkAccessOrThrow(access: API.Messages.MessageAccess, userIdOrPermissions?: ArticlePermission[] | ChannelPermission[] | CallPermission[] | string, userId?: string) {
   console.log('checkAccessOrThrow', access);
+
+  // Every permission below is evaluated for the community, chat, call or
+  // article in the access object, while the message queries use
+  // `access.channelId`; both must refer to the same channel.
+  const requestingUserId = typeof userIdOrPermissions === 'string' ? userIdOrPermissions : userId;
+  if (!(await messageHelper.isChannelInAccessScope(access, requestingUserId))) {
+    throw new Error(errors.server.NOT_ALLOWED);
+  }
 
   if ('communityId' in access && Array.isArray(userIdOrPermissions)) {
     const hasPermissions = await permissionHelper.hasPermissions({
@@ -679,13 +732,20 @@ registerPostRoute<
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
     const { access } = data;
+    // Creator and channel come from the stored message, not from the
+    // request; the permission checks below run against that channel.
+    const message = await messageHelper.getMessageOwnership(data.messageId);
+    if (!message || message.channelId !== access.channelId) {
+      throw new Error(errors.server.NOT_FOUND);
+    }
+    const isOwnMessage = message.creatorId === user.id;
     if ('communityId' in access) {
       const permissions = [
         ChannelPermission.CHANNEL_EXISTS,
         ChannelPermission.CHANNEL_READ,
         ChannelPermission.CHANNEL_WRITE,
       ];
-      if (data.creatorId !== user.id) {
+      if (!isOwnMessage) {
         // user wants to delete another user's message
         permissions.push(ChannelPermission.CHANNEL_MODERATE);
       }
@@ -697,14 +757,14 @@ registerPostRoute<
         CallPermission.CHANNEL_READ,
         CallPermission.CHANNEL_WRITE,
       ];
-      if (data.creatorId !== user.id) {
+      if (!isOwnMessage) {
         // user wants to delete another user's message
         permissions.push(CallPermission.CALL_MODERATE);
       }
       await _checkAccessOrThrow(access, permissions, user.id);
     }
     else if ('articleId' in access) {
-      if (data.creatorId !== user.id) {
+      if (!isOwnMessage) {
         // user wants to delete another user's message
         throw new Error(errors.server.NOT_ALLOWED);
       }
@@ -714,14 +774,18 @@ registerPostRoute<
       ], user.id);
     }
     else {
-      if (data.creatorId !== user.id) {
+      if (!isOwnMessage) {
         // user wants to delete another user's message
         throw new Error(errors.server.NOT_ALLOWED);
       }
       await _checkAccessOrThrow(access, user.id);
     }
 
-    const result = await messageHelper.deleteMessage(user.id, data);
+    const result = await messageHelper.deleteMessage({
+      messageId: data.messageId,
+      channelId: access.channelId,
+      creatorId: message.creatorId,
+    });
     const events: Events.Message.Message[] = [{
       type: "cliMessageEvent",
       action: "delete",
@@ -972,31 +1036,39 @@ registerPostRoute<
   '/getUrlPreview',
   validators.API.Message.getUrlPreview,
   async (request, response, data) => {
+    const { user } = request.session;
+    if (!user) {
+      throw new Error(errors.server.LOGIN_REQUIRED);
+    }
     const { url } = data;
+
+    const cacheKey = `urlpreview:${createHash('sha256').update(url).digest('hex')}`;
+    const cached = await redisManager.get('data', cacheKey).catch(() => null);
+    if (cached) {
+      try {
+        return JSON.parse(cached) as API.Messages.getUrlPreview.Response;
+      } catch {
+        // unreadable entry: rebuild it below
+      }
+    }
+
+    await urlPreviewRateLimiter(request, response);
 
     // The page is fetched here rather than by open-graph-scraper, because v6
     // dropped v5's `downloadLimit` (1 MB by default) without a replacement: it
     // buffers the whole response body and runs cheerio over it *before* looking
-    // at the content type. On this route — unauthenticated, caller-supplied URL
-    // — a large response was reproducibly enough to OOM-kill the process.
-    // axios caps the buffered body instead, and ogs runs on the HTML string.
+    // at the content type. safeFetch caps the buffered body instead, and ogs
+    // runs on the HTML string.
     let html: string;
     let finalUrl = url;
     try {
-      const pageResponse = await axios.get<string>(url, {
-        responseType: 'text',
-        maxContentLength: URL_PREVIEW_MAX_BYTES,
-        maxRedirects: 5,
-        timeout: 10000,
-        transitional: { forcedJSONParsing: false },
+      const page = await safeFetch(url, {
+        maxBytes: URL_PREVIEW_MAX_BYTES,
         headers: { Accept: 'text/html' },
+        acceptContentType: (type) => type === '' || type.startsWith('text/') || type === 'application/xhtml+xml',
       });
-      const contentType = String(pageResponse.headers['content-type'] || '');
-      if (contentType && !contentType.includes('text/')) {
-        throw new Error(errors.server.INVALID_REQUEST);
-      }
-      html = typeof pageResponse.data === 'string' ? pageResponse.data : '';
-      finalUrl = pageResponse.request?.res?.responseUrl || url;
+      html = page.body.toString('utf-8');
+      finalUrl = page.url;
     }
     catch (e) {
       throw new Error(errors.server.INVALID_REQUEST);
@@ -1026,28 +1098,31 @@ registerPostRoute<
     let imageId = '';
     if (imageUrl) {
       try {
-        const imageResponse = await axios.get(imageUrl, {
-          responseType: 'arraybuffer',
-          maxContentLength: URL_PREVIEW_MAX_IMAGE_BYTES,
-          maxRedirects: 5,
-          timeout: 10000,
+        const image = await safeFetch(imageUrl, {
+          maxBytes: URL_PREVIEW_MAX_IMAGE_BYTES,
+          headers: { Accept: 'image/*' },
+          acceptContentType: (type) => type.startsWith('image/') || type === 'application/octet-stream',
         });
-        if (imageResponse.status === 200) {
-          const buffer = Buffer.from(imageResponse.data, "utf-8");
-          const image = await fileHelper.saveImage(null, { type: 'urlPreviewImage' }, buffer, { width: 250, height: 167 }, { withoutEnlargement: true });
-          imageId = image.fileId;
-        }
+        const stored = await fileHelper.saveImage(null, { type: 'urlPreviewImage' }, image.body, { width: 250, height: 167 }, { withoutEnlargement: true });
+        imageId = stored.fileId;
       } catch (e) {
         console.error('Failed to fetch image preview');
       }
     }
 
-    return {
-      title: metadataResult.result.ogTitle || '',
-      description: metadataResult.result.ogDescription || metadataResult.result.twitterDescription || '',
+    const result: API.Messages.getUrlPreview.Response = {
+      title: (metadataResult.result.ogTitle || '').slice(0, URL_PREVIEW_MAX_TEXT),
+      description: (metadataResult.result.ogDescription || metadataResult.result.twitterDescription || '').slice(0, URL_PREVIEW_MAX_TEXT),
       imageId,
-      url: metadataResult.result.ogUrl || url
+      url: previewLink(metadataResult.result.ogUrl, url),
+    };
+    const serialized = JSON.stringify(result);
+    if (Buffer.byteLength(serialized) <= URL_PREVIEW_MAX_CACHED_BYTES) {
+      await redisManager.getClient('data')
+        .set(cacheKey, serialized, { EX: URL_PREVIEW_CACHE_SECONDS })
+        .catch((e) => console.error('Could not cache url preview', e));
     }
+    return result;
   }
 );
 

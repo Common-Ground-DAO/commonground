@@ -246,6 +246,15 @@ async function resolveTypingScope(
   access: API.Messages.MessageAccess,
   userId: string,
 ): Promise<TypingScope | null> {
+  // Calls (callId) intentionally have no typing surface.
+  if ('callId' in access) {
+    return null;
+  }
+  // The authorization below is for the community, chat or article named in
+  // the access object; the channel in the event must be that one's channel.
+  if (!(await typingCache.isChannelInAccessScope(access))) {
+    return null;
+  }
   if ('communityId' in access) {
     const perms = await typingCache.getChannelTypingPerms(access.communityId, access.channelId);
     // Gate on WRITE: only broadcast "composing" where the user could actually send.
@@ -279,7 +288,6 @@ async function resolveTypingScope(
     }
     return { target: { articleIds: [access.articleId] }, except: { userIds: [userId] } };
   }
-  // Calls (callId) intentionally have no typing surface.
   return null;
 }
 

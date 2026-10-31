@@ -168,11 +168,15 @@ async function _updateMessage(
   userId: string,
   data: API.Messages.editMessage.Request
 ) {
+  if (!data.access?.channelId) {
+    throw new Error(errors.server.INVALID_REQUEST);
+  }
   const params: any[] = [
     userId,
-    data.id
+    data.id,
+    data.access.channelId,
   ];
-  let i = 3;
+  let i = 4;
   const setArray: string[] = [];
   if (data.attachments !== undefined) {
     setArray.push(`attachments = $${i++}`);
@@ -186,7 +190,7 @@ async function _updateMessage(
     const query = `
       UPDATE messages
       SET ${setArray.join(',')}, "updatedAt" = NOW(), "editedAt" = NOW()
-      WHERE id = $2 AND "creatorId" = $1 AND "deletedAt" IS NULL
+      WHERE id = $2 AND "creatorId" = $1 AND "channelId" = $3 AND "deletedAt" IS NULL
       RETURNING "updatedAt", "editedAt"
     `;
     const result = await db.query(query, params);
@@ -197,16 +201,21 @@ async function _updateMessage(
   throw new Error(errors.server.NOT_ALLOWED);
 }
 
+/**
+ * Soft-deletes messages of one creator in one channel: either all of them, or
+ * the single message `messageId`. The channel is always part of the filter.
+ */
 async function _deleteMessages(
   db: Pool | PoolClient,
   where: {
     creatorId: string;
-    channelId: string,
-  } | {
-    creatorId: string;
-    messageId: string
+    channelId: string;
+    messageId?: string;
   }
 ) {
+  if (!where.creatorId || !where.channelId) {
+    throw new Error(errors.server.INVALID_REQUEST);
+  }
   const query = `
     WITH removed_messages AS (
       UPDATE messages m
@@ -214,9 +223,9 @@ async function _deleteMessages(
         "deletedAt" = NOW(),
         "reactions" = '{}'::jsonb
       WHERE m."creatorId" = $1
+        AND m."channelId" = $2
         AND m."deletedAt" IS NULL
-        ${'messageId' in where ? 'AND m."id" = $2' : ''}
-        ${'channelId' in where ? 'AND m."channelId" = $2' : ''}
+        ${where.messageId !== undefined ? 'AND m."id" = $3' : ''}
       RETURNING m.id
     ), removed_message_reactions AS (
       UPDATE reactions r
@@ -236,13 +245,9 @@ async function _deleteMessages(
       'dbNow', NOW()
     ) AS "deleteData"
   `;
-  const params: any[] = [];
-  if ('messageId' in where) {
-    params.push(where.creatorId, where.messageId);
-  } else if ('channelId' in where) {
-    params.push(where.creatorId, where.channelId);
-  } else {
-    throw new Error(errors.server.INVALID_REQUEST);
+  const params: any[] = [where.creatorId, where.channelId];
+  if (where.messageId !== undefined) {
+    params.push(where.messageId);
   }
   const result = await db.query(query, params);
   if (result.rows.length !== 1) {
@@ -349,6 +354,11 @@ async function _unsetReaction(
       WHERE "deletedAt" IS NULL
         AND "userId" = $1
         AND "itemId" = $2
+        AND EXISTS (
+          SELECT 1 FROM messages m
+          WHERE m."id" = $2
+            AND m."channelId" = $3
+        )
       RETURNING "reaction"
     )
     UPDATE messages
@@ -368,12 +378,17 @@ async function _unsetReaction(
             )
         END
     WHERE "id" = $2
+      AND "channelId" = $3
       AND EXISTS (SELECT 1 FROM delete_reaction)
     RETURNING "channelId", "reactions", "updatedAt"
   `;
+  if (!data.access?.channelId) {
+    throw new Error(errors.server.INVALID_REQUEST);
+  }
   const result = await db.query(query, [
     userId,
-    data.messageId
+    data.messageId,
+    data.access.channelId,
   ]);
   if (result.rows.length === 1) {
     return result.rows[0] as { channelId: string, reactions: Models.Message.ApiMessage["reactions"], updatedAt: string };
@@ -450,14 +465,92 @@ class MessageHelper {
     return await _updateMessage(pool, userId, data);
   }
 
-  public async deleteMessage(
-    userId: string,
-    data: API.Messages.deleteMessage.Request
-  ) {
-    return await _deleteMessages(pool, {
-      creatorId: data.creatorId,
-      messageId: data.messageId
-    });
+  /**
+   * Creator and channel of a message that is not deleted yet, or `undefined`.
+   */
+  public async getMessageOwnership(
+    messageId: string
+  ): Promise<{ creatorId: string, channelId: string } | undefined> {
+    const result = await pool.query<{ creatorId: string, channelId: string }>(`
+      SELECT "creatorId", "channelId"
+      FROM messages
+      WHERE id = $1
+        AND "deletedAt" IS NULL
+    `, [messageId]);
+    return result.rows[0];
+  }
+
+  /**
+   * Whether `access.channelId` is the channel of the community, chat, call
+   * or article named in the same access object. Deleted channels, chats and
+   * articles do not count. A user article that is not published yet only
+   * counts for its author (`userId`).
+   */
+  public async isChannelInAccessScope(
+    access: API.Messages.MessageAccess,
+    userId?: string,
+  ): Promise<boolean> {
+    let query: string;
+    let params: (string | null)[];
+    if ('communityId' in access) {
+      query = `
+        SELECT 1 FROM communities_channels
+        WHERE "communityId" = $1 AND "channelId" = $2
+          AND "deletedAt" IS NULL
+      `;
+      params = [access.communityId, access.channelId];
+    }
+    else if ('chatId' in access) {
+      query = `
+        SELECT 1 FROM chats
+        WHERE id = $1 AND "channelId" = $2
+          AND "deletedAt" IS NULL
+      `;
+      params = [access.chatId, access.channelId];
+    }
+    else if ('callId' in access) {
+      query = `
+        SELECT 1 FROM calls
+        WHERE id = $1 AND "channelId" = $2
+      `;
+      params = [access.callId, access.channelId];
+    }
+    else if ('articleId' in access && 'articleCommunityId' in access) {
+      query = `
+        SELECT 1 FROM articles a
+        INNER JOIN communities_articles ca
+          ON ca."articleId" = a.id
+        WHERE a.id = $1 AND a."channelId" = $2 AND ca."communityId" = $3
+          AND a."deletedAt" IS NULL
+          AND ca."deletedAt" IS NULL
+      `;
+      params = [access.articleId, access.channelId, access.articleCommunityId];
+    }
+    else if ('articleId' in access && 'articleUserId' in access) {
+      query = `
+        SELECT 1 FROM articles a
+        INNER JOIN users_articles ua
+          ON ua."articleId" = a.id
+        WHERE a.id = $1 AND a."channelId" = $2 AND ua."userId" = $3
+          AND a."deletedAt" IS NULL
+          AND ua."deletedAt" IS NULL
+          AND (ua."published" < now() OR ua."userId" = $4::uuid)
+      `;
+      params = [access.articleId, access.channelId, access.articleUserId, userId ?? null];
+    }
+    else {
+      return false;
+    }
+    const result = await pool.query(query, params);
+    return result.rows.length > 0;
+  }
+
+  public async deleteMessage(data: {
+    messageId: string;
+    channelId: string;
+    creatorId: string;
+  }) {
+    return await _deleteMessages(pool, data);
   }
 
   public async deleteAllUserMessages(

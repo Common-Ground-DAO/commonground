@@ -1,5 +1,5 @@
-> Status: verified against commit 91efa7c82, 2026-08-04; `features.email` row against
-> commit e44dac1, 2026-10-31
+> Status: verified against commit 91efa7c82, 2026-08-04; `features.email` row and
+> Redis key prefixes against commit e44dac1, 2026-10-31
 
 # Common Ground - Architecture Documentation
 
@@ -350,7 +350,7 @@ One Redis instance (`redis`, default URL `redis://redis:6379`, override with `RE
 | `socketIOPub` / `socketIOSub` | Socket.IO adapter pub/sub (`v2:`) for broadcasting across `wsapi` instances. | a subscribing connection cannot issue normal commands |
 | `data` | General-purpose caching, `UserDataManager`, rate limiting, bot connection-presence leases. | plain command connection |
 
-Key prefixes are pairwise disjoint (`sess:`, `ratelimit:`, `bot-ratelimit:`, `bot-presence:`, `captcha:`, `pluginRequest:`, `ud:`/`us:`, `tmp:`, `online-user-addresses`, and the adapter's `v2:`). Until 2026-08-01 these clients pointed at three identically configured instances; the split was mechanical and never load-bearing.
+Key prefixes are pairwise disjoint (`sess:`, `ratelimit:`, `bot-ratelimit:`, `bot-presence:`, `captcha:`, `pluginRequest:`, `urlpreview:`, `ud:`/`us:`, `tmp:`, `online-user-addresses`, and the adapter's `v2:`). Until 2026-08-01 these clients pointed at three identically configured instances; the split was mechanical and never load-bearing.
 
 ### PostgreSQL LISTEN/NOTIFY
 

@@ -8,8 +8,8 @@
 > `s3.selfhost.json` ownership against commit 69999fa20 (chore/env-template),
 > 2026-10-31; image pins, Node 26 / trixie, Yarn 4.18.1, immutable installs and
 > verified binary downloads against commit 5f73578, 2026-10-31; email (SMTP
-> variables, `mailpit` dev service, selfhost `mail` relay and bounce receiver)
-> against commit e44dac1, 2026-10-31
+> variables, `mailpit` dev service, selfhost `mail` relay and bounce receiver),
+> Redis cache roles and `MEDIASOUP_TRUST_PROXY` against commit e44dac1, 2026-10-31
 
 # Common Ground Infrastructure Documentation
 
@@ -65,7 +65,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Purpose:** one instance serves all three historical roles, with pairwise disjoint key prefixes:
   - user session store (`express-session` / `connect-redis`, `sess:`)
   - pub/sub adapter for Socket.IO (`v2:`), distributing real-time events across backend instances
-  - general-purpose cache (rate limiting, bot presence, captcha, user data)
+  - general-purpose cache (rate limiting, bot presence, captcha, user data, plugin replay keys, URL-preview cache)
 - Until 2026-08-01 this was three identically configured instances (`redis-sessions`, `redis-socketio`, `redis-data`); the split was mechanical, never load-bearing. `maxmemory` is now the shared budget for all of it.
 - **Backend connection:** `srv/redis/index.ts` resolves `process.env.REDIS_URL || 'redis://redis:6379'`, password from the Docker secret `redis_password` or `REDIS_PASSWORD`, and hands both to `srv/redis/client.ts` — the only file that calls `createClient`, and where `RESP: 2` is pinned. Neither compose file sets `REDIS_URL`; it exists for deployments that run Redis somewhere else.
 
@@ -625,6 +625,7 @@ The table describes purpose; `.env.example` has the defaults.
 | `BUILDER_UID` / `BUILDER_GID` | Host UID/GID for the builder container (avoids mounted-volume permission issues). `0` (root) is accepted. |
 | `RECALCULATE_BALANCES_AND_ROLES` | If `true`, recomputes all token balances/roles on `onchain` startup. |
 | `MEDIASOUP_DISABLE_LIBURING` | Disables io_uring in mediasoup (workaround for some kernels/containers). |
+| `MEDIASOUP_TRUST_PROXY` | `true` = the call server takes the client address for its pre-login connection limits from `X-Forwarded-For`. Only for a call server reachable solely through a reverse proxy; the self-host stack sets it, the dev stack leaves it unset. |
 | `LOCAL_CERTIFICATE_IP` | IP baked into self-signed certs. Empty = no certs generated; set a LAN IP for multi-device testing. |
 | `MEDIASOUP_ANNOUNCED_IP` | IP mediasoup advertises for WebRTC ICE candidates; must be client-reachable. |
 | `EXTERNAL_LISTEN_IP` | Host port-binding interface. `127.0.0.1` = localhost only, `0.0.0.0` = all interfaces. |

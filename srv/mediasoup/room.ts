@@ -6,9 +6,7 @@ import protoo, { AcceptFn, Peer, ProtooRequest, RejectFn } from 'protoo-server';
 import { mediasoupConfig } from './config';
 import { ActiveSpeakerObserver, AudioLevelObserver, Consumer, Producer, Router, WebRtcServer, WebRtcTransport, Worker } from 'mediasoup/types';
 import Logger from './logger';
-import { realRandomHexString } from '../util';
 import validators from '../validators';
-import deviceHelper from '../repositories/device';
 import errors from '../common/errors';
 import callHelper from '../repositories/calls';
 import { CallType } from '../common/enums';
@@ -58,18 +56,26 @@ export default class Room extends EventEmitter {
         // Create a mediasoup Router.
         const mediasoupRouter = await mediasoupWorker.createRouter({ mediaCodecs });
 
-        // Create a mediasoup AudioLevelObserver.
-        const audioLevelObserver = await mediasoupRouter.createAudioLevelObserver(
-            {
-                maxEntries: 1,
-                threshold: -50,
-                interval: 500
-            });
+        let audioLevelObserver: AudioLevelObserver;
+        let activeSpeakerObserver: ActiveSpeakerObserver;
+        try {
+            // Create a mediasoup AudioLevelObserver.
+            audioLevelObserver = await mediasoupRouter.createAudioLevelObserver(
+                {
+                    maxEntries: 1,
+                    threshold: -50,
+                    interval: 500
+                });
 
-        // Create a mediasoup ActiveSpeakerObserver.
-        const activeSpeakerObserver = await mediasoupRouter.createActiveSpeakerObserver(
-            { interval: 2500 }
-        );
+            // Create a mediasoup ActiveSpeakerObserver.
+            activeSpeakerObserver = await mediasoupRouter.createActiveSpeakerObserver(
+                { interval: 2500 }
+            );
+        } catch (error) {
+            // closing the Router also closes any observer created on it
+            mediasoupRouter.close();
+            throw error;
+        }
 
         const room = new Room(
             {
@@ -210,15 +216,30 @@ export default class Room extends EventEmitter {
     }
 
     /**
-     * Called from mediasoup.ts upon a protoo WebSocket connection request from a
-     * browser.
+     * Closes the room if no connection is attached to it, e.g. when the
+     * connection that caused its creation went away before it was attached.
+     */
+    closeIfEmpty() {
+        if (this._protooRoom.peers.length === 0) {
+            this.close();
+        }
+    }
+
+    /**
+     * Called from mediasoup.ts once a protoo WebSocket connection has logged
+     * in as `peerId` (see connectionGate.ts). An existing peer with the same
+     * id is the same user's previous connection and is replaced.
      */
     async handleProtooConnection({ peerId, consume, protooWebSocketTransport }: { peerId: string, consume: boolean, protooWebSocketTransport: protoo.WebSocketTransport }) {
+        if (this._closed || protooWebSocketTransport.closed) {
+            throw new Error('connection or room already closed');
+        }
+
         const existingPeer = this._protooRoom.getPeer(peerId);
 
         if (existingPeer) {
-            logger.error(
-                'handleProtooConnection() | there is already a protoo Peer with same peerId, closing it [peerId:%s]',
+            logger.warn(
+                'handleProtooConnection() | replacing the previous connection of this peer [peerId:%s]',
                 peerId);
 
             existingPeer.close();
@@ -243,7 +264,7 @@ export default class Room extends EventEmitter {
         peer.data.displayName = undefined;
         peer.data.device = undefined;
         peer.data.rtpCapabilities = undefined;
-        peer.data._cgAuth = false;
+        peer.data._cgAuth = true;
         peer.data.membershipId = '';
 
         // Have mediasoup related maps ready even before the Peer joins since we
@@ -391,45 +412,12 @@ export default class Room extends EventEmitter {
      * @async
      */
     async _handleProtooRequest(peer: Peer, request: ProtooRequest, accept: AcceptFn, reject: RejectFn) {
-        if (
-            !peer.data._cgAuth &&
-            !(request.method === 'getSignableSecret' || request.method === 'login')
-        ) {
+        // Connections only reach a room after logging in (connectionGate.ts).
+        if (!peer.data._cgAuth) {
             throw new Error(errors.server.LOGIN_REQUIRED);
         }
 
         switch (request.method) {
-            case 'getSignableSecret':
-                {
-                    const secret = realRandomHexString(32);
-                    peer.data._cgSecret = secret;
-                    accept(secret);
-
-                    break;
-                }
-
-            case 'login':
-                {
-                    const signableSecret = peer.data._cgSecret as string | undefined;
-                    let data: API.Socket.login.Request = request.data;
-                    data = await validators.API.Socket.login.validateAsync(data);
-                    if (!!signableSecret && signableSecret === data.secret) {
-                        const { userId } = await deviceHelper.verifyDeviceAndGetUserId(data.deviceId, signableSecret, data.base64Signature);
-                        delete peer.data._cgSecret;
-                        if (peer.id !== userId) {
-                            accept("ERROR");
-                            return;
-                        }
-                        peer.data._cgAuth = true;
-                        accept("OK");
-
-                    } else {
-                        accept("ERROR");
-                    }
-
-                    break;
-                }
-
             case 'getRouterRtpCapabilities':
                 {
                     accept(this._mediasoupRouter.rtpCapabilities);

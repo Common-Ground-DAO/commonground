@@ -23,7 +23,7 @@ import validators from "../validators";
 import articleHelper from "../repositories/articles";
 import eventHelper from "../repositories/event";
 import notificationHelper from "../repositories/notifications";
-import axios from "../util/axios";
+import { fetchRemoteImage } from "../util/safeFetch";
 import onchainHelper from "../repositories/onchain";
 import permissionHelper from "../repositories/permissions";
 import ipRateLimitHandler from "../util/rateLimit";
@@ -44,8 +44,7 @@ async function getAndStoreUniversalProfileImage(profileImageUrl: string): Promis
       profileImageUrl.startsWith("ipfs://") 
       ? `https://ipfs.io/ipfs/${profileImageUrl.split('ipfs://').pop()}`
       : profileImageUrl.replace("_normal", "");
-    const response = await axios.get(imageUrl, { responseType: 'arraybuffer', headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36' } });
-    const buffer = Buffer.from(response.data, "utf-8");
+    const buffer = await fetchRemoteImage(imageUrl, { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36' });
     const image = await fileHelper.saveImage(null, { type: 'userProfileImage' }, buffer, { width: 110, height: 110 });
     return image.fileId;
   } catch (e) {
@@ -516,8 +515,7 @@ registerPostRoute<
       if (twitterUserData._json.profile_image_url) {
         try {
           const fullSizeUrl = twitterUserData._json.profile_image_url.replace("_normal", "");
-          const response = await axios.get(fullSizeUrl, { responseType: 'arraybuffer' });
-          const buffer = Buffer.from(response.data, "utf-8");
+          const buffer = await fetchRemoteImage(fullSizeUrl);
           const image = await fileHelper.saveImage(null, { type: 'userProfileImage' }, buffer, { width: 110, height: 110 });
           twitterImageId = image.fileId;
         } catch (e) {
@@ -708,8 +706,7 @@ registerPostRoute<
       if (twitterUserData._json.profile_image_url) {
         try {
           const fullSizeUrl = twitterUserData._json.profile_image_url.replace("_normal", "");
-          const response = await axios.get(fullSizeUrl, { responseType: 'arraybuffer' });
-          const buffer = Buffer.from(response.data, "utf-8");
+          const buffer = await fetchRemoteImage(fullSizeUrl);
           const image = await fileHelper.saveImage(null, { type: 'userProfileImage' }, buffer, { width: 110, height: 110 });
           twitterImageId = image.fileId;
         } catch (e) {

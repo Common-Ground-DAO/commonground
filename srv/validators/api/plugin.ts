@@ -61,15 +61,17 @@ const pluginApi = {
   }).strict(true).required(),
 
   pluginRequest: Joi.object<API.Plugins.pluginRequest.Request>({
-    request: Joi.string().required(),
-    signature: Joi.string().required(),
+    request: Joi.string().max(8192).required(),
+    signature: Joi.string().max(2048).required(),
   }).strict(true).required(),
 
   pluginRequestInner: Joi.object<API.Plugins.pluginRequest.RequestInner>({
     type: Joi.string().valid('request', 'action').required(),
     pluginId: common.Uuid.required(),
-    requestId: Joi.string().required(),
-    iframeUid: Joi.string().required(),
+    // `<prefix>-<unix ms>[-<random>]`: the plugin library sends
+    // `requestId-<ms>-<uuid>`, the reference client `<counter>-<ms>`
+    requestId: Joi.string().max(128).pattern(/^[A-Za-z0-9]{1,32}-\d{1,16}(-[A-Za-z0-9-]{1,64})?$/).required(),
+    iframeUid: Joi.string().max(128).required(),
     data: Joi.alternatives().try(
       Joi.object({
         type: Joi.string().valid('userInfo').required(),

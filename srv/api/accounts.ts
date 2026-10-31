@@ -8,7 +8,7 @@ import { farcasterApi, registerPostRoute } from "./util";
 import errors from "../common/errors";
 import walletHelper from "../repositories/wallets";
 import userHelper from "../repositories/users";
-import axios from "../util/axios";
+import { fetchRemoteImage } from "../util/safeFetch";
 import fileHelper from "../repositories/files";
 
 const accountsRouter = express.Router();
@@ -91,8 +91,7 @@ registerPostRoute<
         }
         if (!!pfp) {
           try {
-            const response = await axios.get(pfp, { responseType: 'arraybuffer' });
-            const buffer = Buffer.from(response.data, "utf-8");
+            const buffer = await fetchRemoteImage(pfp);
             const image = await fileHelper.saveImage(null, { type: 'userProfileImage' }, buffer, { width: 110, height: 110 });
             imageId = image.fileId;
           }

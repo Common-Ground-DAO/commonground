@@ -604,10 +604,14 @@ class CallHelper {
         "callCreator",
         "stageSlots",
         "audioOnly",
-        "highQuality"
+        "highQuality",
+        "callType"
       FROM calls
       WHERE id = $1
     `, [callId]);
+    if (result.rows.length === 0) {
+      return null;
+    }
     const row = result.rows[0] as {
       id: string;
       communityId: string;
@@ -624,6 +628,7 @@ class CallHelper {
       stageSlots: number;
       audioOnly: boolean;
       highQuality: boolean;
+      callType: CallType;
     };
     const callData = {
       id: row.id,
@@ -641,7 +646,8 @@ class CallHelper {
       callCreator: row.callCreator,
       stageSlots: row.stageSlots,
       audioOnly: row.audioOnly,
-      highQuality: row.highQuality
+      highQuality: row.highQuality,
+      callType: row.callType,
     };
     return callData;
   }

@@ -913,11 +913,13 @@ async function _getUserArticleDetailView(
       }
       AND ua."deletedAt" IS NULL
       AND ua."userId" = $1
-      AND (ua."userId" = $1 OR ua."published" < now())
+      -- unpublished (no date or a future one) only for the author
+      AND (ua."published" < now() OR ua."userId" = $2::uuid)
     ORDER BY ua."published" DESC
   `;
   const result = await db.query(query, [
-    data.userId
+    data.userId,
+    userId ?? null,
   ]);
   if (result.rows.length === 1) {
     return result.rows[0] as {

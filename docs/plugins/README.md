@@ -1,6 +1,7 @@
 # Plugin System Documentation
 
-> Status: verified against commit 523fceccd, 2026-07-25
+> Status: verified against commit 523fceccd, 2026-07-25; `/pluginRequest`
+> checks against commit e44dac1, 2026-10-31
 
 This document describes the Common Ground plugin system: architecture, data model, APIs, frontend integration, communication protocol, configuration, and known example plugins. It is written for AI agents and developers working on the codebase.
 
@@ -119,13 +120,14 @@ All endpoints are POST routes under the `/Plugins` prefix. All require authentic
 - **Auth**: Logged-in user.
 - **Request**: `{ request: string, signature: string }` where `request` is JSON-stringified `RequestInner`.
 - **Behavior**: This is the core plugin communication endpoint. It:
-  1. Parses the inner request JSON.
-  2. Validates the request schema.
-  3. Checks the request is at most 10 minutes old (timestamp extracted from `requestId`).
-  4. Checks request uniqueness via Redis (prevents replay attacks, 15-minute TTL).
+  1. Applies a per-account rate limit (300 requests/min across all plugins).
+  2. Parses the inner request JSON and validates it. `request` is at most 8 KB, `signature` at most 2048 chars, `requestId` must have the shape `<prefix>-<unix ms>[-<random>]` (≤ 128 chars; the plugin library sends `requestId-<ms>-<uuid>`, the reference client `<counter>-<ms>`), `iframeUid` ≤ 128 chars.
+  3. Checks the timestamp in `requestId`: at most 10 minutes old and at most 2 minutes in the future.
+  4. Loads the community plugin and the plugin.
   5. Verifies the RSA signature against the plugin's public key.
-  6. Dispatches based on request type (see Section 4).
-  7. Signs the response with the plugin's private key.
+  6. Records the `requestId` per plugin installation in Redis (`pluginRequest:<pluginId>:<requestId>`, `SET NX`, 15-minute TTL, which outlives the acceptance window); a second request with the same id is rejected (`DUPLICATED_SIGNED_REQUEST`).
+  7. Dispatches based on request type (see Section 4).
+  8. Signs the response with the plugin's private key.
 - **Response**: `{ response: string, signature: string }`
 
 #### `POST /Plugins/acceptPluginPermissions`

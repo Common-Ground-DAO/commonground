@@ -8,7 +8,9 @@
 > install note against commit 5f73578, 2026-10-31; email (SMTP sending layer,
 > `emailUnsubscribe` routes, `bucket` rate-limit option and
 > `keyRateLimitHandler`, mail send limits, `bounceReceiver` job and bounce
-> policy, Mailchimp removal) against commit e44dac1, 2026-10-31.
+> policy, Mailchimp removal), message access scope, `/deleteMessage`,
+> `/getUrlPreview`, `safeFetch`, `/pluginRequest`, user-article visibility and
+> the test list against commit e44dac1, 2026-10-31.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -353,7 +355,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/getFollowers`, `/getFollowing`, `/getFriends`
 
 **Articles (user blog):**
-- `/getArticleList`, `/getArticleDetailView`
+- `/getArticleList`, `/getArticleDetailView` -- a user article without a publish date or with one in the future is only returned to its author (`/getArticleList` with `drafts: true` requires the session user to be the `userId` asked for; `/getArticleDetailView` compares the session user with the author in SQL).
 - `/createArticle`, `/updateArticle`, `/deleteArticle`
 
 **Premium:**
@@ -371,15 +373,17 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/createMessage` -- Create a new message
 - `/createModerationMessage` -- Create a moderation-flagged message
 - `/editMessage` -- Edit an existing message
-- `/deleteMessage` -- Delete a message
+- `/deleteMessage` -- Delete a message. Creator and channel are read from the stored message (`messageHelper.getMessageOwnership`), not from the request: the message must live in `access.channelId`, deleting another user's message needs `CHANNEL_MODERATE` / `CALL_MODERATE` there (chats and article comments: own messages only), and the `UPDATE` filters on creator, channel and id.
 - `/deleteAllUserMessages` -- Delete all messages from a user in a channel
 - `/loadMessages` -- Load messages with pagination
 - `/messagesById` -- Load specific messages by ID
 - `/loadUpdates` -- Load message updates since a timestamp
 - `/setReaction`, `/unsetReaction` -- Message reactions
 - `/setChannelLastRead` -- Mark channel as read
-- `/getUrlPreview` -- Get URL preview metadata (Open Graph scrape of a client-supplied URL). The route fetches the page itself with size/time/redirect limits and passes the HTML to `open-graph-scraper` as `ogs({ html })`. The preview image is stored through `saveImage()`, i.e. it passes the NSFW gate.
+- `/getUrlPreview` -- Get URL preview metadata (Open Graph scrape of a client-supplied URL, at most 2048 chars). Requires a session. Results are cached for 1 h in Redis under `urlpreview:<sha256(url)>`; cache misses are rate-limited per account (30/min). The page (≤ 1 MB, `text/*` or XHTML) and the `og:image` (≤ 8 MB, `image/*`) are fetched through `safeFetch` (see `srv/util/safeFetch.ts` below) and the HTML is passed to `open-graph-scraper` as `ogs({ html })`. Title and description are cut to 2000 chars; the returned `url` is the page's `og:url` only if that is an http(s) URL of at most 2048 chars, otherwise the requested URL. Previews larger than 8 KB serialized are returned but not cached. The preview image is stored through `saveImage()`, i.e. it passes the NSFW gate.
 - `/joinArticleEventRoom`, `/leaveArticleEventRoom` -- Join/leave article real-time rooms
+
+Every route that takes an access object (`communityId`, `chatId`, `callId`, or `articleId` with `articleCommunityId`/`articleUserId`, each together with `channelId`) runs `_checkAccessOrThrow`, which first checks that `channelId` is the channel of the named community, chat, call or article (`messageHelper.isChannelInAccessScope`) and then evaluates the permissions for that scope. An article access must name the article's community or user. Deleted community channels, chats and articles do not match; a user article that is not published yet only matches for its author. Message edits and reaction removal additionally filter on `access.channelId` in SQL.
 
 A subset of message routes is also reachable over the Bot API v1 surface (see below). At module load, `messages.ts` allowlists `POST /BotV1/messages/{loadMessages, messagesById, loadUpdates, createMessage, setReaction, unsetReaction}` for bot bearer principals. When a request carries a `botPrincipal`, the handler resolves the acting user from the bot instead of the session, requires an exact `{communityId, channelId}` access target, enforces the per-token bot rate limits, and verifies the bot's active membership/policy for that community before proceeding.
 
@@ -442,7 +446,7 @@ A subset of message routes is also reachable over the Bot API v1 surface (see be
 Contains internal search logic (uses raw SQL `to_tsvector`/`websearch_to_tsquery` for full-text search).
 
 - `/searchUsers` -- Search users by name
-- `/searchArticles` -- Search articles by content
+- `/searchArticles` -- Search articles by content. User articles appear once their publish date has passed.
 
 ### `srv/api/report.ts` -- Reporting Routes
 
@@ -1295,6 +1299,17 @@ Derives application URLs from `BASE_URL` env var or deployment settings:
 
 Converts member lists between binary (UTF-16LE encoded UUIDs) and standard UUID string format. Used for efficient member list storage/transmission in Redis.
 
+### `srv/util/safeFetch.ts` -- Outbound fetch of user-supplied URLs
+
+`safeFetch(url, { maxBytes, timeoutMs?, maxRedirects?, acceptContentType?, headers? })` is the GET used for URLs that come from users or third-party data. It uses `node:http(s)` directly (no axios, no proxy environment, no keep-alive):
+
+- only `http:`/`https:`, no credentials in the URL;
+- host names are resolved by a custom `lookup` at connect time and rejected if *any* resolved address is not public unicast (private, loopback, link-local incl. metadata services, CGN, multicast, reserved and documentation ranges; IPv6 ULA, link-local, multicast, Teredo; v4-mapped, NAT64 and 6to4 addresses are judged by the embedded IPv4); IP literals are checked before connecting (`isPublicAddress`);
+- redirects (default 5) are followed manually and every hop is checked again; the bodies of redirect and error responses are not read, their connections are closed;
+- one deadline (default 10 s) covers all hops; the decoded body (gzip/deflate/br) is capped at `maxBytes`; `acceptContentType` gets the bare media type.
+
+Errors are `SafeFetchError` with a `code` (`INVALID_URL`, `BLOCKED_ADDRESS`, `TOO_MANY_REDIRECTS`, `TOO_LARGE`, `TIMEOUT`, `BAD_STATUS`, `BAD_CONTENT_TYPE`, `NETWORK`). `fetchRemoteImage(url, headers?)` wraps it for images handed to `saveImage()` (8 MiB, `image/*`). Users in `api`: `/getUrlPreview`, and the profile pictures fetched during LUKSO, Twitter and Farcaster sign-up/login. The onchain LSP3 image fetch (`srv/onchain/generic.ts`) and web-push delivery do not use it yet. Tests: `srv/tests/safeFetch.spec.ts`.
+
 ### `srv/util/axios.ts` -- Axios Instance
 
 Custom Axios instance that forces `keepAlive: false` on both the HTTP and HTTPS agent. It was introduced for a Node.js-20-era Axios bug ([axios#5929](https://github.com/axios/axios/issues/5929), rooted in [nodejs#47130](https://github.com/nodejs/node/issues/47130)): a pooled socket the server has already closed fails the next request with `ECONNRESET`. **Re-checked 2026-08-04 on Node 24 + axios 1.19 — still needed**: nodejs#47130 was closed as a known limitation, and the axios 1.x changelog fixes only keep-alive listener leaks, not the pooling race (sources in the code comment). Drop it only once Node changes the pooling behaviour or the backend moves to axios' fetch/undici adapter.
@@ -1392,5 +1407,8 @@ TypeScript 6) are scheduled in `docs/todo/ROADMAP_cg-box.md`.
   codebase does not use — inert.
 - **Tests:** `yarn tests` in `srv/` runs jest 30 + ts-jest 29 (there is no
   ts-jest 30) over `tests/*.spec.ts` directly from the TypeScript sources —
-  currently `ipPrefix`, `saveImage` and `imageFilter`. `npx tsc --noEmit` does
-  not cover `tests/` (see `docs/todo/TODO.md`).
+  currently `ipPrefix`, `saveImage`, `imageFilter`, `stakingConfig`,
+  `configuredSecret`, `onchainHelper`, `messageAccess`, `messageRepository`,
+  `safeFetch`, `urlPreview`, `pluginRequest`, `protooConnectionGate`,
+  `typingCache`, `userArticleVisibility` and `userArticleRoute`. `npx tsc --noEmit`
+  does not cover `tests/` (see `docs/todo/TODO.md`).

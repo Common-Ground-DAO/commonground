@@ -1,5 +1,7 @@
 #!/bin/bash
 cd ${0%/*}
+# docker/.env is sourced inside the container below
+../docker/ensureEnv.sh || exit 1
 
 docker_compose() {
   if docker compose version >/dev/null 2>&1; then

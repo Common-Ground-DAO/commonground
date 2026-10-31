@@ -1,5 +1,6 @@
 #!/bin/bash
 cd ${0%/*}
+./ensureEnv.sh || exit 1
 source .env
 
 docker_compose() {

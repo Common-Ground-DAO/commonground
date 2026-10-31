@@ -252,14 +252,23 @@ and a browser pass on the test VM:
   verified email. A server-side password policy comes with it, plus throttling
   of password and email-code login and a bcrypt cost review. Decide here whether stricter requirements against bots apply to
   new sign-ups too (email verification is cheap once mail runs on our side).
-- [ ] **G4 Passkeys on the main origin + new account-creation UI.** rpID =
+- [x] **G4 Passkeys on the main origin + new account-creation UI.** (done
+  2026-10-31: passkeys bound to their RP (`rpId` per row; `id.app.cg` rows are
+  gateway-only), one login form with passkey autofill, sign-up with the email
+  verified before the account exists, step-up for sensitive actions,
+  last-login-method guard, `/login`; X/LUKSO/Farcaster only linkable in
+  settings, recovery-phrase login only in legacy mode; accepted on the test VM.
+  Decisions: no compatibility mode for self-host `id.<domain>` passkeys, no
+  separate gateway-only flag. Open for G3: accounts whose only methods are
+  X/LUKSO/Farcaster can't pass the step-up dialog later than 5 min after login.)
+  rpID =
   cg.box host, ceremonies run in the main app (conditional UI / passkey autofill
   on the login form; step-up re-authentication for destructive actions such as
   deleting a community becomes a simple in-page prompt). New account-creation /
   login UI. Old `id.app.cg` passkeys stay valid on the gateway only. Take the
   TODO.md item "Passkey ceremony foot-guns in the CGID flow" into account when
   the ceremonies move.
-- [ ] **G5 Import routine.** Restore the production dump into Postgres 18, run the
+- [ ] **G5 Import routine.** (Passkey rows of the dump get `rpId = 'id.app.cg'`; assert none stays NULL.) Restore the production dump into Postgres 18, run the
   develop migrations, then a post-import step (sessions live in Redis/Valkey,
   not in the dump, so they start empty anyway): keep `devices` and
   old passkeys (the gateway needs them) but mark old passkeys as gateway-only,

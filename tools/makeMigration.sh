@@ -24,7 +24,7 @@ cd ../docker
 docker_compose run --rm -T cg-builder bash -C <<EOF
 source docker/.env &&
 cd srv &&
-yarn &&
+yarn install --immutable &&
 yarn tsc --outDir __tmp --target es2021 --module commonjs --esModuleInterop true --experimentalDecorators true --emitDecoratorMetadata true --skipLibCheck true migrations/*.ts util/datasource.ts entities/*.ts common/types/models/*.d.ts common/types/api/*.d.ts common/types/events/*.d.ts common/types/common.d.ts types/*.d.ts > /dev/null &&
 PG_SU_NAME=postgres DB_HOST=db PG_SU_PASSWORD=\$PG_SU_PASSWORD yarn typeorm migration:generate -d __tmp/util/datasource.js "migrations/$1"
 rm -rf ./__tmp

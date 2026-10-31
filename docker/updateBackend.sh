@@ -55,7 +55,7 @@ then
   printf "Generating vapid_keys.json for web push...\n"
   if [ ! -d srv/node_modules/web-push ]
   then
-    docker_compose run --rm -T cg-builder bash -c "cd srv && yarn"
+    docker_compose run --rm -T cg-builder bash -c "cd srv && yarn install --immutable"
   fi
   docker_compose run --rm -T cg-builder bash -c "cd srv && npx --no web-push generate-vapid-keys --json > ../docker/vapid_keys.json"
 fi
@@ -83,6 +83,6 @@ cd ../docker
 
 printf "\n---\n--- Deploying contracts\n---\n"
 sleep 3
-docker_compose run --rm -T cg-builder bash -c "cd contracts && yarn && npx --no hardhat run --network cgstack scripts/deploy.ts"
+docker_compose run --rm -T cg-builder bash -c "cd contracts && yarn install --immutable && npx --no hardhat run --network cgstack scripts/deploy.ts"
 
 ./logs.sh

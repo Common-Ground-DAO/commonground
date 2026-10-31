@@ -2,6 +2,8 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import { type AuthenticationResponseJSON } from "@simplewebauthn/browser";
+
 declare global {
     namespace API {
         namespace User {
@@ -48,6 +50,13 @@ declare global {
                         publicKey: any;
                     };
                 } | {
+                    type: 'passkey';
+                    authenticationResponse: AuthenticationResponseJSON;
+                    device: {
+                        publicKey: any;
+                    };
+                } | {
+                    /** passkey-success: legacy CG ID (gateway) mode only */
                     type: 'twitter' | 'passkey-success' | 'farcaster';
                     device: {
                         publicKey: any;
@@ -75,6 +84,45 @@ declare global {
                 };
             }
 
+            namespace ensureSession {
+                type Request = Record<string, never>;
+                type Response = undefined;
+            }
+
+            namespace reauthenticate {
+                type Request = {
+                    type: 'passkey';
+                    authenticationResponse: AuthenticationResponseJSON;
+                } | {
+                    type: 'password';
+                    password: string;
+                } | {
+                    /** after a fresh User/prepareWalletAction of a login-enabled wallet */
+                    type: 'wallet';
+                };
+                type Response = {
+                    /** epoch ms until which sensitive actions are allowed */
+                    validUntil: number;
+                };
+            }
+
+            namespace requestSignupEmailCode {
+                type Request = {
+                    email: string;
+                    /** the sign-up captcha; not needed for a resend to the same address */
+                    recaptchaToken?: string;
+                };
+                type Response = void;
+            }
+
+            namespace verifySignupEmailCode {
+                type Request = {
+                    email: string;
+                    code: string;
+                };
+                type Response = void;
+            }
+
             namespace checkLoginStatus {
                 type Request = undefined;
                 type Response = {
@@ -100,7 +148,8 @@ declare global {
                     };
                     useCgProfile?: Models.User.ProfileItemWithDetails & { type: 'cg', extraData: Models.User.UserAccountExtraData_CG };
                     displayAccount: Exclude<Models.User.ProfileItemType, 'bot'>;
-                    recaptchaToken: string;
+                    /** not needed when the sign-up went through the email code (captcha solved there) */
+                    recaptchaToken?: string;
                     device: {
                         publicKey: any;
                     };

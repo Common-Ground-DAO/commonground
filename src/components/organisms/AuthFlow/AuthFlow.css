@@ -1,0 +1,97 @@
+.auth-flow {
+  @apply flex flex-col items-center w-full gap-4;
+  color: var(--cardTextMain);
+
+  &.auth-flow-modal {
+    @apply h-full overflow-y-auto px-6 pb-6;
+    padding-top: 2rem;
+  }
+
+  &.auth-flow-page {
+    @apply px-6 py-8 cg-border-xxl;
+    width: min(420px, 100%);
+    background: var(--surface-background-2nd, #222432);
+  }
+
+  .auth-flow-logo {
+    @apply flex items-center justify-center p-3;
+    border-radius: 18px;
+    color: var(--colours-brand-800);
+    background-color: var(--surface-background);
+    border: 1px solid var(--border-panels);
+
+    > svg {
+      width: 48px;
+      height: 48px;
+    }
+  }
+
+  .auth-flow-step {
+    @apply flex flex-col w-full gap-3;
+    max-width: 360px;
+  }
+
+  .auth-flow-header {
+    @apply relative flex flex-col items-center text-center gap-1 pb-1;
+
+    > .auth-flow-back {
+      @apply absolute left-0 top-1 p-1 rounded-full cursor-pointer;
+      color: var(--text-secondary);
+
+      &:hover {
+        background: var(--surface-subtleoverlay);
+      }
+    }
+  }
+
+  .auth-flow-form {
+    @apply flex flex-col w-full gap-3;
+  }
+
+
+  .auth-flow-divider {
+    @apply grid items-center gap-2 w-full;
+    grid-template-columns: 1fr auto 1fr;
+  }
+
+  .auth-flow-more {
+    @apply flex flex-col w-full gap-2;
+  }
+
+  .auth-flow-footer {
+    @apply flex flex-row items-center justify-center gap-1 pt-2;
+  }
+
+  .auth-flow-inline-link {
+    @apply self-center -mt-3;
+  }
+
+  .auth-flow-method {
+    @apply flex flex-col gap-1;
+  }
+
+  .auth-flow-hints {
+    @apply flex flex-col gap-1 pl-5;
+    list-style: disc;
+  }
+
+  .auth-flow-offer-icon {
+    @apply flex justify-center pt-2;
+    color: var(--colours-brand-800);
+  }
+
+  .auth-flow-farcaster-link {
+    border: 1px solid var(--border-secondary);
+    background-color: var(--surface-background-2nd);
+  }
+}
+
+.dark .auth-flow .auth-flow-logo {
+  color: var(--surface-brand);
+}
+
+.login-view {
+  @apply flex flex-col items-center justify-center w-full px-4 py-8;
+  min-height: var(--visualHeight, 100vh);
+  background: var(--surface-background);
+}

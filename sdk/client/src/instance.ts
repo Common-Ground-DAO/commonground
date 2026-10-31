@@ -17,8 +17,10 @@ export type InstanceConfig = {
   deployment?: "prod" | "staging" | "dev";
   /** Public base URL of the instance, no trailing slash. */
   appUrl?: string;
-  /** Base URL of the CG ID app, including the hash router prefix. */
+  /** Legacy CG ID (gateway) instances only: base URL of the CG ID app, including the hash router prefix. */
   cgidUrl?: string;
+  /** WebAuthn RP ID of the passkeys on this origin (absent on a legacy CG ID instance). */
+  passkeyRpId?: string;
   /** reCAPTCHA v2 site key; empty disables the default key. */
   recaptchaSiteKey?: string;
   /** Captcha provider this instance verifies against. */
@@ -33,7 +35,11 @@ export type InstanceConfig = {
     calls?: boolean;
     /** false when the instance disables the server-side NSFW image filter. */
     imageFilter?: boolean;
+    /** true when passkeys run on this origin (Passkey API). */
+    passkeys?: boolean;
   };
+  /** NSFW probability at which the server-side image filter rejects an upload. */
+  imageFilterThreshold?: number;
   /** Giphy API key; empty disables the GIF picker. */
   giphyApiKey?: string;
   /** WalletConnect Cloud project id. */

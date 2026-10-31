@@ -10,6 +10,7 @@ import { useSnackbarContext } from 'context/SnackbarContext';
 import { ExternalAccountType, getAccountIcon } from '../AccountsPage/AccountsPage';
 import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal';
 import { useOwnUser, useOwnWallets } from 'context/OwnDataProvider';
+import { LAST_LOGIN_METHOD_MESSAGE, securityActionErrorMessage } from 'data/auth/authErrors';
 
 type Props = {
   currentAccountType: ExternalAccountType;
@@ -31,16 +32,28 @@ const ExternalAccountPage: React.FC<Props> = (props) => {
   }, [props]);
 
   const tryShowingUnlinkModal = () => {
+    // a first guess only; the server refuses to remove the last way to sign in
     const hasLoginWallets = wallets?.some(w => w.loginEnabled);
-    if (!ownUser?.email && !hasLoginWallets && (ownUser?.accounts?.length || 0) < 2) {
-      showSnackbar({type: 'warning', text: 'This is your only login method and thus cannot be removed'});
+    const hasPasskeys = (ownUser?.passkeys?.length || 0) > 0;
+    if (!ownUser?.email && !hasLoginWallets && !hasPasskeys && (ownUser?.accounts?.length || 0) < 2) {
+      showSnackbar({ type: 'warning', text: LAST_LOGIN_METHOD_MESSAGE });
     } else {
       setShowUnlinkModal(true);
     }
   }
 
   const onUnlinkAccount = async () => {
-    await userApi.removeUserAccount({ type: currentAccountType });
+    try {
+      // X, LUKSO and Farcaster can sign in: "Confirm it's you" first
+      await userApi.removeUserAccount({ type: currentAccountType });
+    }
+    catch (e) {
+      const message = securityActionErrorMessage(e, 'The account could not be disconnected');
+      if (message) {
+        showSnackbar({ type: 'warning', text: message });
+      }
+      return;
+    }
     showSnackbar({type: 'info', text: 'Account removed'});
     goBack();
   }

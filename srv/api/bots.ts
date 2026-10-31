@@ -8,6 +8,7 @@ import botHelper from "../repositories/bots";
 import validators from "../validators";
 import { registerPostRoute } from "./util";
 import botTokenHelper from "../repositories/botTokens";
+import { requireRecentAuth } from "../util/authSession";
 
 const botRouter = express.Router();
 
@@ -56,7 +57,11 @@ registerPostRoute<API.Bot.disableBot.Request, API.Bot.disableBot.Response>(
   botRouter,
   '/disable',
   validators.API.Bot.disableBot,
-  (request, response, data) => botHelper.disableBot(sessionUserId(request), data.botUserId),
+  (request, response, data) => {
+    // switching off a bot account (and its tokens): step-up
+    requireRecentAuth(request);
+    return botHelper.disableBot(sessionUserId(request), data.botUserId);
+  },
 );
 
 registerPostRoute<API.Bot.installBot.Request, API.Bot.installBot.Response>(
@@ -91,7 +96,11 @@ registerPostRoute<API.Bot.issueToken.Request, API.Bot.issueToken.Response>(
   botRouter,
   '/tokens/issue',
   validators.API.Bot.issueToken,
-  (request, response, data) => botTokenHelper.issueToken(sessionUserId(request), data.botUserId, data.name),
+  (request, response, data) => {
+    // a bearer token acts as the bot without any further check: step-up
+    requireRecentAuth(request);
+    return botTokenHelper.issueToken(sessionUserId(request), data.botUserId, data.name);
+  },
 );
 
 registerPostRoute<API.Bot.listTokens.Request, API.Bot.listTokens.Response>(

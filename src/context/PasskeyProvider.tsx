@@ -2,167 +2,305 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import React, { useCallback, useMemo, useState } from 'react';
-import { useWindowSizeContext } from 'context/WindowSizeProvider';
-import connectionManager from 'data/appstate/connection';
-import { randomString } from '../util';
-import urlConfig from '../data/util/urls';
-import webSocketManager from 'data/appstate/webSocket';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import errors from 'common/errors';
-import { browserSupportsWebAuthn } from '@simplewebauthn/browser';
+import loginManager from 'data/appstate/login';
+import userApi from 'data/api/user';
+import stepUpManager from 'data/auth/stepUp';
+import { getAuthMode, getSignalRpId } from 'data/auth/authMode';
+import {
+    abortPasskeyCeremony,
+    authenticateWithPasskey,
+    passkeyAutofillSupported,
+    passkeysSupported,
+    registerPasskey,
+    signalUnknownCredential,
+    toPasskeyCeremonyError,
+    type RegisteredPasskey,
+} from 'data/auth/passkeyCeremony';
+import { LegacyCgIdPasskeyProvider, useLegacyCgIdPasskeyContext } from './LegacyCgIdPasskey';
 
-type PasskeyProcessStatus = 'idle' | 'waitForWebsocket' | 'executing';
+/**
+ * Passkeys for the UI (docs/auth-identity §7, docs/frontend). On a normal
+ * instance every ceremony runs on this origin against the `Passkey` API; on a
+ * legacy CG ID (gateway) instance `login` goes through the CG ID popup
+ * (LegacyCgIdPasskey) and nothing else is available.
+ *
+ * Every action resolves to an outcome instead of throwing: `cancelled` means
+ * the user dismissed the browser dialog — show nothing.
+ */
+
+export type PasskeyOutcome<T> =
+    { status: 'ok'; result: T } |
+    { status: 'cancelled' } |
+    /** the step-up dialog was needed first; the ceremony needs a new click */
+    { status: 'reauthenticated' } |
+    { status: 'error'; message: string; code?: string };
 
 type PasskeyState = {
-    passkeysSupported: boolean;
-    createPasskey: (timeout?: number) => Promise<boolean>;
-    loginWithPasskey: (timeout?: number) => Promise<boolean>;
-    status: PasskeyProcessStatus;
-    error?: string;
+    /** WebAuthn usable in this browser (and on this instance) */
+    supported: boolean;
+    /** passkeys offered in the username field's autofill */
+    autofillSupported: boolean;
+    /** legacy CG ID popup instead of main-origin ceremonies */
+    legacy: boolean;
+    status: 'idle' | 'busy';
+    /** create a passkey: logged out it waits for createUser, logged in it is added */
+    register: (options?: { displayName?: string; name?: string; useAutoRegister?: boolean; beforeStart?: () => boolean }) => Promise<PasskeyOutcome<RegisteredPasskey>>;
+    /** modal ceremony + User/login; must be called from a click */
+    login: () => Promise<PasskeyOutcome<API.User.login.Response>>;
+    /**
+     * conditional (autofill) login on the mounted `webauthn` input; returns a
+     * disarm function. `onEnded` reports a failure (message: show it) after
+     * which the caller may arm again; a cancel/replace is not reported.
+     */
+    armAutofill: (onLoggedIn: (response: API.User.login.Response) => void, onEnded?: (message?: string) => void) => () => void;
+    /** step-up with a passkey; must be called from a click */
+    reauthenticate: () => Promise<PasskeyOutcome<number>>;
 };
 
+const unavailable = { status: 'error', message: "Passkeys aren't available here." } as const;
+
 export const PasskeyContext = React.createContext<PasskeyState>({
-    passkeysSupported: false,
-    createPasskey: async () => false,
-    loginWithPasskey: async () => false,
+    supported: false,
+    autofillSupported: false,
+    legacy: false,
     status: 'idle',
+    register: async () => unavailable,
+    login: async () => unavailable,
+    armAutofill: () => () => undefined,
+    reauthenticate: async () => unavailable,
 });
 
+const UNKNOWN_CREDENTIAL_MESSAGE = "This passkey doesn't belong to an account here any more. Sign in another way.";
+
+function failure<T>(e: unknown): PasskeyOutcome<T> {
+    const error = toPasskeyCeremonyError(e);
+    if (error.silent) {
+        return { status: 'cancelled' };
+    }
+    if (error.kind === 'reauthenticated') {
+        return { status: 'reauthenticated' };
+    }
+    return { status: 'error', message: error.message, code: error.serverCode };
+}
+
+/** User/login with an assertion; an unknown credential is signalled to the browser */
+async function loginWithAssertion(
+    assertion: Awaited<ReturnType<typeof authenticateWithPasskey>>,
+): Promise<PasskeyOutcome<API.User.login.Response>> {
+    try {
+        const result = await loginManager.login({ account: 'passkey', authenticationResponse: assertion.response });
+        return { status: 'ok', result };
+    }
+    catch (e) {
+        const code = e instanceof Error ? e.message : undefined;
+        if (code === errors.server.NOT_FOUND || code === errors.server.DELETED) {
+            await signalUnknownCredential(assertion.rpId || getSignalRpId(), assertion.response.id);
+            return { status: 'error', message: UNKNOWN_CREDENTIAL_MESSAGE, code };
+        }
+        if (code === errors.server.RATE_LIMIT_EXCEEDED) {
+            return { status: 'error', message: "Too many attempts. Please wait a few minutes and try again.", code };
+        }
+        return { status: 'error', message: "Signing in with this passkey didn't work. Please try again.", code };
+    }
+}
+
+function MainOriginPasskeyProvider(props: React.PropsWithChildren<{}>) {
+    // features.passkeys: false = this instance has no passkeys at all
+    const supported = useMemo(() => getAuthMode().passkeysOnOrigin && passkeysSupported(), []);
+    const [autofillSupported, setAutofillSupported] = useState(false);
+    const [busyCount, setBusyCount] = useState(0);
+
+    useEffect(() => {
+        if (!supported) {
+            return;
+        }
+        let mounted = true;
+        passkeyAutofillSupported().then(value => {
+            if (mounted) setAutofillSupported(value);
+        });
+        return () => {
+            mounted = false;
+        };
+    }, [supported]);
+
+    const busy = useCallback(async <T,>(fn: () => Promise<T>): Promise<T> => {
+        setBusyCount(count => count + 1);
+        try {
+            return await fn();
+        }
+        finally {
+            setBusyCount(count => count - 1);
+        }
+    }, []);
+
+    // modal ceremonies in flight: a conditional (autofill) request must not
+    // start while one runs — it would cancel it
+    const modalActive = useRef(0);
+    const modal = useCallback(async <T,>(fn: () => Promise<T>): Promise<T> => {
+        modalActive.current += 1;
+        try {
+            return await busy(fn);
+        }
+        finally {
+            modalActive.current -= 1;
+        }
+    }, [busy]);
+
+    const register = useCallback<PasskeyState['register']>((options = {}) => (options.useAutoRegister ? busy : modal)(async () => {
+        if (!supported) {
+            return { status: 'error', message: "This browser doesn't support passkeys." };
+        }
+        try {
+            return { status: 'ok', result: await registerPasskey(options) };
+        }
+        catch (e) {
+            return failure(e);
+        }
+    }), [busy, modal, supported]);
+
+    const login = useCallback<PasskeyState['login']>(() => modal(async () => {
+        if (!supported) {
+            return { status: 'error', message: "This browser doesn't support passkeys." };
+        }
+        let assertion: Awaited<ReturnType<typeof authenticateWithPasskey>>;
+        try {
+            assertion = await authenticateWithPasskey('login');
+        }
+        catch (e) {
+            return failure(e);
+        }
+        return loginWithAssertion(assertion);
+    }), [modal, supported]);
+
+    const autofillRun = useRef(0);
+    const armAutofill = useCallback<PasskeyState['armAutofill']>((onLoggedIn, onEnded) => {
+        if (!autofillSupported) {
+            return () => undefined;
+        }
+        const run = ++autofillRun.current;
+        let waiting = true;
+        (async () => {
+            let assertion: Awaited<ReturnType<typeof authenticateWithPasskey>>;
+            try {
+                assertion = await authenticateWithPasskey('login', {
+                    conditional: true,
+                    // fetching the options took a moment: don't start if a
+                    // modal ceremony began or this request was disarmed
+                    beforeStart: () => run === autofillRun.current && modalActive.current === 0,
+                });
+            }
+            catch (e) {
+                waiting = false;
+                const error = toPasskeyCeremonyError(e);
+                // replaced by a modal ceremony, disarmed, or not offered: quiet
+                if (!error.silent && error.kind !== 'unsupported' && run === autofillRun.current) {
+                    console.warn("Passkey autofill failed", e);
+                    onEnded?.();
+                }
+                return;
+            }
+            waiting = false;
+            const outcome = await busy(() => loginWithAssertion(assertion));
+            if (outcome.status === 'ok') {
+                onLoggedIn(outcome.result);
+            }
+            else if (outcome.status === 'error') {
+                onEnded?.(outcome.message);
+            }
+        })();
+        return () => {
+            // only abort our own conditional request, not a modal ceremony
+            // that already replaced it
+            if (waiting && run === autofillRun.current) {
+                abortPasskeyCeremony();
+            }
+        };
+    }, [autofillSupported, busy]);
+
+    const reauthenticate = useCallback<PasskeyState['reauthenticate']>(() => modal(async () => {
+        if (!supported) {
+            return { status: 'error', message: "This browser doesn't support passkeys." };
+        }
+        try {
+            const assertion = await authenticateWithPasskey('stepup');
+            const { validUntil } = await userApi.reauthenticate({ type: 'passkey', authenticationResponse: assertion.response });
+            stepUpManager.markAuthenticated(validUntil);
+            return { status: 'ok', result: validUntil };
+        }
+        catch (e) {
+            const error = toPasskeyCeremonyError(e);
+            if (error.serverCode === errors.server.NOT_FOUND) {
+                return { status: 'error', message: "Your account has no passkey on this site yet.", code: error.serverCode };
+            }
+            return failure(e);
+        }
+    }), [modal, supported]);
+
+    const value = useMemo<PasskeyState>(() => ({
+        supported,
+        autofillSupported,
+        legacy: false,
+        status: busyCount > 0 ? 'busy' : 'idle',
+        register,
+        login,
+        armAutofill,
+        reauthenticate,
+    }), [supported, autofillSupported, busyCount, register, login, armAutofill, reauthenticate]);
+
+    return <PasskeyContext.Provider value={value}>{props.children}</PasskeyContext.Provider>;
+}
+
+function LegacyPasskeyAdapter(props: React.PropsWithChildren<{}>) {
+    const legacy = useLegacyCgIdPasskeyContext();
+    const legacyLogin = legacy.loginWithPasskey;
+
+    const login = useCallback<PasskeyState['login']>(async () => {
+        try {
+            const success = await legacyLogin();
+            if (!success) {
+                return { status: 'error', message: legacy.error || "Signing in with this passkey didn't work. Please try again." };
+            }
+            const result = await loginManager.login({ account: 'passkey-legacy' });
+            return { status: 'ok', result };
+        }
+        catch (e) {
+            if (e instanceof Error && e.message === "Cancelled by user") {
+                return { status: 'cancelled' };
+            }
+            if (e instanceof Error && e.message === errors.server.PASSKEY_USER_NULL) {
+                return { status: 'error', message: "This passkey doesn't belong to an account.", code: e.message };
+            }
+            return { status: 'error', message: "Signing in with this passkey didn't work. Please try again." };
+        }
+    }, [legacyLogin, legacy.error]);
+
+    const value = useMemo<PasskeyState>(() => ({
+        supported: legacy.passkeysSupported,
+        autofillSupported: false,
+        legacy: true,
+        status: legacy.status === 'idle' ? 'idle' : 'busy',
+        register: async () => unavailable,
+        login,
+        armAutofill: () => () => undefined,
+        reauthenticate: async () => unavailable,
+    }), [legacy.passkeysSupported, legacy.status, login]);
+
+    return <PasskeyContext.Provider value={value}>{props.children}</PasskeyContext.Provider>;
+}
+
 export function PasskeyProvider(props: React.PropsWithChildren<{}>) {
-    const { isMobile } = useWindowSizeContext();
-    const [status, setStatus] = useState<PasskeyProcessStatus>('idle');
-    const [error, setError] = useState<string | undefined>();
-    const passkeysSupported = useMemo(() => browserSupportsWebAuthn(), []);
-
-    const passkeyAction = useCallback((action: 'create' | 'login', timeout = 60_000) => {
-        if (status === 'idle') {
-            setStatus('executing');
-            const requestId = randomString(20);
-            let timeoutId: any = undefined;
-            let handled = false;
-
-            let resolve: (value: boolean | PromiseLike<boolean>) => void;
-            let reject: (reason?: any) => void;
-            const promise = new Promise<boolean>((_resolve, _reject) => {
-                resolve = _resolve;
-                reject = _reject;
-            });
-
-            const executeAction = () => {
-                let features: string | undefined;
-                if (!isMobile) {
-                    const x = window.screen.width / 2 - 300;
-                    const y = window.screen.height / 2 - 230;
-                    features = "width=600,height=460,left=" + x + ",top=" + y;
-                }
-                const win = window.open(`${urlConfig.CGID_URL}/${action}/${requestId}`, "cgPassportSignWindow", features);
-                if (win) {
-                    let checkWindowClosedInterval = setInterval(() => {
-                        if (win.closed) {
-                            clearInterval(checkWindowClosedInterval);
-                            setTimeout(() => {
-                                if (!handled) {
-                                    handlingFinished();
-                                    reject?.(new Error("Cancelled by user"));
-                                }
-                            }, 200);
-                        }
-                    }, 200);
-                }
-            };
-
-            const webSocketStateListener = (webSocketState: Common.WebSocketState) => {
-                if (webSocketState === "connected") {
-                    executeAction();
-                    // Todo: potentially keep the listener to handle connection loss
-                    // during the signature process? Should be an edge case though.
-                    connectionManager.removeListener("webSocketStateChange", webSocketStateListener);
-                }
-            };
-
-            const passkeyResultListener = (event: Events.CgId.SignResponse, fromWindowPostMessage = false) => {
-                if (event.frontendRequestId === requestId) {
-                    const { success, error } = event.data;
-                    if (success === false && error !== undefined) {
-                        setError(error);
-                    }
-
-                    console.log(`Passkey result received (by ${fromWindowPostMessage ? 'post message' : 'websocket'})`, event.data);
-                    handlingFinished();
-                    resolve?.(success);
-                }
-            };
-
-            const passkeyResultPostMessageListener = function (this: Window, event: MessageEvent<Events.CgId.SignResponse>) {
-                if (event?.data?.type !== "cliCgIdSignResponse") {
-                    return;
-                }
-                passkeyResultListener(event.data, true);
-            };
-
-            const handlingFinished = () => {
-                handled = true;
-                if (timeoutId !== undefined) {
-                    clearTimeout(timeoutId);
-                    timeoutId = undefined;
-                }
-                connectionManager.unregisterClientEventHandler("cliCgIdSignResponse", passkeyResultListener);
-                window.removeEventListener("message", passkeyResultPostMessageListener);
-                connectionManager.removeListener("webSocketStateChange", webSocketStateListener);
-                setStatus('idle');
-            };
-
-            timeoutId = setTimeout(() => {
-                timeoutId = undefined;
-                if (handled) {
-                    return;
-                }
-                handlingFinished();
-                reject?.(errors.client.TIMEOUT);
-                console.error("Passkey: " + action + " timed out");
-            }, timeout);
-
-            connectionManager.registerClientEventHandler("cliCgIdSignResponse", passkeyResultListener);
-            window.addEventListener("message", passkeyResultPostMessageListener)
-
-            if (webSocketManager.state === "connected") {
-                executeAction();
-            }
-            else {
-                setStatus('waitForWebsocket');
-                connectionManager.addListener("webSocketStateChange", webSocketStateListener);
-                console.error("No active webSocket connection detected, waiting for connection...");
-            }
-
-            return promise;
-        }
-        else {
-            throw new Error("Passkey action already in progress");
-        }
-    }, [status, isMobile]);
-
-    const createPasskey = useMemo(() => {
-        return (timeout?: number) => passkeyAction('create', timeout);
-    }, [passkeyAction]);
-
-    const loginWithPasskey = useMemo(() => {
-        return (timeout?: number) => passkeyAction('login', timeout);
-    }, [passkeyAction]);
-
-    return (
-        <PasskeyContext.Provider value={{
-            passkeysSupported,
-            createPasskey,
-            loginWithPasskey,
-            status,
-            error,
-        }}>
-            {props.children}
-        </PasskeyContext.Provider>
-    )
+    if (getAuthMode().legacyCgid) {
+        return (
+            <LegacyCgIdPasskeyProvider>
+                <LegacyPasskeyAdapter>{props.children}</LegacyPasskeyAdapter>
+            </LegacyCgIdPasskeyProvider>
+        );
+    }
+    return <MainOriginPasskeyProvider>{props.children}</MainOriginPasskeyProvider>;
 }
 
 export function usePasskeyContext() {
-    const context = React.useContext(PasskeyContext);
-    return context;
+    return React.useContext(PasskeyContext);
 }

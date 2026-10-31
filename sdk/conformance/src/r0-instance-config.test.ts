@@ -21,8 +21,21 @@ describe("Instance/config", () => {
     expect(config.deployment).toMatch(/^(prod|staging|dev)$/);
     expect(config.appUrl).toMatch(/^https?:\/\/[^/]+/);
     expect(config.appUrl).not.toMatch(/\/$/);
-    expect(config.cgidUrl).toContain("#");
     expect(["altcha", "recaptcha", "off"]).toContain(config.captchaProvider);
+
+    // Passkeys: either on this origin (features.passkeys + the RP ID, no CG ID
+    // app), or — legacy CG ID (gateway) instances only — on the CG ID app.
+    if (config.cgidUrl === undefined) {
+      expect(config.features?.passkeys).toBe(true);
+      const appHost = new URL(config.appUrl!).hostname;
+      expect(typeof config.passkeyRpId).toBe("string");
+      // the RP ID is the app host or a parent domain of it
+      expect(appHost === config.passkeyRpId || appHost.endsWith(`.${config.passkeyRpId}`)).toBe(true);
+    } else {
+      expect(config.cgidUrl).toContain("#");
+      expect(config.features?.passkeys).not.toBe(true);
+      expect(config.passkeyRpId).toBeUndefined();
+    }
 
     // Optional fields must have the right type when present.
     if (config.activeChains !== undefined) {
@@ -33,15 +46,15 @@ describe("Instance/config", () => {
     }
     if (config.features !== undefined) {
       for (const key of Object.keys(config.features)) {
-        expect(["email", "twitterAuth", "calls", "imageFilter"]).toContain(key);
+        expect(["email", "twitterAuth", "calls", "imageFilter", "passkeys"]).toContain(key);
         expect(typeof config.features[key as keyof typeof config.features]).toBe("boolean");
       }
     }
 
     // No unexpected keys: the endpoint mirrors InstanceConfig exactly.
     const allowed = new Set([
-      "deployment", "appUrl", "cgidUrl", "recaptchaSiteKey", "captchaProvider",
-      "activeChains", "features", "giphyApiKey", "walletConnectProjectId",
+      "deployment", "appUrl", "cgidUrl", "passkeyRpId", "recaptchaSiteKey", "captchaProvider",
+      "activeChains", "features", "imageFilterThreshold", "giphyApiKey", "walletConnectProjectId",
     ]);
     for (const key of Object.keys(config)) {
       expect(allowed, `unexpected field ${key} — SDK InstanceConfig mirror is stale`).toContain(key);

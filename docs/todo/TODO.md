@@ -23,8 +23,9 @@
   and neither roadmap recorded it as done. Natural home: the browser passes of the
   major-version waves in `ROADMAP_cg-box.md` (P2) on the test VM. Confirm once, then
   strike:
-  - auth: passkey login with a pre-migration passkey, passkey creation via the CG ID
-    popup, a cross-device (hybrid) attempt; every wallet login (MetaMask,
+  - auth: passkeys on the main origin (sign-up, login, step-up; once the G4 UI
+    lands), a pre-migration passkey on a legacy CG ID gateway, a cross-device
+    (hybrid) attempt; every wallet login (MetaMask,
     WalletConnect, Coinbase, Lukso UP), the deprecated mnemonic login, Farcaster;
     the ALTCHA v3 widget on an ALTCHA-configured instance (light/dark, phone solve
     time — overlaps the captcha manual-pass item under "Optional");
@@ -90,6 +91,18 @@ that stack — confirm and delete:
 
 ## Cleanup candidates (small, self-contained)
 
+- [ ] **Settings → email page sends `User/setPassword` several times on close**
+  (2026-10-31, G4 test-VM pass) — `EmailPage`'s save-on-close effect re-runs while the
+  page unmounts, so one password change fires the request about five times. Run the
+  save once (ref guard or an explicit save action).
+- [ ] **About 6 s of spinner after `createUser`** (2026-10-31, G4 test-VM pass,
+  cause unconfirmed) — the sign-up resolves late; suspects are `setupAfterLogin`
+  (Dexie setup) and the notification database lock. Measure, then fix.
+- [ ] **A logout interrupted by navigation leaves `CG_CURRENT_USER` set** (2026-10-31,
+  G4 test-VM pass) — `loginManager.logout()` clears the stored current user only
+  after the server call and the local cleanup; navigating away in between leaves it
+  in `localStorage` (what the next page load does with it is not analysed yet).
+  Check the order and clear it reliably.
 - [ ] **jest leaves a worker running** (2026-10-31, seen on the combined F3+F4+F6
   test-VM run): `yarn tests` in `srv/` passes but prints "A worker process has
   failed to exit gracefully and has been force exited…" since the F6 dependency
@@ -137,16 +150,12 @@ that stack — confirm and delete:
 - [ ] **`role_gated_files` + `GET /gated-videos/:filename` / `GET /gated-files/:filename`**
   — their only content producers were the wizard data-room elements removed in Phase 2;
   the table has no create path in code. Removal candidate.
-- [ ] **Passkey ceremony foot-guns in the CGID flow** (2026-08-04, found in the
-  wave-1.5 dependency review; pre-existing, unchanged by the simplewebauthn 13
-  migration): (a) `srv/validators/api/cgid.ts` requires `authenticatorAttachment`
-  in both verify-response schemas although the WebAuthn spec makes it optional and
-  `@simplewebauthn/browser` emits `undefined` for unknown values — an authenticator
-  that omits it fails the whole ceremony at the Joi layer; make it `.optional()`.
-  (b) `src/cgid/home.tsx` calls `startRegistration`/`startAuthentication` outside
-  its `try`, so a user cancel becomes an unhandled rejection (login.tsx and
-  createPasskey.tsx do it correctly inside). Relevant to `ROADMAP_cg-box.md` G4
-  (passkey ceremonies move to the main origin).
+- [ ] **Conformance sign-up on instances that send mail** (2026-10-31, G4) — with
+  mail configured, `createUser` (and a sign-up passkey) needs the address verified
+  by `User/requestSignupEmailCode` / `verifySignupEmailCode` first; the conformance
+  fixtures cannot read the code, so `registerUser` fails there (only relevant with
+  `CG_LIVE_MUTATIONS=1`; the disposable instance runs without mail). Needs a mail
+  sink the suite can read, or a test hook for the sign-up code.
 - [ ] **The legacy MetaMask connect path lost its no-extension flow** (2026-08-04,
   dependency-update wave-3 review) — `signatureHelper.connectMetamask()` (reached
   from `WalletsEditor/WalletSelectModal`, i.e. "Add wallet → MetaMask") used to
@@ -216,7 +225,7 @@ that stack — confirm and delete:
   `src/components/molecules/AltchaWidget/AltchaWidget.tsx:26-42` depends on
   `[onVerified, onReset]`, and both call sites pass inline arrows
   (`src/components/molecules/CaptchaModal/CaptchaModal.tsx:59`,
-  `src/components/organisms/UserOnboarding/SetupProfile/SetupProfile.tsx:312`), so the
+  `src/components/molecules/SignupCaptcha/SignupCaptcha.tsx`), so the
   add/remove pair runs on each render. Memoize the callbacks or hold them in refs.
 - [ ] **`CaptchaModal` drops the verify promise** (2026-08-03, captcha close-out) —
   `src/components/molecules/CaptchaModal/CaptchaModal.tsx:59` fires

@@ -2,7 +2,7 @@
 
 > Status: verified against commit a3ab0dcc4, 2026-08-01; `email_bounces` against commit
 > e44dac1, 2026-10-31; database roles and the PostgreSQL 18 server against commit
-> ff0da06, 2026-10-31
+> ff0da06, 2026-10-31; `passkeys` against commit 54e2d73, 2026-10-31
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -104,15 +104,21 @@ Token balances per wallet per contract. Composite PK: `(walletId, contractId)`.
 | `updatedAt` | `timestamptz(3)` | Auto |
 
 #### `passkeys`
-WebAuthn passkeys for passwordless authentication.
+WebAuthn passkeys for passwordless authentication ([docs/auth-identity §7](../auth-identity/README.md#7-passkeys)).
 
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | `uuid` PK | Auto-generated |
-| `userId` | `uuid` | Nullable, FK -> `users.id` (CASCADE) |
-| `data` | `jsonb` | WebAuthn credential data, indexed on `credentialID` and `webAuthnUserID` |
+| `userId` | `uuid` | Nullable, FK -> `users.id` (CASCADE). New rows always have one (a sign-up passkey is inserted by `createUser`); NULL only on rows from the former CG ID sign-up flow |
+| `data` | `jsonb` | `webAuthnUserID` (user handle, stable per account and RP), `credentialID`, `credentialPublicKeyBase64`, `credentialDeviceType`, `credentialBackedUp`, `transports`; older rows also carry `debugData` (registration options/response), new rows do not |
 | `counter` | `bigint` | Default `0`, authenticator counter |
+| `rpId` | `text` | Nullable. WebAuthn relying party the credential belongs to; every lookup is scoped to the process's RP ID, so a NULL matches nothing. Backfilled from `debugData` by `1793480000000-passkeyRelyingParty` |
+| `origin` | `text` | Nullable. Origin from `clientDataJSON` at registration (audit) |
+| `name` | `text` | Nullable. User label (defaults to "<browser> on <OS>") |
+| `lastUsedAt` | `timestamptz(3)` | Nullable. Last successful assertion |
 | `createdAt/updatedAt/deletedAt` | `timestamptz(3)` | Standard timestamps |
+
+Indexes: unique `("rpId", data->>'credentialID')` (`IDX_passkeys_rpId_credentialID`, the lookup), `("userId", "rpId")`, and the older unique `(data->>'credentialID', data->>'webAuthnUserID')`.
 
 #### `devices`
 User devices for push notifications and encryption.

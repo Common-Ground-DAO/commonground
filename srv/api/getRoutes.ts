@@ -672,10 +672,15 @@ getRoutesRouter.get('/sitemap.xml', async (req, res) => {
 //////////////// TWITTER ////////////////
 
 // twitter callback
-getRoutesRouter.get('/twitter-callback', passport.authenticate("twitter", {
+// keepSessionInfo: passport regenerates the session on success; keep the
+// rest of it (above all the logged-in user who is linking an X account)
+// (passport >= 0.6 supports the option; @types/passport does not list it yet)
+const twitterCallbackOptions: passport.AuthenticateOptions & { keepSessionInfo: boolean } = {
   successReturnToOrRedirect: '/twitter-login',
   failureRedirect: '/',
-}));
+  keepSessionInfo: true,
+};
+getRoutesRouter.get('/twitter-callback', passport.authenticate("twitter", twitterCallbackOptions));
 
 // Fallback twitter callback route for when service worker
 // is not installed (return indexhtml either way)

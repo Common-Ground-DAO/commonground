@@ -5,6 +5,9 @@
 import Joi from "joi";
 import common from "../common";
 import { PluginPermission } from "../../common/enums";
+import config from "../../common/config";
+import urls from "../../util/urls";
+import { getProcessRpIdOrNull, isSameOrSubdomain } from "../../util/passkeyConfig";
 
 const pluginConfigSchema = Joi.object<Models.Plugin.PluginConfig>({
   canGiveRole: Joi.boolean(),
@@ -16,10 +19,40 @@ const pluginPermissionsSchema = Joi.object<Models.Plugin.PluginPermissions>({
   optional: Joi.array().items(Joi.string().valid(...Object.values(PluginPermission))).required(),
 }).required();
 
+// Plugin content must never be served from this instance's own host or any
+// subdomain of it (nor of the passkey RP ID): a page there could run WebAuthn
+// ceremonies for the instance's relying party. Not enforced in dev, where
+// plugins are commonly served from another localhost port.
+export function isForbiddenPluginHost(host: string, forbiddenDomains: string[]): boolean {
+  return forbiddenDomains.some(domain => isSameOrSubdomain(host, domain));
+}
+
+const PluginUrl = Joi.string().max(2048).custom((value: string) => {
+  if (config.DEPLOYMENT === 'dev') {
+    return value;
+  }
+  let host: string;
+  try {
+    host = new URL(value).hostname;
+  }
+  catch {
+    throw new Error('plugin url must be an absolute URL');
+  }
+  const forbidden = [urls.APP_HOSTNAME];
+  const rpId = getProcessRpIdOrNull();
+  if (rpId) {
+    forbidden.push(rpId);
+  }
+  if (isForbiddenPluginHost(host, forbidden)) {
+    throw new Error('plugin url must not point to this instance or its subdomains');
+  }
+  return value;
+});
+
 const pluginApi = {
   createPlugin: Joi.object<API.Plugins.createPlugin.Request>({
     name: Joi.string().required(),
-    url: Joi.string().required(),
+    url: PluginUrl.required(),
     description: Joi.alternatives().try(Joi.string().allow('').required(), Joi.equal(null)),
     imageId: Joi.alternatives().try(Joi.string().required(), Joi.equal(null)),
     communityId: common.Uuid.required(),
@@ -45,7 +78,7 @@ const pluginApi = {
       Joi.object<API.Plugins.updatePlugin.Request['pluginData']>({
         pluginId: common.Uuid.required(),
         clonable: Joi.boolean().strict(true).required(),
-        url: Joi.string().required(),
+        url: PluginUrl.required(),
         description: Joi.alternatives().try(Joi.string().allow('').required(), Joi.equal(null)),
         imageId: Joi.alternatives().try(Joi.string().required(), Joi.equal(null)),
         permissions: pluginPermissionsSchema,

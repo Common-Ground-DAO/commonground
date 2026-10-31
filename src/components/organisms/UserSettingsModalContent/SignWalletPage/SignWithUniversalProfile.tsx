@@ -53,7 +53,10 @@ const SignWithUniversalProfile: React.FC<Props> = (props) => {
           // remove useless prefix
           message = message.replace('Error: ', '');
         }
-        if(message === errors.server.EXISTS_ALREADY) {
+        if (message === errors.server.REAUTH_REQUIRED) {
+          // "Confirm it's you" was cancelled: nothing linked, nothing to show
+          setWalletSignError(undefined);
+        } else if(message === errors.server.EXISTS_ALREADY) {
           setWalletSignError("This universal profile is already linked to another account");
         } else if(message === errors.server.LUKSO_FETCH_TIMEOUT) {
           setWalletSignError("Fetching universal profile data timed out, please try again");

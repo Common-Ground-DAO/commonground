@@ -19,10 +19,11 @@ type Props = {
   onBlur?: (e: React.FocusEvent<Element>) => void;
   onEnterPressed?: () => void;
   maxLetters?: number;
+  autoFocus?: boolean;
 }
 
 const PasswordField: React.FC<Props> = (props) => {
-  const { label, sublabel, placeholder, password, passwordError, autoComplete, setPassword, onBlur, onEnterPressed, maxLetters } = props;
+  const { label, sublabel, placeholder, password, passwordError, autoComplete, setPassword, onBlur, onEnterPressed, maxLetters, autoFocus } = props;
   const [isPasswordVisible, setIsPasswordVisible] = React.useState<boolean>(false);
 
   const onKeyPress = useCallback((ev: React.KeyboardEvent) => {
@@ -47,6 +48,7 @@ const PasswordField: React.FC<Props> = (props) => {
     onBlur={onBlur}
     onKeyPress={onKeyPress}
     maxLetters={maxLetters}
+    autoFocus={autoFocus}
   />
 }
 

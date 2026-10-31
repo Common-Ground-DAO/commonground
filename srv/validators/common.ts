@@ -32,6 +32,45 @@ if (config.DEPLOYMENT === "dev") {
   allowedChainIdentifiers.push("hardhat");
 }
 
+// WebAuthn JSON (as produced by @simplewebauthn/browser): base64url fields
+// with generous but finite lengths. Credential IDs are at most 1023 bytes.
+const Base64URL = Joi.string().regex(/^[A-Za-z0-9_-]*$/);
+const CredentialId = Base64URL.min(16).max(1366);
+const AuthenticatorTransport = Joi.string().valid('ble', 'cable', 'hybrid', 'internal', 'nfc', 'smart-card', 'usb');
+const ClientExtensionResults = Joi.object().unknown(true);
+const AuthenticatorAttachment = Joi.string().valid('platform', 'cross-platform');
+
+const WebAuthnRegistrationResponse = Joi.object({
+  id: CredentialId.required(),
+  rawId: CredentialId.required(),
+  type: Joi.string().valid('public-key').required(),
+  authenticatorAttachment: AuthenticatorAttachment,
+  clientExtensionResults: ClientExtensionResults.required(),
+  response: Joi.object({
+    clientDataJSON: Base64URL.min(1).max(4096).required(),
+    attestationObject: Base64URL.min(1).max(16384).required(),
+    authenticatorData: Base64URL.max(16384),
+    transports: Joi.array().items(AuthenticatorTransport).unique().max(8),
+    publicKeyAlgorithm: Joi.number().integer(),
+    publicKey: Base64URL.max(4096),
+  }).strict(true).required(),
+}).strict(true);
+
+const WebAuthnAuthenticationResponse = Joi.object({
+  id: CredentialId.required(),
+  rawId: CredentialId.required(),
+  type: Joi.string().valid('public-key').required(),
+  authenticatorAttachment: AuthenticatorAttachment,
+  clientExtensionResults: ClientExtensionResults.required(),
+  response: Joi.object({
+    clientDataJSON: Base64URL.min(1).max(4096).required(),
+    authenticatorData: Base64URL.min(1).max(16384).required(),
+    signature: Base64URL.min(1).max(2048).required(),
+    // user handles are at most 64 bytes
+    userHandle: Base64URL.min(1).max(86),
+  }).strict(true).required(),
+}).strict(true);
+
 const Tag = Joi.string().max(30).regex(/^[a-z0-9-_ /]+$/i);
 const Tags = Joi.array().items(Tag).unique().max(50);
 
@@ -79,6 +118,9 @@ const common = {
   Base64DeviceSignature: Base64.max(200),
   Address: Joi.string().regex(/^0x[a-fA-F0-9]{40}$/),
   TutorialName: Joi.string().valid('onboarding'),
+  WebAuthnRegistrationResponse,
+  WebAuthnAuthenticationResponse,
+  PasskeyName: Joi.string().min(1).max(64).regex(/^[^\u0000-\u001f\u007f]+$/),
 };
 
 export default common;

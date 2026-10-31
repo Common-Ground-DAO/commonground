@@ -34,6 +34,7 @@ const DOMAIN_TO_ROUTE = {
   Lukso: "Lukso",
   Accounts: "Accounts",
   CgId: "CgId",
+  Passkey: "Passkey",
   Plugin: "Plugins",
   Search: "Search",
   Report: "Report",

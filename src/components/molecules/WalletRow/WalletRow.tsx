@@ -15,10 +15,10 @@ import { useCopiedToClipboardContext } from "../../../context/CopiedToClipboardD
 import userApi from "data/api/user";
 import ToggleInputField from "../inputs/ToggleInputField/ToggleInputField";
 import { MinusCircleIcon } from "@heroicons/react/20/solid";
+import { securityActionErrorMessage } from 'data/auth/authErrors';
 import { useSnackbarContext } from "context/SnackbarContext";
 
 import './WalletRow.css';
-import { useOwnWallets } from "context/OwnDataProvider";
 
 type Props = {
   wallet: Models.Wallet.Wallet;
@@ -63,7 +63,6 @@ const AddressTag = React.memo((props: { address: string }) => {
 });
 
 const ActivityButtons: React.FC<Props> = memo(({ wallet }) => {
-  const wallets = useOwnWallets();
   const { showSnackbar } = useSnackbarContext();
 
   const setLinkedAddressVisibility = useCallback(async (visibility: Models.Wallet.Visibility) => {
@@ -74,14 +73,19 @@ const ActivityButtons: React.FC<Props> = memo(({ wallet }) => {
   }, [wallet]);
 
   const useToLogin = async (toggled: boolean) => {
-    const hasOtherLoginWallet = wallets?.find(curr => curr.id !== wallet.id && curr.loginEnabled);
-    if (!hasOtherLoginWallet) {
-      showSnackbar({type: 'info', text: 'At least one wallet must be used to login'});
-    } else {
+    // switching sign-in on or off asks "Confirm it's you"; the server refuses
+    // to switch off the account's last way to sign in (LAST_LOGIN_METHOD)
+    try {
       await userApi.updateWallet({
         id: wallet.id,
         loginEnabled: toggled
       });
+    }
+    catch (e) {
+      const message = securityActionErrorMessage(e, 'Failed to update wallet');
+      if (message) {
+        showSnackbar({ type: 'warning', text: message });
+      }
     }
   };
 

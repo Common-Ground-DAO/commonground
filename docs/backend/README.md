@@ -12,7 +12,11 @@
 > `/getUrlPreview`, `safeFetch`, `/pluginRequest`, user-article visibility and
 > the test list against commit e44dac1, 2026-10-31; URL-preview cache instance
 > and the node-redis/Valkey note against commit ff0da06, 2026-10-31; §8 against
-> commit ff0da06, 2026-10-31.
+> commit ff0da06, 2026-10-31; passkeys (`Passkey` and legacy `CgId` routes,
+> `srv/util/passkeys.ts`, `passkeyConfig.ts`, `authSession.ts`,
+> `signupEmail.ts`, `srv/repositories/passkeys.ts`), the new `User` auth
+> routes, step-up, the plugin URL check and the passkey test files against
+> commit 54e2d73, 2026-10-31.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -324,9 +328,13 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 
 ### `srv/api/user.ts` -- User Routes
 
-**Authentication:**
+**Authentication** (details: [docs/auth-identity](../auth-identity/README.md)):
 - `/getSignableSecret` -- Get a nonce for signing
 - `/verifyCaptcha` -- Verify a captcha token (provider abstraction in `srv/util/captcha.ts`: ALTCHA default / reCAPTCHA / off; ALTCHA challenges via `GET /Captcha/challenge`, the effective provider via `GET /Captcha/config` — both public, `srv/api/captcha.ts`)
+- `/login` -- every interactive and device-key login; each branch ends in `establishLoginSession()` (`srv/util/authSession.ts`: new session id, user set, `authAt`/`authMethod` recorded except for device-key logins, awaited save). `type: 'passkey'` verifies a WebAuthn assertion in the same call; `type: 'passkey-success'` exists only in legacy CG ID mode
+- `/reauthenticate` -- step-up: passkey (`stepup` assertion), password or a fresh signature of a login-enabled wallet; refreshes `authAt` and returns `{ validUntil }`; rate-limited per IP and per user
+- `/ensureSession` -- session keepalive (the web client calls it every 29 minutes)
+- `/requestSignupEmailCode`, `/verifySignupEmailCode` -- verify the sign-up address before the account exists (`srv/util/signupEmail.ts`)
 - `/clearLoginSession` -- Clear session
 - `/checkLoginStatus` -- Check if logged in
 - `/logout` -- Log out
@@ -342,7 +350,20 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/setOwnStatus` -- Set online status
 - `/isCgProfileNameAvailable` -- Check profile name availability
 - `/isEmailAvailable` -- Check email availability
-- `/setPassword` -- Set/change password
+- `/setPassword` -- Set/change password (step-up)
+
+Sensitive actions call `requireRecentAuth()` (`srv/util/authSession.ts`)
+before anything else and fail with `REAUTH_REQUIRED` unless the session
+authenticated interactively within the last 5 minutes: `/setPassword`, an
+`email` change through `/updateOwnData` (only an actual change),
+`/addUserAccount` and `/removeUserAccount` of an X/LUKSO/Farcaster account, `/addPreparedWallet` with `loginEnabled`, `/updateWallet`
+changing `loginEnabled`, `/deleteWallet` of a login-enabled wallet, the passkey
+add/remove routes and `Bot` `/tokens/issue` and `/disable`.
+`srv/tests/passkeyRoutes.spec.ts` keeps every `User`, `Passkey` and `Bot` route
+classified as protected or not. Removing or switching off the account's last
+sign-in method (passkey of this RP, password, login-enabled wallet) fails with
+`LAST_LOGIN_METHOD` (`srv/repositories/loginMethods.ts`, checked under a lock
+on the user row).
 
 **Wallets:**
 - `/prepareWalletAction` -- Prepare wallet linking
@@ -418,14 +439,29 @@ A subset of message routes is also reachable over the Bot API v1 surface (see be
 - `/getAppstorePlugins` -- List appstore plugins
 - `/getPluginCommunities` -- Get communities using a plugin
 
-### `srv/api/cgid.ts` -- CG ID / Passkey Authentication Routes
+### `srv/api/passkeys.ts` -- Passkey Routes (`/Passkey`)
+
+Passkeys on the instance's own origin, mounted unless the process runs in
+legacy CG ID mode (`CG_LEGACY_CGID=true`). All ceremonies go through the
+shared core `srv/util/passkeys.ts`; details in
+[docs/auth-identity §7](../auth-identity/README.md#7-passkeys).
+
+- `/registrationOptions` -- logged out: options for the sign-up passkey (`displayName` labels it; IP rate-limited; needs the verified sign-up address when the instance sends mail); logged in: options for adding one (step-up, stable user handle, `excludeCredentials`)
+- `/verifyRegistration` -- logged in: stores the passkey, mails a notice to the verified address; logged out: keeps it in `session.pendingPasskey` for `/User/createUser`
+- `/authenticationOptions` -- `{ purpose: 'login' }` (anonymous, IP rate-limited, empty `allowCredentials`) or `{ purpose: 'stepup' }` (the session user's credentials)
+- `/list`, `/rename` -- the session user's passkeys on this relying party
+- `/remove` -- step-up; refused with `LAST_LOGIN_METHOD` if no other sign-in method (passkey, password, login-enabled wallet) would remain
+
+### `srv/api/cgid.ts` -- Legacy CG ID Routes (`/CgId`)
+
+Mounted only with `CG_LEGACY_CGID=true` (gateway), instead of `/Passkey`:
+authentication of existing credentials of the CG ID relying party (host of
+`CGID_URL`) through the shared core — no registration, no user id from the
+client.
 
 - `/ensureSession` -- Ensure a valid session exists
-- `/getLoggedInUserData` -- Get data for the logged-in user
-- `/generateRegistrationOptions` -- Generate WebAuthn registration options
-- `/generateAuthenticationOptions` -- Generate WebAuthn authentication options
-- `/verifyRegistrationResponse` -- Verify WebAuthn registration
-- `/verifyAuthenticationResponse` -- Verify WebAuthn authentication
+- `/generateAuthenticationOptions` -- options with empty `allowCredentials` (IP rate-limited)
+- `/verifyAuthenticationResponse` -- verifies the assertion, leaves `session.passkeyData` for `/User/login {type:'passkey-success'}` and emits `cliCgIdSignResponse` to the session room
 
 ### `srv/api/accounts.ts` -- External Account Routes
 
@@ -552,8 +588,12 @@ All entities use TypeORM decorators and live in `srv/entities/`. The database is
 **`Passkey`** (`srv/entities/passkeys.ts`, table: `passkeys`)
 - `id` (UUID, PK, auto-generated)
 - `userId` -> User
-- `data` (jsonb) -- WebAuthn credential data
+- `data` (jsonb) -- WebAuthn credential data (credential id, public key, user handle, device type, backup state, transports)
 - `counter` (bigint) -- signature counter
+- `rpId` (text, nullable) -- relying party the credential belongs to; NULL matches none
+- `origin` (text, nullable) -- registration origin (audit)
+- `name` (text, nullable) -- user label
+- `lastUsedAt` (timestamptz, nullable)
 
 **`Device`** (`srv/entities/device.ts`, table: `devices`)
 - `id` (UUID, PK, auto-generated)
@@ -1087,7 +1127,7 @@ validators = {
   API: {
     BaseArticle, User, Community, Chat, Message,
     Files, Contract, Notification, Socket, Twitter,
-    Lukso, Accounts, CgId, Plugin, Search,
+    Lukso, Accounts, CgId, Passkey, Plugin, Search,
     Report, Bot
   }
 }
@@ -1148,7 +1188,8 @@ Each module exports Joi schemas matching their domain's API request types. Files
 - `accounts.ts` -- Farcaster login
 - `basearticle.ts` -- Shared article validation
 - `bot.ts` -- Bot management and Bot API v1 operations
-- `cgid.ts` -- Passkey authentication
+- `cgid.ts` -- Legacy CG ID passkey authentication (gateway mode)
+- `passkey.ts` -- Passkey API (WebAuthn JSON schemas themselves live in `common.ts`: `WebAuthnRegistrationResponse`, `WebAuthnAuthenticationResponse`)
 - `chat.ts` -- Chat operations
 - `community.ts` -- Community operations (the largest)
 - `contract.ts` -- Contract queries
@@ -1281,15 +1322,16 @@ fail strict validation get no keys and the request is rejected with
 ### `srv/util/express.ts` -- Express Configuration
 
 Sets up Express with:
-- CORS configuration
-- Session management via `connect-redis` (Redis-backed sessions)
+- CORS configuration (`BASE_URL`, dev origins; the `CGID_URL` origin only in legacy CG ID mode)
+- Session management via `connect-redis` (Redis-backed sessions; host-only cookie, `.<APP_HOSTNAME>` only in legacy CG ID mode)
 - Cookie parser
 - Passport integration (for Twitter OAuth)
 
 Declares TypeScript session data types including:
 - `user?: { id, deviceId }` -- authenticated user
 - `signSecret?` -- nonce for signature verification
-- `twitter?`, `lukso?`, `farcaster?`, `cgid?` -- OAuth/auth flow state
+- `twitter?`, `lukso?`, `farcaster?` -- OAuth/auth flow state
+- `webauthnChallenges?`, `pendingPasskey?`, `signupEmail?`, `authAt?`/`authMethod?`, legacy `passkeyData?` -- passkey ceremonies, sign-up and step-up state ([docs/auth-identity §2](../auth-identity/README.md#session-data-shape))
 
 ### `srv/util/urls.ts` -- URL Configuration
 
@@ -1297,6 +1339,14 @@ Derives application URLs from `BASE_URL` env var or deployment settings:
 - `APP_URL` -- Full app URL (e.g., `https://app.cg`)
 - `API_URL` -- API base URL (e.g., `https://app.cg/api/v2`)
 - `APP_HOSTNAME`, `PROTOCOL`, `PORT_SUFFIX`
+
+### `srv/util/passkeyConfig.ts`, `passkeys.ts`, `authSession.ts`, `signupEmail.ts` -- Sign-in core
+
+- `signInNotice.ts` -- best-effort "new sign-in method" mail (passkey, X/LUKSO/Farcaster account).
+- `passkeyConfig.ts` -- the WebAuthn relying party of the process: `getMainRp()` (RP ID `PASSKEY_RP_ID` or the `BASE_URL` host, origin exactly `BASE_URL`, dev adds `localhost:3000/8000`) or, with `CG_LEGACY_CGID=true`, `getLegacyCgidRp()` (host/origin of `CGID_URL`). `validatePasskeyConfigAtStartup()` stops the api process on an RP ID that is not the app host or a parent domain of it.
+- `passkeys.ts` -- shared ceremony core: challenge map in the session (max 5, TTL, consumed before verification and marked used in Redis), registration/authentication options and verification with user verification required, lookup by `(rpId, credentialID)`, counter check.
+- `authSession.ts` -- `establishLoginSession()` (every login), `requireRecentAuth()` (step-up guard, `REAUTH_REQUIRED`), `recordReauthentication()`.
+- `signupEmail.ts` -- sign-up email code state in the session (hashed 6-digit code bound to the address, 15 min, 5 attempts).
 
 ### `srv/util/memberListHelpers.ts` -- Member List Binary Conversion
 
@@ -1338,7 +1388,7 @@ Parses the staking feature configuration from env vars (`STAKING_CHAIN`, `STAKIN
 
 ### `srv/util/instanceConfig.ts` -- Instance Identity / Capability Flags
 
-Builds the `window.__CG_INSTANCE__` script tag injected into served `index.html` pages (share links / social previews). Declares the deployment, app/CGID URLs, active chains, and a `features` map derived from which credentials and services this server actually has (`email`, `twitterAuth`, `calls` from `CG_ENABLE_CALLS`, `imageFilter` from `IMAGE_MODERATION_ENABLED`) so the frontend can hide features that would only fail, plus `imageFilterThreshold`. Optional keys (reCAPTCHA site key, Giphy key, WalletConnect project id) are included when configured. The same object is served as JSON by `GET /api/v2/Instance/config` (`srv/api/instance.ts`, see §2).
+Builds the `window.__CG_INSTANCE__` script tag injected into served `index.html` pages (share links / social previews). Declares the deployment, the app URL, the passkey RP ID (`passkeyRpId`; `cgidUrl` instead only in legacy CG ID mode), active chains, and a `features` map derived from which credentials and services this server actually has (`email`, `twitterAuth`, `calls` from `CG_ENABLE_CALLS`, `imageFilter` from `IMAGE_MODERATION_ENABLED`, `passkeys` — false in legacy CG ID mode) so the frontend can hide features that would only fail, plus `imageFilterThreshold`. Optional keys (reCAPTCHA site key, Giphy key, WalletConnect project id) are included when configured. The same object is served as JSON by `GET /api/v2/Instance/config` (`srv/api/instance.ts`, see §2).
 
 ---
 
@@ -1385,7 +1435,7 @@ has passed the 7-day age gate — except `mediasoup` (3.23.2) and `puppeteer`
   would need the dependency back.
 - **`@simplewebauthn/browser` is a devDependency of `srv/`** although nothing
   in `srv/` runs it: `srv/common` is a symlink into `src/common`, and
-  `src/common/types/api/cgid.d.ts` imports its types. Inside the container
+  `src/common/types/api/cgid.d.ts`, `passkey.d.ts` and `user.d.ts` import its types. Inside the container
   build there is no root `node_modules`, and `skipLibCheck` would silently turn
   the passkey API types into `any` without it.
 - **ESM-only dependencies under a CommonJS build.** The backend compiles to
@@ -1433,7 +1483,9 @@ has passed the 7-day age gate — except `mediasoup` (3.23.2) and `puppeteer`
   currently `ipPrefix`, `saveImage`, `imageFilter`, `stakingConfig`,
   `configuredSecret`, `onchainHelper`, `messageAccess`, `messageRepository`,
   `safeFetch`, `urlPreview`, `redisManager`, `pluginRequest`, `protooConnectionGate`,
-  `typingCache`, `userArticleVisibility` and `userArticleRoute`. `npx tsc --noEmit`
+  `typingCache`, `userArticleVisibility`, `userArticleRoute`, `passkeyCore`,
+  `passkeyRoutes`, `passkeyConfig` and `signupEmail` (the passkey tests drive
+  a software authenticator, `tests/helpers/softAuthenticator.ts`). `npx tsc --noEmit`
   does not cover `tests/` (see `docs/todo/TODO.md`). ts-jest compiles the specs
   with `srv/tsconfig.json`, which therefore lists `"types": ["node", "jest"]`:
   `@tsconfig/node24` ≥ 24.0.5 sets `types: ["node"]`, which would otherwise hide

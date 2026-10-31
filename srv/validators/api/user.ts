@@ -66,6 +66,12 @@ const userApi = {
       device: newDeviceValidator.required(),
     }).strict(true),
     Joi.object({
+      type: Joi.equal("passkey").required(),
+      authenticationResponse: common.WebAuthnAuthenticationResponse.required(),
+      device: newDeviceValidator.required(),
+    }).strict(true),
+    Joi.object({
+      // passkey-success: legacy CG ID mode only (rejected otherwise)
       type: Joi.string().valid("twitter", "passkey-success", "farcaster").required(),
       device: newDeviceValidator.required(),
     }),
@@ -80,6 +86,34 @@ const userApi = {
       device: newDeviceValidator.required(),
     }),
   ).required().strict(true),
+
+  ensureSession: Joi.object<API.User.ensureSession.Request>({}).strict(true),
+
+  reauthenticate: Joi.alternatives().try(
+    Joi.object({
+      type: Joi.equal("passkey").required(),
+      authenticationResponse: common.WebAuthnAuthenticationResponse.required(),
+    }).strict(true),
+    Joi.object({
+      type: Joi.equal("password").required(),
+      password: common.Password.max(1024).required(),
+    }).strict(true),
+    Joi.object({
+      // proof: a fresh User/prepareWalletAction of a login-enabled wallet
+      type: Joi.equal("wallet").required(),
+    }).strict(true),
+  ).required(),
+
+  requestSignupEmailCode: Joi.object<API.User.requestSignupEmailCode.Request>({
+    email: TldSafeEmailValidator.max(320).required(),
+    // required unless this session already passed the captcha for the address
+    recaptchaToken: Joi.string().max(20000),
+  }).strict(true).required(),
+
+  verifySignupEmailCode: Joi.object<API.User.verifySignupEmailCode.Request>({
+    email: TldSafeEmailValidator.max(320).required(),
+    code: Joi.string().regex(/^[0-9]{6}$/).required(),
+  }).strict(true).required(),
 
   createUser: Joi.object<API.User.createUser.Request>({
     useTwitterCredentials: Joi.bool().strict(),
@@ -98,7 +132,8 @@ const userApi = {
       extraData: cgProfileExtraDataValidator.required(),
     }).strict(true),
     displayAccount: Joi.string().valid(...humanAccountTypes).required(),
-    recaptchaToken: Joi.string().required(),
+    // not needed after a sign-up email code (the captcha was solved there)
+    recaptchaToken: Joi.string(),
     device: newDeviceValidator.required(),
   }).required().strict(true),
 

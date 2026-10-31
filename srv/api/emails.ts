@@ -180,6 +180,52 @@ class EmailUtils {
         await this.sendEmail({ to, subject, text, html: htmlTemplate });
     }
 
+    /** Sign-up: the 6-digit code that proves the address before the account exists. */
+    public async sendSignupCodeEmail(to: string, code: string) {
+        const subject = 'Your Common Ground sign-up code';
+        const html = `
+        <tr>
+            <td colspan="4" style="background-color:#f8f8f8;padding:20px;text-align:center;">
+                <h2> Your sign-up code: ${escapeHtml(code)} </h2>
+                <p> It is valid for 15 minutes. If you did not try to create an account, you can ignore this mail. </p>
+            </td>
+        </tr>`;
+        const htmlTemplate = this.getHTMLTemplate(html, false);
+        const text = `Your sign-up code: ${code}\n\nIt is valid for 15 minutes. If you did not try to create an account, you can ignore this mail.\n`;
+        await this.sendEmail({ to, subject, text, html: htmlTemplate });
+    }
+
+    /** Sign-up attempted with an address that already has an account (no code is sent). */
+    public async sendSignupAddressTakenEmail(to: string) {
+        const subject = 'Sign-up attempt on Common Ground';
+        const loginLink = `${urlConfig.APP_URL}/`;
+        const html = `
+        <tr>
+            <td colspan="4" style="background-color:#f8f8f8;padding:20px;text-align:center;">
+                <h2> Someone tried to create a new account with this address. </h2>
+                <p> This address already belongs to an account. <a href="${escapeHtml(loginLink)}">Log in</a> instead. If this was not you, you can ignore this mail. </p>
+            </td>
+        </tr>`;
+        const htmlTemplate = this.getHTMLTemplate(html, false);
+        const text = `Someone tried to create a new account with this address. This address already belongs to an account — log in instead: ${loginLink}\nIf this was not you, you can ignore this mail.\n`;
+        await this.sendEmail({ to, subject, text, html: htmlTemplate });
+    }
+
+    /** A sign-in method was added to the account. */
+    public async sendNewSignInMethodEmail(to: string, method: string) {
+        const subject = 'A new sign-in method was added to your Common Ground account';
+        const html = `
+        <tr>
+            <td colspan="4" style="background-color:#f8f8f8;padding:20px;text-align:center;">
+                <h2> A new sign-in method was added to your account: ${escapeHtml(method)} </h2>
+                <p> If this was you, there is nothing to do. If not, review the sign-in methods in your account settings right away. </p>
+            </td>
+        </tr>`;
+        const htmlTemplate = this.getHTMLTemplate(html, false);
+        const text = `A new sign-in method was added to your account: ${method}\n\nIf this was you, there is nothing to do. If not, review the sign-in methods in your account settings right away.\n`;
+        await this.sendEmail({ to, subject, text, html: htmlTemplate });
+    }
+
     public async sendNewsletter(recipient: EmailRecipient, posts: EmailPost[], generalPosts: EmailPost[]) {
         if (posts.length === 0 && generalPosts.length === 0) {
             console.log('No posts to send to user: ', recipient.userId);

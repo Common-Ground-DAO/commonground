@@ -1,6 +1,8 @@
 > Status: verified against commit 91efa7c82, 2026-08-04; `features.email` row
 > against commit e44dac1, 2026-10-31; Valkey instances, Redis clients and key
-> prefixes against commit ff0da06, 2026-10-31
+> prefixes against commit ff0da06, 2026-10-31; passkey/session notes (§3), the
+> router table, the CG ID note and the instance-config example against commit
+> 54e2d73, 2026-10-31
 
 # Common Ground - Architecture Documentation
 
@@ -236,7 +238,11 @@ interface SessionData {
   lukso?: { message, address, username, ... };
   farcaster?: { address, fid, username, ... };
   preparedCredential?: PreparedCredential;   // For wallet-based login
-  passkeyData?: { step, ... };               // WebAuthn/passkey state machine
+  webauthnChallenges?: Record<string, ...>;  // WebAuthn ceremonies in flight
+  pendingPasskey?: PendingPasskey;           // sign-up passkey, inserted by createUser
+  signupEmail?: { email, ... };              // sign-up address verification
+  authAt?: number; authMethod?: AuthMethod;  // last interactive authentication (step-up)
+  passkeyData?: { step: 'success', ... };    // legacy CG ID mode only
   temporaryArticleIds?: string[];
 }
 ```
@@ -249,7 +255,7 @@ The login endpoint at `POST /User/login` (in `srv/api/user.ts`) supports multipl
 
 1. **Device-based (`type: "device"`)** — primary re-authentication. `POST /User/getSignableSecret` returns a random 20-char challenge stored in `session.signSecret`; the frontend signs it with the device private key; the server verifies via `deviceHelper.verifyDeviceAndGetUserId()` and populates `session.user`.
 2. **Wallet-based (`type: "wallet"`)** — a "prepared credential" assembled in a prior step (`session.preparedCredential`) is verified, then a device is created.
-3. **Passkey / WebAuthn (`type: "passkey-success"`)** — multi-step state machine in `session.passkeyData` (`registration_sign` → `authentication_sign` → `success`/`error`); login requires the `success` state with a valid, non-deleted passkey.
+3. **Passkey / WebAuthn (`type: "passkey"`)** — the WebAuthn assertion is verified in the login call itself, on the instance's own origin and relying party ([docs/auth-identity §7](../auth-identity/README.md#7-passkeys)). A legacy CG ID (gateway) process instead keeps the CG ID popup flow and `type: "passkey-success"`.
 4. **Email + password (`type: "password"`)** — verified via `userHelper.getOwnDataByCgProfileNameOrEmailAndPassword()`; creates a device from the supplied public key.
 5. **Twitter OAuth (`type: "twitter"`)** — Passport.js flow in `getRoutes.ts`; Twitter user id read from `session.passport`.
 6. **Lukso Universal Profile (`type: "lukso"`)** — on-chain signature over the nonce, verified via `onchainHelper.luksoIsValidSignature()`.
@@ -318,7 +324,8 @@ The API server (`srv/api.ts`) mounts the following Express routers:
 | `/Notification` | notificationRouter | `srv/api/notifications.ts` |
 | `/Twitter` | twitterRouter | `srv/api/twitter.ts` |
 | `/Lukso` | luksoUniversalProfileRouter | `srv/api/luksoUniversalProfile.ts` |
-| `/CgId` | cgIdRouter | `srv/api/cgid.ts` |
+| `/Passkey` | passkeyRouter | `srv/api/passkeys.ts` (not in legacy CG ID mode) |
+| `/CgId` | cgIdRouter | `srv/api/cgid.ts` (legacy CG ID mode only, `CG_LEGACY_CGID=true`) |
 | `/Accounts` | accountsRouter | `srv/api/accounts.ts` |
 | `/Plugins` | pluginRouter | `srv/api/plugins.ts` |
 | `/Search` | searchRouter | `srv/api/search.ts` |
@@ -509,17 +516,17 @@ Common Ground ships a **single-server self-hosting profile** (`docker/docker-com
 - **No dev-chain / test-contract services** (`hardhat` is dev-only). Blockchain features work against public RPC endpoints and are optional.
 - All backend containers (`api`, `wsapi`, `mediasoup`, `onchain`, `job-runner`, `memberlist`, `migrate-db`) run from the same `cryptogram/backend` image, alongside Postgres, the two Valkey instances (`redis`, `redis-cache`), and the single `seaweed` container — the same topology as the dev profile. (The hosted Swarm stack, which lives in a separate infrastructure repository, still runs the pre-consolidation three-service SeaweedFS topology until it is migrated; the application is agnostic to either, since it only ever talks to `s3.local:8333`.)
 
-The two DNS records `chat.example.org` and `id.chat.example.org` must be distinct origins because passkeys are scoped to the CG ID origin.
+Passkeys live on the app origin itself (RP ID = the app host, [docs/auth-identity §7](../auth-identity/README.md#7-passkeys)); the CG ID subdomain is only used by a legacy CG ID (gateway) process. TODO(verify): the selfhost Caddyfile and `init.sh` still provision `CG_ID_DOMAIN`; removing that vhost is tracked with the Caddy work.
 
 ### Instance Configuration (`__CG_INSTANCE__`)
 
 Historically the frontend inferred its deployment mode and URLs from a hardcoded domain list (`app.cg`, `staging.app.cg`); any other domain silently ran with dev semantics. That coupling has been removed. An instance now **declares its identity at serve time** through a single global:
 
 ```html
-<script>window.__CG_INSTANCE__ = {"deployment":"prod","appUrl":"https://chat.example.org","cgidUrl":"https://id.chat.example.org/#", ...}</script>
+<script>window.__CG_INSTANCE__ = {"deployment":"prod","appUrl":"https://chat.example.org","passkeyRpId":"chat.example.org", ...}</script>
 ```
 
-- **Build** (`srv/util/instanceConfig.ts`): `buildInstanceConfig()` assembles the object (`deployment`, `appUrl`, `cgidUrl`, optional `recaptchaSiteKey`, `activeChains`, `features`, `giphyApiKey`, `walletConnectProjectId`) and `instanceConfigScriptTag()` renders a `<`-escaped `<script>`.
+- **Build** (`srv/util/instanceConfig.ts`): `buildInstanceConfig()` assembles the object (`deployment`, `appUrl`, `passkeyRpId` — or `cgidUrl` in legacy CG ID mode —, optional `recaptchaSiteKey`, `activeChains`, `features`, `giphyApiKey`, `walletConnectProjectId`) and `instanceConfigScriptTag()` renders a `<`-escaped `<script>`.
 - **Injection**: the API server injects the tag into any `index.html` it serves (share links / SSR, in `getRoutes.ts`); the self-host nginx image performs the equivalent injection into the statically served `index.html`/`index_cgid.html` at container start (`docker/nginx/inject-instance-config.sh`, driven by `CG_*` env vars in the compose file).
 - **Consumption** (`src/common/instance.ts`): `getInstanceConfig()` is the single, validating accessor. When the global is absent it falls back to the legacy domain-based detection, so `app.cg` and local dev are unaffected. The same build artifacts therefore work for any domain — the domain is configuration, not code.
 
@@ -544,7 +551,7 @@ Based on `docker/nginx/nginx_dev.conf` and `docker/nginx/nginx_selfhost.conf`, r
 | URL Pattern | Destination | Notes |
 |-------------|-------------|-------|
 | `/api/bot/v1/...` | `http://api:4000` | Public bot protocol; rewritten to `/BotV1/...` |
-| `/api/v2/{Router}/...` | `http://api:4000` | REST API; prefix stripped. Router whitelist: `Chat\|Community\|File\|Message\|User\|Contract\|Notification\|Twitter\|Lukso\|CgId\|Accounts\|Plugins\|Search\|Report\|Bot\|Staking` |
+| `/api/v2/{Router}/...` | `http://api:4000` | REST API; prefix stripped. Router whitelist: `Chat\|Community\|File\|Message\|User\|Contract\|Notification\|Twitter\|Lukso\|CgId\|Passkey\|Accounts\|Plugins\|Search\|Report\|Bot\|Staking` |
 | `/api/ws/` | `http://wsapi:4000` | Socket.IO (WebSocket upgrade) |
 | `/files/{id}/{sig}/{date}/{expires}` | `http://s3.local:8333` | Direct S3 proxy (rewritten to a signed S3 URL) |
 | `/c/`, `/u/`, `/gated-videos/`, `/gated-files/` | `http://api:4000` | Social previews / gated content (SSR + instance-config injection) |

@@ -8,6 +8,7 @@ import Button from 'components/atoms/Button/Button';
 import { useOwnWallets } from 'context/OwnDataProvider';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import userApi from 'data/api/user';
+import { useStepUp } from 'context/StepUpProvider';
 import React, { useCallback, useMemo, useRef, useState } from 'react'
 import { useAccount, useChainId, useSignMessage } from 'wagmi';
 import { PageType } from '../UserSettingsModalContent';
@@ -25,6 +26,7 @@ export type SignedState = 'unsigned' | 'signing' | 'signed' | 'cancelled';
 const SignWalletPage: React.FC<Props> = (props) => {
   const { setPage, setCurrentWallet, lockModal } = props;
   const { showSnackbar } = useSnackbarContext();
+  const { ensureRecentAuth } = useStepUp();
   const { address } = useAccount();
   const chainId = useChainId();
   const { signMessageAsync } = useSignMessage();
@@ -38,6 +40,11 @@ const SignWalletPage: React.FC<Props> = (props) => {
 
   const linkCurrentWallet = useCallback(async () => {
     if (!isActiveAddressLinked && !!address) {
+      // a wallet that can sign in is a new sign-in method: confirm first,
+      // before the wallet signature is prepared in the session
+      if (await ensureRecentAuth('add a wallet you can sign in with') === 'cancelled') {
+        return;
+      }
       try {
         const secret = await userApi.getSignableSecret();
         const siweMessage = getSiweMessage({ address, secret, chainId });
@@ -68,7 +75,7 @@ const SignWalletPage: React.FC<Props> = (props) => {
         setWalletSignError(message);
       }
     }
-  }, [isActiveAddressLinked, address, chainId, signMessageAsync, showSnackbar]);
+  }, [isActiveAddressLinked, address, chainId, signMessageAsync, showSnackbar, ensureRecentAuth]);
 
   // Redirect to wallet page when wallet is connected
   if (enableWalletRedirect.current && isActiveAddressLinked) {

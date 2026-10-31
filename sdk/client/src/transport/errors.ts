@@ -40,6 +40,12 @@ export type ApiErrorCode =
   | "COMMUNITY_JOIN_IN_WAIT_PERIOD"
   | "PASSKEY_USER_NULL"
   | "ALREADY_LOGGED_IN"
+  /** a sensitive action needs a recent authentication: AuthApi.reauthenticate*, then retry */
+  | "REAUTH_REQUIRED"
+  /** the action would leave the account without a sign-in method */
+  | "LAST_LOGIN_METHOD"
+  /** createUser without a sign-up address verified in this session */
+  | "EMAIL_VERIFICATION_REQUIRED"
   | "SEND_ARTICLE_LIMIT_EXCEEDED"
   | "EVENT_SCHEDULE_IN_THE_PAST"
   | "EVENT_TOO_LONG"

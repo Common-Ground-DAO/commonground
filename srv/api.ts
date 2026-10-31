@@ -14,6 +14,8 @@ import getRoutes from './api/getRoutes';
 import luksoUniversalProfileRouter from './api/luksoUniversalProfile';
 import twitterRouter from './api/twitter';
 import cgIdRouter from './api/cgid';
+import passkeyRouter from './api/passkeys';
+import { isLegacyCgidMode, validatePasskeyConfigAtStartup } from './util/passkeyConfig';
 import accountsRouter from './api/accounts';
 import { fakeHealthcheck } from './healthcheck';
 import imageFilter from './moderation/imageFilter';
@@ -37,7 +39,17 @@ app.use('/Contract', contractRouter);
 app.use('/Notification', notificationRouter);
 app.use('/Twitter', twitterRouter);
 app.use('/Lukso', luksoUniversalProfileRouter);
-app.use('/CgId', cgIdRouter);
+// Exactly one passkey surface per process (docs/auth-identity §7): the
+// main-origin Passkey API, or — legacy CG ID (gateway) mode — the
+// authentication-only CgId API. A bad relying-party configuration stops the
+// process here.
+validatePasskeyConfigAtStartup();
+if (isLegacyCgidMode()) {
+  app.use('/CgId', cgIdRouter);
+}
+else {
+  app.use('/Passkey', passkeyRouter);
+}
 app.use('/Accounts', accountsRouter);
 app.use('/Plugins', pluginRouter);
 app.use('/Search', searchRouter);

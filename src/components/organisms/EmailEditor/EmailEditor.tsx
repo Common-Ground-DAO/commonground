@@ -13,6 +13,7 @@ import Button from 'components/atoms/Button/Button';
 import Checkbox from 'components/atoms/Checkbox/Checkbox';
 import data from 'data';
 import userApi from 'data/api/user';
+import { securityActionErrorMessage } from 'data/auth/authErrors';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import PasswordField from 'components/molecules/PasswordField/PasswordField';
 import { useEmailConfirmationContext } from 'context/EmailConfirmationProvider';
@@ -67,7 +68,12 @@ const EmailEditor: React.FC<Props> = () => {
       
     } catch (e) {
       console.error(e);
-      showSnackbar({ type: 'warning', text: 'Failed to update info' });
+      // email and password changes ask "Confirm it's you"; nothing to show
+      // when that was cancelled
+      const message = securityActionErrorMessage(e, 'Failed to update info');
+      if (message) {
+        showSnackbar({ type: 'warning', text: message });
+      }
     }
 
   }, [email, emailContext, emailError, newsletterActive, ownUser?.email, password, passwordError, showSnackbar]);

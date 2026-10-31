@@ -42,6 +42,40 @@ class UserApiConnector extends BaseApiConnector {
     );
   }
 
+  /** session keepalive (refreshes the rolling session cookie) */
+  public async ensureSession() {
+    return await this.ajax<API.User.ensureSession.Response>(
+      "POST",
+      "/ensureSession"
+    );
+  }
+
+  /** step-up: proves again that the session user is at the keyboard */
+  public async reauthenticate(data: API.User.reauthenticate.Request): Promise<API.User.reauthenticate.Response> {
+    return await this.ajax<API.User.reauthenticate.Response>(
+      "POST",
+      "/reauthenticate",
+      data
+    );
+  }
+
+  /** sign-up step 1: mails a 6-digit code to the address the account will get */
+  public async requestSignupEmailCode(data: API.User.requestSignupEmailCode.Request): Promise<void> {
+    return await this.ajax<void>(
+      "POST",
+      "/requestSignupEmailCode",
+      data
+    );
+  }
+
+  public async verifySignupEmailCode(data: API.User.verifySignupEmailCode.Request): Promise<void> {
+    return await this.ajax<void>(
+      "POST",
+      "/verifySignupEmailCode",
+      data
+    );
+  }
+
   public async checkLoginStatus() {
     return await this.ajax<API.User.checkLoginStatus.Response>(
       "POST",

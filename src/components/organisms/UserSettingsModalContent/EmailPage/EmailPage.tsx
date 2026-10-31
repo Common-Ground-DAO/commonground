@@ -14,6 +14,7 @@ import data from 'data';
 import userApi from 'data/api/user';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {useEmailConfirmationContext} from 'context/EmailConfirmationProvider';
+import { securityActionErrorMessage } from 'data/auth/authErrors';
 
 type Props = {
   saveOnCloseMode?: boolean;
@@ -91,7 +92,12 @@ const EmailPage: React.FC<Props> = ({ saveOnCloseMode, goBack }) => {
       showSnackbar({ type: 'info', text: updateText });
     } catch (e) {
       console.error(e);
-      showSnackbar({ type: 'warning', text: 'Failed to update info' });
+      // email and password changes ask "Confirm it's you" first; nothing to
+      // show when that was cancelled
+      const message = securityActionErrorMessage(e, 'Failed to update info');
+      if (message) {
+        showSnackbar({ type: 'warning', text: message });
+      }
     }
   }, [emailContext, showSnackbar])
 

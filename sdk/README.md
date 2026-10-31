@@ -26,7 +26,7 @@ break fails the same CI run that caused it.
 | Area | What the SDK does | Phase |
 | --- | --- | --- |
 | Instance | `GET /Instance/config` — instance identity/capabilities | R0 |
-| Identity | device keypairs (P-256 & P-384), native ALTCHA v2 solve, register, password + device-signature login, session lifecycle | R1 |
+| Identity | device keypairs (P-256 & P-384), native ALTCHA v2 solve, sign-up email code, register (password and/or passkey), password + device-signature + passkey login (WebAuthn JSON in/out), step-up re-authentication, passkey list/rename/remove, session lifecycle | R1 |
 | Realtime | socket.io connect + in-band login, typed `cli*` event router, normalized sync store | R2 |
 | Content | image upload/download, notifications + push registration, search, profile | R3 |
 | Calls | protoo signaling handshake (getSignableSecret → login → caps → join); **signaling only, no media** | R4 |

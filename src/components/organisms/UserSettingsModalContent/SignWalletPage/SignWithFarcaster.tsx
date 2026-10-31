@@ -5,6 +5,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSignIn, QRCode } from '@farcaster/auth-kit';
 import userApi from 'data/api/user';
+import errors from 'common/errors';
 import accountsApi from 'data/api/accounts';
 import { PageType } from '../UserSettingsModalContent';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
@@ -103,7 +104,8 @@ export const InnerSign: React.FC<Props & { nonce: string }> = ({ nonce, setPage 
                 }
               }).catch(e => {
                 console.log("Farcaster verify error", e);
-                setCreateError("Farcaster verify error");
+                // a cancelled "Confirm it's you" leaves nothing to report
+                setCreateError(e instanceof Error && e.message === errors.server.REAUTH_REQUIRED ? undefined : "Farcaster verify error");
               }).finally(() => {
                 setCreatingAccount(false);
               });

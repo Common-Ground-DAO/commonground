@@ -25,9 +25,11 @@ export interface ButtonProps {
   loading?: boolean;
   active?: boolean;
   longPress?: boolean;
+  /** for disclosure buttons ("More ▾") */
+  ariaExpanded?: boolean;
 };
 
-const Button: React.FC<ButtonProps> = ({ onClick, onMouseEnter, onMouseLeave, iconLeft, iconRight, text, role, disabled, className, style, tabIndex, buttonRef, loading, active, longPress }) => {
+const Button: React.FC<ButtonProps> = ({ onClick, onMouseEnter, onMouseLeave, iconLeft, iconRight, text, role, disabled, className, style, tabIndex, buttonRef, loading, active, longPress, ariaExpanded }) => {
   const [isLongPressing, setIsLongPressing] = useState(false);
   let classNameFull: string | undefined = `${className ?? ''}${!!text ? '' : ' btnNoText'}${!!active ? ' active' : ''}${!!longPress ? ' longPress' : ''}${!!isLongPressing ? ' pressing' : ''}`;
   const longPressTimeoutRef = useRef<any>(null);
@@ -148,6 +150,7 @@ const Button: React.FC<ButtonProps> = ({ onClick, onMouseEnter, onMouseLeave, ic
       disabled={disabled || loading}
       tabIndex={tabIndex}
       ref={buttonRef}
+      aria-expanded={ariaExpanded}
 
       onMouseDown={longPress ? longPressStart : undefined}
       onTouchStart={longPress ? ev => longPressStart(ev as any) : undefined}

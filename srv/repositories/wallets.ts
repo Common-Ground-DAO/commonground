@@ -11,6 +11,7 @@ import { ethers } from "ethers";
 import onchainHelper from "./onchain";
 import stakingHelper from "./staking";
 import { OnchainPriority } from "../onchain/scheduler";
+import { assertWalletIsNotLastLoginMethod } from "./loginMethods";
 
 type ToObjectType<T extends Models.Wallet.Type> = Models.Wallet.Wallet & { type: T };
 
@@ -312,15 +313,41 @@ class WalletHelper {
     } as Models.Wallet.Wallet;
   }
 
-  public async updateWallet(userId: string, data: API.User.updateWallet.Request): Promise<void> {
-    await _updateWallet(pool, userId, data);
+  /**
+   * `keepLoginMethod`: refuse (LAST_LOGIN_METHOD) to switch off the account's
+   * last sign-in method (srv/repositories/loginMethods.ts); `rpId` is the
+   * passkey relying party whose passkeys count.
+   */
+  public async updateWallet(userId: string, data: API.User.updateWallet.Request, keepLoginMethod?: { rpId: string | null }): Promise<void> {
+    if (!keepLoginMethod || data.loginEnabled !== false) {
+      await _updateWallet(pool, userId, data);
+      return;
+    }
+    const client = await pool.connect();
+    await client.query("BEGIN");
+    try {
+      await assertWalletIsNotLastLoginMethod(client, userId, keepLoginMethod.rpId, data.id);
+      await _updateWallet(client, userId, data);
+      await client.query("COMMIT");
+    }
+    catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    }
+    finally {
+      client.release();
+    }
   }
 
-  public async deleteWallet(userId: string, data: API.User.deleteWallet.Request): Promise<void> {
+  /** `keepLoginMethod`: as for updateWallet — the account's last sign-in method cannot be deleted. */
+  public async deleteWallet(userId: string, data: API.User.deleteWallet.Request, keepLoginMethod?: { rpId: string | null }): Promise<void> {
     const client = await pool.connect();
     let roleData: Awaited<ReturnType<typeof this._walletDeleted_clearBalancesAndGetAffectedRoles>> | undefined;
     await client.query("BEGIN");
     try {
+      if (keepLoginMethod) {
+        await assertWalletIsNotLastLoginMethod(client, userId, keepLoginMethod.rpId, data.id);
+      }
       await _deleteWallet(client, userId, data);
       roleData = await this._walletDeleted_clearBalancesAndGetAffectedRoles(client, userId, data.id);
       await client.query("COMMIT");
@@ -545,6 +572,16 @@ class WalletHelper {
     }[];
   }
 
+  /** loginEnabled flag of one of the user's live wallets, or null if it is not theirs. */
+  public async getOwnWalletLoginEnabled(userId: string, walletId: string): Promise<boolean | null> {
+    const result = await pool.query<{ loginEnabled: boolean }>(`
+      SELECT "loginEnabled"
+      FROM wallets
+      WHERE "id" = $1 AND "userId" = $2 AND "deletedAt" IS NULL
+    `, [walletId, userId]);
+    return result.rows.length === 1 ? result.rows[0].loginEnabled : null;
+  }
+
   public async _getAllContractWalletsByChain(chain: Models.Contract.ChainIdentifier) {
     const query = `
       SELECT
@@ -562,99 +599,6 @@ class WalletHelper {
       signatureData: Models.Wallet.Wallet["signatureData"];
     }>(query, [chain]);
     return result.rows;
-  }
-
-  public async addPasskey(userId: string | null, passkeyData: Models.Passkey.FullData, counter: number) {
-    const query = `
-      INSERT INTO passkeys ("userId", "data", "counter")
-      VALUES ($1, $2::jsonb, $3)
-      RETURNING id
-    `;
-    const result = await pool.query(query, [userId, JSON.stringify(passkeyData), counter]);
-    return result.rows[0].id as string;
-  }
-
-  public async updatePasskeyCounter(passkeyId: string, counter: number) {
-    const query = `
-      UPDATE passkeys
-      SET counter = $1, "updatedAt" = now()
-      WHERE id = $2
-    `;
-    const result = await pool.query(query, [counter, passkeyId]);
-    if (result.rowCount !== 1) {
-      throw new Error(errors.server.NOT_ALLOWED);
-    }
-  }
-
-  public async getUserPasskeys(userId: string) {
-    const query = `
-      SELECT id, "createdAt", "updatedAt", data, counter
-      FROM passkeys
-      WHERE "userId" = $1
-        AND "deletedAt" IS NULL
-      ORDER BY "updatedAt" DESC
-    `;
-    const result = await pool.query<{
-      id: string;
-      createdAt: string;
-      updatedAt: string;
-      data: Models.Passkey.FullData;
-      counter: number;
-    }>(query, [userId]);
-    return result.rows;
-  }
-
-  public async getPasskeyById(id: string) {
-    const query = `
-      SELECT
-        id,
-        "userId",
-        data,
-        counter,
-        "updatedAt",
-        "deletedAt"
-      FROM passkeys
-      WHERE id = $1
-    `;
-    const result = await pool.query<{
-      id: string;
-      userId: string | null;
-      data: Models.Passkey.FullData;
-      counter: number;
-      updatedAt: string;
-      deletedAt: string | null;
-    }>(query, [id]);
-    if (result.rows.length !== 1) {
-      throw new Error(errors.server.NOT_FOUND);
-    }
-    return result.rows[0];
-  }
-
-  public async getPasskeyByCredentialIdAndWebAuthnUserId({ credentialID, webAuthnUserID }: {
-    credentialID: string;
-    webAuthnUserID: string;
-  }) {
-    const query = `
-      SELECT
-        id,
-        "userId",
-        data,
-        counter,
-        "updatedAt",
-        "deletedAt"
-      FROM passkeys
-      WHERE data->>'credentialID' = $1
-        AND data->>'webAuthnUserID' = $2
-    `;
-    const result = await pool.query<{
-      id: string;
-      userId: string | null;
-      data: Models.Passkey.FullData;
-      counter: number;
-      updatedAt: string;
-      deletedAt: string | null;
-    }>(query, [credentialID, webAuthnUserID]);
-    return result.rows.length > 0 ? result.rows[0] : null;
   }
 }
 

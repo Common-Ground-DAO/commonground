@@ -2,7 +2,8 @@
 
 > Status: verified against commit a3ab0dcc4, 2026-08-01; `email_bounces` against commit
 > e44dac1, 2026-10-31; database roles and the PostgreSQL 18 server against commit
-> ff0da06, 2026-10-31; `passkeys` against commit 54e2d73, 2026-10-31
+> ff0da06, 2026-10-31; `passkeys` against commit 54e2d73, 2026-10-31; the TypeORM CLI
+> compile step (`srv/tsconfig.typeorm-cli.json`) against commit d604544, 2026-10-31
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -1036,6 +1037,11 @@ Defined in `srv/util/datasource.ts` (TypeORM DataSource) and `srv/util/postgres.
 - Migrations loaded from: `srv/migrations/*.js` (compiled)
 - UUID extension: `pgcrypto` (`gen_random_uuid()`)
 - Used primarily for migrations and entity definitions
+- The TypeORM CLI tools (`tools/makeMigration.sh` = `./run.sh make_migration`,
+  `tools/revertLastMigration.sh`, `tools/testEntities.sh`) compile the
+  entities, migrations and this data source to `srv/__tmp` with
+  `srv/tsconfig.typeorm-cli.json` (extends `srv/tsconfig.json`, i.e. the
+  backend build settings) and point the CLI at `__tmp/util/datasource.js`
 
 **Raw pg Pool** (`srv/util/postgres.ts`):
 - A raw `pg.Pool` instance with the same connection credentials

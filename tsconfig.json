@@ -1,4 +1,9 @@
 {
+  // TypeScript 6 / 7 readiness (wave M1): no deprecated options, nothing
+  // silenced with `ignoreDeprecations`. `esModuleInterop` and
+  // `allowSyntheticDefaultImports` are always on since TS 6 (they can no
+  // longer be `false`), so they are not repeated here; `dom.iterable` is part
+  // of `dom` since TS 6.
   "compilerOptions": {
     // es2020, not es2018: viem 2 and its `ox` dependency ship .ts sources
     // containing BigInt literals, which tsc rejects below ES2020. This affects
@@ -8,24 +13,31 @@
     "target": "es2020",
     "lib": [
       "dom",
-      "dom.iterable",
       "esnext",
       "WebWorker"
     ],
     "allowJs": true,
     "skipLibCheck": true,
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
     "strict": true,
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
     "module": "esnext",
-    "moduleResolution": "node",
+    // `bundler`, not the deprecated `node` (= node10): Vite resolves the
+    // imports, and bundler resolution is what it implements (package
+    // `exports`, extension-less relative imports).
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "baseUrl": "src",
+    // Replaces the deprecated `baseUrl: "src"`: ~1900 imports in src/ use
+    // project-relative bare specifiers (`components/atoms/Button/Button`,
+    // `common/util`, `data`). A `*` mapping keeps TypeScript's previous
+    // lookup order (src/ first, then node_modules). At bundle/test time
+    // vite/baseUrlResolve.ts implements the same rule for Vite and Vitest.
+    "paths": {
+      "*": ["./src/*"]
+    },
     "types":[
       "dom-screen-wake-lock",
       "vite/client"

@@ -1,0 +1,25 @@
+{
+  // Compiles the entities, the migrations and the TypeORM data source to
+  // srv/__tmp for the TypeORM CLI (tools/makeMigration.sh,
+  // tools/revertLastMigration.sh, tools/testEntities.sh). It inherits the
+  // backend build settings, so the CLI loads the same JavaScript the server
+  // runs. These scripts used to pass the files and options on the tsc command
+  // line; TypeScript 6 refuses files on the command line next to a
+  // tsconfig.json (TS5112) and changed the defaults those flags relied on
+  // (`types: []`, `strict: true`).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "__tmp"
+  },
+  "include": [
+    "migrations/*.ts",
+    "util/datasource.ts",
+    "entities/*.ts",
+    "common/types/*.d.ts",
+    "common/types/api/*.d.ts",
+    "common/types/events/*.d.ts",
+    "common/types/models/*.d.ts",
+    "types/*.d.ts"
+  ]
+}

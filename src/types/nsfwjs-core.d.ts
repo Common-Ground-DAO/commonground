@@ -1,10 +1,12 @@
 // Types for `nsfwjs/core`, the trimmed nsfwjs entry point (no bundled models).
 //
-// Hand-written on purpose. The package ships its own `.d.ts`, but the TS
-// program cannot use it: `moduleResolution: "node"` (node10) predates the
-// `exports` field, so `nsfwjs/core` does not resolve at all — and the shipped
-// declarations import `@tensorflow/tfjs`, the meta package we deliberately do
-// not install (see src/moderation/tfjs.ts).
+// Hand-written on purpose. The package ships its own `.d.ts`, and since the
+// move to `moduleResolution: "bundler"` (TypeScript 6) `nsfwjs/core` resolves
+// to it (`dist/esm/core.d.ts`). This ambient declaration still takes
+// precedence over the resolved file, and it has to: the shipped declarations
+// import `@tensorflow/tfjs`, the meta package we deliberately do not install
+// (see src/moderation/tfjs.ts) — an error only `skipLibCheck` hides, leaving
+// the tfjs-derived types unresolved.
 //
 // Narrowed to what src/moderation/imagePrecheck.ts uses: load a self-hosted
 // graph model, classify one canvas. Keep in sync with the nsfwjs version in

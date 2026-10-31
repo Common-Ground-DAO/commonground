@@ -14,8 +14,9 @@ import { baseUrlResolve } from './vite/baseUrlResolve';
  * HTML-entry and service-worker plugins, none of which a unit test needs, and
  * loading them would make every run pay for the full build plumbing.
  *
- * What it *does* reuse is `baseUrlResolve` — the plugin that reimplements
- * `tsconfig`'s `baseUrl: "src"` for the ~1945 bare import lines in `src/`. It
+ * What it *does* reuse is `baseUrlResolve` — the plugin that resolves the
+ * ~1945 project-relative bare import lines in `src/` (tsconfig's
+ * `paths: { "*": ["./src/*"] }`, formerly `baseUrl: "src"`). It
  * is the single largest piece of migration-specific machinery in the repo, so
  * tests import through it rather than around it.
  *

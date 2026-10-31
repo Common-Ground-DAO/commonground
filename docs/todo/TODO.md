@@ -8,8 +8,9 @@
 
 - [ ] **Remove the two `npmPreapprovedPackages` entries from the root `.yarnrc.yml`**
   once they have aged past the 7-day gate (2026-10-31, first use of the 3-day
-  security-fix rule): `follow-redirects@1.16.2` from 2026-11-01, `joi@17.13.9` from
-  2026-11-04. No lockfile change needed; see the security-fix log in
+  security-fix rule): `follow-redirects@1.16.2` from 2026-11-01, `joi@18.3.1`
+  (replaced `joi@17.13.9` with the joi 18 upgrade, wave M1) from 2026-11-04. No
+  lockfile change needed; see the security-fix log in
   `docs/infrastructure/UPDATE-POLICY.md`.
 - [ ] **Confirm the maintainer's selfhost/reference instances have run the SeaweedFS
   volume cutover** (2026-08-03, storage close-out) — the procedure and
@@ -347,19 +348,13 @@ Forward notes from the 2026-08 dependency updates, for the P2 waves of
 [docs/backend](../backend/README.md#8-dependency-notes); this list is what each
 wave has to *change*.
 
-- **TypeScript 6 (M1)** — the root `tsconfig.json` still uses
-  `moduleResolution: "node"` (node10) and `baseUrl: "src"` (backing ~1945 bare
-  imports through `vite/baseUrlResolve.ts`); TS 6 deprecates both
-  (TODO(verify) against the TS 6 release notes). Moving to `"bundler"` also
-  unblocks `@hapi/tlds` 2 (ESM-only), which has to move in both workspaces at once
-  because of the `srv/common` symlink — re-check whether its broken `types` field
-  (points at `index.d.ts`, ships `index.d.mts`) has been fixed upstream. The target
-  floor is es2020 (viem 2 BigInt literals). `srv/` is on `Node16` resolution and
-  relies on `require(ESM)` for puppeteer 25.
-- **joi 18 (M1)** — joi runs in both workspaces (`src/common/validators.ts` is
-  shared), and `docs/api/openapi.json` is generated from the validators'
-  `describe()` output: regenerate with `sdk/tools/generate-openapi.sh` and review
-  the diff — any change there is a contract change for SDK and native clients.
+- **`@hapi/tlds` 2 (left over from M1)** — the root `tsconfig.json` is on
+  `moduleResolution: "bundler"` since TypeScript 6 (wave M1), which unblocks the
+  ESM-only `@hapi/tlds` 2 on the frontend side. It has to move in both workspaces
+  at once because of the `srv/common` symlink (`srv/` is CommonJS on `Node16`
+  resolution and would load it through `require(ESM)`, as it does puppeteer 25);
+  re-check whether its `types` field (2.0.2: `./dist/index.d.ts`, `exports` has
+  no `types` condition) resolves. joi 18 itself still depends on `^1.1.1`.
 - **Express 5 (M2)** — drop the `@types/express` and
   `@types/express-serve-static-core` `"4"` resolutions in `srv/package.json`.
 - **TypeORM 1.x (M2)** — re-check its `redis` peer (today it warns against

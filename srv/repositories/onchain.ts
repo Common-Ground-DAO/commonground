@@ -127,8 +127,10 @@ class OnchainHelper {
       signature: string,
       message: string
   ): Promise<boolean> {
-    const result = await this.#request('/luksoIsValidSignature', {address, signature, message});
-    return result;
+    // The onchain service answers with `{ isValidSignature: boolean }`; only
+    // an explicit `true` in that field counts as a valid signature.
+    const result: { isValidSignature?: unknown } | undefined = await this.#request('/luksoIsValidSignature', {address, signature, message});
+    return result?.isValidSignature === true;
   }
 
   public async luksoGetUniversalProfileData(

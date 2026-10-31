@@ -10,7 +10,8 @@
     "preserveSymlinks": true,
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
-    "target": "esnext"
+    "target": "esnext",
+    "types": ["node", "jest"]
   },
   "include": [
     "api.ts",

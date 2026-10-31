@@ -88,6 +88,16 @@ id.app.cg ──┤          (develop, gateway mode)   SeaweedFS             │
 16. **No hotfixes on app.cg** for issues found during this work: the
     `production` branch stays untouched until the move.
 17. **Calls are on at cg.box launch.**
+18. **Sign-in methods added during a transfer session are full methods** once
+    added (no probation period); the notices to the verified address are the
+    safeguard. Whoever holds the old login has the account on app.cg anyway.
+19. **The account-security step may link a new wallet**, not only one that is
+    already linked.
+20. **Email-code login only to verified addresses**; users whose address was
+    never confirmed can have the confirmation sent again.
+21. **Sign-up and login must never lock out a person who makes mistakes**:
+    limits only against volumes that look like abuse, every limit message says
+    how long to wait and what else to do (Auth UX package, G10).
 
 ## Phases
 
@@ -217,7 +227,8 @@ plus reviews. Lane B starts when F1+F2 are merged.
 One branch per wave, each verified with typecheck, lint, tests, conformance suite
 and a browser pass on the test VM:
 
-- [ ] **M1** TypeScript 6, joi 18
+- [x] **M1** TypeScript 6, joi 18 (done 2026-10-31: TypeScript 6.0.3 and joi 18.3.1
+  in every workspace, tsconfigs migrated; accepted on the test VM)
 - [ ] **M2** Express 5, TypeORM 1.x (runtime-critical; full backend pass)
 - [ ] **M3** react-router 7, Vite 8
 - [ ] **M4** Tailwind 4 (visual regressions — screenshot comparison of key views)
@@ -297,7 +308,15 @@ and a browser pass on the test VM:
   `index.html` (every self-hosted instance ships it in social previews — drop the
   tag or rewrite it in the instance-config injection like the other social meta);
   external service settings for cg.box: Twitter callback URL,
-  WalletConnect origin allowlist, email sender domain.
+  WalletConnect origin allowlist, email sender domain. The old
+  `/community/P0mI8SYrpO` → `/c/commonground/` redirect of the hosted nginx (not
+  carried into the Caddy config).
+- [ ] **G10 Auth UX.** Walk every login and sign-up path on the test VM with a
+  screenshot of each step and each error message; rework from the maintainer's
+  notes. Limits per decision 21 (account creation per network far above 2 per
+  day; the server returns the remaining wait time and the UI shows it with an
+  alternative path, a countdown on "send again"); input errors caught in the
+  form before anything reaches the server. After G2+G3.
 
 ### P4 — Security gate (before the rehearsal is signed off)
 

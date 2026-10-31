@@ -1,8 +1,15 @@
 {
+  // Loaded by Hardhat's ts-node for hardhat.config.ts (the dev chain). TypeScript
+  // 6 readiness (wave M1): `module: node16` matches how Node runs these files
+  // (CommonJS, no "type" in package.json) and replaces `commonjs`, whose
+  // implied module resolution TS 6 switched from node10 to bundler.
+  // `rootDir` is explicit because ts-node sets an `outDir` and TS 6 no longer
+  // infers the root from the input files (error TS5011 otherwise).
+  // `esModuleInterop` is always on since TS 6.
   "compilerOptions": {
     "target": "es2020",
-    "module": "commonjs",
-    "esModuleInterop": true,
+    "module": "node16",
+    "rootDir": ".",
     "forceConsistentCasingInFileNames": true,
     "strict": true,
     "skipLibCheck": true,

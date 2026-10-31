@@ -12,7 +12,7 @@ import {
   Device,
   RtpEncodingParameters,
   ConnectionState,
-} from "mediasoup-client/lib/types";
+} from "mediasoup-client/types";
 import {
   Action,
   RECENT_REACTIONS_WINDOW_SECONDS,

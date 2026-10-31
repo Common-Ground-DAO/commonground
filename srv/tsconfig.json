@@ -3,7 +3,6 @@
   "compilerOptions": {
     "lib": ["es2023", "DOM"],
     "allowJs": true,
-    "allowSyntheticDefaultImports": true,
     "noFallthroughCasesInSwitch": true,
     "moduleResolution": "Node16",
     "resolveJsonModule": true,

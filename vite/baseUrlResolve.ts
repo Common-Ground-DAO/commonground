@@ -7,12 +7,14 @@ import path from 'node:path';
 import type { Plugin } from 'vite';
 
 /**
- * `tsconfig.json` sets `baseUrl: "src"` and no `paths` map, so ~1900 import
- * lines across `src/` use bare specifiers that are really project-relative
- * (`components/atoms/Button/Button`, `common/util`, `data`, `App`,
- * `service-worker`, `…/icon.svg?react`). `vite-tsconfig-paths` only covers an
- * explicit `paths` map and per-root aliases miss the file-level specifiers, so
- * this plugin reimplements the resolution rule itself.
+ * ~1900 import lines across `src/` use bare specifiers that are really
+ * project-relative (`components/atoms/Button/Button`, `common/util`, `data`,
+ * `App`, `service-worker`, `…/icon.svg?react`). For the type checker
+ * `tsconfig.json` maps them with `paths: { "*": ["./src/*"] }` (until
+ * TypeScript 6 it was `baseUrl: "src"`, which TS 6 deprecates). Per-root
+ * aliases miss the file-level specifiers, and the precedence below differs
+ * from tsc's (which tries `src/` first), so this plugin implements the
+ * resolution rule itself rather than reading the tsconfig.
  *
  * Precedence matches the CRA/webpack setup it replaces: react-scripts passes
  * the tsconfig `baseUrl` as `resolve.modules: ['node_modules', …, appSrc]`, so

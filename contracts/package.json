@@ -22,7 +22,7 @@
     "solidity-coverage": "^0.8.0",
     "ts-node": "^10.9.2",
     "typechain": "^8.3.0",
-    "typescript": "~5.4.5"
+    "typescript": "~6.0.3"
   },
   "dependencies": {
     "@lukso/lsp-smart-contracts": "0.14.0",

@@ -374,3 +374,12 @@ default swap vs. documented limitation. Local eval copy staged at
   before changing either. Same evidence decides whether classifying the source
   instead of the stored crop needs revisiting (accepted as-is in the issue-#53
   review; see [docs/backend](../backend/README.md#srvmoderationimagefilterts--nsfw-image-gate)).
+
+## Email: own newsletter
+
+- [ ] **Own newsletter sending over SMTP** (2026-10-31, G8 mail workstream) —
+  the `users.newsletter` flag (the "CG Updates Newsletter" toggle) is kept for
+  it; since Mailchimp was removed nothing sends based on it. Needs a compose/
+  send path for operators and one-click unsubscribe (a new token kind in
+  `srv/util/unsubscribeToken.ts`; see
+  [docs/email-notifications](../email-notifications/README.md)).

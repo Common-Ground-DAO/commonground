@@ -7,7 +7,9 @@
 > further Swarm rollouts) against commit 935232158, 2026-10-31; dev secrets
 > (generated `docker/.env`) and `s3.selfhost.json` ownership against commit
 > 69999fa20 (chore/env-template), 2026-10-31; digest-pinned images, Node 26 /
-> trixie builder and Yarn 4.18.1 against commit 5f73578, 2026-10-31
+> trixie builder and Yarn 4.18.1 against commit 5f73578, 2026-10-31; email
+> (SMTP, `mail` relay profile, `mail-dns`, bounce receiver, §3.9) against
+> commit e44dac1, 2026-10-31
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -93,7 +95,7 @@ Defined and validated in `src/common/instance.ts` (`InstanceConfig`). Fields:
 | `recaptchaSiteKey` | reCAPTCHA v2 site key (empty disables the default key) |
 | `captchaProvider` | active captcha provider (`altcha` / `recaptcha` / `off`) |
 | `activeChains` | chain keys this instance offers (subset of `AVAILABLE_CHAINS`) |
-| `features` | capability flags `{ email, twitterAuth, calls, imageFilter }` — the first two derived from configured secrets, `calls` from whether the mediasoup service is deployed, `imageFilter` from whether the server-side NSFW filter is enabled (gates the client pre-upload warning) |
+| `features` | capability flags `{ email, twitterAuth, calls, imageFilter }` — `email` from a valid SMTP configuration (`SMTP_HOST` set), `twitterAuth` from configured secrets, `calls` from whether the mediasoup service is deployed, `imageFilter` from whether the server-side NSFW filter is enabled (gates the client pre-upload warning) |
 | `imageFilterThreshold` | this instance's `IMAGE_MODERATION_THRESHOLD` (0 < t ≤ 1, default `0.8`), so the browser pre-check warns at the confidence the server actually rejects at; ignored when `features.imageFilter` is false |
 | `giphyApiKey` | Giphy key (empty hides the GIF picker) |
 | `walletConnectProjectId` | WalletConnect Cloud project id |
@@ -139,13 +141,18 @@ Safe to re-run: existing files are never overwritten. It:
    works for a local test instance. `--tls-internal` writes
    `CG_TLS_MODE=internal` (see [3.4](#34-tls-caddy)), accepts `-` (or an empty
    string) for the unused ACME email, and requires the IP argument — detection
-   would return the router's WAN address, not the one LAN browsers reach.
+   would return the router's WAN address, not the one LAN browsers reach. It
+   also starts the instance with email off (`CG_ENABLE_MAIL=false`, empty
+   `SMTP_HOST`), so a test instance never delivers mail to the internet.
 2. Generates `docker/.env.selfhost` (mode `600`) with fresh random secrets
    (`openssl rand -hex`): the four Postgres passwords (`PG_SU_PASSWORD`,
    `PG_WRITER_PASSWORD`, `PG_READER_PASSWORD`, `PG_MEDIASOUP_PASSWORD`),
-   `REDIS_PASSWORD`, `REDIS_SECRET`, `S3_SECRET`. It also seeds resource-tuning
-   defaults, bot-account limits, blockchain RPC endpoints and empty slots for
-   every optional integration. `BUILDER_UID`/`BUILDER_GID` are the invoking
+   `REDIS_PASSWORD`, `REDIS_SECRET`, `S3_SECRET`, plus `SMTP_PASSWORD` — the
+   app's login for the built-in mail relay, which the file switches on
+   (`CG_ENABLE_MAIL=true`, `SMTP_HOST=mail`, see [3.9](#39-email-smtp-and-the-mail-relay);
+   off with `--tls-internal`).
+   It also seeds resource-tuning defaults, bot-account limits, blockchain RPC
+   endpoints and empty slots for every optional integration. `BUILDER_UID`/`BUILDER_GID` are the invoking
    user's ids — `0` when run as root, which the builder image accepts (it only
    creates a user/group for ids the `node:26-trixie` base doesn't have).
 3. Generates `docker/s3_config/s3.selfhost.json` with an S3 secret matching
@@ -167,19 +174,21 @@ offers, driving both backend chain workers and the UI chain lists.
 
 Wraps `docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml`
 (falling back to `docker-compose` v1). It also derives `COMPOSE_PROFILES` from
-the two optional-service switches (see [3.8](#38-optional-services-calls-and-blockchain)).
+the optional-service switches (see [3.8](#38-optional-services-calls-and-blockchain)
+and [3.9](#39-email-smtp-and-the-mail-relay)).
 Commands:
 
 | Command | Action |
 |---|---|
 | `build` | builds the builder image, installs frontend deps, sets a random build id, then type-checks, lints, builds and HTML-rewrite-checks the frontend in one builder run (`yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite`, `DEPLOYMENT=prod`, `NODE_OPTIONS=--max-old-space-size=4096`), rsyncs `build/` into `nginx/dist`, builds the nginx / backend / db images, and generates `vapid_keys.json` for web push if missing |
-| `up` | `compose up -d --remove-orphans` then `ps` |
+| `up` | warns about mail settings that can't work together (see [3.9](#39-email-smtp-and-the-mail-relay)), then `compose up -d --remove-orphans` and `ps` |
 | `down` | stop the stack (`--remove-orphans`) |
 | `logs [service]` | follow logs (all, or one service) |
 | `ps` | container status |
 | `stats` | `docker stats --no-stream` |
 | `compose <args>` | pass-through to docker compose |
-| `update` | `git pull` + rebuild + restart |
+| `update` | `git pull` + rebuild + the mail-settings check + restart |
+| `mail-dns` | prints the SPF, DKIM, DMARC and PTR records the built-in mail relay needs (see [3.9](#39-email-smtp-and-the-mail-relay)) |
 
 The frontend build is **Vite** (see
 [docs/infrastructure](../infrastructure/README.md#frontend-build-steps) for the
@@ -207,9 +216,11 @@ headroom is thin
 
 ### 3.3 Services (`docker-compose.selfhost.yml`)
 
-All services share the internal `cryptogram` network. State lives in named
-volumes (`pgdata`, `seaweedfs-data`, `caddy-data`, `caddy-config`,
-`builder-cache`).
+All services share the internal `cryptogram` network, except the mail relay,
+which sits on two networks of its own: `mail-relay` (`internal: true`; only
+`api`, `job-runner` and `mail` join it) and `mail-egress` (its way out to port
+25). State lives in named volumes (`pgdata`, `seaweedfs-data`, `caddy-data`,
+`caddy-config`, `builder-cache`, `mail-data`).
 
 | Service | Image | Role |
 |---|---|---|
@@ -225,6 +236,7 @@ volumes (`pgdata`, `seaweedfs-data`, `caddy-data`, `caddy-config`,
 | `job-runner` | `cryptogram/backend` | scheduled jobs incl. Spark accrual (`jobs.js`) |
 | `mediasoup` | `cryptogram/backend` | WebRTC media (`mediasoup.js`); publishes `40000-40099` over UDP **and** TCP (each worker's `WebRtcServer` listens on `40000+n` for both; TCP is the ICE fallback for UDP-blocking networks); uses the internal self-signed cert and `MEDIASOUP_ANNOUNCED_IP=CG_PUBLIC_IP`. Starts only after `migrate-db` completed successfully — its `mediasoup` DB role is created by a migration (`1689160339881-addMediasoupRole`). Compose profile `calls` — optional, see [3.8](#38-optional-services-calls-and-blockchain) |
 | `onchain` | `cryptogram/backend` | blockchain indexer / balance & role listener (`onchain.js`); receives all `QUIKNODE_*`/RPC and staking env. Compose profile `blockchain` — optional, see [3.8](#38-optional-services-calls-and-blockchain) |
+| `mail` | `foxcpp/maddy:0.9.6` (pinned by digest) | send-only SMTP relay: accepts the app's mail on `mail-relay` port 587, DKIM-signs, queues and delivers to the recipients' MX. No published port. Compose profile `mail` — optional, see [3.9](#39-email-smtp-and-the-mail-relay) |
 | `cg-builder` | `commonground/node` | build-only helper container (not a runtime service) |
 
 The seven runtime `cryptogram/backend` services are the same image invoked with
@@ -284,11 +296,17 @@ in `img-src` and `connect-src`, which is what the mini-app actually uses it for
 | 4443 | tcp | call signalling (wss) — only with calls enabled |
 | 40000–40099 | udp+tcp | WebRTC media (voice/video); TCP is the fallback for clients whose network blocks UDP — only with calls enabled |
 
+Outbound, the built-in mail relay needs **port 25** to the internet (only with
+`CG_ENABLE_MAIL=true`; nothing inbound) — see [3.9](#39-email-smtp-and-the-mail-relay).
+
 ### 3.7 Backups
 
 All durable state is in two volumes: `pgdata` (database) and `seaweedfs-data`
-(uploaded media). Redis is intentionally unpersisted (sessions and ephemeral
-data only). See `docker/SELFHOST.md` for an example `pg_dump` command.
+(uploaded media) — plus, with the mail relay enabled, `mail-data`, whose DKIM
+private key should be kept (a new key means publishing a new DKIM record; the
+queued mail in it is short-lived). Redis is intentionally unpersisted (sessions
+and ephemeral data only). See `docker/SELFHOST.md` for an example `pg_dump`
+command.
 
 Since the 3-to-1 SeaweedFS consolidation, blobs and filer metadata live in the
 same `/data` tree, so a filesystem snapshot of the single `seaweedfs-data`
@@ -346,6 +364,100 @@ inside the `api` process and never calls the onchain service.
 Caddy keeps its `CG_DOMAIN:4443` site block either way; with calls disabled
 nothing connects to it (the block is inert, not an error).
 
+The mail relay has a profile of its own (`mail`, switch `CG_ENABLE_MAIL`), with
+the opposite default — see [3.9](#39-email-smtp-and-the-mail-relay).
+
+### 3.9 Email (SMTP and the `mail` relay)
+
+The backend sends every mail over SMTP (nodemailer; configuration and the mail
+types in [docs/email-notifications](../email-notifications/README.md)). The
+`api` and `job-runner` services get `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`
+(`tls` | `starttls` | `none`), `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM` and
+`EMAIL_FROM_NAME` from `.env.selfhost`; an empty `SMTP_HOST` disables email.
+Two ways to give it an SMTP server:
+
+**Built-in relay — `CG_ENABLE_MAIL=true`** (what `init.sh` writes). The `mail`
+service (profile `mail`) runs [maddy](https://maddy.email) with the config in
+`docker/mail/` (`maddy.conf`, `outbound.conf`, `entrypoint.sh`, bind-mounted
+read-only):
+
+- The app submits on port 587 over the `mail-relay` network with
+  `SMTP_HOST=mail`, `SMTP_SECURITY=none` and the relay login `SMTP_USER` /
+  `SMTP_PASSWORD` (generated by `init.sh`). The same two variables configure
+  the relay side: `entrypoint.sh` hashes the password for maddy's
+  `pass_table` at every start. Plaintext on that hop is deliberate — the
+  network is internal and reachable only by `api`, `job-runner` and `mail`.
+- Sender restrictions: unauthenticated submissions are refused, and an
+  authenticated one only for envelope and `From` addresses in `MAIL_DOMAIN`
+  (`authorize_sender`; default `CG_DOMAIN`, must equal the domain of
+  `EMAIL_FROM`).
+- DKIM: maddy signs every message with the key
+  `/data/dkim_keys/<MAIL_DOMAIN>_<MAIL_DKIM_SELECTOR>.key` (selector default
+  `cg`), which it generates (RSA 2048) on the relay's first start. The key
+  exists only in the `mail-data` volume — never in an app container. The
+  signature covers the RFC 8058 `List-Unsubscribe`/`List-Unsubscribe-Post`
+  headers too.
+- Delivery: a persistent queue (`/data/outbound_queue` in `mail-data`) retries
+  temporary failures (greylisting, outages) with exponential back-off, 20
+  attempts over about three days; `outbound.conf` delivers to the recipient's
+  MX over port 25, IPv4 only (`force_ipv4`, so the PTR check runs against the
+  IPv4 address), requiring TLS towards the MX (`min_tls_level encrypted`) and
+  honouring MTA-STS. The relay is the only component that sends to port 25
+  — by design, not enforced: `api` and `job-runner` have ordinary outbound
+  access (`cryptogram` network). To enforce it, block outbound 25/tcp on the
+  host for everything but the relay container (e.g. a rule in the
+  `DOCKER-USER` iptables chain).
+- Bounces: a permanent failure becomes a delivery status notification to
+  `EMAIL_FROM`; the queue's `bounce` block routes it through `bounce_queue`
+  (retries while the job-runner is down) to the job-runner's bounce receiver
+  (`target.smtp` to `job-runner:2525` over `mail-relay`, same relay login).
+  The job-runner is also on `cryptogram`, so the receiver only accepts
+  connections from the address(es) the host name `mail` resolves to. Bounces
+  are recorded in `email_bounces`; an address is marked unverified (which
+  stops all further notification mail to it) only after two permanent
+  bounces at least 24 h apart, and never during a burst of bounces, which
+  points to a problem of the server itself (blocklist, SPF/DKIM/DMARC, PTR)
+  and is logged with a `!!!` warning — see
+  [docs/email-notifications](../email-notifications/README.md#bounces). The
+  `job-runner` runs the receiver when `MAIL_BOUNCE_RECEIVER=true`, which the
+  compose file sets from `CG_ENABLE_MAIL`.
+- Limits: submissions are capped at 50 messages/s and 10 in parallel; maddy
+  has no cap on the queue size. Per-user send limits live in the app
+  ([docs/email-notifications](../email-notifications/README.md#send-limits)).
+- `MAIL_HOSTNAME` (default `CG_DOMAIN`) is the name it greets other servers
+  with; the server IP's PTR record must point to it.
+- The container runs read-only with all capabilities dropped and no published
+  port. maddy logs two "insecure configuration" warnings at start (no TLS,
+  plaintext AUTH on the listener) — expected for the internal-only listener.
+
+`./selfhost/selfhost.sh mail-dns` reads the generated public key (a throwaway
+container on `mail-data`) and prints the records to publish: SPF
+(`v=spf1 ip4:<CG_PUBLIC_IP> -all`), the DKIM TXT record (split into ≤ 250
+character strings for zone files), a starting DMARC policy (`p=none`, strict
+alignment) and the PTR/forward-confirmation pair. Two things outside DNS decide
+whether the relay delivers at all: the hoster must allow **outbound port 25**
+(many block it for new servers until asked), and a fresh IP has no sending
+reputation — start with low volume and watch the logs
+(`./selfhost/selfhost.sh logs mail`).
+
+**External SMTP server — `CG_ENABLE_MAIL=false`.** No relay container; set the
+`SMTP_*` values to the provider's (e.g. `SMTP_SECURITY=starttls`, port 587, or
+`tls` on 465). SPF/DKIM are then the provider's business, and so are bounces:
+they go to the provider's bounce handling or the `EMAIL_FROM` mailbox, and the
+app does not read them.
+
+Unlike calls and blockchain, an **unset** `CG_ENABLE_MAIL` counts as off, so
+upgrading an instance whose `.env.selfhost` predates the switch never starts
+sending mail from the server before its DNS is set up. `selfhost.sh up` (and
+`update`) warns, without failing, when the switches contradict each other:
+relay on but `SMTP_HOST` not `mail`, relay on without a relay login, a sender
+(`EMAIL_FROM`, or its default `no-reply@CG_DOMAIN`) outside `MAIL_DOMAIN`,
+`SMTP_HOST=mail` with the relay off, `SMTP_SECURITY=none` towards a host that
+is neither loopback nor a single-label service name, or leftover
+`SENDGRID_API_KEY` / `MAILCHIMP_API_KEY` values (both unused since email moved
+to SMTP) — with an explicit "email is disabled" warning when `SMTP_HOST` is
+still empty (the SendGrid-over-SMTP recipe is in `docker/SELFHOST.md`).
+
 ---
 
 ## 4. Graceful degradation of optional integrations
@@ -359,14 +471,16 @@ be dropped at deploy time are covered separately in
 [3.8](#38-optional-services-calls-and-blockchain). The `features` flags
 (`email`, `twitterAuth`, `calls`) are computed in `srv/util/instanceConfig.ts`;
 the nginx path computes the equivalent `CG_FEATURE_*` booleans from
-`docker-compose.selfhost.yml` (`${SENDGRID_API_KEY:+true}` etc.).
+`docker-compose.selfhost.yml` (`${SMTP_HOST:+true}` etc.). `CG_FEATURE_EMAIL`
+only checks that `SMTP_HOST` is non-empty, so an otherwise invalid SMTP
+configuration shows the email UI on nginx-served pages while the backend has
+email off (the `api` startup log says why).
 
 | Env key(s) | Feature | Behaviour when unset |
 |---|---|---|
-| `SENDGRID_API_KEY`, `EMAIL_FROM` | email verification, one-time-code login, event & newsletter mails | password/passkey/wallet login still work; OTP login and newsletter UI hidden |
+| `SMTP_HOST` (+ `SMTP_*`, `EMAIL_FROM`; see [3.9](#39-email-smtp-and-the-mail-relay)) | email verification, one-time-code login, event & newsletter mails | password/passkey/wallet login still work; OTP login and newsletter UI hidden |
 | `CAPTCHA_PROVIDER`, `ALTCHA_HMAC_KEY` / `CG_RECAPTCHA_SITE_KEY`, `GOOGLE_RECAPTCHA_SECRET_KEY` | signup captcha | fail-closed default: self-hosted ALTCHA (no external keys needed); reCAPTCHA auto-selected when its secret is set; `off` only explicit (see `docker/SELFHOST.md`) |
 | `TWITTER_API_KEY`, `TWITTER_API_SECRET` (+ OAuth2 vars) | Twitter/X login and account linking | X buttons hidden |
-| `MAILCHIMP_API_KEY`, `MAILCHIMP_LIST_ID` | CG-updates newsletter list sync | subscription preference stored locally only |
 | `CG_GIPHY_API_KEY` | GIF picker in the composer | GIF picker hidden |
 | `CG_WALLETCONNECT_PROJECT_ID` | WalletConnect wallets (QR / mobile deep-link) | injected wallets (MetaMask etc.) still work |
 

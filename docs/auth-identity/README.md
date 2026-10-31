@@ -1,5 +1,5 @@
-> Status: verified against commit 40f4a0b0f, 2026-08-04; `emailEnabled()` reference against
-> commit 69999fa20 (chore/env-template), 2026-10-31
+> Status: verified against commit 40f4a0b0f, 2026-08-04; `emailEnabled()` reference and email
+> send limits against commit e44dac1, 2026-10-31
 
 # Authentication & Identity
 
@@ -236,9 +236,13 @@ credentials via `userHelper.getOwnDataByCgProfileNameOrEmailAndPassword()`
 Passwordless email login:
 
 1. `POST /User/sendOneTimePasswordForLogin` (`srv/api/user.ts:1494-1519`): only allowed when logged
-   out and when email is enabled (`emailEnabled()` requires a real `SENDGRID_API_KEY`,
-   `srv/api/emails.ts:18-20`); otherwise it throws `EMAIL_DISABLED`. It generates a token via
-   `emailHelper.generateVerificationEmailToken(userId)` and emails it.
+   out and when email is enabled (`emailEnabled()` in `srv/api/emails.ts` requires a valid SMTP
+   configuration, `SMTP_HOST` set — see [docs/email-notifications](../email-notifications/README.md));
+   otherwise it throws `EMAIL_DISABLED`. Send limits apply first — 10 per hour per client IP
+   (IPv4 address / IPv6 /64) and, per target address, one per minute and 10 per hour,
+   `RATE_LIMIT_EXCEEDED` beyond
+   (`srv/util/mailSendLimits.ts`, see [docs/email-notifications](../email-notifications/README.md#send-limits)).
+   It generates a token via `emailHelper.generateVerificationEmailToken(userId)` and emails it.
 2. `POST /User/login` with `{ type: "verificationCode", email, code, device }` verifies the code via
    `userHelper.getOwnDataByEmailAndVerificationCode()` (`srv/api/user.ts:299-311`) and creates a
    device.
@@ -429,7 +433,9 @@ per `(type, walletIdentifier)`; `loginEnabled` controls whether it can be used a
 ### Email verification
 
 Independent of any social account, an email can be verified:
-`POST /User/requestEmailVerification` emails a token; `POST /User/verifyEmail`
+`POST /User/requestEmailVerification` emails a token (send limits: 10/h per client IP, 5/h per
+target address, 5/h per account — [docs/email-notifications](../email-notifications/README.md#send-limits));
+`POST /User/verifyEmail`
 (`srv/api/user.ts:1471-1492`) validates `(email, token)` and, on success, emits a
 `cliUserOwnData { emailVerified: true }` event.
 

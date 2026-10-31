@@ -72,21 +72,62 @@ id.app.cg ──┤          (develop, gateway mode)   SeaweedFS             │
     on the test VM; the final dump is taken on move day.
 12. app.cg is kept only for the transition period.
 
+2026-11-01:
+
+13. **Node 26** (LTS since 2026-10, support until ~2029) for the new deployment;
+    Node 24 is the fallback only if mediasoup or a native module blocks.
+14. **Renovate runs as the Mend GitHub app** (free for public repos, no own
+    infrastructure, opens PRs only — nothing auto-merges).
+
 ## Phases
 
 Order: P0 → P1 → (P2 ∥ P3) → P4 → P5 → P6. Work inside a phase runs in parallel
 branches. Each item follows the usual cycle (branch from `develop` → implement →
 independent review → maintainer go → merge → delete branch).
 
+### Lanes (how the work is parallelized)
+
+Claude coordinates: work packages go to implementing agents, each result gets an
+independent review, then a test-VM acceptance where it touches the stack, then
+the maintainer's go for merge + push (ready branches are presented in batches).
+Lanes are cut by **file ownership**, so parallel branches rarely conflict:
+
+| Lane | Owns | Sequence |
+|---|---|---|
+| **A Infra** | `docker/`, Dockerfiles, compose files, Caddy, shell scripts | F1+F2 → F3 ∥ F4 → F5 → F7 → F8 |
+| **B Dependencies** | `package.json` / `yarn.lock` of all workspaces | after F1+F2 are merged (age gate, Node 26): F6 → M1 → M2 → M3 → M4 |
+| **C Move features** | backend auth/APIs, login and account UI | starts now: G8 → G4 → G2+G3 → G1 → G5, G6, G7, G9 |
+| **D Security** | the private findings list (not in this repo) | starts now: S1 triage; fixes are slotted into A/B/C |
+| **Maintainer** | outside the repo | Renovate app, server order, DNS, legal (S6), production dump |
+
+Serialization points (one at a time, coordinated by Claude):
+
+- **Dev stack**: every checkout on the dev VM shares the compose project `docker`
+  (volumes, ports), so only one lane runs the stack; agents in worktrees build
+  and test in throwaway containers with their own project names.
+- **Builds**: a frontend build peaks at ~4 GB; the dev VM (16 GB, 4 cores) takes
+  about two concurrent heavy builds.
+- **Test VM**: one acceptance run at a time.
+- **Lockfile**: lane C's new packages (e.g. nodemailer, WebAuthn) land as small
+  separate commits that are merged first, so lane B rebases on them.
+- **Merges to `develop`**: one at a time; open branches rebase afterwards.
+
+Start set: A (F1+F2), C (G8), D (S1) — two to three implementing agents at once,
+plus reviews. Lane B starts when F1+F2 are merged.
+
 ### P0 — Housekeeping
 
-- [ ] This roadmap committed; `ROADMAP_dependency-updates.md`,
+- [x] This roadmap committed; `ROADMAP_dependency-updates.md`,
   `ROADMAP_REFERENCE_CLIENT.md` and `ROADMAP_IMAGE_FILTER.md` dissolved into
   docs/ and TODO.md; hosted-Swarm-only TODO items marked superseded.
 - [x] Issue #53 follow-up merged (`a5633d5be`); merged remote branches deleted
   (12 on 2026-10-28).
-- [ ] Delete the six remaining remote branches (squash-merged into develop,
+- [x] Delete the six remaining remote branches (squash-merged into develop,
   verified 2026-10-31 by a trial merge that leaves develop's tree unchanged).
+- [x] `docker/.env` untracked: template `docker/.env.example` + first-run
+  generator `docker/ensureEnv.sh` (merged 2026-10-31, `3925a78`).
+- [x] Dev VM access to GitHub via per-repo deploy keys; `main`/`develop`
+  protected against force pushes and deletion (ruleset).
 - [ ] Reply to issue #87 (external contributor, call reliability) — draft by
   Claude, posted by the maintainer. Mention the ICE-TCP and startup-order fixes
   merged 2026-10-28.
@@ -95,14 +136,14 @@ independent review → maintainer go → merge → delete branch).
 
 - [ ] **F1 Update policy.** Policy document in docs/infrastructure (7-day rule,
   exception log, mechanisms: Yarn `npmMinimalAgeGate`/`npmPreapprovedPackages`,
-  Renovate `minimumReleaseAge`). Renovate config (hosting: Mend app vs
-  self-hosted — decide). `yarn --immutable` in every Dockerfile; lockfile for
+  Renovate `minimumReleaseAge`). Renovate config for the Mend GitHub app
+  (decision 14; the maintainer installs the app). `yarn --immutable` in every Dockerfile; lockfile for
   `docker/hardhat/node`; narrow `approvedGitRepositories`. Checksums for binary
   downloads where feasible (mediasoup worker, Chrome for Testing for puppeteer,
   bcrypt prebuilds).
-- [ ] **F2 Base images and tooling.** Pin every image by version + digest. Node:
-  latest 24.x or move to Node 26 (LTS since 2026-10) — evaluate against mediasoup
-  and native modules. Debian base `bookworm` → `trixie`
+- [ ] **F2 Base images and tooling.** Pin every image by version + digest. Node 26
+  (decision 13) — verify mediasoup and the native modules (bcrypt, sharp,
+  onnxruntime) build and run. Debian base `bookworm` → `trixie`
   (TODO(verify): bookworm's regular security support status). apt via dated
   snapshot or exact versions. SeaweedFS and Caddy current. Yarn 4.17.1 → current
   4.x (update the `packageManager` field incl. its hash) — all under the 7-day
@@ -277,8 +318,6 @@ and a browser pass on the test VM:
 
 ## Open questions
 
-- Node 24 vs Node 26 for the new deployment (F2).
-- Renovate hosting: Mend GitHub app or self-hosted (F1).
 - Length of the transition period (P6).
 - Stricter sign-up requirements against bots — which, and for whom (G3).
 - Production storage backend and data volume; who produces the dump and how (G5,
@@ -288,7 +327,7 @@ and a browser pass on the test VM:
 
 | VM | Purpose | Lifecycle |
 |---|---|---|
-| **dev VM** | daily development: checkout, dev stack, Claude Code, VS Code Remote-SSH | long-lived |
+| **dev VM** | daily development: checkout, dev stack, Claude Code, VS Code Remote-SSH (4 cores, 16 GB RAM) | long-lived |
 | **test VM** | self-host acceptance, rehearsal, backup/restore | disposable: snapshot of a fresh Ubuntu Server 26.04, reverted before each from-scratch run |
 
 Test VM sizing: ≥ 4 cores, 8 GB RAM, 40 GB disk; SSH key login for a sudo user;

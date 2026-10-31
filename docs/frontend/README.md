@@ -6,7 +6,10 @@
 > constraints" against commit 935232158, 2026-10-31; dev env file pointer
 > against commit 64e5ab573 (chore/env-template), 2026-10-31; builder image
 > (Node 26) against commit 5f73578, 2026-10-31; "Dependency pins and
-> constraints" verified against commit ff0da06, 2026-10-31
+> constraints" verified against commit ff0da06, 2026-10-31; session keepalive,
+> the `passkeyRpId` / `features.passkeys` instance fields, `cgidUrl` and the
+> auth UI (AuthFlow, `/login`, passkeys, step-up, plugin origin guard, §10)
+> against commit 54e2d73, 2026-10-31
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -208,7 +211,10 @@ Complex, self-contained UI sections that combine molecules and atoms with signif
 | `UserSocialLinksEditor` | Edit social media links |
 | `UserSettings` / `UserSettingsList` / `UserSettingsModalContent` | User settings panels. `UserSettingsModalContent` mounts the personal **Bots** page (`BotsPage` + `BotEditor`). |
 | `UserSettingsModalContent/BotsPage` | Personal bot management: `BotsPage` lists the user's bots; `BotEditor` creates/edits a bot, issues/revokes tokens, and configures scopes. |
-| `UserOnboarding` | New user onboarding wizard overlay |
+| `UserOnboarding` | Onboarding modal: `AuthFlow` (step `start`), then the tail steps in `Splash` ("Welcome back" after a login; newsletter, push, PWA install, finished after a sign-up). Opened by every login / sign-up entry point via `setUserOnboardingVisibility(true)`. See §10. |
+| `AuthFlow` | Login and sign-up (§10): one login form, sign-up with email verification before the account exists. Rendered by `UserOnboarding` and `LoginView`. |
+| `ReauthDialog` | "Confirm it's you to {action}" step-up dialog (passkey, password, sign-in wallet), hosted by `StepUpProvider` (§10). |
+| `UserSettingsModalContent/PasskeySettings` | The account's passkeys on this instance: name, created, last used, synced; rename, remove, add (§10). |
 | `SwapAccount` | Account switching UI |
 | `WalletsEditor` / `WalletsManagement` | Wallet management UI |
 | `ConnectedWalletsModal` | Modal showing connected wallets |
@@ -334,6 +340,7 @@ Views are full pages composed of templates/organisms. They live in `src/views/` 
 
 | View | Route | Purpose |
 |---|---|---|
+| `LoginView` | `/login` (`?mode=signup`, `?next=<same-site path>`) | The login / sign-up flow (`AuthFlow`) as a page (rendered outside main layout); after a sign-up the onboarding modal continues with its tail steps |
 | `TwitterCallbackView` | `/twitter-login` | Twitter OAuth callback handler (rendered outside main layout) |
 | `VerifyEmailView` | `/verify-email` | Email verification handler (rendered outside main layout) |
 
@@ -366,7 +373,7 @@ Providers are composed across three levels:
 2. `src/App.tsx` `App()` wraps the app in `DarkModeProvider`.
 3. `src/App.tsx` `Inner()` composes the large provider stack. Nesting order matters -- outer providers are available to inner ones.
 
-The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `WagmiProvider`, `QueryClientProvider` (TanStack Query, required by wagmi 2), `RainbowKitProvider`, `AuthKitProvider` (Farcaster), `WindowSizeProvider`, `SnackbarContextProvider`, `OwnDataProvider`, `PasskeyProvider`, `MobileLayoutProvider`, `NotificationProvider`, `CommunitySidebarProvider`, `ExternalModalProvider`, `UserOnboardingProvider`, `CreateCommunityModalProvider`, `LoginWithKeyphraseProvider`, `CopiedToClipboardDialogProvider`, `CallDevicesProvider`, `CallProvider`, `CommunityProvider`, `CommunityListViewProvider`, `UserSettingsProvider`, `CommunityModerationProvider`, `ReportModalProvider`, `SidebarDataDisplayProvider`, `PluginDetailsModalProvider`, `UniversalProfileProvider`, `TwitterLoginProvider`, `RoleClaimedProvider`, `EmailConfirmationProvider`, `CommunityJoinedProvider`, `CommunityOnboardingProvider`, `CaptchaContextProvider`, `UserOnchainProvider`, `PluginIframeProvider` (innermost), which renders `UserInfoManager`, `ConnectionStatusIndicator`, and `RoutedContent`.
+The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `WagmiProvider`, `QueryClientProvider` (TanStack Query, required by wagmi 2), `RainbowKitProvider`, `AuthKitProvider` (Farcaster), `WindowSizeProvider`, `SnackbarContextProvider`, `OwnDataProvider`, `PasskeyProvider`, `StepUpProvider`, `MobileLayoutProvider`, `NotificationProvider`, `CommunitySidebarProvider`, `ExternalModalProvider`, `UserOnboardingProvider`, `CreateCommunityModalProvider`, `LoginWithKeyphraseProvider`, `CopiedToClipboardDialogProvider`, `CallDevicesProvider`, `CallProvider`, `CommunityProvider`, `CommunityListViewProvider`, `UserSettingsProvider`, `CommunityModerationProvider`, `ReportModalProvider`, `SidebarDataDisplayProvider`, `PluginDetailsModalProvider`, `UniversalProfileProvider`, `TwitterLoginProvider`, `RoleClaimedProvider`, `EmailConfirmationProvider`, `CommunityJoinedProvider`, `CommunityOnboardingProvider`, `CaptchaContextProvider`, `UserOnchainProvider`, `PluginIframeProvider` (innermost), which renders `UserInfoManager`, `ConnectionStatusIndicator`, and `RoutedContent`.
 
 #### Core Infrastructure Providers
 
@@ -384,11 +391,12 @@ The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `Wa
 |---|---|
 | `OwnDataProvider` | Provides the logged-in user's data (`ownUser`), own communities list, own wallets, and chats. Uses `useLiveQuery` from Dexie to reactively read from IndexedDB. Also provides `navigateToChatOrCreateNewChat`. Exposes `useOwnUser`. |
 | `UserDataProvider` | Not a Context provider mounted in the tree -- provides user data via hooks (`useUserData`, `useMultipleUserData`). Uses `useLiveQuery` with an in-memory `userCacheMap` for fast lookups. Located in `src/context/UserDataProvider.tsx`. |
-| `UserOnboardingProvider` | Manages new user onboarding wizard state. |
+| `UserOnboardingProvider` | Onboarding modal state: visibility, step (`start` = AuthFlow, then the tail steps), newsletter state; `continueAfterSignup(email)` opens the tail steps after a sign-up on `/login`. |
 | `UserSettingsProvider` | User-level settings state. |
 | `UserOnchainProvider` | User's on-chain (blockchain) data. |
-| `PasskeyProvider` | WebAuthn passkey authentication state. |
-| `LoginWithKeyphraseProvider` | Mnemonic/keyphrase login flow state. |
+| `PasskeyProvider` | Passkeys for the UI (§10): `supported`, `autofillSupported`, `status`, `register`, `login`, `armAutofill`, `reauthenticate`; actions resolve to `ok` / `cancelled` / `error`. On a legacy CG ID instance it wraps `LegacyCgIdPasskeyProvider` (`LegacyCgIdPasskey.tsx`, the CG ID popup) and only `login` works. |
+| `StepUpProvider` | Hosts `ReauthDialog`; registers it with `stepUpManager` (used by `BaseApiConnector` on `REAUTH_REQUIRED`) and offers `useStepUp().ensureRecentAuth(action)` for screens that must confirm before a ceremony of their own. |
+| `LoginWithKeyphraseProvider` | 12-word recovery phrase input state (legacy CG ID instances only, AuthFlow "More"). |
 | `EmailConfirmationProvider` | Email confirmation flow state. |
 | `TwitterLoginProvider` | Twitter OAuth login flow state. |
 
@@ -530,6 +538,7 @@ All API communication goes through connector classes that extend `BaseApiConnect
 - Sends/receives JSON by default; supports `ArrayBuffer` for binary uploads.
 - Response format: `{ status: "OK", data: T }` or `{ status: "ERROR", error: string }`.
 - On `LOGIN_REQUIRED` error, automatically triggers `loginManager.loginRequiredErrorHandler()` and retries the request once.
+- On `REAUTH_REQUIRED` (a sensitive action, docs/auth-identity §8), asks `stepUpManager` (`src/data/auth/stepUp.ts`) to open the "Confirm it's you" dialog and retries the request once after a confirmation; when cancelled (or no dialog is mounted) the call rejects with `REAUTH_REQUIRED`. Concurrent requests share one dialog. Pinned by `baseConnector.test.ts`.
 
 #### Domain-Specific Connectors
 
@@ -550,7 +559,8 @@ All API communication goes through connector classes that extend `BaseApiConnect
 | `reportApi` | `report.ts` | Reports | `createReport` (content reporting) |
 | `luksoApi` | `lukso.ts` | LUKSO | LUKSO blockchain operations |
 | `twitterApi` | `twitter.ts` | Twitter | Twitter OAuth operations |
-| `cgidApi` | `cgid.ts` | CG Identity | Session management (`ensureSession`) |
+| `passkeyApi` | `passkey.ts` | Passkey | `registrationOptions`, `verifyRegistration`, `authenticationOptions`, `list`, `rename`, `remove` (main-origin passkeys; not mounted on a legacy CG ID backend) |
+| `cgidApi` | `cgid.ts` | CG Identity | Legacy CG ID app calls (served only by a legacy CG ID / gateway backend); the session keepalive is `userApi.ensureSession()` (`User/ensureSession`) |
 
 ### App State Managers (`src/data/appstate/`)
 
@@ -590,8 +600,9 @@ Manages the Socket.IO connection:
 Manages authentication:
 - Stores current user (`userId`, `deviceId`) in `localStorage`.
 - Uses WebCrypto API for device keypair generation and signing (ECDSA P-384).
-- Supports multiple login methods: device keypair, password, wallet (SIWE), Twitter, LUKSO, Farcaster, passkey, email verification code.
-- `autoLogin()`: attempts login with stored device keypair or legacy mnemonic.
+- Supports multiple login methods: device keypair, password, wallet (SIWE), Twitter, LUKSO, Farcaster, passkey (`{ account: 'passkey', authenticationResponse }` → `User/login {type:'passkey'}`; `{ account: 'passkey-legacy' }` → `passkey-success` on a legacy CG ID instance), email verification code.
+- An interactive login and `createUser` mark the session as freshly authenticated for `stepUpManager`; a device-key re-login, `logout()` and a logout in another tab clear it.
+- `autoLogin()`: attempts login with the stored device keypair; the deprecated mnemonic re-login (`CRYPTOGRAM_USER_MNEMONIC`) only runs on a legacy CG ID instance — elsewhere the stored phrase is removed.
 - `setupAfterLogin()`: initializes all Dexie databases with login response data.
 - `logout()`: clears all databases, removes device keypair, resets state.
 - Cross-tab login coordination via `BroadcastChannel('CG_LOGIN_STATE')`.
@@ -647,7 +658,7 @@ A custom `BrowserRouter` replacement that wraps navigation state updates in `sta
 The `RoutedContent` component defines all top-level routes inside a responsive layout wrapper:
 
 - **Layout selection**: Based on `isMobile` / `isTablet` from `WindowSizeProvider`, wraps routes in `MobileLayout`, `TabletLayout`, or `DesktopLayout`.
-- **Routes outside layout**: `TwitterCallbackView` (`/twitter-login`) and `VerifyEmailView` (`/verify-email`) render without the main layout.
+- **Routes outside layout**: `TwitterCallbackView` (`/twitter-login`), `VerifyEmailView` (`/verify-email`) and `LoginView` (`/login`) render without the main layout.
 
 Key route structure (paths are derived from `getUrl(...)` / `config.URL_*`):
 ```
@@ -1071,15 +1082,50 @@ Recognized fields include:
 |---|---|
 | `deployment` | Semantic mode (`prod` / `staging` / `dev`) — drives feature flags, chains, captcha |
 | `appUrl` | Public base URL of the instance |
-| `cgidUrl` | Base URL of the CG ID app (including hash-router prefix) |
+| `cgidUrl` | Legacy CG ID (gateway) instances only: base URL of the CG ID app (including hash-router prefix) |
+| `passkeyRpId` | WebAuthn RP ID of the passkeys on this origin (absent on a legacy CG ID instance) |
 | `recaptchaSiteKey` | reCAPTCHA v2 site key for this instance |
 | `activeChains` | Chains the instance supports (keys of the available-chain set) |
-| `features` | Capability flags (`email`, `twitterAuth`, `calls`) derived from which server secrets/services are configured; an absent flag means the feature is available. `calls: false` (no mediasoup service) hides the call section in `CallList` / `StartCallButton` and the call-typed event paths in `ScheduleEventModal` / `AttendEventButton` |
+| `features` | Capability flags (`email`, `twitterAuth`, `calls`, `imageFilter`, `passkeys`) derived from which server secrets/services are configured; an absent flag means the feature is available. `calls: false` (no mediasoup service) hides the call section in `CallList` / `StartCallButton` and the call-typed event paths in `ScheduleEventModal` / `AttendEventButton` |
 | `giphyApiKey` | Giphy key for the GIF picker (empty disables it) |
 | `walletConnectProjectId` | WalletConnect Cloud project id for this instance |
 
 When the global is absent (official app and local dev), callers fall back to the legacy domain-based detection, so those environments are unaffected. `config.ts`, `data/util/urls.ts`, and `App.tsx` read this config to select URLs, the active chain set, wallet RPC providers, and captcha keys.
 
+`src/data/auth/authMode.ts` derives the passkey mode from it: an instance is a **legacy CG ID** (gateway) instance only when it carries `cgidUrl` (without an instance config: the app.cg / staging.app.cg hosts); every other instance runs passkeys on its own origin, bound to `passkeyRpId` — unless `features.passkeys: false`, which means passkeys are unavailable there (`PasskeyProvider.supported` is false). `urlConfig.CGID_URL` is only set on a legacy instance (empty elsewhere — there is no CG ID fallback any more).
+
 ### Client-Side Wallet Keys
 
 Wallet-related client keys (RPC provider key, WalletConnect project id, Farcaster RPC URL) are baked into the client bundle by design — they are public, origin-scoped keys used from the browser. Self-hosted instances override them through the instance config above rather than sharing the official-instance defaults, which also makes rotation a configuration change rather than a code change.
+
+---
+
+## 10. Authentication UI
+
+Backend contract: [docs/auth-identity](../auth-identity/README.md) §6 (sign-up with email verification), §7 (passkeys), §8 (step-up).
+
+### AuthFlow (`src/components/organisms/AuthFlow/`)
+
+One organism for login and sign-up, rendered inside the onboarding modal (`UserOnboarding`, step `start`; all `setUserOnboardingVisibility(true)` call sites keep working) and as a page on `/login` (`LoginView`). The step machine is a pure reducer (`authFlowMachine.ts`, unit-tested in `authFlowMachine.test.ts`); the steps live in `LoginSteps.tsx` and `SignupSteps.tsx`.
+
+**Login — one form.** Email or username + password. The username field has `autocomplete="username webauthn"`: while the form is shown, a conditional (autofill) passkey request is armed (`PasskeyProvider.armAutofill`), so the browser offers passkeys in the field's autofill. It is renewed every 9 minutes (abort, then arm — the challenge lives 10), re-armed a few times after a failure, and never started while a modal ceremony runs or after it was disarmed in the meantime. Below the form: "Email me a code instead" (only with `features.email`), "Sign in with a passkey" (modal ceremony, from the click), "Wallet" (SIWE, `WalletSignature` molecule), "More" (Universal Profile, Farcaster, X — login only, for accounts that already have them linked; the 12-word recovery phrase only on a legacy CG ID instance), and "New here? Create an account". A wrong identifier and a wrong password get the same message.
+
+After a **password** login, if the account has no passkey on this instance: once per account and browser, a conditional create (`useAutoRegister`, only where `PublicKeyCredential.getClientCapabilities()` reports `conditionalCreate`) lets the password manager add a passkey silently; otherwise, once, the step `offer-passkey` asks "Sign in faster next time — Add a passkey". Both flags live in `localStorage` (`cg-passkey-offer-*:<userId>`).
+
+**Sign-up.** (1) display name (doubles as username, `^[a-z0-9_-]{3,30}$`), email and — when the email code follows — the captcha (`SignupCaptcha` molecule: ALTCHA / reCAPTCHA / off), which `User/requestSignupEmailCode` checks → (2) the 6-digit code, checked by `User/verifySignupEmailCode` — skipped when the instance sends no mail (`features.email: false`) or on a legacy CG ID instance; there the captcha sits on the step that calls `createUser`, so no token has to survive several steps. Going back from the method step returns to the details, which skip the used-up code for the already confirmed address → (3) "How will you sign in?": **Create a passkey** (primary; `Passkey/registrationOptions` + `verifyRegistration` while logged out, then `createUser {usePreparedPasskey}` right away), **Use a password** (policy hints, `autocomplete="new-password"`), **Use a wallet** (SIWE, `createUser {usePreparedWallet}`). No X / LUKSO / Farcaster sign-up and no recovery phrase. `EMAIL_VERIFICATION_REQUIRED` returns to the details for a new code; `CAPTCHA_FAILED` asks to solve the captcha again where it is. When a passkey sign-up fails after the ceremony, the new credential is reported with `signalUnknownCredential` so the authenticator can drop it. On an instance without mail the typed address is stored after `createUser` (unverified). Then the onboarding tail steps follow (`Splash`: newsletter — for the account's address, push, PWA install, finished).
+
+### Passkeys (`src/data/auth/passkeyCeremony.ts`, `src/context/PasskeyProvider.tsx`)
+
+`passkeyCeremony.ts` wraps `@simplewebauthn/browser`: `registerPasskey`, `authenticateWithPasskey(purpose, {conditional})`, `abortPasskeyCeremony`, and the Signal API (`signalUnknownCredential`, `signalAcceptedCredentials`, `signalUserDetails`, each only where the browser has it). Every browser call is inside a `try`; failures become a `PasskeyCeremonyError` with `kind` `cancelled` (dismissed, timed out or replaced — never shown), `already-registered` ("This device already has a passkey for your account"), `unsupported` or `failed` (with the server code when the API refused). Pinned by `passkeyCeremony.test.ts`.
+
+`PasskeyProvider` turns this into UI actions that resolve to `ok` / `cancelled` / `error`. A login with an unknown or deleted credential (`NOT_FOUND` / `DELETED`) calls `signalUnknownCredential`. On a legacy CG ID instance the provider wraps `LegacyCgIdPasskeyProvider` (`src/context/LegacyCgIdPasskey.tsx`, the former popup flow, unchanged) and only `login` works (`loginManager.login({ account: 'passkey-legacy' })`).
+
+**Settings → Passkeys** (`PasskeySettings`) lists `Passkey/list` (name, created, last used, synced vs. one device), renames, removes (confirm dialog → step-up → `Passkey/remove`; `LAST_LOGIN_METHOD` gets its own message) and adds a passkey. Adding asks for a fresh authentication first and, if the dialog was needed, shows "Create the passkey now" — the ceremony needs a click of its own (Safari refuses one after an async dialog). `registerPasskey` enforces this: when getting the options went through the dialog (`stepUpManager.confirmations` changed), it does not start the ceremony and reports `reauthenticated` (also used by the post-login "Add a passkey" offer). Whenever the list is loaded it is reported with `signalAllAcceptedCredentials` (per WebAuthn user handle, `Models.Passkey.Info.userHandle`) and `signalCurrentUserDetails`.
+
+### Step-up (`src/data/auth/stepUp.ts`, `StepUpProvider`, `ReauthDialog`)
+
+The server answers protected actions (password, email change, passkey add/remove, sign-in wallets, X/LUKSO/Farcaster accounts, bot tokens, …) with `REAUTH_REQUIRED` when the last authentication is older than 5 minutes. `BaseApiConnector` then calls `stepUpManager.request(...)` (also after a `LOGIN_REQUIRED` device re-login — at most one re-login and one step-up per request); `StepUpProvider` shows `ReauthDialog` — "Confirm it's you to {action}" with a passkey (if the account has one here), the password, or a sign-in wallet — and the request is retried once (`User/reauthenticate`). The action text comes from the route (`stepUpRequestForRoute`). The wallet option is hidden while `User/addPreparedWallet` waits (a wallet confirmation would replace the prepared wallet); the settings pages that add a sign-in wallet therefore call `useStepUp().ensureRecentAuth(...)` before the wallet signature. `stepUpManager` tracks a client-side freshness estimate (interactive login, `createUser`, `reauthenticate`) so screens can confirm before starting a WebAuthn ceremony. A cancelled dialog surfaces as `REAUTH_REQUIRED`, which `securityActionErrorMessage` (`src/data/auth/authErrors.ts`) maps to "show nothing".
+
+### Plugin origin guard
+
+`IframePluginPortal` does not render a plugin whose URL is on this instance's host, the passkey RP ID or a subdomain of either (`src/data/auth/pluginOrigin.ts`; not enforced in dev, like the server-side check in `srv/validators/api/plugin.ts`).

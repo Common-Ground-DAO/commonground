@@ -3,7 +3,8 @@
 > Status: verified against commit 5777032d4, 2026-08-01; the frontend wallet
 > stack (sections on `App.tsx` and `UserOnchainProvider`) re-verified against the
 > 2026-08-04 wagmi-2 migration; the wallet-list sentence and the transports
-> bullet against commit 935232158, 2026-10-31.
+> bullet against commit 935232158, 2026-10-31; the "Key Frontend Files for Wallet
+> Operations" table against commit ff0da06, 2026-10-31.
 
 This document covers all blockchain-related subsystems in Common Ground: smart contracts, on-chain data reading, token-gated roles, wallet management, token staking, and the API surface connecting them. The token sale itself was removed in the Phase-2 slimming (2026-08-01) — only its contract source and its database tables remain, for auditability.
 
@@ -742,8 +743,7 @@ Renders the `PremiumManagement` component, which handles premium feature purchas
 | File | Purpose |
 |---|---|
 | `src/components/organisms/WalletsEditor/WalletsEditor.tsx` | Add/remove wallets from user account |
-| `src/components/organisms/UserOnboarding/RainbowSign/RainbowSign.tsx` | Sign-in with EVM wallet |
-| `src/components/organisms/UserOnboarding/ConnectWalletButton/ConnectWalletButton.tsx` | Wallet connection button |
+| `src/components/molecules/WalletSignature/WalletSignature.tsx` | Connect an EVM wallet and sign a SIWE message: login, sign-up and "Confirm it's you" (AuthFlow, ReauthDialog) |
 | `src/components/organisms/UserSettingsModalContent/SignWalletPage/SignWalletPage.tsx` | Wallet signing flow in settings |
 | `src/components/organisms/UserSettingsModalContent/PaySpark/PaySpark.tsx` | On-chain spark purchases |
 | `src/components/molecules/WalletManagerRow/WalletManagerRow.tsx` | Individual wallet display/management |

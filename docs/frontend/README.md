@@ -3,7 +3,8 @@
 > Status: verified against commit 4a9754f8f, 2026-08-04; NSFW pre-check
 > section against the fix/image-filter-review-53 branch, 2026-08-15; wallet,
 > motion, drag & drop and toolchain notes plus "Dependency pins and
-> constraints" against commit 935232158, 2026-10-31
+> constraints" against commit 935232158, 2026-10-31; dev env file pointer
+> against commit 64e5ab573 (chore/env-template), 2026-10-31
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -1050,7 +1051,7 @@ joi 18) are scheduled in `docs/todo/ROADMAP_cg-box.md`.
 - **CG ID entry**: `src/index_cgid.tsx` -- alternative entry point for the CG Identity service.
 - **Service Worker**: `src/service-worker.ts` -- handles caching, push notifications, and multi-tab active-socket refereeing (§8).
 - **Config**: `src/common/config.ts` -- deployment configuration (dev/staging/prod), feature flags, URLs, chain set.
-- **Docker**: `docker/.env` -- environment variables for containerized deployment.
+- **Docker**: `docker/.env` -- environment variables of the dev compose stack (gitignored, generated from the tracked `docker/.env.example` on first `./run.sh`; see [docs/infrastructure §4](../infrastructure/README.md#4-environment-variables)).
 
 ### Runtime Instance Configuration (`src/common/instance.ts`)
 

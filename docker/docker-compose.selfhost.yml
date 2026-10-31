@@ -16,7 +16,7 @@
 #     COMPOSE_PROFILES from CG_ENABLE_CALLS / CG_ENABLE_BLOCKCHAIN, both of
 #     which default to true
 #
-# Usage: see docker/SELFHOST.md. Never run this with the committed dev .env —
+# Usage: see docker/SELFHOST.md. Never run this with the dev docker/.env —
 # use docker/selfhost/init.sh to generate .env.selfhost with fresh secrets.
 
 # distinct project name: containers and volumes stay separate from the dev

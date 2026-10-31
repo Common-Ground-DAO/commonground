@@ -21,7 +21,11 @@ jest.mock('../repositories/articles', () => ({
   default: { getUserArticleDetailView: (...args: any[]) => getUserArticleDetailView(...args) },
 }));
 jest.mock('../redis', () => ({ __esModule: true, default: { get: jest.fn(), getClient: jest.fn(() => ({})) } }));
-jest.mock('../util/rateLimit', () => ({ __esModule: true, default: () => jest.fn() }));
+jest.mock('../util/rateLimit', () => ({
+  __esModule: true,
+  default: () => jest.fn(),
+  keyRateLimitHandler: () => jest.fn(),
+}));
 jest.mock('../util/captcha', () => ({ verifyCaptchaToken: jest.fn() }));
 jest.mock('../util/safeFetch', () => ({ fetchRemoteImage: jest.fn() }));
 jest.mock('../api/emails', () => ({ __esModule: true, default: {}, emailEnabled: () => false }));

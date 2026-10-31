@@ -10289,6 +10289,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "url": {
+                    "maxLength": 2048,
                     "type": "string"
                   }
                 },
@@ -12406,9 +12407,11 @@
                 "additionalProperties": false,
                 "properties": {
                   "request": {
+                    "maxLength": 8192,
                     "type": "string"
                   },
                   "signature": {
+                    "maxLength": 2048,
                     "type": "string"
                   }
                 },
@@ -12567,6 +12570,7 @@
                     ]
                   },
                   "iframeUid": {
+                    "maxLength": 128,
                     "type": "string"
                   },
                   "pluginId": {
@@ -12574,6 +12578,8 @@
                     "type": "string"
                   },
                   "requestId": {
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9]{1,32}-\\d{1,16}(-[A-Za-z0-9-]{1,64})?$",
                     "type": "string"
                   },
                   "type": {
@@ -14181,6 +14187,158 @@
           }
         },
         "summary": "User/deleteWallet",
+        "tags": [
+          "User"
+        ]
+      }
+    },
+    "/api/v2/User/emailUnsubscribeBody": {
+      "post": {
+        "operationId": "User_emailUnsubscribeBody",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "List-Unsubscribe": {
+                    "enum": [
+                      "One-Click"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "User/emailUnsubscribeBody",
+        "tags": [
+          "User"
+        ]
+      }
+    },
+    "/api/v2/User/emailUnsubscribeQuery": {
+      "post": {
+        "operationId": "User_emailUnsubscribeQuery",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "token": {
+                    "maxLength": 200,
+                    "pattern": "^(?:d\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|c\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.[A-Za-z0-9_-]{43}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "token"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "User/emailUnsubscribeQuery",
         "tags": [
           "User"
         ]

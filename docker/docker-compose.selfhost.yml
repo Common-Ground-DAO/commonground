@@ -9,8 +9,9 @@
 #   - DEPLOYMENT=prod: full production semantics on any domain
 #   - no hardhat dev chain, no test contracts
 #   - postgres actually loads the tuned postgresql.conf
-#   - redis maxmemory tuned for a small single machine (total budget of the
-#     single redis instance; override via REDIS_MAXMEMORY)
+#   - Valkey memory tuned for a small single machine: REDIS_MAXMEMORY for the
+#     state instance (redis), REDIS_CACHE_MAXMEMORY for the cache instance
+#     (redis-cache)
 #   - the mediasoup (calls) and onchain (blockchain) services sit behind the
 #     compose profiles "calls" and "blockchain"; selfhost.sh derives
 #     COMPOSE_PROFILES from CG_ENABLE_CALLS / CG_ENABLE_BLOCKCHAIN, both of
@@ -105,14 +106,54 @@ services:
     stop_grace_period: 1m
     restart: unless-stopped
 
-  # one instance for sessions, the Socket.IO pub/sub adapter and app data —
-  # the key prefixes are disjoint and nothing here is persisted (--save "").
-  # No eviction policy on purpose: sessions and the captcha HMAC key are not
-  # cache entries and must never be evicted. REDIS_MAXMEMORY is the total
-  # budget of this one instance.
+  # Valkey (Redis-protocol compatible), two instances split by what may be
+  # lost — see docs/infrastructure/README.md#redis-and-redis-cache-valkey.
+  # `redis` holds state: sessions, the Socket.IO pub/sub, rate-limit windows,
+  # replay guards, the shared captcha key, presence. No eviction (a full
+  # instance refuses writes instead of silently dropping a session) and RDB
+  # snapshots in a volume, so a restart or update does not log everyone out.
+  # A failed background save must not stop writes: losing the last minutes of
+  # state on a crash is better than refusing every login. Not published on
+  # the host.
   redis:
-    image: redis:6.2.23-alpine@sha256:ec5e187c913d422cdf60f4216a5fdfb95246792c6de6fe21ff5bed75cbfc8c23
-    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory ${REDIS_MAXMEMORY:-1536mb} --save ""
+    image: valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+    command: valkey-server --requirepass ${REDIS_PASSWORD} --maxmemory ${REDIS_MAXMEMORY:-1024mb} --maxmemory-policy noeviction --save "900 1 300 100" --stop-writes-on-bgsave-error no --appendonly no
+    environment:
+      # lets valkey-cli in the healthcheck authenticate without a command-line password
+      - REDISCLI_AUTH=${REDIS_PASSWORD}
+    healthcheck:
+      # healthy once the server answers an authenticated PING
+      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 1m
+      start_interval: 2s
+    volumes:
+      - valkey-data:/data
+    networks:
+      - cryptogram
+    # time for the final RDB save on shutdown
+    stop_grace_period: 1m
+    restart: unless-stopped
+
+  # `redis-cache` holds only data that can be rebuilt (the URL-preview
+  # cache): own memory budget, least-recently-used eviction, no persistence,
+  # so a filling cache can never push `redis` into out-of-memory errors
+  redis-cache:
+    image: valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+    command: valkey-server --requirepass ${REDIS_PASSWORD} --maxmemory ${REDIS_CACHE_MAXMEMORY:-256mb} --maxmemory-policy allkeys-lru --save "" --appendonly no
+    environment:
+      # lets valkey-cli in the healthcheck authenticate without a command-line password
+      - REDISCLI_AUTH=${REDIS_PASSWORD}
+    healthcheck:
+      # healthy once the server answers an authenticated PING
+      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 1m
+      start_interval: 2s
     networks:
       - cryptogram
     restart: unless-stopped
@@ -240,6 +281,7 @@ services:
     depends_on:
       - db
       - redis
+      - redis-cache
       - seaweed
       - memberlist
     networks:
@@ -446,6 +488,7 @@ services:
 
 volumes:
   pgdata:
+  valkey-data:
   seaweedfs-data:
   builder-cache:
   caddy-data:

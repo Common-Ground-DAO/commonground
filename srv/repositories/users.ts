@@ -7,7 +7,7 @@ import errors from "../common/errors";
 import { BotOwnerType, BotPlatformPresenceMode, UserProfileTypeEnum, PredefinedRole, PremiumRenewal, RoleType, UserPremiumFeatureName, WalletType, WalletVisibility } from "../common/enums";
 import format from "pg-format";
 import * as bcrypt from "bcrypt";
-import { webcrypto } from "node:crypto";
+import { randomUUID, webcrypto } from "node:crypto";
 import eventHelper from "./event";
 import pool from "../util/postgres";
 import { type Pool, type PoolClient } from "pg";
@@ -17,6 +17,9 @@ import { getDisplayNameString } from "../util";
 import walletHelper from "./wallets";
 import config from "../common/config";
 import { addressRegex, calculateSupporterUpgradeCost } from "../common/util";
+import { passkeyInsertParams, type NewPasskey } from "./passkeys";
+import { assertLoginMethodRemains, LOGIN_ACCOUNT_TYPES } from "./loginMethods";
+import { getProcessRpIdOrNull } from "../util/passkeyConfig";
 
 export type CreateUserAccountData = {
   displayName: string;
@@ -48,9 +51,12 @@ type CreateHumanUserAccountData = Exclude<CreateUserAccountData, { type: "bot" }
 type CreateUserData = {
   devicePublicKey: any;
   email: string | null;
+  /** the address was verified before the account was created */
+  emailVerified?: boolean;
   activateNewsletter: boolean;
   password: string | null;
-  passkeyId?: string;
+  /** passkey registered during sign-up, inserted together with the user */
+  passkey?: NewPasskey;
   displayAccount: Exclude<Models.User.ProfileItemType, "bot">;
   wallet?: {
     walletIdentifier: Models.Wallet.Wallet['walletIdentifier'];
@@ -87,6 +93,8 @@ export type CreateBotUserData = CreateBotUserProfileData & ({
   ownerId: null;
   platformPresenceMode: Models.User.BotPlatformPresenceMode;
 });
+
+let dummyPasswordHash: Promise<string> | undefined;
 
 async function _hashPassword(password: string) {
   const generatedSalt = await bcrypt.genSalt(8);
@@ -401,6 +409,7 @@ async function _getOwnData(
         SELECT "createdAt", "updatedAt", "data"
         FROM passkeys
         WHERE "userId" = u."id"
+          AND "rpId" = ${format('%L', getProcessRpIdOrNull())}
           AND "deletedAt" IS NULL
         ORDER BY "updatedAt" DESC
       ) AS upk), '[]'::json) AS "passkeys",
@@ -473,7 +482,7 @@ async function _createUser(
       data.email !== null ||
       data.password !== null ||
       data.activateNewsletter ||
-      data.passkeyId !== undefined ||
+      data.passkey !== undefined ||
       data.wallet !== undefined
     ) {
       console.error("Error creating bot user, bot invariants not satisfied");
@@ -485,7 +494,7 @@ async function _createUser(
     throw new Error(errors.server.INVALID_REQUEST);
   }
 
-  const { password, wallet, accounts, passkeyId } = data;
+  const { password, wallet, accounts, passkey } = data;
   let passwordHash: string | null = null;
   if (password !== null) {
     passwordHash = await _hashPassword(password);
@@ -496,6 +505,7 @@ async function _createUser(
     passwordHash,
     data.displayAccount,
     data.isBot,
+    data.email !== null && data.emailVerified === true,
   ];
   let query = `
     WITH create_user AS (
@@ -504,21 +514,24 @@ async function _createUser(
         "newsletter",
         "password",
         "displayAccount",
-        "is_bot"
+        "is_bot",
+        "emailVerified"
       )
-      VALUES ($1, $2, $3, $4, $5)
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING "id", "updatedAt"
     )
   `;
-  if (passkeyId) {
+  if (passkey) {
     const baseParamsLength = params.length;
-    params.push(passkeyId);
+    params.push(...passkeyInsertParams(passkey));
     query += `,
       update_passkey AS (
-        UPDATE passkeys
-        SET "userId" = (SELECT "id" FROM create_user)
-        WHERE "id" = $${baseParamsLength + 1}
-          AND "userId" IS NULL
+        INSERT INTO passkeys ("userId", "rpId", "origin", "name", "data", "counter")
+        VALUES (
+          (SELECT "id" FROM create_user),
+          $${baseParamsLength + 1}, $${baseParamsLength + 2}, $${baseParamsLength + 3},
+          $${baseParamsLength + 4}::jsonb, $${baseParamsLength + 5}
+        )
         RETURNING json_build_object(
           'credentialID', "data"->>'credentialID',
           'credentialBackedUp', "data"->>'credentialBackedUp',
@@ -651,9 +664,9 @@ async function _createUser(
     !data.password &&
     !data.accounts.find(a => a.type !== 'cg') &&
     !data.email &&
-    !data.passkeyId
+    !data.passkey
   ) {
-    console.error("Error creating user, no wallet, password, accounts, email or passkeyId", data);
+    console.error("Error creating user, no wallet, password, accounts, email or passkey");
     throw new Error(errors.server.INVALID_REQUEST);
   }
 
@@ -712,13 +725,13 @@ async function _createUser(
     } | null;
   }>(query, params);
   if (result.rows.length === 1) {
-    if (passkeyId && !result.rows[0].passkeyData) {
-      console.error("Error creating user, passkeyId provided but no passkey result data", data);
+    if (passkey && !result.rows[0].passkeyData) {
+      console.error("Error creating user, passkey provided but no passkey result data");
       throw new Error(errors.server.INVALID_REQUEST);
     }
     return result.rows[0];
   }
-  console.error("Error creating user, no result rows", data);
+  console.error("Error creating user: no result rows");
   throw new Error(errors.server.INVALID_REQUEST);
 }
 
@@ -1204,7 +1217,7 @@ class UserHelper {
       for(const account of data.accounts) {
         if (account.type === 'twitter') {
           if (!account.data?.id) {
-            console.error("Error creating user with twitter account, no id", account);
+            console.error("Error creating user with twitter account: no id");
             throw new Error(errors.server.INVALID_REQUEST);
           }
           await this._checkUniqueTwitter(pool, account.data.id);
@@ -1212,7 +1225,7 @@ class UserHelper {
 
         if (account.type === 'lukso') {
           if (!account.data?.id) {
-            console.error("Error creating user with lukso account, no id", account);
+            console.error("Error creating user with lukso account: no id");
             throw new Error(errors.server.INVALID_REQUEST);
           }
           await this._checkUniqueUniversalProfile(pool, account.data.id);
@@ -1423,6 +1436,21 @@ class UserHelper {
     });
   }
 
+  /** Re-authentication: does `password` match the account's password? */
+  public async isPasswordCorrect(userId: string, password: string): Promise<boolean> {
+    const result = await pool.query<{ password: string | null }>(`
+      SELECT "password" FROM users WHERE "id" = $1 AND "deletedAt" IS NULL
+    `, [userId]);
+    const hash = result.rows[0]?.password;
+    if (!hash) {
+      // no password set: compare anyway so both cases take similar time
+      dummyPasswordHash ??= _hashPassword(randomUUID());
+      await bcrypt.compare(password, await dummyPasswordHash);
+      return false;
+    }
+    return await bcrypt.compare(password, hash);
+  }
+
   public async setPassword(userId: string, password: string): Promise<void> {
     await _updateUser(pool, { id: userId, password });
   }
@@ -1619,9 +1647,15 @@ class UserHelper {
     throw new Error(errors.server.NOT_IMPLEMENTED);
   }
 
+  /**
+   * `keepLoginMethod`: an account that can sign in (X, LUKSO, Farcaster) is
+   * only removed if the user keeps a sign-in method of this instance
+   * (srv/repositories/loginMethods.ts), else LAST_LOGIN_METHOD.
+   */
   public async removeUserAccount(
     userId: string,
-    type: UserProfileTypeEnum
+    type: UserProfileTypeEnum,
+    keepLoginMethod?: { rpId: string | null },
   ): Promise<void> {
     if (type === UserProfileTypeEnum.BOT) {
       throw new Error(errors.server.INVALID_REQUEST);
@@ -1631,6 +1665,9 @@ class UserHelper {
     const client = await pool.connect();
     await client.query("BEGIN");
     try {
+      if (keepLoginMethod && LOGIN_ACCOUNT_TYPES.has(type)) {
+        await assertLoginMethodRemains(client, userId, keepLoginMethod.rpId);
+      }
       const result = await _removeUserAccount(client, userId, type);
 
       if (type === 'lukso' && result.data !== null) {

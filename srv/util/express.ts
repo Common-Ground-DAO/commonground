@@ -13,11 +13,10 @@ import config from '../common/config';
 import serverconfig from '../serverconfig';
 import urls from './urls';
 import { UserV2 } from 'twitter-api-v2';
-import {
-  type PublicKeyCredentialCreationOptionsJSON,
-  type PublicKeyCredentialRequestOptionsJSON,
-} from '@simplewebauthn/server';
 import passport from 'passport';
+import type { ChallengeEntry, PendingPasskey } from './passkeys';
+import type { AuthMethod } from './authSession';
+import { isLegacyCgidMode } from './passkeyConfig';
 import { botAllowlistMiddleware, botAuthenticationMiddleware } from './botPrincipal';
 
 // TYPES
@@ -66,20 +65,42 @@ declare module 'express-session' {
 
     preparedCredential?: Models.Server.Session.PreparedCredential;
 
+    // WebAuthn ceremonies in flight, keyed by challenge (srv/util/passkeys.ts)
+    webauthnChallenges?: Record<string, ChallengeEntry>;
+
+    // a passkey registered during sign-up, inserted by createUser
+    pendingPasskey?: PendingPasskey;
+
+    // sign-up email verification before the account exists
+    // (User/requestSignupEmailCode, User/verifySignupEmailCode)
+    signupEmail?: {
+      email: string;
+      codeId?: string;
+      codeHash?: string;
+      expiresAt: number;
+      attempts: number;
+      verifiedAt?: number;
+      // when the captcha of this sign-up was solved (requestSignupEmailCode);
+      // createUser then accepts the verified address without a second one
+      captchaAt?: number;
+    };
+
+    // when and how the session last authenticated interactively (step-up,
+    // srv/util/authSession.ts); never set by a device-key login
+    authAt?: number;
+    authMethod?: AuthMethod;
+
+    // legacy CG ID mode only: result of a successful CgId assertion, redeemed
+    // by User/login {type:'passkey-success'}
     passkeyData?: {
-      step: "registration_sign";
-      options: PublicKeyCredentialCreationOptionsJSON;
-    } | {
-      step: "authentication_sign";
-      options: PublicKeyCredentialRequestOptionsJSON;
-    } | {
       step: "success";
       passkeyId: string;
       userId: string | null;
-    } | {
-      step: "error";
-      message: string;
+      expiresAt: number;
     };
+
+    // set once the obsolete subdomain-scoped session cookie was expired
+    legacyDomainCookieCleared?: boolean;
 
     temporaryArticleIds?: string[];
   }
@@ -106,8 +127,9 @@ if (config.DEPLOYMENT === 'dev') {
     allowedOrigins.push(`https://${process.env.LOCAL_CERTIFICATE_IP}:8001`);
   }
 }
-else {
-  allowedOrigins.push(process.env.CGID_URL as string);
+else if (isLegacyCgidMode() && process.env.CGID_URL) {
+  // legacy CG ID app on its own origin (gateway mode only)
+  allowedOrigins.push(new URL(process.env.CGID_URL).origin);
 }
 const corsOptions: cors.CorsOptions = {
   origin: function(origin, callback){
@@ -162,10 +184,11 @@ const sessionOptions: session.SessionOptions = {
   rolling: true,
 };
 
-// allow session cookie for subdomains so that the app and the CG ID app
-// (id.<domain>) share a session; derived from BASE_URL so self-hosted
-// instances get their own domain (.app.cg / .staging.app.cg unchanged)
-if (config.DEPLOYMENT !== 'dev') {
+// Legacy CG ID mode only: scope the session cookie to all subdomains so the
+// app and the CG ID app (id.<domain>) share a session (.app.cg unchanged).
+// Everywhere else the cookie is host-only — no other host under the domain
+// ever receives it.
+if (config.DEPLOYMENT !== 'dev' && isLegacyCgidMode()) {
   sessionCookieOptions.domain = `.${urls.APP_HOSTNAME}`;
 }
 
@@ -191,6 +214,24 @@ app.use((request, response, next) => {
   if (request.botPrincipal) return next();
   if (!request.session.createdAt) {
     request.session.createdAt = new Date();
+  }
+  next();
+});
+// Instances upgraded in place used to scope the session cookie to
+// `.<APP_HOSTNAME>`; the cookie is host-only now. Expire such an old
+// subdomain-scoped cookie once per session so the browser does not keep
+// sending two cookies of the same name (legacy CG ID mode keeps the old scope).
+app.use((request, response, next) => {
+  if (request.botPrincipal || config.DEPLOYMENT === 'dev' || isLegacyCgidMode()) return next();
+  if (!request.session.legacyDomainCookieCleared) {
+    response.clearCookie(serverconfig.SESSION_COOKIE_NAME, {
+      domain: `.${urls.APP_HOSTNAME}`,
+      path: '/',
+      httpOnly: true,
+      secure: true,
+      sameSite: 'lax',
+    });
+    request.session.legacyDomainCookieCleared = true;
   }
   next();
 });

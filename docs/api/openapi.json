@@ -1364,12 +1364,6 @@
             "application/json": {
               "schema": {
                 "additionalProperties": false,
-                "properties": {
-                  "userId": {
-                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-                    "type": "string"
-                  }
-                },
                 "type": "object"
               }
             }
@@ -1429,83 +1423,6 @@
         ]
       }
     },
-    "/api/v2/CgId/generateRegistrationOptions": {
-      "post": {
-        "operationId": "CgId_generateRegistrationOptions",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": false,
-                "properties": {
-                  "timezone": {
-                    "maxLength": 50,
-                    "pattern": "^[a-z0-9-_+\\/]+$",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "timezone"
-                ],
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "properties": {
-                        "data": {},
-                        "status": {
-                          "enum": [
-                            "OK"
-                          ],
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "status"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "properties": {
-                        "error": {
-                          "description": "machine error code (srv/common/errors.ts)",
-                          "type": "string"
-                        },
-                        "status": {
-                          "enum": [
-                            "ERROR"
-                          ],
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "status",
-                        "error"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                }
-              }
-            },
-            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
-          }
-        },
-        "summary": "CgId/generateRegistrationOptions",
-        "tags": [
-          "CgId"
-        ]
-      }
-    },
     "/api/v2/CgId/verifyAuthenticationResponse": {
       "post": {
         "operationId": "CgId_verifyAuthenticationResponse",
@@ -1519,20 +1436,61 @@
                     "additionalProperties": false,
                     "properties": {
                       "authenticatorAttachment": {
+                        "enum": [
+                          "cross-platform",
+                          "platform"
+                        ],
                         "type": "string"
                       },
                       "clientExtensionResults": {
-                        "additionalProperties": false,
+                        "additionalProperties": true,
                         "type": "object"
                       },
                       "id": {
+                        "maxLength": 1366,
+                        "minLength": 16,
+                        "pattern": "^[A-Za-z0-9_-]*$",
                         "type": "string"
                       },
                       "rawId": {
+                        "maxLength": 1366,
+                        "minLength": 16,
+                        "pattern": "^[A-Za-z0-9_-]*$",
                         "type": "string"
                       },
                       "response": {
                         "additionalProperties": false,
+                        "properties": {
+                          "authenticatorData": {
+                            "maxLength": 16384,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9_-]*$",
+                            "type": "string"
+                          },
+                          "clientDataJSON": {
+                            "maxLength": 4096,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9_-]*$",
+                            "type": "string"
+                          },
+                          "signature": {
+                            "maxLength": 2048,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9_-]*$",
+                            "type": "string"
+                          },
+                          "userHandle": {
+                            "maxLength": 86,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9_-]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "authenticatorData",
+                          "clientDataJSON",
+                          "signature"
+                        ],
                         "type": "object"
                       },
                       "type": {
@@ -1543,7 +1501,7 @@
                       }
                     },
                     "required": [
-                      "authenticatorAttachment",
+                      "clientExtensionResults",
                       "id",
                       "rawId",
                       "response",
@@ -1614,119 +1572,6 @@
           }
         },
         "summary": "CgId/verifyAuthenticationResponse",
-        "tags": [
-          "CgId"
-        ]
-      }
-    },
-    "/api/v2/CgId/verifyRegistrationResponse": {
-      "post": {
-        "operationId": "CgId_verifyRegistrationResponse",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": false,
-                "properties": {
-                  "frontendRequestId": {
-                    "maxLength": 20,
-                    "type": "string"
-                  },
-                  "registrationResponse": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "authenticatorAttachment": {
-                        "type": "string"
-                      },
-                      "clientExtensionResults": {
-                        "additionalProperties": false,
-                        "type": "object"
-                      },
-                      "id": {
-                        "type": "string"
-                      },
-                      "rawId": {
-                        "type": "string"
-                      },
-                      "response": {
-                        "additionalProperties": false,
-                        "type": "object"
-                      },
-                      "type": {
-                        "enum": [
-                          "public-key"
-                        ],
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "authenticatorAttachment",
-                      "id",
-                      "rawId",
-                      "response",
-                      "type"
-                    ],
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "frontendRequestId",
-                  "registrationResponse"
-                ],
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "properties": {
-                        "data": {},
-                        "status": {
-                          "enum": [
-                            "OK"
-                          ],
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "status"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "properties": {
-                        "error": {
-                          "description": "machine error code (srv/common/errors.ts)",
-                          "type": "string"
-                        },
-                        "status": {
-                          "enum": [
-                            "ERROR"
-                          ],
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "status",
-                        "error"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                }
-              }
-            },
-            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
-          }
-        },
-        "summary": "CgId/verifyRegistrationResponse",
         "tags": [
           "CgId"
         ]
@@ -11704,6 +11549,560 @@
         ]
       }
     },
+    "/api/v2/Passkey/authenticationOptions": {
+      "post": {
+        "operationId": "Passkey_authenticationOptions",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "conditional": {
+                    "type": "boolean"
+                  },
+                  "purpose": {
+                    "enum": [
+                      "login",
+                      "stepup"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "purpose"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "Passkey/authenticationOptions",
+        "tags": [
+          "Passkey"
+        ]
+      }
+    },
+    "/api/v2/Passkey/list": {
+      "post": {
+        "operationId": "Passkey_list",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "Passkey/list",
+        "tags": [
+          "Passkey"
+        ]
+      }
+    },
+    "/api/v2/Passkey/registrationOptions": {
+      "post": {
+        "operationId": "Passkey_registrationOptions",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "displayName": {
+                    "pattern": "^[a-z0-9_-]{3,30}$",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "Passkey/registrationOptions",
+        "tags": [
+          "Passkey"
+        ]
+      }
+    },
+    "/api/v2/Passkey/remove": {
+      "post": {
+        "operationId": "Passkey_remove",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "Passkey/remove",
+        "tags": [
+          "Passkey"
+        ]
+      }
+    },
+    "/api/v2/Passkey/rename": {
+      "post": {
+        "operationId": "Passkey_rename",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "Passkey/rename",
+        "tags": [
+          "Passkey"
+        ]
+      }
+    },
+    "/api/v2/Passkey/verifyRegistration": {
+      "post": {
+        "operationId": "Passkey_verifyRegistration",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                    "type": "string"
+                  },
+                  "registrationResponse": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "authenticatorAttachment": {
+                        "enum": [
+                          "cross-platform",
+                          "platform"
+                        ],
+                        "type": "string"
+                      },
+                      "clientExtensionResults": {
+                        "additionalProperties": true,
+                        "type": "object"
+                      },
+                      "id": {
+                        "maxLength": 1366,
+                        "minLength": 16,
+                        "pattern": "^[A-Za-z0-9_-]*$",
+                        "type": "string"
+                      },
+                      "rawId": {
+                        "maxLength": 1366,
+                        "minLength": 16,
+                        "pattern": "^[A-Za-z0-9_-]*$",
+                        "type": "string"
+                      },
+                      "response": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "attestationObject": {
+                            "maxLength": 16384,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9_-]*$",
+                            "type": "string"
+                          },
+                          "authenticatorData": {
+                            "maxLength": 16384,
+                            "pattern": "^[A-Za-z0-9_-]*$",
+                            "type": "string"
+                          },
+                          "clientDataJSON": {
+                            "maxLength": 4096,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9_-]*$",
+                            "type": "string"
+                          },
+                          "publicKey": {
+                            "maxLength": 4096,
+                            "pattern": "^[A-Za-z0-9_-]*$",
+                            "type": "string"
+                          },
+                          "publicKeyAlgorithm": {
+                            "format": "int64",
+                            "type": "integer"
+                          },
+                          "transports": {
+                            "items": {
+                              "enum": [
+                                "ble",
+                                "cable",
+                                "hybrid",
+                                "internal",
+                                "nfc",
+                                "smart-card",
+                                "usb"
+                              ],
+                              "type": "string"
+                            },
+                            "maxItems": 8,
+                            "type": "array",
+                            "uniqueItems": true
+                          }
+                        },
+                        "required": [
+                          "attestationObject",
+                          "clientDataJSON"
+                        ],
+                        "type": "object"
+                      },
+                      "type": {
+                        "enum": [
+                          "public-key"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "clientExtensionResults",
+                      "id",
+                      "rawId",
+                      "response",
+                      "type"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "registrationResponse"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "Passkey/verifyRegistration",
+        "tags": [
+          "Passkey"
+        ]
+      }
+    },
     "/api/v2/Plugins/acceptPluginPermissions": {
       "post": {
         "operationId": "Plugin_acceptPluginPermissions",
@@ -11996,6 +12395,7 @@
                     ]
                   },
                   "url": {
+                    "maxLength": 2048,
                     "type": "string"
                   }
                 },
@@ -12782,6 +13182,7 @@
                             ]
                           },
                           "url": {
+                            "maxLength": 2048,
                             "type": "string"
                           }
                         },
@@ -13978,8 +14379,7 @@
                 },
                 "required": [
                   "device",
-                  "displayAccount",
-                  "recaptchaToken"
+                  "displayAccount"
                 ],
                 "type": "object"
               }
@@ -14339,6 +14739,73 @@
           }
         },
         "summary": "User/emailUnsubscribeQuery",
+        "tags": [
+          "User"
+        ]
+      }
+    },
+    "/api/v2/User/ensureSession": {
+      "post": {
+        "operationId": "User_ensureSession",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "User/ensureSession",
         "tags": [
           "User"
         ]
@@ -15681,6 +16148,162 @@
                   {
                     "additionalProperties": false,
                     "properties": {
+                      "authenticationResponse": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "authenticatorAttachment": {
+                            "enum": [
+                              "cross-platform",
+                              "platform"
+                            ],
+                            "type": "string"
+                          },
+                          "clientExtensionResults": {
+                            "additionalProperties": true,
+                            "type": "object"
+                          },
+                          "id": {
+                            "maxLength": 1366,
+                            "minLength": 16,
+                            "pattern": "^[A-Za-z0-9_-]*$",
+                            "type": "string"
+                          },
+                          "rawId": {
+                            "maxLength": 1366,
+                            "minLength": 16,
+                            "pattern": "^[A-Za-z0-9_-]*$",
+                            "type": "string"
+                          },
+                          "response": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "authenticatorData": {
+                                "maxLength": 16384,
+                                "minLength": 1,
+                                "pattern": "^[A-Za-z0-9_-]*$",
+                                "type": "string"
+                              },
+                              "clientDataJSON": {
+                                "maxLength": 4096,
+                                "minLength": 1,
+                                "pattern": "^[A-Za-z0-9_-]*$",
+                                "type": "string"
+                              },
+                              "signature": {
+                                "maxLength": 2048,
+                                "minLength": 1,
+                                "pattern": "^[A-Za-z0-9_-]*$",
+                                "type": "string"
+                              },
+                              "userHandle": {
+                                "maxLength": 86,
+                                "minLength": 1,
+                                "pattern": "^[A-Za-z0-9_-]*$",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "authenticatorData",
+                              "clientDataJSON",
+                              "signature"
+                            ],
+                            "type": "object"
+                          },
+                          "type": {
+                            "enum": [
+                              "public-key"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "clientExtensionResults",
+                          "id",
+                          "rawId",
+                          "response",
+                          "type"
+                        ],
+                        "type": "object"
+                      },
+                      "device": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "publicKey": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "alg": {
+                                "enum": [
+                                  "ES256",
+                                  "ES384"
+                                ]
+                              },
+                              "crv": {
+                                "enum": [
+                                  "P-256",
+                                  "P-384"
+                                ]
+                              },
+                              "ext": {
+                                "enum": [
+                                  true
+                                ]
+                              },
+                              "key_ops": {
+                                "items": {
+                                  "enum": [
+                                    "verify"
+                                  ]
+                                },
+                                "maxItems": 1,
+                                "minItems": 1,
+                                "type": "array"
+                              },
+                              "kty": {
+                                "enum": [
+                                  "EC"
+                                ]
+                              },
+                              "x": {
+                                "maxLength": 150,
+                                "type": "string"
+                              },
+                              "y": {
+                                "maxLength": 150,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "crv",
+                              "ext",
+                              "key_ops",
+                              "kty",
+                              "x",
+                              "y"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "publicKey"
+                        ],
+                        "type": "object"
+                      },
+                      "type": {
+                        "enum": [
+                          "passkey"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "authenticationResponse",
+                      "device",
+                      "type"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
                       "device": {
                         "additionalProperties": false,
                         "properties": {
@@ -16107,6 +16730,198 @@
         ]
       }
     },
+    "/api/v2/User/reauthenticate": {
+      "post": {
+        "operationId": "User_reauthenticate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "authenticationResponse": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "authenticatorAttachment": {
+                            "enum": [
+                              "cross-platform",
+                              "platform"
+                            ],
+                            "type": "string"
+                          },
+                          "clientExtensionResults": {
+                            "additionalProperties": true,
+                            "type": "object"
+                          },
+                          "id": {
+                            "maxLength": 1366,
+                            "minLength": 16,
+                            "pattern": "^[A-Za-z0-9_-]*$",
+                            "type": "string"
+                          },
+                          "rawId": {
+                            "maxLength": 1366,
+                            "minLength": 16,
+                            "pattern": "^[A-Za-z0-9_-]*$",
+                            "type": "string"
+                          },
+                          "response": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "authenticatorData": {
+                                "maxLength": 16384,
+                                "minLength": 1,
+                                "pattern": "^[A-Za-z0-9_-]*$",
+                                "type": "string"
+                              },
+                              "clientDataJSON": {
+                                "maxLength": 4096,
+                                "minLength": 1,
+                                "pattern": "^[A-Za-z0-9_-]*$",
+                                "type": "string"
+                              },
+                              "signature": {
+                                "maxLength": 2048,
+                                "minLength": 1,
+                                "pattern": "^[A-Za-z0-9_-]*$",
+                                "type": "string"
+                              },
+                              "userHandle": {
+                                "maxLength": 86,
+                                "minLength": 1,
+                                "pattern": "^[A-Za-z0-9_-]*$",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "authenticatorData",
+                              "clientDataJSON",
+                              "signature"
+                            ],
+                            "type": "object"
+                          },
+                          "type": {
+                            "enum": [
+                              "public-key"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "clientExtensionResults",
+                          "id",
+                          "rawId",
+                          "response",
+                          "type"
+                        ],
+                        "type": "object"
+                      },
+                      "type": {
+                        "enum": [
+                          "passkey"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "authenticationResponse",
+                      "type"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "password": {
+                        "maxLength": 1024,
+                        "type": "string"
+                      },
+                      "type": {
+                        "enum": [
+                          "password"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "password",
+                      "type"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "enum": [
+                          "wallet"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "User/reauthenticate",
+        "tags": [
+          "User"
+        ]
+      }
+    },
     "/api/v2/User/removeUserAccount": {
       "post": {
         "operationId": "User_removeUserAccount",
@@ -16259,6 +17074,87 @@
           }
         },
         "summary": "User/requestEmailVerification",
+        "tags": [
+          "User"
+        ]
+      }
+    },
+    "/api/v2/User/requestSignupEmailCode": {
+      "post": {
+        "operationId": "User_requestSignupEmailCode",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "email": {
+                    "format": "email",
+                    "maxLength": 320,
+                    "type": "string"
+                  },
+                  "recaptchaToken": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "email"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "User/requestSignupEmailCode",
         "tags": [
           "User"
         ]
@@ -17558,6 +18454,88 @@
           }
         },
         "summary": "User/verifyEmail",
+        "tags": [
+          "User"
+        ]
+      }
+    },
+    "/api/v2/User/verifySignupEmailCode": {
+      "post": {
+        "operationId": "User_verifySignupEmailCode",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "pattern": "^[0-9]{6}$",
+                    "type": "string"
+                  },
+                  "email": {
+                    "format": "email",
+                    "maxLength": 320,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "email"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "User/verifySignupEmailCode",
         "tags": [
           "User"
         ]

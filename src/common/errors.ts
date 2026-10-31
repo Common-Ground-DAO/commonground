@@ -49,6 +49,14 @@ const errors = {
     COMMUNITY_JOIN_IN_WAIT_PERIOD: "COMMUNITY_JOIN_IN_WAIT_PERIOD",
     PASSKEY_USER_NULL: "PASSKEY_USER_NULL",
     ALREADY_LOGGED_IN: "ALREADY_LOGGED_IN",
+    // a sensitive action needs a recent authentication: call
+    // User/reauthenticate, then retry the same request
+    REAUTH_REQUIRED: "REAUTH_REQUIRED",
+    // the action would leave the account without a way to sign in
+    LAST_LOGIN_METHOD: "LAST_LOGIN_METHOD",
+    // createUser without a sign-up address verified in this session
+    // (User/requestSignupEmailCode + User/verifySignupEmailCode)
+    EMAIL_VERIFICATION_REQUIRED: "EMAIL_VERIFICATION_REQUIRED",
     SEND_ARTICLE_LIMIT_EXCEEDED: "SEND_ARTICLE_LIMIT_EXCEEDED",
     
     EVENT_SCHEDULE_IN_THE_PAST: 'EVENT_SCHEDULE_IN_THE_PAST',

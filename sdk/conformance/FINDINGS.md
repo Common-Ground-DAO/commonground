@@ -143,9 +143,12 @@ branch as reviewable commits.
 ## Boundaries (out of SDK scope by design)
 
 - **B-01 — Passkeys.** WebAuthn ceremonies need a platform authenticator API;
-  headless node has none. Native clients use their platform passkey APIs
-  against the same endpoints; the SDK documents but does not implement them
-  (per the native-clients roadmap auth spec).
+  headless node has none. The SDK wraps the passkey endpoints
+  (`AuthApi.passkey*`, `loginWithPasskey`, `reauthenticateWithPasskey`) and
+  takes/returns the WebAuthn JSON; producing it is up to the platform (native
+  passkey APIs, a browser). The conformance suite drives these endpoints with a
+  software authenticator (`src/softAuthenticator.ts`, ES256 + a minimal CBOR
+  encoder) to prove the server side.
 - **B-02 — Wallet/OAuth logins (SIWE, Twitter, Lukso, Farcaster).** All
   involve a browser or wallet app in the loop. The SDK covers the
   email+password and device-signature flows, which are the substrate every

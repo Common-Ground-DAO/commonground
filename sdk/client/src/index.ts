@@ -14,6 +14,16 @@ export {
   type AltchaSolution,
 } from "./captcha/altcha.js";
 export { AuthApi, type RegisterOptions, type AuthSession } from "./auth/api.js";
+export type {
+  AuthenticatorTransport,
+  PasskeyAuthenticationResponse,
+  PasskeyCreationOptions,
+  PasskeyCredentialDescriptor,
+  PasskeyInfo,
+  PasskeyRegistrationResponse,
+  PasskeyRequestOptions,
+  PasskeyVerifyRegistrationResult,
+} from "./auth/types.js";
 export {
   CommunityApi,
   MessageApi,

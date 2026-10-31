@@ -12,6 +12,7 @@ import errors from "../common/errors";
 import { UserProfileTypeEnum } from "../common/enums";
 import Validators from "../validators";
 import userHelper, { CreateUserAccountData } from "../repositories/users";
+import { LOGIN_ACCOUNT_TYPES } from "../repositories/loginMethods";
 import suggestedUsersHelper from "../repositories/suggestedUsers";
 import walletHelper from "../repositories/wallets";
 import deviceHelper from "../repositories/device";
@@ -31,8 +32,25 @@ import config from "../common/config";
 import { verifyCaptchaToken } from "../util/captcha";
 import emailUtils, { emailEnabled } from "./emails";
 import { registerEmailUnsubscribeRoutes } from "./emailUnsubscribe";
-import { limitOneTimePasswordMail, limitVerificationMail } from "../util/mailSendLimits";
+import { limitOneTimePasswordMail, limitSignupCodeMail, limitVerificationMail } from "../util/mailSendLimits";
 import emailHelper from "../repositories/emails";
+import passkeyHelper from "../repositories/passkeys";
+import { keyRateLimitHandler } from "../util/rateLimit";
+import { getMainRp, getProcessRpIdOrNull, isLegacyCgidMode } from "../util/passkeyConfig";
+import { verifyAuthentication } from "../util/passkeys";
+import { establishLoginSession, recordReauthentication, requireRecentAuth, type AuthMethod } from "../util/authSession";
+import {
+  SIGNUP_CODE_MAX_ATTEMPTS,
+  SIGNUP_CODE_TTL_MS,
+  checkSignupEmailCode,
+  getVerifiedSignupEmail,
+  hasSignupCaptcha,
+  normalizeEmail,
+  startSignupEmailVerification,
+  startSignupWithoutCode,
+  verifiedSignupPassedCaptcha,
+} from "../util/signupEmail";
+import { notifyNewSignInMethod } from "../util/signInNotice";
 
 export const SIGNABLE_SECRET_LENGTH = 20;
 
@@ -256,14 +274,44 @@ registerPostRoute<
         deviceHelper.createDevice(ownData.id, device.publicKey),
         notificationHelper.getUnreadCount(ownData.id),
       ]);
+    } else if (data.type === 'passkey') {
+      if (isLegacyCgidMode()) {
+        throw new Error(errors.server.NOT_SUPPORTED);
+      }
+      const { device } = data;
+      const passkey = await verifyAuthentication(getMainRp(), request.session, data.authenticationResponse, {
+        purpose: 'login',
+        userId: null,
+      });
+      if (passkey.userId === null) {
+        throw new Error(errors.server.NOT_FOUND);
+      }
+      ownData = await userHelper.getOwnDataById(passkey.userId);
+      [ communities,
+        chats,
+        { deviceId },
+        unreadNotificationCount,
+      ] = await Promise.all([
+        communityHelper.getOwnCommunities(ownData.id),
+        chatHelper.getChats(ownData.id),
+        deviceHelper.createDevice(ownData.id, device.publicKey),
+        notificationHelper.getUnreadCount(ownData.id),
+      ]);
     } else if (data.type === 'passkey-success') {
+      // legacy CG ID mode only: redeems the assertion the CgId router verified
+      if (!isLegacyCgidMode()) {
+        throw new Error(errors.server.NOT_SUPPORTED);
+      }
       const { device } = data;
       const { passkeyData } = request.session;
-      if (!passkeyData || passkeyData.step !== "success") {
+      delete request.session.passkeyData;
+      if (!passkeyData || passkeyData.step !== "success" || !(passkeyData.expiresAt > Date.now())) {
         throw new Error(errors.server.INVALID_REQUEST);
       }
-      const { passkeyId } = passkeyData;
-      const passkey = await walletHelper.getPasskeyById(passkeyId);
+      const passkey = await passkeyHelper.getByIdAnyRp(passkeyData.passkeyId);
+      if (!passkey) {
+        throw new Error(errors.server.NOT_FOUND);
+      }
       if (passkey.deletedAt !== null) {
         throw new Error(errors.server.DELETED);
       }
@@ -281,7 +329,6 @@ registerPostRoute<
         deviceHelper.createDevice(ownData.id, device.publicKey),
         notificationHelper.getUnreadCount(ownData.id),
       ]);
-      delete request.session.passkeyData;
     } else if (data.type === "verificationCode") {
       const { device } = data;
       ownData = await userHelper.getOwnDataByEmailAndVerificationCode(data.email, data.code);
@@ -309,12 +356,10 @@ registerPostRoute<
       await userHelper.setUserExtraDataField(isMobileLogin ? 'usesMobileDevice' : 'usesDesktopDevice', true, ownData.id);
     }
 
-    request.session.user = {
-      id: ownData.id,
-      deviceId
-    };
-    delete request.session.signSecret;
-    request.session.save();
+    // new session id, user set, authentication time recorded (not for a
+    // device-key login), awaited save
+    const method: AuthMethod | 'device' = data.type === 'passkey-success' ? 'passkey' : data.type;
+    await establishLoginSession(request, { userId: ownData.id, deviceId, method });
 
     const result: API.User.login.Response = {
       ownData,
@@ -327,6 +372,177 @@ registerPostRoute<
     return result;
   }
 )
+
+registerPostRoute<
+  API.User.ensureSession.Request,
+  API.User.ensureSession.Response
+>(
+  userRouter,
+  '/ensureSession',
+  Validators.API.User.ensureSession,
+  async (request) => {
+    // session keepalive: saving refreshes the rolling cookie and the store TTL
+    await new Promise<void>((resolve, reject) => {
+      request.session.save((e) => {
+        if (e) {
+          console.error("Error saving session", e);
+          reject(e);
+        }
+        else {
+          resolve();
+        }
+      });
+    });
+  }
+);
+
+const reauthenticateIpLimiter = ipRateLimitHandler({
+  bucket: 'user:reauthenticate:ip',
+  windowMs: 15 * 60 * 1000,
+  limit_v4_v6_64: 30,
+  limit_v6_56: 90,
+  limit_v6_48: 180,
+});
+const reauthenticateUserLimiter = keyRateLimitHandler({
+  bucket: 'user:reauthenticate:user',
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+});
+/** a wallet signature older than this does not count as re-authentication */
+const REAUTH_WALLET_PROOF_MAX_AGE_MS = 5 * 60 * 1000;
+
+registerPostRoute<
+  API.User.reauthenticate.Request,
+  API.User.reauthenticate.Response
+>(
+  userRouter,
+  '/reauthenticate',
+  Validators.API.User.reauthenticate,
+  async (request, response, data) => {
+    // Proves again that the person at the keyboard controls the account, with
+    // a passkey, the password or a login-enabled wallet (the same methods the
+    // account can sign in with). Refreshes the session's authentication time
+    // for sensitive actions (requireRecentAuth).
+    const { user } = request.session;
+    if (!user) {
+      throw new Error(errors.server.LOGIN_REQUIRED);
+    }
+    await reauthenticateIpLimiter(request, response);
+    await reauthenticateUserLimiter(user.id);
+
+    if (data.type === 'passkey') {
+      if (isLegacyCgidMode()) {
+        throw new Error(errors.server.NOT_SUPPORTED);
+      }
+      await verifyAuthentication(getMainRp(), request.session, data.authenticationResponse, {
+        purpose: 'stepup',
+        userId: user.id,
+      });
+    }
+    else if (data.type === 'password') {
+      if (!(await userHelper.isPasswordCorrect(user.id, data.password))) {
+        throw new Error(errors.server.NOT_ALLOWED);
+      }
+    }
+    else if (data.type === 'wallet') {
+      const { preparedCredential } = request.session;
+      delete request.session.preparedCredential;
+      if (
+        !preparedCredential ||
+        preparedCredential.type !== 'wallet' ||
+        !preparedCredential.result.readyForLogin ||
+        preparedCredential.ownerId !== user.id ||
+        typeof preparedCredential.createdAt !== 'number' ||
+        Date.now() - preparedCredential.createdAt > REAUTH_WALLET_PROOF_MAX_AGE_MS
+      ) {
+        throw new Error(errors.server.NOT_ALLOWED);
+      }
+    }
+    else {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
+    const validUntil = await recordReauthentication(request, data.type);
+    return { validUntil };
+  }
+);
+
+registerPostRoute<
+  API.User.requestSignupEmailCode.Request,
+  API.User.requestSignupEmailCode.Response
+>(
+  userRouter,
+  '/requestSignupEmailCode',
+  validators.API.User.requestSignupEmailCode,
+  async (request, response, data) => {
+    // step 1 of sign-up: mail a code to the address the account will get
+    const { user } = request.session;
+    if (user) {
+      throw new Error(errors.server.ALREADY_LOGGED_IN);
+    }
+    if (!emailEnabled()) {
+      throw new Error(errors.server.EMAIL_DISABLED);
+    }
+    // the sign-up captcha is solved here, before any mail goes out; a resend
+    // for the same address within the captcha window needs no new one
+    let captchaAt: number;
+    if (hasSignupCaptcha(request.session, data.email)) {
+      captchaAt = request.session.signupEmail!.captchaAt!;
+    }
+    else {
+      if (config.DEPLOYMENT !== 'dev') {
+        const verified = !!data.recaptchaToken && await verifyCaptchaToken(data.recaptchaToken);
+        if (!verified) {
+          throw new Error(errors.server.CAPTCHA_FAILED);
+        }
+      }
+      captchaAt = Date.now();
+    }
+    await limitSignupCodeMail(request, response, data.email);
+    try {
+      if (await userHelper.isEmailAvailable(data.email)) {
+        const code = startSignupEmailVerification(request.session, data.email, Date.now(), captchaAt);
+        await emailUtils.sendSignupCodeEmail(data.email, code);
+      }
+      else {
+        // same response either way (also for a resend); the owner of the
+        // address learns about the attempt instead of receiving a code
+        startSignupWithoutCode(request.session, data.email, Date.now(), captchaAt);
+        await emailUtils.sendSignupAddressTakenEmail(data.email);
+      }
+    }
+    catch (error) {
+      console.error("Error sending the sign-up code mail", error instanceof Error ? error.message : error);
+    }
+  }
+);
+
+// atomic attempt budget per issued sign-up code (Redis): parallel guesses
+// against one session state cannot exceed it
+const signupCodeAttemptLimiter = keyRateLimitHandler({
+  bucket: 'user:signup-code:attempts',
+  windowMs: SIGNUP_CODE_TTL_MS,
+  limit: SIGNUP_CODE_MAX_ATTEMPTS,
+});
+
+registerPostRoute<
+  API.User.verifySignupEmailCode.Request,
+  API.User.verifySignupEmailCode.Response
+>(
+  userRouter,
+  '/verifySignupEmailCode',
+  validators.API.User.verifySignupEmailCode,
+  async (request, response, data) => {
+    const { user } = request.session;
+    if (user) {
+      throw new Error(errors.server.ALREADY_LOGGED_IN);
+    }
+    const codeId = request.session.signupEmail?.codeId;
+    if (codeId) {
+      await signupCodeAttemptLimiter(`${request.sessionID}:${codeId}`);
+    }
+    checkSignupEmailCode(request.session, data.email, data.code);
+  }
+);
 
 registerPostRoute<
   API.User.checkLoginStatus.Request,
@@ -354,7 +570,11 @@ registerPostRoute<
       await deviceHelper.deleteDevice(user.deviceId);
     }
     delete request.session.user;
+    delete request.session.authAt;
+    delete request.session.authMethod;
     delete request.session.passkeyData;
+    delete request.session.pendingPasskey;
+    delete request.session.webauthnChallenges;
     delete request.session.lukso;
     delete request.session.twitter;
     request.session.save();
@@ -389,10 +609,15 @@ registerPostRoute<
       recaptchaToken,
     } = data;
 
-    if (config.DEPLOYMENT !== 'dev') {
-      const verifyResult = await verifyCaptchaToken(recaptchaToken);
+    // A sign-up that went through the email code solved its captcha there
+    // (requestSignupEmailCode, bound to the verified address); every other
+    // path (no mail, legacy CG ID mode) sends a fresh token here.
+    const captchaCovered = !isLegacyCgidMode() && emailEnabled() && verifiedSignupPassedCaptcha(request.session);
+    if (config.DEPLOYMENT !== 'dev' && !captchaCovered) {
+      const verifyResult = !!recaptchaToken && await verifyCaptchaToken(recaptchaToken);
       if (!verifyResult) {
-        console.error("Error creating user, captcha verification failed", recaptchaToken, data);
+        // never log the request: it can carry a password
+        console.error("Error creating user: captcha verification failed");
         throw new Error(errors.server.CAPTCHA_FAILED);
       }
     }
@@ -403,11 +628,33 @@ registerPostRoute<
       throw new Error(errors.server.ALREADY_LOGGED_IN);
     }
 
+    const legacyMode = isLegacyCgidMode();
+    if (!legacyMode && (useTwitterCredentials || useLuksoCredentials || usePreparedFarcaster)) {
+      // X, LUKSO and Farcaster can be linked to an existing account (and then
+      // log in), but they no longer create one
+      throw new Error(errors.server.NOT_SUPPORTED);
+    }
+
+    // The account's address is verified BEFORE the account exists
+    // (User/requestSignupEmailCode + verifySignupEmailCode), whenever this
+    // instance can send mail at all.
+    let verifiedEmail: string | null = null;
+    if (!legacyMode && emailEnabled()) {
+      verifiedEmail = getVerifiedSignupEmail(request.session);
+      if (!verifiedEmail) {
+        throw new Error(errors.server.EMAIL_VERIFICATION_REQUIRED);
+      }
+      if (useEmailAndPassword && normalizeEmail(useEmailAndPassword.email) !== normalizeEmail(verifiedEmail)) {
+        throw new Error(errors.server.INVALID_REQUEST);
+      }
+    }
+
     let loginMethodAdded = false;
 
     const newUserData: Parameters<typeof userHelper.createUser>[0] = {
       activateNewsletter: false,
-      email: null,
+      email: verifiedEmail,
+      emailVerified: verifiedEmail !== null,
       password: null,
       displayAccount,
       devicePublicKey: device.publicKey,
@@ -419,13 +666,13 @@ registerPostRoute<
       (displayAccount === "twitter" && !useTwitterCredentials) ||
       (displayAccount === "cg" && !useCgProfile)
     ) {
-      console.error("Error creating user, display account " + displayAccount + " not provided", data);
+      console.error("Error creating user: display account " + displayAccount + " not provided");
       throw new Error(errors.server.INVALID_REQUEST);
     }
     
     if (useEmailAndPassword) {
       loginMethodAdded = true;
-      newUserData.email = useEmailAndPassword.email;
+      newUserData.email = verifiedEmail || useEmailAndPassword.email;
       newUserData.password = useEmailAndPassword.password;
     }
 
@@ -433,7 +680,7 @@ registerPostRoute<
       loginMethodAdded = true;
       const { preparedCredential } = request.session;
       if (!preparedCredential || preparedCredential.type !== "wallet") {
-        console.error("Error creating user with prepared wallet, incorrect prepared credential", preparedCredential, data);
+        console.error("Error creating user with prepared wallet: prepared credential is not a wallet", preparedCredential?.type);
         throw new Error(errors.server.INVALID_REQUEST);
       }
       const { result, preWallet } = preparedCredential;
@@ -445,26 +692,35 @@ registerPostRoute<
         };
       }
       else {
-        console.error("Error creating user with prepared wallet, not ready for creation or no preWallet", data);
+        console.error("Error creating user with prepared wallet: not ready for creation");
         throw new Error(errors.server.INVALID_REQUEST);
       }
     }
 
     if (usePreparedPasskey) {
-      loginMethodAdded = true;
-      const { passkeyData } = request.session;
-      if (!passkeyData || passkeyData.step !== "success" || passkeyData.userId !== null) {
-        console.error("Error creating user with passkey, invalid passkey data", passkeyData, data);
+      // the passkey registered during this sign-up (Passkey/verifyRegistration
+      // while logged out) waits in the session; it is inserted together with
+      // the user, so an abandoned sign-up leaves no row behind
+      const { pendingPasskey } = request.session;
+      if (
+        legacyMode ||
+        !pendingPasskey ||
+        pendingPasskey.expiresAt <= Date.now() ||
+        pendingPasskey.rpId !== getMainRp().rpId
+      ) {
+        console.error("Error creating user with passkey: no valid pending passkey in the session");
         throw new Error(errors.server.INVALID_REQUEST);
       }
-      newUserData.passkeyId = passkeyData.passkeyId;
+      loginMethodAdded = true;
+      const { expiresAt, ...passkey } = pendingPasskey;
+      newUserData.passkey = passkey;
     }
 
     if (usePreparedFarcaster) {
       loginMethodAdded = true;
       const { farcaster } = request.session;
       if (!farcaster || !farcaster.fid || !farcaster.address || !farcaster.displayName || !farcaster.username) {
-        console.error("Error creating user with prepared farcaster, invalid farcaster data", farcaster, data);
+        console.error("Error creating user with prepared farcaster: invalid farcaster data", farcaster?.fid);
         throw new Error(errors.server.INVALID_REQUEST);
       }
       newUserData.accounts.push({
@@ -544,7 +800,7 @@ registerPostRoute<
       loginMethodAdded = true;
       const luksoData = request.session.lukso;
       if (!luksoData || luksoData.existsAlready) {
-        console.error("Error creating user with lukso credentials, invalid lukso data or already exists", luksoData, data);
+        console.error("Error creating user with lukso credentials: invalid lukso data or already exists");
         throw new Error(errors.server.INVALID_REQUEST);
       }
       let luksoImageId = null;
@@ -570,7 +826,7 @@ registerPostRoute<
     }
 
     if (!loginMethodAdded) {
-      console.error("Error creating user, no login method added", data);
+      console.error("Error creating user: no login method added");
       throw new Error(errors.server.INVALID_REQUEST);
     }
 
@@ -581,20 +837,16 @@ registerPostRoute<
       }
     });
 
-    delete request.session.passkeyData;
-    delete request.session.preparedCredential;
-    delete request.session.twitter;
-    delete request.session.passport;
-    delete request.session.lukso;
-    delete request.session.farcaster;
-
     if (!!useCgProfile && !!useCgProfile.imageId) {
       fileHelper.scheduleUserPreviewUpdate(insertedIds.userId, useCgProfile.imageId);
     }
-    request.session.user = {
-      id: insertedIds.userId,
+    // regenerating the session also drops all sign-up state (prepared
+    // credentials, provider data, pending passkey, verified address)
+    await establishLoginSession(request, {
+      userId: insertedIds.userId,
       deviceId: insertedIds.deviceId,
-    };
+      method: 'signup',
+    });
 
     const result: API.User.createUser.Response = {
       ownData: {
@@ -606,7 +858,7 @@ registerPostRoute<
         newsletter: false,
         weeklyNewsletter: false,
         dmNotifications: true,
-        email: useEmailAndPassword?.email || null,
+        email: newUserData.email,
         followingCount: 0,
         followerCount: 0,
         createdAt: insertedIds.updatedAt,
@@ -623,7 +875,7 @@ registerPostRoute<
         pointBalance: 0,
         trustScore: '1.0',
         premiumFeatures: [],
-        emailVerified: false,
+        emailVerified: newUserData.emailVerified === true,
         passkeys: insertedIds.passkeyData ? [insertedIds.passkeyData] : [],
         extraData: {},
         tags: null,
@@ -635,10 +887,10 @@ registerPostRoute<
       chats: [],
     }
 
-    if(useEmailAndPassword?.email){
+    if (!!newUserData.email && !newUserData.emailVerified) {
       try {
         const verificationToken = await emailHelper.generateVerificationEmailToken(insertedIds.userId);
-        await emailUtils.sendVerificationEmail(useEmailAndPassword.email, verificationToken);
+        await emailUtils.sendVerificationEmail(newUserData.email, verificationToken);
       } catch (error) {
         console.error('Error sending verification email', error);
         //notify user that email could not be sent
@@ -659,6 +911,21 @@ registerPostRoute<
     const { user } = request.session;
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
+    }
+    if (data.email !== undefined) {
+      const current = (await userHelper.getOwnDataById(user.id)).email;
+      if (data.email === current) {
+        // clients re-send the unchanged address with other settings: not a
+        // change (and must not reset the verification)
+        delete data.email;
+        if (Object.keys(data).length === 0) {
+          return;
+        }
+      }
+      else if (data.email === null || current === null || normalizeEmail(data.email) !== normalizeEmail(current)) {
+        // changing the account's address: step-up (before any change)
+        requireRecentAuth(request);
+      }
     }
     await userHelper.updateUser(user.id, data);
   }
@@ -688,6 +955,12 @@ registerPostRoute<
   '/addUserAccount',
   Validators.API.User.addUserAccount as any,
   async (request, response, data) => {
+    const isLoginAccount = LOGIN_ACCOUNT_TYPES.has(data.type);
+    if (isLoginAccount) {
+      // an X, LUKSO or Farcaster account can sign in: adding one is adding a
+      // sign-in method — step-up, and the verified address is told afterwards
+      requireRecentAuth(request);
+    }
     const { user } = request.session;
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
@@ -811,6 +1084,9 @@ registerPostRoute<
     } else {
       throw new Error(errors.server.INVALID_REQUEST);
     }
+    if (isLoginAccount) {
+      notifyNewSignInMethod(user.id, `${data.type === 'twitter' ? 'X' : data.type === 'lukso' ? 'LUKSO' : 'Farcaster'} account`);
+    }
   }
 );
 
@@ -838,12 +1114,17 @@ registerPostRoute<
   '/removeUserAccount',
   Validators.API.User.removeUserAccount,
   async (request, response, data) => {
+    const isLoginAccount = LOGIN_ACCOUNT_TYPES.has(data.type);
+    if (isLoginAccount) {
+      // X, LUKSO and Farcaster accounts can sign in: step-up
+      requireRecentAuth(request);
+    }
     const { user } = request.session;
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-
-    await userHelper.removeUserAccount(user.id, data.type as UserProfileTypeEnum);
+    // never the account's last way to sign in (LAST_LOGIN_METHOD)
+    await userHelper.removeUserAccount(user.id, data.type as UserProfileTypeEnum, { rpId: getProcessRpIdOrNull() });
   }
 );
 
@@ -855,13 +1136,19 @@ registerPostRoute<
   '/prepareWalletAction',
   Validators.API.User.prepareWalletAction,
   async (request, response, data) => {
+    if (data.type === 'cg_evm' && !isLegacyCgidMode()) {
+      // the deprecated 12-word recovery phrase login (a key derived from the
+      // phrase signs in as the account's cg_evm wallet) is gone outside the
+      // legacy gateway
+      throw new Error(errors.server.NOT_SUPPORTED);
+    }
     const { secret } = data.data;
     if (!secret || secret !== request.session.signSecret) {
       throw new Error(errors.server.INVALID_SECRET);
     }
     delete request.session.signSecret;
     const preparedWalletCredential = await walletHelper.prepareWalletAction(data, request.session.user?.id || null);
-    request.session.preparedCredential = preparedWalletCredential;
+    request.session.preparedCredential = { ...preparedWalletCredential, createdAt: Date.now() };
     await new Promise(resolve => request.session.save(resolve));
     return preparedWalletCredential.result;
   }
@@ -875,6 +1162,10 @@ registerPostRoute<
   '/addPreparedWallet',
   Validators.API.User.addPreparedWallet,
   async (request, response, data) => {
+    if (data.loginEnabled) {
+      // a wallet that can sign in is a new sign-in method: step-up
+      requireRecentAuth(request);
+    }
     try {
       const { user, preparedCredential } = request.session;
       if (!user) {
@@ -925,7 +1216,15 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    await walletHelper.updateWallet(user.id, data);
+    if (data.loginEnabled !== undefined) {
+      const current = await walletHelper.getOwnWalletLoginEnabled(user.id, data.id);
+      if (current !== null && current !== data.loginEnabled) {
+        // switching a wallet's sign-in on or off: step-up (before any change)
+        requireRecentAuth(request);
+      }
+    }
+    // switching off the account's last way to sign in is refused (LAST_LOGIN_METHOD)
+    await walletHelper.updateWallet(user.id, data, { rpId: getProcessRpIdOrNull() });
 
     const event: Events.User.Wallet = {
       type: "cliWalletEvent",
@@ -950,7 +1249,12 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    await walletHelper.deleteWallet(user.id, data);
+    if (await walletHelper.getOwnWalletLoginEnabled(user.id, data.id)) {
+      // removing a sign-in method: step-up (checked before anything changes)
+      requireRecentAuth(request);
+    }
+    // the account's last way to sign in cannot be deleted (LAST_LOGIN_METHOD)
+    await walletHelper.deleteWallet(user.id, data, { rpId: getProcessRpIdOrNull() });
 
     const event: Events.User.Wallet = {
       type: "cliWalletEvent",
@@ -1082,11 +1386,8 @@ registerPostRoute<
   '/setPassword',
   Validators.API.User.setPassword,
   async (request, response, data) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-    await userHelper.setPassword(user.id, data.password);
+    const { userId } = requireRecentAuth(request);
+    await userHelper.setPassword(userId, data.password);
   }
 );
 

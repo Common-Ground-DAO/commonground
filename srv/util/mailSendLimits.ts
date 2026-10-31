@@ -78,3 +78,21 @@ export async function limitVerificationMail(request: express.Request, response: 
   await verifyAccountLimit(userId);
   await verifyTargetLimit(mailTargetKey(address));
 }
+
+const signupIpLimit = ipRateLimitHandler({
+  bucket: 'mail:signup:ip',
+  windowMs: HOUR,
+  limit_v4_v6_64: 10,
+  limit_v6_56: 30,
+  limit_v6_48: 60,
+});
+const signupTargetCooldown = keyRateLimitHandler({ bucket: 'mail:signup:to:min', windowMs: MINUTE, limit: 1 });
+const signupTargetLimit = keyRateLimitHandler({ bucket: 'mail:signup:to', windowMs: HOUR, limit: 5 });
+
+/** POST /User/requestSignupEmailCode: 10/h per IP; per address 1/min and 5/h. */
+export async function limitSignupCodeMail(request: express.Request, response: express.Response, address: string) {
+  await signupIpLimit(request, response);
+  const key = mailTargetKey(address);
+  await signupTargetCooldown(key);
+  await signupTargetLimit(key);
+}

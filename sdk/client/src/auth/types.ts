@@ -73,12 +73,22 @@ export interface DeviceDescriptor {
   publicKey: DevicePublicJwk;
 }
 
-/** POST /User/createUser request (email+password + cg profile path). */
+/**
+ * POST /User/createUser request (cg profile path). The sign-in method is a
+ * password (`useEmailAndPassword`) and/or the passkey registered during this
+ * sign-up (`usePreparedPasskey`). On instances that send mail the address
+ * must have been verified first (requestSignupEmailCode/verifySignupEmailCode).
+ */
 export interface CreateUserRequest {
   displayAccount: "cg";
-  recaptchaToken: string;
+  /**
+   * The sign-up captcha. Not needed when the sign-up went through
+   * requestSignupEmailCode, which checks the captcha itself.
+   */
+  recaptchaToken?: string;
   device: DeviceDescriptor;
-  useEmailAndPassword: { email: string; password: string };
+  useEmailAndPassword?: { email: string; password: string };
+  usePreparedPasskey?: boolean;
   useCgProfile: {
     type: "cg";
     displayName: string;
@@ -86,3 +96,91 @@ export interface CreateUserRequest {
     extraData: CgProfileExtraData;
   };
 }
+
+// ---- passkeys (WebAuthn JSON as exchanged with the Passkey API) ------------
+
+export type AuthenticatorTransport = "ble" | "cable" | "hybrid" | "internal" | "nfc" | "smart-card" | "usb";
+
+export interface PasskeyCredentialDescriptor {
+  id: string;
+  type: "public-key";
+  transports?: AuthenticatorTransport[];
+}
+
+/** Passkey/registrationOptions response (PublicKeyCredentialCreationOptionsJSON). */
+export interface PasskeyCreationOptions {
+  rp: { id?: string; name: string };
+  user: { id: string; name: string; displayName: string };
+  challenge: string;
+  pubKeyCredParams: { type: "public-key"; alg: number }[];
+  timeout?: number;
+  excludeCredentials?: PasskeyCredentialDescriptor[];
+  authenticatorSelection?: {
+    residentKey?: string;
+    requireResidentKey?: boolean;
+    userVerification?: string;
+    authenticatorAttachment?: string;
+  };
+  attestation?: string;
+  extensions?: Record<string, unknown>;
+}
+
+/** Passkey/authenticationOptions response (PublicKeyCredentialRequestOptionsJSON). */
+export interface PasskeyRequestOptions {
+  challenge: string;
+  rpId?: string;
+  timeout?: number;
+  allowCredentials?: PasskeyCredentialDescriptor[];
+  userVerification?: string;
+  extensions?: Record<string, unknown>;
+}
+
+/** RegistrationResponseJSON, as @simplewebauthn/browser produces it. */
+export interface PasskeyRegistrationResponse {
+  id: string;
+  rawId: string;
+  type: "public-key";
+  authenticatorAttachment?: "platform" | "cross-platform";
+  clientExtensionResults: Record<string, unknown>;
+  response: {
+    clientDataJSON: string;
+    attestationObject: string;
+    authenticatorData?: string;
+    transports?: AuthenticatorTransport[];
+    publicKeyAlgorithm?: number;
+    publicKey?: string;
+  };
+}
+
+/** AuthenticationResponseJSON, as @simplewebauthn/browser produces it. */
+export interface PasskeyAuthenticationResponse {
+  id: string;
+  rawId: string;
+  type: "public-key";
+  authenticatorAttachment?: "platform" | "cross-platform";
+  clientExtensionResults: Record<string, unknown>;
+  response: {
+    clientDataJSON: string;
+    authenticatorData: string;
+    signature: string;
+    userHandle?: string;
+  };
+}
+
+/** One credential of the session user on the instance's relying party. */
+export interface PasskeyInfo {
+  id: string;
+  credentialID: string;
+  /** WebAuthn user handle (base64url) the credential was created with */
+  userHandle: string;
+  name: string | null;
+  credentialDeviceType: string;
+  credentialBackedUp: boolean;
+  transports?: AuthenticatorTransport[];
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+export type PasskeyVerifyRegistrationResult =
+  | { status: "attached"; passkeys: PasskeyInfo[] }
+  | { status: "pending" };

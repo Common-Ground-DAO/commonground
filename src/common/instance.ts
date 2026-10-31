@@ -21,8 +21,10 @@ export type InstanceConfig = {
   deployment?: 'prod' | 'staging' | 'dev';
   /** Public base URL of the instance, no trailing slash (e.g. https://chat.example.org). */
   appUrl?: string;
-  /** Base URL of the CG ID app, including the hash router prefix (e.g. https://id.chat.example.org/#). */
+  /** Legacy CG ID (gateway) instances only: base URL of the CG ID app, including the hash router prefix (e.g. https://id.app.cg/#). */
   cgidUrl?: string;
+  /** WebAuthn RP ID passkeys on this origin are bound to (absent on a legacy CG ID instance). */
+  passkeyRpId?: string;
   /** reCAPTCHA v2 site key for this instance; empty disables the default key. */
   recaptchaSiteKey?: string;
   /** Captcha provider this instance verifies against (registration spam protection). */
@@ -37,6 +39,8 @@ export type InstanceConfig = {
     calls?: boolean;
     /** false when the instance disables the server-side NSFW image filter (skips the client pre-check too). */
     imageFilter?: boolean;
+    /** true when passkeys run on this origin (Passkey API); false on a legacy CG ID instance. */
+    passkeys?: boolean;
   };
   /**
    * NSFW probability at which this instance's server-side filter rejects an
@@ -75,6 +79,9 @@ export function getInstanceConfig(): InstanceConfig | undefined {
   if (typeof raw.cgidUrl === 'string' && /^https?:\/\/[^/]+/i.test(raw.cgidUrl)) {
     cfg.cgidUrl = raw.cgidUrl;
   }
+  if (typeof raw.passkeyRpId === 'string' && /^[a-z0-9.-]{1,253}$/i.test(raw.passkeyRpId)) {
+    cfg.passkeyRpId = raw.passkeyRpId.toLowerCase();
+  }
   if (typeof raw.recaptchaSiteKey === 'string') {
     cfg.recaptchaSiteKey = raw.recaptchaSiteKey;
   }
@@ -89,7 +96,7 @@ export function getInstanceConfig(): InstanceConfig | undefined {
   }
   if (raw.features && typeof raw.features === 'object') {
     cfg.features = {};
-    for (const key of ['email', 'twitterAuth', 'calls', 'imageFilter'] as const) {
+    for (const key of ['email', 'twitterAuth', 'calls', 'imageFilter', 'passkeys'] as const) {
       if (typeof raw.features[key] === 'boolean') {
         cfg.features[key] = raw.features[key];
       }

@@ -9,6 +9,7 @@ import { dockerSecret } from ".";
 import { CAPTCHA_PROVIDER } from "./captcha";
 import { isConfiguredSecret } from "./configuredSecret";
 import { parseMailConfig } from "./mailConfig";
+import { getProcessRpIdOrNull, isLegacyCgidMode } from "./passkeyConfig";
 
 // Builds the <script> tag that declares this instance's identity to the
 // frontend (window.__CG_INSTANCE__). Injected into every index.html the
@@ -18,15 +19,27 @@ import { parseMailConfig } from "./mailConfig";
 // how the frontend consumes it.
 
 export function buildInstanceConfig(): InstanceConfig {
-  let cgidUrl = process.env.CGID_URL || `${urls.APP_URL}/index_cgid.html`;
-  if (!cgidUrl.includes("#")) {
-    cgidUrl = `${cgidUrl.replace(/\/+$/, "")}/#`;
-  }
+  const legacyCgid = isLegacyCgidMode();
   const instance: InstanceConfig = {
     deployment: config.DEPLOYMENT,
     appUrl: urls.APP_URL,
-    cgidUrl,
   };
+  if (legacyCgid) {
+    // legacy CG ID (gateway) mode: passkeys live on the CG ID app
+    let cgidUrl = process.env.CGID_URL || `${urls.APP_URL}/index_cgid.html`;
+    if (!cgidUrl.includes("#")) {
+      cgidUrl = `${cgidUrl.replace(/\/+$/, "")}/#`;
+    }
+    instance.cgidUrl = cgidUrl;
+  }
+  else {
+    // passkeys on this origin (Passkey API); the RP ID is what credentials
+    // registered here are bound to
+    const rpId = getProcessRpIdOrNull();
+    if (rpId) {
+      instance.passkeyRpId = rpId;
+    }
+  }
   if (typeof process.env.CG_RECAPTCHA_SITE_KEY === "string") {
     instance.recaptchaSiteKey = process.env.CG_RECAPTCHA_SITE_KEY;
   }
@@ -50,6 +63,8 @@ export function buildInstanceConfig(): InstanceConfig {
     imageFilter: config.IMAGE_MODERATION_ENABLED,
     // same rule as emailEnabled() in srv/api/emails.ts
     email: parseMailConfig(process.env, urls.APP_HOSTNAME).enabled,
+    // main-origin passkeys (Passkey API); false on a legacy CG ID process
+    passkeys: !legacyCgid && getProcessRpIdOrNull() !== null,
     twitterAuth:
       configured(dockerSecret("twitter_api_v1_key") || process.env.TWITTER_API_KEY) &&
       configured(dockerSecret("twitter_api_v1_secret") || process.env.TWITTER_API_SECRET),

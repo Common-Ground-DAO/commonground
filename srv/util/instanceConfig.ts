@@ -7,6 +7,7 @@ import type { InstanceConfig } from "../common/instance";
 import urls from "./urls";
 import { dockerSecret } from ".";
 import { CAPTCHA_PROVIDER } from "./captcha";
+import { isConfiguredSecret } from "./configuredSecret";
 
 // Builds the <script> tag that declares this instance's identity to the
 // frontend (window.__CG_INSTANCE__). Injected into every index.html the
@@ -39,7 +40,7 @@ export function buildInstanceConfig(): InstanceConfig {
   }
   // capability flags: derived from which secrets this server actually has,
   // so the frontend can hide features that would only fail
-  const configured = (v: string | undefined) => !!v && v !== "placeholder" && v !== "your-key";
+  const configured = isConfiguredSecret;
   instance.features = {
     // opt-out: only an explicit "false" (no mediasoup service deployed) hides
     // the call UI, so instances that never set the variable keep calls

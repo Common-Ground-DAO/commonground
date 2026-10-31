@@ -145,7 +145,15 @@ services:
       - IMAGE_MODERATION_THRESHOLD=${IMAGE_MODERATION_THRESHOLD:-}
       - IMAGE_MODERATION_MODEL_PATH=${IMAGE_MODERATION_MODEL_PATH:-}
       - ALTCHA_HMAC_KEY=${ALTCHA_HMAC_KEY:-}
-      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
+      # outgoing mail; unset = the mailpit catcher below, empty SMTP_HOST =
+      # email disabled (docs/email-notifications)
+      - SMTP_HOST=${SMTP_HOST-mailpit}
+      - SMTP_PORT=${SMTP_PORT-1025}
+      - SMTP_SECURITY=${SMTP_SECURITY-none}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL_FROM=${EMAIL_FROM:-}
+      - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-}
       - PLATFORM_OPERATOR_USER_IDS=${PLATFORM_OPERATOR_USER_IDS:-}
       - BOT_USER_OWNER_LIMIT=${BOT_USER_OWNER_LIMIT:-5}
       - BOT_COMMUNITY_OWNER_LIMIT=${BOT_COMMUNITY_OWNER_LIMIT:-10}
@@ -200,7 +208,13 @@ services:
       - STAKING_BASE_RATE=${STAKING_BASE_RATE:-}
       - STAKING_MIN_LOCK_DAYS=${STAKING_MIN_LOCK_DAYS:-}
       - STAKING_MAX_LOCK_DAYS=${STAKING_MAX_LOCK_DAYS:-}
-      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
+      - SMTP_HOST=${SMTP_HOST-mailpit}
+      - SMTP_PORT=${SMTP_PORT-1025}
+      - SMTP_SECURITY=${SMTP_SECURITY-none}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL_FROM=${EMAIL_FROM:-}
+      - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-}
     depends_on:
       - db
       - redis
@@ -296,6 +310,20 @@ services:
     image: cryptogram/nginx
     depends_on:
       - api
+    networks:
+      - cryptogram
+    restart: unless-stopped
+
+  # catches every mail the dev stack sends (nothing leaves the machine); web
+  # UI on http://<EXTERNAL_LISTEN_IP>:8025, SMTP on mailpit:1025 inside the
+  # network only
+  mailpit:
+    image: axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498
+    ports:
+      # careful with EXTERNAL_LISTEN_IP=0.0.0.0: the web UI has no login and
+      # shows every caught mail, login codes and verification links included —
+      # anyone on the network could log in as any account that uses them
+      - ${EXTERNAL_LISTEN_IP}:8025:8025
     networks:
       - cryptogram
     restart: unless-stopped

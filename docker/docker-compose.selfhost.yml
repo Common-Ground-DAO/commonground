@@ -15,6 +15,9 @@
 #     compose profiles "calls" and "blockchain"; selfhost.sh derives
 #     COMPOSE_PROFILES from CG_ENABLE_CALLS / CG_ENABLE_BLOCKCHAIN, both of
 #     which default to true
+#   - the send-only mail relay (mail) sits behind the profile "mail",
+#     switched by CG_ENABLE_MAIL (init.sh writes true; unset = off, so an
+#     older .env.selfhost does not start sending mail on its own)
 #
 # Usage: see docker/SELFHOST.md. Never run this with the dev docker/.env —
 # use docker/selfhost/init.sh to generate .env.selfhost with fresh secrets.
@@ -59,7 +62,7 @@ services:
       - CG_RECAPTCHA_SITE_KEY=${CG_RECAPTCHA_SITE_KEY}
       - CG_CAPTCHA_PROVIDER=${CAPTCHA_PROVIDER:-}
       - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
-      - CG_FEATURE_EMAIL=${SENDGRID_API_KEY:+true}
+      - CG_FEATURE_EMAIL=${SMTP_HOST:+true}
       - CG_FEATURE_TWITTER=${TWITTER_API_KEY:+true}
       - CG_ENABLE_CALLS=${CG_ENABLE_CALLS:-true}
       - CG_ENABLE_IMAGE_FILTER=${CG_ENABLE_IMAGE_FILTER:-true}
@@ -203,7 +206,13 @@ services:
       - STAKING_BASE_RATE=${STAKING_BASE_RATE:-}
       - STAKING_MIN_LOCK_DAYS=${STAKING_MIN_LOCK_DAYS:-}
       - STAKING_MAX_LOCK_DAYS=${STAKING_MAX_LOCK_DAYS:-}
-      - EMAIL_FROM=${EMAIL_FROM}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_SECURITY=${SMTP_SECURITY:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL_FROM=${EMAIL_FROM:-}
+      - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-}
       - CG_RECAPTCHA_SITE_KEY=${CG_RECAPTCHA_SITE_KEY}
       - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
       - CG_ENABLE_CALLS=${CG_ENABLE_CALLS:-true}
@@ -214,14 +223,11 @@ services:
       - IMAGE_MODERATION_ENABLED=${CG_ENABLE_IMAGE_FILTER:-true}
       - IMAGE_MODERATION_THRESHOLD=${CG_IMAGE_FILTER_THRESHOLD:-}
       - IMAGE_MODERATION_MODEL_PATH=${CG_IMAGE_FILTER_MODEL_PATH:-}
-      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
       - TWITTER_CALLBACK_URL=${TWITTER_CALLBACK_URL}
       - TWITTER_OAUTH2_CLIENT_ID=${TWITTER_OAUTH2_CLIENT_ID}
       - TWITTER_OAUTH2_CLIENT_SECRET=${TWITTER_OAUTH2_CLIENT_SECRET}
       - TWITTER_API_KEY=${TWITTER_API_KEY}
       - TWITTER_API_SECRET=${TWITTER_API_SECRET}
-      - MAILCHIMP_API_KEY=${MAILCHIMP_API_KEY}
-      - MAILCHIMP_LIST_ID=${MAILCHIMP_LIST_ID}
       - CG_GIPHY_API_KEY=${CG_GIPHY_API_KEY}
       - CG_WALLETCONNECT_PROJECT_ID=${CG_WALLETCONNECT_PROJECT_ID}
       - PLATFORM_OPERATOR_USER_IDS=${PLATFORM_OPERATOR_USER_IDS:-}
@@ -238,6 +244,7 @@ services:
       - memberlist
     networks:
       - cryptogram
+      - mail-relay
     volumes:
       - "./vapid_keys.json:/run/secrets/vapid_keys_json:ro"
       - "./api_data:/api_data:ro"
@@ -277,14 +284,23 @@ services:
       - STAKING_BASE_RATE=${STAKING_BASE_RATE:-}
       - STAKING_MIN_LOCK_DAYS=${STAKING_MIN_LOCK_DAYS:-}
       - STAKING_MAX_LOCK_DAYS=${STAKING_MAX_LOCK_DAYS:-}
-      - EMAIL_FROM=${EMAIL_FROM}
-      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_SECURITY=${SMTP_SECURITY:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL_FROM=${EMAIL_FROM:-}
+      - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-}
+      # receive the mail relay's bounce reports on port 2525 (mail-relay
+      # network; same login as SMTP_USER/SMTP_PASSWORD)
+      - MAIL_BOUNCE_RECEIVER=${CG_ENABLE_MAIL:-false}
     depends_on:
       - db
       - redis
       - seaweed
     networks:
       - cryptogram
+      - mail-relay
     command: ["node", "/dist/jobs.js"]
     stop_grace_period: 1m
     restart: unless-stopped
@@ -370,6 +386,41 @@ services:
     stop_grace_period: 1m
     restart: unless-stopped
 
+  # send-only mail relay (maddy) — disable with CG_ENABLE_MAIL=false and point
+  # SMTP_* at an external server instead (SELFHOST.md, "Email"). The app
+  # submits with its relay login over the internal mail-relay network; the
+  # relay DKIM-signs (key generated on first start, kept in mail-data only),
+  # queues and delivers to the recipients' MX over port 25 via mail-egress.
+  # No published port: inbound mail is not handled.
+  mail:
+    image: foxcpp/maddy:0.9.6@sha256:e1074e92a452b84d1135ebe8ab831c5f541d33dcbd39e38fab740a53bbf2f97c
+    profiles: ["mail"]
+    entrypoint: ["/bin/sh", "/etc/maddy/entrypoint.sh"]
+    command: []
+    environment:
+      - MAIL_DOMAIN=${MAIL_DOMAIN:-${CG_DOMAIN}}
+      - MAIL_HOSTNAME=${MAIL_HOSTNAME:-${CG_DOMAIN}}
+      - MAIL_DKIM_SELECTOR=${MAIL_DKIM_SELECTOR:-cg}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+    volumes:
+      - ./mail:/etc/maddy:ro
+      # queue, DKIM keys, MTA-STS cache (the image's sample /data/maddy.conf
+      # is copied in on creation and unused)
+      - mail-data:/data
+    networks:
+      - mail-relay
+      - mail-egress
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 1m
+    restart: unless-stopped
+
   cg-builder:
     build:
       context: ./node
@@ -397,7 +448,14 @@ volumes:
   builder-cache:
   caddy-data:
   caddy-config:
+  mail-data:
 
 networks:
   cryptogram:
     attachable: true
+  # app (api, job-runner) -> mail relay; no route to the outside
+  mail-relay:
+    internal: true
+  # the mail relay's own way out (SMTP to the recipients' MX, port 25)
+  mail-egress:
+

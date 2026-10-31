@@ -15,6 +15,7 @@ services:
       - POSTGRES_PASSWORD=${PG_SU_PASSWORD}
       - PG_WRITER_PASSWORD=${PG_WRITER_PASSWORD}
       - PG_READER_PASSWORD=${PG_READER_PASSWORD}
+      - PG_MEDIASOUP_PASSWORD=${PG_MEDIASOUP_PASSWORD}
     volumes:
       # Postgres 18 keeps its cluster in <volume>/18/docker. A volume from
       # Postgres 14 (cluster at the volume root) is refused at startup —

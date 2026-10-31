@@ -357,7 +357,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/getFollowers`, `/getFollowing`, `/getFriends`
 
 **Articles (user blog):**
-- `/getArticleList`, `/getArticleDetailView`
+- `/getArticleList`, `/getArticleDetailView` -- a user article without a publish date or with one in the future is only returned to its author (`/getArticleList` with `drafts: true` requires the session user to be the `userId` asked for; `/getArticleDetailView` compares the session user with the author in SQL).
 - `/createArticle`, `/updateArticle`, `/deleteArticle`
 
 **Premium:**
@@ -447,7 +447,7 @@ A subset of message routes is also reachable over the Bot API v1 surface (see be
 Contains internal search logic (uses raw SQL `to_tsvector`/`websearch_to_tsquery` for full-text search).
 
 - `/searchUsers` -- Search users by name
-- `/searchArticles` -- Search articles by content
+- `/searchArticles` -- Search articles by content. User articles appear once their publish date has passed.
 
 ### `srv/api/report.ts` -- Reporting Routes
 

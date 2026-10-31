@@ -199,7 +199,7 @@ class SearchHelper {
       ))
       -- check if published
       AND (ua."userId" IS NOT NULL OR ca."published" IS NOT NULL)
-      AND (ca."communityId" IS NOT NULL OR ua."published" IS NOT NULL)
+      AND (ca."communityId" IS NOT NULL OR ua."published" < now())
       ORDER BY COALESCE(ca."published", ua."published") DESC
       LIMIT $1 OFFSET $2
     `;

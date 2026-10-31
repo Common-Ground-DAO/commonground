@@ -88,8 +88,9 @@ throttles, and relays; it stores nothing authoritative.
   participants. The sender is **never** echoed (its own user room is excluded).
 - **Authorization**: community channels require `CHANNEL_WRITE`; DMs and
   article comment rooms require membership (be in the chat / joined via
-  `joinArticleEventRoom`); calls are unsupported. Unauthorized `setTyping` is
-  silently dropped — nothing is relayed.
+  `joinArticleEventRoom`); calls are unsupported. In every case
+  `access.channelId` must be the channel of the named community, chat or
+  article. Unauthorized `setTyping` is silently dropped — nothing is relayed.
 - **Expiry is the receiver's job**: apply a local timeout (~6–7s) and clear the
   indicator if no refresh arrives, so a dropped `isTyping: false` self-heals.
   The server also emits an explicit stop on disconnect/logout when it can.

@@ -19,8 +19,11 @@
 import pool from '../util/postgres';
 import communityHelper from './communities';
 import chatHelper from './chats';
+import messageHelper from './messages';
 
 const TTL_MS = 30_000;
+/** Entries per cache before expired ones are swept (and, if still full, all). */
+const MAX_ENTRIES = 10_000;
 
 export type ChannelTypingPerms = {
   readerRoleIds: string[];
@@ -33,8 +36,12 @@ export type ChannelTypingPerms = {
 
 type CacheEntry<T> = { value: Promise<T>; expiresAt: number };
 
+// Keyed by `${communityId}:${channelId}`.
 const channelPermsCache = new Map<string, CacheEntry<ChannelTypingPerms>>();
 const chatUsersCache = new Map<string, CacheEntry<string[]>>();
+// Whether an access object's channel belongs to its community/chat/article.
+// A channel never moves to another scope, so only the TTL bounds staleness.
+const accessScopeCache = new Map<string, CacheEntry<boolean>>();
 
 const PUBLIC_ROLE_TITLE = 'Public';
 
@@ -59,11 +66,25 @@ async function loadChannelPerms(communityId: string, channelId: string): Promise
   return { readerRoleIds, writerRoleIds, isPublic };
 }
 
+function sweep<T>(store: Map<string, CacheEntry<T>>, now: number): void {
+  for (const [key, entry] of store) {
+    if (entry.expiresAt <= now) {
+      store.delete(key);
+    }
+  }
+  if (store.size >= MAX_ENTRIES) {
+    store.clear();
+  }
+}
+
 function cached<T>(store: Map<string, CacheEntry<T>>, key: string, load: () => Promise<T>): Promise<T> {
   const now = Date.now();
   const hit = store.get(key);
   if (hit && hit.expiresAt > now) {
     return hit.value;
+  }
+  if (store.size >= MAX_ENTRIES) {
+    sweep(store, now);
   }
   // Don't cache rejections: on failure, drop the entry so the next call retries.
   const value = load().catch((error) => {
@@ -77,7 +98,35 @@ function cached<T>(store: Map<string, CacheEntry<T>>, key: string, load: () => P
 }
 
 export function getChannelTypingPerms(communityId: string, channelId: string): Promise<ChannelTypingPerms> {
-  return cached(channelPermsCache, channelId, () => loadChannelPerms(communityId, channelId));
+  return cached(channelPermsCache, `${communityId}:${channelId}`, () => loadChannelPerms(communityId, channelId));
+}
+
+function accessScopeKey(access: API.Messages.MessageAccess): string | null {
+  if ('communityId' in access) {
+    return `community:${access.communityId}:${access.channelId}`;
+  }
+  if ('chatId' in access) {
+    return `chat:${access.chatId}:${access.channelId}`;
+  }
+  if ('articleId' in access && 'articleCommunityId' in access) {
+    return `communityArticle:${access.articleId}:${access.articleCommunityId}:${access.channelId}`;
+  }
+  if ('articleId' in access && 'articleUserId' in access) {
+    return `userArticle:${access.articleId}:${access.articleUserId}:${access.channelId}`;
+  }
+  return null;
+}
+
+/**
+ * Cached `messageHelper.isChannelInAccessScope` for community, chat and
+ * article access objects (calls have no typing surface).
+ */
+export function isChannelInAccessScope(access: API.Messages.MessageAccess): Promise<boolean> {
+  const key = accessScopeKey(access);
+  if (!key) {
+    return Promise.resolve(false);
+  }
+  return cached(accessScopeCache, key, () => messageHelper.isChannelInAccessScope(access));
 }
 
 export function getChatUserIds(chatId: string): Promise<string[]> {
@@ -85,7 +134,12 @@ export function getChatUserIds(chatId: string): Promise<string[]> {
 }
 
 export function invalidateChannel(channelId: string): void {
-  channelPermsCache.delete(channelId);
+  const suffix = `:${channelId}`;
+  for (const key of channelPermsCache.keys()) {
+    if (key.endsWith(suffix)) {
+      channelPermsCache.delete(key);
+    }
+  }
 }
 
 export function invalidateAllChannels(): void {

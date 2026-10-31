@@ -78,7 +78,10 @@ services:
   db:
     build:
       context: ./db
-    image: cryptogram/db
+    # tag = Postgres major, so a leftover 14 image (cryptogram/db:latest) is
+    # never started on the 18 mount path below — it would initialize an
+    # empty cluster in an anonymous volume
+    image: cryptogram/db:18
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     environment:
       - POSTGRES_DB=postgres
@@ -86,8 +89,12 @@ services:
       - POSTGRES_PASSWORD=${PG_SU_PASSWORD}
       - PG_WRITER_PASSWORD=${PG_WRITER_PASSWORD}
       - PG_READER_PASSWORD=${PG_READER_PASSWORD}
+      - PG_MEDIASOUP_PASSWORD=${PG_MEDIASOUP_PASSWORD}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # Postgres 18 keeps its cluster in <volume>/18/docker. A volume from
+      # Postgres 14 (cluster at the volume root) is refused at startup —
+      # see "Postgres major upgrades" in docs/infrastructure/README.md
+      - pgdata:/var/lib/postgresql
       - ./db/postgresql.conf:/etc/postgresql/postgresql.conf
     networks:
       - cryptogram

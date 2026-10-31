@@ -48,7 +48,7 @@ We have released several open-source plugins to showcase these capabilities:
 
 If you just cloned the project:
 
-1.  Run `./run.sh build_full` to build and run Common Ground. After the build is complete, the app will be available on `http://localhost:8000`. It will run in PWA mode, so when you rebuild, it will update.
+1.  Run `./run.sh build_full` to build and run Common Ground. The first `./run.sh` call creates your local configuration `docker/.env` from the template `docker/.env.example`, with freshly generated passwords; add third-party keys there if you need those features, and never commit it. After the build is complete, the app will be available on `http://localhost:8000`. It will run in PWA mode, so when you rebuild, it will update.
 
 2.  You can always update the running backend with `./run.sh update_backend`.
 

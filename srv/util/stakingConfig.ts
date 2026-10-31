@@ -18,10 +18,20 @@ export type StakingConfig = {
   maxLockDays: number;
 };
 
-function parseConfig(): StakingConfig | null {
-  const chain = process.env.STAKING_CHAIN;
-  const contractAddress = process.env.STAKING_CONTRACT_ADDRESS?.toLowerCase();
-  const tokenAddress = process.env.STAKING_TOKEN_ADDRESS?.toLowerCase();
+type Env = Record<string, string | undefined>;
+
+// Both compose files pass every STAKING_* variable as `${VAR:-}`, so a value
+// left out of the env file arrives as an empty string, not as unset — treat
+// the two alike, or the numeric defaults below would never apply.
+function envValue(env: Env, name: string): string | undefined {
+  const value = env[name]?.trim();
+  return value ? value : undefined;
+}
+
+export function parseStakingConfig(env: Env = process.env): StakingConfig | null {
+  const chain = envValue(env, 'STAKING_CHAIN');
+  const contractAddress = envValue(env, 'STAKING_CONTRACT_ADDRESS')?.toLowerCase();
+  const tokenAddress = envValue(env, 'STAKING_TOKEN_ADDRESS')?.toLowerCase();
   if (!chain || !contractAddress || !tokenAddress) {
     return null;
   }
@@ -29,9 +39,9 @@ function parseConfig(): StakingConfig | null {
     console.error('Staking config ignored: STAKING_CONTRACT_ADDRESS / STAKING_TOKEN_ADDRESS is not a valid address');
     return null;
   }
-  const baseRate = Number(process.env.STAKING_BASE_RATE ?? '0.012');
-  const minLockDays = Number(process.env.STAKING_MIN_LOCK_DAYS ?? '7');
-  const maxLockDays = Number(process.env.STAKING_MAX_LOCK_DAYS ?? '730');
+  const baseRate = Number(envValue(env, 'STAKING_BASE_RATE') ?? '0.012');
+  const minLockDays = Number(envValue(env, 'STAKING_MIN_LOCK_DAYS') ?? '7');
+  const maxLockDays = Number(envValue(env, 'STAKING_MAX_LOCK_DAYS') ?? '730');
   if (
     !Number.isFinite(baseRate) || baseRate <= 0 ||
     !Number.isInteger(minLockDays) || minLockDays < 1 ||
@@ -50,7 +60,7 @@ function parseConfig(): StakingConfig | null {
   };
 }
 
-const stakingConfig = parseConfig();
+const stakingConfig = parseStakingConfig();
 
 export function getStakingConfig(): StakingConfig | null {
   return stakingConfig;

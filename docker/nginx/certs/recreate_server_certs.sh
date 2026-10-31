@@ -1,5 +1,6 @@
 #!/bin/bash
 cd ${0%/*}
+../../ensureEnv.sh || exit 1
 source ../../.env
 
 # if required, we can add another ip here after LOCAL_CERTIFICATE_IP

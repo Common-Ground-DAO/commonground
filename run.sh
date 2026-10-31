@@ -1,5 +1,10 @@
 #!/bin/bash
 cd ${0%/*}
+# creates docker/.env from docker/.env.example on first use, warns about
+# variables the local file lacks; the marker spares the scripts called below
+# from repeating that
+./docker/ensureEnv.sh || exit 1
+export CG_ENV_ENSURED=1
 source ./docker/.env
 
 # This script is only meant to be used in dev environment, since it

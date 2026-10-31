@@ -1,6 +1,7 @@
 # Staking
 
-> Status: verified against commit 0f1d72d66, 2026-08-03.
+> Status: verified against commit 0f1d72d66, 2026-08-03; empty-value handling of
+> the env config against commit 69999fa20 (chore/env-template), 2026-10-31.
 
 CG token **staking** lets users time-lock their CG tokens on-chain for a freely
 chosen duration and earn **Spark** (the platform currency, stored as
@@ -182,8 +183,10 @@ nothing re-proves it at unstake time. For the CG token this makes no difference.
 
 Parsed once at startup by `srv/util/stakingConfig.ts`. Staking is **off** unless
 `STAKING_CHAIN`, `STAKING_CONTRACT_ADDRESS`, and `STAKING_TOKEN_ADDRESS` are all
-set; addresses must match `^0x[0-9a-f]{40}$` (lower-cased on read). Invalid
-numeric params disable the feature with a logged error.
+set; addresses must match `^0x[0-9a-f]{40}$` (lower-cased on read). Empty or
+blank values count as unset — both compose files pass every `STAKING_*` variable
+as `${VAR:-}` — so the defaults below apply. Invalid numeric params disable the
+feature with a logged error. Unit tests: `srv/tests/stakingConfig.spec.ts`.
 
 | Env var | Default | Meaning |
 | --- | --- | --- |

@@ -1,8 +1,8 @@
 {
   "permissions": {
     "deny": [
-      "Read(**/.env)",
-      "Read(**/.env.*)"
+      "Read(**/.env.selfhost)",
+      "Read(**/s3.selfhost.json)"
     ]
   }
 }

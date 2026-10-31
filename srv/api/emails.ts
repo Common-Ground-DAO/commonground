@@ -9,11 +9,14 @@ import urlConfig from '../util/urls';
 import communityHelper from '../repositories/communities';
 import serverconfig from '../serverconfig';
 import errors from '../common/errors';
+import { isConfiguredSecret } from '../util/configuredSecret';
 
 // email delivery is optional (self-hosted instances may run without a
-// SendGrid key); callers can check this to skip email work entirely
+// SendGrid key); callers can check this to skip email work entirely. Same
+// rule as the instance config's `features.email`, so the UI and the backend
+// agree on whether email works.
 export function emailEnabled(): boolean {
-    return !!serverconfig.SENDGRID_API_KEY && serverconfig.SENDGRID_API_KEY !== 'placeholder';
+    return isConfiguredSecret(serverconfig.SENDGRID_API_KEY);
 }
 
 export type EventEmailOptions = {

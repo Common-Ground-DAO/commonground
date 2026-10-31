@@ -16,7 +16,8 @@
 > `srv/util/passkeys.ts`, `passkeyConfig.ts`, `authSession.ts`,
 > `signupEmail.ts`, `srv/repositories/passkeys.ts`), the new `User` auth
 > routes, step-up, the plugin URL check and the passkey test files against
-> commit 54e2d73, 2026-10-31.
+> commit 54e2d73, 2026-10-31; the TypeScript 6 / joi 18 note in §8 against
+> commit d604544, 2026-10-31.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -1400,8 +1401,20 @@ release, and the 2026-10-31 refresh (F6) to the newest in-major release that
 has passed the 7-day age gate — except `mediasoup` (3.23.2) and `puppeteer`
 (25.5.0), which move only together with their pinned worker / Chrome binaries
 (see `docs/infrastructure/UPDATE-POLICY.md`). The remaining major jumps
-(Express 5, TypeORM 1.x, joi 18, TypeScript 6) are scheduled in
-`docs/todo/ROADMAP_cg-box.md`.
+(Express 5, TypeORM 1.x) are scheduled in `docs/todo/ROADMAP_cg-box.md`.
+
+- **TypeScript 6 and joi 18** came with wave M1 (2026-10-31). joi 18.3.1 (the
+  first 18.x that is not affected by GHSA-4528-x5fx-h6hg) needs Node ≥ 20 and
+  replaces the `@sideway/*` helpers with `@hapi/address`/`formula`/`pinpoint`;
+  its error-message templates are unchanged, and all validator schemas in
+  `srv/validators/` were compared against 17.13.9: identical `describe()`
+  output (hence an unchanged `docs/api/openapi.json`) and identical validation
+  results/error details on a generated input corpus. `srv/tsconfig.json` uses
+  no option TS 6 deprecates (no `ignoreDeprecations`); `Node16` resolution,
+  `experimentalDecorators`/`emitDecoratorMetadata` (TypeORM) and the explicit
+  `types: ["node", "jest"]` (TS 6 no longer loads every `@types/*` package by
+  default) carry over. The TypeORM CLI scripts compile through
+  `srv/tsconfig.typeorm-cli.json`, see [docs/database](../database/README.md).
 
 - **`resolutions`**: `@types/express` / `@types/express-serve-static-core` →
   `"4"`. Several `@types/*` packages (`express-session`, `express-ws`,

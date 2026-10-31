@@ -1,6 +1,8 @@
 > Status: verified against commit 5f73578, 2026-10-31; example image line updated for Valkey, "Open advisories",
 > "Held back on purpose", the security-fix rule (3 days) and its log against
-> commit ff0da06, 2026-10-31
+> commit ff0da06, 2026-10-31; the wave M1 changes (joi 18.3.1 in the security-fix
+> log, `typescript` held back, the Renovate majors list) against commit d604544,
+> 2026-10-31
 
 # Update policy: 7-day minimum release age (3 days for security fixes)
 
@@ -68,7 +70,8 @@ one row per artifact).
 
 | Date | Package / version (ecosystem) | Advisory | Published | Where | Reason / mechanism |
 |---|---|---|---|---|---|
-| 2026-10-31 | `joi` 17.13.9 (npm) | GHSA-4528-x5fx-h6hg (high) | 2026-10-28T10:04Z | root, `srv/` (floor `^17.13.9`) | quadratic split in `string().email({ multiple: true })`; not reachable today (no validator uses `multiple: true`), taken anyway as the rule's first application. `npmPreapprovedPackages` entry in the root `.yarnrc.yml` until 2026-11-04 |
+| 2026-10-31 | `joi` 17.13.9 (npm) | GHSA-4528-x5fx-h6hg (high) | 2026-10-28T10:04Z | root, `srv/` (floor `^17.13.9`) | quadratic split in `string().email({ multiple: true })`; not reachable today (no validator uses `multiple: true`), taken anyway as the rule's first application. `npmPreapprovedPackages` entry in the root `.yarnrc.yml` until 2026-11-04; replaced by the 18.3.1 row below the same day |
+| 2026-10-31 | `joi` 18.3.1 (npm) | GHSA-4528-x5fx-h6hg (high) | 2026-10-28T09:59Z | root, `srv/` (`^18.3.1`) | the joi 18 upgrade (wave M1 of `docs/todo/ROADMAP_cg-box.md`): the advisory also covers `>= 18.0.0, < 18.3.1`, so the newest release older than 7 days (18.3.0) would have been vulnerable. Same reachability as above. The `npmPreapprovedPackages` entry `"joi@18.3.1"` replaced `"joi@17.13.9"` in the root `.yarnrc.yml` (no lockfile resolves joi 17 any more); remove it on 2026-11-04 |
 | 2026-10-31 | `follow-redirects` 1.16.2 (npm) | GHSA-mrwp-f3q8-3g9p (high) | 2026-10-25T21:32Z | root, `srv/`, `contracts/`, `docker/hardhat/node/` (lockfiles, via `yarn up -R`) | cross-realm `sensitiveHeaders` arrays; not reachable today (the code never sets `sensitiveHeaders`). `npmPreapprovedPackages` entry in the root `.yarnrc.yml` until 2026-11-01 |
 
 ## Open advisories
@@ -183,7 +186,7 @@ In-major updates the F6 refresh deliberately did not take:
 | `mediasoup` (`srv/`), `mediasoup-client` (root) | 3.23.2 / 3.21.0 | 3.31.0 / 3.25.3 | the worker binary pin in `docker/backend/fetch_mediasoup_worker.sh` has to move in the same change, and the call subsystem has no automated tests (manual two-peer pass needed) — Renovate's `mediasoup` group |
 | `puppeteer` (`srv/`) | 25.5.0 | 25.16.0 | the Chrome for Testing pin in `docker/backend/fetch_chrome.sh` has to move in the same change — Renovate's `puppeteer` group (also clears the `zod` advisory above) |
 | `@openzeppelin/contracts` (`contracts/`) | 5.0.2 | 5.7.0 | it is compiled into the repository's contracts: a bump changes their bytecode against what was deployed and verified on-chain, so redeploys / explorer re-verification would no longer reproduce. The maintainer decides (see `docs/todo/TODO.md`) |
-| `typescript` (`contracts/`) | `~5.4.5` (was `>=4.5.0`) | 5.9.x / 6.x / 7.x | the open range would let a lockfile refresh jump majors; with Hardhat's ts-node an incompatible pair crash-loops (same fix the dev-chain image got in 0b6e48e) |
+| `typescript` (`contracts/`, `docker/hardhat/node/`) | `~6.0.3` (was `>=4.5.0`, then `~5.4.5`) | 7.x | a tilde range, not an open one: a lockfile refresh must not jump majors, and with Hardhat's ts-node an incompatible pair crash-loops (same fix the dev-chain image got in 0b6e48e). Moved to 6.0 with wave M1 (2026-10-31; Hardhat 2.29.1 + ts-node 10.9.2 verified: compile, `hardhat node`, `hardhat run` with and without `--typecheck`). TypeScript 7 ships no compiler API, which ts-node needs |
 | `@types/node` (`contracts/`) | `^20.19.43` (was `>=16.0.0`) | 26.x | same reason — no major jump through an open range. `docker/hardhat/node/` still declares `>=16.0.0` and locks 26.6.5 (resolved fresh on 2026-10-31); harmless for a types-only package that Hardhat's transpile-only ts-node ignores at runtime, but the two files differ here |
 
 Also not taken: next minor lines of 0.x packages (semver-major, e.g. slate
@@ -199,7 +202,7 @@ Also not taken: next minor lines of 0.x packages (semver-major, e.g. slate
   applies to new resolutions; it never downgrades what a lockfile already pins.
   Yarn's own default would be `1d`.
 - **Security fixes (3–7 days old)** — an **exact-version** entry in
-  `npmPreapprovedPackages` in the root `.yarnrc.yml` (e.g. `"joi@17.13.9"`;
+  `npmPreapprovedPackages` in the root `.yarnrc.yml` (e.g. `"joi@18.3.1"`;
   Yarn 4.18.1 matches it as a descriptor, so only that version skips the age
   check), with a comment naming the advisory id and the publish date; then
   `yarn up <pkg>@<range>` / `yarn up -R <pkg>` in each affected workspace.
@@ -371,10 +374,15 @@ repository root:
 - PRs target `develop`, on Monday mornings (Europe/Berlin), grouped per
   workspace for minor/patch updates; at most 8 open / 4 per hour.
 - **Majors** are only opened after approval on the Dependency Dashboard. The
-  seven deferred majors (Express 5, react-router 7, Tailwind 4, Vite 8,
-  TypeORM 1.x, joi 18, TypeScript 6; decision 7) are disabled outright — they
-  are done by hand in waves M1–M4; drop each from the list once its wave is
-  merged.
+  deferred majors (Express 5, react-router 7, Tailwind 4, Vite 8,
+  TypeORM 1.x; decision 7) are disabled outright — they are done by hand in
+  waves M2–M4; drop each from the list once its wave is merged. joi 18 and
+  TypeScript 6 (wave M1) left the list with that wave: a joi 19 major is
+  proposed normally (dashboard approval required). TypeScript majors stay
+  disabled through a rule of their own — TypeScript 7 ships no compiler API
+  yet, so ts-node (Hardhat in `contracts/` and `docker/hardhat/node/`),
+  ts-jest (`srv/`) and typescript-eslint (supports < 6.1.0) cannot use it;
+  re-enable it once they do.
 - `mediasoup` and `puppeteer` get their own PRs with a note to update the
   pinned binaries (see above).
 - Two regex managers cover pins outside Dockerfiles/compose files and

@@ -10,7 +10,9 @@
 > the `passkeyRpId` / `features.passkeys` instance fields, `cgidUrl`, the auth
 > UI (AuthFlow, `/login`, passkeys, step-up, plugin origin guard, §10) and the
 > dnd-kit strategy/transform/trailing-click/ordering notes against commit
-> 54e2d73, 2026-10-31
+> 54e2d73, 2026-10-31; the TypeScript 6 / joi 18 notes (type-check row,
+> project-relative imports, "Dependency pins and constraints") against commit
+> d604544, 2026-10-31
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -1026,7 +1028,7 @@ browserslist; `vite.config.ts` duplicates the floors by hand.
 | Concern | Where |
 |---|---|
 | Build / dev server | `vite.config.ts`. Multi-page: both HTML shells are rollup inputs and are emitted at the dist root under their own names. Dev server is pinned to host `0.0.0.0`, port **3000** — load-bearing, because `src/data/appstate/serviceWorker.ts` disables SW registration on that origin, which is what keeps dev SW-free. |
-| `baseUrl: "src"` imports | `vite/baseUrlResolve.ts`. `tsconfig.json` sets `baseUrl: "src"` and no `paths` map, backing ~1945 bare-specifier import lines (`components/…`, `common/util`, but also file-level ones like `'App'` and `'service-worker'`). The plugin reimplements webpack's precedence: node_modules wins, `src/` is the fallback. |
+| Project-relative bare imports | `vite/baseUrlResolve.ts`. ~1945 import lines use bare specifiers that are really `src/`-relative (`components/…`, `common/util`, but also file-level ones like `'App'` and `'service-worker'`). For the type checker, `tsconfig.json` maps them with `paths: { "*": ["./src/*"] }` (until TypeScript 6 this was `baseUrl: "src"`, which TS 6 deprecates and TS 7 removes); for Vite and Vitest the plugin reimplements webpack's precedence: node_modules wins, `src/` is the fallback. (tsc tries `src/` first and then `node_modules` — with `paths` exactly as it did with `baseUrl`; Vite the other way round, unchanged.) |
 | SVG components | `vite-plugin-svgr`, behind a `?react` query — `import Icon from './icon.svg?react'`, **default** export. `svgo: false` is load-bearing (svgr's default svgo pass strips `viewBox`). Typed by `src/types/svg-react.d.ts`. |
 | Service worker | `vite/serviceWorker.ts` — a nested Vite build plus `workbox-build`'s `injectManifest`; deliberately **not** `vite-plugin-pwa`, because the worker and its registration manager are hand-written. Fails the build if the worker bundle is not a single file or if any emitted JS/CSS chunk is missing from the precache. |
 | Entry `<script>` tags | `vite/htmlEntryScripts.ts` — the shells carry no `<script src>`; the config declares which module belongs to which shell. |
@@ -1036,7 +1038,7 @@ browserslist; `vite.config.ts` duplicates the floors by hand.
 | Chunking | `build.rollupOptions.output.manualChunks` in `vite.config.ts`: nine vendor groups (`vendor-web3`, `vendor-icons`, `vendor-charts`, `vendor-mediasoup`, `vendor-emoji`, `vendor-editor`, `vendor-dnd`, `vendor-react`, `vendor-shared`) split what Vite's default chunking put into one ~5.4 MiB `App` chunk (a Vite 6 measurement; the groups carried over unchanged in the Vite 7 bump — same chunk set, every chunk same-size or marginally smaller). `node_modules` only — `src/` keeps the default behavior, because splitting first-party modules is what turns an import cycle into a TDZ crash. `assertCgidEntryChunks` (same file) fails the build if the CG ID entry ever statically reaches a group other than `vendor-react`/`vendor-shared`. Details and the rules the table follows: [docs/infrastructure](../infrastructure/README.md#frontend-build-steps). Changing it needs a browser pass. |
 | Sourcemaps | `build.sourcemap: true` on every build path (the app is AGPL). **JS only** — Vite/Rollup emit no `.css.map`, unlike CRA. The service worker excludes maps from the precache, so they only cost bandwidth when devtools opens them. |
 | CSS | `postcss.config.js` (`tailwindcss/nesting` → `tailwindcss` → `autoprefixer`), `tailwind.config.js`. |
-| Type-check | `yarn typecheck` — `tsc --noEmit` over `src/**` plus `tsconfig.node.json` over the Vite-side files. TypeScript 5.9 (4.5 could not even *parse* viem's TS-5 `.d.ts` files, which silently disabled semantic checking). `tsconfig.json` targets **es2020**: not es5, because TS 5.5+ grammar-checks regex syntax against the target and rejects the `u` flag + `\p{…}` escapes in `src/common/validators.ts`; and not es2018 any more, because viem 2 and its `ox` dependency ship `.ts` sources with BigInt literals, which tsc rejects below ES2020. Nothing emits from this tsconfig — shipped output is transpiled by Vite against `build.target`, which mirrors the `browserslist` floors. |
+| Type-check | `yarn typecheck` — `tsc --noEmit` over `src/**` plus `tsconfig.node.json` over the Vite-side files. TypeScript 6.0 (wave M1, 2026-10-31; before that 5.9 — and 4.5 could not even *parse* viem's TS-5 `.d.ts` files, which silently disabled semantic checking). The tsconfigs use no option TS 6 deprecates (no `ignoreDeprecations`), so they are ready for TS 7: `moduleResolution: "bundler"` (Vite resolves the imports; this also enforces package `exports`, hence `mediasoup-client/types` instead of the unexported `mediasoup-client/lib/types`), the `paths` mapping above instead of `baseUrl`, no `dom.iterable` (part of `dom` since TS 6) and no `esModuleInterop`/`allowSyntheticDefaultImports` (always on since TS 6). `tsconfig.json` targets **es2020**: not es5, because TS 5.5+ grammar-checks regex syntax against the target and rejects the `u` flag + `\p{…}` escapes in `src/common/validators.ts`; and not es2018 any more, because viem 2 and its `ox` dependency ship `.ts` sources with BigInt literals, which tsc rejects below ES2020. Nothing emits from this tsconfig — shipped output is transpiled by Vite against `build.target`, which mirrors the `browserslist` floors. |
 | Lint | `yarn lint` — `eslint.config.mjs` (ESLint 9 flat config: typescript-eslint + react + react-hooks), calibrated to the severities the old `react-app` preset enforced. Errors fail, warnings do not. |
 | Tests | `yarn test` — Vitest (`vitest.config.ts`) over `src/**/*.test.{ts,tsx}`; a small unit suite so far (instance config, the image-filter client modules, the upload connector, an EditField helper). Not part of the build scripts yet. |
 
@@ -1052,8 +1054,9 @@ Constraints in the root `package.json` that are not self-explanatory. The
 and the 2026-10-31 refresh (F6) moved every package to its newest in-major
 release that has passed the 7-day age gate (except `mediasoup-client`, which
 moves together with the backend's `mediasoup` and its pinned worker); the
-remaining major jumps (react-router 7, Vite 8, Tailwind 4, TypeScript 6,
-joi 18) are scheduled in `docs/todo/ROADMAP_cg-box.md`.
+remaining major jumps (react-router 7, Vite 8, Tailwind 4) are scheduled in
+`docs/todo/ROADMAP_cg-box.md`; TypeScript 6 and joi 18 came with wave M1
+(2026-10-31).
 
 - **`resolutions`**: `@types/react` → `"19"` keeps every `@types/react@*`
   consumer on one copy; a second copy makes components from other packages fail
@@ -1072,10 +1075,11 @@ joi 18) are scheduled in `docs/todo/ROADMAP_cg-box.md`.
 - **`slate-dom`** is direct because slate-react ≥ 0.111 peer-requires it.
 - **`@hapi/tlds` stays on 1.x** (both workspaces — `src/common/validators.ts`
   is shared with the backend via the `srv/common` symlink). 2.x is ESM-only
-  and its `types` field points at a file the tarball does not ship; with the
-  frontend's `moduleResolution: "node"` it does not resolve at all. The data is
-  identical, so there is nothing to gain until the frontend moves to
-  `moduleResolution: "bundler"`.
+  and its `types` field pointed at a file the tarball did not ship, so with the
+  frontend's former `moduleResolution: "node"` it did not resolve at all. The
+  frontend is on `"bundler"` since TypeScript 6 (wave M1); the move to 2.x is a
+  separate follow-up (see `docs/todo/TODO.md`). joi 18 itself depends on
+  `@hapi/tlds` `^1.1.1`.
 - Exact pins are kept exact: `altcha`, `dexie`, `dexie-react-hooks`,
   `mediasoup-client`, `protoo-client`, `socket.io-client`, `typescript`,
   `workbox-precaching`, `workbox-routing`, and in `devDependencies`

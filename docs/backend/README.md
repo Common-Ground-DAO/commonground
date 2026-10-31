@@ -11,8 +11,8 @@
 > policy, Mailchimp removal), message access scope, `/deleteMessage`,
 > `/getUrlPreview`, `safeFetch`, `/pluginRequest`, user-article visibility and
 > the test list against commit e44dac1, 2026-10-31; URL-preview cache instance
-> and the node-redis/Valkey note against commit ff0da06,
-> 2026-10-31.
+> and the node-redis/Valkey note against commit ff0da06, 2026-10-31; §8 against
+> commit ff0da06, 2026-10-31.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -1346,17 +1346,26 @@ Builds the `window.__CG_INSTANCE__` script tag injected into served `index.html`
 
 Version constraints in `srv/package.json` that are not self-explanatory. The
 2026-08 dependency refresh brought every package to a current in-major
-release; the remaining major jumps (Express 5, TypeORM 1.x, joi 18,
-TypeScript 6) are scheduled in `docs/todo/ROADMAP_cg-box.md`.
+release, and the 2026-10-31 refresh (F6) to the newest in-major release that
+has passed the 7-day age gate — except `mediasoup` (3.23.2) and `puppeteer`
+(25.5.0), which move only together with their pinned worker / Chrome binaries
+(see `docs/infrastructure/UPDATE-POLICY.md`). The remaining major jumps
+(Express 5, TypeORM 1.x, joi 18, TypeScript 6) are scheduled in
+`docs/todo/ROADMAP_cg-box.md`.
 
-- **`resolutions`**:
-  - `@types/express` / `@types/express-serve-static-core` → `"4"`. Several
-    `@types/*` packages (`express-session`, `express-ws`, `passport`,
-    `passport-twitter`, `multer`) depend on `@types/express@*` (and
-    `@types/cookie-parser` peer-depends on it), which resolves to 5.x and hoists a second, incompatible `Request` type next
-    to the v4 one. Drop both pins with Express 5.
-  - `sharp` → `^0.35.3`: `@huggingface/transformers` (the NSFW gate) asks for
-    `^0.34`; the resolution keeps a single sharp copy in the image.
+- **`resolutions`**: `@types/express` / `@types/express-serve-static-core` →
+  `"4"`. Several `@types/*` packages (`express-session`, `express-ws`,
+  `passport`, `passport-twitter`, `multer`) depend on `@types/express@*` (and
+  `@types/cookie-parser` peer-depends on it), which resolves to 5.x and hoists
+  a second, incompatible `Request` type next to the v4 one. Drop both pins
+  with Express 5.
+- **`sharp: "^0.35.5"`** — the floor is security-motivated: earlier releases
+  bundle affected libheif/librsvg builds (GHSA-rgj7-g3m4-5g8c,
+  GHSA-wq5f-xc86-pv6w). `@huggingface/transformers` 4.3 (the NSFW gate) asks
+  for `^0.35.4`, so both ranges resolve to one sharp copy without a
+  `resolutions` entry (the one that forced this under transformers 4.2's
+  `^0.34` was dropped on 2026-10-31). Re-check with `yarn why sharp` when
+  either moves.
 - **Exact pins** (kept exact on purpose; bump deliberately): `socket.io`
   (paired with the root workspace's exact `socket.io-client` — keep them on the
   same release), `@socket.io/redis-adapter`, `mediasoup`, `protoo-server`
@@ -1425,4 +1434,7 @@ TypeScript 6) are scheduled in `docs/todo/ROADMAP_cg-box.md`.
   `configuredSecret`, `onchainHelper`, `messageAccess`, `messageRepository`,
   `safeFetch`, `urlPreview`, `redisManager`, `pluginRequest`, `protooConnectionGate`,
   `typingCache`, `userArticleVisibility` and `userArticleRoute`. `npx tsc --noEmit`
-  does not cover `tests/` (see `docs/todo/TODO.md`).
+  does not cover `tests/` (see `docs/todo/TODO.md`). ts-jest compiles the specs
+  with `srv/tsconfig.json`, which therefore lists `"types": ["node", "jest"]`:
+  `@tsconfig/node24` ≥ 24.0.5 sets `types: ["node"]`, which would otherwise hide
+  the jest globals.

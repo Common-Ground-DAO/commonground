@@ -13,7 +13,8 @@
 > (`db` image, volume layout, `postgresql.conf`, init roles, major upgrades)
 > against commit ff0da06, 2026-10-31; the Valkey instances (`redis`,
 > `redis-cache`), their roles, persistence and the backend's Redis client
-> behaviour against commit ff0da06, 2026-10-31
+> behaviour against commit ff0da06, 2026-10-31; git-dependency and `npx` rows
+> of §2 and the age-gate bullet against commit ff0da06, 2026-10-31
 
 # Common Ground Infrastructure Documentation
 
@@ -247,7 +248,7 @@ The dev build scripts live in `docker/` and are invoked through `run.sh`.
 ### Package-manager hardening
 
 The update policy as a whole — the 7-day minimum release age for every
-ecosystem, the exception log, digest pinning, the apt snapshot, verified binary
+ecosystem (3 days for security fixes), the exception and security-fix logs, digest pinning, the apt snapshot, verified binary
 downloads and Renovate — is in **[UPDATE-POLICY.md](UPDATE-POLICY.md)**. This
 section covers the Yarn side.
 
@@ -281,9 +282,11 @@ affected version, but both controls would have made it structurally impossible:
   purged within hours, so package age filters them out; `yarn npm audit` does
   **not** — during this attack no GHSA advisory existed for the highest-traffic
   poisoned packages. The gate applies to new resolutions only; it never
-  downgrades what the lockfile already pins. Its cost is that an urgent security
-  fix is delayed too — the escape hatch is `yarn up --no-time-gate <pkg>`, to be
-  used deliberately and justified in the PR.
+  downgrades what the lockfile already pins. A security fix may come in after
+  3 days through an exact-version `npmPreapprovedPackages` entry in the root
+  `.yarnrc.yml`; anything younger needs the maintainer's approval
+  (`yarn up --no-time-gate <pkg>` or the same entry) — both logged in
+  [UPDATE-POLICY.md](UPDATE-POLICY.md#security-fixes-3-days).
 
 Yarn 4.1.0 had neither (its `enableScripts` default was `true`, contrary to what
 the current yarnpkg.com docs say — the pinned binary is the authority), which is
@@ -306,8 +309,8 @@ main workspaces:
 | backend image build | the copied `.yarnrc.yml` carries both controls (no `yarnPath` exists any more — corepack provisions the `packageManager`-pinned Yarn); verified by the `YN0004` warnings in the build output |
 | Azure pipelines | the secure-file `.yarnrc.yml` **replaces** the repo's, so the pipelines re-append both settings after copying it — see the comment there |
 | lockfile drift | every scripted install is `yarn install --immutable` (backend images, hardhat image, `docker/build.sh`, `docker/updateBackend.sh`, `docker/updateFrontend.sh`, `docker/selfhost/selfhost.sh`, `tools/*Migration.sh`, `tools/testEntities.sh`): a stale lockfile fails the build instead of resolving something unreviewed. Change dependencies with a plain `yarn install`/`yarn add` in `./run.sh shell` and commit the lockfile. |
-| git dependencies | `approvedGitRepositories` (root `.yarnrc.yml`) lists only `https://github.com/ethereumjs/ethereumjs-abi.git`, the one git dependency in any lockfile (via `@truffle/hdwallet-provider`); it was `"**"` until 2026-10-31. For `github.com` repositories Yarn fetches the commit archive over HTTPS first and only falls back to `git clone`, which is the path the allowlist guards — see [UPDATE-POLICY.md](UPDATE-POLICY.md#npm-yarn). |
-| `npx` call sites | every call (`web-push` and `hardhat` in the build scripts, `truffle-flattener` in `tools/generateFlattenedSourceCode.sh`) resolves to a declared local dependency and passes `--no`, which turns a missing package into a loud failure instead of a silent registry download-and-run |
+| git dependencies | `approvedGitRepositories` (root `.yarnrc.yml`) lists only `https://github.com/ethereumjs/ethereumjs-abi.git`, the one git dependency in any lockfile (`contracts/yarn.lock`, via `solidity-bytes-utils` → `@truffle/hdwallet-provider`); it was `"**"` until 2026-10-31. For `github.com` repositories Yarn fetches the commit archive over HTTPS first and only falls back to `git clone`, which is the path the allowlist guards — see [UPDATE-POLICY.md](UPDATE-POLICY.md#npm-yarn). |
+| `npx` call sites | every call (`web-push` and `hardhat` in the build scripts) resolves to a declared local dependency and passes `--no`, which turns a missing package into a loud failure instead of a silent registry download-and-run |
 
 **Refreshing a lockfile within the existing ranges** needs both patterns:
 `yarn up -R '*' '@*/*'`. Yarn's micromatch `*` does not cross `/`, so

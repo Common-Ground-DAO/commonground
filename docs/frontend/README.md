@@ -5,7 +5,8 @@
 > motion, drag & drop and toolchain notes plus "Dependency pins and
 > constraints" against commit 935232158, 2026-10-31; dev env file pointer
 > against commit 64e5ab573 (chore/env-template), 2026-10-31; builder image
-> (Node 26) against commit 5f73578, 2026-10-31
+> (Node 26) against commit 5f73578, 2026-10-31; "Dependency pins and
+> constraints" verified against commit ff0da06, 2026-10-31
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -1014,16 +1015,22 @@ build scripts run them as explicit steps — see
 
 Constraints in the root `package.json` that are not self-explanatory. The
 2026-08 dependency refresh brought everything to a current in-major release
-(React 19, wagmi 2 / viem 2 / RainbowKit 2, slate 0.126, motion 12, dnd-kit);
-the remaining major jumps (react-router 7, Vite 8, Tailwind 4, TypeScript 6,
+(React 19, wagmi 2 / viem 2 / RainbowKit 2, slate 0.126, motion 12, dnd-kit),
+and the 2026-10-31 refresh (F6) moved every package to its newest in-major
+release that has passed the 7-day age gate (except `mediasoup-client`, which
+moves together with the backend's `mediasoup` and its pinned worker); the
+remaining major jumps (react-router 7, Vite 8, Tailwind 4, TypeScript 6,
 joi 18) are scheduled in `docs/todo/ROADMAP_cg-box.md`.
 
-- **`resolutions`**:
-  - `@types/react` → `"19"` keeps every `@types/react@*` consumer on one copy;
-    a second copy makes components from other packages fail with `TS2786`.
-  - `react-router-dom` → `"6.30.1"` is a **security hold**: 6.30.2–6.30.4 are
-    affected by GHSA-jjmj-jmhj-qwj2 (open redirect → XSS) and there is no fixed
-    6.x release — the fix is react-router 7. Drop the pin with that upgrade.
+- **`resolutions`**: `@types/react` → `"19"` keeps every `@types/react@*`
+  consumer on one copy; a second copy makes components from other packages fail
+  with `TS2786`.
+- **`react-router-dom: "^6.30.6"`** — the floor is security-motivated: 6.30.2–6.30.5
+  are affected by GHSA-jjmj-jmhj-qwj2 (open redirect → XSS), which is why the
+  tree was held on 6.30.1 by a resolution until 6.30.6 shipped the fix (the
+  hold was dropped in the 2026-10-31 refresh). Two advisories remain that only
+  react-router 7.18 fixes (see "Open advisories" in
+  `docs/infrastructure/UPDATE-POLICY.md`).
 - **`history`** is a direct dependency because `SuspenseRouter` imports
   `createBrowserHistory` from it; react-router 6.30 no longer depends on it,
   so without the declaration it would be a phantom dependency.
@@ -1039,7 +1046,7 @@ joi 18) are scheduled in `docs/todo/ROADMAP_cg-box.md`.
 - Exact pins are kept exact: `altcha`, `dexie`, `dexie-react-hooks`,
   `mediasoup-client`, `protoo-client`, `socket.io-client`, `typescript`,
   `workbox-precaching`, `workbox-routing`, and in `devDependencies`
-  `@tsconfig/node24`, `@types/node`, `truffle-flattener`, `workbox-build`.
+  `@tsconfig/node24`, `@types/node`, `workbox-build`.
   `socket.io-client` moves together with the backend's exact `socket.io`
   (likewise `protoo-client` with `protoo-server`). (`react`, `react-dom` and
   `react-is` are pinned to the major only, `"19"`.) Ranged packages keep their range style; a security-motivated

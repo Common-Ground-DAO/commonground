@@ -59,7 +59,11 @@ services:
     environment:
       - CG_DEPLOYMENT=prod
       - CG_APP_URL=https://${CG_DOMAIN}
-      - CG_CGID_URL=https://${CG_ID_DOMAIN}/#
+      # instance config (inject-instance-config.sh): passkeys on this origin
+      # unless CG_LEGACY_CGID=true; CG_CGID_URL is only emitted in legacy mode
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
+      - CG_PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_CGID_URL=https://${CG_ID_DOMAIN:-}/#
       - CG_RECAPTCHA_SITE_KEY=${CG_RECAPTCHA_SITE_KEY}
       - CG_CAPTCHA_PROVIDER=${CAPTCHA_PROVIDER:-}
       - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
@@ -192,6 +196,10 @@ services:
   migrate-db:
     image: cryptogram/backend
     environment:
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the CG_DOMAIN host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - PG_SU_PASSWORD=${PG_SU_PASSWORD}
       - PG_MEDIASOUP_PASSWORD=${PG_MEDIASOUP_PASSWORD}
       - PG_SU_NAME=postgres
@@ -217,13 +225,16 @@ services:
   wsapi:
     image: cryptogram/backend
     environment:
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the CG_DOMAIN host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SECRET=${REDIS_SECRET}
       - DEPLOYMENT=prod
       - BASE_URL=https://${CG_DOMAIN}
-      - CGID_URL=https://${CG_ID_DOMAIN}
       - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
     depends_on:
       - db
@@ -240,13 +251,18 @@ services:
       dockerfile: Dockerfile_dev_stage_1
     image: cryptogram/backend
     environment:
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the CG_DOMAIN host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SECRET=${REDIS_SECRET}
       - DEPLOYMENT=prod
       - BASE_URL=https://${CG_DOMAIN}
-      - CGID_URL=https://${CG_ID_DOMAIN}
+      # read only with CG_LEGACY_CGID=true (the CG ID app's RP and CORS origin)
+      - CGID_URL=https://${CG_ID_DOMAIN:-}
       - S3_SECRET=${S3_SECRET}
       - STAKING_CHAIN=${STAKING_CHAIN:-}
       - STAKING_TOKEN_ADDRESS=${STAKING_TOKEN_ADDRESS:-}
@@ -304,6 +320,10 @@ services:
   memberlist:
     image: cryptogram/backend
     environment:
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the CG_DOMAIN host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - DEPLOYMENT=prod
@@ -319,13 +339,16 @@ services:
   job-runner:
     image: cryptogram/backend
     environment:
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the CG_DOMAIN host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SECRET=${REDIS_SECRET}
       - DEPLOYMENT=prod
       - BASE_URL=https://${CG_DOMAIN}
-      - CGID_URL=https://${CG_ID_DOMAIN}
       - S3_SECRET=${S3_SECRET}
       - STAKING_CHAIN=${STAKING_CHAIN:-}
       - STAKING_TOKEN_ADDRESS=${STAKING_TOKEN_ADDRESS:-}
@@ -359,6 +382,10 @@ services:
     image: cryptogram/backend
     profiles: ["calls"]
     environment:
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the CG_DOMAIN host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=mediasoup
       - PG_PASSWORD=${PG_MEDIASOUP_PASSWORD}
       - DEPLOYMENT=prod
@@ -395,6 +422,10 @@ services:
     image: cryptogram/backend
     profiles: ["blockchain"]
     environment:
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the CG_DOMAIN host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - REDIS_PASSWORD=${REDIS_PASSWORD}

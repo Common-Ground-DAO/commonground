@@ -94,13 +94,16 @@ services:
   wsapi:
     image: cryptogram/backend
     environment:
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the BASE_URL host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SECRET=${REDIS_SECRET}
       - DEPLOYMENT=${DEPLOYMENT}
       - BASE_URL=${BASE_URL}
-      - CGID_URL=${BASE_URL}/index_cgid.html
       - LOCAL_CERTIFICATE_IP=${LOCAL_CERTIFICATE_IP}
     depends_on:
       - db
@@ -137,6 +140,10 @@ services:
   migrate-db:
     image: cryptogram/backend
     environment: 
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the BASE_URL host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - PG_SU_PASSWORD=${PG_SU_PASSWORD}
       - PG_MEDIASOUP_PASSWORD=${PG_MEDIASOUP_PASSWORD}
       - PG_SU_NAME=postgres
@@ -168,12 +175,17 @@ services:
       dockerfile: Dockerfile_dev_stage_1
     image: cryptogram/backend
     environment: 
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the BASE_URL host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SECRET=${REDIS_SECRET}
       - DEPLOYMENT=${DEPLOYMENT}
       - BASE_URL=${BASE_URL}
+      # read only with CG_LEGACY_CGID=true (the CG ID app's RP and CORS origin)
       - CGID_URL=${BASE_URL}/index_cgid.html
       - S3_SECRET=${S3_SECRET}
       - STAKING_CHAIN=${STAKING_CHAIN:-}
@@ -226,11 +238,14 @@ services:
   memberlist:
     image: cryptogram/backend
     environment: 
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the BASE_URL host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - DEPLOYMENT=${DEPLOYMENT}
       - BASE_URL=${BASE_URL}
-      - CGID_URL=${BASE_URL}/index_cgid.html
     depends_on:
       - db
     networks:
@@ -242,13 +257,16 @@ services:
   job-runner:
     image: cryptogram/backend
     environment: 
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the BASE_URL host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SECRET=${REDIS_SECRET}
       - DEPLOYMENT=${DEPLOYMENT}
       - BASE_URL=${BASE_URL}
-      - CGID_URL=${BASE_URL}/index_cgid.html
       - S3_SECRET=${S3_SECRET}
       - STAKING_CHAIN=${STAKING_CHAIN:-}
       - STAKING_TOKEN_ADDRESS=${STAKING_TOKEN_ADDRESS:-}
@@ -276,6 +294,10 @@ services:
   mediasoup:
     image: cryptogram/backend
     environment: 
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the BASE_URL host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=mediasoup
       - PG_PASSWORD=${PG_MEDIASOUP_PASSWORD}
       - DEPLOYMENT=${DEPLOYMENT}
@@ -305,6 +327,10 @@ services:
   onchain:
     image: cryptogram/backend
     environment: 
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the BASE_URL host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - REDIS_PASSWORD=${REDIS_PASSWORD}

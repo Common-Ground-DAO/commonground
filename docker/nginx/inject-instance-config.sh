@@ -7,7 +7,11 @@
 # Configured via environment:
 #   CG_APP_URL            required to activate, e.g. https://chat.example.org
 #   CG_DEPLOYMENT         prod (default) | staging | dev
-#   CG_CGID_URL           e.g. https://id.chat.example.org/#
+#   CG_LEGACY_CGID        "true" only on a legacy CG ID (gateway) instance:
+#                         emits cgidUrl, and no main-origin passkeys
+#   CG_CGID_URL           e.g. https://id.app.cg/# (legacy CG ID mode only)
+#   CG_PASSKEY_RP_ID      the backend's PASSKEY_RP_ID, if set (default: the
+#                         host of CG_APP_URL — must match the backend)
 #   CG_RECAPTCHA_SITE_KEY reCAPTCHA v2 site key (only used when the provider is reCAPTCHA)
 #   CG_CAPTCHA_PROVIDER   altcha (default) | recaptcha | off; auto-detected from
 #                         CG_RECAPTCHA_SITE_KEY when unset
@@ -30,8 +34,22 @@ if [ -z "$CG_APP_URL" ]; then
 fi
 
 cfg="{\"deployment\":\"${CG_DEPLOYMENT:-prod}\",\"appUrl\":\"$CG_APP_URL\""
-if [ -n "$CG_CGID_URL" ]; then
-  cfg="$cfg,\"cgidUrl\":\"$CG_CGID_URL\""
+# Same rules as srv/util/instanceConfig.ts: cgidUrl only in legacy CG ID mode,
+# otherwise the RP ID of the main-origin passkeys.
+passkeys=false
+if [ "${CG_LEGACY_CGID:-}" = "true" ]; then
+  if [ -n "$CG_CGID_URL" ]; then
+    cfg="$cfg,\"cgidUrl\":\"$CG_CGID_URL\""
+  fi
+else
+  rp_id="${CG_PASSKEY_RP_ID:-$(printf '%s' "$CG_APP_URL" | sed -E 's#^[a-zA-Z]+://([^/:]+).*$#\1#')}"
+  rp_id=$(printf '%s' "$rp_id" | tr 'A-Z' 'a-z')
+  if printf '%s' "$rp_id" | grep -Eq '^[a-z0-9.-]{1,253}$'; then
+    cfg="$cfg,\"passkeyRpId\":\"$rp_id\""
+    passkeys=true
+  else
+    echo "inject-instance-config: cannot derive a passkey RP ID from '$rp_id', leaving passkeys off"
+  fi
 fi
 if [ -n "$CG_ACTIVE_CHAINS" ]; then
   chains_json=$(printf '%s' "$CG_ACTIVE_CHAINS" | awk -F, '{for(i=1;i<=NF;i++){gsub(/ /,"",$i); printf "%s\"%s\"", (i>1?",":""), $i}}')
@@ -41,7 +59,7 @@ bool() { [ "$1" = "true" ] && echo "true" || echo "false"; }
 # opt-out flag: only an explicit "false" disables the feature, so an instance
 # that never sets the variable keeps calls
 optout() { [ "$1" = "false" ] && echo "false" || echo "true"; }
-cfg="$cfg,\"features\":{\"email\":$(bool "$CG_FEATURE_EMAIL"),\"twitterAuth\":$(bool "$CG_FEATURE_TWITTER"),\"calls\":$(optout "${CG_ENABLE_CALLS:-}"),\"imageFilter\":$(optout "${CG_ENABLE_IMAGE_FILTER:-}")}"
+cfg="$cfg,\"features\":{\"email\":$(bool "$CG_FEATURE_EMAIL"),\"twitterAuth\":$(bool "$CG_FEATURE_TWITTER"),\"calls\":$(optout "${CG_ENABLE_CALLS:-}"),\"imageFilter\":$(optout "${CG_ENABLE_IMAGE_FILTER:-}"),\"passkeys\":$passkeys}"
 # Emitted unquoted as a JSON number, so a non-numeric value would turn the whole
 # injected object into a syntax error and take every instance setting with it —
 # hence the shape check. Out-of-range values are left to the frontend's own

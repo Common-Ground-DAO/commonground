@@ -92,6 +92,12 @@ else
 
 CG_DOMAIN=${CG_DOMAIN}
 CG_ID_DOMAIN=${CG_ID_DOMAIN}
+# Passkeys (docs/auth-identity §7) are bound to PASSKEY_RP_ID: empty = the
+# host of CG_DOMAIN (the usual choice); otherwise that host or a parent domain
+# of it. Never change it once passkeys exist. CG_LEGACY_CGID=true is only for
+# the legacy CG ID gateway (passkeys on CG_ID_DOMAIN); keep false.
+PASSKEY_RP_ID=
+CG_LEGACY_CGID=false
 # Where Caddy gets its TLS certificates from:
 #   acme      Let's Encrypt (default). Both domains need public DNS records
 #             pointing here, and ports 80/443 must be reachable from the

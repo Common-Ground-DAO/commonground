@@ -12,7 +12,8 @@
 > `MEDIASOUP_TRUST_PROXY` against commit e44dac1, 2026-10-31; PostgreSQL 18
 > (`db` row, §3.7 note, §5) against commit ff0da06, 2026-10-31; Valkey
 > (`redis`/`redis-cache`, memory variables, upgrade note) against commit
-> ff0da06, 2026-10-31
+> ff0da06, 2026-10-31; instance-config passkey fields, the passkey/legacy
+> CG ID variables and the CG ID note against commit 54e2d73, 2026-10-31
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -80,7 +81,9 @@ There are two injection paths that produce the same shape:
 | nginx (container start) | `docker/nginx/inject-instance-config.sh` (runs as a `/docker-entrypoint.d/` hook in the self-host image) | the statically served copies in the nginx `cryptogram/nginx-selfhost` image |
 
 The nginx hook is driven by `CG_*` env passed to the container in
-`docker-compose.selfhost.yml` (`CG_APP_URL`, `CG_DEPLOYMENT`, `CG_CGID_URL`,
+`docker-compose.selfhost.yml` (`CG_APP_URL`, `CG_DEPLOYMENT`, `CG_LEGACY_CGID`,
+`CG_PASSKEY_RP_ID` (= `PASSKEY_RP_ID`, empty = the `CG_DOMAIN` host), `CG_CGID_URL` (emitted only
+with `CG_LEGACY_CGID=true`),
 `CG_RECAPTCHA_SITE_KEY`, `CG_ACTIVE_CHAINS`, the `CG_FEATURE_*` capability
 booleans, `CG_ENABLE_CALLS`, `CG_ENABLE_IMAGE_FILTER`, `CG_GIPHY_API_KEY`,
 `CG_WALLETCONNECT_PROJECT_ID`). It skips injection
@@ -95,11 +98,12 @@ Defined and validated in `src/common/instance.ts` (`InstanceConfig`). Fields:
 |---|---|
 | `deployment` | `prod` / `staging` / `dev` — semantic mode |
 | `appUrl` | public base URL, no trailing slash |
-| `cgidUrl` | CG ID app base URL including the hash-router prefix (`.../#`) |
+| `cgidUrl` | legacy CG ID (gateway) instances only: CG ID app base URL including the hash-router prefix (`.../#`) |
+| `passkeyRpId` | WebAuthn RP ID of the passkeys on this origin (`PASSKEY_RP_ID` / `CG_PASSKEY_RP_ID`, default the app host); absent on a legacy CG ID instance |
 | `recaptchaSiteKey` | reCAPTCHA v2 site key (empty disables the default key) |
 | `captchaProvider` | active captcha provider (`altcha` / `recaptcha` / `off`) |
 | `activeChains` | chain keys this instance offers (subset of `AVAILABLE_CHAINS`) |
-| `features` | capability flags `{ email, twitterAuth, calls, imageFilter }` — `email` from a valid SMTP configuration (`SMTP_HOST` set), `twitterAuth` from configured secrets, `calls` from whether the mediasoup service is deployed, `imageFilter` from whether the server-side NSFW filter is enabled (gates the client pre-upload warning) |
+| `features` | capability flags `{ email, twitterAuth, calls, imageFilter, passkeys }` — `passkeys` is false only on a legacy CG ID instance; `email` from a valid SMTP configuration (`SMTP_HOST` set), `twitterAuth` from configured secrets, `calls` from whether the mediasoup service is deployed, `imageFilter` from whether the server-side NSFW filter is enabled (gates the client pre-upload warning) |
 | `imageFilterThreshold` | this instance's `IMAGE_MODERATION_THRESHOLD` (0 < t ≤ 1, default `0.8`), so the browser pre-check warns at the confidence the server actually rejects at; ignored when `features.imageFilter` is false |
 | `giphyApiKey` | Giphy key (empty hides the GIF picker) |
 | `walletConnectProjectId` | WalletConnect Cloud project id |
@@ -133,7 +137,15 @@ The full stack runs on **one server** (the operator guide,
 cores and 16 GB RAM is sufficient and that the stack idles well under 2 GB, with
 RAM mostly consumed under load). Two DNS records are required: the app domain
 (`CG_DOMAIN`) and a **separate** CG ID origin (`CG_ID_DOMAIN`, default
-`id.<domain>`) — passkeys are scoped to their origin, so it must be distinct.
+`id.<domain>`). Passkeys no longer use the CG ID origin — they are bound to the
+app host ([docs/auth-identity §7](../auth-identity/README.md#7-passkeys)); the
+CG ID origin only matters for a legacy CG ID (gateway) process: `.env.selfhost` carries
+`PASSKEY_RP_ID=` (empty = the `CG_DOMAIN` host) and `CG_LEGACY_CGID=false`, every backend service
+gets both, and `CGID_URL` / `CG_CGID_URL` (built from `CG_ID_DOMAIN`) are passed only to `api` and
+nginx, which read them only in legacy mode. Existing `.env.selfhost` files without the two lines
+behave the same (the compose defaults are empty / `false`).
+TODO(verify): `init.sh` and the Caddyfile still require `CG_ID_DOMAIN`; making it
+optional belongs to the Caddy/vhost work.
 
 ### 3.1 `docker/selfhost/init.sh` — one-time initialization
 

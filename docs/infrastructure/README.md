@@ -14,7 +14,9 @@
 > against commit ff0da06, 2026-10-31; the Valkey instances (`redis`,
 > `redis-cache`), their roles, persistence and the backend's Redis client
 > behaviour against commit ff0da06, 2026-10-31; git-dependency and `npx` rows
-> of §2 and the age-gate bullet against commit ff0da06, 2026-10-31
+> of §2 and the age-gate bullet against commit ff0da06, 2026-10-31; `Passkey`
+> in the API allowlist, the passkey fields of the injected instance config and
+> the passkey/legacy CG ID variables against commit 54e2d73, 2026-10-31
 
 # Common Ground Infrastructure Documentation
 
@@ -102,14 +104,15 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Volumes:**
   - `./vapid_keys.json:/run/secrets/vapid_keys_json:ro` — VAPID keys for web push notifications
   - `./api_data:/api_data:ro` — static API data
-- **Key environment variables:** `DB_TYPE=writer`, `PG_PASSWORD` (writer), `REDIS_PASSWORD`, `REDIS_SECRET`, `DEPLOYMENT`, `BASE_URL`, `CGID_URL`, `S3_SECRET`, the `SMTP_*`/`EMAIL_FROM*` set (see [Email](#email-smtp)), `GOOGLE_RECAPTCHA_SECRET_KEY`, Twitter OAuth credentials, the `STAKING_*` set, and the bot limits (`PLATFORM_OPERATOR_USER_IDS`, `BOT_USER_OWNER_LIMIT`, `BOT_COMMUNITY_OWNER_LIMIT`, `BOT_PLATFORM_OWNER_LIMIT`, `BOT_ACTIVE_TOKEN_LIMIT`, `BOT_API_RATE_LIMIT_PER_MINUTE`, `BOT_MESSAGE_RATE_LIMIT_PER_MINUTE`).
+- **Key environment variables:** `DB_TYPE=writer`, `PG_PASSWORD` (writer), `REDIS_PASSWORD`, `REDIS_SECRET`, `DEPLOYMENT`, `BASE_URL`, `CGID_URL` (read only in legacy CG ID mode), `S3_SECRET`, the `SMTP_*`/`EMAIL_FROM*` set (see [Email](#email-smtp)), `GOOGLE_RECAPTCHA_SECRET_KEY`, Twitter OAuth credentials, the `STAKING_*` set, and the bot limits (`PLATFORM_OPERATOR_USER_IDS`, `BOT_USER_OWNER_LIMIT`, `BOT_COMMUNITY_OWNER_LIMIT`, `BOT_PLATFORM_OWNER_LIMIT`, `BOT_ACTIVE_TOKEN_LIMIT`, `BOT_API_RATE_LIMIT_PER_MINUTE`, `BOT_MESSAGE_RATE_LIMIT_PER_MINUTE`).
+- **Passkey variables (every backend process — api, wsapi, migrate-db, job-runner, onchain, memberlist, mediasoup — with the same values; both compose files pass `PASSKEY_RP_ID=${PASSKEY_RP_ID:-}` and `CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}` to each, from `docker/.env` / `.env.selfhost`):** `PASSKEY_RP_ID` (empty = the `BASE_URL` host — on selfhost the `CG_DOMAIN` host; otherwise that host or a parent domain; must never change once passkeys exist — the selfhost nginx gets the same value as `CG_PASSKEY_RP_ID`) and `CG_LEGACY_CGID=true` (legacy CG ID / gateway mode only). `CGID_URL` is passed to `api` only and read only in legacy mode (the CG ID app's RP and CORS origin). Shared code reads the RP ID in whichever process it runs, see [docs/auth-identity §7](../auth-identity/README.md#7-passkeys).
 
 #### `wsapi`
 - **Image:** `cryptogram/backend`
 - **Purpose:** WebSocket API server. Handles real-time communication at `/api/ws/` — message delivery, presence updates, typing indicators, etc.
 - **Command:** `node /dist/wsapi.js`
 - **Depends on:** `db`, `redis`
-- **Key environment variables:** `DB_TYPE=writer`, `PG_PASSWORD`, `REDIS_PASSWORD`, `REDIS_SECRET`, `DEPLOYMENT`, `BASE_URL`, `CGID_URL`
+- **Key environment variables:** `DB_TYPE=writer`, `PG_PASSWORD`, `REDIS_PASSWORD`, `REDIS_SECRET`, `DEPLOYMENT`, `BASE_URL`, the passkey variables (see `api`)
 
 #### `memberlist`
 - **Image:** `cryptogram/backend`
@@ -565,7 +568,7 @@ The `{NGINX_EXPOSED_ON}` placeholder is replaced at Docker build time with `LOCA
 |---|---|---|
 | `/files/<id>/<sig>/<date>/<expires>` | `http://s3.local:8333` | File/media downloads. Rewrites to an S3 presigned request (AWS4-HMAC-SHA256). Cached 7 days, immutable. |
 | `/api/bot/v1/...` | `http://api:4000` | **Bot API v1.** Rewrites to `/BotV1/...`. Stable, bearer-token-only namespace kept separate from the web-app API. |
-| `/api/v2/(Captcha\|Chat\|Community\|File\|Message\|User\|Contract\|Notification\|Twitter\|Lukso\|CgId\|Accounts\|Plugins\|Search\|Report\|Bot\|Staking)/` | `http://api:4000` | REST API. Strips `/api/v2/`. No caching. (`Captcha`, `Report`, `Bot`, `Staking` are the newer groups.) |
+| `/api/v2/(Captcha\|Chat\|Community\|File\|Message\|User\|Contract\|Notification\|Twitter\|Lukso\|CgId\|Passkey\|Accounts\|Plugins\|Search\|Report\|Bot\|Staking)/` | `http://api:4000` | REST API. Strips `/api/v2/`. No caching. (`Captcha`, `Report`, `Bot`, `Staking` are the newer groups.) |
 | `/api/ws/` | `http://wsapi:4000` | WebSocket upgrade (HTTP/1.1, `Upgrade: websocket`). |
 | `/(c\|u\|gated-videos\|gated-files)/` | `http://api:4000` | Community pages, profiles, gated content. Cached 24h. |
 | `/(sitemap.xml\|twitter-callback\|twitter-login\|verify-email\|push-icon\|token-sale\|token\|store)` | `http://api:4000` | Misc server-rendered endpoints. Cached 24h. |
@@ -803,7 +806,7 @@ The same build artifacts serve any domain: identity is configuration, not code. 
 <script>window.__CG_INSTANCE__ = {"deployment":"prod","appUrl":"https://chat.example.org", ...}</script>
 ```
 
-into `/www/index.html` and `/www/index_cgid.html` (skipping files already configured). The object carries `deployment`, `appUrl`, `cgidUrl`, `activeChains`, a `features` map (`email`, `twitterAuth`, `calls`), `giphyApiKey`, `walletConnectProjectId`, and `recaptchaSiteKey`. Compose derives the boolean feature flags from whether the corresponding key is set (e.g. `CG_FEATURE_EMAIL=${SMTP_HOST:+true}`), so the frontend hides or honestly labels features that aren't configured. The backend performs the equivalent injection for share links. See `src/common/instance.ts`.
+into `/www/index.html` and `/www/index_cgid.html` (skipping files already configured). The object carries `deployment`, `appUrl`, `passkeyRpId` (from `CG_PASSKEY_RP_ID`, default the host of `CG_APP_URL`; must match the backend's `PASSKEY_RP_ID`) — or, only with `CG_LEGACY_CGID=true`, `cgidUrl` from `CG_CGID_URL` —, `activeChains`, a `features` map (`email`, `twitterAuth`, `calls`, `imageFilter`, `passkeys`), `giphyApiKey`, `walletConnectProjectId`, and `recaptchaSiteKey`. Compose derives the boolean feature flags from whether the corresponding key is set (e.g. `CG_FEATURE_EMAIL=${SMTP_HOST:+true}`), so the frontend hides or honestly labels features that aren't configured. The backend performs the equivalent injection for share links. See `src/common/instance.ts`.
 
 ### `nginx_selfhost.conf` specifics
 

@@ -4,8 +4,9 @@
 > a5633d5be (+ fix/selfhost-local-test), 2026-10-27; npx/lockfile-refresh
 > notes, chunking figures, tests and the reference-client pipeline against
 > commit 935232158, 2026-10-31; dev env template (`docker/.env.example`,
-> `docker/ensureEnv.sh`, generated `s3.json`) against commit 64e5ab573
-> (chore/env-template), 2026-10-31
+> `docker/ensureEnv.sh`, generated `s3.json`, existing-checkout steps) and
+> `s3.selfhost.json` ownership against commit 69999fa20 (chore/env-template),
+> 2026-10-31
 
 # Common Ground Infrastructure Documentation
 
@@ -547,15 +548,35 @@ The self-host config (`nginx_selfhost.conf`) is described in [section 7](#7-self
 
 ### `docker/.env` — Dev Compose Environment
 
-`docker/.env` is the dev stack's configuration: `run.sh`, `docker/build.sh`, `docker/updateBackend.sh`, the `tools/` migration/test scripts and `docker/nginx/certs/recreate_server_certs.sh` source it, and docker compose reads it for the `${VAR}` references in `docker-compose.yml`. It is **gitignored and local to each checkout**; the tracked template is **`docker/.env.example`**, which lists every variable with grouped comments and holds no real secret.
+`docker/.env` is the dev stack's configuration: `run.sh`, `docker/build.sh`, `docker/updateBackend.sh`, `docker/updateFrontend.sh` (compose only), the `tools/` migration/test scripts and `docker/nginx/certs/recreate_server_certs.sh` source it, and docker compose reads it for the `${VAR}` references in `docker-compose.yml`. It is **gitignored and local to each checkout**; the tracked template is **`docker/.env.example`**, which lists every variable with grouped comments and holds no real secret.
 
-**Generation — `docker/ensureEnv.sh`.** Every script above calls it before sourcing `docker/.env` (`run.sh` first, then exports `CG_ENV_ENSURED=1` so the scripts it invokes skip the repeat). It:
+**Generation — `docker/ensureEnv.sh`.** Every script above calls it before using `docker/.env`; `run.sh`, `build.sh`, `updateBackend.sh` and `updateFrontend.sh` then export `CG_ENV_ENSURED=1`, so the scripts they invoke skip the repeat. It:
 
-- creates a missing `docker/.env` from `.env.example` (mode `600`), replacing every `generated-on-first-run` placeholder with `openssl rand -hex` output — 24 bytes for `PG_SU_PASSWORD`, `PG_WRITER_PASSWORD`, `PG_READER_PASSWORD`, `PG_MEDIASOUP_PASSWORD`, `REDIS_PASSWORD`, `REDIS_SECRET`, `PGADMIN_SECRET`; 48 for `S3_SECRET`; 32 for `ALTCHA_HMAC_KEY` (same lengths as `docker/selfhost/init.sh`) — and setting `BUILDER_UID`/`BUILDER_GID` to `id -u`/`id -g`. Hex keeps the values safe in the unescaped SQL literals of `docker/db/init.sh`, on redis' command line and in JSON. If a `<project>_pgdata` volume already exists (the compose project is named after the `docker/` directory, so every checkout on a machine shares `docker_pgdata`), it warns that the database still expects its old passwords;
-- creates a missing `docker/s3_config/s3.json` (gitignored, mode `600`) with the `S3_SECRET` from `docker/.env` as the `cgadmin` secret key, and warns when an existing one disagrees with `S3_SECRET`;
-- **warns, never fails,** when `docker/.env` lacks variables that `.env.example` assigns (listing them) or still contains placeholders.
+- creates a missing `docker/.env` — but never with fresh passwords for an existing database (below) — from `.env.example` (mode `600`), replacing every `generated-on-first-run` placeholder with `openssl rand -hex` output — 24 bytes for `PG_SU_PASSWORD`, `PG_WRITER_PASSWORD`, `PG_READER_PASSWORD`, `PG_MEDIASOUP_PASSWORD`, `REDIS_PASSWORD`, `REDIS_SECRET`, `PGADMIN_SECRET`; 48 for `S3_SECRET`; 32 for `ALTCHA_HMAC_KEY` (same lengths as `docker/selfhost/init.sh`) — and setting `BUILDER_UID`/`BUILDER_GID` to `id -u`/`id -g`. Hex keeps the values safe in the unescaped SQL literals of `docker/db/init.sh`, on redis' command line and in JSON. The file is written to a temp file and renamed (`docker/.env.*` is gitignored, so an interrupted run leaves no stray secrets file to commit);
+- **in a linked git worktree**, copies `docker/.env` (and a missing `s3.json`) from the main worktree instead, when that has one;
+- **stops with an error** instead of generating when a `<project>_pgdata` volume already exists. The compose project is named after the `docker/` directory, so **every checkout on a machine shares `docker_pgdata`**, and postgres only accepts the passwords the volume was initialized with. The error lists the ways out: copy `docker/.env` from another checkout, restore the formerly tracked version from history, or delete the volume (the dev data of every checkout);
+- creates a missing `docker/s3_config/s3.json` (gitignored, written atomically) with the `S3_SECRET` from `docker/.env` as the `cgadmin` secret key. Mode `644` on purpose: seaweed reads the bind-mounted file as its in-container user (uid 1000), which need not own it (another host user, rootless Docker, Podman), and the dev S3 port is not published. It stops with a `sudo rmdir` hint when `s3.json` is a *directory* — what Docker creates when a container bind-mounts the path while the file is missing;
+- **warns, never fails,** when `docker/.env` lacks variables that `.env.example` assigns (listing them), still contains placeholders, has a `GOOGLE_RECAPTCHA_SECRET_KEY` while `CAPTCHA_PROVIDER` is empty (implicit reCAPTCHA — with the `your-key` placeholder every signup fails), or when `s3.json` has no `secretKey` or one that differs from `S3_SECRET`.
 
 It never modifies an existing `docker/.env` or `s3.json`. New variables therefore reach existing checkouts only by hand — the warning says which ones to copy.
+
+**Existing checkouts (from before 2026-11).** Until 2026-10-31 `docker/.env` and `docker/s3_config/s3.json` were tracked. A pull across that change deletes both (git removes files the incoming commit stops tracking), and it refuses to run at all while `docker/.env` has local modifications. Your dev database only accepts the passwords in your old `docker/.env`, so keep it:
+
+```bash
+cp docker/.env ~/cg-env.bak
+git checkout -- docker/.env docker/s3_config/s3.json   # drop local edits so the pull can proceed
+git pull
+cp ~/cg-env.bak docker/.env
+./run.sh            # regenerates s3.json from it; lists variables your file lacks
+```
+
+If the pull already deleted it and you never changed the committed values, restore that version from history (then delete `docker/s3_config/s3.json` if it was generated from a different `docker/.env` in the meantime):
+
+```bash
+git show "$(git log -1 --format=%H --diff-filter=D -- docker/.env)^:docker/.env" > docker/.env
+```
+
+`git stash` works too, but `git stash pop` after the pull ends in a modify/delete conflict on `docker/.env` (the file is back with your values, marked unmerged) and keeps the stash entry: run `git reset -q -- docker/.env && git stash drop` afterwards. A restored old `docker/.env` keeps the dev passwords that were public on GitHub — acceptable on localhost (`EXTERNAL_LISTEN_IP=127.0.0.1`); before switching to LAN mode, rotate them, which needs a fresh `pgdata` volume (`./run.sh down && docker volume rm docker_pgdata`, then delete `docker/.env` and `s3.json` and rerun).
 
 Password consumers on a fresh stack: `PG_SU_PASSWORD` initializes the postgres superuser (`POSTGRES_PASSWORD`, applied only when the `pgdata` volume is first created) and is the login of `migrate-db` and `cg-builder`; `PG_WRITER_PASSWORD`/`PG_READER_PASSWORD` become the `writer`/`reader` roles in `docker/db/init.sh` (same first-init caveat; no dev service connects as `reader`), `writer` is used by `api`, `wsapi`, `memberlist`, `job-runner` and `onchain`; `PG_MEDIASOUP_PASSWORD` is set on the `mediasoup` role by migration `1689160339881-addMediasoupRole` (run by `migrate-db`) and used by `mediasoup`; `REDIS_PASSWORD` is redis' `--requirepass` and every backend client's password; `S3_SECRET` must equal the `s3.json` secret key.
 
@@ -589,7 +610,7 @@ The table describes purpose; `.env.example` has the defaults.
 | `IMAGE_MODERATION_THRESHOLD` | NSFW probability above which an image is rejected. Default `0.8`; invalid values fall back to the default (non-empty invalid values log a warning; an empty value — the compose default — falls back silently). |
 | `IMAGE_MODERATION_MODEL_PATH` | Model directory in the container (default `/models/nsfw`, baked into the backend image). Point at a mounted Transformers.js-layout classifier to swap models. |
 
-Also consumed by the compose file (with compose-side defaults when absent from `.env`): the `STAKING_*` set (`STAKING_CHAIN`, `STAKING_TOKEN_ADDRESS`, `STAKING_CONTRACT_ADDRESS`, `STAKING_BASE_RATE`, `STAKING_MIN_LOCK_DAYS`, `STAKING_MAX_LOCK_DAYS`) and the bot limits (`PLATFORM_OPERATOR_USER_IDS`, `BOT_USER_OWNER_LIMIT`, `BOT_COMMUNITY_OWNER_LIMIT`, `BOT_PLATFORM_OWNER_LIMIT`, `BOT_ACTIVE_TOKEN_LIMIT`, `BOT_API_RATE_LIMIT_PER_MINUTE`, `BOT_MESSAGE_RATE_LIMIT_PER_MINUTE`). See [`docs/BOT-API.md`](../BOT-API.md) and [`docs/staking`](../staking/README.md). The compose default of `STAKING_BASE_RATE` / `STAKING_MIN_LOCK_DAYS` / `STAKING_MAX_LOCK_DAYS` is an empty string, which `srv/util/stakingConfig.ts` rejects (it only defaults an *unset* value), so `.env.example` sets them to the backend defaults `0.012` / `7` / `730`.
+Also consumed by the compose file (with compose-side defaults when absent from `.env`): the `STAKING_*` set (`STAKING_CHAIN`, `STAKING_TOKEN_ADDRESS`, `STAKING_CONTRACT_ADDRESS`, `STAKING_BASE_RATE`, `STAKING_MIN_LOCK_DAYS`, `STAKING_MAX_LOCK_DAYS`) and the bot limits (`PLATFORM_OPERATOR_USER_IDS`, `BOT_USER_OWNER_LIMIT`, `BOT_COMMUNITY_OWNER_LIMIT`, `BOT_PLATFORM_OWNER_LIMIT`, `BOT_ACTIVE_TOKEN_LIMIT`, `BOT_API_RATE_LIMIT_PER_MINUTE`, `BOT_MESSAGE_RATE_LIMIT_PER_MINUTE`). See [`docs/BOT-API.md`](../BOT-API.md) and [`docs/staking`](../staking/README.md). The compose default of every `STAKING_*` variable is an empty string; `srv/util/stakingConfig.ts` treats empty like unset, so the backend defaults (`0.012` / `7` / `730`, which `.env.example` spells out) apply.
 
 ### `srv/serverconfig.ts` — Backend Server Configuration
 
@@ -711,7 +732,7 @@ This profile runs the **entire stack on one server** with real production semant
   - Auto-detects the public IP (via ipify) if not supplied; a supplied IP (e.g. a LAN address) is used as-is.
   - `--tls-internal` writes `CG_TLS_MODE=internal` instead of `acme`, accepts `-` for the then-unused ACME email, and requires the IP argument.
   - Generates `docker/.env.selfhost` with fresh random secrets (`openssl rand`) — all DB/Redis/S3 credentials, resource-tuning defaults sized for 16 GB, bot limits, and a fully-commented set of optional-integration keys. Written `chmod 600`.
-  - Generates `docker/s3_config/s3.selfhost.json` with an S3 secret matching the generated `S3_SECRET` (`chmod 600`).
+  - Generates `docker/s3_config/s3.selfhost.json` with an S3 secret matching the generated `S3_SECRET`. Seaweed reads it as its in-container uid 1000, so it is made owned by `1000:1000` with mode `600` (run as uid 1000 or root); any other user can't `chown`, gets mode `644` and a printed note on how to tighten it as root.
   - Generates a self-signed cert in `docker/selfhost/certs/` for the internal caddy→mediasoup hop only (clients only ever see Caddy's cert).
   - The generated `.env.selfhost` prefills the RPC endpoints with **free public JSON-RPC URLs** and `CG_ACTIVE_CHAINS=eth,arbitrum,xdai,base,matic,lukso`, so token-gating works out of the box.
 - **`docker/selfhost/selfhost.sh <cmd>`** — build/operate wrapper. Requires `.env.selfhost`; runs Compose with `--env-file .env.selfhost -f docker-compose.selfhost.yml`. Commands: `build`, `up`, `down`, `logs [service]`, `ps`, `stats`, `compose <args>`, `update` (git pull + rebuild + restart). It sets `COMPOSE_PROFILES` from the `CG_ENABLE_CALLS` / `CG_ENABLE_BLOCKCHAIN` switches and runs `up`/`down`/`update` with `--remove-orphans`, so a service whose switch was flipped off is actually removed. The `build` command mirrors `build.sh` (same type-check/lint/build/check chain, same `NODE_OPTIONS=--max-old-space-size=4096`) and builds the nginx image from `Dockerfile_selfhost`. Sourcemaps ship here too — see [Frontend build steps](#frontend-build-steps).

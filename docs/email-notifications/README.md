@@ -1,6 +1,7 @@
 # Email & Notifications
 
-> Status: verified against commit a3c3f7608, 2026-08-01.
+> Status: verified against commit a3c3f7608, 2026-08-01; `emailEnabled()`
+> placeholder rule against commit 69999fa20 (chore/env-template), 2026-10-31.
 
 This document covers every email path in Common Ground: transactional mail (verification, one-time-password login, event and article notifications), the weekly digest and per-community article newsletters, the Mailchimp marketing integration, and the user/community preference model that gates them. Web push and in-app notifications are a separate delivery channel — see [docs/realtime](../realtime/README.md) (§ Push Notifications) — and the boundary between the two is described in [Boundary to web push](#boundary-to-web-push).
 
@@ -37,7 +38,7 @@ Both are initialised once in `srv/serverconfig.ts`. Keys resolve in order: Docke
 
 ### Graceful degradation (self-hosting)
 
-Email delivery is **optional**. `emailEnabled()` (`srv/api/emails.ts:15`) returns `true` only when `SENDGRID_API_KEY` is set and is not the `'placeholder'` value. When it returns `false`:
+Email delivery is **optional**. `emailEnabled()` (`srv/api/emails.ts:18`) returns `true` only when `SENDGRID_API_KEY` holds a real value — not empty, not the `'placeholder'` fallback and not the `your-key` placeholder of `docker/.env.example` (`isConfiguredSecret()` in `srv/util/configuredSecret.ts`, the same rule as the instance config's `features.email`). When it returns `false`:
 
 - `sendEmail` logs a warning, drops the message, and throws `EMAIL_DISABLED` (`srv/common/errors`).
 - The `newsletterDelivery` and `emailNotifications` jobs exit early without doing work.

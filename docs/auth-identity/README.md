@@ -1,4 +1,5 @@
-> Status: verified against commit 40f4a0b0f, 2026-08-04
+> Status: verified against commit 40f4a0b0f, 2026-08-04; `emailEnabled()` reference against
+> commit 69999fa20 (chore/env-template), 2026-10-31
 
 # Authentication & Identity
 
@@ -236,7 +237,7 @@ Passwordless email login:
 
 1. `POST /User/sendOneTimePasswordForLogin` (`srv/api/user.ts:1494-1519`): only allowed when logged
    out and when email is enabled (`emailEnabled()` requires a real `SENDGRID_API_KEY`,
-   `srv/api/emails.ts:15-16`); otherwise it throws `EMAIL_DISABLED`. It generates a token via
+   `srv/api/emails.ts:18-20`); otherwise it throws `EMAIL_DISABLED`. It generates a token via
    `emailHelper.generateVerificationEmailToken(userId)` and emails it.
 2. `POST /User/login` with `{ type: "verificationCode", email, code, device }` verifies the code via
    `userHelper.getOwnDataByEmailAndVerificationCode()` (`srv/api/user.ts:299-311`) and creates a

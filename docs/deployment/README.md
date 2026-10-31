@@ -5,8 +5,8 @@
 > TLS mode, call ports, root builds and startup ordering against commit
 > a5633d5be (+ fix/selfhost-local-test), 2026-10-27; Redis-cutover note (no
 > further Swarm rollouts) against commit 935232158, 2026-10-31; dev secrets
-> (generated `docker/.env`) against commit 64e5ab573 (chore/env-template),
-> 2026-10-31
+> (generated `docker/.env`) and `s3.selfhost.json` ownership against commit
+> 69999fa20 (chore/env-template), 2026-10-31
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -147,8 +147,10 @@ Safe to re-run: existing files are never overwritten. It:
    every optional integration. `BUILDER_UID`/`BUILDER_GID` are the invoking
    user's ids — `0` when run as root, which the builder image accepts (it only
    creates a user/group for ids the `node:24.18-bookworm` base doesn't have).
-3. Generates `docker/s3_config/s3.selfhost.json` (mode `600`) with an S3 secret
-   matching `.env.selfhost` for the SeaweedFS filer.
+3. Generates `docker/s3_config/s3.selfhost.json` with an S3 secret matching
+   `.env.selfhost` for the SeaweedFS filer — owned by uid/gid `1000` (seaweed's
+   in-container user) with mode `600` when run as root or uid 1000, otherwise
+   mode `644` with a note on how to tighten it.
 4. Generates a self-signed cert (`docker/selfhost/certs/`) for the internal
    Caddy→mediasoup hop.
 

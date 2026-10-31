@@ -17,9 +17,31 @@ import eventHelper from "../repositories/event";
 import fileHelper from "../repositories/files";
 import config from "../common/config";
 import dayjs from "dayjs";
+import ipRateLimitHandler from "../util/rateLimit";
 const pluginRouter = express.Router();
 
 const dataClient = redisManager.getClient('data');
+
+/** Signed plugin requests are accepted for this long after they were issued. */
+const PLUGIN_REQUEST_MAX_AGE_MS = 10 * 60 * 1000;
+/** Tolerated clock difference for request timestamps in the future. */
+const PLUGIN_REQUEST_MAX_SKEW_MS = 2 * 60 * 1000;
+/** Replay keys must outlive the acceptance window above. */
+const PLUGIN_REQUEST_REPLAY_TTL_S = 15 * 60;
+
+/**
+ * Plugins call this for every user/community lookup; the client throttles
+ * each iframe to 100 requests per minute, so the per-user budget leaves room
+ * for several plugins at once.
+ */
+const pluginRequestRateLimiter = ipRateLimitHandler({
+  windowMs: 1000 * 60, // 1 min
+  identity: (req) => req.session?.user?.id,
+  limit_identity: 300,
+  limit_v4_v6_64: 300,
+  limit_v6_56: 600,
+  limit_v6_48: 1200,
+});
 
 async function emitEventFilterConfigForNonAdmins({ event, adminRoleId, communityId }: { event: Events.Community.Plugin, adminRoleId: string, communityId: string }) {
   const nonAdminEvent: Events.Community.Plugin = JSON.parse(JSON.stringify(event));
@@ -314,9 +336,30 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
+    await pluginRequestRateLimiter(request, response);
+
+    // Parse and validate the inner request
+    let pluginRequest: API.Plugins.pluginRequest.RequestInner;
+    try {
+      pluginRequest = await validators.API.Plugin.pluginRequestInner.validateAsync(JSON.parse(data.request));
+    } catch (error) {
+      console.error(error);
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
+
+    // The request must be at most 10 minutes old (and not more than a small
+    // clock skew in the future), so the replay key below outlives it.
+    const requestTime = Number(pluginRequest.requestId.split('-')[1]);
+    const now = Date.now();
+    if (
+      !Number.isSafeInteger(requestTime) ||
+      now - requestTime > PLUGIN_REQUEST_MAX_AGE_MS ||
+      requestTime - now > PLUGIN_REQUEST_MAX_SKEW_MS
+    ) {
+      throw new Error(errors.server.SIGNED_REQUEST_EXPIRED);
+    }
 
     // Get plugin
-    const pluginRequest = JSON.parse(data.request) as API.Plugins.pluginRequest.RequestInner;
     const communityPlugin = await pluginHelper.getCommunityPlugin(pluginRequest.pluginId);
     if (!communityPlugin) {
       throw new Error(errors.server.NOT_FOUND);
@@ -327,35 +370,6 @@ registerPostRoute<
       throw new Error(errors.server.NOT_FOUND);
     }
 
-    // Validate request schema
-    try {
-      await validators.API.Plugin.pluginRequestInner.validateAsync(pluginRequest);
-    } catch (error) {
-      console.error(error);
-      throw new Error(errors.server.INVALID_REQUEST);
-    }
-
-    // Check if the request is at most 10 minutes old
-    const requestTime = new Date(Number(pluginRequest.requestId.split('-')[1]));
-    const now = new Date();
-    const timeDiff = now.getTime() - requestTime.getTime();
-    if (timeDiff > 10 * 60 * 1000) {
-      throw new Error(errors.server.SIGNED_REQUEST_EXPIRED);
-    }
-
-    // Check if request is unique
-    const requestKey = `pluginRequest:${pluginRequest.requestId}`;
-    const [getResults] = await dataClient
-      .multi()
-      .get(requestKey)
-      // node-redis 5+ spells the SET flags as `expiration`/`condition`; the
-      // old `{ EX, NX }` shape still works but is deprecated.
-      .set(requestKey, "1", { expiration: { type: 'EX', value: 900 }, condition: 'NX' })
-      .execTyped();
-    if (getResults === "1") {
-      throw new Error(errors.server.DUPLICATED_SIGNED_REQUEST);
-    }
-
     // Check request signature
     const verify = crypto.createVerify('SHA256');
     verify.update(data.request);
@@ -364,6 +378,17 @@ registerPostRoute<
     const isValid = verify.verify(plugin.publicKey, Buffer.from(data.signature, 'base64'));
     if (!isValid) {
       throw new Error(errors.server.INVALID_SIGNATURE);
+    }
+
+    // Check if request is unique for this plugin installation. Only signed
+    // requests get here, and the validator bounds the requestId length.
+    const requestKey = `pluginRequest:${pluginRequest.pluginId}:${pluginRequest.requestId}`;
+    const setResult = await dataClient.set(requestKey, "1", {
+      expiration: { type: 'EX', value: PLUGIN_REQUEST_REPLAY_TTL_S },
+      condition: 'NX',
+    });
+    if (setResult !== 'OK') {
+      throw new Error(errors.server.DUPLICATED_SIGNED_REQUEST);
     }
 
     let responseInner: API.Plugins.pluginRequest.ResponseInner | undefined = undefined;

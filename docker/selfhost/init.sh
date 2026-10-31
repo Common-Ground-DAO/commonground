@@ -267,7 +267,18 @@ else
   ]
 }
 EOF
-  chmod 600 s3_config/s3.selfhost.json
+  # seaweed reads the bind-mounted file as its in-container user, uid 1000
+  # (chrislusf/seaweedfs drops root via su-exec). Keep the production secret
+  # unreadable for others: owned by 1000 with mode 600 — which needs either
+  # running as uid 1000 or the right to chown (root).
+  if [ "$(id -u)" = "1000" ] || chown 1000:1000 s3_config/s3.selfhost.json 2>/dev/null; then
+    chmod 600 s3_config/s3.selfhost.json
+  else
+    chmod 644 s3_config/s3.selfhost.json
+    echo "Note: s3_config/s3.selfhost.json is world-readable (mode 644): seaweed reads it as"
+    echo "      uid 1000 and this user can't chown it. To tighten it, run as root:"
+    echo "        chown 1000:1000 s3_config/s3.selfhost.json && chmod 600 s3_config/s3.selfhost.json"
+  fi
   echo "Wrote s3_config/s3.selfhost.json"
 fi
 

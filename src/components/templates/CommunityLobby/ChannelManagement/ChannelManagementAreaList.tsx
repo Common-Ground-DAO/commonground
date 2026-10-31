@@ -17,7 +17,7 @@ import {
   pointerWithin,
   rectIntersection,
 } from '@dnd-kit/core';
-import { rectSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable';
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { dragAnnouncements, useDragSensors } from 'hooks/useDragSensors';
 import AreaItem from './AreaItem/AreaItem';
@@ -465,7 +465,11 @@ const ChannelManagementAreaList: React.FC<Props> = (props) => {
     onDragCancel={onDragCancel}
     onDragEnd={onDragEnd}
   >
-    <SortableContext items={areaIds} strategy={rectSortingStrategy}>
+    {/* One column of area blocks whose heights differ (expanded channel
+        lists): the vertical strategy shifts rows by the dragged block's height;
+        rectSortingStrategy moved and scaled each block onto its neighbour's
+        rect. */}
+    <SortableContext items={areaIds} strategy={verticalListSortingStrategy}>
       <div className="management-area">
         <div className="area-panel">
           <div
@@ -528,7 +532,8 @@ function SortableAreaRow(props: SortableAreaRowProps) {
     <div
       ref={setNodeRef}
       style={{
-        transform: CSS.Transform.toString(transform),
+        // Translate only: a scale component distorts blocks of different heights.
+        transform: CSS.Translate.toString(transform),
         transition,
         position: 'relative',
         zIndex: isDragging ? 5000 : undefined,

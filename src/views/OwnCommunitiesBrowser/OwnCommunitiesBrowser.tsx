@@ -14,14 +14,13 @@ import { useCommunitySidebarContext } from "components/organisms/CommunityViewSi
 
 import { UserGroupIcon } from '@heroicons/react/24/outline';
 
-import { useOwnCommunities, useOwnUser } from "context/OwnDataProvider";
+import { useSortableOwnCommunities } from "hooks/useSortableOwnCommunities";
 import { getUrl } from 'common/util';
 import { DndContext, DragEndEvent } from "@dnd-kit/core";
-import { rectSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { dragAnnouncements, listCollisionDetection, useDragSensors } from "hooks/useDragSensors";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import data from "data";
+import { useCallback, useMemo, useState } from "react";
 import Scrollable from 'components/molecules/Scrollable/Scrollable';
 import { Bell, ChatsTeardrop, CoinVertical, Compass, HouseSimple, Plus, Storefront } from '@phosphor-icons/react';
 import { isActiveButton } from 'components/organisms/Menu/ExpandedMenu/ExpandedMenu';
@@ -32,14 +31,11 @@ type Properties = {
 }
 
 export default function OwnCommunitiesBrowser(props: Properties) {
-  const delayedSaveTimeoutRef = useRef<any>(null);
-  const ownUser = useOwnUser();
-  const ownCommunities = useOwnCommunities();
   const { isExpanded, contentRef } = props;
   const { isMobile } = useWindowSizeContext();
   const { setVisible } = useCreateCommunityModalContext();
   const { setCommunitySidebarIsOpen } = useCommunitySidebarContext();
-  const [sortedCommunities, setSortedCommunities] = useState(ownCommunities);
+  const { sortedCommunities, communityIds, moveCommunity } = useSortableOwnCommunities(200);
   const [draggingOver, setDraggingOver] = useState(false);
   const sensors = useDragSensors();
   const navigate = useNavigate();
@@ -53,51 +49,6 @@ export default function OwnCommunitiesBrowser(props: Properties) {
     }
   }, [navigate, setCommunitySidebarIsOpen]);
 
-  const sortCommunities = useCallback((orderedCommunityIds: string[]) => {
-    const sortedCommunities: Models.Community.DetailView[] = [];
-    orderedCommunityIds.forEach(communityId => {
-      const foundCommunity = ownCommunities?.find(community => community.id === communityId);
-      if (foundCommunity) {
-        sortedCommunities.push(foundCommunity);
-      }
-    });
-    return sortedCommunities;
-  }, [ownCommunities]);
-
-  useEffect(() => {
-    const orderedCommunityIds = ownUser?.communityOrder || [];
-    const sortedCommunities = sortCommunities(orderedCommunityIds);
-    setSortedCommunities(sortedCommunities);
-  }, [ownUser?.communityOrder, sortCommunities]);
-
-  const updateCommunityOrder = useCallback((draggedCommunityId: string, sourceIndex: number, destinationIndex: number) => {
-    const delayDebouncedSave = (orderedCommunityIds: string[], timeout: number) => {
-      if (delayedSaveTimeoutRef.current) {
-        clearTimeout(delayedSaveTimeoutRef.current);
-      }
-      delayedSaveTimeoutRef.current = setTimeout(() => {
-        (async () => {
-          if (!!ownUser) {
-            await data.user.updateOwnData({ communityOrder: orderedCommunityIds });
-          }
-        })();
-        delayedSaveTimeoutRef.current = null;
-      }, timeout);
-    }
-
-    const communityOrder = ownUser?.communityOrder || [];
-    const index = communityOrder.findIndex(communityId => communityId === draggedCommunityId);
-    const orderedCommunityIds = [...communityOrder];
-    orderedCommunityIds.splice(index, 1);
-    orderedCommunityIds.splice(destinationIndex, 0, draggedCommunityId);
-
-    const sortedCommunities = sortCommunities(orderedCommunityIds);
-    setSortedCommunities(sortedCommunities);
-    delayDebouncedSave(orderedCommunityIds, 200);
-  }, [ownUser?.communityOrder]);
-
-  const communityIds = useMemo(() => (sortedCommunities || []).map(community => community.id), [sortedCommunities]);
-
   const onDragEnd = useCallback((event: DragEndEvent) => {
     setDraggingOver(false);
     const { active, over } = event;
@@ -109,15 +60,13 @@ export default function OwnCommunitiesBrowser(props: Properties) {
     if (sourceIndex < 0 || destinationIndex < 0 || sourceIndex === destinationIndex) {
       return;
     }
-    const draggedCommunity = ownCommunities.find(community => community.id === active.id);
-    if (draggedCommunity) {
-      updateCommunityOrder(draggedCommunity.id, sourceIndex, destinationIndex);
-    }
-  }, [communityIds, ownCommunities, updateCommunityOrder]);
+    moveCommunity(sourceIndex, destinationIndex);
+  }, [communityIds, moveCommunity]);
 
   const communitiesMemo = useMemo(() => {
     if (!!sortedCommunities && sortedCommunities.length > 0) {
-      return <SortableContext items={communityIds} strategy={rectSortingStrategy}>
+      // `column-view` is a single flex column of variable-height cards.
+      return <SortableContext items={communityIds} strategy={verticalListSortingStrategy}>
         <div
           className={[
             'own-communities-content column-view',
@@ -252,7 +201,8 @@ function SortableCommunityCard(props: SortableCommunityCardProps) {
       {...attributes}
       {...listeners}
       style={{
-        transform: CSS.Transform.toString(transform),
+        // Translate only — a scale component distorts cards of different sizes.
+        transform: CSS.Translate.toString(transform),
         transition,
         position: 'relative',
         zIndex: isDragging ? 5000 : undefined,

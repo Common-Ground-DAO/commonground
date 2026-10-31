@@ -7,9 +7,10 @@
 > against commit 64e5ab573 (chore/env-template), 2026-10-31; builder image
 > (Node 26) against commit 5f73578, 2026-10-31; "Dependency pins and
 > constraints" verified against commit ff0da06, 2026-10-31; session keepalive,
-> the `passkeyRpId` / `features.passkeys` instance fields, `cgidUrl` and the
-> auth UI (AuthFlow, `/login`, passkeys, step-up, plugin origin guard, §10)
-> against commit 54e2d73, 2026-10-31
+> the `passkeyRpId` / `features.passkeys` instance fields, `cgidUrl`, the auth
+> UI (AuthFlow, `/login`, passkeys, step-up, plugin origin guard, §10) and the
+> dnd-kit strategy/transform/trailing-click/ordering notes against commit
+> 54e2d73, 2026-10-31
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -920,6 +921,27 @@ preset was chosen over Atlassian's pragmatic-drag-and-drop.
   every target cancels, and drops in the gaps between rows land at the right
   slot. Screen-reader announcements are positional, fed by per-item
   `data.label`.
+- Every list is a single column with rows of different heights, so all of
+  them use `verticalListSortingStrategy` (`rectSortingStrategy` is for grids
+  of equal cells: it moves each row onto its neighbour's rect *and scales it
+  to that size*), and every sortable applies `CSS.Translate`, never
+  `CSS.Transform` — dnd-kit transforms carry `scaleX`/`scaleY`, which
+  squashed/stretched the sidebar icons mid-drag.
+- dnd-kit's guard against the click that trails a pointer drop only stops its
+  propagation; the browser's default action survives. On draggables that
+  contain links (`GroupsMenu`'s `NavLink`s) that default is a native
+  navigation — a full page reload after a drop — so such surfaces call
+  `suppressClickAfterDrag(event.activatorEvent)` from `onDragEnd`/
+  `onDragCancel`.
+- `GroupsMenu` and `OwnCommunitiesBrowser` share `useSortableOwnCommunities`:
+  they render `useOwnCommunities()` as is (stored order, communities missing
+  from it appended); a move is laid over that locally at once, saved
+  debounced, and stays until the stored `communityOrder` matches it — or the
+  save fails, or the stored order changes to something else while no save is
+  scheduled or in flight (no snap-back while saving, no stuck local order).
+  Moves are applied to the *rendered* list and mapped back onto
+  `communityOrder`, which may hold ids that are not rendered and lack ids
+  that are (`util/communityOrder.ts`).
 - Known deviation from rbd: there is no `DragOverlay`, so the dragged row is
   transformed in place and can be clipped by a scrolling ancestor.
 

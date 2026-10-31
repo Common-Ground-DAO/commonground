@@ -3,12 +3,13 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { DndContext, DragEndEvent } from "@dnd-kit/core";
-import { rectSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
+import { DndContext, DragCancelEvent, DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { dragAnnouncements, listCollisionDetection, useDragSensors } from "hooks/useDragSensors";
+import { dragAnnouncements, listCollisionDetection, suppressClickAfterDrag, useDragSensors } from "hooks/useDragSensors";
+import { useSortableOwnCommunities } from "hooks/useSortableOwnCommunities";
 import { useLiveQuery } from "dexie-react-hooks";
 import data from "data";
 
@@ -19,7 +20,6 @@ import OfficialIcon from "../../../../components/atoms/icons/20/OfficialIcon.svg
 
 import './GroupsMenu.css';
 import { getUrl } from 'common/util';
-import { useOwnUser, useOwnCommunities } from "context/OwnDataProvider";
 import { useSafeCommunityContext } from "context/CommunityProvider";
 import PinnedChannel from "components/molecules/PinnedChannel/PinnedChannel";
 import { useWindowSizeContext } from "context/WindowSizeProvider";
@@ -31,63 +31,17 @@ type Props = {
 }
 
 export default function GroupsMenu(props: Props) {
-  const delayedSaveTimeoutRef = useRef<any>(null);
-
-  const ownUser = useOwnUser();
-  const communities = useOwnCommunities();
   const communityCtx = useSafeCommunityContext();
   const currentCommunity = communityCtx.state === "loaded" ? communityCtx.community : undefined;
 
-  const [sortedCommunities, setSortedCommunities] = useState(communities);
+  const { sortedCommunities, communityIds, moveCommunity } = useSortableOwnCommunities(1500);
   const [draggingOver, setDraggingOver] = useState(false);
   const sensors = useDragSensors();
 
-  const sortCommunities = useCallback((orderedCommunityIds: string[]) => {
-    const sortedCommunities: Models.Community.DetailView[] = [];
-    orderedCommunityIds.forEach(communityId => {
-      const foundCommunity = communities?.find(community => community.id === communityId);
-      if (foundCommunity) {
-        sortedCommunities.push(foundCommunity);
-      }
-    });
-    return sortedCommunities;
-  }, [communities]);
-
-  useEffect(() => {
-    const orderedCommunityIds = ownUser?.communityOrder || [];
-    const sortedCommunities = sortCommunities(orderedCommunityIds);
-    setSortedCommunities(sortedCommunities);
-  }, [ownUser?.communityOrder, sortCommunities]);
-
-  const updateCommunityOrder = useCallback((draggedCommunity: Models.Community.DetailView, sourceIndex: number, destinationIndex: number) => {
-    const delayDebouncedSave = (orderedCommunityIds: string[], timeout: number) => {
-      if (delayedSaveTimeoutRef.current) {
-        clearTimeout(delayedSaveTimeoutRef.current);
-      }
-      delayedSaveTimeoutRef.current = setTimeout(() => {
-        (async () => {
-          if (!!ownUser) {
-            await data.user.updateOwnData({ communityOrder: orderedCommunityIds });
-          }
-        })();
-        delayedSaveTimeoutRef.current = null;
-      }, timeout);
-    }
-
-    const communityOrder = ownUser?.communityOrder || [];
-    const index = communityOrder.findIndex(communityId => communityId === draggedCommunity.id);
-    const orderedCommunityIds = [...communityOrder];
-    orderedCommunityIds.splice(index, 1);
-    orderedCommunityIds.splice(destinationIndex, 0, draggedCommunity.id);
-
-    const sortedCommunities = sortCommunities(orderedCommunityIds);
-    setSortedCommunities(sortedCommunities);
-    delayDebouncedSave(orderedCommunityIds, 1500);
-  }, [ownUser, sortCommunities]);
-
-  const communityIds = useMemo(() => (sortedCommunities || []).map(community => community.id), [sortedCommunities]);
-
   const onDragEnd = useCallback((event: DragEndEvent) => {
+    // Every item is a NavLink: without this, the click that trails a mouse
+    // drop follows the link natively — a full page reload.
+    suppressClickAfterDrag(event.activatorEvent);
     setDraggingOver(false);
     const { active, over } = event;
     if (!over || active.id === over.id) {
@@ -98,11 +52,13 @@ export default function GroupsMenu(props: Props) {
     if (sourceIndex < 0 || destinationIndex < 0 || sourceIndex === destinationIndex) {
       return;
     }
-    const draggedCommunity = sortedCommunities?.find(community => community.id === active.id);
-    if (draggedCommunity) {
-      updateCommunityOrder(draggedCommunity, sourceIndex, destinationIndex);
-    }
-  }, [communityIds, sortedCommunities, updateCommunityOrder]);
+    moveCommunity(sourceIndex, destinationIndex);
+  }, [communityIds, moveCommunity]);
+
+  const onDragCancel = useCallback((event: DragCancelEvent) => {
+    suppressClickAfterDrag(event.activatorEvent);
+    setDraggingOver(false);
+  }, []);
 
   return (
     <DndContext
@@ -113,13 +69,16 @@ export default function GroupsMenu(props: Props) {
       // rbd's isDraggingOver was on only while hovering the list, not for the
       // whole drag — with the cancel-outside collision rule, `over` tracks it.
       onDragOver={event => setDraggingOver(!!event.over)}
-      onDragCancel={() => setDraggingOver(false)}
+      onDragCancel={onDragCancel}
       onDragEnd={onDragEnd}
     >
-      <SortableContext items={communityIds} strategy={rectSortingStrategy}>
+      {/* A single column in both sidebar states, with rows of different
+          heights (pinned channels) — rectSortingStrategy would move each row
+          onto its neighbour's rect and scale it to that size. */}
+      <SortableContext items={communityIds} strategy={verticalListSortingStrategy}>
         <div className={`groups-menu${props.collapsed ? ' collapsed' : ''}${draggingOver ? ' dragging-over' : ''}`}>
           <div className="items">
-            {sortedCommunities?.map(community => (
+            {sortedCommunities.map(community => (
               <CommunityItem
                 key={community.id}
                 community={community}
@@ -233,7 +192,9 @@ function CommunityItem(props: CommunityItemProps) {
       {...attributes}
       {...listeners}
       style={{
-        transform: CSS.Transform.toString(transform),
+        // Translate only: dnd-kit's transforms carry scaleX/scaleY (rows of
+        // different heights), which squashed/stretched the icons mid-drag.
+        transform: CSS.Translate.toString(transform),
         transition,
         position: 'relative',
         zIndex: isDragging ? 5000 : undefined,

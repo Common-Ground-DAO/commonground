@@ -374,7 +374,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/createMessage` -- Create a new message
 - `/createModerationMessage` -- Create a moderation-flagged message
 - `/editMessage` -- Edit an existing message
-- `/deleteMessage` -- Delete a message
+- `/deleteMessage` -- Delete a message. Creator and channel are read from the stored message (`messageHelper.getMessageOwnership`), not from the request: the message must live in `access.channelId`, deleting another user's message needs `CHANNEL_MODERATE` / `CALL_MODERATE` there (chats and article comments: own messages only), and the `UPDATE` filters on creator, channel and id.
 - `/deleteAllUserMessages` -- Delete all messages from a user in a channel
 - `/loadMessages` -- Load messages with pagination
 - `/messagesById` -- Load specific messages by ID
@@ -383,6 +383,8 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/setChannelLastRead` -- Mark channel as read
 - `/getUrlPreview` -- Get URL preview metadata (Open Graph scrape of a client-supplied URL). The route fetches the page itself with size/time/redirect limits and passes the HTML to `open-graph-scraper` as `ogs({ html })`. The preview image is stored through `saveImage()`, i.e. it passes the NSFW gate.
 - `/joinArticleEventRoom`, `/leaveArticleEventRoom` -- Join/leave article real-time rooms
+
+Every route that takes an access object (`communityId`, `chatId`, `callId`, or `articleId` with `articleCommunityId`/`articleUserId`, each together with `channelId`) runs `_checkAccessOrThrow`, which first checks that `channelId` is the channel of the named community, chat, call or article (`messageHelper.isChannelInAccessScope`) and then evaluates the permissions for that scope. An article access must name the article's community or user. Deleted community channels, chats and articles do not match; a user article that is not published yet only matches for its author. Message edits and reaction removal additionally filter on `access.channelId` in SQL.
 
 A subset of message routes is also reachable over the Bot API v1 surface (see below). At module load, `messages.ts` allowlists `POST /BotV1/messages/{loadMessages, messagesById, loadUpdates, createMessage, setReaction, unsetReaction}` for bot bearer principals. When a request carries a `botPrincipal`, the handler resolves the acting user from the bot instead of the session, requires an exact `{communityId, channelId}` access target, enforces the per-token bot rate limits, and verifies the bot's active membership/policy for that community before proceeding.
 

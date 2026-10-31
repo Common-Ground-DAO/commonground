@@ -105,6 +105,14 @@ export async function _checkAccessOrThrow(access: { channelId: string, chatId: s
 export async function _checkAccessOrThrow(access: API.Messages.MessageAccess, userIdOrPermissions?: ArticlePermission[] | ChannelPermission[] | CallPermission[] | string, userId?: string) {
   console.log('checkAccessOrThrow', access);
 
+  // Every permission below is evaluated for the community, chat, call or
+  // article in the access object, while the message queries use
+  // `access.channelId`; both must refer to the same channel.
+  const requestingUserId = typeof userIdOrPermissions === 'string' ? userIdOrPermissions : userId;
+  if (!(await messageHelper.isChannelInAccessScope(access, requestingUserId))) {
+    throw new Error(errors.server.NOT_ALLOWED);
+  }
+
   if ('communityId' in access && Array.isArray(userIdOrPermissions)) {
     const hasPermissions = await permissionHelper.hasPermissions({
       userId,
@@ -679,13 +687,20 @@ registerPostRoute<
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
     const { access } = data;
+    // Creator and channel come from the stored message, not from the
+    // request; the permission checks below run against that channel.
+    const message = await messageHelper.getMessageOwnership(data.messageId);
+    if (!message || message.channelId !== access.channelId) {
+      throw new Error(errors.server.NOT_FOUND);
+    }
+    const isOwnMessage = message.creatorId === user.id;
     if ('communityId' in access) {
       const permissions = [
         ChannelPermission.CHANNEL_EXISTS,
         ChannelPermission.CHANNEL_READ,
         ChannelPermission.CHANNEL_WRITE,
       ];
-      if (data.creatorId !== user.id) {
+      if (!isOwnMessage) {
         // user wants to delete another user's message
         permissions.push(ChannelPermission.CHANNEL_MODERATE);
       }
@@ -697,14 +712,14 @@ registerPostRoute<
         CallPermission.CHANNEL_READ,
         CallPermission.CHANNEL_WRITE,
       ];
-      if (data.creatorId !== user.id) {
+      if (!isOwnMessage) {
         // user wants to delete another user's message
         permissions.push(CallPermission.CALL_MODERATE);
       }
       await _checkAccessOrThrow(access, permissions, user.id);
     }
     else if ('articleId' in access) {
-      if (data.creatorId !== user.id) {
+      if (!isOwnMessage) {
         // user wants to delete another user's message
         throw new Error(errors.server.NOT_ALLOWED);
       }
@@ -714,14 +729,18 @@ registerPostRoute<
       ], user.id);
     }
     else {
-      if (data.creatorId !== user.id) {
+      if (!isOwnMessage) {
         // user wants to delete another user's message
         throw new Error(errors.server.NOT_ALLOWED);
       }
       await _checkAccessOrThrow(access, user.id);
     }
 
-    const result = await messageHelper.deleteMessage(user.id, data);
+    const result = await messageHelper.deleteMessage({
+      messageId: data.messageId,
+      channelId: access.channelId,
+      creatorId: message.creatorId,
+    });
     const events: Events.Message.Message[] = [{
       type: "cliMessageEvent",
       action: "delete",

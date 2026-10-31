@@ -6,7 +6,8 @@
 > commit 935232158, 2026-10-31; dev env template (`docker/.env.example`,
 > `docker/ensureEnv.sh`, generated `s3.json`, existing-checkout steps) and
 > `s3.selfhost.json` ownership against commit 69999fa20 (chore/env-template),
-> 2026-10-31
+> 2026-10-31; image pins, Node 26 / trixie, Yarn 4.18.1, immutable installs and
+> verified binary downloads against commit 5f73578, 2026-10-31
 
 # Common Ground Infrastructure Documentation
 
@@ -41,7 +42,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 
 #### `db` (PostgreSQL)
 - **Image:** `cryptogram/db` (custom build from `docker/db/`)
-- **Base image:** `postgres:14-alpine`
+- **Base image:** `postgres:14-alpine` line, exact tag + digest pinned in `docker/db/Dockerfile` (major upgrade to 18: roadmap item F3)
 - **Purpose:** Primary relational database. Stores all application data: users, communities, messages, channels, contracts, etc.
 - **Port:** `127.0.0.1:5432:5432` (localhost only)
 - **Command:** `postgres -c config_file=/etc/postgresql/postgresql.conf`. This explicit `config_file` flag is required — without it Postgres ignores the mounted `postgresql.conf` and runs on image defaults (this was a real bug: the config was mounted but never loaded).
@@ -56,7 +57,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Restart:** `unless-stopped`
 
 #### `redis`
-- **Image:** `redis:6.2.7-alpine`
+- **Image:** `redis:6.2-alpine` line, exact tag + digest pinned in the compose files (replacement by Valkey: roadmap item F4)
 - **Command:** `redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 6GB --save ""`
 - **No persistence** (`--save ""`) and **no eviction policy** (the default `noeviction`): sessions and the captcha HMAC key are not cache entries and must never be evicted. Nothing survives a restart — a restart logs everyone out.
 - **Purpose:** one instance serves all three historical roles, with pairwise disjoint key prefixes:
@@ -127,12 +128,12 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Key environment variables:** `PG_SU_PASSWORD`, `PG_SU_NAME=postgres`, `PG_MEDIASOUP_PASSWORD`, `REDIS_PASSWORD`, `S3_SECRET`, `DEPLOYMENT`, `BASE_URL`
 
 #### `seaweed` (SeaweedFS)
-- **Image:** `chrislusf/seaweedfs:4.40` (pinned — do not run an untagged/`latest` image, and keep any deployment at ≥ 4.34 for the 2026 security fixes)
+- **Image:** `chrislusf/seaweedfs` 4.x, exact tag + digest pinned in the compose files (do not run an untagged/`latest` image, and keep any deployment at ≥ 4.34 for the 2026 security fixes). Moved 4.40 → 4.48 on 2026-10-31: 4.48 starts with exactly this command line and serves S3 (smoke-tested), and the SDK conformance suite passed against it.
 - **Purpose:** S3-compatible object storage for uploaded files and images. One all-in-one `weed server` process replaces the former `seaweedmaster` / `seaweedvolume` / `s3` trio (consolidated 2026-08-02).
 - **Command:** `server -dir=/data -ip=seaweed -master.volumeSizeLimitMB=16 -volume.max=0 -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.port.iceberg=0`
   - `-s3` implies `-filer`, so the single process runs master, volume server, filer and the S3 gateway.
   - `-volume.max=0` auto-sizes the volume count from free disk space instead of the default cap of 8 (which at a 16 MB volume-size limit would cap the store at 128 MB).
-  - `-s3.port.iceberg=0` disables the Iceberg REST catalog that 4.40 otherwise starts on 8181 — nothing in this stack speaks Iceberg.
+  - `-s3.port.iceberg=0` disables the Iceberg REST catalog that SeaweedFS (since 4.40) otherwise starts on 8181 — nothing in this stack speaks Iceberg.
   - `weed server`, not `weed mini` (upstream's default CMD), on purpose: `mini` bundles WebDAV, an Admin UI and the Iceberg catalog, enables an embedded IAM API on the S3 port by default, and upstream reserves the right to evolve its defaults — `server` keeps a stable flag surface and no extra listeners.
   - Single-copy replication via `WEED_MASTER_VOLUME_GROWTH_COPY_1=1` / `..._OTHER=1`.
 - **Ports (all internal to the `cryptogram` network):** S3 8333, master 9333, volume 8080, filer 8888, plus their gRPC siblings (port + 10000). **Only 8333 is consumed by anything else in the stack** — nginx proxies file requests to it and `srv/repositories/files.ts` uses it as its endpoint, both via the network alias `s3.local`.
@@ -165,7 +166,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 #### `cg-builder`
 - **Image:** `commonground/node` (built from `docker/node/`)
 - **Purpose:** Build container. Not a running service — invoked via `docker compose run` to execute build commands (yarn install, type-check/lint/`vite build`, backend `tsc` compile, contract deployment). Mounts the entire project directory.
-- **User:** `${BUILDER_UID}:${BUILDER_GID}` (matches host user to avoid permission issues). The image (`docker/node/Dockerfile`) creates a `cg_env` group/user only for ids the `node:24.18-bookworm` base doesn't already have, so `1000` (the base's `node` user), `0` (root — e.g. a self-host operator building as root) and ids that collide with Debian system groups all build.
+- **User:** `${BUILDER_UID}:${BUILDER_GID}` (matches host user to avoid permission issues). The image (`docker/node/Dockerfile`) creates a `cg_env` group/user only for ids the `node:26-trixie` base doesn't already have, so `1000` (the base's `node` user), `0` (root — e.g. a self-host operator building as root) and ids that collide with Debian system groups all build.
 - **Volumes:** `../:/cg`, `builder-cache:/builder-cache` (persistent yarn cache)
 - **Default command:** `echo "Not running interactive, exiting..."` (always invoked with explicit commands)
 
@@ -217,7 +218,13 @@ The dev build scripts live in `docker/` and are invoked through `run.sh`.
 
 ### Package-manager hardening
 
-Both workspaces pin **Yarn 4.17.1** and configure two supply-chain controls in
+The update policy as a whole — the 7-day minimum release age for every
+ecosystem, the exception log, digest pinning, the apt snapshot, verified binary
+downloads and Renovate — is in **[UPDATE-POLICY.md](UPDATE-POLICY.md)**. This
+section covers the Yarn side.
+
+Both workspaces pin **Yarn 4** (exact version + Corepack's `+sha512.` hash in
+`packageManager`) and configure two supply-chain controls in
 `.yarnrc.yml` (root and `srv/`). They were added on 2026-08-04, the day the
 "Shai-Hulud: Here We Go Again" npm worm poisoned ~440 packages (keyv, cacheable,
 flat-cache, file-entry-cache and others) by publishing versions whose
@@ -255,7 +262,8 @@ the current yarnpkg.com docs say — the pinned binary is the authority), which 
 why the version moved as part of the same change. The upgrade changed the
 lockfile metadata format (8 → 10) but **no resolved version**. Note that 4.1.0
 *hard-errors* on the unknown `npmMinimalAgeGate` key, so every place that
-bootstraps a Yarn version has to stay at 4.17.1 or newer: `docker/build.sh`,
+bootstraps a Yarn version has to stay at 4.17.1 or newer (4.18.1 since
+2026-10-31; that bump changed no lockfile): `docker/build.sh`,
 `docker/updateBackend.sh`, `docker/updateFrontend.sh`,
 `docker/selfhost/selfhost.sh` and both Azure pipelines.
 
@@ -266,9 +274,11 @@ main workspaces:
 |---|---|
 | root, `srv/` | own `.yarnrc.yml` + `dependenciesMeta` allowlist |
 | `contracts/` | inherits the root `.yarnrc.yml` (Yarn walks up); no allowlist needed |
-| `docker/hardhat/node/` | **was the one unprotected path** — `docker/hardhat/Dockerfile` ran a bare `yarn`, i.e. the base image's Yarn 1.22, with no lockfile and scripts on. It now enables corepack, pins `packageManager: yarn@4.17.1`, and ships its own `.yarnrc.yml`. |
-| backend image build | the copied `.yarnrc.yml` carries both controls (no `yarnPath` exists any more — corepack provisions the `packageManager`-pinned 4.17.1); verified by the `YN0004` warnings in the build output |
+| `docker/hardhat/node/` | **was the one unprotected path** — `docker/hardhat/Dockerfile` ran a bare `yarn`, i.e. the base image's Yarn 1.22, with no lockfile and scripts on. It now installs corepack (verified tarball), pins `packageManager` (Yarn 4.18.1 + hash), ships its own `.yarnrc.yml`, and since 2026-10-31 its own `yarn.lock`, installed with `--immutable` (resolved fresh under the age gate — the same versions the image had been resolving, e.g. hardhat 2.29.1). |
+| backend image build | the copied `.yarnrc.yml` carries both controls (no `yarnPath` exists any more — corepack provisions the `packageManager`-pinned Yarn); verified by the `YN0004` warnings in the build output |
 | Azure pipelines | the secure-file `.yarnrc.yml` **replaces** the repo's, so the pipelines re-append both settings after copying it — see the comment there |
+| lockfile drift | every scripted install is `yarn install --immutable` (backend images, hardhat image, `docker/build.sh`, `docker/updateBackend.sh`, `docker/updateFrontend.sh`, `docker/selfhost/selfhost.sh`, `tools/*Migration.sh`, `tools/testEntities.sh`): a stale lockfile fails the build instead of resolving something unreviewed. Change dependencies with a plain `yarn install`/`yarn add` in `./run.sh shell` and commit the lockfile. |
+| git dependencies | `approvedGitRepositories` (root `.yarnrc.yml`) lists only `https://github.com/ethereumjs/ethereumjs-abi.git`, the one git dependency in any lockfile (via `@truffle/hdwallet-provider`); it was `"**"` until 2026-10-31. For `github.com` repositories Yarn fetches the commit archive over HTTPS first and only falls back to `git clone`, which is the path the allowlist guards — see [UPDATE-POLICY.md](UPDATE-POLICY.md#npm-yarn). |
 | `npx` call sites | every call (`web-push` and `hardhat` in the build scripts, `truffle-flattener` in `tools/generateFlattenedSourceCode.sh`) resolves to a declared local dependency and passes `--no`, which turns a missing package into a loud failure instead of a silent registry download-and-run |
 
 **Refreshing a lockfile within the existing ranges** needs both patterns:
@@ -285,14 +295,16 @@ The complete build pipeline, for first-time setup or full rebuilds.
 **Steps (in order):**
 
 1. **Stop and clean:** `docker compose down --remove-orphans`, then `docker compose build cg-builder`.
-2. **Yarn 4.17.1 comes from corepack**: the `commonground/node` base image
-   enables corepack and pre-fetches the `packageManager`-pinned release into a
+2. **Yarn comes from corepack**: the `commonground/node` base image
+   installs corepack (no longer bundled with Node ≥ 25; npm tarball checked
+   against a pinned sha512), enables it and pre-fetches the
+   `packageManager`-pinned release (hash-verified) into a
    world-readable `COREPACK_HOME`, so builder runs need no bootstrap step and
    no network fetch. (The former "Missing .yarn directory" repair blocks and
    `yarn set version` calls are gone; on a dev host, run `corepack enable`
    once to get the same resolution outside the containers.)
 3. **Generate SSL certificates:** compare `LOCAL_CERTIFICATE_IP` with the stored `certificate_ip`; if changed, regenerate root CA and server certs.
-4. **Clear `backend/dist/` and `nginx/dist/`**, then install frontend dependencies (`docker compose run --rm cg-builder yarn`).
+4. **Clear `backend/dist/` and `nginx/dist/`**, then install frontend dependencies (`docker compose run --rm cg-builder yarn install --immutable`).
 5. **Generate random build ID:** a random base64 string is written into `src/common/random_build_id.ts` for cache-busting / new-build detection.
 6. **Type-check, lint and build the frontend:** one builder run of `yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite`, with `DEPLOYMENT=prod` and `NODE_OPTIONS=--max-old-space-size=4096`. Output goes to `../build/`, then `rsync`ed into `nginx/dist/`. See [Frontend build steps](#frontend-build-steps) for what each step does and why it is a separate step now.
 7. **Build nginx image:** `docker compose build --no-cache nginx`.
@@ -335,6 +347,8 @@ its default heap from machine RAM, so a small selfhost VPS would fail without
 it. The figure was re-measured under Node 24 + Vite 7 by a dedicated measured
 `yarn build` in the builder container (`node:24.18-bookworm`): ~3.9 GiB peak by
 `docker stats`, ~4.1 GiB cgroup `memory.peak` (which also counts page cache).
+On Node 26 (`node:26-trixie`, 2026-10-31) the same build passed with the
+same cap; the peak was not re-measured (TODO(verify): re-measure on Node 26).
 The flag caps only the V8 heap, so the build still fits — but the headroom is
 thin; treat further dependency growth as a trigger to re-measure, with 5120 as
 the fallback if a build ever OOMs.
@@ -475,19 +489,25 @@ scripts yet; the suite is a small set of unit tests (`src/**/*.test.ts`).
 
 ### Backend Docker Image Build (Two-Stage for Dev)
 
-- **Stage 0 (`Dockerfile_dev_stage_0`):** `FROM node:24.18-bookworm`. Installs system deps, then (before the dependency layers, so it only rebuilds when the pin changes) runs `download_model.sh`, which fetches the NSFW classification model (~87 MB) from a **pinned HuggingFace revision** into `/models/nsfw` and verifies every file's sha256 — the build needs network access to `huggingface.co`, the runtime never does. It then copies `package.json` / `yarn.lock` / `.yarnrc.yml`, enables Corepack, runs `yarn` and prunes the darwin/win32 `onnxruntime-node` binaries plus the browser-only `onnxruntime-web` (~290 MB that can never run in the linux node image). Cached; rebuilt only when dependencies (or the model pin) change.
+- **Stage 0 (`Dockerfile_dev_stage_0`):** `FROM node:26-trixie` line, exact tag + digest pinned. Switches apt to the `snapshot.debian.org` timestamp of the Debian rootfs underneath the pinned node image ([UPDATE-POLICY.md](UPDATE-POLICY.md#apt-debian)), then — before the dependency layers, so they only rebuild when a pin changes — runs three verified downloads: `fetch_chrome.sh` (Chrome for Testing for puppeteer, sha256-pinned, plus its runtime libraries from the archive's `deb.deps` via apt; x86_64 only — on other architectures it is skipped and social preview images do not work), `download_model.sh` (the NSFW classification model, ~87 MB, from a **pinned HuggingFace revision** into `/models/nsfw`, sha256 per file) and `fetch_mediasoup_worker.sh` (the prebuilt mediasoup worker for the build host's arch and kernel major — kernels older than 6 get the kernel6 asset — sha256-pinned). The build needs network access to `storage.googleapis.com`, `huggingface.co`, `github.com`, `registry.npmjs.org` and `snapshot.debian.org`; the runtime needs none of them. It then installs corepack (pinned sha512), copies `package.json` / `yarn.lock` / `.yarnrc.yml`, runs `yarn install --immutable` (bcrypt compiled from source against the image's Node headers; the mediasoup and puppeteer postinstall downloads skipped via `MEDIASOUP_WORKER_BIN` / `PUPPETEER_SKIP_DOWNLOAD`), runs `check_pinned_binaries.sh` (fails if the installed mediasoup/puppeteer expect a different worker/Chrome than the pinned ones) and prunes the darwin/win32 `onnxruntime-node` binaries plus the browser-only `onnxruntime-web` (~290 MB that can never run in the linux node image). Details: [UPDATE-POLICY.md](UPDATE-POLICY.md#binary-downloads).
 - **Stage 1 (`Dockerfile_dev_stage_1`):** `FROM commonground/backend_stage_0`. Copies the full `dist/` source and runs `yarn tsc`. Rebuilt on every code change.
 
-**Production backend (`Dockerfile`):** single-stage build, `FROM node:24.18-bookworm`. Its first layers bake the NSFW model into `/models/nsfw` (`download_model.sh`, pinned revision + sha256 — placed before the `COPY ./dist` layer on purpose, so source changes don't re-download 87 MB from huggingface.co); it then installs system dependencies (build-essential, python3, Chromium libs for Puppeteer), enables Corepack, runs `yarn && yarn tsc`, prunes the darwin/win32 `onnxruntime-node` binaries plus the browser-only `onnxruntime-web` and cleans up build tools. Building requires network access to `huggingface.co`; the runtime never does. Used by the CI/CD pipelines.
+**Production backend (`Dockerfile`):** single-stage build used by the legacy CI/CD pipelines, same base and the same steps as stage 0 + stage 1 in one image (verified downloads before `COPY ./dist`, then `yarn install --immutable`, `check_pinned_binaries.sh`, `yarn tsc`). The compilers and python3 that node-gyp needs come with the `node:*-trixie` base, so no build packages are installed or removed any more.
 
-All images stay on **Debian bookworm** deliberately: the Node 24 audit
-(2026-08) found that moving to trixie breaks the Puppeteer dependency install
-in `docker/backend/Dockerfile` — trixie ships no `libgcc1` (renamed
-`libgcc-s1`) and renames `libasound2`/`libcups2` to their `…t64` variants under
-the 64-bit `time_t` transition. Forward note for the next Node bump: the
-Node 24 images still bundle Corepack, which the `corepack install -g
-yarn@4.17.1` step in `docker/node/Dockerfile` relies on; the Node 26 images
-drop Corepack, so that step will need corepack installed explicitly first.
+All Node images run **Node 26 on Debian trixie** since 2026-10-31 (roadmap
+decision 13). The obstacle the Node 24 audit (2026-08) found — the hand-written
+Chrome library list named bookworm packages (`libgcc1`, `libasound2`,
+`libcups2`) that trixie renamed under the 64-bit `time_t` transition — is gone:
+the libraries now come from the Chrome archive's own `deb.deps` through
+`apt-get satisfy`, whose versioned `Provides` resolve to the `…t64` packages.
+Node 26 images ship without Corepack; every Dockerfile installs it from the
+npm tarball against a pinned sha512. Verified on Node 26: bcrypt (built from
+source), sharp, onnxruntime-node + transformers (NSFW model classification),
+mediasoup (`createWorker()` + router), puppeteer (launch with the
+`htmlToImage` flags + screenshot), `hardhat node`, the frontend
+typecheck/lint/build, and the SDK conformance suite against a disposable
+self-host stack (two `r0-instance-config` failures unrelated to the runtime
+are tracked in `docs/todo/TODO.md`).
 
 ---
 
@@ -718,7 +738,7 @@ This profile runs the **entire stack on one server** with real production semant
 ### How it differs from the dev stack
 
 - **Distinct Compose project name** (`name: cg-selfhost`), so its containers and volumes never collide with the dev stack even in the same directory.
-- **Caddy** (`caddy:2-alpine`) fronts everything and obtains/renews **Let's Encrypt** certificates automatically for the app domain, the CG ID domain, and mediasoup call signalling (port 4443) — or, with `CG_TLS_MODE=internal`, issues all three from its own local CA (LAN/test instances without public DNS).
+- **Caddy** (`caddy:2-alpine` line, exact tag + digest pinned in `docker-compose.selfhost.yml`) fronts everything and obtains/renews **Let's Encrypt** certificates automatically for the app domain, the CG ID domain, and mediasoup call signalling (port 4443) — or, with `CG_TLS_MODE=internal`, issues all three from its own local CA (LAN/test instances without public DNS).
 - **nginx** is built from `Dockerfile_selfhost` (real domains, parameterized CSP, instance-config injection) instead of the dev image.
 - **`DEPLOYMENT=prod`** on any domain — full production behaviour without hardcoding `app.cg`.
 - **No `hardhat` dev chain, no test-contract deployment.**

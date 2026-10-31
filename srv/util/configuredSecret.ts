@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 /**
- * Whether an optional third-party key (SendGrid, Twitter, ...) holds a real
+ * Whether an optional third-party key (Twitter, ...) holds a real
  * value. Empty, the `placeholder` fallback of srv/serverconfig.ts and the
  * `your-key` placeholder of docker/.env.example all mean "not configured", so
  * the feature is skipped (backend) or hidden (instance config) instead of

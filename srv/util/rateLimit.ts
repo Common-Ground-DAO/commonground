@@ -68,9 +68,15 @@ export default function ipRateLimitHandler(options: {
   limit_v4_v6_64: number;
   limit_v6_56: number;
   limit_v6_48: number;
+  /**
+   * Name of the counter, instead of the request URL. Needed for routes that
+   * carry data in the query string: with the URL as the key, every distinct
+   * query would get a bucket of its own.
+   */
+  bucket?: string;
 } & IdentityKeying) {
   const rateLimiter = async (req: express.Request, res: express.Response) => {
-    const url = req.originalUrl;
+    const url = options.bucket ?? req.originalUrl;
     const now = Date.now();
 
     const identity = options.identity?.(req);
@@ -116,4 +122,25 @@ export default function ipRateLimitHandler(options: {
     }
   };
   return rateLimiter;
+}
+
+/**
+ * Sliding-window limit on an arbitrary key the caller computes — for limits
+ * that are neither per IP nor "the request's identity", e.g. how many mails
+ * may go to one target address. Throws RATE_LIMIT_EXCEEDED when the key's
+ * bucket is full. `bucket` names the counter family; keys of different
+ * families never collide.
+ */
+export function keyRateLimitHandler(options: { bucket: string; windowMs: number; limit: number }) {
+  return async (key: string) => {
+    const withinLimit = await countWithinWindow(
+      `ratelimit:${options.bucket}:key:${key}`,
+      options.limit,
+      options.windowMs,
+      Date.now(),
+    );
+    if (!withinLimit) {
+      throw new Error(errors.server.RATE_LIMIT_EXCEEDED);
+    }
+  };
 }

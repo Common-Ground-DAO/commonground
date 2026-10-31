@@ -85,6 +85,15 @@ async function createOneshotWorker(filename: string, sleepBefore?: number) {
 createPermanentWorker('premiumRenewal', true, 30000);
 createPermanentWorker('callUpdateEmitter', true);
 createPermanentWorker('handleCommunityAirdrops', true, 30000);
+// receives the selfhost mail relay's bounce reports (selfhost compose sets
+// MAIL_BOUNCE_RECEIVER from CG_ENABLE_MAIL); needs the relay login
+if (process.env.MAIL_BOUNCE_RECEIVER === 'true') {
+  if (process.env.SMTP_USER && process.env.SMTP_PASSWORD) {
+    createPermanentWorker('bounceReceiver', true);
+  } else {
+    console.error('MAIL_BOUNCE_RECEIVER=true, but SMTP_USER/SMTP_PASSWORD are not set: bounce handling is off');
+  }
+}
 
 // the backend image's HEALTHCHECK reads healthcheck.txt; without this the
 // job-runner container reports permanently unhealthy (every other backend

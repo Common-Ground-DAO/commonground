@@ -30,6 +30,8 @@ import ipRateLimitHandler from "../util/rateLimit";
 import config from "../common/config";
 import { verifyCaptchaToken } from "../util/captcha";
 import emailUtils, { emailEnabled } from "./emails";
+import { registerEmailUnsubscribeRoutes } from "./emailUnsubscribe";
+import { limitOneTimePasswordMail, limitVerificationMail } from "../util/mailSendLimits";
 import emailHelper from "../repositories/emails";
 
 export const SIGNABLE_SECRET_LENGTH = 20;
@@ -638,7 +640,7 @@ registerPostRoute<
     if(useEmailAndPassword?.email){
       try {
         const verificationToken = await emailHelper.generateVerificationEmailToken(insertedIds.userId);
-        await emailUtils.sendVerificationEmail(useEmailAndPassword.email, verificationToken, request.hostname);
+        await emailUtils.sendVerificationEmail(useEmailAndPassword.email, verificationToken);
       } catch (error) {
         console.error('Error sending verification email', error);
         //notify user that email could not be sent
@@ -1103,9 +1105,12 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    await userHelper.subscribeNewsletter(user.id, data.email);
+    await userHelper.subscribeNewsletter(user.id);
   }
 );
+
+// one-click unsubscribe links of notification mails (no login needed)
+registerEmailUnsubscribeRoutes(userRouter);
 
 registerPostRoute<
   API.User.unsubscribeNewsletter.Request,
@@ -1119,7 +1124,7 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    await userHelper.unsubscribeNewsletter(user.id, data.email);
+    await userHelper.unsubscribeNewsletter(user.id);
   }
 );
 
@@ -1423,10 +1428,11 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
+    await limitVerificationMail(request, response, data.email, user.id);
     // avoid generating multiple tokens if the existing one is still valid
     const token = await emailHelper.generateVerificationEmailToken(user.id);
     try {
-      await emailUtils.sendVerificationEmail(data.email, token, request.hostname);
+      await emailUtils.sendVerificationEmail(data.email, token);
     } catch (error) {
       console.error(error);
     }
@@ -1473,6 +1479,7 @@ registerPostRoute<
       throw new Error(errors.server.EMAIL_DISABLED);
     }
     const { email } = data;
+    await limitOneTimePasswordMail(request, response, email);
     const userId = await userHelper.getUserIdByEmail(email);
     const otp = await emailHelper.generateVerificationEmailToken(userId);
     try {

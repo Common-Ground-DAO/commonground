@@ -7,7 +7,6 @@ import errors from "../common/errors";
 import format from "pg-format";
 import communityHelper from "./communities";
 import emailHelper from "./emails";
-import emailUtils from "../api/emails";
 import { rolePermissionPresets } from "../common/presets";
 import pool from "../util/postgres";
 import { type Pool, type PoolClient } from "pg";

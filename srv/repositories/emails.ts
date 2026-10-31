@@ -126,7 +126,7 @@ class EmailHelper {
     }
 
     public async prepareArticleToSendViaEmail(articleId: string, communityId: string): Promise<{
-        recipients: string[];
+        recipients: { email: string, userId: string }[];
         emailPost: EmailPost | null;
     }> {
         const result = await pool.query<{
@@ -204,7 +204,7 @@ class EmailHelper {
         if (article.length === 0) {
             throw new Error(errors.server.NOT_FOUND);
         }
-        const recipients = usersEmailsToSent.rows.map((user) => user.email);
+        const recipients = usersEmailsToSent.rows.map((user) => ({ email: user.email, userId: user.id }));
         const emailPost: EmailPost = {
             title: article[0].communityArticle.articleTitle,
             community: article[0].communityArticle.communityTitle,
@@ -234,16 +234,6 @@ class EmailHelper {
         });
         const result = await pool.query<{ count: number }>(query);
         return Number(result.rows[0]?.count) || 0;
-    }
-
-    public async updateVerifiedStatusesFromBouncedEmails(bouncedEmails: string[]): Promise<void> {
-        await pool.query(
-            format(`
-                UPDATE users
-                SET email_verified = false
-                WHERE email = ANY(%L)
-            `, bouncedEmails)
-        );
     }
 
     public async generateVerificationEmailToken(userId: string): Promise<string> {

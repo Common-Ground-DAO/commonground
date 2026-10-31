@@ -420,7 +420,7 @@ with spam accounts. Unlike before, captcha is **never silently disabled** —
   privacy-friendly proof-of-work captcha. No third-party keys, no external
   calls, GDPR-friendly. `init.sh` generates an `ALTCHA_HMAC_KEY` for you so
   challenges stay valid across restarts; if you clear it, the backend generates
-  one and shares it across instances via Redis. This is the recommended default
+  one and shares it across processes via Valkey. This is the recommended default
   for public instances.
 - **`recaptcha`** — Google reCAPTCHA v2. Set `CAPTCHA_PROVIDER=recaptcha` and
   fill in both `CG_RECAPTCHA_SITE_KEY` (public, injected into the frontend) and
@@ -471,8 +471,17 @@ not used when an instance config is present).
 
 Defaults in `.env.selfhost` are sized for a 16 GB machine:
 
-- `REDIS_MAXMEMORY=1536mb` — total budget of the single Redis instance
-  (sessions, Socket.IO pub/sub and app data share it)
+- `REDIS_MAXMEMORY=1024mb` — the Valkey **state** instance (`redis`):
+  sessions, Socket.IO pub/sub, rate limits. It never evicts; when it is full,
+  logins fail, so leave headroom.
+- `REDIS_CACHE_MAXMEMORY=256mb` — the Valkey **cache** instance
+  (`redis-cache`): rebuildable data such as link previews. When full it drops
+  its least recently used entries.
+
+  Both limits cover the data only: while the state instance writes its
+  snapshot (a forked process), memory use can briefly reach about twice the
+  data size, plus allocator overhead. Below 8 GB of RAM the defaults are
+  tight next to the rest of the stack.
 - `SEAWEED_VOLUME_LIMIT_MB=1024` — SeaweedFS volume chunk size
 - mediasoup spawns one media worker per CPU core
 
@@ -481,13 +490,49 @@ Postgres loads `docker/db/postgresql.conf`, sized for the same 16 GB machine
 setting is commented there). Raise `shared_buffers` and
 `effective_cache_size` for larger instances, lower them for smaller ones.
 
+> **If logins stop sticking** (users are logged out right after logging in,
+> the API logs `OOM command not allowed`): the Valkey state instance is full,
+> most likely of sessions — the backend stores a session for every API request
+> without a session cookie (`saveUninitialized: true` in
+> `srv/util/express.ts`), so crawlers or scripts can fill it. Check with
+> `./selfhost/selfhost.sh compose exec redis valkey-cli INFO memory`
+> (`used_memory_human` vs. `maxmemory_human`), then remove all sessions
+> (everyone is logged out, rate limits stay):
+>
+> ```bash
+> ./selfhost/selfhost.sh compose exec redis sh -c "valkey-cli --scan --pattern 'sess:*' | xargs -r -n 500 valkey-cli UNLINK"
+> ```
+>
+> or clear everything with `… compose exec redis valkey-cli FLUSHDB`. A
+> restart does not help: the snapshot brings the sessions back. Afterwards
+> raise `REDIS_MAXMEMORY` or block the source of the requests. Details:
+> `docs/infrastructure/README.md` (Valkey section).
+
+> **Upgrading from a release that ran Redis 6.2** (before 2026-10-31): the
+> `redis` service now runs **Valkey** (a drop-in, Redis-compatible server), and
+> a second instance `redis-cache` is added. Valkey itself needs nothing
+> beyond `./selfhost/selfhost.sh update`: it recreates `redis` with the new
+> image, starts `redis-cache` and creates the `valkey-data` volume. **But the
+> same release moves the database to PostgreSQL 18** — if your instance still
+> runs PostgreSQL 14, `update` fails at `up`; follow
+> [PostgreSQL 18](#postgresql-18) first (its dump/restore steps bring Valkey
+> along). Everyone is logged out
+> once — the old Redis kept nothing on disk; from now on sessions survive
+> restarts and updates. Your `.env.selfhost` keeps working unchanged: an old
+> `REDIS_MAXMEMORY=1536mb` now applies to the state instance alone, and the
+> cache instance takes its default `256mb` (add `REDIS_CACHE_MAXMEMORY` to
+> change that). Recommended once on the host: `sysctl vm.overcommit_memory=1`
+> (persist it in `/etc/sysctl.d/`) — Valkey forks for its background saves and
+> warns at startup without it. Going back to an older release is a cold start
+> as well (its `redis` service does not use the `valkey-data` volume).
+
 > **Upgrading from a release that ran three Redis instances** (`redis-sessions`,
 > `redis-socketio`, `redis-data`): they are replaced by a single `redis`
-> service. Set `REDIS_MAXMEMORY` in `.env.selfhost` to the *total* budget
-> (the old per-instance `512mb` becomes `1536mb`), then
+> service (since 2026-10-31 a Valkey state instance plus a cache instance, see
+> above). Set `REDIS_MAXMEMORY` in `.env.selfhost` to the state budget
+> (the old per-instance `512mb` becomes `1024mb`), then
 > `./selfhost/selfhost.sh up` — it runs with `--remove-orphans` and cleans up
-> the three old containers. Everyone is logged out once: Redis is unpersisted,
-> so this is the same effect any Redis restart has.
+> the three old containers. Everyone is logged out once.
 
 > **SeaweedFS image is pinned** by version and digest (the exact tag is in
 > `docker/docker-compose.selfhost.yml`; every pulled image is pinned, see
@@ -653,8 +698,10 @@ the stack is running can capture a blob whose metadata was not written yet (or
 the reverse). Since the storage consolidation, blobs and metadata at least share
 a single volume, so one snapshot covers both.
 
-Redis is intentionally unpersisted (sessions and ephemeral data only) —
-users just log in again after a restart.
+The Valkey state instance keeps a snapshot in the `valkey-data` volume, so a
+restart or update keeps everyone logged in. It does not need a backup: losing
+it only logs everyone out once and resets rate-limit windows. The cache
+instance keeps nothing on disk.
 
 ## Firewall summary
 

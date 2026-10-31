@@ -31,6 +31,27 @@ export function handleError(response: express.Response, e: unknown) {
   }
 }
 
+/**
+ * Express error middleware (registered last in api.ts) for errors that
+ * middleware passes to `next(error)` before any route handler runs.
+ */
+export function apiErrorHandler(
+  error: unknown,
+  request: express.Request,
+  response: express.Response,
+  next: express.NextFunction,
+) {
+  if (response.headersSent) {
+    return next(error);
+  }
+  const status = (error as { status?: unknown } | null)?.status;
+  const httpStatus = typeof status === 'number' && status >= 400 && status < 500 ? status : 500;
+  if (httpStatus === 500) {
+    console.error(`Request ${request.method} ${request.path} failed in middleware:`, error);
+  }
+  response.status(httpStatus).json(ERROR);
+}
+
 export function registerPostRoute<RQ, RS>(
   router: ReturnType<typeof express.Router>,
   route: `/${string}`,

@@ -366,7 +366,9 @@ io.use(async (socket, next) => {
   }
 });
 
-redisManager.isReady.then(async () => {
+// wsapi never reads the session store (it only unsigns the session cookie)
+// or the cache instance, so only these three connections are opened
+redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
   io.adapter(createAdapter(
     redisManager.getClient('socketIOPub'),
     redisManager.getClient('socketIOSub'),

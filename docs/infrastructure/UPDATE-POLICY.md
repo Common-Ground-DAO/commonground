@@ -1,4 +1,4 @@
-> Status: verified against commit 5f73578, 2026-10-31
+> Status: verified against commit 5f73578, 2026-10-31; example image line updated for Valkey against commit ff0da06, 2026-10-31
 
 # Update policy: 7-day minimum release age
 
@@ -23,7 +23,7 @@ published at least 7 days ago.** "Exact artifact" means:
 
 The exact pins (image tags + digests, tool versions + hashes) live only in the
 Dockerfiles, compose files and fetch scripts; the docs name the line
-(`node:26-trixie`, `redis:6.2-alpine`, …) so a Renovate bump does not make them
+(`node:26-trixie`, `valkey/valkey:9.1-alpine`, …) so a Renovate bump does not make them
 stale.
 
 Why a week: supply-chain worms of the 2025–2026 kind (e.g. the 2026-08

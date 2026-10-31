@@ -9,13 +9,15 @@
 > 2026-10-31; image pins, Node 26 / trixie, Yarn 4.18.1, immutable installs and
 > verified binary downloads against commit 5f73578, 2026-10-31; email (SMTP
 > variables, `mailpit` dev service, selfhost `mail` relay and bounce receiver),
-> Redis cache roles and `MEDIASOUP_TRUST_PROXY` against commit e44dac1, 2026-10-31;
-> PostgreSQL 18 (`db` image, volume layout, `postgresql.conf`, init roles, major
-> upgrades) against commit ff0da06, 2026-10-31
+> and `MEDIASOUP_TRUST_PROXY` against commit e44dac1, 2026-10-31; PostgreSQL 18
+> (`db` image, volume layout, `postgresql.conf`, init roles, major upgrades)
+> against commit ff0da06, 2026-10-31; the Valkey instances (`redis`,
+> `redis-cache`), their roles, persistence and the backend's Redis client
+> behaviour against commit ff0da06, 2026-10-31
 
 # Common Ground Infrastructure Documentation
 
-This document covers the full infrastructure stack for Common Ground, a Discord alternative built as a Docker Compose application with a React frontend, Node.js backend, PostgreSQL database, Redis caching, S3-compatible object storage, and WebRTC media server.
+This document covers the full infrastructure stack for Common Ground, a Discord alternative built as a Docker Compose application with a React frontend, Node.js backend, PostgreSQL database, Valkey (Redis-compatible) for sessions, pub/sub and caching, S3-compatible object storage, and WebRTC media server.
 
 There are two deployment shapes, each with its own compose file:
 
@@ -64,16 +66,29 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
   - **Data you want to keep** (e.g. a self-host instance created before 2026-10-31): dump with the old version **before** updating, then restore into the fresh 18 cluster — the steps are in [docs/database](../database/README.md#restoring-a-postgresql-14-database-into-18) (`pg_dump -Fc` / `pg_restore`), and [SELFHOST.md](../../docker/SELFHOST.md#postgresql-18) has the self-host sequence.
   - The next major upgrade (19+) will find this cluster under `18/docker` and refuse the same way; the layout leaves room for a `pg_upgrade --link` into a sibling directory then.
 
-#### `redis`
-- **Image:** `redis:6.2-alpine` line, exact tag + digest pinned in the compose files (replacement by Valkey: roadmap item F4)
-- **Command:** `redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 6GB --save ""`
-- **No persistence** (`--save ""`) and **no eviction policy** (the default `noeviction`): sessions and the captcha HMAC key are not cache entries and must never be evicted. Nothing survives a restart — a restart logs everyone out.
-- **Purpose:** one instance serves all three historical roles, with pairwise disjoint key prefixes:
-  - user session store (`express-session` / `connect-redis`, `sess:`)
-  - pub/sub adapter for Socket.IO (`v2:`), distributing real-time events across backend instances
-  - general-purpose cache (rate limiting, bot presence, captcha, user data, plugin replay keys, URL-preview cache)
-- Until 2026-08-01 this was three identically configured instances (`redis-sessions`, `redis-socketio`, `redis-data`); the split was mechanical, never load-bearing. `maxmemory` is now the shared budget for all of it.
-- **Backend connection:** `srv/redis/index.ts` resolves `process.env.REDIS_URL || 'redis://redis:6379'`, password from the Docker secret `redis_password` or `REDIS_PASSWORD`, and hands both to `srv/redis/client.ts` — the only file that calls `createClient`, and where `RESP: 2` is pinned. Neither compose file sets `REDIS_URL`; it exists for deployments that run Redis somewhere else.
+#### `redis` and `redis-cache` (Valkey)
+- **Image:** `valkey/valkey:9.1-alpine` line, exact tag + digest pinned in the compose files (both services use the same image). Valkey is the BSD-licensed fork of Redis and speaks the same protocol; it replaced `redis:6.2` on 2026-10-31 (roadmap item F4). The service names, the `redis://` URLs and the `REDIS_*` variables keep their old names — they name the protocol, not the server.
+- **Two instances, split by what may be lost** (`srv/redis/index.ts`, `INSTANCE_OF`):
+
+  | Service | Holds | Policy |
+  |---|---|---|
+  | `redis` (state) | sessions (`sess:`), the Socket.IO pub/sub (`v2:`), and every key whose loss changes behaviour: rate-limit windows (`ratelimit:`, `bot-ratelimit:`), replay guards (`captcha:altcha:used:`, `pluginRequest:`), the shared ALTCHA HMAC key (`captcha:altcha:hmackey`), bot presence leases (`bot-presence:`), user status (`ud:`), `online-user-addresses`, `tmp:` | `--maxmemory-policy noeviction`; RDB snapshots in the `valkey-data` volume (`--save "900 1 300 100"`, final snapshot on shutdown, `stop_grace_period: 1m`); `--stop-writes-on-bgsave-error no` |
+  | `redis-cache` | data that can be rebuilt at any time — today only the URL-preview cache (`urlpreview:`) | `--maxmemory-policy allkeys-lru`; no persistence (`--save ""`) |
+
+- **Why two:** with one `noeviction` instance (the layout until 2026-10-31) a cache that fills the shared `maxmemory` makes every *write* fail with `OOM command not allowed` — and a session is a write. Measured with cache keys filling a `noeviction` instance: `createUser` still answered `OK` and set a cookie, but the session was never stored, so the new user was logged out on the next request, and every rate-limited route failed (`ZADD` refused); sessions that already existed kept working, because reading and refreshing them (`GET`, `EXPIRE`) is not refused. With the cache on its own `allkeys-lru` instance it evicts its own entries and cannot reach the state instance's budget. The state instance keeps `noeviction` on purpose: under memory pressure, refusing writes is visible, while evicting would silently drop sessions, rate-limit windows or replay guards. Every cache writer still caps its own entries (URL previews: ≤ 8 KB, 1 h TTL, rate-limited per user) — the separate instance is what makes a cache unable to break logins even if a future writer forgets.
+- **Commands:** dev `valkey-server --requirepass ${REDIS_PASSWORD} --maxmemory 1gb --maxmemory-policy noeviction --save "900 1 300 100" --stop-writes-on-bgsave-error no --appendonly no` and, for `redis-cache`, `--maxmemory 256mb --maxmemory-policy allkeys-lru --save "" --appendonly no`. Self-host: the same with `${REDIS_MAXMEMORY:-1024mb}` / `${REDIS_CACHE_MAXMEMORY:-256mb}`.
+- **Healthcheck:** both services run `valkey-cli ping` (authenticated through `REDISCLI_AUTH=${REDIS_PASSWORD}` in the container environment, so the password is not on the command line) every 30 s, probing every 2 s during a 1-minute start period; healthy once the answer is `PONG`. Nothing depends on it yet (`depends_on` stays plain) — it shows in `docker ps` / `selfhost.sh ps`.
+- **Memory:** `maxmemory` limits the dataset, not the container. Allocator fragmentation and, above all, the copy-on-write pages of the forked background save come on top — up to about twice the dataset while a snapshot is written under heavy writes. Budget the host for that; below 8 GB RAM, the defaults (1 GB + 256 MB) next to the rest of the stack are tight.
+- **Persistence (state instance):** a clean stop or restart writes a final snapshot and the next start loads it, so updates and reboots no longer log everyone out. A crash (`SIGKILL`, OOM kill, power loss) loses what changed since the last snapshot — at most 15 minutes, at most 5 minutes when 100 or more writes have accumulated; affected users log in again. There is deliberately no 1-minute save point: during a flood of new sessions (see the runbook below) it would fork a snapshot every minute. `--stop-writes-on-bgsave-error no` keeps logins working if a background save fails (e.g. a full disk); the failure is logged by Valkey. Background saves fork: set `vm.overcommit_memory = 1` on the host (`sysctl`; Valkey logs a warning at startup otherwise — it is a kernel setting and cannot be set from Compose). AOF is off: the data needs no per-second durability, and RDB snapshots are cheap at this size. The snapshot holds session contents — treat the volume like the database volume; it does not need to be backed up (losing it logs everyone out once).
+- **Auth / exposure:** both instances use `REDIS_PASSWORD` (`--requirepass`) and publish no host port; they are reachable only on the `cryptogram` network. The server process runs as the image's `valkey` user (uid 999).
+- **Backend connection:** `srv/redis/index.ts` resolves `process.env.REDIS_URL || 'redis://redis:6379'` for the state instance and `process.env.REDIS_CACHE_URL || 'redis://redis-cache:6379'` for the cache, password from the Docker secret `redis_password` or `REDIS_PASSWORD` for both, and hands them to `srv/redis/client.ts` — the only file that calls `createClient`, where `RESP: 2` is pinned and every client gets its `error` listener. Neither compose file sets the URLs; they exist for deployments that run Valkey/Redis elsewhere. Pointing both at one server works (the key prefixes are disjoint) but gives up the isolation. Clients connect lazily on first use, so `memberlist`, `migrate-db` and the job-runner main thread hold no connection; see [docs/realtime](../realtime/README.md#redis-pubsub--data) for which process opens what and how outages are handled.
+- **Runbook: the state instance is full.** Symptom: logins "succeed" but the user is logged out on the next request, rate-limited routes fail, and the backend logs `OOM command not allowed when used memory > 'maxmemory'`. The most likely cause is a flood of sessions: `express-session` runs with `saveUninitialized: true` (`srv/util/express.ts`), and a middleware sets `createdAt` on every new session, so every API request without a session cookie (crawlers, scripts) stores a new 12-hour session (`docs/todo/TODO.md` has the follow-up). Check and recover — run each command inside the container, prefixed with `./selfhost/selfhost.sh compose exec redis` (self-host) or `./run.sh compose exec redis` (dev); `REDISCLI_AUTH` is already set there:
+  1. `valkey-cli INFO memory` (compare `used_memory_human` with `maxmemory_human`), `valkey-cli DBSIZE`, and `sh -c "valkey-cli --scan --pattern 'sess:*' | wc -l"` for the number of sessions.
+  2. Remove the sessions: `sh -c "valkey-cli --scan --pattern 'sess:*' | xargs -r -n 500 valkey-cli UNLINK"` — logs everyone out, keeps rate-limit windows and replay guards. Or `valkey-cli FLUSHDB` to clear everything (global logout, rate-limit windows and replay guards reset).
+  3. Then raise `REDIS_MAXMEMORY` if the instance is simply too small, or find and block the source of the cookieless requests.
+
+  Restarting the container does **not** help any more: the snapshot brings the sessions back.
+- Until 2026-08-01 there were three identically configured instances (`redis-sessions`, `redis-socketio`, `redis-data`); that split was mechanical. From 2026-08-01 to 2026-10-31 one unpersisted `redis:6.2` instance served everything.
 
 > The former `redis-blockscout` service (a cache for the deleted optional Blockscout explorer stack) was removed from the compose file on 2026-08-02.
 
@@ -82,7 +97,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Purpose:** Main HTTP REST API server. Handles all `/api/v2/*` requests plus the Bot API v1 (`/BotV1/*`): authentication, community management, file uploads, messaging, contracts, notifications, Twitter/Lukso integrations, search, reporting, bots, and staking.
 - **Command:** `node /dist/api.js`
 - **Port:** Internal only (reached by nginx on port 4000 over the Docker network)
-- **Depends on:** `db`, `redis`, `seaweed`, `memberlist`
+- **Depends on:** `db`, `redis`, `redis-cache`, `seaweed`, `memberlist`
 - **Volumes:**
   - `./vapid_keys.json:/run/secrets/vapid_keys_json:ro` — VAPID keys for web push notifications
   - `./api_data:/api_data:ro` — static API data
@@ -613,7 +628,7 @@ The same applies to **checking out any commit from before the change** (an old b
 
 `git stash` works too, but `git stash pop` after the pull ends in a modify/delete conflict on `docker/.env` (the file is back with your values, marked unmerged) and keeps the stash entry: run `git reset -q -- docker/.env && git stash drop` afterwards. A restored old `docker/.env` keeps the dev passwords that were public on GitHub — acceptable on localhost (`EXTERNAL_LISTEN_IP=127.0.0.1`); before switching to LAN mode, rotate them, which needs a fresh `pgdata` volume (`./run.sh down && docker volume rm docker_pgdata`, then delete `docker/.env` and `s3.json` and rerun).
 
-Password consumers on a fresh stack: `PG_SU_PASSWORD` initializes the postgres superuser (`POSTGRES_PASSWORD`, applied only when the `pgdata` volume is first created) and is the login of `migrate-db` and `cg-builder`; `PG_WRITER_PASSWORD`/`PG_READER_PASSWORD` become the `writer`/`reader` roles in `docker/db/init.sh` (same first-init caveat; no dev service connects as `reader`), `writer` is used by `api`, `wsapi`, `memberlist`, `job-runner` and `onchain`; `PG_MEDIASOUP_PASSWORD` becomes the `mediasoup` role in `docker/db/init.sh` (same first-init caveat; migration `1689160339881-addMediasoupRole`, run by `migrate-db`, creates it only if missing) and is used by `mediasoup`; `REDIS_PASSWORD` is redis' `--requirepass` and every backend client's password; `S3_SECRET` must equal the `s3.json` secret key.
+Password consumers on a fresh stack: `PG_SU_PASSWORD` initializes the postgres superuser (`POSTGRES_PASSWORD`, applied only when the `pgdata` volume is first created) and is the login of `migrate-db` and `cg-builder`; `PG_WRITER_PASSWORD`/`PG_READER_PASSWORD` become the `writer`/`reader` roles in `docker/db/init.sh` (same first-init caveat; no dev service connects as `reader`), `writer` is used by `api`, `wsapi`, `memberlist`, `job-runner` and `onchain`; `PG_MEDIASOUP_PASSWORD` becomes the `mediasoup` role in `docker/db/init.sh` (same first-init caveat; migration `1689160339881-addMediasoupRole`, run by `migrate-db`, creates it only if missing) and is used by `mediasoup`; `REDIS_PASSWORD` is the `--requirepass` of both Valkey instances and every backend client's password; `S3_SECRET` must equal the `s3.json` secret key.
 
 The table describes purpose; `.env.example` has the defaults.
 
@@ -622,7 +637,7 @@ The table describes purpose; `.env.example` has the defaults.
 | `PG_WRITER_PASSWORD` / `PG_READER_PASSWORD` | Passwords for the `writer` / `reader` DB roles |
 | `PG_SU_PASSWORD` | PostgreSQL superuser password |
 | `PG_MEDIASOUP_PASSWORD` | Password for mediasoup's dedicated DB role |
-| `REDIS_PASSWORD` | Password for the Redis instance |
+| `REDIS_PASSWORD` | Password of both Valkey instances (`redis`, `redis-cache`) |
 | `REDIS_SECRET` | Secret for Redis-backed session signing |
 | `PGADMIN_SECRET` / `PGADMIN_EMAIL` | pgAdmin login (only if pgAdmin is enabled) |
 | `DEPLOYMENT` | `dev` \| `staging` \| `prod`. Controls feature flags, chain config, CSP, session cookie names. |
@@ -752,7 +767,7 @@ This profile runs the **entire stack on one server** with real production semant
 - **`DEPLOYMENT=prod`** on any domain — full production behaviour without hardcoding `app.cg`.
 - **No `hardhat` dev chain, no test-contract deployment.**
 - **Postgres loads the tuned `postgresql.conf`** (same `config_file` command as dev).
-- **Redis `maxmemory` is tuned small** (`${REDIS_MAXMEMORY:-1536mb}` total) instead of the dev 6 GB.
+- **Valkey memory is set from `.env.selfhost`**: `${REDIS_MAXMEMORY:-1024mb}` for the state instance (`redis`) and `${REDIS_CACHE_MAXMEMORY:-256mb}` for the cache (`redis-cache`), instead of the dev 1 GB / 256 MB. `.env.selfhost` files from before 2026-10-31 still carry `REDIS_MAXMEMORY=1536mb` (then the budget of the single instance); it now applies to the state instance alone, and the cache instance adds its default 256 MB.
 - **`mediasoup` and `onchain` are optional**: they carry the Compose profiles `calls` and `blockchain`, which `selfhost.sh` enables from `CG_ENABLE_CALLS` / `CG_ENABLE_BLOCKCHAIN` in `.env.selfhost` (both default to `true`). See [docs/deployment §3.8](../deployment/README.md#38-optional-services-calls-and-blockchain) and `docker/SELFHOST.md`.
 - **`CG_ENABLE_IMAGE_FILTER`** (default `true`) is a plain switch, not a profile: it feeds `IMAGE_MODERATION_ENABLED` into the `api`/`onchain` services and the instance-config injection (`features.imageFilter`), which also turns off the client-side pre-upload warning. `CG_IMAGE_FILTER_THRESHOLD` / `CG_IMAGE_FILTER_MODEL_PATH` pass through to `IMAGE_MODERATION_THRESHOLD` / `IMAGE_MODERATION_MODEL_PATH`.
 - **SeaweedFS master** uses `-volumeSizeLimitMB=${SEAWEED_VOLUME_LIMIT_MB:-1024}`.
@@ -808,4 +823,4 @@ Off by default. To enable, deploy your own non-custodial `CgStaking` contract (`
 
 ### Backups & firewall
 
-State lives in two named volumes: `pgdata` (database) and `seaweedfs-data` (uploaded media), plus `mail-data` (DKIM key and outgoing queue) when the mail relay runs. Redis is intentionally unpersisted (sessions/ephemeral only). Ports to open: `80/tcp` (ACME + HTTPS redirect), `443/tcp+udp` (app + CG ID, HTTP/3), `4443/tcp` (call signalling), `40000–40099/udp+tcp` (WebRTC media; TCP is the fallback for UDP-blocking client networks). The mail relay needs outbound `25/tcp` only.
+State lives in two named volumes: `pgdata` (database) and `seaweedfs-data` (uploaded media), plus `mail-data` (DKIM key and outgoing queue) when the mail relay runs. `valkey-data` holds the state instance's RDB snapshot (sessions, rate-limit windows, replay guards); it needs no backup — losing it logs everyone out once. The cache instance is unpersisted. Ports to open: `80/tcp` (ACME + HTTPS redirect), `443/tcp+udp` (app + CG ID, HTTP/3), `4443/tcp` (call signalling), `40000–40099/udp+tcp` (WebRTC media; TCP is the fallback for UDP-blocking client networks). The mail relay needs outbound `25/tcp` only.

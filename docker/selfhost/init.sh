@@ -114,8 +114,11 @@ REDIS_SECRET=$(rand 24)
 S3_SECRET=${S3_SECRET_GEN}
 
 # resource tuning (defaults are sized for a 16 GB machine)
-# REDIS_MAXMEMORY is the total budget of the single redis instance
-REDIS_MAXMEMORY=1536mb
+# Valkey memory: REDIS_MAXMEMORY for the state instance (sessions, rate
+# limits, pub/sub; refuses writes when full), REDIS_CACHE_MAXMEMORY for the
+# cache instance (evicts its oldest entries when full)
+REDIS_MAXMEMORY=1024mb
+REDIS_CACHE_MAXMEMORY=256mb
 SEAWEED_VOLUME_LIMIT_MB=1024
 MEDIASOUP_DISABLE_LIBURING=true
 # uid/gid the frontend builder container runs as, so files it writes into the

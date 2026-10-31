@@ -1043,7 +1043,9 @@ registerPostRoute<
     const { url } = data;
 
     const cacheKey = `urlpreview:${createHash('sha256').update(url).digest('hex')}`;
-    const cached = await redisManager.get('data', cacheKey).catch(() => null);
+    // the cache instance is optional: while it is unreachable, previews are
+    // simply built uncached instead of waiting for it
+    const cached = await redisManager.connectedClient('cache')?.get(cacheKey).catch(() => null);
     if (cached) {
       try {
         return JSON.parse(cached) as API.Messages.getUrlPreview.Response;
@@ -1118,8 +1120,8 @@ registerPostRoute<
     };
     const serialized = JSON.stringify(result);
     if (Buffer.byteLength(serialized) <= URL_PREVIEW_MAX_CACHED_BYTES) {
-      await redisManager.getClient('data')
-        .set(cacheKey, serialized, { EX: URL_PREVIEW_CACHE_SECONDS })
+      await redisManager.connectedClient('cache')
+        ?.set(cacheKey, serialized, { EX: URL_PREVIEW_CACHE_SECONDS })
         .catch((e) => console.error('Could not cache url preview', e));
     }
     return result;

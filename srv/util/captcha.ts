@@ -114,7 +114,6 @@ async function getHmacKey(): Promise<string> {
   }
   if (!hmacKeyPromise) {
     hmacKeyPromise = (async () => {
-      await redisManager.isReady;
       const client = redisManager.getClient("data");
       const key = "captcha:altcha:hmackey";
       const generated = realRandomHexString(32);
@@ -231,7 +230,6 @@ async function verifyAltchaToken(token: string): Promise<boolean> {
   // signature is an HMAC over the challenge parameters, which carry a random
   // nonce and salt, so it is unique per challenge and — having just been
   // verified — unforgeable. SET NX returns null if the key already exists.
-  await redisManager.isReady;
   const client = redisManager.getClient("data");
   const replayKey = `captcha:altcha:used:${payload.challenge.signature}`;
   const set = await client.set(replayKey, "1", {

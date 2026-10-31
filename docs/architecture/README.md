@@ -1,5 +1,6 @@
-> Status: verified against commit 91efa7c82, 2026-08-04; `features.email` row and
-> Redis key prefixes against commit e44dac1, 2026-10-31
+> Status: verified against commit 91efa7c82, 2026-08-04; `features.email` row
+> against commit e44dac1, 2026-10-31; Valkey instances, Redis clients and key
+> prefixes against commit ff0da06, 2026-10-31
 
 # Common Ground - Architecture Documentation
 
@@ -41,11 +42,12 @@ The reference (cloud) deployment terminates TLS at Cloudflare and routes everyth
                               +--------+------------------------+
                                        |
                                        |
-                              +--------v-----------------------+
-                              |             redis              |
-                              | sessions + Socket.IO pub/sub   |
-                              | + cache (one instance)         |
-                              +--------------------------------+
+                              +--------v-------+  +-----------------+
+                              | redis (Valkey) |  | redis-cache     |
+                              | sessions, pub/ |  | (Valkey)        |
+                              | sub, rate lim. |  | URL previews,   |
+                              | noeviction,RDB |  | allkeys-lru     |
+                              +----------------+  +-----------------+
 
    +----------------+  +----------------+  +----------------+  +----------------+
    |   mediasoup    |  |   onchain      |  |   job-runner   |  |   memberlist   |
@@ -66,7 +68,8 @@ A single-server self-hosting profile is also supported; it places **Caddy** (aut
 | **API Server** | Express.js (TypeScript) | `api` | REST API for all CRUD operations, session management, authentication, bot protocol |
 | **WebSocket Server** | Socket.IO (TypeScript) | `wsapi` | Real-time event broadcasting (messages, presence, notifications), bot socket streams |
 | **Database** | PostgreSQL | `db` | Primary persistent data store; uses LISTEN/NOTIFY for some inter-service signaling |
-| **Redis** | Redis 6.2 | `redis` | One instance for everything: Express session storage via `connect-redis`, the Socket.IO pub/sub adapter for multi-instance broadcasting, and general-purpose caching (user data, rate limiting, bot presence) |
+| **Redis protocol (state)** | Valkey 9.1 | `redis` | Express session storage via `connect-redis`, the Socket.IO pub/sub adapter for multi-instance broadcasting, and short-lived state (rate limiting, replay guards, captcha key, bot presence). `noeviction`, persisted (RDB) |
+| **Redis protocol (cache)** | Valkey 9.1 | `redis-cache` | Rebuildable cache data (URL previews). `allkeys-lru`, own memory budget, unpersisted — a full cache cannot break sessions |
 | **File Storage** | SeaweedFS (S3-compatible) | `seaweed` | S3-compatible object storage for uploaded files and images. One all-in-one `weed server` (master + volume + filer + S3 gateway) since 2026-08-02; other services only ever reach its S3 port 8333 via the alias `s3.local` |
 | **Reverse Proxy** | nginx | `nginx` | TLS termination (cloud), routing, static file serving, S3 file proxying, instance-config injection (self-host) |
 | **WebRTC SFU** | MediaSoup | `mediasoup` | Selective Forwarding Unit for voice/video calls |
@@ -203,7 +206,7 @@ Every `index.html` the backend serves for share links / previews is stamped with
 
 Sessions are managed by `express-session` with a Redis-backed store. Key configuration from `srv/util/express.ts` and `srv/serverconfig.ts`:
 
-- **Store**: `connect-redis` backed by the `redis` instance (`sess:` key prefix)
+- **Store**: `connect-redis` backed by the `redis` (state) Valkey instance (`sess:` key prefix; persisted, so a planned restart keeps everyone logged in)
 - **Cookie name**: `connect.sid` when `DEPLOYMENT === 'prod'`; otherwise `cg_{deployment}.sid` (`SESSION_COOKIE_NAME` in `srv/serverconfig.ts`)
 - **Cookie settings**: `httpOnly`, `secure` (except in dev), `sameSite: lax`, 12-hour max age, `rolling: true` (refreshed on every request)
 - **Cookie domain**: for non-dev deployments the cookie domain is set to `.{APP_HOSTNAME}` (derived from `BASE_URL`), so the app and the CG ID app (`id.<domain>`) share a session. Self-hosted instances get their own domain automatically.
@@ -293,8 +296,8 @@ The system runs as multiple independent Node.js processes (Docker containers), e
 
 | Service | Entry Point | Listens On | Communicates With |
 |---------|------------|------------|-------------------|
-| `api` | `srv/api.ts` | HTTP :4000 | PostgreSQL, Redis, S3, onchain |
-| `wsapi` | `srv/wsapi.ts` | Socket.IO :4000 | PostgreSQL, Redis (session cookie decode, pub/sub adapter, bot presence) |
+| `api` | `srv/api.ts` | HTTP :4000 | PostgreSQL, Redis (state + cache), S3, onchain |
+| `wsapi` | `srv/wsapi.ts` | Socket.IO :4000 | PostgreSQL, Redis (pub/sub adapter, bot presence; the session cookie is unsigned locally, the store is not read) |
 | `mediasoup` | `srv/mediasoup.ts` | HTTPS :4443 + UDP 40000-40099 | PostgreSQL (LISTEN/NOTIFY) |
 | `onchain` | `srv/onchain.ts` | HTTP :4000 (internal) | PostgreSQL, Redis, blockchain RPC nodes |
 | `job-runner` | `srv/jobs.ts` | None (worker threads) | PostgreSQL, Redis, S3 |
@@ -342,15 +345,16 @@ This allows the API server to emit events (via the shared Redis pub/sub channel)
 
 ### Redis Clients
 
-One Redis instance (`redis`, default URL `redis://redis:6379`, override with `REDIS_URL`) serves every purpose. `srv/redis/index.ts` owns the connections (all built by `srv/redis/client.ts`, the only `createClient` call site) and still keeps four of them:
+Two Valkey instances (Redis-protocol compatible) split by what may be lost: the **state** instance (`redis`, default URL `redis://redis:6379`, override `REDIS_URL`; `noeviction`, persisted) and the **cache** instance (`redis-cache`, default `redis://redis-cache:6379`, override `REDIS_CACHE_URL`; `allkeys-lru`, unpersisted). `srv/redis/index.ts` owns the connections (all built by `srv/redis/client.ts`, the only `createClient` call site, which also attaches the `error` listener every client needs) and creates each one lazily on first use:
 
-| Client | Purpose | Why it is separate |
-|--------|---------|--------------------|
-| `session` | Express session storage (connect-redis, `sess:`). Written by `api`, read by `wsapi` for cookie verification. | historical — it used to be the one client needing `legacyMode`; kept because collapsing connections is a behaviour change |
-| `socketIOPub` / `socketIOSub` | Socket.IO adapter pub/sub (`v2:`) for broadcasting across `wsapi` instances. | a subscribing connection cannot issue normal commands |
-| `data` | General-purpose caching, `UserDataManager`, rate limiting, bot connection-presence leases. | plain command connection |
+| Client | Instance | Purpose | Why it is separate |
+|--------|----------|---------|--------------------|
+| `session` | state | Express session storage (connect-redis, `sess:`). Used by `api` only — `wsapi` unsigns the session cookie itself and never reads the store. | historical — it used to be the one client needing `legacyMode`; kept because collapsing connections is a behaviour change |
+| `socketIOPub` / `socketIOSub` | state | Socket.IO adapter pub/sub (`v2:`) for broadcasting across `wsapi` instances; `socketIOPub` alone also carries the emitter used by `api`, `onchain` and job workers. | a subscribing connection cannot issue normal commands |
+| `data` | state | `UserDataManager`, rate limiting, captcha key and replay guards, plugin replay keys, bot connection-presence leases. | plain command connection |
+| `cache` | cache | URL-preview cache (`urlpreview:`), skipped (not waited for) while the cache instance is unreachable. | lives on the evicting instance |
 
-Key prefixes are pairwise disjoint (`sess:`, `ratelimit:`, `bot-ratelimit:`, `bot-presence:`, `captcha:`, `pluginRequest:`, `urlpreview:`, `ud:`/`us:`, `tmp:`, `online-user-addresses`, and the adapter's `v2:`). Until 2026-08-01 these clients pointed at three identically configured instances; the split was mechanical and never load-bearing.
+Key prefixes are pairwise disjoint (`sess:`, `ratelimit:`, `bot-ratelimit:`, `bot-presence:`, `captcha:`, `pluginRequest:`, `ud:`/`us:`, `tmp:`, `online-user-addresses`, and the adapter's `v2:` on the state instance; `urlpreview:` on the cache instance). The split between the instances is load-bearing: a cache filling a shared `noeviction` instance would make session writes fail — see [docs/infrastructure](../infrastructure/README.md#redis-and-redis-cache-valkey). New cache data (anything that can be rebuilt) belongs on the `cache` client; anything whose loss changes behaviour belongs on `data`.
 
 ### PostgreSQL LISTEN/NOTIFY
 
@@ -503,7 +507,7 @@ Common Ground ships a **single-server self-hosting profile** (`docker/docker-com
 - **Caddy** is added in front of nginx. Caddy owns ports 80/443 (and forwards mediasoup's 4443/tcp), obtains Let's Encrypt certificates automatically for the app domain and the CG ID subdomain, and reverse-proxies into the internal nginx. There is no Cloudflare layer.
 - **nginx** uses `nginx_selfhost.conf` (image `cryptogram/nginx-selfhost`). Upstreams are **resolved dynamically** via Docker's embedded DNS (`resolver 127.0.0.11; set $upstream ...; proxy_pass $upstream;`) so nginx starts even if a backend container is not yet up, instead of failing at config-load time on a static upstream.
 - **No dev-chain / test-contract services** (`hardhat` is dev-only). Blockchain features work against public RPC endpoints and are optional.
-- All backend containers (`api`, `wsapi`, `mediasoup`, `onchain`, `job-runner`, `memberlist`, `migrate-db`) run from the same `cryptogram/backend` image, alongside Postgres, Redis, and the single `seaweed` container — the same topology as the dev profile. (The hosted Swarm stack, which lives in a separate infrastructure repository, still runs the pre-consolidation three-service SeaweedFS topology until it is migrated; the application is agnostic to either, since it only ever talks to `s3.local:8333`.)
+- All backend containers (`api`, `wsapi`, `mediasoup`, `onchain`, `job-runner`, `memberlist`, `migrate-db`) run from the same `cryptogram/backend` image, alongside Postgres, the two Valkey instances (`redis`, `redis-cache`), and the single `seaweed` container — the same topology as the dev profile. (The hosted Swarm stack, which lives in a separate infrastructure repository, still runs the pre-consolidation three-service SeaweedFS topology until it is migrated; the application is agnostic to either, since it only ever talks to `s3.local:8333`.)
 
 The two DNS records `chat.example.org` and `id.chat.example.org` must be distinct origins because passkeys are scoped to the CG ID origin.
 

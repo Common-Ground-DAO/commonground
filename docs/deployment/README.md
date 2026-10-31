@@ -9,7 +9,9 @@
 > 69999fa20 (chore/env-template), 2026-10-31; digest-pinned images, Node 26 /
 > trixie builder and Yarn 4.18.1 against commit 5f73578, 2026-10-31; email
 > (SMTP, `mail` relay profile, `mail-dns`, bounce receiver, §3.9) and
-> `MEDIASOUP_TRUST_PROXY` against commit e44dac1, 2026-10-31
+> `MEDIASOUP_TRUST_PROXY` against commit e44dac1, 2026-10-31; Valkey
+> (`redis`/`redis-cache`, memory variables, upgrade note) against commit
+> ff0da06 (+ chore/f4-valkey), 2026-10-31
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -45,7 +47,8 @@ of `docker-compose.selfhost.yml`):
 - `DEPLOYMENT=prod` gives full production semantics on any domain.
 - No hardhat dev chain, no test contracts.
 - Postgres loads the tuned `docker/db/postgresql.conf`.
-- Redis `maxmemory` is tuned for a small single machine.
+- Valkey (Redis-compatible) memory is tuned for a small single machine:
+  `REDIS_MAXMEMORY` (state instance) and `REDIS_CACHE_MAXMEMORY` (cache).
 - The compose project is named `cg-selfhost`, so its containers and volumes
   stay separate from the dev stack even in the same directory.
 
@@ -227,7 +230,8 @@ which sits on two networks of its own: `mail-relay` (`internal: true`; only
 | `caddy` | `caddy:2-alpine` line (exact tag + digest in the compose file) | TLS terminator; publishes `80`, `443` (tcp+udp), `4443`; obtains/renews Let's Encrypt certs, or issues them from its local CA (`CG_TLS_MODE=internal`) |
 | `nginx` | `cryptogram/nginx-selfhost` (built from `Dockerfile_selfhost`) | static frontend + reverse proxy to API/wsapi/S3; injects instance config; sets CSP |
 | `db` | `cryptogram/db` (Postgres) | primary database; loads tuned `postgresql.conf`; healthcheck; `shm_size 256m` |
-| `redis` | `redis:6.2-alpine` line (exact tag + digest in the compose file) | one instance for sessions, the Socket.IO adapter and app data; password-protected, `--save ""` (unpersisted), no eviction policy, `maxmemory` tuned |
+| `redis` | `valkey/valkey:9.1-alpine` line (exact tag + digest in the compose file) | state instance: sessions, the Socket.IO adapter, rate limits, replay guards; password-protected, `noeviction`, RDB snapshots in `valkey-data`, `maxmemory ${REDIS_MAXMEMORY:-1024mb}`; no host port |
+| `redis-cache` | same image | cache instance (URL previews): password-protected, `allkeys-lru`, unpersisted, `maxmemory ${REDIS_CACHE_MAXMEMORY:-256mb}`; no host port |
 | `seaweed` | `chrislusf/seaweedfs` 4.x (exact tag + digest in the compose file) | SeaweedFS object storage — one all-in-one `weed server` (master + volume + filer + S3 gateway, aliased `s3.local`); only the S3 port 8333 is consumed by other services |
 | `migrate-db` | `cryptogram/backend` | one-shot DB migration (`migrateDb.js`); starts once `db` is healthy, `restart: on-failure:3` |
 | `api` | `cryptogram/backend` | REST API (`api.js`); the image everything else reuses |
@@ -306,8 +310,9 @@ Outbound, the built-in mail relay needs **port 25** to the internet (only with
 All durable state is in two volumes: `pgdata` (database) and `seaweedfs-data`
 (uploaded media) — plus, with the mail relay enabled, `mail-data`, whose DKIM
 private key should be kept (a new key means publishing a new DKIM record; the
-queued mail in it is short-lived). Redis is intentionally unpersisted (sessions
-and ephemeral data only). See `docker/SELFHOST.md` for an example `pg_dump`
+queued mail in it is short-lived). The `valkey-data` volume (the state
+instance's snapshot: sessions, rate-limit windows) needs no backup — losing it
+logs everyone out once. See `docker/SELFHOST.md` for an example `pg_dump`
 command.
 
 Since the 3-to-1 SeaweedFS consolidation, blobs and filer metadata live in the
@@ -497,11 +502,19 @@ via `.env.selfhost` — see [`docs/staking`](../staking/README.md),
 Verifiable defaults seeded by `init.sh` into `.env.selfhost`, sized for a 16 GB
 machine:
 
-- `REDIS_MAXMEMORY=1536mb` — the **total** budget of the single Redis instance
-  (`--maxmemory ${REDIS_MAXMEMORY:-1536mb}`). It used to be a per-instance value
-  applied to three instances; upgrading instances should triple their old value.
-  No eviction policy is configured on purpose (sessions and the captcha HMAC key
-  are not cache entries), so this is a hard ceiling: writes fail once it is hit.
+- `REDIS_MAXMEMORY=1024mb` — the Valkey **state** instance
+  (`--maxmemory ${REDIS_MAXMEMORY:-1024mb}`, `noeviction`): sessions, Socket.IO
+  pub/sub, rate-limit windows, replay guards. A hard ceiling on purpose —
+  nothing here may be evicted silently, so writes (new logins included) fail
+  once it is hit. `.env.selfhost` files from before 2026-10-31 carry `1536mb`
+  (then the budget of the single instance), which now applies to the state
+  instance alone.
+- `REDIS_CACHE_MAXMEMORY=256mb` — the Valkey **cache** instance
+  (`allkeys-lru`): evicts its least recently used entries when full, so it can
+  never push the state instance into out-of-memory errors. Not in older
+  `.env.selfhost` files; the compose default applies.
+- Host setting: `vm.overcommit_memory = 1` (sysctl) — the state instance forks
+  for its background snapshots and Valkey warns at startup without it.
 - `SEAWEED_VOLUME_LIMIT_MB=1024` — SeaweedFS volume chunk size.
 - `MEDIASOUP_DISABLE_LIBURING=true`.
 - `db` runs with `shm_size: 256m`.
@@ -585,9 +598,11 @@ Either fix works:
 2. **Set `REDIS_URL` on every backend service** (`api`, `wsapi`, `job-runner`,
    `onchain`) to whichever instance is kept, and retire the other two.
 
-Option 1 matches both compose files in this repo. Either way the cutover logs
-everyone out once — Redis is unpersisted, so this is the same effect any Redis
-restart has.
+Option 1 matched both compose files in this repo at the time. Either way the
+cutover logs everyone out once. Since 2026-10-31 the image additionally expects
+a cache instance (`REDIS_CACHE_URL`, default `redis://redis-cache:6379`; it may
+point at the same server as `REDIS_URL`) — without it, URL previews are just
+built uncached and the backend logs a connection error every 30 s.
 
 ### Hosted deployment topology
 

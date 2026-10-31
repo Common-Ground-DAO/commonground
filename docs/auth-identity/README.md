@@ -1,5 +1,6 @@
 > Status: verified against commit 40f4a0b0f, 2026-08-04; `emailEnabled()` reference and email
-> send limits against commit e44dac1, 2026-10-31
+> send limits against commit e44dac1, 2026-10-31; session store instance (Valkey state
+> instance) against commit ff0da06 (+ chore/f4-valkey), 2026-10-31
 
 # Authentication & Identity
 
@@ -68,7 +69,7 @@ Sessions are managed by `express-session` with a Redis-backed store, configured 
 
 | Setting | Value | Source |
 |---------|-------|--------|
-| Store | `connect-redis` 10 (`RedisStore`) on the shared `redis` instance (`sess:` prefix) | `srv/util/express.ts` |
+| Store | `connect-redis` 10 (`RedisStore`) on the `redis` Valkey state instance (`sess:` prefix; `noeviction`, persisted — sessions survive restarts, a full cache cannot evict them) | `srv/util/express.ts` |
 | Cookie name | `connect.sid` in prod, `cg_<deployment>.sid` otherwise | `srv/serverconfig.ts:25` |
 | Secret | Docker secret `redis_secret`, else `REDIS_SECRET` env | `srv/util/express.ts:144` |
 | `maxAge` | 12 hours | `srv/util/express.ts:147` |

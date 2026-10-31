@@ -79,6 +79,27 @@ that stack — confirm and delete:
 
 ## Cleanup candidates (small, self-contained)
 
+- [ ] **jest leaves a worker running** (2026-10-31, seen on the combined F3+F4+F6
+  test-VM run): `yarn tests` in `srv/` passes but prints "A worker process has
+  failed to exit gracefully and has been force exited…" since the F6 dependency
+  set. Not reproducible on `develop` before F6 (`ff0da06`: 23 suites, no warning),
+  so a dependency update leaves a timer or socket open in some spec. Find it with
+  `yarn jest --detectOpenHandles` (or `--runInBand` per suite) on the F6 lockfile,
+  then close the handle in that spec (or `.unref()` it in the module).
+
+- [ ] **Store only real sessions** (2026-10-31, from the F4 Valkey review).
+  `srv/util/express.ts` runs `express-session` with `saveUninitialized: true`, so
+  every API request without a session cookie stores a new 12-hour `sess:` key on
+  the `noeviction` Valkey state instance — a crawler or script can fill it, after
+  which new logins silently fail (runbook in docs/infrastructure, Valkey section).
+  Switching to `saveUninitialized: false` alone is not enough: the middleware right
+  after the session setup sets `request.session.createdAt` on every session that
+  lacks it, which modifies — and therefore saves — every new session anyway. Set
+  `createdAt` only where a session gains real content (login, `signSecret`,
+  prepared credentials, …) or drop it — nothing in `srv/` reads it today (check
+  the frontend and the session typings first) — and verify that anonymous flows that rely on the session (CG ID
+  passkey popup, Twitter/Lukso/Farcaster preparation, captcha) still work.
+
 - [ ] **`imageFilterThreshold` breaks the `r0-instance-config` conformance test**
   (2026-10-31, found during the Node 26 conformance run; 102 of 104 tests pass).
   `/api/v2/Instance/config` always sends `imageFilterThreshold`

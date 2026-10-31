@@ -1,8 +1,9 @@
 # Real-time & WebRTC Documentation
 
 > Status: verified against commit 91efa7c82, 2026-08-04; call-server
-> connection handling (startup, ended-call check, authentication flow) and the
-> Redis key-prefix list against commit e44dac1, 2026-10-31
+> connection handling (startup, ended-call check, authentication flow) against
+> commit e44dac1, 2026-10-31; Redis/Valkey instances, clients, key prefixes and
+> outage behaviour against commit ff0da06 (+ chore/f4-valkey), 2026-10-31
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -87,7 +88,7 @@ io.adapter(createAdapter(
 ));
 ```
 
-This uses a dedicated publisher/subscriber connection pair on the shared Redis instance (`redis:6379`). The key prefix `v2:` namespaces all adapter messages. Any event emitted to a room on one server instance is automatically delivered to clients connected to other instances via Redis pub/sub.
+This uses a dedicated publisher/subscriber connection pair on the state instance (`redis:6379`, Valkey). The key prefix `v2:` namespaces all adapter messages. Any event emitted to a room on one server instance is automatically delivered to clients connected to other instances via Redis pub/sub.
 
 ### Namespaces
 
@@ -134,7 +135,8 @@ The `EventHelper` class (`srv/repositories/event.ts`) is the primary mechanism f
 
 ```typescript
 class EventHelper {
-  #io = new Emitter(redisManager.getClient('socketIOPub'), { key: 'v2:' });
+  // created on first use, so importing the module opens no connection
+  get #io() { /* new Emitter(redisManager.getClient('socketIOPub'), { key: 'v2:' }) */ }
 
   async emit(event, target, except?) { ... }
   async userJoinRooms(userId, target) { ... }
@@ -694,32 +696,44 @@ The `sendWsOrWebPushNotificationEvent` method (`srv/repositories/notifications.t
 
 **Source:** `srv/redis/index.ts`, `srv/redis/userdata.ts`
 
-### Redis Instance
+### Instances
 
-The system uses **one Redis instance** (`redis:6379`, override with `REDIS_URL`) for everything. It is shared by four clients with disjoint key spaces:
+The backend talks to **two Valkey instances** (Redis-protocol compatible; compose services `redis` and `redis-cache`, see [docs/infrastructure](../infrastructure/README.md#redis-and-redis-cache-valkey) for their configuration). Which client goes where is fixed in `srv/redis/index.ts` (`INSTANCE_OF`):
 
-| Client Type | Key prefixes | Purpose |
+| Client type | Instance | Key prefixes | Purpose |
+|---|---|---|---|
+| `session` | state (`REDIS_URL`, default `redis://redis:6379`) | `sess:` | Express session storage (connect-redis) |
+| `socketIOPub`, `socketIOSub` | state | `v2:` (pub/sub channels only, no keys) | Socket.IO adapter and emitter |
+| `data` | state | `ud:`, `us:`, `online-user-addresses`, `ratelimit:`, `bot-ratelimit:`, `bot-presence:`, `captcha:`, `pluginRequest:`, `tmp:` | User online status, rate limiting, captcha key + replay guards, plugin replay keys, bot presence leases |
+| `cache` | cache (`REDIS_CACHE_URL`, default `redis://redis-cache:6379`) | `urlpreview:` | URL-preview cache |
+
+What is state and what is cache:
+
+| Data | Instance | Lost on a cold start |
 |---|---|---|
-| `session` | `sess:` | Express session storage |
-| `socketIOPub`, `socketIOSub` | `v2:` (pub/sub only) | Socket.IO adapter pub/sub |
-| `data` | `ud:`, `us:`, `online-user-addresses`, `ratelimit:`, `bot-*`, `captcha:`, `pluginRequest:`, `urlpreview:`, `tmp:` | User online status, session tracking, rate limiting, captcha, plugin replay keys, URL-preview cache |
+| Sessions (`sess:`, 12 h rolling TTL) | state | every user is logged out once |
+| Rate-limit windows (`ratelimit:` sorted sets, `bot-ratelimit:` counters; TTL = window) | state | limits restart from zero for one window |
+| Replay guards (`captcha:altcha:used:` 10 min, `pluginRequest:` 15 min) | state | a captcha solution / signed plugin request from the last minutes could be redeemed once more |
+| ALTCHA HMAC key (`captcha:altcha:hmackey`, no TTL; only when `ALTCHA_HMAC_KEY` is not configured) | state | regenerated; challenges issued before become invalid. Each process caches the key in memory after first use, so processes started before and after a loss disagree until they restart — configure `ALTCHA_HMAC_KEY` to avoid this |
+| Bot presence leases (`bot-presence:`) | state | rebuilt within one 60 s keepalive round |
+| User status (`ud:`, no TTL) | state | nothing visible — `/User/setOwnStatus` writes it, but nothing reads it (`UserDataManager.getUserData` has no caller) |
+| `online-user-addresses`, `us:` | state | nothing — `addUserSession`/`removeUserSession` have no caller, so these keys are never written; `intersectWithOnlineUsers` (used by `onchain`) reads an empty set |
+| URL previews (`urlpreview:`, 1 h TTL, ≤ 8 KB each) | cache | rebuilt on the next request |
+| Socket.IO pub/sub | state | nothing stored; messages published while a subscriber is disconnected are lost |
 
-Until 2026-08-01 these were three identically configured instances (`redis-sessions`, `redis-socketio`, `redis-data`). Nothing is persisted (`--save ""`) and no eviction policy is set, so sessions and the captcha HMAC key are never evicted — but a Redis restart logs everyone out.
+No queue or job state lives in Valkey (the job runner schedules in-process and keeps its state in PostgreSQL). The state instance is persisted (RDB, final snapshot on shutdown), so a planned restart keeps all of the above; only a crash loses what changed since the last snapshot. Until 2026-10-31 a single unpersisted `redis:6.2` instance held everything, so every restart was a cold start; before 2026-08-01 there were three identically configured instances (`redis-sessions`, `redis-socketio`, `redis-data`).
 
 ### RedisManager
 
-The `RedisManager` class (`srv/redis/index.ts`) manages all Redis connections:
+The `RedisManager` class (`srv/redis/index.ts`) manages all connections:
 
-- Creates four clients: `session`, `socketIOPub`, `socketIOSub`, `data`
-- `socketIOSub` is a `duplicate()` of `socketIOPub` (same connection config, separate client for subscribing)
-- `isReady` promise resolves when all clients are connected
-- Generates a random `instanceId` per process instance
-- Exposes `get`, `set`, `del` convenience operations on any of the four clients
-- Three of the four clients are created through `srv/redis/client.ts` (the
-  fourth, `socketIOSub`, is `socketIOPub.duplicate()`, which inherits the same
-  options), and that file pins `RESP: 2`. node-redis 6 defaults to RESP3;
-  `@socket.io/redis-adapter` 8.3 is written against RESP2, so the protocol
-  stays where node-redis 4 had it.
+- Up to five clients: `session`, `socketIOPub`, `socketIOSub`, `data` (state instance) and `cache` (cache instance), each built by `srv/redis/client.ts`, which pins `RESP: 2` (node-redis 6 defaults to RESP3; `@socket.io/redis-adapter` 8.3 is written against RESP2).
+- **Clients are created and connect on first use** (`getClient(type)`), so a process holds only the connections it needs. Measured on a smoke stack: `api` 3 state connections (`session`, `data`, `socketIOPub`) + 1 cache connection once a URL preview was requested; each `wsapi` 3 (`socketIOPub`, `socketIOSub`, `data` — it never reads the session store, it only unsigns the session cookie); `memberlist` 0 (it used to open 4 through `healthcheck.ts`). By the import graph, the job-runner main thread and `migrate-db` open none either, and job workers that emit events open `socketIOPub` only. Commands sent before a connection is up wait in node-redis' offline queue, bounded to 10,000 commands per client (`commandsQueueMaxLength`; beyond it node-redis rejects new commands at once with "The queue is full").
+- `ready(...types)` resolves once the given clients have connected (once — it says nothing about the connection still being up, and it waits for as long as the server is unreachable), so it is only used for startup ordering (`wsapi` attaches the Socket.IO adapter after it); request paths never wait on it. If a client's `connect()` gives up anyway (e.g. an invalid URL), the client is dropped and the next `getClient()` starts over. `connectedClient(type)` returns the client only if it is connected right now — the URL-preview cache uses it, so previews are built uncached instead of waiting while the cache instance is down.
+- Exposes `get`, `set`, `del` convenience operations and `userData` (below); generates a random `instanceId` per process (bot presence leases).
+- **Error handling:** every client has an `error` listener (`client.ts`). Without one, node-redis' `error` event — emitted on every failed (re)connection attempt — is thrown and kills the process; before 2026-10-31 only the two Socket.IO clients had one (attached by the adapter, in `wsapi` only), so a Redis restart crashed every process that imports `srv/redis` — observed for `memberlist`, which exited with `SocketClosedUnexpectedlyError`. The listener logs at most one line per client every 30 s (with a count of suppressed errors) and one line when the client is connected again. Reconnects use node-redis' default strategy (exponential backoff capped at 2 s plus jitter, unlimited retries); pub/sub subscriptions are restored on reconnect.
+- **Timeouts:** node-redis 6 gives every single command a 5 s timeout, but **not** MULTI or pipeline chains (`_executeMulti` / `_executePipeline` queue their commands without one), so such a chain would wait in the offline queue for the whole outage. Every MULTI call site (`srv/util/rateLimit.ts` `countWithinWindow`, `srv/util/botRateLimit.ts`, the four MULTIs in `srv/redis/userdata.ts`) therefore goes through `withTimeout()` (`client.ts`, 5 s, rejects with `Redis <what> timed out after 5000 ms`); the chain itself stays queued and runs if the connection returns. `PUBLISH` gets a handler attached in `client.ts`: `@socket.io/redis-emitter` and the adapter call `publish()` without awaiting it, so a PUBLISH timing out during an outage used to be an unhandled rejection, on which `api` and `wsapi` exit (reproduced with a plain node-redis client: `TimeoutError` unhandled after 5 s).
+- **Outage behaviour (measured):** with the state instance stopped, requests that touch it fail after 5 s (single commands via node-redis' command timeout — a request carrying a session cookie gets HTTP 500 with the API's JSON error body `{"status":"ERROR","error":"UNKNOWN"}` from `apiErrorHandler` in `srv/api/util.ts`, because the session lookup fails before any route runs; rate-limit, bot-rate-limit and `UserDataManager` MULTIs via `withTimeout()`) instead of hanging — both for a process that had connected before and for one that never reached the server; `eventHelper.emit` returns at once and its PUBLISH times out without an unhandled rejection; every process stays up, and after the restart sessions, rate-limit windows and Socket.IO fan-out across both `wsapi` instances work again without restarting anything. With the cache instance stopped, URL previews are served uncached at normal speed. A process started while Valkey is unreachable keeps retrying and connects when it comes up.
 - `REDIS_LEGACY_MODE` is gone: node-redis 6 dropped `legacyMode`, connect-redis
   10 speaks the promise API, and the backend never reads the variable any more.
   The inert `REDIS_LEGACY_MODE=true` lines were removed from both compose files
@@ -755,6 +769,8 @@ The `UserDataManager` class (`srv/redis/userdata.ts`) manages user online state 
 | `getUserData(userIds)` | `HGETALL ud:{userId}` (pipelined) | Batch-get user online statuses |
 | `intersectWithOnlineUsers(userIds)` | `SADD tmp:{random} {userIds}`, `SINTER tmp:{random} online-user-addresses`, `DEL tmp:{random}` | Filter a list of user IDs to only those currently online |
 
+Only `setUserData` (from `/User/setOwnStatus`) and `intersectWithOnlineUsers` (from `onchain`) have callers today; the other three methods are unused, so `us:` and `online-user-addresses` are never written.
+
 Key prefixes:
 - `us:{userId}` -- Set of active session IDs for a user
 - `ud:{userId}` -- Hash of user data (currently only `status`)
@@ -776,7 +792,8 @@ Key prefixes:
 | `srv/mediasoup/utils.ts` | `clone()` deep-copy utility |
 | `srv/mediasoup/logger.ts` | Debug logger wrapper |
 | `srv/mediasoup/mediasoupHealthcheck.ts` | Fake healthcheck (writes file periodically) |
-| `srv/redis/index.ts` | RedisManager: one Redis instance, four client objects |
+| `srv/redis/index.ts` | RedisManager: two Valkey instances (state, cache), up to five lazily created clients |
+| `srv/redis/client.ts` | The one `createClient` call: `RESP: 2`, `error` listener, reconnect logging |
 | `srv/redis/userdata.ts` | UserDataManager for online status tracking |
 | `srv/repositories/event.ts` | EventHelper: emit Socket.IO events from any process; `disconnectBotTokenSockets` |
 | `srv/repositories/notifications.ts` | NotificationHelper: CRUD + web push delivery |

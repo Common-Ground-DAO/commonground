@@ -10,7 +10,9 @@
 > `keyRateLimitHandler`, mail send limits, `bounceReceiver` job and bounce
 > policy, Mailchimp removal), message access scope, `/deleteMessage`,
 > `/getUrlPreview`, `safeFetch`, `/pluginRequest`, user-article visibility and
-> the test list against commit e44dac1, 2026-10-31.
+> the test list against commit e44dac1, 2026-10-31; URL-preview cache instance
+> and the node-redis/Valkey note against commit ff0da06 (+ chore/f4-valkey),
+> 2026-10-31.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -192,6 +194,7 @@ How it works:
 **Key exports from `srv/api/util.ts`:**
 - `OK` / `ERROR` -- Standard response templates
 - `handleError(response, error)` -- Centralized error handling
+- `apiErrorHandler` -- Express error middleware registered last in `api.ts`: errors that middleware passes to `next(error)` before a route runs (the session store failing while Valkey is unreachable, body-parser rejecting a malformed or oversized body) answer `{ status: 'ERROR', error: 'UNKNOWN' }` as JSON, with the middleware's 4xx status kept and 500 otherwise, instead of Express' default HTML error page
 - `registerPostRoute(...)` -- The route registration helper
 - `farcasterApi(type, data)` -- Wrapper for Farcaster Hub API calls (`onChainIdRegistryEventByAddress`, `userDataByFid`)
 - `isSignatureValid(...)` -- Verify Ethereum personal signatures using `@metamask/eth-sig-util`
@@ -380,7 +383,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/loadUpdates` -- Load message updates since a timestamp
 - `/setReaction`, `/unsetReaction` -- Message reactions
 - `/setChannelLastRead` -- Mark channel as read
-- `/getUrlPreview` -- Get URL preview metadata (Open Graph scrape of a client-supplied URL, at most 2048 chars). Requires a session. Results are cached for 1 h in Redis under `urlpreview:<sha256(url)>`; cache misses are rate-limited per account (30/min). The page (≤ 1 MB, `text/*` or XHTML) and the `og:image` (≤ 8 MB, `image/*`) are fetched through `safeFetch` (see `srv/util/safeFetch.ts` below) and the HTML is passed to `open-graph-scraper` as `ogs({ html })`. Title and description are cut to 2000 chars; the returned `url` is the page's `og:url` only if that is an http(s) URL of at most 2048 chars, otherwise the requested URL. Previews larger than 8 KB serialized are returned but not cached. The preview image is stored through `saveImage()`, i.e. it passes the NSFW gate.
+- `/getUrlPreview` -- Get URL preview metadata (Open Graph scrape of a client-supplied URL, at most 2048 chars). Requires a session. Results are cached for 1 h on the Valkey cache instance (`redis-cache`, client type `cache`) under `urlpreview:<sha256(url)>` — skipped, not waited for, while that instance is unreachable; cache misses are rate-limited per account (30/min). The page (≤ 1 MB, `text/*` or XHTML) and the `og:image` (≤ 8 MB, `image/*`) are fetched through `safeFetch` (see `srv/util/safeFetch.ts` below) and the HTML is passed to `open-graph-scraper` as `ogs({ html })`. Title and description are cut to 2000 chars; the returned `url` is the page's `og:url` only if that is an http(s) URL of at most 2048 chars, otherwise the requested URL. Previews larger than 8 KB serialized are returned but not cached. The preview image is stored through `saveImage()`, i.e. it passes the NSFW gate.
 - `/joinArticleEventRoom`, `/leaveArticleEventRoom` -- Join/leave article real-time rooms
 
 Every route that takes an access object (`communityId`, `chatId`, `callId`, or `articleId` with `articleCommunityId`/`articleUserId`, each together with `channelId`) runs `_checkAccessOrThrow`, which first checks that `channelId` is the channel of the named community, chat, call or article (`messageHelper.isChannelInAccessScope`) and then evaluates the permissions for that scope. An article access must name the article's community or user. Deleted community channels, chats and articles do not match; a user article that is not published yet only matches for its author. Message edits and reaction removal additionally filter on `access.channelId` in SQL.
@@ -1402,13 +1405,24 @@ TypeScript 6) are scheduled in `docs/todo/ROADMAP_cg-box.md`.
   `getSignedUrls()` mutates the request before formatting it.
 - **node-redis 6** (see docs/realtime for the `RESP: 2` pin) gives every
   command a default 5 s timeout and a 30 s TCP keep-alive initial delay, so a
-  wedged Redis fails requests fast instead of hanging them. TypeORM's peer
+  wedged Redis fails single commands fast instead of hanging them. MULTI and
+  pipeline chains get **no** timeout from node-redis 6, so every MULTI call
+  site wraps `exec()`/`execTyped()` in `withTimeout()` from
+  `srv/redis/client.ts` (5 s), and the offline queue is bounded
+  (`commandsQueueMaxLength` 10,000). Measured against a stopped Valkey: rate
+  limits, the bot rate limit, `UserDataManager` and plain commands all reject
+  after ~5 s and the process stays up (every client has an `error` listener,
+  and un-awaited PUBLISH rejections are handled — see docs/realtime). The server is Valkey 9.1
+  since 2026-10-31; node-redis, connect-redis 10, `@socket.io/redis-adapter`
+  8.3 and `@socket.io/redis-emitter` 5.1 work against it unchanged (smoke-tested:
+  sessions, cross-process fan-out, rate limits, the bot-presence Lua script).
+  TypeORM's peer
   warning about `redis` versions concerns its optional query cache, which this
   codebase does not use — inert.
 - **Tests:** `yarn tests` in `srv/` runs jest 30 + ts-jest 29 (there is no
   ts-jest 30) over `tests/*.spec.ts` directly from the TypeScript sources —
   currently `ipPrefix`, `saveImage`, `imageFilter`, `stakingConfig`,
   `configuredSecret`, `onchainHelper`, `messageAccess`, `messageRepository`,
-  `safeFetch`, `urlPreview`, `pluginRequest`, `protooConnectionGate`,
+  `safeFetch`, `urlPreview`, `redisManager`, `pluginRequest`, `protooConnectionGate`,
   `typingCache`, `userArticleVisibility` and `userArticleRoute`. `npx tsc --noEmit`
   does not cover `tests/` (see `docs/todo/TODO.md`).

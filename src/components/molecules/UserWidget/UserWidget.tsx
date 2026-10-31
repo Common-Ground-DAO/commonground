@@ -78,9 +78,19 @@ const DesktopUserWidgetContainer: React.FC<Props> = (props) => {
 
   const repositionWidget = useCallback(() => {
     const boundingBox = selfRef.current?.getBoundingClientRect();
-    let left = (boundingBox?.left || 0);
-    let bottom = document.body.clientHeight - (boundingBox?.bottom || 0);
-    let width = boundingBox?.width || 0;
+    if (!boundingBox) {
+      return;
+    }
+    // The widget is rendered into `#user-settings-root` and placed with
+    // `left`/`bottom` relative to *that* box, so measure against it. The old
+    // `document.body.clientHeight - rect.bottom` mixed coordinate systems: it
+    // assumed the root's bottom edge sits exactly at body height and the
+    // document is unscrolled, and any difference left the overlay floating
+    // off its in-flow slot (the slot's own box peeking out underneath).
+    const rootBox = portalRoot.getBoundingClientRect();
+    let left = boundingBox.left - rootBox.left;
+    let bottom = rootBox.bottom - boundingBox.bottom;
+    let width = boundingBox.width;
 
     // Undo parent padding
     if (isConnected) {
@@ -98,7 +108,22 @@ const DesktopUserWidgetContainer: React.FC<Props> = (props) => {
       bottom,
     });
     setClosedWidth(width);
-  }, [isConnected, props.collapsed]);
+  }, [isConnected, props.collapsed, portalRoot]);
+
+  // The slot can move without changing size (viewport height changes, e.g. a
+  // tablet's on-screen keyboard, and visual-viewport scrolls, which
+  // WindowSizeProvider answers by shifting the layout), which the
+  // ResizeObserver below won't see.
+  useEffect(() => {
+    window.addEventListener('resize', repositionWidget);
+    window.visualViewport?.addEventListener('resize', repositionWidget);
+    window.visualViewport?.addEventListener('scroll', repositionWidget);
+    return () => {
+      window.removeEventListener('resize', repositionWidget);
+      window.visualViewport?.removeEventListener('resize', repositionWidget);
+      window.visualViewport?.removeEventListener('scroll', repositionWidget);
+    };
+  }, [repositionWidget]);
 
   // Reposition on connected with delay
   useEffect(() => {

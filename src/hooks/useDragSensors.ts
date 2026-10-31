@@ -126,6 +126,48 @@ export const dragAnnouncements: Announcements = {
   },
 };
 
+/**
+ * How long after a drop the trailing `click` is cancelled. Mirrors dnd-kit's
+ * own window: `AbstractPointerSensor.detach()` keeps its click guard on the
+ * document for 50ms after the drop (verified against @dnd-kit/core 6.3.1).
+ */
+export const CLICK_AFTER_DRAG_WINDOW_MS = 50;
+
+/**
+ * Cancels the *default action* of the `click` that trails a pointer drag.
+ *
+ * Call it from `onDragEnd`/`onDragCancel` on every surface whose draggables
+ * contain real links (`<a href>`, e.g. a `NavLink`). dnd-kit's guard against
+ * the trailing click (see `useDragSensors`) only calls `stopPropagation()` in
+ * the document capture phase. That keeps every React `onClick` from running —
+ * including React Router's, which is what normally `preventDefault()`s a link
+ * click and navigates client-side — but it does not cancel the browser's
+ * default action. A mouse drag that ends on the dragged item (the row follows
+ * the pointer, so mousedown and mouseup hit the same `<a>`) therefore makes
+ * the browser follow the link natively: a full page load of the community the
+ * user just dropped. This listener sits on `window` in the capture phase —
+ * before dnd-kit's document listener — and cancels that default for the same
+ * 50ms window; swallowing the click stays dnd-kit's job. Keyboard drags
+ * (Space to drop) produce no trailing click and are left alone.
+ *
+ * `target` is injectable for tests; production code passes nothing.
+ */
+export function suppressClickAfterDrag(
+  activatorEvent: Event | null | undefined,
+  target: EventTarget = window,
+): void {
+  if (activatorEvent?.type.startsWith('key')) {
+    return;
+  }
+  const cancelClick = (event: Event) => {
+    event.preventDefault();
+  };
+  target.addEventListener('click', cancelClick, { capture: true, once: true });
+  setTimeout(() => {
+    target.removeEventListener('click', cancelClick, { capture: true });
+  }, CLICK_AFTER_DRAG_WINDOW_MS);
+}
+
 // Hoisted so `useSensor`'s identity-based memoization holds — fresh option
 // literals per render would produce a new sensors array (and with it new
 // synthetic `listeners` objects) every render, defeating the `useMemo`/
@@ -153,7 +195,9 @@ const KEYBOARD_OPTIONS = {
  *    header toggles its channel list, a channel row opens its settings — so the
  *    pointer has to travel before a press counts as a lift. Below the threshold
  *    the click goes through untouched; above it, dnd-kit swallows the trailing
- *    `click` on the document for 50ms after the drop, exactly as rbd did.
+ *    `click` on the document for 50ms after the drop, exactly as rbd did —
+ *    but only its propagation, not its default action; surfaces with links
+ *    inside their draggables also need `suppressClickAfterDrag`.
  *  - **Touch: a 120ms long press with a 5px tolerance** (rbd's
  *    `timeForLongPress`). This is load-bearing on mobile: `MouseSensor` +
  *    `TouchSensor` instead of the unified `PointerSensor` is what keeps a

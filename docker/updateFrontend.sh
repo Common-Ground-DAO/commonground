@@ -1,5 +1,8 @@
 #!/bin/bash
 cd ${0%/*}
+# docker compose reads docker/.env
+./ensureEnv.sh || exit 1
+export CG_ENV_ENSURED=1
 
 docker_compose() {
   if docker compose version >/dev/null 2>&1; then

@@ -1,6 +1,7 @@
 #!/bin/bash
 cd ${0%/*}
 ./ensureEnv.sh || exit 1
+export CG_ENV_ENSURED=1
 source .env
 
 docker_compose() {

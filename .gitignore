@@ -40,7 +40,13 @@ docker/.env.conformance
 docker/s3_config/s3.selfhost.json
 docker/s3_config/s3.conformance.json
 docker/selfhost/certs/
+
 # dev stack: local configuration, generated on first run by docker/ensureEnv.sh
-# (docker/.env from the docker/.env.example template, s3.json from its S3_SECRET)
+# (docker/.env from the docker/.env.example template, s3.json from its S3_SECRET).
+# docker/.env.* also covers the generator's temp files, so an interrupted run
+# can't leave an untracked file full of secrets behind.
 docker/.env
+docker/.env.*
+!docker/.env.example
 docker/s3_config/s3.json
+docker/s3_config/.s3.json.*

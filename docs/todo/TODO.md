@@ -252,6 +252,22 @@ that stack — confirm and delete:
   (2026-08-04, React 19 wave) — still working under `@types/react` 19, ~18 uses in
   `src/`.
 
+- [ ] **App errors the e2e suite reports** (2026-11-01, `e2e/` guards; each fails
+  its flow until fixed or allowlisted with a reason):
+  - joining a community with `CG_ENABLE_BLOCKCHAIN=false`: `checkCommunityRoleClaimability`
+    answers `SERVICE_UNAVAILABLE` and the frontend leaves it unhandled;
+  - an empty Giphy key still calls Giphy (401, unhandled `@giphy/js-fetch-api: Unauthorized`);
+  - article editor: `IndexSizeError: getRangeAt` (uncaught); `getLatestArticleSentAsNewsletterDate`
+    answers `NOT_ALLOWED` for the community owner;
+  - channel creation logs "Channel does not have permissions for Admin, this is a bug", and
+    `getChannelMemberList` sometimes answers `UNKNOWN`;
+  - the call chat sometimes sends `loadMessages` with `{callId, channelId, communityId}`, which
+    fails the access validator (`VALIDATION`);
+  - the "edited" marker never shows for the other user;
+  - `/files/` serves images as `application/octet-stream`;
+  - `createCommunity` logs "Creating initial article failed … articleId null" when the template
+    article does not exist.
+
 ## Optional / nice-to-have
 
 - [ ] **Dev-stack service toggles** — the `calls`/`blockchain` compose profiles exist only

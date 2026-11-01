@@ -254,23 +254,23 @@ and a browser pass on the test VM:
   keeps the full previous sign-up/login surface — so the server-side allowlist
   is the only thing standing between the gateway and that surface; test it
   against the complete route list.
-- [ ] **G2 Transfer link.** One-time token: random, stored hashed with user id,
+- [x] **G2 Transfer link.** One-time token: random, stored hashed with user id,
   ~10 min expiry, single use; carried in the URL fragment
   (`https://cg.box/transfer#<token>`) so it never reaches logs or `Referer`;
-  redeemed by a POST from the cg.box frontend. Rate-limited. (Implemented on
-  `feat/g2g3-transfer-security`, in review: `User/createTransferLink` — on only
+  redeemed by a POST from the cg.box frontend. Rate-limited. (Done 2026-11-01,
+  accepted on the test VM: `User/createTransferLink` — on only
   with `TRANSFER_TARGET_URL`, for the session's own user —, `previewTransferLink`,
   `redeemTransferLink` (one conditional `UPDATE`, logged-out sessions only,
   `authMethod: 'transfer'`), the `/transfer` confirmation page with name, handle
   and image; docs/auth-identity §11. G1 sets `TRANSFER_TARGET_URL` on the gateway
   and allowlists `User/createTransferLink`.)
-- [ ] **G3 Account-security step on cg.box.** A user arriving via transfer link
+- [x] **G3 Account-security step on cg.box.** A user arriving via transfer link
   (and any user without a working login method on cg.box) must add one before
   using the app: passkey on cg.box, password, or a wallet (decision 19); plus a
   verified email. A server-side password policy comes with it, plus throttling
   of password and email-code login and a bcrypt cost review. Decide here whether stricter requirements against bots apply to
   new sign-ups too (email verification is cheap once mail runs on our side).
-  (Implemented on `feat/g2g3-transfer-security`, in review: the step is derived
+  (Done 2026-11-01, accepted on the test VM: the step is derived
   from the account and enforced by the api, wsapi and the call server; adding
   what is missing needs a sign-in within the hour; password policy = 8
   characters, bcrypt cost 12 with rehash; failure-based login throttles; email
@@ -280,6 +280,12 @@ and a browser pass on the test VM:
   added in a transfer session are full methods, notices to the verified address
   are the safeguard (decision 18). Anti-bot: nothing beyond G4's verified
   address and captcha. docs/auth-identity §5, §8, §11.)
+- [ ] **G11 Session cookie on expired sessions.** When the session has expired
+  at page load, parallel requests mint new anonymous sessions whose cookies can
+  overwrite the one the automatic device login just set (the e2e reload flow's
+  `cookie-cleared`/`session-expired` modes show it). Anonymous requests should
+  not create sessions (`saveUninitialized: false` or equivalent), verified with
+  the e2e reload flow.
 - [x] **G4 Passkeys on the main origin + new account-creation UI.** (done
   2026-10-31: passkeys bound to their RP (`rpId` per row; `id.app.cg` rows are
   gateway-only), one login form with passkey autofill, sign-up with the email

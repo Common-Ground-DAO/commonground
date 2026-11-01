@@ -114,7 +114,7 @@ const userApi = {
 
   verifySignupEmailCode: Joi.object<API.User.verifySignupEmailCode.Request>({
     email: TldSafeEmailValidator.max(320).required(),
-    code: Joi.string().regex(/^[0-9]{6}$/).required(),
+    code: common.EmailCode.required(),
   }).strict(true).required(),
 
   createUser: Joi.object<API.User.createUser.Request>({

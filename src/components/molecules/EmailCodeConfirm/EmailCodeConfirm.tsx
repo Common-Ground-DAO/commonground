@@ -7,6 +7,7 @@ import Button from 'components/atoms/Button/Button';
 import TextInputField from 'components/molecules/inputs/TextInputField/TextInputField';
 import errors from 'common/errors';
 import userApi from 'data/api/user';
+import { EMAIL_CODE_LENGTH, EMAIL_CODE_PATTERN, normalizeEmailCode } from 'common/authInputRules';
 
 /** the text for a failed `User/verifyEmail` (null: nothing to show) */
 export function emailCodeErrorMessage(e: unknown): string | null {
@@ -36,7 +37,7 @@ type Props = {
 };
 
 /**
- * The 6-digit code from a confirmation mail (`User/requestEmailVerification`)
+ * The 8-digit code from a confirmation mail (`User/requestEmailVerification`)
  * → `User/verifyEmail`. The address becomes the account's address once this
  * succeeds (docs/auth-identity §8).
  */
@@ -46,9 +47,9 @@ const EmailCodeConfirm: React.FC<Props> = ({ email, onConfirmed, label = 'Code',
   const [loading, setLoading] = useState(false);
 
   const confirm = useCallback(async () => {
-    const value = code.replace(/\s+/g, '');
-    if (!/^[0-9]{6}$/.test(value)) {
-      setError("Enter the 6-digit code from the email.");
+    const value = normalizeEmailCode(code);
+    if (!EMAIL_CODE_PATTERN.test(value)) {
+      setError(`Enter the ${EMAIL_CODE_LENGTH}-digit code from the email (numbers only).`);
       return;
     }
     setLoading(true);
@@ -70,13 +71,14 @@ const EmailCodeConfirm: React.FC<Props> = ({ email, onConfirmed, label = 'Code',
     <form className='flex flex-col gap-2 w-full' onSubmit={ev => { ev.preventDefault(); ev.stopPropagation(); confirm(); }}>
       <TextInputField
         label={label}
-        subLabel={subLabel ?? `We sent a 6-digit code to ${email}.`}
+        subLabel={subLabel ?? `We sent an ${EMAIL_CODE_LENGTH}-digit code to ${email}.`}
         value={code}
         onChange={value => { setCode(value); setError(undefined); }}
-        placeholder='123456'
+        placeholder='12345678'
         autoComplete='one-time-code'
+        inputMode='numeric'
         name='code'
-        maxLetters={7}
+        maxLetters={EMAIL_CODE_LENGTH + 1}
         error={error}
       />
       <Button className='w-full' role='primary' text={buttonText} loading={loading} disabled={loading} />

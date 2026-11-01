@@ -322,7 +322,7 @@ export async function validateFractalData(data: Common.FractalData) {
 
 export function validatePassword(password: string, minLength: number): string {
   if (password.length < minLength) {
-    return `Password has to contain at least ${minLength} letters`;
+    return `Use at least ${minLength} characters.`;
   }
 
   // const withoutRepeatedCharacters = password.replace(/[^\w\s]|(.)(?=\1)/gi, ""); 

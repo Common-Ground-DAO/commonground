@@ -16,7 +16,9 @@
 > the `cuer` resolution and the WalletConnect QR note against commit 816d046,
 > 2026-11-01;
 > transfer links, the account-security step, the email confirmation flows and
-> `/verify-email` (§10) against commit 9fc05a9, 2026-11-01
+> `/verify-email` (§10) against commit 9fc05a9, 2026-11-01; limit messages, "send
+> again" countdowns, the form checks and the 8-digit codes (§10 "Limits and input
+> checks") against commit 2fad7d3, 2026-11-01
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -1153,7 +1155,7 @@ One organism for login and sign-up, rendered inside the onboarding modal (`UserO
 
 After a **password** login, if the account has no passkey on this instance: once per account and browser, a conditional create (`useAutoRegister`, only where `PublicKeyCredential.getClientCapabilities()` reports `conditionalCreate`) lets the password manager add a passkey silently; otherwise, once, the step `offer-passkey` asks "Sign in faster next time — Add a passkey". Both flags live in `localStorage` (`cg-passkey-offer-*:<userId>`).
 
-**Sign-up.** (1) display name (doubles as username, `^[a-z0-9_-]{3,30}$`), email and — when the email code follows — the captcha (`SignupCaptcha` molecule: ALTCHA / reCAPTCHA / off), which `User/requestSignupEmailCode` checks → (2) the 6-digit code, checked by `User/verifySignupEmailCode` — skipped when the instance sends no mail (`features.email: false`) or on a legacy CG ID instance; there the captcha sits on the step that calls `createUser`, so no token has to survive several steps. Going back from the method step returns to the details, which skip the used-up code for the already confirmed address → (3) "How will you sign in?": **Create a passkey** (primary; `Passkey/registrationOptions` + `verifyRegistration` while logged out, then `createUser {usePreparedPasskey}` right away), **Use a password** (policy hints, `autocomplete="new-password"`), **Use a wallet** (SIWE, `createUser {usePreparedWallet}`). No X / LUKSO / Farcaster sign-up and no recovery phrase. `EMAIL_VERIFICATION_REQUIRED` returns to the details for a new code; `CAPTCHA_FAILED` asks to solve the captcha again where it is. When a passkey sign-up fails after the ceremony, the new credential is reported with `signalUnknownCredential` so the authenticator can drop it. On an instance without mail the typed address is stored after `createUser` (unverified). Then the onboarding tail steps follow (`Splash`: newsletter — for the account's address, push, PWA install, finished).
+**Sign-up.** (1) display name (doubles as username, `^[a-z0-9_-]{3,30}$`), email and — when the email code follows — the captcha (`SignupCaptcha` molecule: ALTCHA / reCAPTCHA / off), which `User/requestSignupEmailCode` checks → (2) the 8-digit code, checked by `User/verifySignupEmailCode` — skipped when the instance sends no mail (`features.email: false`) or on a legacy CG ID instance; there the captcha sits on the step that calls `createUser`, so no token has to survive several steps. Going back from the method step returns to the details, which skip the used-up code for the already confirmed address → (3) "How will you sign in?": **Create a passkey** (primary; `Passkey/registrationOptions` + `verifyRegistration` while logged out, then `createUser {usePreparedPasskey}` right away), **Use a password** (policy hints, `autocomplete="new-password"`), **Use a wallet** (SIWE, `createUser {usePreparedWallet}`). No X / LUKSO / Farcaster sign-up and no recovery phrase. `EMAIL_VERIFICATION_REQUIRED` returns to the details for a new code; `CAPTCHA_FAILED` asks to solve the captcha again where it is. When a passkey sign-up fails after the ceremony, the new credential is reported with `signalUnknownCredential` so the authenticator can drop it. On an instance without mail the typed address is stored after `createUser` (unverified). Then the onboarding tail steps follow (`Splash`: newsletter — for the account's address, push, PWA install, finished).
 
 ### Passkeys (`src/data/auth/passkeyCeremony.ts`, `src/context/PasskeyProvider.tsx`)
 
@@ -1214,11 +1216,50 @@ step) for the code; the address changes once the code or the link comes back. `/
 signed in to that account; signed out it offers "Sign in" (`/login?next=…`). Without mail the old
 direct update stays.
 
-An address that was never confirmed gets "Send confirmation again" (with a 60-second countdown;
-the server's send limits still apply) in the settings email page (`ConfirmEmailAgain` molecule,
+An address that was never confirmed gets "Send confirmation again" (with a 60-second countdown,
+or the server's wait after a refusal) in the settings email page (`ConfirmEmailAgain` molecule,
 then the code field), in the account-security step and in the newsletter prompt — always for the
 signed-in account only. The login form's code step tells logged-out users that codes only go to
 confirmed addresses and how to get theirs confirmed.
+
+### Limits and input checks
+
+Decision 21 of the cg.box roadmap: nobody who makes a mistake is locked out, and every limit
+message says when it works again and what else the person can do now.
+
+- **Wait.** `BaseApiConnector` throws `ApiRequestError` (`src/data/api/apiError.ts`): the message is
+  the server code as before, plus `retryAfterSeconds` and `limit` (`accounts` / `mail` /
+  `attempts`, `limitKindOf`) from the envelope
+  ([auth-identity §4 "Limits"](../auth-identity/README.md#limits)). `rateLimitMessage(e, { what,
+  alternative })` (`src/data/auth/authErrors.ts`) turns it into "What happened. You can try again
+  in 4 minutes / at 15:01 / tomorrow at 09:30. Alternative." (`formatRetryAfter`; clock times in the
+  browser's locale, the words are English — the app has no translations). `securityActionErrorMessage`
+  uses it, so the settings and the account-security step show the wait, too.
+- **Alternatives** per place: password login → a code by email, a passkey or a wallet; code login
+  → the last code, the password or a passkey; sign-up code request and "Send a new code" → for
+  `limit: accounts` the account message below, otherwise another network (mobile data) or "Log
+  in instead"; account creation refused at the end (`accountLimitMessage`,
+  `authFlowMachine.ts`) → the time, another network, "Log in instead"; transfer links → logging in
+  directly.
+- **"Send again" countdowns** (`useCooldown` / `cooldownLabel`, `src/hooks/useCooldown.ts`): the
+  sign-up code, the login code, "Send confirmation again" and the account-security step's code
+  count down `EMAIL_CODE_RESEND_SECONDS` (60, the server's per-address minute, shared in
+  `src/common/authInputRules.ts`) after a send and the server's `retryAfterSeconds` after a
+  refusal; the button is disabled meanwhile ("Send a new code (42 s)"). The countdown is kept per
+  address across steps, so going back and forth does not re-enable it.
+- **Codes.** The forms count wrong guesses of the current code (the server allows
+  `EMAIL_CODE_GUESSES` = 5, the same for an address that got no code, so nothing leaks): "2 tries
+  left", then "send a new one" without another request; only wrong or expired codes count, not
+  network or server errors. Going back from the sign-up code step with the same address reuses the
+  code mailed in the last 10 minutes (no second mail, no captcha) — unless a code check failed or
+  the server asked for the captcha again; then "Continue" requests a new code with the captcha.
+- **Input checks before anything is sent**, with the server's rules (shared constants in
+  `src/common/authInputRules.ts` and `passwordPolicy.ts`, used by `srv/validators` as well): email
+  format (`validateEmailInput`), the username rule on sign-up and on the login identifier
+  (`identifierProblem`, `src/data/auth/loginInput.ts`: an email address or a username), 8-digit
+  codes (spaces and dashes dropped, `inputMode="numeric"`), passwords of at least 8 characters on
+  sign-up.
+- After the second wrong password the login form points to "Email me a code instead".
 
 ### Plugin origin guard
 

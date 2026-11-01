@@ -29,12 +29,12 @@ export async function waitForMail(mailpitUrl: string, to: string, timeoutMs = 30
   }
 }
 
-/** the first 6-digit code in the mail to `to` */
+/** the first 8-digit code in the mail to `to` */
 export async function waitForCode(mailpitUrl: string, to: string, since: number): Promise<string> {
   const mail = await waitForMail(mailpitUrl, to, 30_000, since - 2000);
-  const code = /\b(\d{6})\b/.exec(mail.text) ?? /\b(\d{6})\b/.exec(mail.html.replace(/<[^>]+>/g, ' '));
+  const code = /\b(\d{8})\b/.exec(mail.text) ?? /\b(\d{8})\b/.exec(mail.html.replace(/<[^>]+>/g, ' '));
   if (!code) {
-    throw new Error(`mail "${mail.subject}" to ${to} contains no 6-digit code`);
+    throw new Error(`mail "${mail.subject}" to ${to} contains no 8-digit code`);
   }
   return code[1];
 }

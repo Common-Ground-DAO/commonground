@@ -60,14 +60,19 @@ const failureCounts: Record<string, number> = {};
 const NETWORK = 'v4:203.0.113';
 jest.doMock('../util/rateLimit', () => ({
   __esModule: true,
-  default: (options: { bucket?: string; limit_v4_v6_64: number }) => countingLimiter(`ip:${options.bucket ?? 'url'}`, options.limit_v4_v6_64),
+  default: (options: { bucket?: string; limit_v4_v6_64: number }) => {
+    const limiter = countingLimiter(`ip:${options.bucket ?? 'url'}`, options.limit_v4_v6_64);
+    return Object.assign(limiter, { peek: async () => undefined, buckets: () => [{ run: limiter }] });
+  },
   keyRateLimitHandler: (options: { bucket: string; limit: number }) => {
     const perKey: Record<string, jest.Mock> = {};
-    return async (key: string) => {
-      perKey[key] ??= countingLimiter(`${options.bucket}:${key}`, options.limit);
-      await perKey[key]();
-    };
+    const forKey = (key: string) => (perKey[key] ??= countingLimiter(`${options.bucket}:${key}`, options.limit));
+    return Object.assign(async (key: string) => { await forKey(key)(); }, { buckets: (key: string) => [{ run: forKey(key) }] });
   },
+  enforceLimits: async (buckets: { run: () => Promise<void> }[]) => {
+    for (const bucket of buckets) await bucket.run();
+  },
+  peekLimits: async () => undefined,
   failureBudget: (options: { bucket: string; limit: number }) => ({
     reserve: jest.fn(async (key: string) => {
       const name = `${options.bucket}:${key}`;
@@ -598,7 +603,7 @@ describe('account-security step: adding what is missing', () => {
     request.session.authAt = Date.now();
     request.session.authMethod = 'transfer';
     await call('User/requestEmailVerification', request, { email: 'Mine@Example.org' });
-    expect(emailUtils.sendVerificationEmail).toHaveBeenCalledWith('Mine@Example.org', expect.stringMatching(/^[0-9]{6}$/));
+    expect(emailUtils.sendVerificationEmail).toHaveBeenCalledWith('Mine@Example.org', expect.stringMatching(/^[0-9]{8}$/));
     const code = lastCode(emailUtils.sendVerificationEmail);
     await expect(call('User/getSecurityStatus', request, {})).resolves.toMatchObject({ pendingEmail: 'Mine@Example.org', needsVerifiedEmail: true });
 
@@ -617,7 +622,7 @@ describe('account-security step: adding what is missing', () => {
     facts[USER] = { ...COMPLETE, email: null, emailVerified: false };
     await call('User/requestEmailVerification', fresh(), { email: 'mine@example.org' });
     const code = lastCode(emailUtils.sendVerificationEmail);
-    const wrong = code === '000000' ? '111111' : '000000';
+    const wrong = code === '00000000' ? '11111111' : '00000000';
     for (let i = 0; i < 5; i++) {
       await expect(call('User/verifyEmail', loggedIn(), { email: 'mine@example.org', token: wrong })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
     }
@@ -701,9 +706,9 @@ describe('email login code', () => {
     expect(answers).toEqual([undefined, undefined, undefined]);
     await flush();
     expect(emailUtils.sendOneTimePasswordEmail).toHaveBeenCalledTimes(1);
-    expect(emailUtils.sendOneTimePasswordEmail).toHaveBeenCalledWith('someone@example.org', expect.stringMatching(/^[0-9]{6}$/));
+    expect(emailUtils.sendOneTimePasswordEmail).toHaveBeenCalledWith('someone@example.org', expect.stringMatching(/^[0-9]{8}$/));
     // and no login with a code for the unverified address
-    await expect(call('User/login', makeRequest(), { type: 'verificationCode', email: 'unconfirmed@example.org', code: '123456', device })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
+    await expect(call('User/login', makeRequest(), { type: 'verificationCode', email: 'unconfirmed@example.org', code: '12345678', device })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
   });
 
   it('signs in once with the code of that address', async () => {
@@ -727,7 +732,7 @@ describe('email login code', () => {
     await call('User/sendOneTimePasswordForLogin', makeRequest(), { email: 'someone@example.org' });
     await flush();
     const code = lastCode(emailUtils.sendOneTimePasswordEmail);
-    const wrong = code === '000000' ? '111111' : '000000';
+    const wrong = code === '00000000' ? '11111111' : '00000000';
     for (let i = 0; i < 5; i++) {
       await expect(call('User/login', makeRequest(), { type: 'verificationCode', email: 'someone@example.org', code: wrong, device })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
     }
@@ -743,7 +748,7 @@ describe('email login code', () => {
   });
 
   it('failure budgets per address and network, and overall; a success gives its slot back', async () => {
-    await expect(call('User/login', makeRequest(), { type: 'verificationCode', email: 'Nobody@example.org', code: '123456', device })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
+    await expect(call('User/login', makeRequest(), { type: 'verificationCode', email: 'Nobody@example.org', code: '12345678', device })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
     expect(failureCounts[`user:login:code:identifier-network:nobody@example.org|${NETWORK}`]).toBe(1);
     await call('User/sendOneTimePasswordForLogin', makeRequest(), { email: 'someone@example.org' });
     await flush();
@@ -751,11 +756,11 @@ describe('email login code', () => {
     expect(failureCounts['user:login:code:identifier:someone@example.org']).toBe(0);
     // 30 failures from this network today: refused before the code is looked at
     failureCounts[`user:login:code:identifier-network:someone@example.org|${NETWORK}`] = 30;
-    await expect(call('User/login', makeRequest(), { type: 'verificationCode', email: 'someone@example.org', code: '123456', device })).rejects.toThrow('RATE_LIMIT_EXCEEDED');
+    await expect(call('User/login', makeRequest(), { type: 'verificationCode', email: 'someone@example.org', code: '12345678', device })).rejects.toThrow('RATE_LIMIT_EXCEEDED');
     // the overall cap (all networks)
     failureCounts[`user:login:code:identifier-network:someone@example.org|${NETWORK}`] = 0;
     failureCounts['user:login:code:identifier:someone@example.org'] = 200;
-    await expect(call('User/login', makeRequest(), { type: 'verificationCode', email: 'someone@example.org', code: '123456', device })).rejects.toThrow('RATE_LIMIT_EXCEEDED');
+    await expect(call('User/login', makeRequest(), { type: 'verificationCode', email: 'someone@example.org', code: '12345678', device })).rejects.toThrow('RATE_LIMIT_EXCEEDED');
     // the refused attempt did not keep the network slot
     expect(failureCounts[`user:login:code:identifier-network:someone@example.org|${NETWORK}`]).toBe(0);
   });

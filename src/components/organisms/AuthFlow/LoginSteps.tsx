@@ -17,8 +17,13 @@ import { useTwitterAuth } from 'hooks/useTwitterAuth';
 import config from 'common/config';
 import errors from 'common/errors';
 import { validateEmailInput } from 'common/validators';
+import { EMAIL_CODE_GUESSES, EMAIL_CODE_LENGTH, EMAIL_CODE_PATTERN, normalizeEmailCode } from 'common/authInputRules';
 import loginManager from 'data/appstate/login';
 import userApi from 'data/api/user';
+import { retryAfterSecondsOf } from 'data/api/apiError';
+import { isRateLimited, rateLimitMessage } from 'data/auth/authErrors';
+import { identifierProblem } from 'data/auth/loginInput';
+import { cooldownLabel, useCooldown } from 'hooks/useCooldown';
 import luksoApi from 'data/api/lukso';
 import { moreLoginMethods, type MoreLoginMethod } from './authFlowMachine';
 import { Divider, errorCode, StepError, StepHeader, type LoggedInHandler, type StepProps } from './shared';
@@ -36,10 +41,20 @@ const GENERIC_CREDENTIALS_ERROR = "That email, username or password isn't right.
 const AUTOFILL_RENEW_MS = 9 * 60 * 1000;
 const AUTOFILL_REARM_DELAY_MS = 3_000;
 const AUTOFILL_MAX_FAILURES = 3;
-const RATE_LIMITED = "Too many attempts. Please wait a few minutes and try again.";
 
 function looksLikeEmail(value: string) {
   return value.includes('@') && validateEmailInput(value.trim()) === undefined;
+}
+
+/** "a code by email, a passkey or a wallet": the other ways to sign in on this instance */
+function otherMethods(options: { code: boolean; passkey: boolean; password?: boolean }) {
+  const methods = [
+    ...(options.password ? ['your password'] : []),
+    ...(options.code ? ['a code by email'] : []),
+    ...(options.passkey ? ['a passkey'] : []),
+    'a wallet',
+  ];
+  return methods.length > 1 ? `${methods.slice(0, -1).join(', ')} or ${methods[methods.length - 1]}` : methods[0];
 }
 
 // ---------------------------------------------------------------------------
@@ -55,6 +70,8 @@ export const LoginForm: React.FC<LoginProps & {
   const [loading, setLoading] = useState<'password' | 'passkey' | 'twitter' | null>(null);
   const [showMore, setShowMore] = useState(false);
   const [autofillRun, setAutofillRun] = useState(0);
+  const [identifierError, setIdentifierError] = useState<string | undefined>();
+  const [wrongPasswords, setWrongPasswords] = useState(0);
 
   const onLoggedInRef = useRef(onLoggedIn);
   onLoggedInRef.current = onLoggedIn;
@@ -95,9 +112,16 @@ export const LoginForm: React.FC<LoginProps & {
     };
   }, [autofillSupported, armAutofill, autofillRun, dispatch]);
 
+  const showPasskeyButton = passkey.supported || passkey.legacy;
+
   const submitPassword = useCallback(async () => {
-    if (!identifier.trim() || !password) {
-      dispatch({ type: 'ERROR', message: "Enter your email or username and your password." });
+    const problem = identifierProblem(identifier);
+    setIdentifierError(problem);
+    if (problem) {
+      return;
+    }
+    if (!password) {
+      dispatch({ type: 'ERROR', message: "Enter your password." });
       return;
     }
     setLoading('password');
@@ -107,19 +131,30 @@ export const LoginForm: React.FC<LoginProps & {
     }
     catch (e) {
       const code = errorCode(e);
-      dispatch({
-        type: 'ERROR',
-        message: code === errors.server.RATE_LIMIT_EXCEEDED ? RATE_LIMITED
-          // one message for unknown account and wrong password
-          : code === errors.server.NOT_FOUND || code === errors.server.NOT_ALLOWED || code === errors.server.VALIDATION || code === errors.server.INVALID_REQUEST
-            ? GENERIC_CREDENTIALS_ERROR
-            : "Something went wrong, please try again.",
-      });
+      let message: string;
+      if (isRateLimited(e)) {
+        message = rateLimitMessage(e, {
+          what: "Too many sign-in attempts.",
+          alternative: `You can sign in right away with ${otherMethods({ code: config.EMAIL_ENABLED, passkey: showPasskeyButton })}.`,
+        });
+      }
+      // one message for unknown account and wrong password
+      else if (code === errors.server.NOT_FOUND || code === errors.server.NOT_ALLOWED || code === errors.server.VALIDATION || code === errors.server.INVALID_REQUEST) {
+        const wrong = wrongPasswords + 1;
+        setWrongPasswords(wrong);
+        message = wrong >= 2 && config.EMAIL_ENABLED
+          ? `${GENERIC_CREDENTIALS_ERROR} Forgot your password? Sign in with a code by email instead, then set a new password in your settings.`
+          : GENERIC_CREDENTIALS_ERROR;
+      }
+      else {
+        message = "Something went wrong, please try again.";
+      }
+      dispatch({ type: 'ERROR', message });
     }
     finally {
       setLoading(null);
     }
-  }, [identifier, password, dispatch]);
+  }, [identifier, password, wrongPasswords, showPasskeyButton, dispatch]);
 
   const passkeyLogin = useCallback(async () => {
     setLoading('passkey');
@@ -130,7 +165,12 @@ export const LoginForm: React.FC<LoginProps & {
         return;
       }
       if (outcome.status === 'error') {
-        dispatch({ type: 'ERROR', message: outcome.message });
+        dispatch({
+          type: 'ERROR',
+          message: outcome.code === errors.server.RATE_LIMIT_EXCEEDED
+            ? `${outcome.message} You can sign in right away with ${otherMethods({ code: config.EMAIL_ENABLED, passkey: false, password: true })}.`
+            : outcome.message,
+        });
       }
       setAutofillRun(run => run + 1);
     }
@@ -167,7 +207,6 @@ export const LoginForm: React.FC<LoginProps & {
     dispatch({ type: 'USE_EMAIL_CODE' });
   }, [dispatch]);
 
-  const showPasskeyButton = passkey.supported || passkey.legacy;
   const more = moreLoginMethods(flowConfig);
 
   return (
@@ -182,7 +221,8 @@ export const LoginForm: React.FC<LoginProps & {
           label='Email or username'
           iconLeft={<UserIcon className='w-5 h-5' />}
           value={identifier}
-          onChange={setIdentifier}
+          onChange={value => { setIdentifier(value); setIdentifierError(undefined); }}
+          error={identifierError}
           placeholder='name@email.com'
           autoComplete='username webauthn'
           autoCapitalize='none'
@@ -286,40 +326,52 @@ const MoreButton: React.FC<{ method: MoreLoginMethod; dispatch: StepProps['dispa
 );
 
 // ---------------------------------------------------------------------------
-// One-time code by email
-
-let lastCodeSentAt = 0;
-const RESEND_COOLDOWN_MS = 30_000;
+// One-time code by email: the address, then the code; "Send a new code"
+// waits for the server's per-address cooldown (a countdown on the button)
 
 export const LoginCode: React.FC<LoginProps & { initialEmail: string }> = ({ state, dispatch, onLoggedIn, initialEmail }) => {
+  const passkey = usePasskeyContext();
   const [email, setEmail] = useState(looksLikeEmail(initialEmail) ? initialEmail.trim() : '');
+  const [emailError, setEmailError] = useState<string | undefined>();
   const [code, setCode] = useState('');
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [loading, setLoading] = useState<'send' | 'login' | null>(null);
+  const [info, setInfo] = useState<string | undefined>();
+  // wrong guesses of the current code: it stops working after EMAIL_CODE_GUESSES
+  const [wrongGuesses, setWrongGuesses] = useState(0);
+  const target = (sentTo ?? email).trim().toLowerCase();
+  const { left: resendLeft, start: startCooldown } = useCooldown(undefined, `login:${target}`);
+  const alternatives = otherMethods({ code: false, password: true, passkey: passkey.supported || passkey.legacy });
 
-  const sendCode = useCallback(async () => {
-    const address = email.trim();
-    if (validateEmailInput(address) !== undefined) {
-      dispatch({ type: 'ERROR', message: "Enter the email address of your account." });
-      return;
-    }
-    const wait = lastCodeSentAt + RESEND_COOLDOWN_MS - Date.now();
-    if (wait > 0) {
-      dispatch({ type: 'ERROR', message: `Please wait ${Math.ceil(wait / 1000)} seconds before requesting another code.` });
+  const sendCode = useCallback(async (address: string) => {
+    const problem = validateEmailInput(address) !== undefined ? "Enter the email address of your account (e.g. name@example.com)." : undefined;
+    setEmailError(problem);
+    if (problem) {
       return;
     }
     setLoading('send');
     try {
       await userApi.sendOneTimePasswordForLogin({ email: address });
-      lastCodeSentAt = Date.now();
+      startCooldown();
       setSentTo(address);
+      setCode('');
+      setWrongGuesses(0);
+      setInfo(sentTo ? "We sent you a new code. It replaces the previous one." : undefined);
       dispatch({ type: 'ERROR', message: '' });
     }
     catch (e) {
       const code = errorCode(e);
+      if (isRateLimited(e)) {
+        startCooldown(retryAfterSecondsOf(e));
+      }
+      setInfo(undefined);
       dispatch({
         type: 'ERROR',
-        message: code === errors.server.RATE_LIMIT_EXCEEDED ? RATE_LIMITED
+        message: isRateLimited(e)
+          ? rateLimitMessage(e, {
+            what: "We can't send another code to this address right now.",
+            alternative: `Use the last code we sent (check your spam folder), or sign in with ${alternatives}.`,
+          })
           : code === errors.server.EMAIL_DISABLED ? "This site can't send emails right now."
             : "The code could not be sent. Please try again.",
       });
@@ -327,27 +379,54 @@ export const LoginCode: React.FC<LoginProps & { initialEmail: string }> = ({ sta
     finally {
       setLoading(null);
     }
-  }, [email, dispatch]);
+  }, [sentTo, alternatives, startCooldown, dispatch]);
 
   const submitCode = useCallback(async () => {
-    if (!sentTo || !code.trim()) {
+    if (!sentTo) {
+      return;
+    }
+    const value = normalizeEmailCode(code);
+    if (!EMAIL_CODE_PATTERN.test(value)) {
+      dispatch({ type: 'ERROR', message: `Enter the ${EMAIL_CODE_LENGTH}-digit code from the email (numbers only).` });
+      return;
+    }
+    if (wrongGuesses >= EMAIL_CODE_GUESSES) {
+      dispatch({ type: 'ERROR', message: "This code was entered wrong too often and no longer works. Send a new one." });
       return;
     }
     setLoading('login');
+    setInfo(undefined);
     try {
-      const response = await loginManager.login({ email: sentTo, code: code.trim() });
+      const response = await loginManager.login({ email: sentTo, code: value });
       await onLoggedIn('code', response);
     }
     catch (e) {
-      dispatch({
-        type: 'ERROR',
-        message: errorCode(e) === errors.server.RATE_LIMIT_EXCEEDED ? RATE_LIMITED : "That code isn't right or has expired.",
-      });
+      let message: string;
+      if (isRateLimited(e)) {
+        message = rateLimitMessage(e, {
+          what: "Too many wrong codes for this address.",
+          alternative: `You can sign in right away with ${alternatives}.`,
+        });
+      }
+      else if (errorCode(e) !== errors.server.VERIFY_EMAIL_INVALID_TOKEN && errorCode(e) !== errors.server.VERIFY_EMAIL_EXPIRED_TOKEN) {
+        // not a guess (network, server): nothing counted
+        message = "Something went wrong, please try again.";
+      }
+      else {
+        // the answer is the same for a wrong, used-up or expired code and an
+        // address that got none; the count is the web app's own
+        const guesses = wrongGuesses + 1;
+        setWrongGuesses(guesses);
+        const left = EMAIL_CODE_GUESSES - guesses;
+        message = left <= 0 ? "That code isn't right or has expired, and that was the last try for it. Send a new one."
+          : `That code isn't right or has expired (codes work for 15 minutes). Check the email${left <= 2 ? ` (${left} ${left === 1 ? 'try' : 'tries'} left for this code)` : ''} or send a new one.`;
+      }
+      dispatch({ type: 'ERROR', message });
     }
     finally {
       setLoading(null);
     }
-  }, [sentTo, code, onLoggedIn, dispatch]);
+  }, [sentTo, code, wrongGuesses, alternatives, onLoggedIn, dispatch]);
 
   return (
     <div className='auth-flow-step'>
@@ -358,19 +437,26 @@ export const LoginCode: React.FC<LoginProps & { initialEmail: string }> = ({ sta
           : "We'll email you a one-time code."}
         onBack={() => dispatch({ type: 'BACK' })}
       />
-      {!sentTo && <form className='auth-flow-form' onSubmit={ev => { ev.preventDefault(); sendCode(); }}>
+      {!sentTo && <form className='auth-flow-form' noValidate onSubmit={ev => { ev.preventDefault(); sendCode(email.trim()); }}>
         <TextInputField
           label='Email address'
           iconLeft={<EnvelopeIcon className='w-5 h-5' />}
           value={email}
-          onChange={setEmail}
+          onChange={value => { setEmail(value); setEmailError(undefined); }}
+          error={emailError}
           placeholder='name@email.com'
           type='email'
           autoComplete='email'
           name='email'
         />
         <StepError message={state.error} />
-        <Button className='w-full' role='primary' text='Send code' loading={loading === 'send'} disabled={loading !== null} />
+        <Button
+          className='w-full'
+          role='primary'
+          text={cooldownLabel('Send code', resendLeft)}
+          loading={loading === 'send'}
+          disabled={loading !== null || resendLeft > 0}
+        />
       </form>}
       {!!sentTo && <>
         <form className='auth-flow-form' onSubmit={ev => { ev.preventDefault(); submitCode(); }}>
@@ -378,15 +464,32 @@ export const LoginCode: React.FC<LoginProps & { initialEmail: string }> = ({ sta
             label='Code'
             value={code}
             onChange={setCode}
-            placeholder='Code from the email'
+            placeholder='12345678'
             autoComplete='one-time-code'
+            inputMode='numeric'
             name='code'
+            maxLetters={EMAIL_CODE_LENGTH + 1}
             autoFocus
           />
           <StepError message={state.error} />
+          {!!info && <span className='cg-text-md-400 cg-text-secondary' role='status'>{info}</span>}
           <Button className='w-full' role='primary' text='Log in' loading={loading === 'login'} disabled={!code.trim() || loading !== null} />
         </form>
-        <Button className='w-full' role='textual' text='Send a new code' onClick={() => { setSentTo(null); setCode(''); }} disabled={loading !== null} />
+        <Button
+          className='w-full'
+          role='textual'
+          text={cooldownLabel('Send a new code', resendLeft)}
+          onClick={() => sendCode(sentTo)}
+          loading={loading === 'send'}
+          disabled={loading !== null || resendLeft > 0}
+        />
+        <Button
+          className='w-full'
+          role='textual'
+          text='Use a different email'
+          onClick={() => { setSentTo(null); setCode(''); setInfo(undefined); dispatch({ type: 'ERROR', message: '' }); }}
+          disabled={loading !== null}
+        />
       </>}
     </div>
   );
@@ -408,7 +511,7 @@ export const LoginWallet: React.FC<LoginProps> = ({ state, dispatch, onLoggedIn 
       response = await loginManager.login({ account: 'wallet' });
     }
     catch (e) {
-      throw new Error(errorCode(e) === errors.server.RATE_LIMIT_EXCEEDED ? RATE_LIMITED : "Signing in with this wallet didn't work. Please try again.");
+      throw new Error(isRateLimited(e) ? rateLimitMessage(e) : "Signing in with this wallet didn't work. Please try again.");
     }
     await onLoggedIn('wallet', response);
   }, [onLoggedIn]);

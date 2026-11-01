@@ -11,7 +11,7 @@ import TextInputField from 'components/molecules/inputs/TextInputField/TextInput
 import PasswordField from 'components/molecules/PasswordField/PasswordField';
 import WalletSignature from 'components/molecules/WalletSignature/WalletSignature';
 import EmailCodeConfirm from 'components/molecules/EmailCodeConfirm/EmailCodeConfirm';
-import { useCooldown } from 'components/molecules/EmailCodeConfirm/ConfirmEmailAgain';
+import { cooldownLabel, useCooldown } from 'hooks/useCooldown';
 import { StepError, StepHeader, errorCode } from 'components/organisms/AuthFlow/shared';
 import { usePasskeyContext } from 'context/PasskeyProvider';
 import errors from 'common/errors';
@@ -20,14 +20,14 @@ import { validateEmailInput, validatePassword } from 'common/validators';
 import userApi from 'data/api/user';
 import loginManager from 'data/appstate/login';
 import securityStepState, { nextSecurityStepTask, type SecurityStepTask } from 'data/auth/securityStep';
-import { securityActionErrorMessage } from 'data/auth/authErrors';
+import { isRateLimited, rateLimitMessage, securityActionErrorMessage } from 'data/auth/authErrors';
+import { retryAfterSecondsOf } from 'data/api/apiError';
 import 'components/organisms/AuthFlow/AuthFlow.css';
 import './SecurityStep.css';
 
 type Status = API.User.getSecurityStatus.Response;
 type TaskProps = { status: Status; onDone: () => Promise<void> };
 
-const RATE_LIMITED = "Too many attempts. Please wait a few minutes and try again.";
 
 const TASK_LABELS: Record<SecurityStepTask, string> = {
   'email': 'Confirm your email address',
@@ -154,7 +154,12 @@ const EmailTask: React.FC<TaskProps> = ({ status, onDone }) => {
       startCooldown();
     }
     catch (e) {
-      const message = securityActionErrorMessage(e, "The code could not be sent. Please try again.");
+      if (isRateLimited(e) && sentTo) {
+        startCooldown(retryAfterSecondsOf(e));
+      }
+      const message = isRateLimited(e) && sentTo
+        ? rateLimitMessage(e, { what: "We can't send another code right now.", alternative: "Use the code from the last email (check your spam folder)." })
+        : securityActionErrorMessage(e, "The code could not be sent. Please try again.");
       if (message) {
         setError(message);
       }
@@ -162,9 +167,9 @@ const EmailTask: React.FC<TaskProps> = ({ status, onDone }) => {
     finally {
       setLoading(false);
     }
-  }, [email, startCooldown]);
+  }, [email, sentTo, startCooldown]);
 
-  const resendLabel = cooldownLeft > 0 ? `Send the code again (${cooldownLeft} s)` : 'Send the code again';
+  const resendLabel = cooldownLabel('Send the code again', cooldownLeft);
   return (
     <div className='auth-flow-step'>
       <StepHeader title={TASK_LABELS.email} subtitle='Important messages about your account go there, and you can sign in with a code sent to it.' />
@@ -398,7 +403,7 @@ const SignInWallet: React.FC<Pick<TaskProps, 'onDone'> & { onBack: () => void }>
     catch (e) {
       const code = errorCode(e);
       if (code && Object.values(errors.server).includes(code as any)) {
-        throw new Error(code === errors.server.RATE_LIMIT_EXCEEDED ? RATE_LIMITED : "This wallet could not be added. Please try again.");
+        throw new Error(code === errors.server.RATE_LIMIT_EXCEEDED ? rateLimitMessage(e) : "This wallet could not be added. Please try again.");
       }
       throw e;
     }

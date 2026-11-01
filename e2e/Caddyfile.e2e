@@ -3,8 +3,8 @@
 # signalling edge) plus one test-only difference.
 #
 # Test-only: per-browser client addresses. The backend keys its per-address
-# limits on the first X-Forwarded-For entry — sign-up allows 2 accounts per
-# address and day, and the suite creates a dozen. Every browser context of
+# limits on the first X-Forwarded-For entry — sign-up allows 20 accounts per
+# address and hour, and repeated runs of the suite create dozens. Every browser context of
 # the suite carries a `cg_e2e_client=<private IPv4>` cookie; this edge turns
 # it into the X-Forwarded-For the backend sees, and the private ranges (the
 # runner container) are trusted proxies so Caddy keeps that entry first. A

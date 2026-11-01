@@ -11,6 +11,7 @@ import {
   type AuthenticationResponseJSON,
 } from "@simplewebauthn/browser";
 import errors from "common/errors";
+import { rateLimitMessage } from "./authErrors";
 import passkeyApi from "data/api/passkey";
 import stepUpManager from "./stepUp";
 
@@ -56,7 +57,6 @@ const MESSAGES = {
   noUserVerification: "This authenticator can't be used here: it needs a PIN, fingerprint or face unlock.",
   noDiscoverable: "This authenticator can't store a passkey. Try your phone or your device's built-in passkey manager.",
   wrongDomain: "Passkeys aren't available on this address.",
-  rateLimited: "Too many attempts. Please wait a few minutes and try again.",
   verifyFailed: "The passkey could not be verified. Please try again.",
   emailVerification: "Please verify your email address first.",
   generic: "Something went wrong with the passkey. Please try again.",
@@ -83,7 +83,7 @@ export function toPasskeyCeremonyError(e: unknown): PasskeyCeremonyError {
   // server refusals come through BaseApiConnector as Error(<code>)
   if (message && SERVER_CODES.has(message)) {
     if (message === errors.server.RATE_LIMIT_EXCEEDED) {
-      return new PasskeyCeremonyError('failed', MESSAGES.rateLimited, message);
+      return new PasskeyCeremonyError('failed', rateLimitMessage(e), message);
     }
     if (message === errors.server.EMAIL_VERIFICATION_REQUIRED) {
       return new PasskeyCeremonyError('failed', MESSAGES.emailVerification, message);

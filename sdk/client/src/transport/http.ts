@@ -33,7 +33,14 @@ export interface HttpTransportOptions {
 
 type Envelope<T> =
   | { status: "OK"; data?: T }
-  | { status: "ERROR"; error: string };
+  | { status: "ERROR"; error: string; retryAfterSeconds?: number; limit?: string };
+
+/** the wait of a limit error: the envelope's field, else the Retry-After header (seconds) */
+function retryAfterOf(envelope: { retryAfterSeconds?: number }, response: Response): number | undefined {
+  if (typeof envelope.retryAfterSeconds === "number") return envelope.retryAfterSeconds;
+  const header = Number(response.headers.get("retry-after"));
+  return Number.isFinite(header) && header > 0 ? header : undefined;
+}
 
 export class HttpTransport {
   readonly baseUrl: string;
@@ -88,7 +95,7 @@ export class HttpTransport {
       return envelope.data as TResponse;
     }
     if (envelope.status === "ERROR") {
-      throw new ApiError(envelope.error, route, response.status);
+      throw new ApiError(envelope.error, route, response.status, retryAfterOf(envelope, response), envelope.limit);
     }
     throw new TransportError("response is not an API envelope", route, response.status);
   }
@@ -119,7 +126,7 @@ export class HttpTransport {
     }
     const maybeEnvelope = body as Envelope<TResponse>;
     if (maybeEnvelope.status === "ERROR") {
-      throw new ApiError(maybeEnvelope.error, route, response.status);
+      throw new ApiError(maybeEnvelope.error, route, response.status, retryAfterOf(maybeEnvelope, response), maybeEnvelope.limit);
     }
     if (maybeEnvelope.status === "OK") return (maybeEnvelope as { data?: TResponse }).data as TResponse;
     return body as TResponse;

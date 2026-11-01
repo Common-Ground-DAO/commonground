@@ -25,7 +25,7 @@ import notificationHelper from "../repositories/notifications";
 import { fetchRemoteImage } from "../util/safeFetch";
 import onchainHelper from "../repositories/onchain";
 import permissionHelper from "../repositories/permissions";
-import ipRateLimitHandler, { clientPrefixKey, failureBudget, ipFailureLimiter, reserveFailures, type FailureReservation } from "../util/rateLimit";
+import ipRateLimitHandler, { clientPrefixKey, enforceLimits, failureBudget, ipFailureLimiter, peekLimits, reserveFailures, type FailureReservation } from "../util/rateLimit";
 import { AUTH_LIMITS } from "../util/authLimits";
 import config from "../common/config";
 import { verifyCaptchaToken } from "../util/captcha";
@@ -161,6 +161,18 @@ const isEmailAvailableLimiter = ipRateLimitHandler({
   ...AUTH_LIMITS.isEmailAvailable.ip,
 });
 
+// Accounts created per client network, per hour and per day (off on a dev
+// stack). Counted when an account is created — in both windows or in none
+// (enforceLimits) —; the sign-up code request only peeks, so nobody fills in
+// a whole sign-up to be refused at the very end.
+const createUserHourLimiter = ipRateLimitHandler({ bucket: 'user:createUser:hour', kind: 'accounts', ...AUTH_LIMITS.createUser.hour });
+const createUserDayLimiter = ipRateLimitHandler({ bucket: 'user:createUser:day', kind: 'accounts', ...AUTH_LIMITS.createUser.day });
+const accountLimitBuckets = (request: express.Request) => [
+  ...createUserHourLimiter.buckets(request),
+  ...createUserDayLimiter.buckets(request),
+];
+const ACCOUNT_LIMITS = config.DEPLOYMENT !== 'dev';
+
 /** whether the account must finish the security step (login responses) */
 async function securityStepRequiredAfterLogin(request: express.Request, userId: string): Promise<boolean> {
   if (!securityStepEnforced()) {
@@ -214,12 +226,7 @@ registerPostRoute<
   }
 );
 
-const verifyCaptchaRateLimiter = ipRateLimitHandler({
-  windowMs: 1000 * 60 * 60 * 24, // 24h
-  limit_v4_v6_64: 3,
-  limit_v6_56: 10,
-  limit_v6_48: 20,
-});
+const verifyCaptchaRateLimiter = ipRateLimitHandler(AUTH_LIMITS.verifyCaptcha.ip);
 
 registerPostRoute<
   API.User.verifyCaptcha.Request,
@@ -555,15 +562,11 @@ registerPostRoute<
 
 const reauthenticateIpLimiter = ipRateLimitHandler({
   bucket: 'user:reauthenticate:ip',
-  windowMs: 15 * 60 * 1000,
-  limit_v4_v6_64: 30,
-  limit_v6_56: 90,
-  limit_v6_48: 180,
+  ...AUTH_LIMITS.reauthenticate.ip,
 });
 const reauthenticateUserLimiter = keyRateLimitHandler({
   bucket: 'user:reauthenticate:user',
-  windowMs: 15 * 60 * 1000,
-  limit: 10,
+  ...AUTH_LIMITS.reauthenticate.user,
 });
 /** a wallet signature older than this does not count as re-authentication */
 const REAUTH_WALLET_PROOF_MAX_AGE_MS = 5 * 60 * 1000;
@@ -638,6 +641,11 @@ registerPostRoute<
     }
     if (!emailEnabled()) {
       throw new Error(errors.server.EMAIL_DISABLED);
+    }
+    if (ACCOUNT_LIMITS) {
+      // this network cannot create an account right now: say so before the
+      // person solves the captcha and fills in the rest
+      await peekLimits(accountLimitBuckets(request));
     }
     // the sign-up captcha is solved here, before any mail goes out; a resend
     // for the same address within the captcha window needs no new one
@@ -732,13 +740,6 @@ registerPostRoute<
     await endLoginSession(request);
   }
 );
-
-const createUserRateLimiter = ipRateLimitHandler({
-  windowMs: 1000 * 60 * 60 * 24, // 24h
-  limit_v4_v6_64: 2,
-  limit_v6_56: 8,
-  limit_v6_48: 15,
-});
 
 registerPostRoute<
   API.User.createUser.Request,
@@ -984,8 +985,8 @@ registerPostRoute<
 
     const insertedIds = await userHelper.createUser(newUserData, async () => {
       // make sure rate limits are respected
-      if (config.DEPLOYMENT !== 'dev') {
-        await createUserRateLimiter(request, response);
+      if (ACCOUNT_LIMITS) {
+        await enforceLimits(accountLimitBuckets(request));
       }
     });
 

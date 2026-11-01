@@ -23,8 +23,9 @@ vi.mock('data/appstate/login', () => ({ default: { loginRequiredErrorHandler } }
 import BaseApiConnector from './baseConnector';
 import stepUpManager from 'data/auth/stepUp';
 import securityStepState from 'data/auth/securityStep';
+import { ApiRequestError } from './apiError';
 
-type Reply = { status: 'OK'; data?: unknown } | { status: 'ERROR'; error: string };
+type Reply = { status: 'OK'; data?: unknown } | { status: 'ERROR'; error: string; retryAfterSeconds?: number; limit?: string };
 
 const sent: { url: string; body: string | undefined }[] = [];
 let replies: Reply[] = [];
@@ -206,5 +207,16 @@ describe('account-security step', () => {
     expect(securityStepState.required).toBe(true);
     expect(sent).toHaveLength(1);
     securityStepState.set(false);
+  });
+});
+
+describe('limit errors', () => {
+  it('RATE_LIMIT_EXCEEDED carries the wait the server sent', async () => {
+    replies = [{ status: 'ERROR', error: 'RATE_LIMIT_EXCEEDED', retryAfterSeconds: 42, limit: 'accounts' }];
+    const error = await connector.get('x').catch(e => e);
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error.message).toBe('RATE_LIMIT_EXCEEDED');
+    expect(error.retryAfterSeconds).toBe(42);
+    expect(error.limit).toBe('accounts');
   });
 });

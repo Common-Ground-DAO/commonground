@@ -13,6 +13,7 @@ import userApi from 'data/api/user';
 import loginManager from 'data/appstate/login';
 import stepUpManager, { type StepUpRequest } from 'data/auth/stepUp';
 import errors from 'common/errors';
+import { rateLimitMessage } from 'data/auth/authErrors';
 import './ReauthDialog.css';
 
 type Props = {
@@ -75,7 +76,7 @@ const ReauthDialog: React.FC<Props> = ({ request, onDone }) => {
         setError("That password isn't correct.");
       }
       else if (code === errors.server.RATE_LIMIT_EXCEEDED) {
-        setError("Too many attempts. Please wait a few minutes and try again.");
+        setError(rateLimitMessage(e, { what: "Too many attempts to confirm it's you." }));
       }
       else {
         setError("Something went wrong, please try again.");
@@ -98,7 +99,7 @@ const ReauthDialog: React.FC<Props> = ({ request, onDone }) => {
     catch (e) {
       const code = e instanceof Error ? e.message : undefined;
       throw new Error(code === errors.server.RATE_LIMIT_EXCEEDED
-        ? "Too many attempts. Please wait a few minutes and try again."
+        ? rateLimitMessage(e, { what: "Too many attempts to confirm it's you." })
         : "This wallet can't be used to sign in to your account.");
     }
   }, [confirmed]);

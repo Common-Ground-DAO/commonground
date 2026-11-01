@@ -7,7 +7,9 @@
 > policy (§5.4), email codes (§5.5, §8), the wallet message domain (§5.2), the add-method rule (§7)
 > and transfer links / the account-security step (§11) against commit 9fc05a9, 2026-11-01;
 > session creation, cookie, middleware order, logout and keepalive (§2, §4, §7, §10) against
-> commit eab2a27, 2026-11-01
+> commit eab2a27, 2026-11-01; limits, limit errors and the sign-up code state (§4 "Limits", §5.4,
+> §5.5, §6, §8) against commit 2fad7d3, 2026-11-01; 8-digit email codes and the hourly email-code
+> failure budgets (§4, §5.5, §6, §8) against commit 2fad7d3, 2026-11-01
 
 # Authentication & Identity
 
@@ -253,6 +255,79 @@ sensitive actions (null if it does not) — also after a silent device re-login 
 `POST /User/clearLoginSession` clears the in-flight provider state (`lukso`, `farcaster`, `twitter`,
 `passport`) without logging the user out.
 
+### Limits
+
+Decision 21 of the cg.box roadmap: sign-up and login never lock out a person who mistypes, retries
+or shares a network with many others (offices, universities, mobile carriers); limits only stop
+volumes that look like abuse, and every refusal says how long to wait. All numbers live in
+`srv/util/authLimits.ts`; "per IP" means per IPv4 address or IPv6 /64, with three and six times
+the value per IPv6 /56 and /48 (`ipRateLimitHandler`, `srv/util/rateLimit.ts`). Sliding windows in
+Valkey. The limits of one request (the hour and the day of the account limit, the IPv6 prefixes,
+a client and a target address) are counted together (`enforceLimits`): if one refuses, the hits in
+the others are taken back, so a refused request counts nowhere and waiting never takes longer
+than the wait announced.
+Off on a dev stack (`DEPLOYMENT=dev`): account creation and the login throttles.
+
+| What | Key | Limit |
+|------|-----|-------|
+| Accounts created (`createUser`; the sign-up code request checks it first without counting) | per IP | 20 per hour and 50 per day |
+| Sign-up passkey ceremonies while logged out (`Passkey/registrationOptions` + `verifyRegistration`) | per IP | 60 per hour |
+| Passkey login options (`Passkey/authenticationOptions {purpose:'login'}`, every view of the login form) | per IP | 300 per hour |
+| Password login attempts | per IP | 60 per 15 minutes |
+| Failed password logins | per identifier as typed + network (IPv4 /24, IPv6 /56) | 10 per 15 minutes |
+| Failed password logins | per identifier, all networks | 100 per hour |
+| Email-code login attempts | per IP | 60 per 15 minutes |
+| Failed email-code logins | per address + network / all networks | 10 / 30 per hour |
+| Guesses per code (sign-up, login, confirmation) | per issued code | 5 (then a new code is needed) |
+| Login code mails (`sendOneTimePasswordForLogin`) | per IP / per address | 30 per hour / 1 per minute and 10 per hour |
+| Sign-up code mails (`requestSignupEmailCode`) | per IP / per address | 40 per hour / 1 per minute and 5 per hour |
+| Confirmation mails (`requestEmailVerification`, signed in) | per IP / address / account | 30 / 5 / 5 per hour |
+| Re-authentication (`reauthenticate`) | per IP / per account | 30 / 10 per 15 minutes |
+| Captcha for trust score (`verifyCaptcha`, signed in) | per IP | 3 per day |
+| Transfer links | per user / per IP / failures per IP | 10 per hour / 120 / 20 per 15 minutes |
+| `isEmailAvailable` (instances without mail only) | per IP | 60 per hour |
+
+Changed on 2026-11-01 (G10): accounts per network from 2 per day (a single office or mobile-carrier
+address could block every further sign-up for a day) to 20 per hour and 50 per day; the sign-up
+code mails per IP from 10 to 40 per hour and the sign-up passkey ceremonies from 20 to 60 per hour,
+so they never cap sign-ups below the account limit; login code and confirmation mails per IP from
+10 to 30 per hour (shared networks); passkey login options from 120 to 300 per hour (every login
+page view fetches them for autofill); `isEmailAvailable` from 30 to 60 per hour; failed email-code
+logins per address from 30 per day (per network) and 200 per day (overall) to 10 and 30 per hour,
+so a person who mistyped is not locked out until the next day, together with codes of 8 instead of
+6 digits (a hundred times more codes to guess). The other guessing budgets are unchanged; the
+sign-up and confirmation codes have no per-address budget beyond their 5 guesses per code.
+
+**Limit errors.** A refusal is `RATE_LIMIT_EXCEEDED` with the seconds until the limit lets the next
+attempt through, in the envelope and as the standard header:
+
+```
+HTTP/1.1 200 OK
+Retry-After: 240
+
+{ "status": "ERROR", "error": "RATE_LIMIT_EXCEEDED", "retryAfterSeconds": 240, "limit": "accounts" }
+```
+
+`limit` says what was limited, so the client can word its message: `accounts` (accounts per
+network), `mail` (code and confirmation mails, per network or per address) or `attempts`
+(everything else). It depends only on which IP- or address-keyed limiter refused, never on
+whether an account exists.
+
+The HTTP status stays 200 like every RPC error. The server throws `RateLimitError`
+(`srv/util/rateLimitError.ts`; its message is the plain code, so existing checks keep working) and
+`handleError` (`srv/api/util.ts`) writes both. The wait is the time until enough of the oldest hits
+have left the window (the longest one when several limits refused, with that limit's kind).
+`API.AjaxResponse` carries the optional `retryAfterSeconds` and `limit`; the web app's
+`BaseApiConnector` throws an `ApiRequestError` (`src/data/api/apiError.ts`, message = code, plus
+both fields), the SDK's `ApiError` has the same fields (`sdk/client/src/transport/errors.ts`). The per-code guess budget answers without a
+wait: the remedy is a new code. The web app's messages are described in
+[frontend §10](../frontend/README.md#limits-and-input-checks).
+
+**Testing the messages.** `CG_TEST_AUTH_LIMITS` (JSON, e.g. `{"createUser.hour": 1}`) lowers single
+limits at startup — it can never raise one; unknown names stop the process. The disposable e2e
+instance passes `E2E_AUTH_LIMITS` through to it (`e2e/docker-compose.e2e.yml`).
+
+
 ---
 
 ## 5. Login Methods
@@ -325,7 +400,7 @@ Client posts `{ aliasOrEmail, password, device: { publicKey } }`. The server
    failure slot atomically before the password is checked and gives it back on success
    (`failureBudget` / `reserveFailures`, `srv/util/rateLimit.ts`), so parallel attempts cannot
    overrun a budget and a successful login never uses it up. All numbers:
-   `srv/util/authLimits.ts`;
+   `srv/util/authLimits.ts` ([§4 "Limits"](#limits)); a refusal carries the wait;
 2. checks the password (`checkPasswordLogin`; an unknown account is compared against a throwaway
    hash, same answer `NOT_ALLOWED`; a failed check against an older, cheaper hash also runs a
    cost-12 check, so there is no practical timing difference);
@@ -353,11 +428,11 @@ Passwordless email login:
 1. `POST /User/sendOneTimePasswordForLogin` (`srv/api/user.ts`): only allowed when logged
    out and when email is enabled (`emailEnabled()` in `srv/api/emails.ts` requires a valid SMTP
    configuration, `SMTP_HOST` set — see [docs/email-notifications](../email-notifications/README.md));
-   otherwise it throws `EMAIL_DISABLED`. Send limits apply first — 10 per hour per client IP
+   otherwise it throws `EMAIL_DISABLED`. Send limits apply first — 30 per hour per client IP
    (IPv4 address / IPv6 /64) and, per target address, one per minute and 10 per hour,
-   `RATE_LIMIT_EXCEEDED` beyond
+   `RATE_LIMIT_EXCEEDED` with the wait beyond
    (`srv/util/mailSendLimits.ts`, see [docs/email-notifications](../email-notifications/README.md#send-limits)).
-   Only if the address is the **verified** address of an account (case-insensitive) is a 6-digit
+   Only if the address is the **verified** address of an account (case-insensitive) is an 8-digit
    login code (CSPRNG, 15 minutes, `srv/util/emailCodes.ts`) stored as a hash bound to the account
    and the address and mailed; for an unconfirmed or unknown address nothing is sent. The answer
    is the same in every case, and the mail is sent after the response. Someone whose address was
@@ -366,8 +441,8 @@ Passwordless email login:
    would let the address's owner confirm it for someone else's account. The login form says so
    next to the uniform answer.
 2. `POST /User/login` with `{ type: "verificationCode", email, code, device }` (60 attempts per 15
-   minutes per client IP; five guesses per code; failed guesses per address — 30 a day from the
-   client's network, 200 a day from all networks, reserved atomically like the password budgets)
+   minutes per client IP; five guesses per code; failed guesses per address — 10 an hour from the
+   client's network, 30 an hour from all networks, reserved atomically like the password budgets)
    checks the code against the address, deletes it in the same step (single use), and creates a
    device. A wrong code, an unknown or unconfirmed address, an expired code and a code whose five
    guesses are used up (it is deleted) all answer `VERIFY_EMAIL_INVALID_TOKEN`, so the answer
@@ -418,7 +493,7 @@ SIWE-based, verified against the on-chain Farcaster ID registry:
 | Wallet | `wallet` | `preparedCredential` (SIWE / chain signature) | Yes | `wallets` |
 | Passkey | `passkey` (`passkey-success` on a legacy CG ID process) | WebAuthn assertion, user verification required | Yes | `passkeys` |
 | Password | `password` | email/alias + password | Yes | `users` |
-| Email code | `verificationCode` | emailed 6-digit code, bound to the address | Yes | `users` / Valkey |
+| Email code | `verificationCode` | emailed 8-digit code, bound to the address | Yes | `users` / Valkey |
 | Twitter | `twitter` | Passport OAuth session | Yes | `user_accounts` |
 | LUKSO | `lukso` | on-chain signature + nonce | Yes | `user_accounts` |
 | Farcaster | `farcaster` | SIWE + on-chain FID registry | Yes | `user_accounts` |
@@ -435,8 +510,10 @@ verified *before* the account exists:
 
 1. `POST /User/requestSignupEmailCode { email, recaptchaToken }` (logged out only;
    `EMAIL_DISABLED` without mail) first checks the **sign-up captcha** (`CAPTCHA_FAILED`; skipped
-   in dev) — before any mail goes out — then applies the send limits (10/h per client IP, per
-   address one per minute and 5 per hour), stores a hash of a 6-digit code (CSPRNG) bound to the
+   in dev) — before any mail goes out; before that, the account limit of the client's network is
+   checked without counting (`peekLimits`, the longer wait of hour and day), so nobody fills in a whole sign-up only to be refused at
+   the end — then applies the send limits (40/h per client IP, per
+   address one per minute and 5 per hour), stores a hash of an 8-digit code (CSPRNG, uniform over 00000000–99999999) bound to the
    address in `session.signupEmail` (valid 15 minutes) together with `captchaAt`, and mails the
    code. A resend to the same address in the same session within 2 hours needs no new token. If
    the address already belongs to an account, no code is sent; the address receives a notice
@@ -444,7 +521,9 @@ verified *before* the account exists:
    as for a free address.
 2. `POST /User/verifySignupEmailCode { email, code }` checks code and address (5 wrong attempts per
    code, counted atomically in Redis per issued code) and marks the address verified for one
-   hour.
+   hour. A code that expired or whose guesses are spent is dropped, but the address and the solved
+   captcha stay in the session, so a new code needs no new captcha; the state of a taken address
+   (no code) answers the same way, also once expired.
 3. `createUser` without such a verified address fails with `EMAIL_VERIFICATION_REQUIRED`; with it,
    the account gets exactly that address with `emailVerified = true` (a `useEmailAndPassword.email`
    must match it), and its captcha counts — `recaptchaToken` is not needed (it is still checked on
@@ -524,13 +603,13 @@ a separate authenticated endpoint `POST /User/verifyCaptcha`
 (`srv/api/user.ts`) lets a logged-in user raise their `trustScore` to `1.0` by solving a
 captcha.
 
-Rate limiting: `createUser` is IP-rate-limited (`createUserRateLimiter`: 2 per /64 per 24 h outside
-dev); `verifyCaptcha` is limited to 3 per /64 per 24 h.
+Rate limiting: `createUser` is limited per client network (20 per hour and 50 per day per IPv4
+address / IPv6 /64, outside dev; [§4 "Limits"](#limits)); `verifyCaptcha` to 3 per /64 per 24 h.
 
 **Taken addresses.** On an instance that sends mail no endpoint tells whether an address has an
 account: sign-up, address changes and the email login answer the same either way (the owner gets
 a notice where it matters). `POST /User/isEmailAvailable` therefore only answers on an instance
-without mail (or in legacy CG ID mode), IP rate-limited (30/h per /64); elsewhere it is
+without mail (or in legacy CG ID mode), IP rate-limited (60/h per /64); elsewhere it is
 `NOT_SUPPORTED`.
 
 **Anti-bot.** New accounts on an instance with mail need the captcha (checked before the code is
@@ -752,12 +831,12 @@ per `(type, walletIdentifier)`; `loginEnabled` controls whether it can be used a
 
 Independent of any social account, an address can be confirmed for the account:
 
-- `POST /User/requestEmailVerification { email }` (logged in; mail required) mails a 6-digit code
+- `POST /User/requestEmailVerification { email }` (logged in; mail required) mails an 8-digit code
   (24 hours) bound to the session's account and to that address (`srv/util/emailCodes.ts`). The
   current address is untouched. Replacing a verified address needs a step-up; setting one while
   none is verified adds a way in (`requireAuthToAdd`, [§7](#step-up-for-sensitive-actions)).
   An address another account has gets a notice instead of a code, with the same answer. Send
-  limits: 10/h per client IP, 5/h per target address, 5/h per account
+  limits: 30/h per client IP, 5/h per target address, 5/h per account
   ([docs/email-notifications](../email-notifications/README.md#send-limits)). "Another account
   has it" means: has it **verified**. An account that holds the address unverified does not block
   its owner — confirming the address removes it from that account in the same transaction

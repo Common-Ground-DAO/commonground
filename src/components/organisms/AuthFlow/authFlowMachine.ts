@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import errors from "common/errors";
+import { formatRetryAfter } from "data/auth/authErrors";
 
 /**
  * Step machine of the login / sign-up flow (AuthFlow). Pure, so the
@@ -11,7 +12,7 @@ import errors from "common/errors";
  * Login is one form (`login`) with side steps for the email code, a wallet
  * and the "More" methods. Sign-up is
  *   signup-details (name, email; the captcha when the email code follows)
- *   → signup-verify (6-digit code; skipped without mail / on a legacy instance)
+ *   → signup-verify (8-digit code; skipped without mail / on a legacy instance)
  *   → signup-method ("How will you sign in?")
  *   → signup-password | signup-wallet (passkey runs from signup-method)
  * The captcha is solved exactly where the server checks it: with the email
@@ -74,7 +75,7 @@ export type AuthFlowEvent =
   | { type: 'DETAILS_SUBMITTED'; data: SignupData }
   | { type: 'EMAIL_VERIFIED' }
   | { type: 'CHOOSE_METHOD'; method: Exclude<SignupMethod, 'passkey'> }
-  | { type: 'SIGNUP_FAILED'; code: string }
+  | { type: 'SIGNUP_FAILED'; code: string; retryAfterSeconds?: number }
   | { type: 'ACCOUNT_CREATED' }
   | { type: 'LOGGED_IN'; offerPasskey: boolean }
   | { type: 'PASSKEY_OFFER_DONE' }
@@ -124,15 +125,23 @@ export function moreLoginMethods(config: AuthFlowConfig): MoreLoginMethod[] {
   return methods;
 }
 
+/** the account-creation limit per network: when, and what else works */
+export function accountLimitMessage(retryAfterSeconds?: number, now?: Date) {
+  const when = retryAfterSeconds !== undefined ? formatRetryAfter(retryAfterSeconds, now) : "a bit later";
+  return `Too many accounts were created from your network recently. You can create yours ${when}, `
+    + "or right away from another network (e.g. mobile data instead of Wi-Fi). Already have an account? Log in instead.";
+}
+
 /** What a failed createUser (or sign-up passkey) means for the flow */
-export function signupFailure(code: string): { step: AuthFlowStep | null; message: string } {
+export function signupFailure(code: string, retryAfterSeconds?: number, now?: Date): { step: AuthFlowStep | null; message: string } {
   switch (code) {
     case errors.server.CAPTCHA_FAILED:
       return { step: 'signup-details', message: "Please solve the captcha again." };
     case errors.server.EMAIL_VERIFICATION_REQUIRED:
       return { step: 'signup-details', message: "Please confirm your email address again." };
     case errors.server.RATE_LIMIT_EXCEEDED:
-      return { step: null, message: "You cannot create more accounts from this network right now. Please try again later." };
+      // the account-creation limit per network (or a sign-up passkey limit)
+      return { step: null, message: accountLimitMessage(retryAfterSeconds, now) };
     case errors.server.ALREADY_LOGGED_IN:
       return { step: null, message: "You are already signed in. Reload the page to continue." };
     case errors.server.EXISTS_ALREADY:
@@ -223,7 +232,7 @@ export function authFlowReducer(config: AuthFlowConfig) {
         return to(event.method === 'password' ? 'signup-password' : 'signup-wallet');
 
       case 'SIGNUP_FAILED': {
-        const failure = signupFailure(event.code);
+        const failure = signupFailure(event.code, event.retryAfterSeconds);
         let step = failure.step || state.step;
         let signup = state.signup;
         if (event.code === errors.server.CAPTCHA_FAILED && captchaAtCreateUser(config)) {

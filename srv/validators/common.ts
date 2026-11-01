@@ -5,6 +5,7 @@
 import Joi from "joi";
 import config from "../common/config";
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "../common/passwordPolicy";
+import { EMAIL_CODE_PATTERN, PROFILE_NAME_PATTERN } from "../common/authInputRules";
 
 // mirrored in src/common/util.ts, change in both places
 export const itemUrlRegex = /^[a-z0-9-]{3,50}$/i;
@@ -87,7 +88,8 @@ const common = {
   Emoji: Joi.string().regex(/[\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}\u{1F9B0}-\u{1F9B3}]/u),
   Tag,
   Tags,
-  CgProfileDisplayName:  Joi.string().regex(/^[a-z0-9_-]{3,30}$/i),
+  // the username rule, shared with the web app (src/common/authInputRules.ts)
+  CgProfileDisplayName:  Joi.string().regex(PROFILE_NAME_PATTERN),
   OnlineStatus: Joi.string().regex(/^online|away|dnd|invisible$/),
   ChainIdentifier: Joi.string().valid(...allowedChainIdentifiers),
   EIP712Signature: Joi.string(),
@@ -99,8 +101,8 @@ const common = {
   PasswordAttempt: Joi.string().min(1).max(PASSWORD_MAX_LENGTH),
   // the one-time token of a transfer link (srv/util/transferLink.ts)
   TransferToken: Joi.string().regex(/^[A-Za-z0-9_-]{43}$/),
-  // a 6-digit email code
-  EmailCode: Joi.string().regex(/^[0-9]{6}$/),
+  // an 8-digit email code (src/common/authInputRules.ts)
+  EmailCode: Joi.string().regex(EMAIL_CODE_PATTERN),
   // Signable login secrets. Two generations coexist: wsapi still issues
   // 20-char alphanumeric secrets (randomString), the call server issues
   // 64-char hex secrets (realRandomHexString(32)) since the mediasoup

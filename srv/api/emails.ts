@@ -152,7 +152,7 @@ class EmailUtils {
     }
 
     /**
-     * Confirms an address for an existing account: the 6-digit code, plus a
+     * Confirms an address for an existing account: the 8-digit code, plus a
      * link that confirms it when opened while signed in to that account.
      */
     public async sendVerificationEmail(to: string, code: string) {
@@ -172,7 +172,7 @@ class EmailUtils {
         await this.sendEmail({ to, subject, text, html: htmlTemplate });
     }
 
-    /** Email login: the 6-digit one-time code. */
+    /** Email login: the 8-digit one-time code. */
     public async sendOneTimePasswordEmail(to: string, code: string) {
         const subject = 'Your Common Ground login code';
         const html = `
@@ -232,7 +232,7 @@ class EmailUtils {
         await this.sendEmail({ to, subject, text, html: htmlTemplate });
     }
 
-    /** Sign-up: the 6-digit code that proves the address before the account exists. */
+    /** Sign-up: the 8-digit code that proves the address before the account exists. */
     public async sendSignupCodeEmail(to: string, code: string) {
         const subject = 'Your Common Ground sign-up code';
         const html = `

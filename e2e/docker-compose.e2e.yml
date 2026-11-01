@@ -9,7 +9,7 @@
 #   - own image tags (cg-e2e/*), built from the checkout by instance.sh build —
 #     the shared cryptogram/* images are never used or retagged
 #   - the edge maps a per-browser cookie to X-Forwarded-For, so the
-#     backend's per-address limits (2 sign-ups per address and day) see
+#     backend's per-address limits (e.g. sign-ups per network) see
 #     each browser context as its own client (Caddyfile.e2e)
 #   - nothing is published on the host: the suite's browser runs in a
 #     container on this stack's network and reaches the edge by its domain
@@ -59,6 +59,10 @@ services:
   api:
     image: ${E2E_IMAGE_PREFIX:-cg-e2e}/backend
     build: !reset null
+    environment:
+      # test hook: lowers single auth limits to show their messages
+      # (srv/util/authLimits.ts), e.g. E2E_AUTH_LIMITS='{"createUser.hour":1}'
+      - CG_TEST_AUTH_LIMITS=${E2E_AUTH_LIMITS:-}
     volumes: !override
       - ../e2e/.instance/vapid_keys.json:/run/secrets/vapid_keys_json:ro
       - ./api_data:/api_data:ro

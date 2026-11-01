@@ -39,6 +39,8 @@ type Props = {
   autoComplete?: string;
   name?: string;
   pattern?: string;
+  /** keyboard hint for touch devices, e.g. "numeric" for codes */
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
   backgroundColor?: string;
 
   showEmojiButton?: boolean;
@@ -77,6 +79,7 @@ export default function TextInputField(props: Props) {
     autoFocus,
     name,
     pattern,
+    inputMode,
     backgroundColor,
     showEmojiButton,
     currentEmoji,
@@ -136,6 +139,7 @@ export default function TextInputField(props: Props) {
           tabIndex={tabIndex}
           maxLength={maxLetters}
           autoComplete={autoComplete}
+          inputMode={inputMode}
           name={name}
           style={style}
         />

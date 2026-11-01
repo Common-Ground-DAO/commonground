@@ -4,6 +4,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import errors from 'common/errors';
+import { rateLimitMessage } from 'data/auth/authErrors';
 import loginManager from 'data/appstate/login';
 import userApi from 'data/api/user';
 import stepUpManager from 'data/auth/stepUp';
@@ -100,7 +101,7 @@ async function loginWithAssertion(
             return { status: 'error', message: UNKNOWN_CREDENTIAL_MESSAGE, code };
         }
         if (code === errors.server.RATE_LIMIT_EXCEEDED) {
-            return { status: 'error', message: "Too many attempts. Please wait a few minutes and try again.", code };
+            return { status: 'error', message: rateLimitMessage(e), code };
         }
         return { status: 'error', message: "Signing in with this passkey didn't work. Please try again.", code };
     }

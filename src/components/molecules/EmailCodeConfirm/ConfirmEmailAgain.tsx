@@ -2,28 +2,13 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import Button from 'components/atoms/Button/Button';
 import userApi from 'data/api/user';
-import { securityActionErrorMessage } from 'data/auth/authErrors';
+import { isRateLimited, rateLimitMessage, securityActionErrorMessage } from 'data/auth/authErrors';
+import { retryAfterSecondsOf } from 'data/api/apiError';
+import { cooldownLabel, useCooldown } from 'hooks/useCooldown';
 import EmailCodeConfirm from './EmailCodeConfirm';
-
-/** seconds before the next confirmation mail may be asked for */
-export const RESEND_COOLDOWN_SECONDS = 60;
-
-/** A countdown in seconds; `start()` restarts it. */
-export function useCooldown(seconds = RESEND_COOLDOWN_SECONDS) {
-  const [left, setLeft] = useState(0);
-  useEffect(() => {
-    if (left <= 0) {
-      return;
-    }
-    const timer = setTimeout(() => setLeft(value => value - 1), 1000);
-    return () => clearTimeout(timer);
-  }, [left]);
-  const start = useCallback(() => setLeft(seconds), [seconds]);
-  return { left, start };
-}
 
 type Props = {
   /** the account's current, unconfirmed address */
@@ -38,7 +23,7 @@ type Props = {
  * (docs/auth-identity §8).
  */
 const ConfirmEmailAgain: React.FC<Props> = ({ email, onConfirmed }) => {
-  const { left, start } = useCooldown();
+  const { left, start } = useCooldown(undefined, `verify:${email.toLowerCase()}`);
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -52,12 +37,17 @@ const ConfirmEmailAgain: React.FC<Props> = ({ email, onConfirmed }) => {
       start();
     }
     catch (e) {
-      setError(securityActionErrorMessage(e, "The confirmation could not be sent. Please try again later.") ?? undefined);
+      if (isRateLimited(e)) {
+        start(retryAfterSecondsOf(e));
+      }
+      setError((isRateLimited(e) && sent
+        ? rateLimitMessage(e, { what: "We can't send another confirmation right now.", alternative: "Use the code from the last email (check your spam folder)." })
+        : securityActionErrorMessage(e, "The confirmation could not be sent. Please try again later.")) ?? undefined);
     }
     finally {
       setLoading(false);
     }
-  }, [email, start]);
+  }, [email, sent, start]);
 
   return (
     <div className='flex flex-col gap-2 w-full'>
@@ -67,7 +57,7 @@ const ConfirmEmailAgain: React.FC<Props> = ({ email, onConfirmed }) => {
       <Button
         className='w-full'
         role='secondary'
-        text={left > 0 ? `Send confirmation again (${left} s)` : 'Send confirmation again'}
+        text={cooldownLabel('Send confirmation again', left)}
         onClick={send}
         loading={loading}
         disabled={loading || left > 0}

@@ -4,7 +4,9 @@
 > connection handling (startup, ended-call check, authentication flow) against
 > commit e44dac1, 2026-10-31; Redis/Valkey instances, clients, key prefixes and
 > outage behaviour against commit ff0da06, 2026-10-31; the `MEDIASOUP_TRUST_PROXY`
-> note (Caddy in front of 4443 in dev too) against commit fe3937f, 2026-10-31
+> note (Caddy in front of 4443 in dev too) against commit fe3937f, 2026-10-31;
+> the browser-socket session room (cookie optional), `watchCgIdRequest` and `sess-revoked:`
+> against commit eab2a27, 2026-11-01
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -73,7 +75,7 @@ It listens on **port 4000**.
 
 There are **two mutually exclusive connection paths**, distinguished at handshake time:
 
-1. **Browser / device clients** (cookie-based). No `handshake.auth.token` is provided. On connection, the server parses the session cookie (`SESSION_COOKIE_NAME`, default `connect.sid`) via signed-cookie parsing to extract the Express session ID and joins the `expressSession:{sessionId}` room. If no cookie is present, the socket is immediately disconnected. These sockets stay unauthenticated until they complete the `login` event flow (device-signature challenge, see below).
+1. **Browser / device clients** (cookie-based). No `handshake.auth.token` is provided. On connection, the server parses the session cookie (`SESSION_COOKIE_NAME`, default `connect.sid`) via signed-cookie parsing to extract the Express session ID and joins the `expressSession:{sessionId}` room. Without a validly signed session cookie the socket stays connected and joins no session room — anonymous visitors have no session until something is stored in one. These sockets stay unauthenticated until they complete the `login` event flow (device-signature challenge, see below).
 
 2. **Bot clients** (token-based). A Socket.IO middleware (`io.use`) inspects `handshake.auth.token`. If a token is present it must be a non-empty string **and no cookie header may be set**; the middleware also requires `handshake.auth.protocolVersion === BOT_PROTOCOL_VERSION` (`"1"`). The token is verified by `botTokenHelper.authenticate`; on success the socket is joined to its user/device/role/community rooms plus a `botToken:{tokenId}` room during the handshake, before `connection` fires. See [Bot Socket Connections](#bot-socket-connections). If the token is absent, the middleware falls through to the cookie path.
 
@@ -105,11 +107,12 @@ Sockets are organized into rooms based on identity and membership. Room key func
 | `communityRoomKey(communityId)` | `community:{communityId}` | Broadcast to all members of a community |
 | `roleRoomKey(roleId)` | `role:{roleId}` | Target users with a specific role |
 | `deviceRoomKey(deviceId)` | `device:{deviceId}` | Target a specific device |
-| `expressSessionRoomKey(sessionId)` | `expressSession:{sessionId}` | Target a specific browser session |
+| `expressSessionRoomKey(sessionId)` | `expressSession:{sessionId}` | Target a specific browser session (only the legacy CG ID result still uses it, for clients that predate `watchCgIdRequest`) |
+| `cgIdRequestRoomKey(frontendRequestId)` | `cgIdRequest:{frontendRequestId}` | Legacy CG ID: the socket that watches a CG ID popup request (`watchCgIdRequest`) |
 | `articleRoomKey(articleId)` | `article:{articleId}` | Target viewers of a specific article |
 | `botTokenRoomKey(tokenId)` | `botToken:{tokenId}` | Target all sockets authenticated with a specific bot token |
 
-For browser clients, the socket immediately joins its `expressSession:{sessionId}` room on connection. On `login`, it joins `user:`, `device:`, all `role:`, and all `community:` rooms for that user (via `joinAuthenticatedRooms`). For bot clients the same room set (minus `expressSession:`, plus `botToken:`) is joined inside the handshake middleware, before the `connection` event.
+For browser clients with a session cookie, the socket immediately joins its `expressSession:{sessionId}` room on connection. On `login`, it joins `user:`, `device:`, all `role:`, and all `community:` rooms for that user (via `joinAuthenticatedRooms`). For bot clients the same room set (minus `expressSession:`, plus `botToken:`) is joined inside the handshake middleware, before the `connection` event.
 
 ### Client-to-Server Events
 
@@ -120,6 +123,7 @@ For browser clients, the socket immediately joins its `expressSession:{sessionId
 | `login` | `{ deviceId, secret, base64Signature }` | `("OK" \| "ERROR")` | Authenticates the socket. Verifies the device signature against the signable secret. On success, joins user/device/role/community rooms and sets user online status |
 | `logout` | none | none | Leaves all rooms except the temporary community visitor room. Sets user offline if this was the last socket |
 | `joinCommunityVisitorRoom` | `{ communityId }` | none | Joins the community room temporarily so a non-member viewing a public community receives its live events. Validated with Joi. Leaves the previous visitor room first (unless the user is a member of it) |
+| `watchCgIdRequest` | `{ frontendRequestId }` | none | Legacy CG ID: joins `cgIdRequest:{frontendRequestId}` so the popup's result (`cliCgIdSignResponse`) reaches this socket; one request per socket (the previous one is left). Validated with Joi. The client re-sends it after a reconnect |
 | `leaveCommunityVisitorRoom` | none | none | Leaves the temporary community visitor room (only if the user is not a member) |
 | `prepareWalletRequest` | none | `(requestId: string)` | Generates a random wallet request ID for Web3 auth flows |
 
@@ -703,7 +707,7 @@ The backend talks to **two Valkey instances** (Redis-protocol compatible; compos
 
 | Client type | Instance | Key prefixes | Purpose |
 |---|---|---|---|
-| `session` | state (`REDIS_URL`, default `redis://redis:6379`) | `sess:` | Express session storage (connect-redis) |
+| `session` | state (`REDIS_URL`, default `redis://redis:6379`) | `sess:`, `sess-revoked:` | Express session storage (connect-redis); ids of destroyed/replaced sessions (1 h, [auth-identity §2](../auth-identity/README.md#when-a-session-exists)) |
 | `socketIOPub`, `socketIOSub` | state | `v2:` (pub/sub channels only, no keys) | Socket.IO adapter and emitter |
 | `data` | state | `ud:`, `us:`, `online-user-addresses`, `ratelimit:`, `bot-ratelimit:`, `bot-presence:`, `captcha:`, `pluginRequest:`, `tmp:` | User online status, rate limiting, captcha key + replay guards, plugin replay keys, bot presence leases |
 | `cache` | cache (`REDIS_CACHE_URL`, default `redis://redis-cache:6379`) | `urlpreview:` | URL-preview cache |

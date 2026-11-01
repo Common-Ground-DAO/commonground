@@ -280,12 +280,16 @@ and a browser pass on the test VM:
   added in a transfer session are full methods, notices to the verified address
   are the safeguard (decision 18). Anti-bot: nothing beyond G4's verified
   address and captcha. docs/auth-identity §5, §8, §11.)
-- [ ] **G11 Session cookie on expired sessions.** When the session has expired
+- [x] **G11 Session cookie on expired sessions.** When the session has expired
   at page load, parallel requests mint new anonymous sessions whose cookies can
   overwrite the one the automatic device login just set (the e2e reload flow's
   `cookie-cleared`/`session-expired` modes show it). Anonymous requests should
   not create sessions (`saveUninitialized: false` or equivalent), verified with
-  the e2e reload flow.
+  the e2e reload flow (done 2026-11-01: `saveUninitialized: false`, cookies
+  rolled only for logged-in sessions, revoked session ids after logout and
+  re-login are never written back or re-sent, the legacy CG ID popup result
+  goes to a per-request socket room instead of the session room; e2e reload
+  flow 0/40 failures, before 6/40.)
 - [x] **G4 Passkeys on the main origin + new account-creation UI.** (done
   2026-10-31: passkeys bound to their RP (`rpId` per row; `id.app.cg` rows are
   gateway-only), one login form with passkey autofill, sign-up with the email

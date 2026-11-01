@@ -3,19 +3,22 @@
 #
 # Layered on top of docker-compose.selfhost.yml with its own project name and
 # env file, so its volumes and network never touch a real deployment on the
-# same host. No TLS edge: caddy is parked behind an unused profile and nginx
-# is published directly on loopback — the suite talks plain HTTP. The protoo
-# (calls signaling) port is published separately because caddy normally
-# terminates TLS for it.
+# same host. No TLS: caddy serves the self-host routing as plain HTTP for any
+# host name (docker/caddy/Caddyfile.conformance), published on loopback only —
+# the suite talks plain HTTP. Call signalling is not routed through caddy
+# here (docker-compose.selfhost.calls.yml is not layered on); the protoo port
+# is published from mediasoup directly.
 services:
   caddy:
-    profiles: ["edge"]
-  cg-builder:
-    # API-only instance: no frontend build; the cryptogram volume stays empty
-    profiles: ["edge"]
-  nginx:
-    ports:
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile.conformance", "--adapter", "caddyfile"]
+    # test-only config, not part of the image
+    volumes:
+      - ./caddy/Caddyfile.conformance:/etc/caddy/Caddyfile.conformance:ro
+    ports: !override
       - "127.0.0.1:${CONFORMANCE_HTTP_PORT:-18080}:80"
+  cg-builder:
+    # API-only instance: no frontend build
+    profiles: ["edge"]
   seaweed:
     volumes: !override
       - seaweedfs-data:/data
@@ -28,6 +31,9 @@ services:
     # published on its real 4443.
     environment:
       - DOMAIN=127.0.0.1
+      # 4443 is published directly here, not behind caddy: the socket
+      # address is the client
+      - MEDIASOUP_TRUST_PROXY=false
     ports: !override
       # signaling-only: protoo WSS, no RTC media port range on the host.
       # Published on a non-default host port so it coexists with a live

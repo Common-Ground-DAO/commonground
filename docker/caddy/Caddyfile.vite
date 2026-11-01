@@ -1,0 +1,35 @@
+# TLS in front of the Vite dev server for `./run.sh start_https`
+# (docker-compose.yml, service vite-tls). Vite itself serves plain HTTP inside
+# the stack network; this Caddy terminates TLS on :3000 with a certificate
+# from the dev stack's local CA (the caddy-data volume is shared with the
+# caddy service, so it is the same root — ./run.sh export_ca).
+#
+# The browser still sees port 3000, which the service-worker registration
+# manager relies on (src/data/appstate/serviceWorker.ts), and Vite's HMR
+# websocket goes through the same proxy. Names and the default certificate as
+# in Caddyfile.dev.
+{
+	local_certs
+	skip_install_trust
+	auto_https disable_redirects
+	default_sni {$CG_DEV_DEFAULT_SNI:127.0.0.1}
+}
+
+# `run.sh start_https` runs the dev server as a cg-builder container with the
+# service's network alias
+(vite) {
+	reverse_proxy cg-builder:3000
+}
+
+https://localhost:3000, https://127.0.0.1:3000, https://app.cg.local:3000, https://bs-local.com:3000 {
+	import vite
+}
+
+(dev_lan) {
+}
+(dev_lan_on) {
+	https://{$CG_DEV_LAN_IP}:3000 {
+		import vite
+	}
+}
+import dev_lan{$CG_DEV_LAN}

@@ -7,7 +7,7 @@
  * UploadType). Profile/community image types wire themselves up server-side;
  * message attachments take the returned ids. `POST /File/getSignedUrls`
  * presigns S3 GETs, rewritten to the clean `/files/<id>/<sig>/<date>/<ttl>`
- * path nginx resolves — the signature lives in the path, so downloads need
+ * path the edge resolves — the signature lives in the path, so downloads need
  * no auth headers.
  */
 

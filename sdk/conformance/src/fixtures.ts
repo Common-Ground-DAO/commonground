@@ -7,12 +7,14 @@
  * rate-limited to death. Set CG_LIVE_MUTATIONS=1 to run them elsewhere.
  *
  * Rate limits (srv/util/rateLimit.ts) key on the FIRST X-Forwarded-For
- * entry, and the selfhost nginx *appends* the peer address to a
- * client-supplied XFF — so against the disposable instance each fixture
+ * entry, and the disposable instance's Caddy edge
+ * (docker/caddy/Caddyfile.conformance) keeps a client-supplied XFF from
+ * private addresses and appends the peer address — so against it each fixture
  * client claims a unique address and registration limits (2/24h per /64,
- * srv/api/user.ts createUserRateLimiter) never collide across runs. This
- * only works because there is no sanitizing edge (caddy) in front; the
- * behavior itself is recorded in the findings log.
+ * srv/api/user.ts createUserRateLimiter) never collide across runs. A real
+ * instance's edge (Caddyfile.selfhost) replaces client XFF, so this only
+ * works against the disposable instance; the behavior itself is recorded in
+ * the findings log.
  */
 
 import { randomBytes, randomInt } from "node:crypto";

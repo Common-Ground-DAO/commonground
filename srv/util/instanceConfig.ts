@@ -11,12 +11,13 @@ import { isConfiguredSecret } from "./configuredSecret";
 import { parseMailConfig } from "./mailConfig";
 import { getProcessRpIdOrNull, isLegacyCgidMode } from "./passkeyConfig";
 
-// Builds the <script> tag that declares this instance's identity to the
-// frontend (window.__CG_INSTANCE__). Injected into every index.html the
-// backend serves (share links / social previews); the nginx image performs
-// the same injection for statically served copies
-// (docker/nginx/inject-instance-config.sh). See src/common/instance.ts for
-// how the frontend consumes it.
+// Builds this instance's identity for the frontend (window.__CG_INSTANCE__)
+// and for GET /api/v2/Instance/config. The web app normally gets it from
+// /instance-config.js, which the Caddy edge renders from the same settings
+// (docker/caddy/instance-config.js — keep the rules in sync); the inline
+// <script> tag below is only the fallback for an HTML shell that does not
+// load that script (srv/api/getRoutes.ts). See src/common/instance.ts for how
+// the frontend consumes it.
 
 export function buildInstanceConfig(): InstanceConfig {
   const legacyCgid = isLegacyCgidMode();

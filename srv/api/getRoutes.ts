@@ -48,8 +48,12 @@ const getRoutesRouter = express.Router();
 let indexhtml: string = '';
 try {
   indexhtml = readFileSync("/dist/index.html").toString();
-  // declare this instance's identity to the frontend (see src/common/instance.ts)
-  if (!indexhtml.includes('__CG_INSTANCE__')) {
+  // declare this instance's identity to the frontend (see src/common/instance.ts).
+  // The shell normally loads it as /instance-config.js from the edge
+  // (docker/caddy), like every page Caddy serves itself; an inline copy here
+  // would be blocked by the edge's CSP. Only a shell without that script tag
+  // gets the inline fallback.
+  if (!indexhtml.includes('__CG_INSTANCE__') && !indexhtml.includes('src="/instance-config.js"')) {
     indexhtml = indexhtml.replace('<head>', `<head>${instanceConfigScriptTag()}`);
   }
 } catch (e) {

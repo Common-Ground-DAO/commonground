@@ -19,8 +19,8 @@
 # An existing docker/.env or s3.json is never modified.
 #
 # Called by run.sh, docker/build.sh, docker/updateBackend.sh,
-# docker/updateFrontend.sh, the tools/*.sh migration/test scripts and
-# docker/nginx/certs/recreate_server_certs.sh. Safe to run any number of times.
+# docker/updateFrontend.sh and the tools/*.sh migration/test scripts. Safe to
+# run any number of times.
 set -euo pipefail
 
 # the calling script exports this marker after the first run, so the scripts

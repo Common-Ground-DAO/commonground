@@ -24,7 +24,7 @@ export interface HttpTransportOptions {
   /** Extra headers sent on every request (e.g. bot `authorization`). */
   headers?: Record<string, string>;
   /** Route base under the origin. Default "/api/v2"; bot clients use
-   * "/api/bot/v1" (nginx rewrites it to the /BotV1 router). */
+   * "/api/bot/v1" (the edge rewrites it to the /BotV1 router). */
   apiBasePath?: string;
   /** When false, never attach the cookie jar (bot bearer auth forbids
    * co-sending a cookie). Default true. */

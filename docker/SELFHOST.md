@@ -37,10 +37,11 @@ public DNS, see [Local test instance](#local-test-instance-no-public-dns).
   stack used ~4.4 GB, `onchain` alone ~2 GB) — so `selfhost.sh update`, which
   builds before restarting, fails there. Add swap (e.g. 4 GB) or stop the
   stack before building (`selfhost.sh down`, then `build` and `up`).
-- A domain with two DNS records pointing at the server:
-  - `chat.example.org` — the app itself
-  - `id.chat.example.org` — the CG ID passkey app (**must** be a separate
-    origin; passkeys are scoped to it)
+- A domain with a DNS record pointing at the server, e.g. `chat.example.org`.
+  Passkeys are bound to that host; no second (`id.`) domain is needed. (An
+  `.env.selfhost` from before 2026-10-31 still carries `CG_ID_DOMAIN`; it is
+  ignored unless the instance runs as the legacy CG ID gateway, and its DNS
+  record can go.)
 - For email (login codes, verification, notifications) either outbound
   **port 25** for the built-in mail relay plus a few DNS records, or an
   external SMTP server — see [Email](#email).
@@ -54,7 +55,7 @@ cd commonground/docker
 # 1. Generate secrets, S3 config and internal certs
 ./selfhost/init.sh chat.example.org admin@example.org
 
-# 2. Build everything (frontend, backend, nginx, db) — ~15-20 min
+# 2. Build everything (frontend, backend, caddy, db) — ~15-20 min
 ./selfhost/selfhost.sh build
 
 # 3. Start
@@ -79,11 +80,11 @@ Operating:
 
 Let's Encrypt can only issue certificates for names that resolve publicly to
 your server. For a test instance on a LAN or a local VM — e.g. to exercise
-passkey login on the CG ID origin, uploads and calls in a real browser — let
+passkey login, uploads and calls in a real browser — let
 Caddy issue every certificate from its own local CA instead:
 
 ```bash
-./selfhost/init.sh --tls-internal cg.test - id.cg.test 192.168.122.44
+./selfhost/init.sh --tls-internal cg.test - - 192.168.122.44
 ./selfhost/selfhost.sh build
 ./selfhost/selfhost.sh up
 ```
@@ -94,7 +95,8 @@ Caddy issue every certificate from its own local CA instead:
   `./selfhost/selfhost.sh up`, which recreates the `caddy` container.
   Switching back to `acme` also needs a real `CG_ACME_EMAIL`; with an empty
   one Caddy refuses its config and keeps restarting.
-- `-` stands in for the ACME email, which this mode does not use.
+- The first `-` stands in for the ACME email, which this mode does not use;
+  the second for the CG ID domain (only for the legacy CG ID gateway).
 - The fourth argument (the IP) is **required** here: it becomes
   `MEDIASOUP_ANNOUNCED_IP`, the address browsers send call media to, so it must
   be the address they reach the machine at — its LAN IP, not the public IP
@@ -111,7 +113,7 @@ hosts file (`/etc/hosts` on Linux/macOS,
 `C:\Windows\System32\drivers\etc\hosts` on Windows):
 
 ```
-192.168.122.44  cg.test id.cg.test
+192.168.122.44  cg.test
 ```
 
 ### Trusting Caddy's root certificate
@@ -180,15 +182,16 @@ instead, but would need them mounted into the container on every install.
 
 Historically the frontend decided "am I prod?" by matching against
 `app.cg` — any other domain silently ran in dev mode. Self-hosted instances
-instead declare their identity at serve time: nginx (and the API server, for
-share links) injects
+instead declare their identity at serve time: Caddy serves
+`/instance-config.js`, rendered from `.env.selfhost` settings,
 
-```html
-<script>window.__CG_INSTANCE__ = {"deployment":"prod","appUrl":"https://chat.example.org",...}</script>
+```js
+window.__CG_INSTANCE__ = {"deployment":"prod","appUrl":"https://chat.example.org",...};
 ```
 
-into `index.html`. See `src/common/instance.ts`. This means the same build
-artifacts work for any domain — the domain is configuration, not code.
+and every page of the app loads it. See `src/common/instance.ts`. This means
+the same build artifacts — and the same Caddy image — work for any domain:
+the domain is configuration, not code.
 
 ## Optional integrations
 
@@ -213,11 +216,13 @@ honest message instead of breaking.
 Two of the backend services can be left out of the deployment entirely. Set
 either switch to `false` in `.env.selfhost` and run `./selfhost/selfhost.sh up`
 — the wrapper turns them into Docker Compose profiles, so the container is
-never created (and `up` removes it if it was running before).
+never created, and `up` (also as part of `update`) stops and removes it if it
+was running before (`compose rm -sf`; switching a profile off is not enough
+for Compose to remove a container). Running `up` again changes nothing.
 
 | Switch | Off means | What still works |
 |---|---|---|
-| `CG_ENABLE_CALLS=false` | no `mediasoup` container | everything except voice/video calls. The call UI is hidden through the instance config — the sidebar start-call button and call list, and in the events UI the Group Call / Broadcast event types and the "Start Event" / "Join now" buttons (events themselves stay, as external-link events). Nobody is offered a call that cannot happen. Ports 4443/tcp and 40000–40099/udp+tcp are then unused. |
+| `CG_ENABLE_CALLS=false` | no `mediasoup` container | everything except voice/video calls. The call UI is hidden through the instance config — the sidebar start-call button and call list, and in the events UI the Group Call / Broadcast event types and the "Start Event" / "Join now" buttons (events themselves stay, as external-link events). Nobody is offered a call that cannot happen. On a running instance, `up` removes the `mediasoup` container and Caddy's `:4443` site, so ports 4443/tcp and 40000–40099/udp+tcp are no longer published. |
 | `CG_ENABLE_BLOCKCHAIN=false` | no `onchain` container | wallet login (EVM/SIWE), communities, messaging, events, bots, premium/Spark balances that already exist. |
 
 Both default to `true`; leaving them out of `.env.selfhost` keeps the full
@@ -534,6 +539,26 @@ setting is commented there). Raise `shared_buffers` and
 > `./selfhost/selfhost.sh up` — it runs with `--remove-orphans` and cleans up
 > the three old containers. Everyone is logged out once.
 
+> **Upgrading from a release that ran nginx behind Caddy**: Caddy is now the whole edge (image `cryptogram/caddy-selfhost`,
+> built by `build`); the `nginx` service is gone. The **first**
+> `./selfhost/selfhost.sh update` onto this release still runs the complete
+> frontend build (a few minutes) and then stops with an error
+> (`no such service: nginx`; the running containers are untouched): the
+> script that ran it is the old one, still trying to build the old image. Finish the update with the freshly pulled script:
+>
+> ```bash
+> ./selfhost/selfhost.sh build
+> ./selfhost/selfhost.sh up
+> ```
+>
+> `up` runs with `--remove-orphans`, which removes the old `nginx` container;
+> `caddy` is recreated from the new image and keeps its `caddy-data` volume,
+> so certificates (and a local test CA) carry over. From this release on,
+> `update` continues in the pulled script, so later changes to the build
+> steps no longer trip it. A `CG_ID_DOMAIN` from an older `init.sh` is now
+> ignored unless the instance is the legacy CG ID gateway (`up` says so);
+> its DNS record can go. Port 4443 is published only while calls are enabled.
+
 > **SeaweedFS image is pinned** by version and digest (the exact tag is in
 > `docker/docker-compose.selfhost.yml`; every pulled image is pinned, see
 > `docs/infrastructure/UPDATE-POLICY.md`) since 2026-08-02; releases before
@@ -708,7 +733,7 @@ instance keeps nothing on disk.
 | Port | Protocol | Purpose |
 |---|---|---|
 | 80 | tcp | HTTP → HTTPS redirect, ACME |
-| 443 | tcp+udp | app + CG ID (HTTPS/HTTP3) |
+| 443 | tcp+udp | app (HTTPS/HTTP3) |
 | 4443 | tcp | call signalling (wss) — only with `CG_ENABLE_CALLS=true` |
 | 40000–40099 | udp+tcp | WebRTC media (voice/video); TCP is the fallback for clients whose network blocks UDP — only with `CG_ENABLE_CALLS=true` |
 

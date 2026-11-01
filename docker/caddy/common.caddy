@@ -1,0 +1,370 @@
+# Snippets shared by Caddyfile.dev, Caddyfile.selfhost and
+# Caddyfile.conformance (the latter is bind-mounted by the conformance stack): everything the app's origin serves, in one place
+# (docs/infrastructure/README.md, "Caddy (the edge)").
+#
+# Forwarded headers: Caddy sets X-Forwarded-For (the client's address),
+# X-Forwarded-Host and X-Forwarded-Proto itself and replaces whatever a client
+# sent, because no `trusted_proxies` are configured — keep it that way unless a
+# CDN or another proxy is put in front (then trust only its ranges). The
+# backend runs with `trust proxy` and keys its rate limits on X-Forwarded-For.
+
+# Content-Security-Policy of the app's own pages and API responses.
+#   args[0]  connect-src sources besides 'self' for the instance's own host
+#            (other ports: call signalling on :4443; dev: http/ws variants)
+#   args[1]  frame-src (plugins and embeds come from arbitrary origins)
+# The one inline script of the HTML shell (the initial dark-mode switch in
+# index.html) is allowed by its hash; tools/checkHtmlRewriteCompat.mjs fails
+# the build when the shell's inline scripts no longer match the hashes here.
+# The instance config is a same-origin script (/instance-config.js), so there
+# is no 'unsafe-inline' for scripts.
+(cg_csp) {
+	header >Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; frame-src {args[1]}; worker-src 'self' blob: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://use.typekit.net; font-src 'self' https://fonts.gstatic.com https://use.typekit.net; img-src 'self' data: blob: https://api.web3modal.org https://ipfs.io https://media0.giphy.com https://media1.giphy.com https://media2.giphy.com https://media3.giphy.com https://media4.giphy.com; connect-src 'self' {args[0]} wss://www.walletlink.org wss://relay.walletconnect.org https://rpc.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://pulse.walletconnect.org https://api.web3modal.org https://cloudflare-eth.com https://*.drpc.org https://www.google.com https://api.giphy.com https://pingback.giphy.com https://developer-access-mainnet.base.org https://rpc.gnosischain.com https://relay.farcaster.xyz https://mainnet.optimism.io https://*.g.alchemy.com https://*.publicnode.com https://polygon-rpc.com https://arb1.arbitrum.io https://rpc.ankr.com https://api.avax.network https://mainnet.era.zksync.io https://mainnet.base.org https://rpc.mainnet.lukso.network; script-src 'self' 'wasm-unsafe-eval'; script-src-elem 'self' 'sha256-Uwjxj04GODhoKtvk/zj5F9Guxj3iVbBsuC5gsVazr5s=' https://www.google.com https://www.gstatic.com"
+}
+
+# Headers on every response of a site. Deferred (applied after the handler
+# or upstream has written its headers), so an upstream value never wins.
+# Permissions-Policy: passkey ceremonies only in this origin's own documents,
+# never in a framed page. Camera, microphone and display capture keep the
+# browser default, because the plugin host delegates them to plugin frames
+# that were granted them (IframePluginPortal's `allow`).
+(cg_common_headers) {
+	header {
+		defer
+		-Server
+		-Via
+		-X-Powered-By
+		X-Frame-Options DENY
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "publickey-credentials-get=(self), publickey-credentials-create=(self), geolocation=(), payment=()"
+	}
+}
+
+# Access log to stdout without secrets: the token/email query values of email
+# verification, login and unsubscribe links and the signature of /files/
+# URLs are redacted, and the Referer header (which repeats such URLs) is
+# dropped. Cookie and Authorization are redacted by Caddy itself.
+(cg_access_log) {
+	log {
+		output stdout
+		format filter {
+			request>uri multi_regexp {
+				regexp "([?&](?:token|email)=)[^&]*" "${1}REDACTED"
+				regexp "^(/files/[0-9a-f]+/)[^/]+/" "${1}REDACTED/"
+			}
+			request>headers>Referer delete
+		}
+	}
+}
+
+# HSTS without includeSubDomains or preload (the instance vouches only for its
+# own host), only on HTTPS responses; self-host sites only — on localhost it
+# would break the plain-HTTP dev ports. args[0] names the matcher, so the
+# snippet can be imported again inside handle_errors.
+(cg_hsts_on) {
+	@https_{args[0]} protocol https
+	header @https_{args[0]} >Strict-Transport-Security "max-age=31536000"
+}
+(cg_hsts_off) {
+}
+
+# /instance-config.js: declares this instance to the frontend
+# (window.__CG_INSTANCE__, src/common/instance.ts). Rendered per request from
+# the container environment by the template in templates/instance-config.js;
+# the JSON is produced by Go's encoder, never by string templating.
+(cg_instance_config) {
+	handle /instance-config.js {
+		root * /etc/caddy/templates
+		header Cache-Control "no-cache"
+		templates {
+			mime text/javascript
+		}
+		file_server
+	}
+}
+
+# X-Forwarded-Proto sent to the backend. "https" always claims HTTPS: the
+# self-host edge serves plain HTTP only to redirect to HTTPS (and in the
+# loopback-only conformance stack), and the backend sets its secure session
+# cookie only for HTTPS requests. "auto" passes the scheme of the request.
+(cg_xfp_https) {
+	header_up X-Forwarded-Proto https
+}
+(cg_xfp_auto) {
+}
+
+# The legacy CG ID mini-app on the app's origin (args[3] of cg_app):
+#   off       no CG ID: /api/v2/CgId/ is not routed, the mini-app's shell is
+#             refused (a normal instance)
+#   on        the CG ID API is routed for the mini-app on its own vhost
+#             (Caddyfile.selfhost, legacy CG ID gateway only); its shell is
+#             still refused here
+#   samehost  dev stack: API routed and the shell served on this origin at
+#             /index_cgid.html (CGID_URL in docker-compose.yml)
+# args: [0] X-Forwarded-Proto mode, [1] connect-src, [2] frame-src
+(cg_cgid_api) {
+	@cgidapi path_regexp ^/api/v2/CgId/
+	handle @cgidapi {
+		import cg_csp {args[1]} {args[2]}
+		header ?Cache-Control "no-cache"
+		uri strip_prefix /api/v2
+		reverse_proxy api:4000 {
+			import cg_xfp_{args[0]}
+		}
+	}
+}
+(cg_cgid_off) {
+	handle /index_cgid.html {
+		respond 403
+	}
+}
+(cg_cgid_on) {
+	import cg_cgid_api {args[0]} {args[1]} {args[2]}
+	handle /index_cgid.html {
+		respond 403
+	}
+}
+(cg_cgid_samehost) {
+	import cg_cgid_api {args[0]} {args[1]} {args[2]}
+	@cgidshell path_regexp ^/index_cgid\.html/?$
+	handle @cgidshell {
+		root * /srv
+		import cg_csp {args[1]} {args[2]}
+		header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+		rewrite * /index_cgid.html
+		file_server
+	}
+}
+
+# The app's origin. Routes are tried in order; the first match wins.
+#   args[0]  connect-src sources for the own host (see cg_csp)
+#   args[1]  frame-src (see cg_csp)
+#   args[2]  X-Forwarded-Proto mode: https | auto (see cg_xfp_*)
+#   args[3]  legacy CG ID mini-app: off | on | samehost (see cg_cgid_*)
+#   args[4]  HSTS: on | off (see cg_hsts_*)
+(cg_app) {
+	# 16 MiB, the old nginx client_max_body_size; larger bodies get a 413
+	request_body {
+		max_size 16MiB
+	}
+	encode zstd gzip
+	import cg_common_headers
+	import cg_hsts_{args[4]} site
+	import cg_access_log
+
+	# errors raised by a handler (e.g. a missing static file) get the same
+	# headers, are never cached, and have an empty body
+	handle_errors {
+		import cg_common_headers
+		import cg_hsts_{args[4]} errors
+		header >Cache-Control "no-store"
+		respond "" {err.status_code}
+	}
+
+	route {
+		# Dot segments are never part of a valid URL here. Caddy's path
+		# matchers see the cleaned path while the upstream gets the path as
+		# sent, so refuse them before any prefix rule below can be walked out
+		# of (checked on the path as sent, after percent-decoding).
+		@dotsegments vars_regexp {path} (^|/)\.\.?(/|$)
+		handle @dotsegments {
+			respond 400
+		}
+
+		# Uploaded media: /files/<id>/<signature>/<date>T<time>Z/<expires> is
+		# turned back into the S3 presigned GET the backend signed
+		# (srv/repositories/files.ts, getSignedUrls) and proxied to SeaweedFS.
+		# The signature covers the Host header, which must be exactly
+		# <host>:8333. Uploads are re-encoded images, and this route still
+		# treats them as untrusted: a CSP that runs nothing, nosniff, no
+		# cookies in either direction, and S3 error bodies are not passed on.
+		@files path_regexp files ^/files/([0-9a-f]+)/([0-9a-f]+)/([0-9]{8})T([0-9]{6})Z/([1-9][0-9]{1,6})$
+		handle @files {
+			header >Content-Security-Policy "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; sandbox"
+			header >Access-Control-Allow-Origin "{scheme}://{hostport}"
+			rewrite * /cg-media/{re.files.1}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cgadmin%2F{re.files.3}%2Fglobal%2Fs3%2Faws4_request&X-Amz-Date={re.files.3}T{re.files.4}Z&X-Amz-Expires={re.files.5}&X-Amz-Signature={re.files.2}&X-Amz-SignedHeaders=host
+			reverse_proxy s3.local:8333 {
+				header_up Host {host}:8333
+				# SeaweedFS checks the signature against X-Forwarded-Host
+				# when present, which would not be <host>:8333
+				header_up -X-Forwarded-Host
+				import cg_xfp_{args[2]}
+				header_up -Cookie
+				header_up -Authorization
+				header_down -Set-Cookie
+				# only successful object responses are cacheable (the
+				# error responses below are built anew without it)
+				header_down Cache-Control "private,max-age=604800,immutable"
+				# SeaweedFS' own CORS and owner headers; the origin's
+				# Access-Control-Allow-Origin is set above
+				header_down -Access-Control-Allow-Methods
+				header_down -Access-Control-Allow-Headers
+				header_down -Access-Control-Expose-Headers
+				header_down -Seaweed-X-Amz-Owner
+				header_down -Seaweed-X-Amz-ETag
+				@s3error status 4xx 5xx
+				handle_response @s3error {
+					respond "" {rp.status_code}
+				}
+			}
+		}
+		handle /files/* {
+			respond 404
+		}
+
+		# Bot API v1: stable, bearer-only, kept apart from the web app's API
+		# namespace (docs/BOT-API.md)
+		@botapi path_regexp ^/api/bot/v1/
+		handle @botapi {
+			import cg_csp {args[0]} {args[1]}
+			header ?Cache-Control "no-cache"
+			uri path_regexp ^/api/bot/v1/ /BotV1/
+			reverse_proxy api:4000 {
+				import cg_xfp_{args[2]}
+			}
+		}
+
+		# The web app's API: only these routers are reachable from outside
+		import cg_cgid_{args[3]} {args[2]} {args[0]} {args[1]}
+		@api path_regexp ^/api/v2/(Captcha|Instance|Chat|Community|File|Message|User|Contract|Notification|Twitter|Lukso|Passkey|Accounts|Plugins|Search|Report|Bot|Staking|Feed)/
+		handle @api {
+			import cg_csp {args[0]} {args[1]}
+			header ?Cache-Control "no-cache"
+			uri strip_prefix /api/v2
+			reverse_proxy api:4000 {
+				import cg_xfp_{args[2]}
+			}
+		}
+
+		# Socket.IO (wsapi), websocket upgrade included
+		handle /api/ws/* {
+			import cg_csp {args[0]} {args[1]}
+			reverse_proxy wsapi:4000 {
+				import cg_xfp_{args[2]}
+			}
+		}
+
+		# everything else under /api/ does not exist
+		handle /api/* {
+			respond 404
+		}
+
+		# Pages the backend renders: share links with per-item social meta
+		# (the SPA shell plus og/twitter tags), profile/community images,
+		# gated media, the sitemap and a few callbacks. Unless the backend
+		# sets its own Cache-Control, HTML (the shell) is revalidated on every
+		# load and anything else may be cached for a day.
+		@backendpages path_regexp ^/((c|u|gated-videos|gated-files)/|(sitemap\.xml|twitter-callback|twitter-login|verify-email|push-icon|token-sale|token|store)/?$)
+		handle @backendpages {
+			import cg_csp {args[0]} {args[1]}
+			header ?Cache-Control "private,max-age=86400,must-revalidate"
+			reverse_proxy api:4000 {
+				import cg_xfp_{args[2]}
+				@html header Content-Type text/html*
+				handle_response @html {
+					header ?Cache-Control "no-cache"
+					copy_response
+				}
+			}
+		}
+
+		import cg_instance_config
+
+		# robots.txt carries a Sitemap line rendered for the requesting host
+		handle /robots.txt {
+			root * /srv
+			templates {
+				mime text/plain
+			}
+			file_server
+		}
+
+		# Built assets. Everything Vite emits under static/ carries an 8-hex
+		# content hash in its name (name.<hash>.js, name.<hash>.chunk.js,
+		# name.<hash>.css, name.<hash>.<ext>, plus .map files of each) and
+		# never changes: cached for a year. Unhashed files (fonts, icons,
+		# images, audio, downloads, and any unhashed file under static/) are
+		# revalidated daily. Only existing files get either; no SPA fallback
+		# here: a missing asset is an uncached 404.
+		@assets path_regexp ^/(fonts|icons|images|static|audio|downloads)/
+		handle @assets {
+			root * /srv
+			import cg_csp {args[0]} {args[1]}
+			@hashed {
+				path_regexp ^/static/.+\.[0-9a-f]{8}(\.chunk)?\.[A-Za-z0-9]+(\.map)?$
+				file
+			}
+			@unhashed {
+				not path_regexp ^/static/.+\.[0-9a-f]{8}(\.chunk)?\.[A-Za-z0-9]+(\.map)?$
+				file
+			}
+			header @hashed Cache-Control "public,max-age=31536000,immutable"
+			header @unhashed Cache-Control "private,max-age=86400,must-revalidate"
+			file_server
+		}
+
+		# the SPA shell and the service worker: always revalidated, so a
+		# deploy is picked up on the next load
+		@shell path_regexp ^/(index\.html|service-worker\.js|e/[^/]+)?$
+		handle @shell {
+			root * /srv
+			import cg_csp {args[0]} {args[1]}
+			header Cache-Control "no-cache"
+			try_files {path} /index.html
+			file_server
+		}
+
+		# legacy community links
+		@community path_regexp community ^/community/([a-zA-Z0-9]{10})
+		handle @community {
+			redir * /c/{re.community.1}/ permanent
+		}
+
+		# Cross-origin isolation on/off pages (the service worker precaches
+		# both): the shell, never cached, with COOP/COEP on the "enable" one
+		handle /enable-cross-origin-security* {
+			root * /srv
+			import cg_csp {args[0]} {args[1]}
+			header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+			header Cross-Origin-Opener-Policy same-origin
+			header Cross-Origin-Embedder-Policy require-corp
+			rewrite * /index.html
+			file_server
+		}
+		handle /disable-cross-origin-security* {
+			root * /srv
+			import cg_csp {args[0]} {args[1]}
+			header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+			rewrite * /index.html
+			file_server
+		}
+
+		# Any other file of the build (manifest, logo, models, ...) is
+		# revalidated daily; any other path is a client-side route and gets
+		# the shell, never cached, so deep links work before the service
+		# worker takes over navigation.
+		handle {
+			root * /srv
+			import cg_csp {args[0]} {args[1]}
+			@notshell not path /index.html
+			route {
+				try_files {path} /index.html
+				header /index.html Cache-Control "no-cache"
+				header @notshell Cache-Control "private,max-age=86400,must-revalidate"
+				file_server
+			}
+		}
+	}
+}
+
+# Call signalling (protoo over wss) for the mediasoup service. Clients only
+# ever see Caddy's certificate; the internal hop uses mediasoup's own
+# self-signed certificate, which is why it is not verified.
+(cg_calls_edge) {
+	import cg_common_headers
+	reverse_proxy https://mediasoup:4443 {
+		transport http {
+			tls_insecure_skip_verify
+		}
+	}
+}

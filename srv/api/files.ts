@@ -59,7 +59,7 @@ const uploadImageRateLimiter = ipRateLimitHandler({
  * Skipped on dev deployments like the account-creation limiter. Only the
  * anonymous branch actually needs the escape hatch — that one keys on
  * X-Forwarded-For and treats a missing header as an invalid request, which a
- * backend reached without nginx in front would trip on every upload — but a dev
+ * backend reached without the edge (Caddy) in front would trip on every upload — but a dev
  * instance has no reason to throttle either branch.
  */
 const enforceUploadRateLimit: express.RequestHandler = (req, res, next) => {

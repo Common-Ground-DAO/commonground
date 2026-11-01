@@ -18,7 +18,8 @@
 > transfer links, the account-security step, the email confirmation flows and
 > `/verify-email` (§10) against commit 9fc05a9, 2026-11-01; limit messages, "send
 > again" countdowns, the form checks and the 8-digit codes (§10 "Limits and input
-> checks") against commit 2fad7d3, 2026-11-01
+> checks") against commit 2fad7d3, 2026-11-01; "Sign out other devices", the signed-out
+> notice and the password snackbar (§10 "Other devices") against commit 23a4c1e, 2026-11-01
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -224,6 +225,8 @@ Complex, self-contained UI sections that combine molecules and atoms with signif
 | `AuthFlow` | Login and sign-up (§10): one login form, sign-up with email verification before the account exists. Rendered by `UserOnboarding` and `LoginView`. |
 | `ReauthDialog` | "Confirm it's you to {action}" step-up dialog (passkey, password, sign-in wallet), hosted by `StepUpProvider` (§10). |
 | `UserSettingsModalContent/PasskeySettings` | The account's passkeys on this instance: name, created, last used, synced; rename, remove, add (§10). |
+| `UserSettingsModalContent/AccountsPage/SignOutOtherDevices` | "Sign out other devices" at the end of Settings → Accounts: confirm dialog → step-up → `User/signOutOtherDevices`, then "Signed out N other devices." (§10). |
+| `SignedOutNotice` | "You were signed out" dialog after this device was signed out from elsewhere ("Sign in" / "Not now"), mounted next to `ConnectionStatusIndicator` (§10). |
 | `SwapAccount` | Account switching UI |
 | `WalletsEditor` / `WalletsManagement` | Wallet management UI |
 | `ConnectedWalletsModal` | Modal showing connected wallets |
@@ -1164,6 +1167,14 @@ After a **password** login, if the account has no passkey on this instance: once
 `PasskeyProvider` turns this into UI actions that resolve to `ok` / `cancelled` / `error`. A login with an unknown or deleted credential (`NOT_FOUND` / `DELETED`) calls `signalUnknownCredential`. On a legacy CG ID instance the provider wraps `LegacyCgIdPasskeyProvider` (`src/context/LegacyCgIdPasskey.tsx`, the former popup flow, unchanged) and only `login` works (`loginManager.login({ account: 'passkey-legacy' })`).
 
 **Settings → Passkeys** (`PasskeySettings`) lists `Passkey/list` (name, created, last used, synced vs. one device), renames, removes (confirm dialog → step-up → `Passkey/remove`; `LAST_LOGIN_METHOD` gets its own message) and adds a passkey. Adding asks for a fresh authentication first and, if the dialog was needed, shows "Create the passkey now" — the ceremony needs a click of its own (Safari refuses one after an async dialog). `registerPasskey` enforces this: when getting the options went through the dialog (`stepUpManager.confirmations` changed), it does not start the ceremony and reports `reauthenticated` (also used by the post-login "Add a passkey" offer). Whenever the list is loaded it is reported with `signalAllAcceptedCredentials` (per WebAuthn user handle, `Models.Passkey.Info.userHandle`) and `signalCurrentUserDetails`.
+
+### Other devices (`SignOutOtherDevices`, `SignedOutNotice`, `src/data/auth/signedOut.ts`)
+
+**Settings → Accounts → Sign out other devices** asks first ("Sign out other devices? Every other browser and app signed in to your account is signed out and has to sign in again. This device stays signed in."), then confirms it's you (`ensureRecentAuth`, like removing a passkey) and calls `User/signOutOtherDevices`. What it did shows below the button and as a snackbar: "Signed out 3 other devices." / "Signed out 1 other device." / "No other device was signed in." (`signedOutDevicesText`), or "Other devices will be signed out within a minute." when the server answers `delayed`. A replaced password (`EmailPage`, `EmailEditor`) adds the same sentence from `setPassword`'s `signedOutDevices` to "Password updated"; removing a passkey or an X/LUKSO/Farcaster account says "Your other devices were signed out." (docs/auth-identity §2).
+
+The device that was signed out learns it from the socket event `cliSignedOut`, or — when it was offline or closed — from the `NOT_FOUND` of its device key at the next automatic login. `LoginManager.signedOutElsewhere()` raises `signedOutNotice` and signs out locally (`logout()`); `SignedOutNotice` then shows "You were signed out — Your account was signed out on this device from another device, or its password, email address or sign-in methods were changed there. Sign in again to continue." with **Sign in** (opens the login modal) and **Not now**. A logout in another tab of the same browser (which deletes this device's key as well) shows no notice: the tab knows it from the `CG_LOGIN_STATE` broadcast or the stored current user.
+
+The X popup page (`/twitter-login`, `TwitterCallbackView`) shows "Too many attempts to connect X from this network. You can try again in …" when `Twitter/startLogin` was refused by its limit (`?error=rate-limited&retryAfter=`).
 
 ### Step-up (`src/data/auth/stepUp.ts`, `StepUpProvider`, `ReauthDialog`)
 

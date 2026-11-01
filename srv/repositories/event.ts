@@ -197,6 +197,20 @@ class EventHelper {
     io.in(deviceRoomKey(deviceId)).socketsLeave(rooms);
   }
 
+  /**
+   * Tells the given devices that they were signed out (cliSignedOut) and then
+   * disconnects their sockets, so none of them keeps receiving the account's
+   * events. Both go out through the same publisher, in this order.
+   */
+  public async signOutDeviceSockets(deviceIds: string[]) {
+    if (deviceIds.length === 0) {
+      return;
+    }
+    await this.emit({ type: 'cliSignedOut' }, { deviceIds });
+    const io = await this.#io;
+    io.in(deviceIds.map(deviceRoomKey)).disconnectSockets(false);
+  }
+
   public async disconnectBotTokenSockets(tokenId: string) {
     const io = await this.#io;
     io.in(botTokenRoomKey(tokenId)).disconnectSockets(true);

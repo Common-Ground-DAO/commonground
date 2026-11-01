@@ -101,6 +101,21 @@ declare global {
                 type Response = undefined;
             }
 
+            /**
+             * Signs the account out on every other device: their sessions
+             * end and their device keys are deleted; this session and device
+             * stay (step-up; docs/auth-identity §2)
+             */
+            namespace signOutOtherDevices {
+                type Request = Record<string, never>;
+                type Response = {
+                    /** how many other devices were signed out */
+                    devices: number;
+                    /** their sessions end within a minute (not right away) */
+                    delayed: boolean;
+                };
+            }
+
             namespace reauthenticate {
                 type Request = {
                     type: 'passkey';
@@ -348,7 +363,12 @@ declare global {
                 type Request = {
                     password: string;
                 }
-                type Response = void;
+                type Response = {
+                    /** other devices signed out with a replaced password (0 for a first one) */
+                    signedOutDevices: number;
+                    /** their sessions end within a minute (not right away) */
+                    signOutDelayed: boolean;
+                };
             }
 
             namespace subscribeNewsletter {

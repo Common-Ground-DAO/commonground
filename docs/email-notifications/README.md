@@ -4,7 +4,8 @@
 > Mailchimp removal, one-click unsubscribe, send limits, bounce policy and ICS
 > invites against commit e44dac1, 2026-10-31; send limits per IP, the limit error and the 8-digit codes against commit
 > 2fad7d3, 2026-11-01; `CG_FEATURE_EMAIL` note against commit fe3937f, 2026-10-31;
-> verification and login codes, the notice mails of the account-security changes against commit 9fc05a9, 2026-11-01.
+> verification and login codes, the notice mails of the account-security changes against commit 9fc05a9, 2026-11-01;
+> the "other devices were signed out" sentence of the password and address notices against commit 23a4c1e, 2026-11-01.
 
 This document covers every email path in Common Ground: transactional mail (verification, one-time-password login, event mails), the weekly digest and per-community article newsletters, one-click unsubscribe, send limits, bounce handling, and the user/community preference model that gates them. Web push and in-app notifications are a separate delivery channel — see [docs/realtime](../realtime/README.md) (§ Push Notifications) — and the boundary between the two is described in [Boundary to web push](#boundary-to-web-push). Running a mail server for a self-hosted instance (the `mail` relay, SPF/DKIM/DMARC/PTR) is covered in [docs/deployment §3.9](../deployment/README.md#39-email-smtp-and-the-mail-relay) and [`docker/SELFHOST.md`](../../docker/SELFHOST.md#email).
 
@@ -93,8 +94,8 @@ User-provided values (post titles, community and event names, image URLs) are HT
 | Email verification | `sendVerificationEmail` | `POST /user/requestEmailVerification` (and account creation on an instance without the sign-up code step) | An 8-digit code plus a link to `<APP_URL>/verify-email?email=…&token=<code>` (both URI-component-encoded) that works while signed in to the account that asked; a dev setup that wants the link on the Vite dev server sets `BASE_URL` accordingly. Send limits apply ([Send limits](#send-limits)). |
 | Address in use | `sendAddressInUseEmail` | `POST /user/requestEmailVerification` for an address another account has verified | Notice instead of a code; the requester gets the same answer as for a free address. Send limits apply ([Send limits](#send-limits)). |
 | One-time password login | `sendOneTimePasswordEmail` | `POST /user/sendOneTimePasswordForLogin` | Emails an 8-digit login code (15 minutes) only to the **verified** address of an account; nothing is sent for an unconfirmed or unknown address, the answer is the same. Requires `emailEnabled()`; send limits apply. |
-| Password changed | `sendPasswordChangedEmail` | `POST /user/setPassword` | Notice to the verified address. |
-| Address changed | `sendEmailChangedEmail` | `POST /user/verifyEmail` replacing a verified address | Notice to the previous address. |
+| Password changed | `sendPasswordChangedEmail` | `POST /user/setPassword` | Notice to the verified address. A replaced password signs the account's other devices out, and the notice says so ("All other devices signed in to your account were signed out."); a first password does not ([auth-identity §2](../auth-identity/README.md#signing-out-other-devices)). |
+| Address changed | `sendEmailChangedEmail` | `POST /user/verifyEmail` replacing a verified address | Notice to the previous address; it says that the account's other devices were signed out. |
 | Event mails | `sendEventEmail` | See [Event notification mails](#event-notification-mails) | — |
 
 Transactional mails carry **no** unsubscribe headers. The notification mails — [Weekly digest](#weekly-newsletter-digest) (`sendNewsletter`) and [community article mails](#per-community-article-newsletter) (`sendArticleAsEmail`) — do.

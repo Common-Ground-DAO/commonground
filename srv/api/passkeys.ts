@@ -26,6 +26,7 @@ import { getVerifiedSignupEmail } from "../util/signupEmail";
 import { emailEnabled } from "./emails";
 import { notifyNewSignInMethod } from "../util/signInNotice";
 import { requireAuthToAdd } from "../util/securityStep";
+import { changeAndSignOut } from "../util/signOutOtherDevices";
 
 // Passkeys on the instance's own origin (docs/auth-identity §7). Mounted only
 // when the process is NOT in legacy CG ID mode. Login with a passkey is
@@ -255,13 +256,17 @@ registerPostRoute<
   async (request, response, data) => {
     const { userId } = requireRecentAuth(request);
     const rp = getMainRp();
-    const result = await passkeyHelper.removeUnlessLastMethod(userId, rp.rpId, data.id);
-    if (result === 'not-found') {
-      throw new Error(errors.server.NOT_FOUND);
-    }
-    if (result === 'last') {
-      throw new Error(errors.server.LAST_LOGIN_METHOD);
-    }
+    // a way in is gone: so are the other devices, with the change (a refused
+    // removal signs nobody out)
+    await changeAndSignOut(request, async (beforeCommit) => {
+      const result = await passkeyHelper.removeUnlessLastMethod(userId, rp.rpId, data.id, beforeCommit);
+      if (result === 'not-found') {
+        throw new Error(errors.server.NOT_FOUND);
+      }
+      if (result === 'last') {
+        throw new Error(errors.server.LAST_LOGIN_METHOD);
+      }
+    });
     await emitOwnPasskeys(userId, await passkeyHelper.listUserPasskeys(userId, rp.rpId));
   }
 );

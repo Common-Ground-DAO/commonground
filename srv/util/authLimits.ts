@@ -102,6 +102,18 @@ const DEFAULTS = {
   isEmailAvailable: {
     ip: { windowMs: HOUR, ...perIp(60) },
   },
+  /**
+   * Endpoints that store something for a visitor who is not signed in (and
+   * so may start a session). A page load makes one device-login challenge.
+   */
+  preLogin: {
+    /** User/getSignableSecret calls that start a new session (the request had none) */
+    newChallengeSession: { windowMs: HOUR, ...perIp(600) },
+    /** signed challenges checked: User/prepareWalletAction, Lukso/PrepareLuksoAction, Accounts/Farcaster/verifyLogin (each) */
+    signatureCheck: { windowMs: HOUR, ...perIp(300) },
+    /** X sign-in redirects (Twitter/startLogin) */
+    xRedirect: { windowMs: HOUR, ...perIp(120) },
+  },
 };
 
 type Limit = { windowMs: number; limit?: number; limit_v4_v6_64?: number; limit_v6_56?: number; limit_v6_48?: number };

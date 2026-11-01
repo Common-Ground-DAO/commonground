@@ -11,14 +11,15 @@ import format from "pg-format";
 async function _createDevice(
   db: Pool | PoolClient,
   userId: string,
-  publicKey: any
+  publicKey: any,
+  generation: number,
 ): Promise<{ deviceId: string }> {
   const query = `
-    INSERT INTO devices ("userId", "publicKey")
-    VALUES ($1, $2)
+    INSERT INTO devices ("userId", "publicKey", "generation")
+    VALUES ($1, $2, $3)
     RETURNING "id" AS "deviceId"
   `;
-  const result = await db.query(query, [userId, publicKey]);
+  const result = await db.query(query, [userId, publicKey, generation]);
   if (result.rows.length === 1) {
     return result.rows[0] as { deviceId: string };
   }
@@ -85,6 +86,7 @@ async function _getDeviceData(
       "webPushSubscription"
     FROM devices
     WHERE "id" = $1 AND "deletedAt" IS NULL
+      AND "generation" >= session_generation_of("userId")
   `;
   const result = await db.query(query, [deviceId]);
   if (result.rows.length === 1) {
@@ -98,19 +100,55 @@ async function _getDeviceData(
 }
 
 class DeviceHelper {
+  /**
+   * `generation`: the session generation of the login that creates the key
+   * (srv/util/userSessions.ts beginLogin); the key signs in only while that
+   * is not below the user's generation.
+   */
   public async createDevice(
     userId: string,
-    publicKey: JsonWebKey
+    publicKey: JsonWebKey,
+    generation: number,
   ): Promise<{
     deviceId: string;
   }> {
-    return await _createDevice(pool, userId, publicKey);
+    return await _createDevice(pool, userId, publicKey, generation);
   }
 
   public async deleteDevice(
     deviceId: string
   ): Promise<void> {
     await _deleteDevice(pool, deviceId);
+  }
+
+  /**
+   * Clean-up after a sign-out of other devices: the user's device keys below
+   * `generation` (they no longer sign in anyway) are deleted like a logout
+   * of each — push subscriptions dropped. Returns their ids.
+   */
+  public async deleteStaleDevices(
+    userId: string,
+    generation: number,
+  ): Promise<string[]> {
+    const result = await pool.query<{ id: string }>(`
+      UPDATE devices
+      SET
+        "deletedAt" = NOW(),
+        "updatedAt" = NOW(),
+        "webPushSubscription" = NULL
+      WHERE "userId" = $1 AND "generation" < $2 AND "deletedAt" IS NULL
+      RETURNING "id"
+    `, [userId, generation]);
+    return result.rows.map(row => row.id);
+  }
+
+  /** whether the device key signs in (exists, not deleted, not below its user's generation) */
+  public async isLiveDevice(deviceId: string): Promise<boolean> {
+    const result = await pool.query(`
+      SELECT 1 FROM devices
+      WHERE "id" = $1 AND "deletedAt" IS NULL AND "generation" >= session_generation_of("userId")
+    `, [deviceId]);
+    return result.rows.length === 1;
   }
 
   public async updateDeviceInfo(

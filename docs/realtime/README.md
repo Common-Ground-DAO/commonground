@@ -6,7 +6,8 @@
 > outage behaviour against commit ff0da06, 2026-10-31; the `MEDIASOUP_TRUST_PROXY`
 > note (Caddy in front of 4443 in dev too) against commit fe3937f, 2026-10-31;
 > the browser-socket session room (cookie optional), `watchCgIdRequest` and `sess-revoked:`
-> against commit eab2a27, 2026-11-01
+> against commit eab2a27, 2026-11-01; `sess-user:`, the session TTLs and the signed-out devices'
+> `cliSignedOut` + disconnect against commit 23a4c1e, 2026-11-01
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -202,6 +203,8 @@ Bot presence is tracked separately from human online status, because a bot may h
 ### Forced Disconnect on Revocation
 
 `eventHelper.disconnectBotTokenSockets(tokenId)` (`srv/repositories/event.ts`) calls `io.in(botToken:{tokenId}).disconnectSockets(true)` across all instances via the Redis adapter. It is invoked when a token is revoked (`botTokenHelper`), and when a bot is uninstalled or banned (`botHelper`), so live sockets for an invalidated token are torn down immediately rather than lingering until their next request.
+
+Browser sockets of devices that were signed out from elsewhere (another device's "Sign out other devices", or a replaced password, email or removed sign-in method, [auth-identity §2](../auth-identity/README.md#signing-out-other-devices)) are handled the same way: `eventHelper.signOutDeviceSockets(deviceIds)` emits `cliSignedOut` to their `device:{deviceId}` rooms and then calls `disconnectSockets(false)` on them, through the same publisher in this order. The client signs out locally on the event; a socket that reconnects cannot log in again, its device key is gone. The socket `login` verifies the key with the same lookup as the HTTP device login, which rejects a key below the account's session generation, and after joining its rooms checks once more that its key is still valid (one DB read) and disconnects if it is not — a key that became invalid between the check and the joining.
 
 ---
 
@@ -707,7 +710,7 @@ The backend talks to **two Valkey instances** (Redis-protocol compatible; compos
 
 | Client type | Instance | Key prefixes | Purpose |
 |---|---|---|---|
-| `session` | state (`REDIS_URL`, default `redis://redis:6379`) | `sess:`, `sess-revoked:` | Express session storage (connect-redis); ids of destroyed/replaced sessions (1 h, [auth-identity §2](../auth-identity/README.md#when-a-session-exists)) |
+| `session` | state (`REDIS_URL`, default `redis://redis:6379`) | `sess:`, `sess-revoked:`, `sess-user:`, `sess-gen:`, `sess-keep:`, `sess-gen-copied` | Express session storage (connect-redis); ids of destroyed/replaced sessions (1 h, [auth-identity §2](../auth-identity/README.md#when-a-session-exists)); each user's logged-in session ids (sorted set, expires with its sessions) and the copies of the session generations (no TTL, reconciled from PostgreSQL at api start and every 30 s, `sess-gen-copied` records how far; `sess-keep:` 13 h; [auth-identity §2](../auth-identity/README.md#signing-out-other-devices)) |
 | `socketIOPub`, `socketIOSub` | state | `v2:` (pub/sub channels only, no keys) | Socket.IO adapter and emitter |
 | `data` | state | `ud:`, `us:`, `online-user-addresses`, `ratelimit:`, `bot-ratelimit:`, `bot-presence:`, `captcha:`, `pluginRequest:`, `tmp:` | User online status, rate limiting, captcha key + replay guards, plugin replay keys, bot presence leases |
 | `cache` | cache (`REDIS_CACHE_URL`, default `redis://redis-cache:6379`) | `urlpreview:` | URL-preview cache |
@@ -716,7 +719,7 @@ What is state and what is cache:
 
 | Data | Instance | Lost on a cold start |
 |---|---|---|
-| Sessions (`sess:`, 12 h rolling TTL) | state | every user is logged out once |
+| Sessions (`sess:`; 12 h rolling TTL when logged in, 1 h without a user), the index of each user's sessions (`sess-user:`) and the copies of the session generations (`sess-gen:`, `sess-keep:`; reconciled from PostgreSQL at api start and every 30 s) | state | every user is logged out once |
 | Rate-limit windows (`ratelimit:` sorted sets, `bot-ratelimit:` counters; TTL = window) | state | limits restart from zero for one window |
 | Replay guards (`captcha:altcha:used:` 10 min, `pluginRequest:` 15 min) | state | a captcha solution / signed plugin request from the last minutes could be redeemed once more |
 | ALTCHA HMAC key (`captcha:altcha:hmackey`, no TTL; only when `ALTCHA_HMAC_KEY` is not configured) | state | regenerated; challenges issued before become invalid. Each process caches the key in memory after first use, so processes started before and after a loss disagree until they restart — configure `ALTCHA_HMAC_KEY` to avoid this |

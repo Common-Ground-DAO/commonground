@@ -48,6 +48,15 @@ jest.doMock('../util/rateLimit', () => {
   extractIpFromRequest: () => ({ ipString: '203.0.113.1' }),
   };
 });
+// signing out the other devices (srv/util/signOutOtherDevices.ts, tested in
+// userSessions.spec.ts): here only which changes do it
+// counts every sign-out: the explicit action, and the changes through changeAndSignOut
+const signOutOtherDevices = jest.fn(async (_request?: unknown) => ({ devices: 3, delayed: false }));
+const changeAndSignOut = jest.fn(async (request: unknown, change: (beforeCommit: () => Promise<void>) => Promise<unknown>) => {
+  const result = await change(async () => undefined);
+  return { result, ...await signOutOtherDevices(request) };
+});
+jest.doMock('../util/signOutOtherDevices', () => ({ signOutOtherDevices, changeAndSignOut }));
 const verifyCaptchaToken = jest.fn(async (token: string) => token === 'captcha');
 jest.doMock('../util/captcha', () => ({ verifyCaptchaToken }));
 jest.doMock('../util/safeFetch', () => ({ fetchRemoteImage: jest.fn() }));
@@ -110,6 +119,8 @@ const users = {
   updateUser: jest.fn(async () => undefined),
   removeUserAccount: jest.fn(async () => undefined),
   addUserAccount: jest.fn(async () => undefined),
+  getLinkedAccountId: jest.fn(async (): Promise<string | null> => null),
+  nextSessionGeneration: jest.fn(async () => 1),
   setUserExtraDataField: jest.fn(async () => undefined),
   isEmailAvailable: jest.fn(async () => true),
 };
@@ -122,6 +133,7 @@ const devices = {
 };
 const wallets = {
   getOwnWalletLoginEnabled: jest.fn(async () => true),
+  isSignInWallet: jest.fn(async () => true),
   updateWallet: jest.fn(async () => undefined),
   deleteWallet: jest.fn(async () => undefined),
   createWallet: jest.fn(async () => ({})),
@@ -327,9 +339,13 @@ describe('Passkey/remove', () => {
   it('refuses to remove the last sign-in method', async () => {
     const row = await seedPasskey(new SoftAuthenticator(), USER);
     await expect(call('Passkey/remove', freshlyAuthenticated(), { id: row.id })).rejects.toThrow('LAST_LOGIN_METHOD');
+    expect(signOutOtherDevices).not.toHaveBeenCalled();
     memoryPasskeys.otherMethods.password = true;
-    await call('Passkey/remove', freshlyAuthenticated(), { id: row.id });
+    const request = freshlyAuthenticated();
+    await call('Passkey/remove', request, { id: row.id });
     expect(memoryPasskeys.rows[0].deletedAt).not.toBeNull();
+    // a way in is gone: the other devices are signed out
+    expect(signOutOtherDevices).toHaveBeenCalledWith(request);
   });
 
   it('another passkey counts as a remaining method; someone else\'s passkey is not found', async () => {
@@ -636,7 +652,7 @@ describe('User/reauthenticate', () => {
     expect(validUntil).toBe(Date.now() + 5 * 60 * 1000);
     expect(request.session).toMatchObject({ authAt: Date.now(), authMethod: 'password' });
     await call('User/setPassword', request, { password: 'new password' });
-    expect(users.setPassword).toHaveBeenCalledWith(USER, 'new password');
+    expect(users.setPassword).toHaveBeenCalledWith(USER, 'new password', expect.any(Function));
   });
 
   it('password: a password that predates the policy still re-authenticates', async () => {
@@ -663,16 +679,58 @@ describe('User/reauthenticate', () => {
 
   it('wallet: a fresh signature of one of the user\'s login wallets', async () => {
     const stale = silentlyLoggedIn();
-    stale.session.preparedCredential = { type: 'wallet', ownerId: USER, result: { readyForLogin: true }, createdAt: Date.now() - 10 * 60 * 1000 };
+    stale.session.preparedCredential = { type: 'wallet', ownerId: USER, walletIdentifier: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', walletType: 'evm', result: { readyForLogin: true }, createdAt: Date.now() - 10 * 60 * 1000 };
     await expect(call('User/reauthenticate', stale, { type: 'wallet' })).rejects.toThrow('NOT_ALLOWED');
     const foreign = silentlyLoggedIn();
-    foreign.session.preparedCredential = { type: 'wallet', ownerId: OTHER_USER, result: { readyForLogin: true }, createdAt: Date.now() };
+    foreign.session.preparedCredential = { type: 'wallet', ownerId: OTHER_USER, walletIdentifier: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', walletType: 'evm', result: { readyForLogin: true }, createdAt: Date.now() };
     await expect(call('User/reauthenticate', foreign, { type: 'wallet' })).rejects.toThrow('NOT_ALLOWED');
+    // the wallet's sign-in was switched off since the signature was checked
+    const switchedOff = silentlyLoggedIn();
+    switchedOff.session.preparedCredential = { type: 'wallet', ownerId: USER, walletIdentifier: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', walletType: 'evm', result: { readyForLogin: true }, createdAt: Date.now() };
+    wallets.isSignInWallet.mockResolvedValueOnce(false);
+    await expect(call('User/reauthenticate', switchedOff, { type: 'wallet' })).rejects.toThrow('NOT_ALLOWED');
     const fresh = silentlyLoggedIn();
-    fresh.session.preparedCredential = { type: 'wallet', ownerId: USER, result: { readyForLogin: true }, createdAt: Date.now() };
+    fresh.session.preparedCredential = { type: 'wallet', ownerId: USER, walletIdentifier: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', walletType: 'evm', result: { readyForLogin: true }, createdAt: Date.now() };
     await call('User/reauthenticate', fresh, { type: 'wallet' });
     expect(fresh.session.authMethod).toBe('wallet');
     expect(fresh.session.preparedCredential).toBeUndefined();
+    expect(wallets.isSignInWallet).toHaveBeenLastCalledWith(USER, '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'evm');
+  });
+});
+
+describe('User/login {type: wallet}', () => {
+  const WALLET_ADDRESS = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const prepared = (extra: Record<string, unknown> = {}) => ({
+    type: 'wallet', ownerId: USER, walletIdentifier: WALLET_ADDRESS, walletType: 'evm',
+    result: { readyForLogin: true }, createdAt: Date.now(), ...extra,
+  });
+  const login = (request: any) => call('User/login', request, { type: 'wallet', device: { publicKey: DEVICE_KEY } });
+
+  it('signs in with a fresh signature of a wallet that still signs in for its owner', async () => {
+    const request = makeRequest({ preparedCredential: prepared() });
+    const result = await login(request);
+    expect(result.ownData.id).toBe(USER);
+    expect(wallets.isSignInWallet).toHaveBeenCalledWith(USER, WALLET_ADDRESS, 'evm');
+    expect(request.session.preparedCredential).toBeUndefined();
+  });
+
+  it('a signature kept in a session past a few minutes signs in no one', async () => {
+    const request = makeRequest({ preparedCredential: prepared({ createdAt: Date.now() - 6 * 60 * 1000 }) });
+    await expect(login(request)).rejects.toThrow('NOT_ALLOWED');
+    expect(devices.createDevice).not.toHaveBeenCalled();
+  });
+
+  it('a wallet removed (or its sign-in switched off) after the signature signs in no one; the signature is used up', async () => {
+    wallets.isSignInWallet.mockResolvedValueOnce(false);
+    const request = makeRequest({ preparedCredential: prepared() });
+    await expect(login(request)).rejects.toThrow('NOT_ALLOWED');
+    expect(devices.createDevice).not.toHaveBeenCalled();
+    expect(request.session.preparedCredential).toBeUndefined();
+  });
+
+  it('a prepared credential from before the wallet was recorded in it signs in no one', async () => {
+    const { walletIdentifier, ...old } = prepared();
+    await expect(login(makeRequest({ preparedCredential: old }))).rejects.toThrow('NOT_ALLOWED');
   });
 });
 
@@ -698,6 +756,7 @@ const PROTECTED: Record<string, { data: any; sideEffects: () => jest.Mock[]; add
     adds: true,
   },
   'Passkey/remove': { data: { id: WALLET }, sideEffects: () => [] },
+  'User/signOutOtherDevices': { data: {}, sideEffects: () => [signOutOtherDevices] },
   'Bot/disable': { data: { botUserId: OTHER_USER }, sideEffects: () => [bots.disableBot] },
   'Bot/tokens/issue': { data: { botUserId: OTHER_USER, name: 'ci' }, sideEffects: () => [botTokens.issueToken] },
 };
@@ -786,7 +845,7 @@ describe('step-up: protected routes', () => {
     expect(wallets.deleteWallet).toHaveBeenCalled();
     // the cg profile is not a sign-in method
     await call('User/removeUserAccount', silentlyLoggedIn(), { type: 'cg' });
-    expect(users.removeUserAccount).toHaveBeenCalledWith(USER, 'cg', { rpId: 'cg.box' });
+    expect(users.removeUserAccount).toHaveBeenCalledWith(USER, 'cg', { rpId: 'cg.box' }, undefined);
     await call('User/addUserAccount', silentlyLoggedIn(), { type: 'cg', displayName: 'someone' });
     expect(users.addUserAccount).toHaveBeenCalledTimes(1);
     // the unchanged address re-sent with other settings is no address change
@@ -800,20 +859,71 @@ describe('step-up: protected routes', () => {
       passport: { user: { username: 'someone', _json: { id_str: '42', followers_count: 1, friends_count: 2 } } },
     });
     await call('User/addUserAccount', request, { type: 'twitter' });
-    expect(users.addUserAccount).toHaveBeenCalledWith(USER, expect.objectContaining({ type: 'twitter' }));
+    expect(users.addUserAccount).toHaveBeenCalledWith(USER, expect.objectContaining({ type: 'twitter' }), undefined);
     await new Promise(resolve => setImmediate(resolve));
     expect(emailUtils.sendNewSignInMethodEmail).toHaveBeenCalledWith('someone@example.org', 'X account');
+    // an added way in leaves the other devices signed in
+    expect(signOutOtherDevices).not.toHaveBeenCalled();
+  });
+
+  it('linking a different X account than the one linked replaces a way in: plain step-up, the others signed out', async () => {
+    const passport = { user: { username: 'other', _json: { id_str: '43', followers_count: 1, friends_count: 2 } } };
+    users.getLinkedAccountId.mockResolvedValue('42');
+    try {
+      // a transfer session may add, never replace
+      const transfer = makeRequest({ user: { id: USER, deviceId: 'd' }, authAt: Date.now(), authMethod: 'transfer', passport });
+      await expect(call('User/addUserAccount', transfer, { type: 'twitter' })).rejects.toThrow('REAUTH_REQUIRED');
+      expect(users.addUserAccount).not.toHaveBeenCalled();
+      const request = freshlyAuthenticated(USER, { passport });
+      await call('User/addUserAccount', request, { type: 'twitter' });
+      expect(signOutOtherDevices).toHaveBeenCalledWith(request);
+      // the same account again (a profile refresh) is no replacement
+      jest.clearAllMocks();
+      users.getLinkedAccountId.mockResolvedValue('43');
+      await call('User/addUserAccount', freshlyAuthenticated(USER, { passport }), { type: 'twitter' });
+      expect(signOutOtherDevices).not.toHaveBeenCalled();
+    }
+    finally {
+      users.getLinkedAccountId.mockResolvedValue(null);
+    }
   });
 
   it('removing or switching off a sign-in method keeps the last one (passed to the repositories)', async () => {
     await call('User/deleteWallet', freshlyAuthenticated(), { id: WALLET });
-    expect(wallets.deleteWallet).toHaveBeenCalledWith(USER, { id: WALLET }, { rpId: 'cg.box' });
+    expect(wallets.deleteWallet).toHaveBeenCalledWith(USER, { id: WALLET }, { rpId: 'cg.box' }, expect.any(Function));
     await call('User/updateWallet', freshlyAuthenticated(), { id: WALLET, loginEnabled: false });
-    expect(wallets.updateWallet).toHaveBeenCalledWith(USER, { id: WALLET, loginEnabled: false }, { rpId: 'cg.box' });
+    expect(wallets.updateWallet).toHaveBeenCalledWith(USER, { id: WALLET, loginEnabled: false }, { rpId: 'cg.box' }, expect.any(Function));
     await call('User/removeUserAccount', freshlyAuthenticated(), { type: 'farcaster' });
-    expect(users.removeUserAccount).toHaveBeenCalledWith(USER, 'farcaster', { rpId: 'cg.box' });
+    expect(users.removeUserAccount).toHaveBeenCalledWith(USER, 'farcaster', { rpId: 'cg.box' }, expect.any(Function));
+    // each removed a way in: each signed the other devices out after it
+    expect(signOutOtherDevices).toHaveBeenCalledTimes(3);
     wallets.deleteWallet.mockRejectedValueOnce(new Error('LAST_LOGIN_METHOD'));
     await expect(call('User/deleteWallet', freshlyAuthenticated(), { id: WALLET })).rejects.toThrow('LAST_LOGIN_METHOD');
+    // a refused removal changes nothing
+    expect(signOutOtherDevices).toHaveBeenCalledTimes(3);
+  });
+
+  it('changes that remove no way in leave the other devices signed in', async () => {
+    // wallet settings other than sign-in, a wallet that cannot sign in, the cg profile
+    await call('User/updateWallet', silentlyLoggedIn(), { id: WALLET, visibility: 'public' });
+    wallets.getOwnWalletLoginEnabled.mockResolvedValueOnce(false);
+    await call('User/deleteWallet', silentlyLoggedIn(), { id: WALLET });
+    await call('User/removeUserAccount', silentlyLoggedIn(), { type: 'cg' });
+    // switching a wallet's sign-in on adds a way in
+    wallets.getOwnWalletLoginEnabled.mockResolvedValueOnce(false);
+    await call('User/updateWallet', freshlyAuthenticated(), { id: WALLET, loginEnabled: true });
+    expect(wallets.updateWallet).toHaveBeenCalledTimes(2);
+    expect(signOutOtherDevices).not.toHaveBeenCalled();
+  });
+
+  it('User/signOutOtherDevices: after a step-up, says how many devices it signed out', async () => {
+    await expect(call('User/signOutOtherDevices', makeRequest(), {})).rejects.toThrow('LOGIN_REQUIRED');
+    await expect(call('User/signOutOtherDevices', silentlyLoggedIn(), {})).rejects.toThrow('REAUTH_REQUIRED');
+    expect(signOutOtherDevices).not.toHaveBeenCalled();
+    const request = freshlyAuthenticated();
+    await expect(call('User/signOutOtherDevices', request, {})).resolves.toEqual({ devices: 3, delayed: false });
+    expect(signOutOtherDevices).toHaveBeenCalledWith(request);
+    await expect(routes['User/signOutOtherDevices'].validator!.validateAsync({ userId: USER })).rejects.toThrow();
   });
 });
 

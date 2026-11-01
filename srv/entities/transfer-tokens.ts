@@ -49,4 +49,8 @@ export class TransferToken {
 
   @Column({ type: 'timestamptz', precision: 3, nullable: true })
   usedAt!: Date | null;
+
+  /** the session generation of the session that minted it; redeemable only while not below the user's */
+  @Column({ type: 'bigint', nullable: false, default: 0 })
+  generation!: string;
 }

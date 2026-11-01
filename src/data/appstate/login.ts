@@ -17,6 +17,7 @@ import getSiweMessage from "util/siwe";
 import uniqueDb from "data/databases/unique";
 import stepUpManager from "data/auth/stepUp";
 import securityStepState from "data/auth/securityStep";
+import signedOutNotice from "data/auth/signedOut";
 import { getAuthMode } from "data/auth/authMode";
 import { type AuthenticationResponseJSON } from "@simplewebauthn/browser";
 
@@ -82,6 +83,14 @@ class LoginManager {
       }
     };
     window.addEventListener("storage", storageListener);
+    // signed out from another device (or by a change of the account's
+    // password, email or sign-in methods there): the session and the device
+    // key are gone on the server already
+    import("./connection").then(({ default: connectionManager }) => {
+      connectionManager.registerClientEventHandler("cliSignedOut", () => {
+        this.signedOutElsewhere().catch(e => console.error("Error signing out", e));
+      });
+    });
     if (!!this._currentUser) {
       // what this account's security step was when the page was left: known
       // before the automatic re-login answers (data/auth/securityStep.ts)
@@ -122,6 +131,7 @@ class LoginManager {
         if (event.data === 'loggingout' || event.data === 'anonymous') {
           // another tab logged out
           stepUpManager.clear();
+          this._loggedOutInOtherTabAt = Date.now();
         }
         this.state = event.data;
       }
@@ -227,9 +237,9 @@ class LoginManager {
           } catch (e) {
             if (e instanceof Error) {
               if (e.message === errors.server.NOT_FOUND) {
-                // device does not exist, so user has
-                // removed it
-                await this.logout();
+                // the device key is gone: this device was signed out from
+                // elsewhere (the sign-out on this device clears it locally)
+                await this.signedOutElsewhere();
                 return;
               }
             }
@@ -421,6 +431,25 @@ class LoginManager {
     this.state = "loggedin";
     return responseData;
   }
+
+  /**
+   * This device was signed out on the server (cliSignedOut, or its device
+   * key is gone): sign out here too and tell the person why.
+   */
+  private async signedOutElsewhere() {
+    if (!this.currentUser) {
+      return;
+    }
+    // a logout in another tab of this browser deletes this device's key as
+    // well: no notice for that
+    const stored = JSON.parse(localStorage.getItem(CURRENT_USER_KEY) || 'null') as CurrentUser | null;
+    const ownLogout = stored?.userId !== this.currentUser.userId || Date.now() - this._loggedOutInOtherTabAt < 30_000;
+    if (!ownLogout) {
+      signedOutNotice.show();
+    }
+    await this.logout();
+  }
+  private _loggedOutInOtherTabAt = 0;
 
   private logoutPromise: Promise<void> | undefined;
   public async logout() {
@@ -645,8 +674,9 @@ class LoginManager {
             e.message === errors.server.NOT_FOUND &&
             "deviceId" in options
           ) {
-            // device has been deleted from the server
-            this.logout().catch((e) => {
+            // device has been deleted from the server: signed out from
+            // elsewhere
+            this.signedOutElsewhere().catch((e) => {
               console.log(e);
             });
           } else {

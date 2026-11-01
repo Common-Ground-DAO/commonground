@@ -181,7 +181,7 @@ class PasskeyHelper {
    * Soft-deletes one of the user's passkeys unless it is the account's last
    * sign-in method on this instance (srv/repositories/loginMethods.ts).
    */
-  public async removeUnlessLastMethod(userId: string, rpId: string, id: string): Promise<'removed' | 'last' | 'not-found'> {
+  public async removeUnlessLastMethod(userId: string, rpId: string, id: string, beforeCommit?: (client: PoolClient) => Promise<void>): Promise<'removed' | 'last' | 'not-found'> {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -202,6 +202,9 @@ class PasskeyHelper {
         SET "deletedAt" = now(), "updatedAt" = now()
         WHERE "id" = $1
       `, [id]);
+      // the caller's own step in the same transaction (signing out the
+      // other devices: srv/util/signOutOtherDevices.ts)
+      await beforeCommit?.(client);
       await client.query("COMMIT");
       return 'removed';
     }

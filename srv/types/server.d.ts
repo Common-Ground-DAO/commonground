@@ -78,7 +78,10 @@ declare {
                     preWallet?: Omit<Models.Wallet.Wallet, "id" | "userId">;
                     result: API.User.prepareWalletAction.Response;
                     ownerId?: string;
-                    /** epoch ms of the signature check (User/reauthenticate needs a fresh one) */
+                    /** the signed wallet (lowercase) and its type: checked again when the signature is used */
+                    walletIdentifier?: string;
+                    walletType?: Models.Wallet.Type;
+                    /** epoch ms of the signature check (login and User/reauthenticate need a fresh one) */
                     createdAt?: number;
                 }
             }

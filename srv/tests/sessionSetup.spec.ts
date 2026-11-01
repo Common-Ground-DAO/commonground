@@ -51,6 +51,8 @@ type App = { baseUrl: string; store: session.MemoryStore; server: Server; gates:
 
 async function startApp(setup: SetupModule, sessionModule: typeof session): Promise<App> {
   const { establishLoginSession, endLoginSession } = await import('../util/authSession');
+  const { setLoginGeneration } = await import('../util/userSessions');
+  let generation = 0;
   const store = new sessionModule.MemoryStore();
   const revocations = memoryRevocations();
   const gates = new Map<string, ReturnType<typeof gate>>();
@@ -91,6 +93,8 @@ async function startApp(setup: SetupModule, sessionModule: typeof session): Prom
     response.json({});
   });
   app.post('/login', async (request, response) => {
+    // a login takes its session generation first (srv/api/user.ts beginLogin)
+    setLoginGeneration(request, ++generation);
     await establishLoginSession(request, { userId: USER, deviceId: 'device-1', method: request.query.method === 'password' ? 'password' : 'device' });
     response.json({});
   });

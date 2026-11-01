@@ -91,6 +91,8 @@ const userApi = {
 
   ensureSession: Joi.object<API.User.ensureSession.Request>({}).strict(true),
 
+  signOutOtherDevices: Joi.object<API.User.signOutOtherDevices.Request>({}).strict(true),
+
   reauthenticate: Joi.alternatives().try(
     Joi.object({
       type: Joi.equal("passkey").required(),

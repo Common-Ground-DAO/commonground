@@ -209,26 +209,30 @@ class EmailUtils {
         <tr>
             <td colspan="4" style="background-color:#f8f8f8;padding:20px;text-align:center;">
                 <h2> The email address of your account was changed. </h2>
-                <p> Mails for your account now go to the new address. If this was not you, sign in and review your account settings right away. </p>
+                <p> Mails for your account now go to the new address. All other devices signed in to your account were signed out. If this was not you, sign in and review your account settings right away. </p>
             </td>
         </tr>`;
         const htmlTemplate = this.getHTMLTemplate(html, false);
-        const text = `The email address of your account was changed. Mails for your account now go to the new address. If this was not you, sign in and review your account settings right away.\n`;
+        const text = `The email address of your account was changed. Mails for your account now go to the new address. All other devices signed in to your account were signed out. If this was not you, sign in and review your account settings right away.\n`;
         await this.sendEmail({ to, subject, text, html: htmlTemplate });
     }
 
-    /** The account's password was set or changed. */
-    public async sendPasswordChangedEmail(to: string) {
+    /**
+     * The account's password was set or changed; `otherDevicesSignedOut`: the
+     * other devices were signed out with it (a replaced password).
+     */
+    public async sendPasswordChangedEmail(to: string, otherDevicesSignedOut = false) {
         const subject = 'The password of your Common Ground account was changed';
+        const signedOut = otherDevicesSignedOut ? ' All other devices signed in to your account were signed out.' : '';
         const html = `
         <tr>
             <td colspan="4" style="background-color:#f8f8f8;padding:20px;text-align:center;">
                 <h2> The password of your account was set or changed. </h2>
-                <p> If this was you, there is nothing to do. If not, sign in and review the sign-in methods in your account settings right away. </p>
+                <p>${signedOut} If this was you, there is nothing to do. If not, sign in and review the sign-in methods in your account settings right away. </p>
             </td>
         </tr>`;
         const htmlTemplate = this.getHTMLTemplate(html, false);
-        const text = `The password of your account was set or changed. If this was you, there is nothing to do. If not, sign in and review the sign-in methods in your account settings right away.\n`;
+        const text = `The password of your account was set or changed.${signedOut} If this was you, there is nothing to do. If not, sign in and review the sign-in methods in your account settings right away.\n`;
         await this.sendEmail({ to, subject, text, html: htmlTemplate });
     }
 

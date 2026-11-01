@@ -107,6 +107,15 @@ jest.doMock('../util/rateLimit', () => ({
 }));
 jest.doMock('../util/captcha', () => ({ verifyCaptchaToken: jest.fn(async () => true) }));
 jest.doMock('../util/safeFetch', () => ({ fetchRemoteImage: jest.fn() }));
+// signing out the other devices (srv/util/signOutOtherDevices.ts, tested in
+// userSessions.spec.ts): here only whether a change does it
+// counts every sign-out: the explicit action, and the changes through changeAndSignOut
+const signOutOtherDevices = jest.fn(async (_request?: unknown) => ({ devices: 2, delayed: false }));
+const changeAndSignOut = jest.fn(async (request: unknown, change: (beforeCommit: () => Promise<void>) => Promise<unknown>) => {
+  const result = await change(async () => undefined);
+  return { result, ...await signOutOtherDevices(request) };
+});
+jest.doMock('../util/signOutOtherDevices', () => ({ signOutOtherDevices, changeAndSignOut }));
 
 let mailEnabled = true;
 const emailUtils = {
@@ -203,6 +212,7 @@ const users = {
   updateUser: jest.fn(async () => undefined),
   setUserExtraDataField: jest.fn(async () => undefined),
   isEmailAvailable: jest.fn(async () => true),
+  nextSessionGeneration: jest.fn(async () => 1),
 };
 const devices = {
   createDevice: jest.fn(async () => ({ deviceId: 'device-new' })),
@@ -324,7 +334,7 @@ describe('transfer links: minting', () => {
     expect(url).toMatch(/^https:\/\/cg\.box\/transfer#[A-Za-z0-9_-]{43}$/);
     expect(expiresAt).toBeGreaterThan(Date.now() + 9 * 60 * 1000);
     expect(expiresAt).toBeLessThanOrEqual(Date.now() + 10 * 60 * 1000);
-    expect(transferTokens.create).toHaveBeenCalledWith(USER, '/c/abc/?x=1', 10 * 60 * 1000);
+    expect(transferTokens.create).toHaveBeenCalledWith(USER, '/c/abc/?x=1', 10 * 60 * 1000, 0);
     // the stored value is the hash, never the token
     const token = url.split('#')[1];
     expect(tokenRows[0].hash).toBe(transferLink.hashTransferToken(token));
@@ -335,7 +345,7 @@ describe('transfer links: minting', () => {
     await expect(call('User/createTransferLink', loggedIn(), { userId: OTHER_USER })).rejects.toThrow();
     for (const next of ['//evil.com', '/\\evil.com', 'https://evil.com/', 'javascript:alert(1)', '/\t/evil.com', '/transfer']) {
       await call('User/createTransferLink', loggedIn(), { nextPath: next });
-      expect(transferTokens.create).toHaveBeenLastCalledWith(USER, null, expect.any(Number));
+      expect(transferTokens.create).toHaveBeenLastCalledWith(USER, null, expect.any(Number), 0);
     }
   });
 
@@ -437,6 +447,10 @@ describe('transfer links: redemption', () => {
     request.session.preparedCredential = { type: 'wallet', result: { readyForCreation: true }, preWallet: { type: 'evm' } };
     await call('User/addPreparedWallet', request, { loginEnabled: true, visibility: 'private' });
     expect((mocks.wallets as any).createWallet).toHaveBeenCalled();
+    // an added way in leaves the account's other devices signed in (the
+    // gateway's and those of other transfers among them)
+    expect(signOutOtherDevices).not.toHaveBeenCalled();
+    expect(request.session.user).toMatchObject({ id: USER, deviceId: 'device-new' });
   });
 
   it('is off on a legacy CG ID (gateway) process', async () => {
@@ -572,13 +586,23 @@ describe('account-security step: adding what is missing', () => {
     await expect(call('User/setPassword', signedInAgo(61), { password: 'long enough' })).rejects.toThrow('REAUTH_REQUIRED');
     expect(users.setPassword).not.toHaveBeenCalled();
     // the X sign-in (or a transfer link) 59 minutes ago
-    await call('User/setPassword', signedInAgo(59), { password: 'long enough' });
+    await expect(call('User/setPassword', signedInAgo(59), { password: 'long enough' })).resolves.toEqual({ signedOutDevices: 0, signOutDelayed: false });
     expect(users.setPassword).toHaveBeenCalledWith(USER, 'long enough');
     await flush();
-    expect(emailUtils.sendPasswordChangedEmail).toHaveBeenCalledWith('someone@example.org');
+    // a first password is an added way in: the other devices stay signed in
+    expect(signOutOtherDevices).not.toHaveBeenCalled();
+    expect(emailUtils.sendPasswordChangedEmail).toHaveBeenCalledWith('someone@example.org', false);
     // now it has a password: replacing it needs a fresh authentication
     await expect(call('User/setPassword', loggedIn(), { password: 'another one' })).rejects.toThrow('REAUTH_REQUIRED');
-    await call('User/setPassword', fresh(), { password: 'another one' });
+    expect(signOutOtherDevices).not.toHaveBeenCalled();
+    // and signs the other devices out (the mail says so)
+    const request = fresh();
+    await expect(call('User/setPassword', request, { password: 'another one' })).resolves.toEqual({ signedOutDevices: 2, signOutDelayed: false });
+    expect(signOutOtherDevices).toHaveBeenCalledWith(request);
+    // only after the change committed
+    expect(signOutOtherDevices.mock.invocationCallOrder[0]).toBeGreaterThan(users.setPassword.mock.invocationCallOrder[1]);
+    await flush();
+    expect(emailUtils.sendPasswordChangedEmail).toHaveBeenLastCalledWith('someone@example.org', true);
   });
 
   it('a password below the policy: a new one, after confirming the old one', async () => {
@@ -614,6 +638,8 @@ describe('account-security step: adding what is missing', () => {
 
     await call('User/verifyEmail', loggedIn(), { email: 'mine@example.org', token: code });
     expect(users.setVerifiedEmail).toHaveBeenCalledWith(USER, 'Mine@Example.org');
+    // a first verified address is an added way in: no other device signed out
+    expect(signOutOtherDevices).not.toHaveBeenCalled();
     // once
     await expect(call('User/verifyEmail', loggedIn(), { email: 'mine@example.org', token: code })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
   });
@@ -638,7 +664,10 @@ describe('account-security step: adding what is missing', () => {
     // confirming it later in a session without a fresh sign-in: step-up again,
     // and the code is not used up by the refusal
     await expect(call('User/verifyEmail', loggedIn(), { email: 'new@example.org', token: code })).rejects.toThrow('REAUTH_REQUIRED');
+    expect(signOutOtherDevices).not.toHaveBeenCalled();
     await call('User/verifyEmail', request, { email: 'new@example.org', token: code });
+    // the replaced address signs the other devices out (the notice says so)
+    expect(signOutOtherDevices).toHaveBeenCalledWith(request);
     await flush();
     expect(emailUtils.sendEmailChangedEmail).toHaveBeenCalledWith('someone@example.org');
   });
@@ -681,8 +710,16 @@ describe('account-security step: adding what is missing', () => {
     await expect(call('User/updateOwnData', fresh(), { email: 'new@example.org' })).rejects.toThrow('EMAIL_VERIFICATION_REQUIRED');
     expect(users.updateUser).not.toHaveBeenCalled();
     mailEnabled = false;
-    await call('User/updateOwnData', fresh(), { email: 'new@example.org' });
-    expect(users.updateUser).toHaveBeenCalledWith(USER, { email: 'new@example.org' });
+    const request = fresh();
+    await call('User/updateOwnData', request, { email: 'new@example.org' });
+    expect(users.updateUser).toHaveBeenCalledWith(USER, { email: 'new@example.org' }, expect.any(Function));
+    // without mail the address changes here: the other devices are signed out
+    expect(signOutOtherDevices).toHaveBeenCalledWith(request);
+    signOutOtherDevices.mockClear();
+    // a first address is an added one
+    facts[USER] = { ...COMPLETE, email: null, emailVerified: false };
+    await call('User/updateOwnData', fresh(), { email: 'first@example.org' });
+    expect(signOutOtherDevices).not.toHaveBeenCalled();
   });
 
   it('isEmailAvailable answers only on an instance without mail', async () => {

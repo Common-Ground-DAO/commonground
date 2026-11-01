@@ -28,12 +28,18 @@ export function notifyNewSignInMethod(userId: string, method: string): void {
   toVerifiedAddress(userId, address => emailUtils.sendNewSignInMethodEmail(address, method), "new sign-in method");
 }
 
-/** the password was set or replaced */
-export function notifyPasswordChanged(userId: string): void {
-  toVerifiedAddress(userId, address => emailUtils.sendPasswordChangedEmail(address), "password change");
+/**
+ * the password was set or replaced; `otherDevicesSignedOut`: the account's
+ * other devices were signed out with it (a replaced password)
+ */
+export function notifyPasswordChanged(userId: string, otherDevicesSignedOut: boolean): void {
+  toVerifiedAddress(userId, address => emailUtils.sendPasswordChangedEmail(address, otherDevicesSignedOut), "password change");
 }
 
-/** the account's verified address was replaced: told to the previous one */
+/**
+ * the account's verified address was replaced: told to the previous one (the
+ * account's other devices were signed out with it)
+ */
 export function notifyEmailChanged(previousAddress: string): void {
   if (!emailEnabled()) {
     return;

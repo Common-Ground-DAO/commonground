@@ -179,7 +179,7 @@ const PasskeySettings: React.FC<Props> = (props) => {
       await passkeyApi.remove({ id: removing.id });
       setPasskeys(list => list?.filter(item => item.id !== removing.id) || null);
       setRemoveDialog(null);
-      showSnackbar({ type: 'info', text: 'Passkey removed. You can also delete it from your password manager.' });
+      showSnackbar({ type: 'info', text: 'Passkey removed. Your other devices were signed out. You can also delete the passkey from your password manager.' });
     }
     catch (e) {
       const message = securityActionErrorMessage(e, 'The passkey could not be removed');

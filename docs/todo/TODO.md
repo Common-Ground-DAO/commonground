@@ -112,14 +112,6 @@ that stack — confirm and delete:
   `yarn jest --detectOpenHandles` (or `--runInBand` per suite) on the F6 lockfile,
   then close the handle in that spec (or `.unref()` it in the module).
 
-- [ ] **Sessions created by anonymous challenge requests** (2026-11-01, left
-  over from G11). Requests that store nothing no longer create a session, but
-  the endpoints that do store something for an anonymous visitor
-  (`User/getSignableSecret`, the WebAuthn options, the sign-up code requests)
-  still create a 12-hour `sess:` key on the `noeviction` Valkey state instance
-  per call without a cookie. Check that each is rate-limited per network, or
-  give such pre-login sessions a short store TTL until login.
-
 - [ ] **`imageFilterThreshold` breaks the `r0-instance-config` conformance test**
   (2026-10-31, found during the Node 26 conformance run; 102 of 104 tests pass).
   `/api/v2/Instance/config` always sends `imageFilterThreshold`

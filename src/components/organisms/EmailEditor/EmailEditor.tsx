@@ -17,6 +17,7 @@ import Checkbox from 'components/atoms/Checkbox/Checkbox';
 import data from 'data';
 import userApi from 'data/api/user';
 import { securityActionErrorMessage } from 'data/auth/authErrors';
+import { signedOutDevicesText } from 'data/auth/signedOut';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import PasswordField from 'components/molecules/PasswordField/PasswordField';
 import { useEmailConfirmationContext } from 'context/EmailConfirmationProvider';
@@ -73,8 +74,10 @@ const EmailEditor: React.FC<Props> = () => {
         }
       }
       if (password.length > 0) {
-        await userApi.setPassword({ password });
-        showSnackbar({ type: 'info', text: 'Password updated' });
+        // a replaced password signs the other devices out
+        const { signedOutDevices, signOutDelayed } = await userApi.setPassword({ password });
+        const signedOut = signedOutDevicesText(signedOutDevices, signOutDelayed);
+        showSnackbar({ type: 'info', text: signedOut ? `Password updated. ${signedOut}` : 'Password updated' });
       }
       
     } catch (e) {

@@ -9,7 +9,9 @@
 > session creation, cookie, middleware order, logout and keepalive (§2, §4, §7, §10) against
 > commit eab2a27, 2026-11-01; limits, limit errors and the sign-up code state (§4 "Limits", §5.4,
 > §5.5, §6, §8) against commit 2fad7d3, 2026-11-01; 8-digit email codes and the hourly email-code
-> failure budgets (§4, §5.5, §6, §8) against commit 2fad7d3, 2026-11-01
+> failure budgets (§4, §5.5, §6, §8) against commit 2fad7d3, 2026-11-01; the store TTL of sessions
+> without a user, the index of each user's sessions, signing out other devices and the pre-login
+> limits (§2, §3, §4, §5.4, §7, §8, §10, §11) against commit 23a4c1e, 2026-11-01
 
 # Authentication & Identity
 
@@ -50,7 +52,7 @@ else hangs off it.
 | `users` | `srv/entities/users.ts` | Root account. Holds `email`, hashed `password`, `is_bot`, `displayAccount`, `trustScore`, etc. |
 | `user_accounts` | `srv/entities/user-accounts.ts` | Linked identity/profile items (one row per provider). Composite PK `(userId, type)`. |
 | `wallets` | `srv/entities/wallets.ts` | Crypto wallets attached to a user; may be login-enabled. |
-| `devices` | `srv/entities/device.ts` | Per-device public keys used for silent re-authentication. |
+| `devices` | `srv/entities/device.ts` | Per-device public keys used for silent re-authentication; valid while their `generation` is not below the user's `sessionGeneration` ([§2](#signing-out-other-devices)). |
 | `passkeys` | `srv/entities/passkeys.ts` | WebAuthn credentials, each bound to one relying party (`rpId`), see [§7](#7-passkeys). |
 | `bots` / `bot_tokens` | `srv/entities/bots.ts`, `srv/entities/bot-tokens.ts` | Bot users and their bearer tokens. |
 
@@ -80,6 +82,7 @@ Sessions are managed by `express-session` with a Redis-backed store, configured 
 | Setting | Value | Source |
 |---------|-------|--------|
 | Store | `connect-redis` 10 (`RedisStore`) on the `redis` Valkey state instance (`sess:` prefix; `noeviction`, persisted — sessions survive restarts, a full cache cannot evict them) | `srv/util/express.ts` |
+| Store TTL | the rest of the cookie's 12 hours for a logged-in session; an hour after the last request for any other session (longer only while a sign-up in it needs its state, see below) | `sessionStoreTtlSeconds`, `srv/util/sessionSetup.ts` |
 | Cookie name | `connect.sid` in prod, `cg_<deployment>.sid` otherwise | `srv/serverconfig.ts` |
 | Secret | Docker secret `redis_secret`, else `REDIS_SECRET` env | `srv/util/sessionSetup.ts` |
 | `maxAge` | 12 hours | `srv/util/sessionSetup.ts` |
@@ -101,6 +104,22 @@ that response sets the cookie. This matters on a page load without a valid sessi
 cleared or unknown to the store): the app's parallel requests used to mint one anonymous session
 each, and their cookies could arrive after — and overwrite — the one the device login had just set.
 
+**Sessions without a logged-in user are short-lived.** The store keeps such a session for an
+hour after its last request (`ANONYMOUS_SESSION_TTL_MS`; connect-redis `ttl` is a function of
+the session, `sessionStoreTtlSeconds`), never longer than the cookie. Every request refreshes it,
+so does the web app's keepalive (`User/ensureSession`, every 29 minutes) while a tab is open —
+twice within the hour, so one keepalive that a throttled background tab or a sleeping laptop
+delays does not lose pre-login state (a prepared wallet signature, the X/LUKSO/Farcaster state, a
+WebAuthn ceremony). A
+sign-up in progress keeps its session as long as it needs its state: until the verified address or
+the code runs out (`signupEmail.expiresAt`, at most an hour) and while the solved captcha still
+counts for a new code (2 hours after `captchaAt`). The cookie keeps its 12-hour `maxAge`; once the
+store has dropped the session, the browser's cookie names an unknown id, which is the same as no
+session (a later write creates a new one). From login on, the full 12 hours apply: the TTL is
+computed again on every write and touch, and a logged-in session gets the rest of the cookie's
+lifetime. Every endpoint that can start a session for a visitor without one is limited per client
+network ([§4 "Limits"](#limits)).
+
 Sliding expiry is kept for logged-in sessions only: `rolling` is off, and a hook that runs right
 before the headers go out re-sends the cookie of a session with `user` (signed like
 express-session signs it) unless express-session set it in that response itself. A response to a
@@ -119,6 +138,164 @@ or the first write of a streamed response) — no Set-Cookie of the old id, no s
 bring a logged-out session back. Left open: a response that the server had finished before the
 revocation but that reaches the browser after the new cookie (delivery reordering) can still set
 the old id; the store no longer knows it, so the browser is anonymous until the next login.
+
+### Signing out other devices
+
+**Session generations** decide which sessions, device keys and transfer links of an account are
+still valid. The authority is PostgreSQL ([database](../database/README.md#session-generations)):
+
+- one sequence, `session_generation_seq`;
+- the account's generation, `users."sessionGeneration"` (0 until its first sign-out of other
+  devices);
+- the generation each device key and transfer link was created with (`devices."generation"`,
+  `transfer_tokens."generation"`; 0 for those from before).
+
+**Logins.** A login's first step (`beginLogin` in `User/login`, `createUser` and
+`redeemTransferLink`) takes the next sequence value, before any credential is checked
+(`users.nextSessionGeneration`). The session it establishes carries that value as `gen`, and so
+does a device key it creates. `establishLoginSession` reads the account's generation again after
+saving the session (and after the login created its device key). If the generation is above the
+login's own, the login destroys the new session, deletes the new key, and is refused
+(`NOT_ALLOWED`; `NOT_FOUND` for a device login).
+
+**Signing out others.** A sign-out of the other devices raises the account's generation to the next
+sequence value (`users.bumpSessionGeneration`). It runs in the same transaction as the change that
+caused it, right before COMMIT, and gives the calling session's device the new generation:
+
+- the change and the sign-out commit together or not at all. A refused change (`LAST_LOGIN_METHOD`,
+  `NOT_FOUND`, a wrong code, …) signs nobody out;
+- from the commit on, a device key or transfer link below the account's generation no longer
+  works. The SQL that looks the key or link up checks this in the same statement:
+  - `verifyDeviceAndGetUserId`, used by the HTTP device login, the socket login and the call server;
+    the call server's role uses `session_generation_of()` because it may not read `users`;
+  - `isLiveDevice`, which the socket login checks again after joining its rooms;
+  - transfer-link `peek` and `consume`;
+  - the push-notification device queries and `registerWebPushSubscription`.
+
+  Bot devices are not checked this way: a bot account never signs out other devices, so its
+  generation stays 0.
+
+  A link carries the generation of the session that minted it.
+- **Lock order.** The step locks the user row (`FOR UPDATE`) first. Only for its last statement,
+  which draws the new value and also stamps the caller's device, does it take an advisory lock
+  exclusively, held until COMMIT. A login's first step takes the same lock shared. A login
+  therefore either got its value before the sign-out (lower generation: it is refused or ended),
+  or after the commit, in which case its credential check sees the change. Logins wait only for
+  that last statement and the COMMIT;
+- `SET LOCAL lock_timeout = '5s'`: if the step cannot get its locks in time (a long transaction
+  holds the user row), it fails with `SERVICE_UNAVAILABLE` instead of waiting. The change is
+  rolled back with it, and the request can be retried;
+- a session whose own generation is below the account's is refused (`LOGIN_REQUIRED`), with its
+  change rolled back. A session that was itself signed out cannot sign out anyone.
+
+**Sessions.** Sessions live in Valkey, so their check uses a copy of each account's generation
+there, `sess-gen:<userId>` (`srv/util/sessionGenerations.ts`):
+
+- **Load check** (`sessionGenerationGuard`, right after the revocation guard): for a session with a
+  user, one round (`MGET`) reads the copy and `sess-keep:<userId>`, the session that signed the
+  others out (13 hours).
+  - A session with a lower generation is destroyed and revoked in the store. The request runs
+    anonymously, and the revocation guard keeps the session from being saved or its cookie being
+    sent.
+  - A session without `gen` (from before generations existed) counts as 0.
+  - The session named in `sess-keep:` is stamped with the new generation instead of being ended. A
+    request of the signing device may have loaded its session before the sign-out, or written it
+    back afterwards.
+  - If the copy cannot be read, the request fails (fail closed). So do logged-in requests until the
+    api has reconciled the copies with PostgreSQL once since it started (`SERVICE_UNAVAILABLE`);
+    anonymous requests are unaffected.
+- **Writing the copy:** after the commit, one script writes the copy and `sess-keep:` together,
+  and only if the generation is greater than the stored one. Copies are never lowered, and an
+  older sign-out arriving late cannot rename the kept session. The write is retried a few times.
+- **Reconciler** (`GenerationReconciler`, started by the api): copies every generation committed
+  since its last run. It runs at start (every 2 s until PostgreSQL and Valkey answer, e.g. while
+  Valkey is still loading a snapshot) and then every 30 s:
+  - the sequence is monotonic, so each run asks only for accounts above the last complete value
+    (`users.sessionGenerationsSince`, partial index on `"sessionGeneration" > 0`). It reads them
+    while holding the advisory lock shared, so no sign-out sits between drawing its value and its
+    COMMIT, and every value up to the sequence's current one is complete;
+  - Valkey records up to which value it holds every copy (`sess-gen-copied`, written after the
+    copies). If that is behind — its data was lost or restored from an older snapshot — the next
+    run copies from there again.
+- **If the copy fails at sign-out time:** the answer says so (`delayed: true`;
+  `signOutDelayed: true` for `setPassword`), and the web app shows "Other devices will be signed
+  out within a minute." The reconciler copies it within one interval. Until then, sessions of the
+  account from before the sign-out still pass the load check, but their device keys and transfer
+  links are already invalid.
+
+**Index.** Each account's logged-in sessions are also indexed, so the others can be ended right away
+and counted:
+
+- The index is a sorted set `sess-user:<userId>`, member = session id, score = when the session
+  runs out in the store (`srv/util/userSessions.ts`).
+- The store wrapper (`withUserSessionIndex`, together with `withSessionRevocation`) records a
+  logged-in session on every write. On a touch it records only when the expiry moved by more than
+  5 minutes.
+- Recording drops expired entries and sets the key's expiry (`PEXPIREAT`).
+- Logout and a login that replaces a logged-in session drop the old id. Ids whose session is gone
+  are dropped when the index is read.
+- Index writes are best effort: a write the Valkey instance refuses is logged, and the session
+  write still succeeds.
+
+Bots never have sessions.
+
+`changeAndSignOut()` / `signOutOtherDevices()` (`srv/util/signOutOtherDevices.ts`). After the commit,
+it does the following, all best effort (none of it is needed for the device keys and links to be
+invalid):
+
+1. copies the new generation to Valkey and names this session in `sess-keep:` (failing that, the
+   reconciler does it, and the answer says `delayed`);
+2. stamps this session with the new generation;
+3. ends the other indexed sessions below it through the store's `destroy`. Each id is revoked first,
+   so a request still running with one of them neither writes it back nor sends its cookie again
+   ([above](#when-a-session-exists));
+4. deletes the old device keys (`deviceHelper.deleteStaleDevices`, like a logout of each: push
+   subscription dropped). The deleted devices get the socket event `cliSignedOut`, and then their
+   sockets are disconnected (`eventHelper.signOutDeviceSockets`, through the Redis emitter, in this
+   order);
+5. deletes the old unused transfer links (`transferTokenHelper.deleteStale`).
+
+The current session and device stay as they are (the step-up state included). The result is the
+number of other devices signed out: the deleted device keys plus the devices of the ended sessions
+(a key whose browser has long lost it counts as well).
+
+It runs:
+
+- on request: `POST /User/signOutOtherDevices` (step-up, [§7](#step-up-for-sensitive-actions)) →
+  `{ devices, delayed }`;
+- with every change that takes a way in away from the account. These are the changes that need the
+  plain step-up because they remove or replace something:
+  - replacing the password (`setPassword` when the account has one; the answer carries
+    `signedOutDevices` and `signOutDelayed`);
+  - replacing the verified email address (`verifyEmail`; without mail, `updateOwnData` replacing or
+    removing the address);
+  - removing a passkey (`Passkey/remove`);
+  - deleting a sign-in wallet or switching its sign-in off (`deleteWallet`, `updateWallet`);
+  - removing an X/LUKSO/Farcaster account (`removeUserAccount`);
+  - linking a different X/LUKSO/Farcaster account than the one of that type already linked
+    (`addUserAccount` replaces it; plain step-up then).
+
+  The repository functions behind these changes take the sign-out as a step to run before their
+  COMMIT (`beforeCommit`).
+
+Two sign-outs of one account at the same time: the second waits for the first. Its session was
+signed out by the first one, so it is refused. Generations only grow.
+
+Adding a way in (a first password, a passkey, a sign-in wallet, an X/LUKSO/Farcaster account, a
+first verified address) signs nobody out:
+
+- the sessions that exist are as legitimate as before;
+- the verified address gets a notice ([§7](#step-up-for-sensitive-actions));
+- someone who wants the other devices out uses the explicit action.
+
+This also keeps the transfer flow intact. Completing the account-security step in a transfer
+session adds methods and leaves the account's other sessions and device keys alone, including those
+of the gateway, which shares the `devices` table ([§11](#11-transfer-links-and-the-account-security-step)).
+A password below the policy is replaced there, which signs the other devices out like any replaced
+password.
+
+The notices to the verified address say so when other devices were signed out: the password notice
+after a replaced password, the email-change notice to the previous address.
 
 ### Cookie scoping
 
@@ -139,6 +316,8 @@ botAuthenticationMiddleware      # sets request.botPrincipal if a valid Bearer t
   → logged-in cookie hook (skipped if botPrincipal; registered before the session so it runs
                                    after express-session's own Set-Cookie decision)
   → session (skipped if botPrincipal)
+  → revocation guard (skipped if botPrincipal; §2 "When a session exists")
+  → session-generation guard (skipped if botPrincipal; §2 "Signing out other devices")
   → passport.initialize (skipped if botPrincipal)
   → passport.session (skipped if botPrincipal)
   → old-scope cookie cleanup (skipped if botPrincipal, see §7; writes nothing to the session)
@@ -156,6 +335,7 @@ The authenticated identity plus in-flight login state live on the session (`Sess
 | `authAt` / `authMethod` | When and how the session last authenticated interactively (login, account creation, `User/reauthenticate`). Never set by a device-key login. Read by the step-up guard ([§7](#step-up-for-sensitive-actions)). |
 | `signSecret` | One-time random challenge (20 chars) for signature-based flows. |
 | `createdAt` | When the login session was created (`establishLoginSession`). Nothing reads it. |
+| `gen` | The session generation the login took when it started (`beginLogin` → `establishLoginSession`); a lower one than the account's ends the session ([§2](#signing-out-other-devices)). |
 | `passport` / `twitter` | Twitter OAuth data (via Passport.js). |
 | `lukso` | Prepared LUKSO Universal Profile login/creation data. |
 | `farcaster` | Prepared Farcaster login/creation data (FID, address, profile). |
@@ -214,9 +394,11 @@ Silent re-authentication is built on an asymmetric device key rather than a stor
   `deviceHelper.verifyDeviceAndGetUserId()` (called from `srv/api/user.ts:193`).
 
 A device is created on every non-device login (`deviceHelper.createDevice`) and deleted on logout
-(`deviceHelper.deleteDevice`, `srv/api/user.ts:368`). If the server reports the device as
-`NOT_FOUND` during auto-login, the client treats itself as logged out and clears local state
-(`src/data/appstate/login.ts:194-204`).
+(`deviceHelper.deleteDevice`, `User/logout` in `srv/api/user.ts`) and, for every device but the
+current one, when the account signs out its other devices
+([§2](#signing-out-other-devices)). If the server reports the device as `NOT_FOUND` during
+auto-login, the client treats itself as signed out from elsewhere, clears local state and says so
+(`signedOutElsewhere`, `src/data/appstate/login.ts`, [§10](#10-frontend-login-state-machine)).
 
 The same device signature is also used to authenticate the Socket.IO connection — see the
 [realtime docs](../realtime/README.md) and the architecture overview.
@@ -237,16 +419,21 @@ All logins go through `POST /User/login` (`srv/api/user.ts`), a discriminated un
 5. Return `{ ownData, communities, chats, deviceId, webPushSubscription, unreadNotificationCount }`.
 
 The challenge used by signature methods comes from `POST /User/getSignableSecret`
-(`srv/api/user.ts:71-94`), which generates a 20-char random string
+(`srv/api/user.ts`), which generates a 20-char random string
 (`SIGNABLE_SECRET_LENGTH`), stores it as `session.signSecret`, and returns it. A given challenge is
-consumed on use (`signSecret` is deleted after login).
+consumed on use (`signSecret` is deleted after login). A call that starts a session (the request
+had none with data) counts against a limit per client network ([Limits](#limits)); a page load with
+a live session reuses it and is not counted.
 
 `POST /User/checkLoginStatus` returns `{ userId | null }` for the current session,
 `POST /User/ensureSession` is the keepalive: it stores nothing and creates no session, in every
 mode (the response itself refreshes an existing session's store TTL and re-sends a logged-in
 session's cookie).
 `POST /User/logout` deletes the device, destroys the session (`endLoginSession()`; the old id is
-dead) and expires the cookie; no new session takes its place.
+dead and leaves the user's session index) and expires the cookie; no new session takes its place.
+`POST /User/signOutOtherDevices` (step-up) ends every other session and device key of the account
+and answers `{ devices, delayed }`, the number of other devices signed out
+([§2](#signing-out-other-devices)).
 
 Every login response also carries `securityStepRequired`: whether the account has to finish the
 account-security step before anything else works ([§11](#11-transfer-links-and-the-account-security-step)),
@@ -286,6 +473,9 @@ Off on a dev stack (`DEPLOYMENT=dev`): account creation and the login throttles.
 | Captcha for trust score (`verifyCaptcha`, signed in) | per IP | 3 per day |
 | Transfer links | per user / per IP / failures per IP | 10 per hour / 120 / 20 per 15 minutes |
 | `isEmailAvailable` (instances without mail only) | per IP | 60 per hour |
+| Device-login and SIWE challenges that start a session (`getSignableSecret` without a session) | per IP | 600 per hour |
+| Signed challenges checked (`prepareWalletAction`, `Lukso/PrepareLuksoAction`, `Accounts/Farcaster/verifyLogin`) | per IP, each | 300 per hour |
+| X sign-in redirects (`Twitter/startLogin`) | per IP | 120 per hour |
 
 Changed on 2026-11-01 (G10): accounts per network from 2 per day (a single office or mobile-carrier
 address could block every further sign-up for a day) to 20 per hour and 50 per day; the sign-up
@@ -297,6 +487,12 @@ logins per address from 30 per day (per network) and 200 per day (overall) to 10
 so a person who mistyped is not locked out until the next day, together with codes of 8 instead of
 6 digits (a hundred times more codes to guess). The other guessing budgets are unchanged; the
 sign-up and confirmation codes have no per-address budget beyond their 5 guesses per code.
+
+Added on 2026-11-01 (G12): every endpoint that stores something for a visitor without a session has
+a limit per client network now — the three `preLogin` rows above (the WebAuthn options and the
+sign-up code requests had theirs already). A page load makes one device-login challenge, and only
+one that starts a session counts, so the challenge limit is far above what a shared network uses.
+These limits also apply on a dev stack.
 
 **Limit errors.** A refusal is `RATE_LIMIT_EXCEEDED` with the seconds until the limit lets the next
 attempt through, in the envelope and as the standard header:
@@ -355,9 +551,15 @@ Two-step, using a **prepared credential** held in the session:
    values, address types and the stored rows themselves
    (`1785632400000-dropFuelAeternityWallets`).
    `prepareWalletAction` then determines `readyForLogin` (wallet exists, `loginEnabled`, not
-   deleted) vs `readyForCreation`, and stores the result as `session.preparedCredential`.
-3. `POST /User/login` with `type: "wallet"` reads `preparedCredential`, requires
-   `readyForLogin && ownerId`, creates a device, and logs in (`srv/api/user.ts:164-184`).
+   deleted) vs `readyForCreation`, and stores the result as `session.preparedCredential` (with the
+   signed address, its type and the time of the check).
+3. `POST /User/login` with `type: "wallet"` reads `preparedCredential` (and uses it up), requires
+   `readyForLogin && ownerId`, a signature at most 5 minutes old, and that the wallet is a live,
+   login-enabled wallet of that owner right now (`walletHelper.isSignInWallet`) — a wallet removed
+   or switched off after the signature signs in no one —, then creates a device and logs in.
+   `User/reauthenticate {type:'wallet'}` applies the same check. The LUKSO, Farcaster and X logins
+   resolve the account from the linked provider id at login time (`getUserByAccount`), so an
+   unlinked account signs in no one there either.
 
 The SIWE message is built client-side in `src/util/siwe.ts` (host, `URI`, `Version`, `Chain ID`,
 `Nonce: <signSecret>`, `Issued At`). The server checks that the message was made for this
@@ -417,9 +619,11 @@ password typed to sign in or re-authenticate (`common.PasswordAttempt`) may be o
 The web app shows the same rule.
 
 Passwords are set/changed via `POST /User/setPassword`: replacing one requires a recent
-authentication (step-up, [§7](#step-up-for-sensitive-actions)); a first password adds a sign-in
-method (`requireAuthToAdd`). Setting one clears `passwordChangeRequired`; the verified address gets
-a notice.
+authentication (step-up, [§7](#step-up-for-sensitive-actions)) and signs the account out on every
+other device ([§2](#signing-out-other-devices)); a first password adds a sign-in method
+(`requireAuthToAdd`) and signs nobody out. The answer is `{ signedOutDevices }` (0 for a first
+password). Setting one clears `passwordChangeRequired`; the verified address gets a notice, which
+says when the other devices were signed out.
 
 ### 5.5 Email Verification Code / One-Time Password (`type: "verificationCode"`)
 
@@ -453,7 +657,9 @@ Passwordless email login:
 OAuth 1.0a via Passport.js (`passport-twitter`, `srv/api/twitter.ts`). The strategy is only
 registered when `TWITTER_API_KEY`/`TWITTER_API_SECRET` are configured (`srv/api/twitter.ts:23-31`).
 
-1. `GET /Twitter/startLogin` kicks off `passport.authenticate("twitter")`.
+1. `GET /Twitter/startLogin` kicks off `passport.authenticate("twitter")` (limited per IP; a
+   refusal redirects the popup to `/twitter-login?error=rate-limited&retryAfter=<s>`, which says how
+   long to wait).
 2. The provider redirects to `GET /twitter-callback` (`srv/api/getRoutes.ts:751-755`), which stores
    the Twitter profile in `session.passport`.
 3. `POST /Twitter/finishLogin` (`srv/api/twitter.ts:46-67`) returns the pending profile
@@ -719,9 +925,13 @@ current address with other settings is ignored);
 Farcaster);
 `User/addPreparedWallet` with `loginEnabled`; `User/updateWallet` when it changes `loginEnabled`;
 `User/deleteWallet` of a login-enabled wallet; adding (`registrationOptions` /
-`verifyRegistration` while logged in) and removing a passkey; the bot owner's `Bot/tokens/issue`
-and `Bot/disable`. Routine moderation (including `Bot/remove`, which removes a bot from a
-community) is not protected.
+`verifyRegistration` while logged in) and removing a passkey; signing out the other devices
+(`User/signOutOtherDevices` — otherwise whoever holds a session alone could sign the owner out
+everywhere else); the bot owner's `Bot/tokens/issue` and `Bot/disable`. Routine moderation
+(including `Bot/remove`, which removes a bot from a community) is not protected.
+
+Every protected change that removes or replaces a way in also signs the account out on its other
+devices once it is done; adding one does not ([§2](#signing-out-other-devices)).
 
 **Last sign-in method.** An account never loses its last sign-in method of this instance — a
 passkey of this RP, a password or a login-enabled EVM wallet (`srv/repositories/loginMethods.ts`;
@@ -736,7 +946,7 @@ classified.
 `{type:'passkey', authenticationResponse}` (a `stepup` assertion of one of the user's own
 credentials), `{type:'password', password}` (also for accounts that have passkeys) or
 `{type:'wallet'}` (a `prepareWalletAction` signature of one of the user's login-enabled wallets,
-at most 5 minutes old). It sets `authAt`/`authMethod` and returns `{ validUntil }`.
+at most 5 minutes old, the wallet checked again as at login). It sets `authAt`/`authMethod` and returns `{ validUntil }`.
 
 **Client.** `BaseApiConnector` answers `REAUTH_REQUIRED` by opening the "Confirm it's you to
 {action}" dialog (`ReauthDialog`: passkey if the account has one here, password, or a sign-in
@@ -808,9 +1018,12 @@ address) adds a `twitter`, `lukso`, `farcaster`, or `cg` account to the current
 user, reading the prepared provider state from the session (same state built by the prepare/verify
 endpoints). `POST /User/updateUserAccount` edits the `cg` profile, and `POST /User/removeUserAccount`
 removes an account of a given type (for X, LUKSO and Farcaster: step-up and the last-method check,
-[§7](#step-up-for-sensitive-actions)). Because
+[§7](#step-up-for-sensitive-actions), then the other devices are signed out,
+[§2](#signing-out-other-devices)). Because
 `user_accounts` has a composite PK `(userId, type)`, a user holds at most one account per provider
-type.
+type: linking a different X/LUKSO/Farcaster account than the one of that type already linked
+replaces it — that takes the plain step-up (no transfer session) and signs the other devices out
+like a removal; linking the same account again (a profile refresh) is an add.
 
 ### Wallets
 
@@ -818,8 +1031,8 @@ type.
 |----------|---------|
 | `/User/prepareWalletAction` | Verify a wallet signature and stage a `preparedCredential` ([§5.2](#52-wallet-type-wallet--evm-only)). |
 | `/User/addPreparedWallet` | Attach the prepared wallet to the current user, with `loginEnabled` / `visibility` flags (step-up when `loginEnabled`). |
-| `/User/updateWallet` | Update wallet flags (step-up when `loginEnabled` changes; switching off the last sign-in method is refused). |
-| `/User/deleteWallet` | Soft-delete a wallet (step-up for a login-enabled wallet; the last sign-in method is refused). |
+| `/User/updateWallet` | Update wallet flags (step-up when `loginEnabled` changes; switching off the last sign-in method is refused; switching sign-in off signs the other devices out). |
+| `/User/deleteWallet` | Soft-delete a wallet (step-up for a login-enabled wallet; the last sign-in method is refused; a deleted sign-in wallet signs the other devices out). |
 | `/User/getWallets` | List the current user's wallets. Querying **other** users' wallets is disabled and returns `NOT_ALLOWED` (`srv/api/user.ts:1032-1040`). |
 
 Each wallet mutation emits a `cliWalletEvent` to the owning user over the socket. A wallet is unique
@@ -846,8 +1059,11 @@ Independent of any social account, an address can be confirmed for the account:
   code; replacing a verified address needs a step-up here as well, before the code is used up)
   makes the address the account's verified address — this is how the address changes on an
   instance that sends mail; `updateOwnData` refuses a new `email` there with
-  `EMAIL_VERIFICATION_REQUIRED`. `EXISTS_ALREADY` if another account took it meanwhile. The previous
-  verified address gets a notice; a `cliUserOwnData { email, emailVerified: true }` event follows.
+  `EMAIL_VERIFICATION_REQUIRED`. `EXISTS_ALREADY` if another account took it meanwhile. A replaced
+  verified address signs the account out on its other devices
+  ([§2](#signing-out-other-devices)), and the previous address gets a notice that says so; a first
+  verified address signs nobody out. A `cliUserOwnData { email, emailVerified: true }` event
+  follows.
 - The mail also links to `/verify-email?email=…&token=<code>`, which does the same while signed in
   to that account.
 - **Sending the confirmation again** (the mail got lost): `requestEmailVerification` with the
@@ -906,7 +1122,17 @@ The client login lifecycle is owned by `LoginManager` (`src/data/appstate/login.
   mismatch.
 - **Keepalive**: `WebSocketManager` calls `POST /User/ensureSession` every 29 minutes (it creates
   no session, [§4](#4-the-login-endpoint)); there is no call on start — the socket needs no session
-  cookie.
+  cookie. It also keeps a session without a user alive while the tab is open (its store TTL is an
+  hour, [§2](#when-a-session-exists)), even when one keepalive is late.
+- **Signed out from elsewhere**: the socket event `cliSignedOut` (another device signed this one
+  out, or the account's password, email or sign-in methods changed there,
+  [§2](#signing-out-other-devices)) or a `NOT_FOUND` for the device at the automatic login makes
+  `LoginManager.signedOutElsewhere()` sign out locally (`logout()`: local databases, device key,
+  current user) and raise `signedOutNotice` (`src/data/auth/signedOut.ts`); `SignedOutNotice`
+  shows "You were signed out" with "Sign in" / "Not now". The other tabs follow the logout through
+  the `CG_LOGIN_STATE` broadcast. A logout in another tab of the same browser (which deletes this
+  device's key too) shows no notice: the tab knows it from the broadcast or the stored current
+  user.
 - **Post-login setup** (`setupAfterLogin`): seeds the local Dexie databases (user, communities, chats,
   notifications), logs the socket in, and registers the push subscription.
 
@@ -1022,9 +1248,11 @@ never from how the session came about, and it is not enforced in legacy CG ID mo
   the account already has gets sign-in switched on; either way a SIWE signature checked against
   this instance's domain ([§5.2](#52-wallet-type-wallet--evm-only)) —, and an address confirmed
   with a code ([§8](#email-verification)). Methods added this way, also in a transfer-link
-  session, are full sign-in methods; the notices to the verified address are the safeguard. A
-  password below the policy is replaced with `setPassword`, which asks for the current password
-  first (step-up). Every added method is reported to the verified address. An account whose only
+  session, are full sign-in methods; the notices to the verified address are the safeguard. Adding
+  them signs no other device out, so the account's other transfer sessions and its gateway devices
+  stay signed in ([§2](#signing-out-other-devices)). A password below the policy is replaced with
+  `setPassword`, which asks for the current password first (step-up) and, like every replaced
+  password, signs the other devices out. Every added method is reported to the verified address. An account whose only
   sign-in was X/LUKSO/Farcaster therefore must add one of these; afterwards the normal step-up
   works with it (there is no X/LUKSO/Farcaster option in the step-up dialog).
 - **Web app** — `SecurityStepView` / `SecurityStep` organism ([frontend §10](../frontend/README.md#10-authentication-ui)).

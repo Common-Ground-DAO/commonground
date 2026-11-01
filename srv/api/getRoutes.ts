@@ -99,7 +99,7 @@ function getWorkingHost(hostname: string): string {
 // User Profile
 getRoutesRouter.get(`/${config.URL_USER}/:userId/image.jpeg`, asyncHandler(async (req, res) => {
   try {
-    const userId = translator.toUUID(req.params.userId.replace('~', ''));
+    const userId = translator.toUUID((req.params.userId as string).replace('~', ''));
     const data = await userHelper.getSocialPreviewData({ userId });
     if (data) {
       const imageBuffer = await fileHelper.getFile(data.previewImageId);
@@ -817,7 +817,8 @@ async function getGatedFileData(filename: string, userId: string) {
 
 getRoutesRouter.get('/gated-videos/:filename', asyncHandler(async (req, res) => {
   const { user } = req.session;
-  const { filename } = req.params;
+  // a named parameter is a string (only wildcards yield arrays)
+  const filename = req.params.filename as string;
 
   try {
     if (!user) {
@@ -882,7 +883,8 @@ getRoutesRouter.get('/gated-videos/:filename', asyncHandler(async (req, res) => 
 
 getRoutesRouter.get('/gated-files/:filename', asyncHandler(async (req, res) => {
   const { user } = req.session;
-  const { filename } = req.params;
+  // a named parameter is a string (only wildcards yield arrays)
+  const filename = req.params.filename as string;
 
   try {
     if (!user) {

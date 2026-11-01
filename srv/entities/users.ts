@@ -115,12 +115,13 @@ export class User {
     @Column({ type: 'jsonb', nullable: false, default: {} })
     extraData!: Models.User.ExtraData;
 
-    @Index('idx_users_verification_codes', { synchronize: false })
-    @Column({ type: 'varchar', length: 32, nullable: true, select: false })
-    verificationCode!: string | null;
-
-    @Column({ type: 'timestamptz', precision: 3, nullable: true, select: false })
-    verificationCodeExpiration!: Date | null;
+    /**
+     * The password signed in but does not meet the password policy: the
+     * account has to choose a new one (account-security step,
+     * srv/util/securityStep.ts). Cleared when a password is set.
+     */
+    @Column({ type: 'boolean', nullable: false, default: false, select: false })
+    passwordChangeRequired!: boolean;
 
     @Column({ type: 'integer', nullable: false, default: 0 })
     pointBalance!: number;

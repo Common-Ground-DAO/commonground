@@ -257,13 +257,29 @@ and a browser pass on the test VM:
 - [ ] **G2 Transfer link.** One-time token: random, stored hashed with user id,
   ~10 min expiry, single use; carried in the URL fragment
   (`https://cg.box/transfer#<token>`) so it never reaches logs or `Referer`;
-  redeemed by a POST from the cg.box frontend. Rate-limited.
+  redeemed by a POST from the cg.box frontend. Rate-limited. (Implemented on
+  `feat/g2g3-transfer-security`, in review: `User/createTransferLink` — on only
+  with `TRANSFER_TARGET_URL`, for the session's own user —, `previewTransferLink`,
+  `redeemTransferLink` (one conditional `UPDATE`, logged-out sessions only,
+  `authMethod: 'transfer'`), the `/transfer` confirmation page with name, handle
+  and image; docs/auth-identity §11. G1 sets `TRANSFER_TARGET_URL` on the gateway
+  and allowlists `User/createTransferLink`.)
 - [ ] **G3 Account-security step on cg.box.** A user arriving via transfer link
   (and any user without a working login method on cg.box) must add one before
-  using the app: passkey on cg.box, password, or an already-linked wallet; plus a
+  using the app: passkey on cg.box, password, or a wallet (decision 19); plus a
   verified email. A server-side password policy comes with it, plus throttling
   of password and email-code login and a bcrypt cost review. Decide here whether stricter requirements against bots apply to
   new sign-ups too (email verification is cheap once mail runs on our side).
+  (Implemented on `feat/g2g3-transfer-security`, in review: the step is derived
+  from the account and enforced by the api, wsapi and the call server; adding
+  what is missing needs a sign-in within the hour; password policy = 8
+  characters, bcrypt cost 12 with rehash; failure-based login throttles; email
+  codes bound to their address and account, email-code login only to verified
+  addresses with "send confirmation again" for signed-in users (decision 20);
+  X/LUKSO/Farcaster-only accounts must add a passkey, password or wallet; methods
+  added in a transfer session are full methods, notices to the verified address
+  are the safeguard (decision 18). Anti-bot: nothing beyond G4's verified
+  address and captcha. docs/auth-identity §5, §8, §11.)
 - [x] **G4 Passkeys on the main origin + new account-creation UI.** (done
   2026-10-31: passkeys bound to their RP (`rpId` per row; `id.app.cg` rows are
   gateway-only), one login form with passkey autofill, sign-up with the email
@@ -271,8 +287,7 @@ and a browser pass on the test VM:
   last-login-method guard, `/login`; X/LUKSO/Farcaster only linkable in
   settings, recovery-phrase login only in legacy mode; accepted on the test VM.
   Decisions: no compatibility mode for self-host `id.<domain>` passkeys, no
-  separate gateway-only flag. Open for G3: accounts whose only methods are
-  X/LUKSO/Farcaster can't pass the step-up dialog later than 5 min after login.)
+  separate gateway-only flag.)
   rpID =
   cg.box host, ceremonies run in the main app (conditional UI / passkey autofill
   on the login form; step-up re-authentication for destructive actions such as
@@ -385,7 +400,6 @@ and a browser pass on the test VM:
 ## Open questions
 
 - Length of the transition period (P6).
-- Stricter sign-up requirements against bots — which, and for whom (G3).
 - Production storage backend and data volume; who produces the dump and how (G5,
   P5).
 - Server sizing: a frontend build needs ~4.2 GB on top of the running stack

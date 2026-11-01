@@ -3,7 +3,9 @@
 > instance) against commit ff0da06, 2026-10-31; sessions (§2), the login endpoint (§4), passkeys
 > (§5.3, §7), the recovery-phrase gate (§5.2), sign-up (§6), step-up (§7), the keepalive (§10)
 > and the client side of sign-up, passkeys and step-up (§6, §7, §10) against commit 54e2d73,
-> 2026-10-31; `trust proxy` row against commit fe3937f, 2026-10-31
+> 2026-10-31; `trust proxy` row against commit fe3937f, 2026-10-31; logout, password login and
+> policy (§5.4), email codes (§5.5, §8), the wallet message domain (§5.2), the add-method rule (§7)
+> and transfer links / the account-security step (§11) against commit 9fc05a9, 2026-11-01
 
 # Authentication & Identity
 
@@ -30,6 +32,7 @@ lifecycle) in [the bots docs](../bots/README.md).
 8. [Account Linking (user_accounts & wallets)](#8-account-linking-user_accounts--wallets)
 9. [Bot Token Authentication (separate plane)](#9-bot-token-authentication-separate-plane)
 10. [Frontend Login State Machine](#10-frontend-login-state-machine)
+11. [Transfer Links and the Account-Security Step](#11-transfer-links-and-the-account-security-step)
 
 ---
 
@@ -125,16 +128,24 @@ The authenticated identity plus in-flight login state live on the session (`Sess
 | `pendingPasskey` | A passkey registered during sign-up, waiting for `createUser` ([§7](#sign-up-with-a-passkey)). |
 | `signupEmail` | Sign-up address verification: hashed code bound to the address, expiry, attempts, then `verifiedAt` ([§6](#6-signup-flow--captcha)). |
 | `legacyDomainCookieCleared` | Set once an obsolete subdomain-scoped session cookie has been expired ([§7](#session-cookie-on-upgraded-instances)). |
+| `securityStepClearFor` | The session user's account was found complete for the account-security step ([§11](#11-transfer-links-and-the-account-security-step)); a new login starts without it. |
 | `passkeyData` | Legacy CG ID mode only: `{ step: 'success', passkeyId, userId }` left by `CgId/verifyAuthenticationResponse`. |
 | `temporaryArticleIds` | Unrelated to auth (draft article ownership). |
 
-Every login (all `User/login` branches and `createUser`) ends in `establishLoginSession()`
-(`srv/util/authSession.ts`): `session.regenerate()` (a session id known before the login is
-worthless afterwards and all pre-login state is dropped), set `user`, record `authAt`/`authMethod`
-(not for a device-key login), and an awaited `session.save()`. When the session was already logged
-in as the **same** user (a device-key re-login, e.g. after the page reload that ends the X OAuth
-redirect), the in-flight linking state (`passport`, `twitter`, `lukso`, `farcaster`,
-`preparedCredential`) and `authAt`/`authMethod` are kept. The X OAuth callback
+Every login (all `User/login` branches, `createUser` and transfer-link redemption) ends in
+`establishLoginSession()` (`srv/util/authSession.ts`). Whenever the session gains a principal or
+authority — anonymous → user, user A → user B, and every interactive login (it refreshes the
+step-up time) — it does `session.regenerate()` (a session id known before the login is worthless
+afterwards: no session fixation, and all pre-login state is dropped), sets `user`, records
+`authAt`/`authMethod` and awaits `session.save()`. An interactive re-login of the **same** user keeps
+the in-flight linking state (`passport`, `twitter`, `lukso`, `farcaster`, `preparedCredential`).
+
+A **device-key login of the user the session already belongs to** — the automatic re-login on every
+page load, also the one that ends the X OAuth redirect — gains nothing and keeps the session as it
+is: same id, same linking state, and `authAt`/`authMethod` untouched (a silent login never extends
+step-up freshness); only its challenge (`signSecret`) is used up. Regenerating here would destroy
+the id the page's other requests are still sending, so they would run anonymously
+(`LOGIN_REQUIRED`) until the new cookie arrived. The X OAuth callback
 (`/twitter-callback`) passes `keepSessionInfo: true`, so passport's own session regeneration keeps
 the logged-in user. TODO(verify): X linking end to end on the test VM.
 
@@ -196,7 +207,13 @@ consumed on use (`signSecret` is deleted after login).
 
 `POST /User/checkLoginStatus` returns `{ userId | null }` for the current session,
 `POST /User/ensureSession` saves the session (keepalive for the rolling cookie), and
-`POST /User/logout` deletes the device, clears the auth-related session fields, and saves.
+`POST /User/logout` deletes the device and replaces the session with a new, empty one
+(`endLoginSession()`: regenerate, awaited save — the old session id is dead).
+
+Every login response also carries `securityStepRequired`: whether the account has to finish the
+account-security step before anything else works ([§11](#11-transfer-links-and-the-account-security-step)),
+and `stepUpValidUntil`: until when the session's last interactive authentication counts for
+sensitive actions (null if it does not) — also after a silent device re-login that kept the session.
 `POST /User/clearLoginSession` clears the in-flight provider state (`lukso`, `farcaster`, `twitter`,
 `passport`) without logging the user out.
 
@@ -232,7 +249,13 @@ Two-step, using a **prepared credential** held in the session:
    `readyForLogin && ownerId`, creates a device, and logs in (`srv/api/user.ts:164-184`).
 
 The SIWE message is built client-side in `src/util/siwe.ts` (host, `URI`, `Version`, `Chain ID`,
-`Nonce: <signSecret>`, `Issued At`).
+`Nonce: <signSecret>`, `Issued At`). The server checks that the message was made for this
+instance: its first line must name the host and its `URI` the origin of the instance's web app
+(`BASE_URL`; in dev also the local dev origins, `srv/util/origins.ts`;
+`assertSiweForThisInstance`, `srv/repositories/wallets.ts`). A message for another site does not
+fail the request: `prepareWalletAction` answers `walletValid: false` (nothing ready for login or
+creation), like any other signature that does not check out. The challenge
+(`getSignableSecret`) comes from a CSPRNG. Farcaster's SIWE messages are not checked this way yet.
 
 **Recovery phrase (12 words).** The deprecated recovery-phrase login (`prepareMnemonicLogin`,
 `src/data/appstate/login.ts`) derives an EVM key from the phrase and signs in as the account's
@@ -255,26 +278,64 @@ credential is `NOT_FOUND`, a removed one `DELETED`. On a legacy CG ID process th
 
 ### 5.4 Email + Password (`type: "password"`)
 
-Client posts `{ aliasOrEmail, password, device: { publicKey } }`. The server resolves and verifies
-credentials via `userHelper.getOwnDataByCgProfileNameOrEmailAndPassword()`
-and creates a device. Passwords are set/changed via `POST /User/setPassword`, which requires a
-recent authentication (step-up, [§7](#step-up-for-sensitive-actions)).
+Client posts `{ aliasOrEmail, password, device: { publicKey } }`. The server
+
+1. throttles: 60 attempts per 15 minutes per client IP (IPv4 address / IPv6 /64; generous because
+   many users can share an address), and **failed** attempts per identifier — 10 per 15 minutes
+   from the client's network (IPv4 /24, IPv6 /56), so a third party elsewhere cannot lock the user
+   out, and 100 per hour from all networks against distributed guessing. The budgets are keyed by
+   the identifier as typed (normalized), not by the account it names, so reaching a limit never
+   shows that a username and an address belong to the same account. Each attempt reserves its
+   failure slot atomically before the password is checked and gives it back on success
+   (`failureBudget` / `reserveFailures`, `srv/util/rateLimit.ts`), so parallel attempts cannot
+   overrun a budget and a successful login never uses it up. All numbers:
+   `srv/util/authLimits.ts`;
+2. checks the password (`checkPasswordLogin`; an unknown account is compared against a throwaway
+   hash, same answer `NOT_ALLOWED`; a failed check against an older, cheaper hash also runs a
+   cost-12 check, so there is no practical timing difference);
+3. on success replaces a hash of a lower bcrypt cost than 12 with one of cost 12, and — if the
+   password does not meet the policy — sets `users.passwordChangeRequired`
+   ([§11](#11-transfer-links-and-the-account-security-step)); then creates a device.
+
+The throttles are off on a dev stack (`DEPLOYMENT=dev`), like the sign-up limit.
+
+**Password policy** (`src/common/passwordPolicy.ts`, Joi `common.Password`): at least 8 characters,
+nothing else — no composition rules, no blocklist. It applies to new passwords
+(`createUser {useEmailAndPassword}`, where the password is required, and `setPassword`); a
+password typed to sign in or re-authenticate (`common.PasswordAttempt`) may be older and shorter.
+The web app shows the same rule.
+
+Passwords are set/changed via `POST /User/setPassword`: replacing one requires a recent
+authentication (step-up, [§7](#step-up-for-sensitive-actions)); a first password adds a sign-in
+method (`requireAuthToAdd`). Setting one clears `passwordChangeRequired`; the verified address gets
+a notice.
 
 ### 5.5 Email Verification Code / One-Time Password (`type: "verificationCode"`)
 
 Passwordless email login:
 
-1. `POST /User/sendOneTimePasswordForLogin` (`srv/api/user.ts:1494-1519`): only allowed when logged
+1. `POST /User/sendOneTimePasswordForLogin` (`srv/api/user.ts`): only allowed when logged
    out and when email is enabled (`emailEnabled()` in `srv/api/emails.ts` requires a valid SMTP
    configuration, `SMTP_HOST` set — see [docs/email-notifications](../email-notifications/README.md));
    otherwise it throws `EMAIL_DISABLED`. Send limits apply first — 10 per hour per client IP
    (IPv4 address / IPv6 /64) and, per target address, one per minute and 10 per hour,
    `RATE_LIMIT_EXCEEDED` beyond
    (`srv/util/mailSendLimits.ts`, see [docs/email-notifications](../email-notifications/README.md#send-limits)).
-   It generates a token via `emailHelper.generateVerificationEmailToken(userId)` and emails it.
-2. `POST /User/login` with `{ type: "verificationCode", email, code, device }` verifies the code via
-   `userHelper.getOwnDataByEmailAndVerificationCode()` (`srv/api/user.ts:299-311`) and creates a
-   device.
+   Only if the address is the **verified** address of an account (case-insensitive) is a 6-digit
+   login code (CSPRNG, 15 minutes, `srv/util/emailCodes.ts`) stored as a hash bound to the account
+   and the address and mailed; for an unconfirmed or unknown address nothing is sent. The answer
+   is the same in every case, and the mail is sent after the response. Someone whose address was
+   never confirmed signs in another way and asks for the confirmation again while signed in
+   ([§8](#email-verification)); there is deliberately no logged-out "confirm this address", which
+   would let the address's owner confirm it for someone else's account. The login form says so
+   next to the uniform answer.
+2. `POST /User/login` with `{ type: "verificationCode", email, code, device }` (60 attempts per 15
+   minutes per client IP; five guesses per code; failed guesses per address — 30 a day from the
+   client's network, 200 a day from all networks, reserved atomically like the password budgets)
+   checks the code against the address, deletes it in the same step (single use), and creates a
+   device. A wrong code, an unknown or unconfirmed address, an expired code and a code whose five
+   guesses are used up (it is deleted) all answer `VERIFY_EMAIL_INVALID_TOKEN`, so the answer
+   never tells whether a code was sent. An email-verification code is never accepted here.
 
 ### 5.6 Twitter OAuth (`type: "twitter"`)
 
@@ -321,7 +382,7 @@ SIWE-based, verified against the on-chain Farcaster ID registry:
 | Wallet | `wallet` | `preparedCredential` (SIWE / chain signature) | Yes | `wallets` |
 | Passkey | `passkey` (`passkey-success` on a legacy CG ID process) | WebAuthn assertion, user verification required | Yes | `passkeys` |
 | Password | `password` | email/alias + password | Yes | `users` |
-| Email code | `verificationCode` | emailed one-time token | Yes | `users` / email token |
+| Email code | `verificationCode` | emailed 6-digit code, bound to the address | Yes | `users` / Valkey |
 | Twitter | `twitter` | Passport OAuth session | Yes | `user_accounts` |
 | LUKSO | `lukso` | on-chain signature + nonce | Yes | `user_accounts` |
 | Farcaster | `farcaster` | SIWE + on-chain FID registry | Yes | `user_accounts` |
@@ -430,6 +491,15 @@ captcha.
 Rate limiting: `createUser` is IP-rate-limited (`createUserRateLimiter`: 2 per /64 per 24 h outside
 dev); `verifyCaptcha` is limited to 3 per /64 per 24 h.
 
+**Taken addresses.** On an instance that sends mail no endpoint tells whether an address has an
+account: sign-up, address changes and the email login answer the same either way (the owner gets
+a notice where it matters). `POST /User/isEmailAvailable` therefore only answers on an instance
+without mail (or in legacy CG ID mode), IP rate-limited (30/h per /64); elsewhere it is
+`NOT_SUPPORTED`.
+
+**Anti-bot.** New accounts on an instance with mail need the captcha (checked before the code is
+sent) and an address verified before the account exists; nothing further applies.
+
 ---
 
 ## 7. Passkeys
@@ -460,7 +530,9 @@ core, `srv/util/passkeys.ts`, which takes the relying-party configuration as a p
   `PASSKEY_RP_ID` and `CG_LEGACY_CGID` values: shared code (e.g. the own-data query behind
   `OwnData.passkeys`) asks `getProcessRpIdOrNull()` for the RP ID in whichever process it runs.
   Only the api validates the configuration at startup; elsewhere an invalid value yields no RP
-  (no passkeys listed). TODO(verify): the compose files do not pass these variables yet.
+  (no passkeys listed). Both compose files pass `PASSKEY_RP_ID`, `CG_LEGACY_CGID` and `BASE_URL`
+  (from which the RP ID is derived when `PASSKEY_RP_ID` is empty) to every backend process —
+  `mediasoup` included, which checks the account-security step at its login ([§11](#11-transfer-links-and-the-account-security-step)).
 
 ### Ceremony state
 
@@ -508,12 +580,26 @@ it in the same statement as the user. An abandoned sign-up therefore leaves no r
 
 `requireRecentAuth()` (`srv/util/authSession.ts`) runs before any side effect of a sensitive
 action and fails with `REAUTH_REQUIRED` unless `session.authAt` is at most 5 minutes old and
-`authMethod` is an interactive one (any login type except the device key, or `signup`; a future
+`authMethod` is an interactive one (any login type except the device key, or `signup`; a
 transfer-link session — `transfer` — never qualifies). Because nothing has changed when it fails,
 the client can re-authenticate and retry the same request.
 
-Protected: `User/setPassword`; an `email` change via `User/updateOwnData` (only when the address
-actually changes — re-sending the current address with other settings is ignored);
+**Adding a way in** — a passkey (`registrationOptions` / `verifyRegistration` while logged in), a
+sign-in wallet (`addPreparedWallet` with `loginEnabled`, `updateWallet` switching it on), a first
+password (`setPassword` without one), an X/LUKSO/Farcaster account (`addUserAccount`), an address
+while the account has none verified (`requestEmailVerification`) — goes through
+`requireAuthToAdd()` (`srv/util/securityStep.ts`): while the account lacks exactly that (no
+sign-in method here / no verified address — the account-security step, [§11](#11-transfer-links-and-the-account-security-step)),
+it may have nothing to confirm "it's you" with, so a sign-in (or transfer link) within the last
+60 minutes is enough (`SECURITY_STEP_AUTH_MAX_AGE_MS`); a silent device-key session alone is not
+(`REAUTH_REQUIRED` — the user signs in again or gets a new transfer link). Otherwise the step-up
+applies, and a fresh transfer-link session counts. Removing or replacing a method or a verified address keeps the plain step-up,
+which a transfer-link session never satisfies.
+
+Protected: `User/setPassword` replacing a password; a new address via
+`User/requestEmailVerification` replacing a verified one (and, on an instance without mail, an
+`email` change via `User/updateOwnData` — only when the address actually changes, re-sending the
+current address with other settings is ignored);
 `User/addUserAccount` and `User/removeUserAccount` of an account that can sign in (X, LUKSO,
 Farcaster);
 `User/addPreparedWallet` with `loginEnabled`; `User/updateWallet` when it changes `loginEnabled`;
@@ -619,12 +705,31 @@ per `(type, walletIdentifier)`; `loginEnabled` controls whether it can be used a
 
 ### Email verification
 
-Independent of any social account, an email can be verified:
-`POST /User/requestEmailVerification` emails a token (send limits: 10/h per client IP, 5/h per
-target address, 5/h per account — [docs/email-notifications](../email-notifications/README.md#send-limits));
-`POST /User/verifyEmail`
-(`srv/api/user.ts:1471-1492`) validates `(email, token)` and, on success, emits a
-`cliUserOwnData { emailVerified: true }` event.
+Independent of any social account, an address can be confirmed for the account:
+
+- `POST /User/requestEmailVerification { email }` (logged in; mail required) mails a 6-digit code
+  (24 hours) bound to the session's account and to that address (`srv/util/emailCodes.ts`). The
+  current address is untouched. Replacing a verified address needs a step-up; setting one while
+  none is verified adds a way in (`requireAuthToAdd`, [§7](#step-up-for-sensitive-actions)).
+  An address another account has gets a notice instead of a code, with the same answer. Send
+  limits: 10/h per client IP, 5/h per target address, 5/h per account
+  ([docs/email-notifications](../email-notifications/README.md#send-limits)). "Another account
+  has it" means: has it **verified**. An account that holds the address unverified does not block
+  its owner — confirming the address removes it from that account in the same transaction
+  (`setVerifiedEmail`), which is told by a `cliUserOwnData { email: null }` event. In both cases a
+  code is pending afterwards and no mail is awaited, so the answer and its timing are the same.
+- `POST /User/verifyEmail { email, token }` (logged in as that account; five wrong guesses per
+  code; replacing a verified address needs a step-up here as well, before the code is used up)
+  makes the address the account's verified address — this is how the address changes on an
+  instance that sends mail; `updateOwnData` refuses a new `email` there with
+  `EMAIL_VERIFICATION_REQUIRED`. `EXISTS_ALREADY` if another account took it meanwhile. The previous
+  verified address gets a notice; a `cliUserOwnData { email, emailVerified: true }` event follows.
+- The mail also links to `/verify-email?email=…&token=<code>`, which does the same while signed in
+  to that account.
+- **Sending the confirmation again** (the mail got lost): `requestEmailVerification` with the
+  account's own unconfirmed address needs no step-up and replaces the previous code; the send
+  limits apply. The web app offers it with a countdown in the settings, in the account-security
+  step and in the newsletter prompt — only for the signed-in account.
 
 ---
 
@@ -666,8 +771,9 @@ The client login lifecycle is owned by `LoginManager` (`src/data/appstate/login.
   local `OwnData`, then performs a `device` login. The deprecated stored-mnemonic fallback runs only
   on a legacy CG ID instance; elsewhere a stored phrase is deleted.
 - **Step-up freshness**: an interactive login and `createUser` mark the session as freshly
-  authenticated for the client's `stepUpManager` (`src/data/auth/stepUp.ts`); a `device` login,
-  `logout()` and a logout in another tab clear it. It is only an estimate used to confirm before a WebAuthn ceremony — the
+  authenticated for the client's `stepUpManager` (`src/data/auth/stepUp.ts`); a `device` login takes
+  `stepUpValidUntil` from its response (the session's earlier sign-in, e.g. right after a reload) or
+  clears it; `logout()` and a logout in another tab clear it. It is only an estimate used to confirm before a WebAuthn ceremony — the
   server's `REAUTH_REQUIRED` stays authoritative.
 - **Multi-tab coordination**: only the active tab performs the network login; passive tabs wait for a
   `LOGIN_FINISHED`/`LOGIN_ERROR` broadcast (`loginRequiredErrorHandler`). This avoids concurrent
@@ -678,12 +784,135 @@ The client login lifecycle is owned by `LoginManager` (`src/data/appstate/login.
 - **Post-login setup** (`setupAfterLogin`): seeds the local Dexie databases (user, communities, chats,
   notifications), logs the socket in, and registers the push subscription.
 
+**Account-security step and transfer links (client).** Login responses set
+`securityStepState` (`src/data/auth/securityStep.ts`) from `securityStepRequired`, and
+`BaseApiConnector` sets it on any `SECURITY_STEP_REQUIRED`; while it is set, `RoutedContent` shows
+`SecurityStepView` on every route, and `setupAfterLogin` skips the socket login and the push
+subscription. `loginManager.redeemTransferLink(token)` signs in with a transfer link like an
+interactive login (new device key), without a step-up freshness. Details: [§11](#11-transfer-links-and-the-account-security-step),
+[frontend §10](../frontend/README.md#10-authentication-ui).
+
 The `login()` method maps UI choices to the `POST /User/login` `type` values described in
 [§5](#5-login-methods) (`_login` in `src/data/appstate/login.ts`; `{account:'passkey',
 authenticationResponse}` → `passkey`, `{account:'passkey-legacy'}` → `passkey-success`), generating a
 fresh device keypair for every non-device method and persisting it after the server confirms the
 login. The login and sign-up UI is `AuthFlow`, in the onboarding modal and on `/login`
 ([frontend §10](../frontend/README.md#10-authentication-ui)).
+
+---
+
+## 11. Transfer Links and the Account-Security Step
+
+Built for the move of the hosted instance (app.cg → cg.box): the old domain runs a sign-in-only
+gateway on the same database, which hands its users a one-time link to the new instance; there
+they set up a way to sign in that works on the new origin before they continue. Both parts are
+generic.
+
+### Transfer links
+
+`srv/util/transferLink.ts`, `srv/repositories/transferTokens.ts`, table `transfer_tokens`
+([database](../database/README.md#transfer_tokens)).
+
+- **Minting** — `POST /User/createTransferLink { nextPath? }` (logged in; 10 per hour per user)
+  mints a token for the session's own user only; there is no user id parameter. It is on only where
+  `TRANSFER_TARGET_URL` names the instance the links lead to (an `https` origin; `NOT_SUPPORTED`
+  otherwise; a malformed value stops the api at startup). The answer is
+  `{ url: "<target>/transfer#<token>", expiresAt }`. `nextPath` is kept only if it is a same-site
+  path on the target (`safeNextPath`, `src/common/safeNextPath.ts`, shared with the web app).
+- **Token** — 32 random bytes, base64url (43 characters), valid 10 minutes. Only its SHA-256 is
+  stored, with the user id and the path. It travels in the URL fragment, which browsers never send
+  to a server — not in requests, server logs or `Referer`.
+- **Confirmation** — the target's web app (`/transfer`, `TransferView`) takes the token out of the
+  address bar first thing at startup (`history.replaceState`, kept in memory only), shows whose
+  account the link signs in to (`POST /User/previewTransferLink { token }` → `{ userId,
+  displayName, expiresAt }`, which does not use the token) and redeems it only after an explicit
+  "Continue as …". A different account signed in there is signed out first (after the page said
+  so); "This isn't me" leaves without using the link.
+- **Redemption** — `POST /User/redeemTransferLink { token, device }` only from a logged-out session
+  (`ALREADY_LOGGED_IN` otherwise). One conditional statement (`UPDATE … SET "usedAt" = now() WHERE
+  "tokenHash" = $1 AND "usedAt" IS NULL AND "expiresAt" > now() AND <live human account>
+  RETURNING …`) uses the token up, so of two concurrent redemptions exactly one succeeds. Then a
+  device is created and `establishLoginSession()` runs with `authMethod: 'transfer'` (new session
+  id, awaited save). The answer is the login response plus `nextPath`. A transfer session may add a
+  sign-in method, but is no recent authentication for anything else ([§7](#step-up-for-sensitive-actions)).
+- **Limits** (`srv/util/authLimits.ts`) — preview and redemption: 120 attempts per 15 minutes per
+  client IP, and after 20 failed attempts in 15 minutes an IP is refused before the lookup
+  (`ipFailureLimiter`); more than 100 failures per hour instance-wide log one `[security]` warning
+  per hour. Unknown, used and expired tokens all answer `TRANSFER_LINK_INVALID`.
+- **Confirmation page** shows the account's display name, its unique handle (`@<cg profile
+  name>`, so a look-alike display name cannot fool anyone) and profile image (`previewTransferLink`
+  → `{ userId, displayName, username, imageId, expiresAt }`).
+- **Legacy CG ID mode** (the gateway) mints but never redeems: preview and redemption are
+  `NOT_SUPPORTED` there. The gateway itself (route allowlist, its own session store) is roadmap
+  item G1; it exposes `User/createTransferLink` to its logged-in users and is configured with
+  `TRANSFER_TARGET_URL=https://<new instance>`.
+
+### Account-security step
+
+`srv/util/securityStep.ts`. An account has to finish the step before it can use the instance when
+
+- it has **no sign-in method that works here**: a passkey of this instance's relying party, a
+  password or a login-enabled EVM wallet (X, LUKSO and Farcaster accounts still sign in, but do
+  not count; neither do passkeys of another RP, e.g. the old `id.app.cg` ones), or
+- it has **no verified email address** (only on an instance that sends mail), or
+- its password **does not meet the policy** and signed in that way (`passwordChangeRequired`).
+
+The state is derived from the account (`getSecurityFacts`, `srv/repositories/loginMethods.ts`),
+never from how the session came about, and it is not enforced in legacy CG ID mode.
+
+- **api** — `securityStepMiddleware` runs in front of every API router and the gated file routes
+  (`/gated-videos`, `/gated-files`), not in front of the page routes (social previews, redirects,
+  `/verify-email` …), which serve HTML. For a session whose account is in
+  the step, only the step's endpoints work (method + path, case-insensitive): `User/`
+  `getSecurityStatus`, `checkLoginStatus`, `ensureSession`, `getSignableSecret`, `login`, `logout`,
+  `clearLoginSession`, `reauthenticate`, `setPassword`, `requestEmailVerification`, `verifyEmail`,
+  `prepareWalletAction`, `addPreparedWallet`, `updateWallet`, `getWallets`, `getUserData`,
+  `previewTransferLink`, `redeemTransferLink`, `emailUnsubscribe` (GET and POST, token-authenticated
+  one-click links); `Passkey/` `registrationOptions`,
+  `verifyRegistration`, `authenticationOptions`, `list`; `GET` `Captcha/config`,
+  `Captcha/challenge`, `Instance/config`. Everything else — messages, uploads, communities, bot
+  management, gated files — answers `{status:'ERROR', error:'SECURITY_STEP_REQUIRED'}`. A
+  complete account is remembered in the session (`securityStepClearFor`) together with the
+  account's change counter in Valkey (`security-step-version:<userId>`,
+  `srv/util/securityStepVersion.ts`); the counter moves when something outside the session may
+  have made the step due again — a password below the policy signed in, or the bounce policy reset
+  the verified address — and every session then checks again.
+- **wsapi** refuses the socket `login` of such an account with `SECURITY_STEP_REQUIRED` (the web
+  app then shows the step): the parts that need no mail configuration come from the database
+  function `security_step_db_required(userId, rpId)`, the email part from a Valkey record the api
+  keeps (`security-step:<userId>`, written whenever it computes the state). The **call server**
+  checks the database part only, through the same function: its role has no Valkey access and may
+  not read `users`, `passkeys` or `wallets` — the `SECURITY DEFINER` function only answers yes or
+  no ([database](../database/README.md#security_step_db_required)). It needs `BASE_URL` (and
+  `PASSKEY_RP_ID`, if set) like every backend process, for the relying party.
+- **What is missing** — `POST /User/getSecurityStatus` → `{ required, needsSignInMethod,
+  needsVerifiedEmail, needsNewPassword, email, emailVerified, hasPassword, passkeys, loginWallets,
+  pendingEmail, recentSignIn }`; login responses carry `securityStepRequired`. `pendingEmail` is
+  set after a code request whether or not the address was free, so it reveals nothing.
+  `recentSignIn: false` means the session cannot add what is missing (see below).
+- **Completing it** — adding what is missing needs a sign-in or transfer link within the last
+  60 minutes, but no step-up (`requireAuthToAdd`, [§7](#step-up-for-sensitive-actions)):
+  a passkey on this origin, a password, or a wallet — a new one is linked as a sign-in wallet, one
+  the account already has gets sign-in switched on; either way a SIWE signature checked against
+  this instance's domain ([§5.2](#52-wallet-type-wallet--evm-only)) —, and an address confirmed
+  with a code ([§8](#email-verification)). Methods added this way, also in a transfer-link
+  session, are full sign-in methods; the notices to the verified address are the safeguard. A
+  password below the policy is replaced with `setPassword`, which asks for the current password
+  first (step-up). Every added method is reported to the verified address. An account whose only
+  sign-in was X/LUKSO/Farcaster therefore must add one of these; afterwards the normal step-up
+  works with it (there is no X/LUKSO/Farcaster option in the step-up dialog).
+- **Web app** — `SecurityStepView` / `SecurityStep` organism ([frontend §10](../frontend/README.md#10-authentication-ui)).
+- **Operational dependency** — on an instance that sends mail, accounts without a verified
+  address can only finish the step with a code by mail: while outgoing mail does not work, they
+  cannot get into the app.
+
+### Logging
+
+Unexpected errors are logged as name, message and stack only (`describeErrorForLog`,
+`srv/api/util.ts`) — never the error object, which can hold request data (an HTTP client error
+carries the request it sent, a database error the row's values) — and a validation error only
+with the paths of the failing fields. Sign-in paths log no request bodies, passwords, codes or
+tokens.
 
 ---
 

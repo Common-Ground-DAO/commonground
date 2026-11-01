@@ -16,18 +16,29 @@ export const OK: API.AjaxResponse<void> = { status: 'OK' };
 export const ERROR: API.AjaxResponse<void> = { status: "ERROR", error: errors.server.UNKNOWN };
 const allowedErrorMessages = new Set<string>(Object.values(errors.server));
 
+/**
+ * What an unexpected error may put into the log: its name, message and stack
+ * — never the error object itself, which can carry request data (an HTTP
+ * client error holds the request it sent, including credentials; a database
+ * error the values of the row).
+ */
+export function describeErrorForLog(e: unknown): string {
+  if (e instanceof Error) {
+    return e.stack || `${e.name}: ${e.message}`;
+  }
+  return `non-error value of type ${typeof e}`;
+}
+
 export function handleError(response: express.Response, e: unknown) {
   if (e instanceof Error && allowedErrorMessages.has(e.message)) {
     response.send({ ...ERROR, error: e.message });
   } else if (e instanceof Joi.ValidationError) {
-    console.log(`ValidationError: ${e.message}`);
-    // console.log(e.details);
-    // console.log(e.name);
-    // console.log(e._original());
-    // console.log(e.details);
+    // the message names the offending field; it can quote its value, so
+    // only the field paths are logged
+    console.log(`ValidationError at ${e.details.map(detail => detail.path.join('.') || '(root)').join(', ')}`);
     response.send({ ...ERROR, error: errors.server.VALIDATION });
   } else {
-    console.log(e);
+    console.log(describeErrorForLog(e));
     response.send(ERROR);
   }
 }
@@ -48,7 +59,7 @@ export function apiErrorHandler(
   const status = (error as { status?: unknown } | null)?.status;
   const httpStatus = typeof status === 'number' && status >= 400 && status < 500 ? status : 500;
   if (httpStatus === 500) {
-    console.error(`Request ${request.method} ${request.path} failed in middleware:`, error);
+    console.error(`Request ${request.method} ${request.path} failed in middleware:`, describeErrorForLog(error));
   }
   response.status(httpStatus).json(ERROR);
 }

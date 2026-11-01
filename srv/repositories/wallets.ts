@@ -12,6 +12,29 @@ import onchainHelper from "./onchain";
 import stakingHelper from "./staking";
 import { OnchainPriority } from "../onchain/scheduler";
 import { assertWalletIsNotLastLoginMethod } from "./loginMethods";
+import { appOrigins } from "../util/origins";
+
+const SIWE_DOMAIN_LINE = /^(\S+) wants you to sign in with your Ethereum account:$/;
+
+/**
+ * A wallet sign-in message (EIP-4361) names the site it is for: its first
+ * line carries the host, its `URI:` the origin. Both must be this instance's
+ * web app (appOrigins), so a signature a user gave another site cannot be
+ * replayed here. Throws INVALID_SIGNATURE otherwise.
+ */
+export function assertSiweForThisInstance(domainLine: string | undefined, uri: string, origins: string[] = appOrigins()) {
+  const domain = domainLine?.match(SIWE_DOMAIN_LINE)?.[1];
+  let uriOrigin: string;
+  try {
+    uriOrigin = new URL(uri).origin;
+  }
+  catch {
+    throw new Error(errors.server.INVALID_SIGNATURE);
+  }
+  if (!domain || !origins.includes(uriOrigin) || new URL(uriOrigin).host !== domain) {
+    throw new Error(errors.server.INVALID_SIGNATURE);
+  }
+}
 
 type ToObjectType<T extends Models.Wallet.Type> = Models.Wallet.Wallet & { type: T };
 
@@ -192,6 +215,9 @@ class WalletHelper {
     if (result.address !== data.address.toLowerCase() || result.nonce !== data.secret) {
       throw new Error(errors.server.INVALID_SIGNATURE);
     }
+    // the message must have been made for this instance (domain and URI):
+    // a signature collected by another site is worthless here
+    assertSiweForThisInstance(siweMessage.split('\n')[0], result.uri);
     return result;
   }
 

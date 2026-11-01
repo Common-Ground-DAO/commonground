@@ -46,6 +46,10 @@ export type ApiErrorCode =
   | "LAST_LOGIN_METHOD"
   /** createUser without a sign-up address verified in this session */
   | "EMAIL_VERIFICATION_REQUIRED"
+  /** the account must finish the account-security step (User/getSecurityStatus) first */
+  | "SECURITY_STEP_REQUIRED"
+  /** a transfer link that is unknown, expired or already used */
+  | "TRANSFER_LINK_INVALID"
   | "SEND_ARTICLE_LIMIT_EXCEEDED"
   | "EVENT_SCHEDULE_IN_THE_PAST"
   | "EVENT_TOO_LONG"

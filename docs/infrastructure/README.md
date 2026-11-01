@@ -19,7 +19,8 @@
 > the passkey/legacy CG ID variables against commit 54e2d73, 2026-10-31; the
 > Caddy edge that replaced nginx in the dev and self-host stacks (§1 `caddy`,
 > `vite-tls`, `mediasoup`, TLS certificates; §2 build steps and the HTML check;
-> §3; §6 commands; §7) against commit fe3937f, 2026-10-31
+> §3; §6 commands; §7) against commit fe3937f, 2026-10-31;
+> `TRANSFER_TARGET_URL` against commit 9fc05a9, 2026-11-01
 
 # Common Ground Infrastructure Documentation
 
@@ -108,7 +109,8 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
   - `./vapid_keys.json:/run/secrets/vapid_keys_json:ro` — VAPID keys for web push notifications
   - `./api_data:/api_data:ro` — static API data
 - **Key environment variables:** `DB_TYPE=writer`, `PG_PASSWORD` (writer), `REDIS_PASSWORD`, `REDIS_SECRET`, `DEPLOYMENT`, `BASE_URL`, `CGID_URL` (read only in legacy CG ID mode), `S3_SECRET`, the `SMTP_*`/`EMAIL_FROM*` set (see [Email](#email-smtp)), `GOOGLE_RECAPTCHA_SECRET_KEY`, Twitter OAuth credentials, the `STAKING_*` set, and the bot limits (`PLATFORM_OPERATOR_USER_IDS`, `BOT_USER_OWNER_LIMIT`, `BOT_COMMUNITY_OWNER_LIMIT`, `BOT_PLATFORM_OWNER_LIMIT`, `BOT_ACTIVE_TOKEN_LIMIT`, `BOT_API_RATE_LIMIT_PER_MINUTE`, `BOT_MESSAGE_RATE_LIMIT_PER_MINUTE`).
-- **Passkey variables (every backend process — api, wsapi, migrate-db, job-runner, onchain, memberlist, mediasoup — with the same values; both compose files pass `PASSKEY_RP_ID=${PASSKEY_RP_ID:-}` and `CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}` to each, from `docker/.env` / `.env.selfhost`):** `PASSKEY_RP_ID` (empty = the `BASE_URL` host — on selfhost the `CG_DOMAIN` host; otherwise that host or a parent domain; must never change once passkeys exist — the selfhost caddy gets the same value as `CG_PASSKEY_RP_ID` for the instance config) and `CG_LEGACY_CGID=true` (legacy CG ID / gateway mode only). `CGID_URL` is passed to `api` only and read only in legacy mode (the CG ID app's RP and CORS origin). Shared code reads the RP ID in whichever process it runs, see [docs/auth-identity §7](../auth-identity/README.md#7-passkeys).
+- **Passkey variables (every backend process — api, wsapi, migrate-db, job-runner, onchain, memberlist, mediasoup — with the same values; both compose files pass `PASSKEY_RP_ID=${PASSKEY_RP_ID:-}` and `CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}` to each, from `docker/.env` / `.env.selfhost`, and `BASE_URL` too — `mediasoup` included, which derives the RP ID from it for the account-security check at its login):** `PASSKEY_RP_ID` (empty = the `BASE_URL` host — on selfhost the `CG_DOMAIN` host; otherwise that host or a parent domain; must never change once passkeys exist — the selfhost caddy gets the same value as `CG_PASSKEY_RP_ID` for the instance config) and `CG_LEGACY_CGID=true` (legacy CG ID / gateway mode only). `CGID_URL` is passed to `api` only and read only in legacy mode (the CG ID app's RP and CORS origin). Shared code reads the RP ID in whichever process it runs, see [docs/auth-identity §7](../auth-identity/README.md#7-passkeys).
+- **`TRANSFER_TARGET_URL`** (`api` only, optional): the `https` origin transfer links lead to (`User/createTransferLink`, [docs/auth-identity §11](../auth-identity/README.md#11-transfer-links-and-the-account-security-step)); unset = this instance mints no links (the default — only the move gateway sets it, e.g. `https://cg.box`). A malformed value stops the api at startup. Neither compose file passes it: only the gateway's compose setup will (roadmap G1); `docker/.env.example` lists it, commented out.
 
 #### `wsapi`
 - **Image:** `cryptogram/backend`

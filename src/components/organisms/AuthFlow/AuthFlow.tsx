@@ -8,6 +8,7 @@ import CgLogoIcon from 'components/atoms/icons/misc/Logo/logo.svg?react';
 import { Key as PasskeyIcon } from '@phosphor-icons/react';
 import config from 'common/config';
 import errors from 'common/errors';
+import userApi from 'data/api/user';
 import data from 'data';
 import { usePasskeyContext } from 'context/PasskeyProvider';
 import { useSnackbarContext } from 'context/SnackbarContext';
@@ -154,8 +155,19 @@ const AuthFlow: React.FC<Props> = ({ initialMode = 'login', variant, onLoggedIn,
       });
       if (!needsEmailVerification(flowConfig) && !method.useEmailAndPassword && !!email) {
         // without the code step the address is not verified at sign-up; keep
-        // it anyway (the account was just created: a fresh authentication)
-        await data.user.updateOwnData({ email }).catch(e => console.warn("Could not store the email address", e));
+        // it anyway (the account was just created: a fresh authentication).
+        // A server that sends mail (a legacy CG ID process, where this step
+        // is skipped) only takes a confirmed address: then mail it a code —
+        // the account can confirm it in its settings.
+        await data.user.updateOwnData({ email }).catch(async e => {
+          if (errorCode(e) === errors.server.EMAIL_VERIFICATION_REQUIRED) {
+            await userApi.requestEmailVerification({ email })
+              .catch(err => console.warn("Could not send the email confirmation", err));
+          }
+          else {
+            console.warn("Could not store the email address", e);
+          }
+        });
       }
       dispatch({ type: 'ACCOUNT_CREATED' });
       return true;

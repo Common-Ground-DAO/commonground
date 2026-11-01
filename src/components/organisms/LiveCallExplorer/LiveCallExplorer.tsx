@@ -24,7 +24,7 @@ function useCurrentCalls(fetchCalls: boolean) {
   const refetchTimeoutRef = useRef<any>(null);
   const [calls, setCalls] = useState<Models.Calls.Call[]>([]);
   const fetchCallsAndPrepareUpdate = useCallback(() => {
-    communityApi.getCurrentCalls({offset: 0}).then(setCalls);
+    communityApi.getCurrentCalls({offset: 0}).then(setCalls).catch(e => console.warn("Could not load the current calls", e instanceof Error ? e.message : e));
     refetchTimeoutRef.current = setTimeout(() => {
       fetchCallsAndPrepareUpdate();
     }, 60 * 1000);

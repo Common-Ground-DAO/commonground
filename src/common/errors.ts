@@ -57,6 +57,12 @@ const errors = {
     // createUser without a sign-up address verified in this session
     // (User/requestSignupEmailCode + User/verifySignupEmailCode)
     EMAIL_VERIFICATION_REQUIRED: "EMAIL_VERIFICATION_REQUIRED",
+    // the account must finish the account-security step first (a sign-in
+    // method that works on this instance, a verified email, a new password):
+    // only the endpoints of that step are open (User/getSecurityStatus)
+    SECURITY_STEP_REQUIRED: "SECURITY_STEP_REQUIRED",
+    // a transfer link that is unknown, expired or already used
+    TRANSFER_LINK_INVALID: "TRANSFER_LINK_INVALID",
     SEND_ARTICLE_LIMIT_EXCEEDED: "SEND_ARTICLE_LIMIT_EXCEEDED",
     
     EVENT_SCHEDULE_IN_THE_PAST: 'EVENT_SCHEDULE_IN_THE_PAST',

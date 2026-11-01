@@ -146,10 +146,11 @@ async function handleRequest(msg: http.IncomingMessage, acceptedContentTypes?: s
 }
 
 const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+/** alphanumeric, from a CSPRNG (also used for sign-in challenges) */
 export function randomString(length: number = 20) {
   let str = '';
   for (let i = 0; i < length; i++) {
-    str += chars.charAt(Math.floor(Math.random() * chars.length));
+    str += chars.charAt(crypto.randomInt(chars.length));
   }
   return str;
 }

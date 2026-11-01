@@ -2,7 +2,8 @@
 
 > Status: verified against commit a3c3f7608, 2026-08-01; SMTP sending layer,
 > Mailchimp removal, one-click unsubscribe, send limits, bounce policy and ICS
-> invites against commit e44dac1, 2026-10-31; `CG_FEATURE_EMAIL` note against commit fe3937f, 2026-10-31
+> invites against commit e44dac1, 2026-10-31; `CG_FEATURE_EMAIL` note against commit fe3937f, 2026-10-31;
+> verification and login codes, the notice mails of the account-security changes against commit 9fc05a9, 2026-11-01.
 
 This document covers every email path in Common Ground: transactional mail (verification, one-time-password login, event mails), the weekly digest and per-community article newsletters, one-click unsubscribe, send limits, bounce handling, and the user/community preference model that gates them. Web push and in-app notifications are a separate delivery channel — see [docs/realtime](../realtime/README.md) (§ Push Notifications) — and the boundary between the two is described in [Boundary to web push](#boundary-to-web-push). Running a mail server for a self-hosted instance (the `mail` relay, SPF/DKIM/DMARC/PTR) is covered in [docs/deployment §3.9](../deployment/README.md#39-email-smtp-and-the-mail-relay) and [`docker/SELFHOST.md`](../../docker/SELFHOST.md#email).
 
@@ -88,19 +89,29 @@ User-provided values (post titles, community and event names, image URLs) are HT
 
 | Mail | Composer | Triggered from | Notes |
 |------|----------|----------------|-------|
-| Email verification | `sendVerificationEmail` | Account creation with email + password (`POST /user/createUser`) and `POST /user/requestEmailVerification` | Link to `<APP_URL>/verify-email?email=…&token=…` (both URI-component-encoded); a dev setup that wants the link on the Vite dev server sets `BASE_URL` accordingly. Send limits apply ([Send limits](#send-limits)). |
-| One-time password login | `sendOneTimePasswordEmail` | `POST /user/sendOneTimePasswordForLogin` | Emails a login code to an existing account. Requires `emailEnabled()`; send limits apply. |
+| Email verification | `sendVerificationEmail` | `POST /user/requestEmailVerification` (and account creation on an instance without the sign-up code step) | A 6-digit code plus a link to `<APP_URL>/verify-email?email=…&token=<code>` (both URI-component-encoded) that works while signed in to the account that asked; a dev setup that wants the link on the Vite dev server sets `BASE_URL` accordingly. Send limits apply ([Send limits](#send-limits)). |
+| Address in use | `sendAddressInUseEmail` | `POST /user/requestEmailVerification` for an address another account has verified | Notice instead of a code; the requester gets the same answer as for a free address. Send limits apply ([Send limits](#send-limits)). |
+| One-time password login | `sendOneTimePasswordEmail` | `POST /user/sendOneTimePasswordForLogin` | Emails a 6-digit login code (15 minutes) only to the **verified** address of an account; nothing is sent for an unconfirmed or unknown address, the answer is the same. Requires `emailEnabled()`; send limits apply. |
+| Password changed | `sendPasswordChangedEmail` | `POST /user/setPassword` | Notice to the verified address. |
+| Address changed | `sendEmailChangedEmail` | `POST /user/verifyEmail` replacing a verified address | Notice to the previous address. |
 | Event mails | `sendEventEmail` | See [Event notification mails](#event-notification-mails) | — |
 
 Transactional mails carry **no** unsubscribe headers. The notification mails — [Weekly digest](#weekly-newsletter-digest) (`sendNewsletter`) and [community article mails](#per-community-article-newsletter) (`sendArticleAsEmail`) — do.
 
-### Verification token lifecycle
+### Verification and login codes
 
-Verification / OTP tokens are managed in `srv/repositories/emails.ts`:
+`srv/util/emailCodes.ts` keeps two kinds of 6-digit codes (CSPRNG) for existing accounts, in
+Valkey with the expiry as TTL — only a hash, bound to the account, the purpose and the address the
+code was sent to:
 
-- `generateVerificationEmailToken(userId)` returns the user's current unexpired code if one exists, otherwise stores a freshly generated code with an expiry and returns it.
-- `verifyEmail(email, token)` validates the code, checks expiry, and on success sets `emailVerified = true`, clearing the code and its expiration.
-- The same generator backs both email verification and the OTP-login flow.
+- `verify` (24 hours): `requestEmailVerification` → `verifyEmail` (signed in to that account). The
+  address becomes the account's verified address only when its code comes back; on an instance that
+  sends mail, `updateOwnData` no longer sets `email` (`EMAIL_VERIFICATION_REQUIRED`).
+- `login` (15 minutes, only to a verified address): `sendOneTimePasswordForLogin` → `User/login {type:'verificationCode'}`.
+
+One code per account and purpose (a new one replaces the old one), five wrong guesses per code
+(atomic counter), and a matching code is deleted in the step that accepts it, so it works once.
+A verification code is never a login code. Details: [auth-identity §5.5, §8](../auth-identity/README.md#55-email-verification-code--one-time-password-type-verificationcode).
 
 ---
 
@@ -276,7 +287,7 @@ The per-community `notify*` booleans (`notifyMentions`, `notifyReplies`, `notify
 |----------------|---------|
 | `users.email`, `users.emailVerified` | Address and verification state (`emailVerified` is reset by the bounce policy) |
 | `email_bounces` (`address`, `reportId`, `status`, `diagnostic`, `senderSide`, `createdAt`) | Permanent bounces from the selfhost relay; unique per (`reportId`, `address`); kept 180 days |
-| `users.verificationCode`, `verificationCodeExpiration` | Verification / OTP token and expiry |
+| Valkey `email-code:<purpose>:<userId>` | Pending verification / login code (hash, bound address, expiry) |
 | `users.newsletter` | "CG Updates Newsletter" opt-in (kept for a future newsletter; nothing is sent based on it yet) |
 | `users.weeklyNewsletter` | Weekly digest opt-in |
 | `users.dmNotifications` | DM push opt-in |

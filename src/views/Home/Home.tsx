@@ -28,6 +28,7 @@ import userApi from 'data/api/user';
 import { useUserOnboardingContext } from 'context/UserOnboarding';
 import { removeInitialSlash } from 'App';
 import CommunityExplorer from 'components/organisms/CommunityExplorer/CommunityExplorer';
+import config from 'common/config';
 import PluginAppstore from 'components/organisms/PluginAppstore/PluginAppstore';
 import Search from 'components/organisms/Search/Search';
 import TagHeader from 'components/organisms/TagHeader/TagHeader';
@@ -35,6 +36,8 @@ import { PredefinedTag } from 'components/molecules/inputs/TagInputField/predefi
 import EmptyState from 'components/molecules/EmptyState/EmptyState';
 import ScreenAwareDropdown from 'components/atoms/ScreenAwareDropdown/ScreenAwareDropdown';
 import ListItem from 'components/atoms/ListItem/ListItem';
+import { getAuthMode } from 'data/auth/authMode';
+import securityStepState from 'data/auth/securityStep';
 import SearchInputField from 'components/molecules/inputs/SearchInputField/SearchInputField';
 
 const privacyPolicyLink = 'https://app.cg/c/commonground/article/privacy-policy-4vhHTcaUHQnDfmCDdQcNFf/';
@@ -53,7 +56,11 @@ export default function Home() {
   const { pathname } = useLocation();
 
   useEffect(() => {
-    if (emailConfirmationOpened === "opened") return;
+    // An instance without mail cannot confirm addresses. Where the
+    // account-security step runs (every instance but a legacy CG ID gateway),
+    // an unconfirmed address IS that step: it asks for the address itself,
+    // and nothing here may send mail or open a dialog over it.
+    if (emailConfirmationOpened === "opened" || !config.EMAIL_ENABLED || !getAuthMode().legacyCgid || securityStepState.required) return;
 
     if (!ownUser || !!isUserOnboardingVisible) return;
 

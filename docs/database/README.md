@@ -3,7 +3,9 @@
 > Status: verified against commit a3ab0dcc4, 2026-08-01; `email_bounces` against commit
 > e44dac1, 2026-10-31; database roles and the PostgreSQL 18 server against commit
 > ff0da06, 2026-10-31; `passkeys` against commit 54e2d73, 2026-10-31; the TypeORM CLI
-> compile step (`srv/tsconfig.typeorm-cli.json`) against commit d604544, 2026-10-31
+> compile step (`srv/tsconfig.typeorm-cli.json`) against commit d604544, 2026-10-31;
+> `transfer_tokens`, `users.passwordChangeRequired`, `security_step_db_required` and the
+> dropped verification-code columns against commit 9fc05a9, 2026-11-01
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -48,8 +50,7 @@ Primary user table. One row per registered user.
 | `communityOrder` | `uuid[]` | User's preferred community ordering |
 | `emailVerified` | `boolean` | Default `false` |
 | `extraData` | `jsonb` | Default `{}` |
-| `verificationCode` | `varchar(32)` | Nullable, indexed (`idx_users_verification_codes`) |
-| `verificationCodeExpiration` | `timestamptz(3)` | Nullable |
+| `passwordChangeRequired` | `boolean` | Default `false`, `select: false`. Set when a password below the policy signed in; the account-security step asks for a new one ([auth-identity §11](../auth-identity/README.md#11-transfer-links-and-the-account-security-step)) |
 | `pointBalance` | `integer` | Default `0` |
 | `tags` | `text[]` | Nullable, indexed |
 | `createdAt` | `timestamptz(3)` | Auto |
@@ -120,6 +121,34 @@ WebAuthn passkeys for passwordless authentication ([docs/auth-identity §7](../a
 | `createdAt/updatedAt/deletedAt` | `timestamptz(3)` | Standard timestamps |
 
 Indexes: unique `("rpId", data->>'credentialID')` (`IDX_passkeys_rpId_credentialID`, the lookup), `("userId", "rpId")`, and the older unique `(data->>'credentialID', data->>'webAuthnUserID')`.
+
+#### `transfer_tokens`
+One-time sign-in links from an instance on the same database (the app.cg gateway) to this one
+([auth-identity §11](../auth-identity/README.md#11-transfer-links-and-the-account-security-step)).
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | `uuid` PK | Auto-generated |
+| `userId` | `uuid` | FK -> `users.id` (CASCADE), indexed |
+| `tokenHash` | `char(64)` | SHA-256 of the token, unique, `select: false`; the token itself is never stored |
+| `nextPath` | `varchar(2048)` | Nullable, a same-site path to continue to |
+| `createdAt` | `timestamptz(3)` | Default `now()` |
+| `expiresAt` | `timestamptz(3)` | About 10 minutes after creation, indexed |
+| `usedAt` | `timestamptz(3)` | Nullable; set by the single statement that redeems the token |
+
+Rows that expired more than a day ago are deleted whenever a new link is minted. Added by
+`1793520000000-transferLinksAndSecurityStep`, which also drops `users.verificationCode` /
+`verificationCodeExpiration` (email codes live in Valkey now), adds `users.passwordChangeRequired`
+and creates the function below.
+
+#### `security_step_db_required`
+`security_step_db_required(p_user_id uuid, p_rp_id text) RETURNS boolean` — the database part of
+the account-security step for the realtime servers ([auth-identity §11](../auth-identity/README.md#11-transfer-links-and-the-account-security-step)):
+true when the account has no passkey of `p_rp_id`, no password and no login-enabled EVM wallet,
+when its password must be changed, or when it is missing, deleted or a bot. `SECURITY DEFINER`
+with a pinned `search_path`; `EXECUTE` is revoked from `PUBLIC` and granted to `writer`, `reader`
+and `mediasoup` — the call server's role gets the answer without any access to `users`,
+`passkeys` or `wallets`.
 
 #### `devices`
 User devices for push notifications and encryption.

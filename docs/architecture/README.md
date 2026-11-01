@@ -4,7 +4,8 @@
 > router table, the CG ID note and the instance-config example against commit
 > 54e2d73, 2026-10-31; the edge (Caddy replacing nginx in the dev and
 > self-host stacks: §1, the request flows, Pattern 5, §7, the routing
-> appendix) against commit fe3937f, 2026-10-31
+> appendix) against commit fe3937f, 2026-10-31; the login list (§3) against
+> commit 9fc05a9, 2026-11-01
 
 # Common Ground - Architecture Documentation
 
@@ -259,11 +260,13 @@ The login endpoint at `POST /User/login` (in `srv/api/user.ts`) supports multipl
 1. **Device-based (`type: "device"`)** — primary re-authentication. `POST /User/getSignableSecret` returns a random 20-char challenge stored in `session.signSecret`; the frontend signs it with the device private key; the server verifies via `deviceHelper.verifyDeviceAndGetUserId()` and populates `session.user`.
 2. **Wallet-based (`type: "wallet"`)** — a "prepared credential" assembled in a prior step (`session.preparedCredential`) is verified, then a device is created.
 3. **Passkey / WebAuthn (`type: "passkey"`)** — the WebAuthn assertion is verified in the login call itself, on the instance's own origin and relying party ([docs/auth-identity §7](../auth-identity/README.md#7-passkeys)). A legacy CG ID (gateway) process instead keeps the CG ID popup flow and `type: "passkey-success"`.
-4. **Email + password (`type: "password"`)** — verified via `userHelper.getOwnDataByCgProfileNameOrEmailAndPassword()`; creates a device from the supplied public key.
+4. **Email + password (`type: "password"`)** — throttled per IP and per account, verified via `userHelper.checkPasswordLogin()` (bcrypt cost 12, older hashes are rehashed; a password below the policy marks the account for a new one); creates a device from the supplied public key.
 5. **Twitter OAuth (`type: "twitter"`)** — Passport.js flow in `getRoutes.ts`; Twitter user id read from `session.passport`.
 6. **Lukso Universal Profile (`type: "lukso"`)** — on-chain signature over the nonce, verified via `onchainHelper.luksoIsValidSignature()`.
 7. **Farcaster (`type: "farcaster"`)** — SIWE flow verified via `/Farcaster/verifyLogin`, checking the Farcaster id registry on-chain.
-8. **Email verification code (`type: "verificationCode"`)** — passwordless; verified via `userHelper.getOwnDataByEmailAndVerificationCode()`.
+8. **Email login code (`type: "verificationCode"`)** — passwordless; a single-use 6-digit code bound to the address (`srv/util/emailCodes.ts`), throttled per IP, account and code.
+
+A ninth way in is the **transfer link** (`POST /User/redeemTransferLink`, [docs/auth-identity §11](../auth-identity/README.md#11-transfer-links-and-the-account-security-step)), and every login ends in the **account-security step** when the account lacks a sign-in method that works here or a verified email.
 
 **Post-login state.** After any successful login the server creates a device entry, sets `request.session.user = { id, deviceId }`, clears `session.signSecret`, and returns `{ ownData, communities, chats, deviceId, webPushSubscription, unreadNotificationCount }`.
 

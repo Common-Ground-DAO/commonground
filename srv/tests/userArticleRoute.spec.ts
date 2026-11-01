@@ -25,6 +25,10 @@ jest.mock('../util/rateLimit', () => ({
   __esModule: true,
   default: () => jest.fn(),
   keyRateLimitHandler: () => jest.fn(),
+  failureBudget: () => ({ reserve: jest.fn() }),
+  reserveFailures: jest.fn(),
+  clientPrefixKey: jest.fn(),
+  ipFailureLimiter: () => ({ assertBelow: jest.fn(), recordFailure: jest.fn() }),
 }));
 jest.mock('../util/captcha', () => ({ verifyCaptchaToken: jest.fn() }));
 jest.mock('../util/safeFetch', () => ({ fetchRemoteImage: jest.fn() }));

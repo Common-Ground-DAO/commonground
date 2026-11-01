@@ -20,6 +20,8 @@ import { addressRegex, calculateSupporterUpgradeCost } from "../common/util";
 import { passkeyInsertParams, type NewPasskey } from "./passkeys";
 import { assertLoginMethodRemains, LOGIN_ACCOUNT_TYPES } from "./loginMethods";
 import { getProcessRpIdOrNull } from "../util/passkeyConfig";
+import { passwordMeetsPolicy } from "../common/passwordPolicy";
+import { bumpSecurityStepVersion } from "../util/securityStepVersion";
 
 export type CreateUserAccountData = {
   displayName: string;
@@ -96,9 +98,56 @@ export type CreateBotUserData = CreateBotUserProfileData & ({
 
 let dummyPasswordHash: Promise<string> | undefined;
 
+/**
+ * bcrypt cost factor for new hashes. Hashes with a lower cost are replaced
+ * with one of this cost after the next successful check (rehash on login).
+ */
+export const BCRYPT_COST = 12;
+
 async function _hashPassword(password: string) {
-  const generatedSalt = await bcrypt.genSalt(8);
+  const generatedSalt = await bcrypt.genSalt(BCRYPT_COST);
   return await bcrypt.hash(password, generatedSalt);
+}
+
+/** compare against a throwaway hash, so unknown accounts take as long as known ones */
+async function _compareWithDummy(password: string) {
+  dummyPasswordHash ??= _hashPassword(randomUUID());
+  await bcrypt.compare(password, await dummyPasswordHash);
+}
+
+/**
+ * A failed check against a cheaper (older) hash: spend the time of a full-cost
+ * check as well, so the answer's timing tells nothing about the hash.
+ */
+async function _padFailedCheck(password: string, hash: string) {
+  if (_needsRehash(hash)) {
+    await _compareWithDummy(password);
+  }
+}
+
+function _needsRehash(hash: string): boolean {
+  try {
+    return bcrypt.getRounds(hash) < BCRYPT_COST;
+  }
+  catch {
+    return false;
+  }
+}
+
+/** Replaces a still-matching hash of a lower cost (best effort, never throws). */
+async function _rehashIfNeeded(userId: string, password: string, hash: string) {
+  if (!_needsRehash(hash)) {
+    return;
+  }
+  try {
+    await pool.query(`
+      UPDATE users SET "password" = $3
+      WHERE "id" = $1 AND "password" = $2
+    `, [userId, hash, await _hashPassword(password)]);
+  }
+  catch (e) {
+    console.error("Could not rehash a password", e instanceof Error ? e.message : e);
+  }
 }
 
 async function _getSocialPreviewData(
@@ -1311,38 +1360,60 @@ class UserHelper {
     }
   }
 
-  public async getOwnDataByCgProfileNameOrEmailAndPassword(cgProfileNameOrEmail: string, password: string): Promise<Models.User.OwnData> {
-    let options: Parameters<typeof _getOwnData>[1];
-    if (cgProfileNameOrEmail.indexOf('@') > -1) {
-      options = {
-        where: 'u."email" = $1',
-        extraFields: ['u."password"'],
-        params: [cgProfileNameOrEmail],
-      };
+  /**
+   * The account a password login names (email address or cg profile name),
+   * or null. Lets the caller apply per-account limits before the password
+   * is checked (checkPasswordLogin).
+   */
+  public async findPasswordLoginUserId(cgProfileNameOrEmail: string): Promise<string | null> {
+    const byEmail = cgProfileNameOrEmail.indexOf('@') > -1;
+    const result = await pool.query<{ id: string }>(byEmail
+      ? `
+        SELECT u."id" FROM users u
+        WHERE LOWER(u."email") = LOWER($1) AND u."deletedAt" IS NULL AND u.is_bot = FALSE
+      `
+      : `
+        SELECT u."id" FROM users u
+        JOIN user_accounts ua ON ua."userId" = u."id"
+        WHERE ua."type" = 'cg'
+          AND LOWER(ua."displayName") = LOWER($1)
+          AND ua."deletedAt" IS NULL
+          AND u."deletedAt" IS NULL AND u.is_bot = FALSE
+      `, [cgProfileNameOrEmail]);
+    return result.rows.length === 1 ? result.rows[0].id : null;
+  }
+
+  /**
+   * Password login: checks `password` for `userId` (null: unknown account —
+   * compared against a throwaway hash, same answer). On success an old hash
+   * is replaced by one of BCRYPT_COST, and a password that does not meet the
+   * policy marks the account (passwordChangeRequired: the account-security
+   * step asks for a new one). Throws NOT_ALLOWED otherwise.
+   */
+  public async checkPasswordLogin(userId: string | null, password: string): Promise<Models.User.OwnData> {
+    const hash = userId === null ? null : (await pool.query<{ password: string | null }>(`
+      SELECT "password" FROM users WHERE "id" = $1 AND "deletedAt" IS NULL
+    `, [userId])).rows[0]?.password;
+    if (!userId || !hash) {
+      await _compareWithDummy(password);
+      throw new Error(errors.server.NOT_ALLOWED);
     }
-    else {
-      options = {
-        CTE: `
-          WITH user_id AS (
-            SELECT "userId"
-            FROM user_accounts
-            WHERE "type" = 'cg'
-              AND LOWER("displayName") = ${format("LOWER(%L)", cgProfileNameOrEmail)}
-              AND "deletedAt" IS NULL
-          )
-        `,
-        where: 'u."id" = (SELECT "userId" FROM user_id)',
-        extraFields: ['u."password"'],
-      };
+    if (!(await bcrypt.compare(password, hash))) {
+      await _padFailedCheck(password, hash);
+      throw new Error(errors.server.NOT_ALLOWED);
     }
-    const result = await _getOwnData(pool, options);
-    const passwordHash: string = (result as any).password;
-    const passwordCorrect = await bcrypt.compare(password, passwordHash);
-    if (passwordCorrect) {
-      delete (result as any).password;
-      return result;
+    await _rehashIfNeeded(userId, password, hash);
+    if (!passwordMeetsPolicy(password)) {
+      const flagged = await pool.query(`
+        UPDATE users SET "passwordChangeRequired" = TRUE
+        WHERE "id" = $1 AND "passwordChangeRequired" = FALSE
+      `, [userId]);
+      if (flagged.rowCount) {
+        // other sessions of the account must notice the account-security step
+        await bumpSecurityStepVersion([userId]);
+      }
     }
-    throw new Error(errors.server.NOT_ALLOWED);
+    return await this.getOwnDataById(userId);
   }
 
   public async getOwnDataById(userId: string): Promise<Models.User.OwnData> {
@@ -1373,22 +1444,59 @@ class UserHelper {
     throw new Error(errors.server.TWITTER_LOGIN_FAILED);
   }
 
-  public async getOwnDataByEmailAndVerificationCode(email: string, code: string): Promise<Models.User.OwnData> {
-    const options = {
-      where: 'u."email" = $1 AND u."verificationCode" = $2 AND u."verificationCodeExpiration" > now()',
-      params: [email, code],
-    };
-    const user = await _getOwnData(pool, options);
-    // if no error is thrown, then otp is correct
-    await pool.query(`
-      UPDATE users
-      SET "verificationCode" = NULL, "verificationCodeExpiration" = NULL ${!user.emailVerified ? ', "emailVerified" = TRUE' : ''}
-      WHERE id = $1
-    `, [user.id]);
-    if (!user.emailVerified) { 
-      user.emailVerified = true;
+  /**
+   * An email-verification code came back: `email` becomes the account's
+   * verified address (it may differ from the current one — that is how the
+   * address changes on an instance that sends mail). Another account that
+   * holds the same address UNVERIFIED loses it in the same transaction (an
+   * unconfirmed claim never blocks the owner); `clearedFrom` names those
+   * accounts. EXISTS_ALREADY when another account has it verified.
+   */
+  public async setVerifiedEmail(userId: string, email: string): Promise<{ previousEmail: string | null; previousVerified: boolean; clearedFrom: string[] }> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const cleared = await client.query<{ id: string }>(`
+        UPDATE users SET "email" = NULL, "updatedAt" = now()
+        WHERE LOWER("email") = LOWER($2) AND "id" <> $1 AND "emailVerified" = FALSE
+        RETURNING "id"
+      `, [userId, email]);
+      const result = await client.query<{ previousEmail: string | null; previousVerified: boolean }>(`
+        WITH previous AS (
+          SELECT "email", "emailVerified" FROM users WHERE "id" = $1 FOR UPDATE
+        )
+        UPDATE users u
+        SET "email" = $2, "emailVerified" = TRUE, "updatedAt" = now()
+        FROM previous
+        WHERE u."id" = $1 AND u."deletedAt" IS NULL
+        RETURNING previous."email" AS "previousEmail", previous."emailVerified" AS "previousVerified"
+      `, [userId, email]);
+      if (result.rows.length !== 1) {
+        throw new Error(errors.server.NOT_FOUND);
+      }
+      await client.query('COMMIT');
+      return { ...result.rows[0], clearedFrom: cleared.rows.map(row => row.id) };
     }
-    return user;
+    catch (e) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      if ((e as { code?: string }).code === '23505') {
+        throw new Error(errors.server.EXISTS_ALREADY);
+      }
+      throw e;
+    }
+    finally {
+      client.release();
+    }
+  }
+
+  /** The live human account that has this address VERIFIED (case-insensitive), or null. */
+  public async getVerifiedUserIdByEmail(email: string): Promise<string | null> {
+    const result = await pool.query<{ id: string }>(`
+      SELECT "id"
+      FROM users
+      WHERE LOWER("email") = LOWER($1) AND "emailVerified" = TRUE AND "deletedAt" IS NULL AND is_bot = FALSE
+    `, [email]);
+    return result.rows.length === 1 ? result.rows[0].id : null;
   }
 
   public async getUserAccount(accountType: Exclude<Models.User.ProfileItemType, "cg" | "bot">, accountId: string) {
@@ -1444,15 +1552,27 @@ class UserHelper {
     const hash = result.rows[0]?.password;
     if (!hash) {
       // no password set: compare anyway so both cases take similar time
-      dummyPasswordHash ??= _hashPassword(randomUUID());
-      await bcrypt.compare(password, await dummyPasswordHash);
+      await _compareWithDummy(password);
       return false;
     }
-    return await bcrypt.compare(password, hash);
+    if (!(await bcrypt.compare(password, hash))) {
+      await _padFailedCheck(password, hash);
+      return false;
+    }
+    await _rehashIfNeeded(userId, password, hash);
+    return true;
   }
 
+  /** Sets (or replaces) the password; a pending password change is done with it. */
   public async setPassword(userId: string, password: string): Promise<void> {
-    await _updateUser(pool, { id: userId, password });
+    const result = await pool.query(`
+      UPDATE users
+      SET "password" = $2, "passwordChangeRequired" = FALSE, "updatedAt" = now()
+      WHERE "id" = $1 AND "deletedAt" IS NULL
+    `, [userId, await _hashPassword(password)]);
+    if (result.rowCount !== 1) {
+      throw new Error(errors.server.NOT_FOUND);
+    }
   }
 
   public async updateUser(
@@ -2522,18 +2642,6 @@ class UserHelper {
     `, [userId]);
     if (result.rows.length === 1) {
       return result.rows[0].extraData;
-    }
-    throw new Error(errors.server.NOT_FOUND);
-  }
-
-  public async getUserIdByEmail(email: string): Promise<string> {
-    const result = await pool.query(`
-      SELECT "id"
-      FROM users
-      WHERE "email" = $1
-    `, [email]);
-    if (result.rows.length === 1) {
-      return result.rows[0].id;
     }
     throw new Error(errors.server.NOT_FOUND);
   }

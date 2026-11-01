@@ -94,6 +94,8 @@ import { PluginDetailsModalProvider } from 'context/PluginDetailsModalProvider';
 import { IsolationModeProvider } from 'context/IsolationModeProvider';
 import { ReportModalProvider } from 'context/ReportModalProvider';
 import { SuspiciousImageModalProvider } from 'context/SuspiciousImageModalProvider';
+import { useSecurityStepRequired } from 'hooks/useSecurityStepRequired';
+import { showSecurityStep } from 'data/auth/securityStep';
 
 dayjs.extend(utc);
 dayjs.extend(isToday);
@@ -126,6 +128,8 @@ const WalletManagementView = React.lazy(() => import('views/WalletManagementView
 const TwitterCallbackView = React.lazy(() => import('views/TwitterCallbackView/TwitterCallbackView'));
 const VerifyEmailView = React.lazy(() => import('views/VerifyEmailView/VerifyEmailView'));
 const LoginView = React.lazy(() => import('views/LoginView/LoginView'));
+const TransferView = React.lazy(() => import('views/TransferView/TransferView'));
+const SecurityStepView = React.lazy(() => import('views/SecurityStepView/SecurityStepView'));
 const IsolationModeToggle = React.lazy(() => import('views/IsolationModeToggle/IsolationModeToggle'));
 
 const activeChains = (config.DEPLOYMENT === 'dev'
@@ -224,6 +228,13 @@ const farcasterConfig = {
 
 const RoutedContent = () => {
   const { isMobile, isTablet } = useWindowSizeContext();
+  const { loginState } = useConnectionContext();
+  // the account has to finish the account-security step: nothing else is
+  // shown (the server refuses everything else anyway)
+  // also while the automatic re-login after a reload is still running: the
+  // flag is remembered per account (data/auth/securityStep.ts), so the
+  // normal app never mounts first
+  const securityStepRequired = showSecurityStep(useSecurityStepRequired(), loginState);
 
   const routesWithLayout = useMemo(() => {
     const routes = <Routes>
@@ -274,7 +285,8 @@ return <Routes>
   <Route path={'twitter-login'} element={<TwitterCallbackView />} />
   <Route path={'verify-email'} element={<VerifyEmailView />} />
   <Route path={'login'} element={<LoginView />} />
-  <Route path="*" element={routesWithLayout} />
+  <Route path={'transfer'} element={<TransferView />} />
+  <Route path="*" element={securityStepRequired ? <SecurityStepView /> : routesWithLayout} />
 </Routes>
 }
 

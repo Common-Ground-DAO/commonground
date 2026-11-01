@@ -451,6 +451,33 @@ class UserApiConnector extends BaseApiConnector {
       data,
     );
   }
+
+  /** what the account-security step still needs */
+  public async getSecurityStatus(): Promise<API.User.getSecurityStatus.Response> {
+    return await this.ajax<API.User.getSecurityStatus.Response>(
+      "POST",
+      "/getSecurityStatus",
+      {},
+    );
+  }
+
+  /** whose account a transfer link signs in to (does not use it up) */
+  public async previewTransferLink(data: API.User.previewTransferLink.Request): Promise<API.User.previewTransferLink.Response> {
+    return await this.ajax<API.User.previewTransferLink.Response>(
+      "POST",
+      "/previewTransferLink",
+      data,
+    );
+  }
+
+  /** use `loginManager.redeemTransferLink`, which also sets up the login */
+  public async redeemTransferLink(data: API.User.redeemTransferLink.Request): Promise<API.User.redeemTransferLink.Response> {
+    return await this.ajax<API.User.redeemTransferLink.Response>(
+      "POST",
+      "/redeemTransferLink",
+      data,
+    );
+  }
 }
 
 const userApi = new UserApiConnector();

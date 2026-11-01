@@ -20,6 +20,8 @@ import type {
   PasskeyRegistrationResponse,
   PasskeyRequestOptions,
   PasskeyVerifyRegistrationResult,
+  SecurityStatus,
+  TransferLinkPreview,
 } from "./types.js";
 
 export interface RegisterOptions {
@@ -205,6 +207,44 @@ export class AuthApi {
   /** needs a recent authentication; LAST_LOGIN_METHOD if nothing else could sign in */
   async removePasskey(id: string): Promise<void> {
     await this.transport.call("Passkey/remove", { id });
+  }
+
+  /**
+   * POST /User/getSecurityStatus — what the account-security step still
+   * needs. While `required`, every other request fails with
+   * SECURITY_STEP_REQUIRED.
+   */
+  async getSecurityStatus(): Promise<SecurityStatus> {
+    return this.transport.call("User/getSecurityStatus", {});
+  }
+
+  /**
+   * POST /User/createTransferLink — a one-time link (`<target>/transfer#<token>`,
+   * ~10 minutes) that signs this session's user in on the instance the server
+   * is configured to transfer to. NOT_SUPPORTED where none is configured.
+   */
+  async createTransferLink(nextPath?: string): Promise<{ url: string; expiresAt: number }> {
+    return this.transport.call("User/createTransferLink", nextPath !== undefined ? { nextPath } : {});
+  }
+
+  /** POST /User/previewTransferLink — whose account a link signs in to (does not use it). */
+  async previewTransferLink(token: string): Promise<TransferLinkPreview> {
+    return this.transport.call("User/previewTransferLink", { token });
+  }
+
+  /**
+   * POST /User/redeemTransferLink — signs in with a transfer link (only from a
+   * logged-out session). The supplied key becomes a new device, as with a
+   * password login. The session may add sign-in methods but counts as no
+   * recent authentication for anything else.
+   */
+  async redeemTransferLink(token: string, deviceKey?: DeviceKey, curve: DeviceCurve = "P-384"): Promise<AuthSession & { nextPath: string | null }> {
+    const key = deviceKey ?? (await DeviceKey.generate(curve));
+    const response = await this.transport.call<LoginResponse & { nextPath: string | null }>("User/redeemTransferLink", {
+      token,
+      device: { publicKey: key.publicJwk },
+    });
+    return { response, deviceId: response.deviceId, deviceKey: key, nextPath: response.nextPath };
   }
 
   /** POST /User/ensureSession — keepalive for the rolling session cookie. */

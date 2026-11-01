@@ -13,6 +13,7 @@ import SignupCaptcha from 'components/molecules/SignupCaptcha/SignupCaptcha';
 import { usePasskeyContext } from 'context/PasskeyProvider';
 import errors from 'common/errors';
 import { validateEmailInput, validatePassword } from 'common/validators';
+import { PASSWORD_MIN_LENGTH } from 'common/passwordPolicy';
 import userApi from 'data/api/user';
 import { signalUnknownCredential } from 'data/auth/passkeyCeremony';
 import { getSignalRpId } from 'data/auth/authMode';
@@ -46,7 +47,7 @@ function useCreateUserCaptcha(config: StepProps['config']) {
   };
 }
 
-const MIN_PASSWORD_LENGTH = 8;
+const MIN_PASSWORD_LENGTH = PASSWORD_MIN_LENGTH;
 const RATE_LIMITED = "Too many attempts. Please wait a few minutes and try again.";
 const RESEND_COOLDOWN_MS = 30_000;
 const DISPLAY_NAME_PATTERN = /^[a-z0-9_-]{3,30}$/i;

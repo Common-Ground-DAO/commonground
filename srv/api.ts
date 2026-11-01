@@ -29,37 +29,51 @@ import captchaRouter from './api/captcha';
 import instanceRouter from './api/instance';
 import feedRouter from './api/feed';
 import { apiErrorHandler } from './api/util';
+import { securityStepMiddleware } from './util/securityStep';
+import { emailEnabled } from './api/emails';
+import { validateTransferConfigAtStartup } from './util/transferLink';
 
-app.use('/Chat', chatRouter);
-app.use('/Community', communityRouter);
-app.use('/File', fileRouter);
-app.use('/Message', messageRouter);
-app.use('/User', userRouter);
-app.use('/Contract', contractRouter);
-app.use('/Notification', notificationRouter);
-app.use('/Twitter', twitterRouter);
-app.use('/Lukso', luksoUniversalProfileRouter);
+// A misconfigured transfer-link target (TRANSFER_TARGET_URL) stops the process.
+validateTransferConfigAtStartup();
+
+// Accounts that still have to finish the account-security step (no sign-in
+// method that works here, no verified email, a password below the policy)
+// reach only the endpoints of that step: the check runs in front of every
+// API router and the gated file routes, not in front of the page routes
+// (social previews, redirects), which serve HTML (docs/auth-identity §11).
+const securityStep = securityStepMiddleware(emailEnabled);
+
+app.use('/Chat', securityStep, chatRouter);
+app.use('/Community', securityStep, communityRouter);
+app.use('/File', securityStep, fileRouter);
+app.use('/Message', securityStep, messageRouter);
+app.use('/User', securityStep, userRouter);
+app.use('/Contract', securityStep, contractRouter);
+app.use('/Notification', securityStep, notificationRouter);
+app.use('/Twitter', securityStep, twitterRouter);
+app.use('/Lukso', securityStep, luksoUniversalProfileRouter);
 // Exactly one passkey surface per process (docs/auth-identity §7): the
 // main-origin Passkey API, or — legacy CG ID (gateway) mode — the
 // authentication-only CgId API. A bad relying-party configuration stops the
 // process here.
 validatePasskeyConfigAtStartup();
 if (isLegacyCgidMode()) {
-  app.use('/CgId', cgIdRouter);
+  app.use('/CgId', securityStep, cgIdRouter);
 }
 else {
-  app.use('/Passkey', passkeyRouter);
+  app.use('/Passkey', securityStep, passkeyRouter);
 }
-app.use('/Accounts', accountsRouter);
-app.use('/Plugins', pluginRouter);
-app.use('/Search', searchRouter);
-app.use('/Report', reportRouter);
-app.use('/Bot', botRouter);
-app.use('/BotV1', botV1Router);
-app.use('/Staking', stakingRouter);
-app.use('/Captcha', captchaRouter);
-app.use('/Instance', instanceRouter);
-app.use('/Feed', feedRouter);
+app.use('/Accounts', securityStep, accountsRouter);
+app.use('/Plugins', securityStep, pluginRouter);
+app.use('/Search', securityStep, searchRouter);
+app.use('/Report', securityStep, reportRouter);
+app.use('/Bot', securityStep, botRouter);
+app.use('/BotV1', securityStep, botV1Router);
+app.use('/Staking', securityStep, stakingRouter);
+app.use('/Captcha', securityStep, captchaRouter);
+app.use('/Instance', securityStep, instanceRouter);
+app.use('/Feed', securityStep, feedRouter);
+app.use(['/gated-videos', '/gated-files'], securityStep);
 app.use('/', getRoutes);
 
 // Errors handed to next() by middleware — e.g. the session store failing while

@@ -3,7 +3,8 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 /**
- * `/login?next=…` only ever leads to a path on this site. Rejects anything
+ * `/login?next=…` and the path a transfer link continues to (shared with the
+ * backend) only ever lead to a path on this site. Rejects anything
  * that is not a plain absolute path (`//host`, `\`, schemes), any control
  * character (browsers strip tabs and newlines, so `/\t/evil.com` would
  * become `//evil.com`), and anything that resolves to another origin; returns

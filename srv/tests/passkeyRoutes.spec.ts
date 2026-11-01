@@ -32,11 +32,31 @@ jest.doMock('../util/rateLimit', () => ({
   __esModule: true,
   default: () => jest.fn(async () => undefined),
   keyRateLimitHandler: () => jest.fn(async () => undefined),
+  failureBudget: () => ({ reserve: jest.fn(async () => ({ release: jest.fn(async () => undefined) })) }),
+  reserveFailures: jest.fn(async () => ({ release: jest.fn(async () => undefined) })),
+  clientPrefixKey: () => 'v4:203.0.113',
+  ipFailureLimiter: () => ({ assertBelow: jest.fn(async () => undefined), recordFailure: jest.fn(async () => undefined) }),
   extractIpFromRequest: () => ({ ipString: '203.0.113.1' }),
 }));
 const verifyCaptchaToken = jest.fn(async (token: string) => token === 'captcha');
 jest.doMock('../util/captcha', () => ({ verifyCaptchaToken }));
 jest.doMock('../util/safeFetch', () => ({ fetchRemoteImage: jest.fn() }));
+// the account-security step reads these facts (srv/util/securityStep.ts);
+// by default the account is complete: a password and a verified address
+const securityFacts = {
+  email: 'someone@example.org' as string | null,
+  emailVerified: true,
+  hasPassword: true,
+  passwordChangeRequired: false,
+  passkeys: 0,
+  loginWallets: 0,
+};
+const defaultSecurityFacts = { ...securityFacts };
+jest.doMock('../repositories/loginMethods', () => ({
+  ...jest.requireActual('../repositories/loginMethods'),
+  getSecurityFacts: jest.fn(async () => ({ ...securityFacts })),
+}));
+jest.doMock('../util/postgres', () => ({ __esModule: true, default: { query: jest.fn() } }));
 
 let mailEnabled = false;
 const emailUtils = {
@@ -67,7 +87,8 @@ function ownData(id: string): any {
 
 const users = {
   getOwnDataById: jest.fn(async (id: string) => ownData(id)),
-  getOwnDataByCgProfileNameOrEmailAndPassword: jest.fn(async () => ownData(USER)),
+  findPasswordLoginUserId: jest.fn(async () => USER),
+  checkPasswordLogin: jest.fn(async () => ownData(USER)),
   createUser: jest.fn(async (data: any) => ({
     userId: NEW_USER,
     deviceId: 'device-new',
@@ -110,7 +131,8 @@ const mocks: Record<string, object> = {
   chats: { getChats: jest.fn(async () => []) },
   notifications: { getUnreadCount: jest.fn(async () => 0) },
   files: { scheduleUserPreviewUpdate: jest.fn() },
-  emails: { generateVerificationEmailToken: jest.fn(async () => 'token') },
+  emails: {},
+  transferTokens: {},
   suggestedUsers: {},
   articles: {},
   onchain: {},
@@ -125,10 +147,10 @@ for (const [name, mock] of Object.entries(mocks)) {
 const sessionStore = new Map<string, Record<string, unknown>>();
 let sessionCounter = 0;
 
-function makeRequest(data: Record<string, unknown> = {}): any {
+function makeRequest(data: Record<string, unknown> = {}, cookieSid?: string): any {
   const request: any = { headers: { 'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15' } };
-  const attach = (fields: Record<string, unknown>) => {
-    const id = `sid-${++sessionCounter}`;
+  const attach = (fields: Record<string, unknown>, sid?: string) => {
+    const id = sid ?? `sid-${++sessionCounter}`;
     const session: any = {
       ...fields,
       regenerate(cb: (e?: unknown) => void) {
@@ -147,8 +169,18 @@ function makeRequest(data: Record<string, unknown> = {}): any {
     request.sessionID = id;
     sessionStore.set(id, { ...fields });
   };
-  attach(data);
+  attach(data, cookieSid);
   return request;
+}
+
+/**
+ * A request that arrives with the cookie of session `sid`, loaded from the
+ * store as express-session would — an unknown id becomes a new, empty
+ * (anonymous) session.
+ */
+function requestWithCookie(sid: string): any {
+  const stored = sessionStore.get(sid);
+  return stored ? makeRequest(JSON.parse(JSON.stringify(stored)), sid) : makeRequest();
 }
 
 function freshlyAuthenticated(userId = USER, extra: Record<string, unknown> = {}) {
@@ -189,6 +221,7 @@ beforeEach(() => {
   memoryRedis.keys.clear();
   sessionStore.clear();
   mailEnabled = false;
+  Object.assign(securityFacts, defaultSecurityFacts);
   delete process.env.CG_LEGACY_CGID;
   delete process.env.CGID_URL;
   passkeyConfig._resetPasskeyConfigCache();
@@ -326,26 +359,70 @@ describe('User/login {type: passkey}', () => {
 
   it('a device-key login does not count as a fresh authentication', async () => {
     const request = makeRequest({ signSecret: 's'.repeat(20) });
-    await call('User/login', request, { type: 'device', deviceId: USER, secret: 's'.repeat(20), base64Signature: 'sig' });
+    const result = await call('User/login', request, { type: 'device', deviceId: USER, secret: 's'.repeat(20), base64Signature: 'sig' });
     expect(request.session.user).toEqual({ id: USER, deviceId: USER });
     expect(request.session.authAt).toBeUndefined();
+    expect(result.stepUpValidUntil).toBeNull();
     await expect(call('User/setPassword', request, { password: 'new password' })).rejects.toThrow('REAUTH_REQUIRED');
   });
 
-  it('a device-key re-login of the same user keeps in-flight linking and step-up state', async () => {
+  it('a device-key re-login of the same user keeps the session (id, linking and step-up state)', async () => {
     const passport = { user: { username: 'someone', _json: { id_str: '42' } } };
-    const authAt = Date.now();
+    const authAt = Date.now() - 60 * 1000;
     const same = makeRequest({ user: { id: USER, deviceId: 'old' }, passport, authAt, authMethod: 'passkey', signSecret: 's'.repeat(20) });
     const oldSid = same.sessionID;
-    await call('User/login', same, { type: 'device', deviceId: USER, secret: 's'.repeat(20), base64Signature: 'sig' });
-    expect(same.sessionID).not.toBe(oldSid);
-    expect(same.session).toMatchObject({ passport, authAt, authMethod: 'passkey' });
+    const result = await call('User/login', same, { type: 'device', deviceId: USER, secret: 's'.repeat(20), base64Signature: 'sig' });
+    expect(same.sessionID).toBe(oldSid);
+    // the web app learns until when that earlier sign-in still counts
+    expect(result.stepUpValidUntil).toBe(authAt + 5 * 60 * 1000);
+    expect(sessionStore.get(oldSid)).toMatchObject({ user: { id: USER, deviceId: USER }, passport, authAt, authMethod: 'passkey' });
+    // the step-up time is not refreshed by the silent login, and its
+    // challenge is used up
+    expect(same.session.authAt).toBe(authAt);
+    expect(same.session.signSecret).toBeUndefined();
 
     // another user's (or an anonymous) session carries nothing over
     const other = makeRequest({ user: { id: OTHER_USER, deviceId: 'old' }, passport, authAt, authMethod: 'passkey', signSecret: 's'.repeat(20) });
     await call('User/login', other, { type: 'device', deviceId: USER, secret: 's'.repeat(20), base64Signature: 'sig' });
     expect(other.session.passport).toBeUndefined();
     expect(other.session.authAt).toBeUndefined();
+  });
+
+  it('the page\'s other requests keep their session while the automatic re-login runs', async () => {
+    // a logged-in session; after a reload the app sends its device login and,
+    // at the same time, other requests with the same cookie
+    const page = makeRequest({ user: { id: USER, deviceId: 'device-1' }, signSecret: 's'.repeat(20) });
+    const sid = page.sessionID;
+    const [, concurrent] = await Promise.all([
+      call('User/login', requestWithCookie(sid), { type: 'device', deviceId: USER, secret: 's'.repeat(20), base64Signature: 'sig' }),
+      Promise.resolve().then(() => requestWithCookie(sid)),
+    ]);
+    // a request that is loaded after the re-login (it was still in flight)
+    const late = requestWithCookie(sid);
+    expect(concurrent.session.user).toEqual({ id: USER, deviceId: 'device-1' });
+    expect(late.session.user).toEqual({ id: USER, deviceId: USER });
+    await expect(call('User/checkLoginStatus', late)).resolves.toEqual({ userId: USER });
+  });
+
+  it('every login that gains something still gets a new session id (no fixation)', async () => {
+    // anonymous → user (device key)
+    const anonymous = makeRequest({ signSecret: 's'.repeat(20) });
+    const anonymousSid = anonymous.sessionID;
+    await call('User/login', anonymous, { type: 'device', deviceId: USER, secret: 's'.repeat(20), base64Signature: 'sig' });
+    expect(anonymous.sessionID).not.toBe(anonymousSid);
+    expect(sessionStore.has(anonymousSid)).toBe(false);
+    // user A → user B (device key of B)
+    const other = makeRequest({ user: { id: OTHER_USER, deviceId: 'd' }, signSecret: 's'.repeat(20) });
+    const otherSid = other.sessionID;
+    await call('User/login', other, { type: 'device', deviceId: USER, secret: 's'.repeat(20), base64Signature: 'sig' });
+    expect(other.sessionID).not.toBe(otherSid);
+    // the same user, interactively (refreshes the step-up time)
+    const interactive = makeRequest({ user: { id: USER, deviceId: 'device-1' } });
+    const interactiveSid = interactive.sessionID;
+    await call('User/login', interactive, { type: 'password', aliasOrEmail: 'someone@example.org', password: 'correct horse', device: { publicKey: DEVICE_KEY } });
+    expect(interactive.sessionID).not.toBe(interactiveSid);
+    expect(sessionStore.has(interactiveSid)).toBe(false);
+    expect(interactive.session.authMethod).toBe('password');
   });
 
   it('passkey-success is a legacy CG ID mode branch only', async () => {
@@ -404,14 +481,14 @@ describe('User/createUser', () => {
     const request = makeRequest();
     // email code first, then the sign-in method, then createUser
     await expect(call('Passkey/registrationOptions', request, { displayName: 'newbie' })).rejects.toThrow('EMAIL_VERIFICATION_REQUIRED');
-    await expect(call('User/createUser', request, { ...base, useEmailAndPassword: { email: 'newbie@example.org', password: 'pw' } })).rejects.toThrow('EMAIL_VERIFICATION_REQUIRED');
+    await expect(call('User/createUser', request, { ...base, useEmailAndPassword: { email: 'newbie@example.org', password: 'long enough' } })).rejects.toThrow('EMAIL_VERIFICATION_REQUIRED');
 
     await call('User/requestSignupEmailCode', request, { email: 'newbie@example.org', recaptchaToken: 'captcha' });
     const code = (emailUtils.sendSignupCodeEmail.mock.calls[0] as any)[1];
     await expect(call('User/verifySignupEmailCode', request, { email: 'other@example.org', code })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
     await call('User/verifySignupEmailCode', request, { email: 'newbie@example.org', code });
     // a password sign-up must use the verified address
-    await expect(call('User/createUser', request, { ...base, useEmailAndPassword: { email: 'other@example.org', password: 'pw' } })).rejects.toThrow('INVALID_REQUEST');
+    await expect(call('User/createUser', request, { ...base, useEmailAndPassword: { email: 'other@example.org', password: 'long enough' } })).rejects.toThrow('INVALID_REQUEST');
     const options = await call('Passkey/registrationOptions', request, { displayName: 'newbie' });
     expect(options.user.name).toBe('newbie@example.org');
     await call('Passkey/verifyRegistration', request, { registrationResponse: new SoftAuthenticator().createCredential(options, ORIGIN) });
@@ -497,6 +574,13 @@ describe('User/reauthenticate', () => {
     expect(users.setPassword).toHaveBeenCalledWith(USER, 'new password');
   });
 
+  it('password: a password that predates the policy still re-authenticates', async () => {
+    users.isPasswordCorrect.mockResolvedValueOnce(true);
+    const request = silentlyLoggedIn();
+    await call('User/reauthenticate', request, { type: 'password', password: 'short' });
+    expect(request.session.authMethod).toBe('password');
+  });
+
   it('passkey: only the session user\'s own credential', async () => {
     const own = new SoftAuthenticator();
     const foreign = new SoftAuthenticator();
@@ -531,19 +615,22 @@ describe('User/reauthenticate', () => {
  * Every route of the User, Passkey and Bot APIs is classified here. A new
  * route fails this test until it is added to one of the two lists — sensitive
  * ones with a request that must be refused without a recent authentication.
+ * `adds`: the request adds a way into the account, which a fresh
+ * transfer-link session may do (everything else it may not).
  */
-const PROTECTED: Record<string, { data: any; sideEffects: () => jest.Mock[] }> = {
+const PROTECTED: Record<string, { data: any; sideEffects: () => jest.Mock[]; adds?: boolean }> = {
   'User/setPassword': { data: { password: 'new password' }, sideEffects: () => [users.setPassword] },
   'User/updateOwnData': { data: { email: 'new@example.org' }, sideEffects: () => [users.updateUser] },
   'User/removeUserAccount': { data: { type: 'twitter' }, sideEffects: () => [users.removeUserAccount] },
-  'User/addUserAccount': { data: { type: 'twitter' }, sideEffects: () => [users.addUserAccount] },
-  'User/addPreparedWallet': { data: { loginEnabled: true, visibility: 'private' }, sideEffects: () => [wallets.createWallet] },
+  'User/addUserAccount': { data: { type: 'twitter' }, sideEffects: () => [users.addUserAccount], adds: true },
+  'User/addPreparedWallet': { data: { loginEnabled: true, visibility: 'private' }, sideEffects: () => [wallets.createWallet], adds: true },
   'User/updateWallet': { data: { id: WALLET, loginEnabled: false }, sideEffects: () => [wallets.updateWallet] },
   'User/deleteWallet': { data: { id: WALLET }, sideEffects: () => [wallets.deleteWallet] },
-  'Passkey/registrationOptions': { data: {}, sideEffects: () => [] },
+  'Passkey/registrationOptions': { data: {}, sideEffects: () => [], adds: true },
   'Passkey/verifyRegistration': {
     data: { registrationResponse: { id: 'a'.repeat(22), rawId: 'a'.repeat(22), type: 'public-key', clientExtensionResults: {}, response: { clientDataJSON: 'e30', attestationObject: 'oA' } } },
     sideEffects: () => [],
+    adds: true,
   },
   'Passkey/remove': { data: { id: WALLET }, sideEffects: () => [] },
   'Bot/disable': { data: { botUserId: OTHER_USER }, sideEffects: () => [bots.disableBot] },
@@ -554,7 +641,9 @@ const NOT_PROTECTED = new Set([
   'User/getSignableSecret', 'User/verifyCaptcha', 'User/clearLoginSession', 'User/login', 'User/ensureSession',
   'User/reauthenticate', 'User/requestSignupEmailCode', 'User/verifySignupEmailCode', 'User/checkLoginStatus',
   'User/logout', 'User/createUser', 'User/prepareWalletAction', 'User/sendOneTimePasswordForLogin',
-  'User/requestEmailVerification', 'User/verifyEmail',
+  'User/requestEmailVerification', 'User/verifyEmail', 'User/getSecurityStatus',
+  // transfer links: minted for the session's own user, redeemed logged out
+  'User/createTransferLink', 'User/previewTransferLink', 'User/redeemTransferLink',
   'Passkey/authenticationOptions', 'Passkey/list', 'Passkey/rename',
   // editing the cg profile
   'User/updateUserAccount',
@@ -593,9 +682,17 @@ describe('step-up: protected routes', () => {
       jest.setSystemTime(Date.now() + 5 * 60 * 1000 + 1);
       await expect(call(name, request, spec.data)).rejects.toThrow('REAUTH_REQUIRED');
 
-      // a transfer session may not do it either
+      // a transfer session may only add a way in, never remove or replace one
       const transfer = makeRequest({ user: { id: USER, deviceId: 'd' }, authAt: Date.now(), authMethod: 'transfer', preparedCredential: prepared });
-      await expect(call(name, transfer, spec.data)).rejects.toThrow('REAUTH_REQUIRED');
+      if (spec.adds) {
+        await call(name, transfer, spec.data).catch((e: Error) => {
+          expect(e.message).not.toBe('REAUTH_REQUIRED');
+        });
+        jest.clearAllMocks();
+      }
+      else {
+        await expect(call(name, transfer, spec.data)).rejects.toThrow('REAUTH_REQUIRED');
+      }
 
       for (const sideEffect of spec.sideEffects()) {
         expect(sideEffect).not.toHaveBeenCalled();

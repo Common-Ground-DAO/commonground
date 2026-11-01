@@ -16,7 +16,8 @@ declare global {
                     deviceId: string,
                     base64Signature: string;
                 };
-                type Response = "OK" | "ERROR";
+                /** SECURITY_STEP_REQUIRED: the account must finish the account-security step first */
+                type Response = "OK" | "ERROR" | "SECURITY_STEP_REQUIRED";
             }
 
             namespace logout {

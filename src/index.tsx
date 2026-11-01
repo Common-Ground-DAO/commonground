@@ -2,6 +2,20 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import { captureTransferToken } from 'data/auth/transferToken';
+
+// a transfer link's token leaves the address bar before anything else loads
+captureTransferToken();
+
+// A request refused because the account still has to finish the
+// account-security step switches the app to that step (BaseApiConnector);
+// a loader that did not handle the refusal is no page error.
+window.addEventListener('unhandledrejection', event => {
+  if (event.reason instanceof Error && event.reason.message === 'SECURITY_STEP_REQUIRED') {
+    event.preventDefault();
+  }
+});
+
 window.onload = async () => {
   /* async imports */
 

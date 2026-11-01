@@ -34,7 +34,7 @@ registerPostRoute<
       const farcasterIdString = lines[11].substring(18).match(/^\d+$/)?.[0];
       const farcasterId = !!farcasterIdString ? parseInt(farcasterIdString) : null;
       const userRegistry = await farcasterApi('onChainIdRegistryEventByAddress', { address: siweData.address });
-      console.log("Farcaster user registry result", userRegistry, farcasterIdString);
+      console.log(`Farcaster login: registry fid ${userRegistry?.fid}, claimed fid ${farcasterIdString}`);
       if (farcasterId === null || userRegistry.fid !== farcasterId) {
         throw new Error("Farcaster ID mismatch");
       }
@@ -56,13 +56,13 @@ registerPostRoute<
           imageId = existingAccount.imageId;
         }
         else {
-          console.error("Existing account does not have the correct farcaster fields", existingAccount);
+          console.error(`Existing farcaster account of fid ${farcasterId} lacks profile fields`);
           throw new Error(errors.server.INVALID_REQUEST);
         }
       }
       else {
         const userData = await farcasterApi('userDataByFid', { fid: farcasterId });
-        console.log("create farcaster user data: ", userData);
+
         
         for (const message of userData.messages) {
           const { type, fid, userDataBody } = message.data;
@@ -86,7 +86,7 @@ registerPostRoute<
           }
         }
         if (!displayName || !username) {
-          console.error("Farcaster user data missing", userData);
+          console.error(`Farcaster profile data missing for fid ${farcasterId}`);
           throw new Error(errors.server.INVALID_REQUEST);
         }
         if (!!pfp) {
@@ -96,7 +96,7 @@ registerPostRoute<
             imageId = image.fileId;
           }
           catch (e) {
-            console.error("Could not retrieve farcaster profile image for fid " + farcasterId, e);
+            console.error("Could not retrieve farcaster profile image for fid " + farcasterId, e instanceof Error ? e.message : e);
           }
         }
       }

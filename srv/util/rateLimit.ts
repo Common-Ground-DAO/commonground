@@ -128,6 +128,134 @@ export default function ipRateLimitHandler(options: {
 }
 
 /**
+ * Counts only failures, per key: `assertBelow(key)` refuses with
+ * RATE_LIMIT_EXCEEDED once `limit` failures fell into the window — without
+ * counting the request itself —, `recordFailure(key)` counts one. For budgets
+ * that successes must never use up (per account, per client IP).
+ */
+export function keyFailureLimiter(options: { bucket: string; windowMs: number; limit: number }) {
+  const keyFor = (key: string) => `ratelimit:${options.bucket}:failures:${key}`;
+  return {
+    async assertBelow(key: string): Promise<void> {
+      const redisKey = keyFor(key);
+      const now = Date.now();
+      const results = await withTimeout(redisClient
+        .multi()
+        .zRemRangeByScore(redisKey, 0, now - options.windowMs)
+        .zCount(redisKey, now - options.windowMs, now)
+        .execTyped(), 'failure-limit MULTI');
+      if (results[1] >= options.limit) {
+        throw new Error(errors.server.RATE_LIMIT_EXCEEDED);
+      }
+    },
+    async recordFailure(key: string): Promise<void> {
+      const redisKey = keyFor(key);
+      const now = Date.now();
+      await withTimeout(redisClient
+        .multi()
+        .zAdd(redisKey, { value: `${now}:${Math.random().toFixed(6)}`, score: now })
+        .expire(redisKey, Math.ceil(options.windowMs / 1000))
+        .execTyped(), 'failure-limit MULTI');
+    },
+  };
+}
+
+export type FailureReservation = {
+  /** the attempt succeeded: it does not count as a failure */
+  release(): Promise<void>;
+};
+
+/**
+ * A failure budget that holds under parallel attempts: `reserve(key)` counts
+ * the attempt as a failure up front — adding it and counting in one MULTI,
+ * like countWithinWindow — and refuses with RATE_LIMIT_EXCEEDED (removing
+ * its own entry again) once the window holds more than `limit`. An attempt
+ * that then succeeds calls `release()`; one that fails keeps its entry, so
+ * it stays counted. N parallel attempts can therefore never get more than
+ * `limit` checks through.
+ */
+export function failureBudget(options: { bucket: string; windowMs: number; limit: number }) {
+  return {
+    async reserve(key: string): Promise<FailureReservation> {
+      const redisKey = `ratelimit:${options.bucket}:failures:${key}`;
+      const now = Date.now();
+      const entry = `${now}:${Math.random().toFixed(8)}`;
+      const results = await withTimeout(redisClient
+        .multi()
+        .zAdd(redisKey, { value: entry, score: now })
+        .expire(redisKey, Math.ceil(options.windowMs / 1000))
+        .zRemRangeByScore(redisKey, 0, now - options.windowMs)
+        .zCount(redisKey, now - options.windowMs, now)
+        .execTyped(), 'failure-budget MULTI');
+      const release = async () => {
+        await redisClient.zRem(redisKey, entry);
+      };
+      if (results[3] > options.limit) {
+        await release();
+        throw new Error(errors.server.RATE_LIMIT_EXCEEDED);
+      }
+      return { release };
+    },
+  };
+}
+
+/**
+ * Reserves one slot in each budget (see failureBudget); if one of them is
+ * spent, the slots already taken are given back and RATE_LIMIT_EXCEEDED is
+ * thrown.
+ */
+export async function reserveFailures(
+  reservations: { budget: ReturnType<typeof failureBudget>; key: string }[],
+): Promise<FailureReservation> {
+  const taken: FailureReservation[] = [];
+  try {
+    for (const { budget, key } of reservations) {
+      taken.push(await budget.reserve(key));
+    }
+  }
+  catch (e) {
+    await Promise.all(taken.map(reservation => reservation.release()));
+    throw e;
+  }
+  return {
+    release: async () => {
+      await Promise.all(taken.map(reservation => reservation.release()));
+    },
+  };
+}
+
+/**
+ * The client's network for per-account failure budgets: the IPv4 /24, or the
+ * IPv6 /56 — so that a third party elsewhere cannot spend a user's budget.
+ */
+export function clientPrefixKey(req: express.Request): string {
+  const { ipString, ip56String } = extractIpFromRequest(req);
+  if (ip56String) {
+    return `v6:${ip56String}`;
+  }
+  if (ipString) {
+    return `v4:${ipString.split('.').slice(0, 3).join('.')}`;
+  }
+  throw new Error(errors.server.INVALID_REQUEST);
+}
+
+/** keyFailureLimiter keyed on the client IP (IPv4 address / IPv6 /64). */
+export function ipFailureLimiter(options: { bucket: string; windowMs: number; limit: number }) {
+  const limiter = keyFailureLimiter(options);
+  const keyFor = (req: express.Request) => {
+    const { ipString } = extractIpFromRequest(req);
+    if (!ipString) {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
+    return ipString;
+  };
+  return {
+    assertBelow: (req: express.Request) => limiter.assertBelow(keyFor(req)),
+    recordFailure: (req: express.Request) => limiter.recordFailure(keyFor(req)),
+  };
+}
+
+/**
  * Sliding-window limit on an arbitrary key the caller computes — for limits
  * that are neither per IP nor "the request's identity", e.g. how many mails
  * may go to one target address. Throws RATE_LIMIT_EXCEEDED when the key's

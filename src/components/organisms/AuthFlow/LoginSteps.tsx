@@ -353,7 +353,9 @@ export const LoginCode: React.FC<LoginProps & { initialEmail: string }> = ({ sta
     <div className='auth-flow-step'>
       <StepHeader
         title='Log in with a code'
-        subtitle={sentTo ? <>If an account uses <b>{sentTo}</b>, we sent it a code.</> : "We'll email you a one-time code."}
+        subtitle={sentTo
+          ? <>If an account uses <b>{sentTo}</b> as its confirmed address, we sent it a code. No code? If your address was never confirmed, sign in another way and confirm it in your settings.</>
+          : "We'll email you a one-time code."}
         onBack={() => dispatch({ type: 'BACK' })}
       />
       {!sentTo && <form className='auth-flow-form' onSubmit={ev => { ev.preventDefault(); sendCode(); }}>

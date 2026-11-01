@@ -21,6 +21,7 @@ import { Server, type Socket } from "socket.io";
 import { BOT_PROTOCOL_VERSION } from "./common/botProtocol";
 import { createAdapter } from "@socket.io/redis-adapter";
 import deviceHelper from "./repositories/device";
+import { isSecurityStepRequiredForRealtime } from "./util/securityStep";
 import validators from './validators';
 import userHelper from './repositories/users';
 import redisManager from './redis';
@@ -516,8 +517,14 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
           return;
         }
         const { userId } = await deviceHelper.verifyDeviceAndGetUserId(data.deviceId, signableSecret, data.base64Signature);
-        const ids = await userHelper.getUserRoleAndCommunityIds(userId);
         delete socket.data.signableSecret;
+        if (await isSecurityStepRequiredForRealtime(userId)) {
+          // the account must finish the account-security step first
+          // (docs/auth-identity §11): no rooms, no events
+          callback("SECURITY_STEP_REQUIRED");
+          return;
+        }
+        const ids = await userHelper.getUserRoleAndCommunityIds(userId);
         localOnlineUsers.add(userId);
         await joinAuthenticatedRooms(socket, {
           userId,

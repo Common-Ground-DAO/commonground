@@ -16,6 +16,7 @@ import { UserProfileTypeEnum } from "common/enums";
 import getSiweMessage from "util/siwe";
 import uniqueDb from "data/databases/unique";
 import stepUpManager from "data/auth/stepUp";
+import securityStepState from "data/auth/securityStep";
 import { getAuthMode } from "data/auth/authMode";
 import { type AuthenticationResponseJSON } from "@simplewebauthn/browser";
 
@@ -70,6 +71,7 @@ class LoginManager {
       if (event.key === CURRENT_USER_KEY) {
         const previousUserId = this._currentUser?.userId;
         this._currentUser = JSON.parse(event.newValue || 'null');
+        securityStepState.setUser(this._currentUser?.userId ?? null);
         if (this._currentUser?.userId !== previousUserId) {
           // logged out (or switched account) in another tab
           stepUpManager.clear();
@@ -81,6 +83,9 @@ class LoginManager {
     };
     window.addEventListener("storage", storageListener);
     if (!!this._currentUser) {
+      // what this account's security step was when the page was left: known
+      // before the automatic re-login answers (data/auth/securityStep.ts)
+      securityStepState.setUser(this._currentUser.userId);
       webSocketManager.login(this._currentUser.deviceId);
       channelDatabaseManager.userId = this._currentUser.userId;
     }
@@ -154,6 +159,7 @@ class LoginManager {
   }
   private setCurrentUser(data: CurrentUser | null) {
     this._currentUser = data;
+    securityStepState.setUser(data?.userId ?? null);
     localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(data));
   }
 
@@ -410,6 +416,7 @@ class LoginManager {
       userId: responseData.ownData.id,
       deviceId: responseData.deviceId,
     });
+    securityStepState.set(responseData.securityStepRequired === true);
     await this.setupAfterLogin(responseData);
     this.state = "loggedin";
     return responseData;
@@ -421,6 +428,7 @@ class LoginManager {
       this.logoutPromise = new Promise<void>(async (resolve, reject) => {
         this.state = "loggingout";
         stepUpManager.clear();
+        securityStepState.set(false);
         try {
           await userApi.logout();
           webSocketManager.logout()
@@ -438,6 +446,41 @@ class LoginManager {
       });
     }
     return this.logoutPromise;
+  }
+
+  /**
+   * Signs in with a transfer link (docs/auth-identity §11). Never into an
+   * existing login: the caller signs out first, after asking. The session
+   * then counts as authenticated by the link, which is not a recent
+   * authentication for sensitive actions.
+   */
+  public async redeemTransferLink(token: string): Promise<API.User.redeemTransferLink.Response> {
+    if (this.currentUser) {
+      throw new Error(errors.server.ALREADY_LOGGED_IN);
+    }
+    this.state = "loggingin";
+    try {
+      const keyPair = await generateNewKeyPair();
+      const publicKey = await window.crypto.subtle.exportKey("jwk", keyPair.publicKey as any);
+      publicKey.key_ops = ["verify"];
+      const responseData = await userApi.redeemTransferLink({ token, device: { publicKey } });
+      await saveDeviceKeyPair(responseData.ownData.id, responseData.deviceId, keyPair);
+      this.setCurrentUser({
+        userId: responseData.ownData.id,
+        deviceId: responseData.deviceId,
+      });
+      stepUpManager.clear();
+      securityStepState.set(responseData.securityStepRequired === true);
+      await this.setupAfterLogin(responseData);
+      this.state = "loggedin";
+      return responseData;
+    }
+    catch (e) {
+      if (!this.currentUser) {
+        this.state = "anonymous";
+      }
+      throw e;
+    }
   }
 
   /** legacy CG ID (gateway) instances only: the server refuses cg_evm elsewhere */
@@ -575,9 +618,15 @@ class LoginManager {
                 // sensitive actions; a device-key re-login does not
                 stepUpManager.markAuthenticated();
               }
+              else if (typeof responseData.stepUpValidUntil === 'number') {
+                // a silent re-login keeps the session's earlier sign-in
+                // (e.g. right after a reload): still fresh until then
+                stepUpManager.markAuthenticated(responseData.stepUpValidUntil);
+              }
               else {
                 stepUpManager.clear();
               }
+              securityStepState.set(responseData.securityStepRequired === true);
               await this.setupAfterLogin(responseData);
               this.state = "loggedin";
               resolve(responseData);
@@ -619,6 +668,9 @@ class LoginManager {
     const serviceWorkerManager = (await import("./serviceWorker")).default;
     if (this._windowReloadTriggered === false) {
       channelDatabaseManager.userId = data.ownData.id;
+      // an account in the security step gets no realtime connection and no
+      // push subscription until it finished the step (the page reloads then)
+      const restricted = data.securityStepRequired === true;
       const promise = Promise.allSettled([
         userDatabase.setupAfterLogin(data.ownData).catch(async (e) => {
           await userDatabase.clear();
@@ -632,8 +684,8 @@ class LoginManager {
           await chatDatabase.clear();
           return chatDatabase.setupAfterLogin(data.chats);
         }),
-        webSocketManager.login(data.deviceId),
-        serviceWorkerManager.setupAfterLogin(data.webPushSubscription),
+        restricted ? Promise.resolve() : webSocketManager.login(data.deviceId),
+        restricted ? Promise.resolve() : serviceWorkerManager.setupAfterLogin(data.webPushSubscription),
         notificationDatabase.setupAfterLogin(data.unreadNotificationCount, data.ownData).catch(async (e) => {
           await notificationDatabase.clear();
           return notificationDatabase.setupAfterLogin(data.unreadNotificationCount, data.ownData);

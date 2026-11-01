@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import pool from "../util/postgres";
+import { bumpSecurityStepVersion } from "../util/securityStepVersion";
 import type { DsnRecipient } from "../util/dsn";
 import {
   addressesToUnverify,
@@ -87,15 +88,21 @@ class EmailBounceHelper {
       const unverify = addressesToUnverify(candidates, history, burst, policy);
 
       let usersUnverified = 0;
+      let unverifiedUserIds: string[] = [];
       if (unverify.length > 0) {
-        const updated = await client.query(`
+        const updated = await client.query<{ id: string }>(`
           UPDATE users SET "emailVerified" = false
           WHERE lower(email) = ANY($1::text[]) AND "emailVerified" = true
+          RETURNING "id"
         `, [unverify]);
         usersUnverified = updated.rowCount ?? 0;
+        unverifiedUserIds = updated.rows.map(row => row.id);
       }
 
       await client.query('COMMIT');
+      // these accounts need a verified address again (account-security step):
+      // sessions that found them complete check again
+      await bumpSecurityStepVersion(unverifiedUserIds);
       return { recorded: inserted.rowCount ?? 0, burst, unverify, usersUnverified };
     } catch (error) {
       await client.query('ROLLBACK');

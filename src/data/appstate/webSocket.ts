@@ -12,6 +12,7 @@ import type { WorkerToTabMessage, TabToWorkerMessage } from 'service-worker';
 import { randomString } from '../../util';
 import { type ConnectionManager } from './connection'; 
 import userApi from 'data/api/user';
+import securityStepState from 'data/auth/securityStep';
 
 const LOCAL_STORAGE_KEY = "CG_LAST_KNOWN_WS_CONNCETION";
 const _localStorageLastEventTime = parseInt(localStorage.getItem(LOCAL_STORAGE_KEY) || '0') || Date.now();
@@ -634,6 +635,12 @@ class WebSocketManager {
                 if (!!this._socket) {
                   this._socket.cg_loggedin = 2;
                 }
+              } else if (result === 'SECURITY_STEP_REQUIRED') {
+                if (!!this._socket) {
+                  this._socket.cg_loggedin = 0;
+                }
+                // no realtime until the account finished the step: show it
+                securityStepState.set(true);
               } else if (result === 'ERROR') {
                 if (!!this._socket) {
                   this._socket.cg_loggedin = 0;

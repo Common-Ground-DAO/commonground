@@ -123,6 +123,8 @@ export default stepUpManager;
 const ACTIONS: Record<string, string> = {
   "User/setPassword": "change your password",
   "User/updateOwnData": "change your email address",
+  "User/requestEmailVerification": "change your email address",
+  "User/verifyEmail": "change your email address",
   "User/addPreparedWallet": "add a wallet you can sign in with",
   "User/updateWallet": "change how a wallet signs in",
   "User/deleteWallet": "remove a wallet",

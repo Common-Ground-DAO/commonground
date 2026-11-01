@@ -5,9 +5,7 @@
 import express from "express";
 import redisManager from '../redis';
 import { UAParser } from "ua-parser-js";
-import {
-  randomString
-} from "../util";
+import { getDisplayNameString, randomString } from "../util";
 import errors from "../common/errors";
 import { UserProfileTypeEnum } from "../common/enums";
 import Validators from "../validators";
@@ -27,18 +25,18 @@ import notificationHelper from "../repositories/notifications";
 import { fetchRemoteImage } from "../util/safeFetch";
 import onchainHelper from "../repositories/onchain";
 import permissionHelper from "../repositories/permissions";
-import ipRateLimitHandler from "../util/rateLimit";
+import ipRateLimitHandler, { clientPrefixKey, failureBudget, ipFailureLimiter, reserveFailures, type FailureReservation } from "../util/rateLimit";
+import { AUTH_LIMITS } from "../util/authLimits";
 import config from "../common/config";
 import { verifyCaptchaToken } from "../util/captcha";
 import emailUtils, { emailEnabled } from "./emails";
 import { registerEmailUnsubscribeRoutes } from "./emailUnsubscribe";
 import { limitOneTimePasswordMail, limitSignupCodeMail, limitVerificationMail } from "../util/mailSendLimits";
-import emailHelper from "../repositories/emails";
 import passkeyHelper from "../repositories/passkeys";
 import { keyRateLimitHandler } from "../util/rateLimit";
 import { getMainRp, getProcessRpIdOrNull, isLegacyCgidMode } from "../util/passkeyConfig";
 import { verifyAuthentication } from "../util/passkeys";
-import { establishLoginSession, recordReauthentication, requireRecentAuth, type AuthMethod } from "../util/authSession";
+import { ADD_SIGN_IN_METHOD_AUTH, endLoginSession, establishLoginSession, hasRecentAuth, recordReauthentication, requireRecentAuth, stepUpValidUntil, type AuthMethod } from "../util/authSession";
 import {
   SIGNUP_CODE_MAX_ATTEMPTS,
   SIGNUP_CODE_TTL_MS,
@@ -50,11 +48,130 @@ import {
   startSignupWithoutCode,
   verifiedSignupPassedCaptcha,
 } from "../util/signupEmail";
-import { notifyNewSignInMethod } from "../util/signInNotice";
+import { notifyEmailChanged, notifyNewSignInMethod, notifyPasswordChanged } from "../util/signInNotice";
+import { computeSecurityStatus, computeSecurityStatusVersioned, rememberSecurityStepClear, requireAuthToAdd, SECURITY_STEP_AUTH_MAX_AGE_MS, securityStepEnforced } from "../util/securityStep";
+import { consumeEmailCode, EMAIL_CODE_MAX_ATTEMPTS, getPendingEmail, issueEmailCode, VERIFY_CODE_TTL_MS } from "../util/emailCodes";
+import transferTokenHelper from "../repositories/transferTokens";
+import {
+  getTransferTargetOrigin,
+  TRANSFER_LINK_TTL_MS,
+  transferLinkUrl,
+  transferNextPath,
+} from "../util/transferLink";
 
 export const SIGNABLE_SECRET_LENGTH = 20;
 
 const userRouter = express.Router();
+
+// Like the sign-up limit, the login throttles are off on a dev stack. The
+// conformance suite runs against a disposable instance with DEPLOYMENT=prod:
+// each of its clients claims its own address and it signs in a few times per
+// account, so the limits do not get in its way. The per-code guess budget of
+// email codes always applies. Numbers: srv/util/authLimits.ts.
+const LOGIN_LIMITS = config.DEPLOYMENT !== 'dev';
+
+// Password login (docs/auth-identity §5.4): attempts per client IP, and failed
+// attempts per identifier — from the client's network, and from everywhere.
+// Keyed by the identifier as typed, never by the account it names (see
+// srv/util/authLimits.ts).
+const passwordLoginIpLimiter = ipRateLimitHandler({
+  bucket: 'user:login:password:ip',
+  ...AUTH_LIMITS.passwordLogin.ip,
+});
+const passwordLoginFailures = {
+  perNetwork: failureBudget({ bucket: 'user:login:password:identifier-network', ...AUTH_LIMITS.passwordLogin.identifierFailuresPerNetwork }),
+  all: failureBudget({ bucket: 'user:login:password:identifier', ...AUTH_LIMITS.passwordLogin.identifierFailures }),
+};
+
+// Email login code (§5.5): attempts per client IP, failed guesses per address
+// (from the client's network, and from everywhere), plus a budget per code.
+const loginCodeIpLimiter = ipRateLimitHandler({
+  bucket: 'user:login:code:ip',
+  ...AUTH_LIMITS.codeLogin.ip,
+});
+const loginCodeFailures = {
+  perNetwork: failureBudget({ bucket: 'user:login:code:identifier-network', ...AUTH_LIMITS.codeLogin.identifierFailuresPerNetwork }),
+  all: failureBudget({ bucket: 'user:login:code:identifier', ...AUTH_LIMITS.codeLogin.identifierFailures }),
+};
+// guesses per issued code (login and email verification); a code is dead once
+// its attempts are spent
+const emailCodeAttemptLimiter = keyRateLimitHandler({
+  bucket: 'user:email-code:attempts',
+  windowMs: VERIFY_CODE_TTL_MS,
+  limit: EMAIL_CODE_MAX_ATTEMPTS,
+});
+
+/**
+ * Counts this login attempt as a failure up front, in both budgets of the
+ * typed identifier (atomic, so parallel attempts cannot overrun them); the
+ * caller releases the reservation unless the attempt failed for a wrong
+ * password or code.
+ */
+async function reserveLoginFailure(
+  request: express.Request,
+  budgets: typeof passwordLoginFailures,
+  identifier: string,
+): Promise<FailureReservation> {
+  if (!LOGIN_LIMITS) {
+    return { release: async () => undefined };
+  }
+  const key = identifier.trim().toLowerCase();
+  return reserveFailures([
+    { budget: budgets.perNetwork, key: `${key}|${clientPrefixKey(request)}` },
+    { budget: budgets.all, key },
+  ]);
+}
+
+// Transfer links (§11)
+const transferCreateUserLimiter = keyRateLimitHandler({
+  bucket: 'user:transfer:create:user',
+  ...AUTH_LIMITS.transfer.createPerUser,
+});
+const transferRedeemIpLimiter = ipRateLimitHandler({
+  bucket: 'user:transfer:redeem:ip',
+  ...AUTH_LIMITS.transfer.ip,
+});
+const transferFailureLimiter = ipFailureLimiter({
+  bucket: 'user:transfer:redeem',
+  ...AUTH_LIMITS.transfer.ipFailures,
+});
+// instance-wide: many failed redemptions are worth a log line (once per window)
+const transferFailureAlarm = keyRateLimitHandler({
+  bucket: 'user:transfer:failures:all',
+  ...AUTH_LIMITS.transfer.alarm,
+});
+let transferAlarmLoggedAt = 0;
+
+async function recordTransferFailure(request: express.Request) {
+  await transferFailureLimiter.recordFailure(request);
+  try {
+    await transferFailureAlarm('all');
+  }
+  catch (e) {
+    const { windowMs, limit } = AUTH_LIMITS.transfer.alarm;
+    if (e instanceof Error && e.message === errors.server.RATE_LIMIT_EXCEEDED && Date.now() - transferAlarmLoggedAt > windowMs) {
+      transferAlarmLoggedAt = Date.now();
+      console.warn(`[security] more than ${limit} failed transfer-link redemptions within ${windowMs / 60000} minutes`);
+    }
+  }
+}
+
+const isEmailAvailableLimiter = ipRateLimitHandler({
+  bucket: 'user:isEmailAvailable:ip',
+  ...AUTH_LIMITS.isEmailAvailable.ip,
+});
+
+/** whether the account must finish the security step (login responses) */
+async function securityStepRequiredAfterLogin(request: express.Request, userId: string): Promise<boolean> {
+  if (!securityStepEnforced()) {
+    return false;
+  }
+  const { status, version } = await computeSecurityStatusVersioned(userId, { emailRequired: emailEnabled() });
+  if (!status.required) {
+    rememberSecurityStepClear(request, userId, version);
+  }
+  return status.required;
+}
 
 async function getAndStoreUniversalProfileImage(profileImageUrl: string): Promise<string | null> {
   try {
@@ -67,7 +184,7 @@ async function getAndStoreUniversalProfileImage(profileImageUrl: string): Promis
     return image.fileId;
   } catch (e) {
     // For now just ignore error if this fails, but is this fine for now?
-    console.error("Could not download lukso image", e);
+    console.error("Could not download lukso image", e instanceof Error ? e.message : e);
   }
   return null;
 }
@@ -211,7 +328,23 @@ registerPostRoute<
       // Email + Password login
     } else if (data.type === "password") {
       const { aliasOrEmail, password, device } = data;
-      ownData = await userHelper.getOwnDataByCgProfileNameOrEmailAndPassword(aliasOrEmail, password);
+      if (LOGIN_LIMITS) {
+        await passwordLoginIpLimiter(request, response);
+      }
+      const candidateId = await userHelper.findPasswordLoginUserId(aliasOrEmail);
+      const reservation = await reserveLoginFailure(request, passwordLoginFailures, aliasOrEmail);
+      try {
+        // rehashes an old hash; marks a password below the policy for a change
+        ownData = await userHelper.checkPasswordLogin(candidateId, password);
+      }
+      catch (e) {
+        // a wrong password stays counted; anything else was no guess
+        if (!(e instanceof Error && e.message === errors.server.NOT_ALLOWED)) {
+          await reservation.release();
+        }
+        throw e;
+      }
+      await reservation.release();
       [ communities,
         chats,
         { deviceId },
@@ -331,7 +464,36 @@ registerPostRoute<
       ]);
     } else if (data.type === "verificationCode") {
       const { device } = data;
-      ownData = await userHelper.getOwnDataByEmailAndVerificationCode(data.email, data.code);
+      if (LOGIN_LIMITS) {
+        await loginCodeIpLimiter(request, response);
+      }
+      // codes only ever go to verified addresses (sendOneTimePasswordForLogin)
+      const userId = await userHelper.getVerifiedUserIdByEmail(data.email);
+      const reservation = await reserveLoginFailure(request, loginCodeFailures, data.email);
+      try {
+        if (!userId) {
+          throw new Error(errors.server.VERIFY_EMAIL_INVALID_TOKEN);
+        }
+        // an exhausted code answers like a wrong one (emailCodes.ts), so the
+        // answer never tells whether a code was sent to the address
+        await consumeEmailCode('login', userId, data.email, data.code,
+          codeId => emailCodeAttemptLimiter(`login:${codeId}`));
+      }
+      catch (e) {
+        // a wrong, used-up or expired code stays counted; anything else was no guess
+        const guess = e instanceof Error && (
+          e.message === errors.server.VERIFY_EMAIL_INVALID_TOKEN || e.message === errors.server.VERIFY_EMAIL_EXPIRED_TOKEN
+        );
+        if (!guess) {
+          await reservation.release();
+        }
+        throw e;
+      }
+      await reservation.release();
+      if (!userId) {
+        throw new Error(errors.server.VERIFY_EMAIL_INVALID_TOKEN);
+      }
+      ownData = await userHelper.getOwnDataById(userId);
       [ communities,
         chats,
         { deviceId },
@@ -368,6 +530,8 @@ registerPostRoute<
       deviceId,
       webPushSubscription,
       unreadNotificationCount,
+      securityStepRequired: await securityStepRequiredAfterLogin(request, ownData.id),
+      stepUpValidUntil: stepUpValidUntil(request),
     };
     return result;
   }
@@ -569,15 +733,9 @@ registerPostRoute<
     if (!!user) {
       await deviceHelper.deleteDevice(user.deviceId);
     }
-    delete request.session.user;
-    delete request.session.authAt;
-    delete request.session.authMethod;
-    delete request.session.passkeyData;
-    delete request.session.pendingPasskey;
-    delete request.session.webauthnChallenges;
-    delete request.session.lukso;
-    delete request.session.twitter;
-    request.session.save();
+    // a new, empty session: nothing of the old one (user, step-up state,
+    // ceremonies, provider data) survives, and its id is dead
+    await endLoginSession(request);
   }
 );
 
@@ -776,7 +934,7 @@ registerPostRoute<
           twitterImageId = image.fileId;
         } catch (e) {
           // For now just ignore error if this fails, but is this fine for now?
-          console.error("Could not download twitter image", e);
+          console.error("Could not download twitter image", e instanceof Error ? e.message : e);
         }
       }
       
@@ -885,15 +1043,15 @@ registerPostRoute<
       communities: [],
       unreadNotificationCount: 0,
       chats: [],
+      securityStepRequired: await securityStepRequiredAfterLogin(request, insertedIds.userId),
     }
 
-    if (!!newUserData.email && !newUserData.emailVerified) {
+    if (!!newUserData.email && !newUserData.emailVerified && emailEnabled()) {
       try {
-        const verificationToken = await emailHelper.generateVerificationEmailToken(insertedIds.userId);
-        await emailUtils.sendVerificationEmail(newUserData.email, verificationToken);
+        const code = await issueEmailCode('verify', insertedIds.userId, newUserData.email);
+        await emailUtils.sendVerificationEmail(newUserData.email, code);
       } catch (error) {
-        console.error('Error sending verification email', error);
-        //notify user that email could not be sent
+        console.error('Error sending verification email', error instanceof Error ? error.message : error);
       }
     }
     return result;
@@ -921,6 +1079,11 @@ registerPostRoute<
         if (Object.keys(data).length === 0) {
           return;
         }
+      }
+      else if (emailEnabled()) {
+        // an instance that sends mail only takes an address that was
+        // confirmed: User/requestEmailVerification + User/verifyEmail
+        throw new Error(errors.server.EMAIL_VERIFICATION_REQUIRED);
       }
       else if (data.email === null || current === null || normalizeEmail(data.email) !== normalizeEmail(current)) {
         // changing the account's address: step-up (before any change)
@@ -959,7 +1122,7 @@ registerPostRoute<
     if (isLoginAccount) {
       // an X, LUKSO or Farcaster account can sign in: adding one is adding a
       // sign-in method — step-up, and the verified address is told afterwards
-      requireRecentAuth(request);
+      await requireAuthToAdd(request, 'sign-in-method', { emailRequired: emailEnabled() });
     }
     const { user } = request.session;
     if (!user) {
@@ -984,7 +1147,7 @@ registerPostRoute<
           twitterImageId = image.fileId;
         } catch (e) {
           // For now just ignore error if this fails, but is this fine for now?
-          console.error("Could not download twitter image", e);
+          console.error("Could not download twitter image", e instanceof Error ? e.message : e);
         }
       }
       
@@ -1163,8 +1326,9 @@ registerPostRoute<
   Validators.API.User.addPreparedWallet,
   async (request, response, data) => {
     if (data.loginEnabled) {
-      // a wallet that can sign in is a new sign-in method: step-up
-      requireRecentAuth(request);
+      // a wallet that can sign in is a new sign-in method: step-up (a sign-in
+      // within the hour while the account has no sign-in method here at all)
+      await requireAuthToAdd(request, 'sign-in-method', { emailRequired: emailEnabled() });
     }
     try {
       const { user, preparedCredential } = request.session;
@@ -1193,6 +1357,9 @@ registerPostRoute<
         eventHelper.emit(event, {
           userIds: [user.id]
         });
+        if (data.loginEnabled) {
+          notifyNewSignInMethod(user.id, 'wallet');
+        }
       }
       else {
         throw new Error(errors.server.INVALID_REQUEST);
@@ -1216,15 +1383,26 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
+    let switchedOn = false;
     if (data.loginEnabled !== undefined) {
       const current = await walletHelper.getOwnWalletLoginEnabled(user.id, data.id);
       if (current !== null && current !== data.loginEnabled) {
-        // switching a wallet's sign-in on or off: step-up (before any change)
-        requireRecentAuth(request);
+        // switching a wallet's sign-in on (adding a sign-in method) or off
+        // (removing one): step-up, before any change
+        if (data.loginEnabled) {
+          await requireAuthToAdd(request, 'sign-in-method', { emailRequired: emailEnabled() });
+          switchedOn = true;
+        }
+        else {
+          requireRecentAuth(request);
+        }
       }
     }
     // switching off the account's last way to sign in is refused (LAST_LOGIN_METHOD)
     await walletHelper.updateWallet(user.id, data, { rpId: getProcessRpIdOrNull() });
+    if (switchedOn) {
+      notifyNewSignInMethod(user.id, 'wallet');
+    }
 
     const event: Events.User.Wallet = {
       type: "cliWalletEvent",
@@ -1374,6 +1552,12 @@ registerPostRoute<
   '/isEmailAvailable',
   Validators.API.User.isEmailAvailable,
   async (request, response, data) => {
+    if (emailEnabled() && !isLegacyCgidMode()) {
+      // with mail, nothing needs this: sign-up and address changes answer the
+      // same way for taken and free addresses (no lookup for anyone)
+      throw new Error(errors.server.NOT_SUPPORTED);
+    }
+    await isEmailAvailableLimiter(request, response);
     return await userHelper.isEmailAvailable(data.email);
   }
 );
@@ -1386,8 +1570,18 @@ registerPostRoute<
   '/setPassword',
   Validators.API.User.setPassword,
   async (request, response, data) => {
-    const { userId } = requireRecentAuth(request);
+    const { user } = request.session;
+    if (!user) {
+      throw new Error(errors.server.LOGIN_REQUIRED);
+    }
+    const { hasPassword } = await computeSecurityStatus(user.id, { emailRequired: emailEnabled() });
+    // replacing a password: step-up (the current password is the usual
+    // proof); a first password adds a sign-in method
+    const { userId } = hasPassword
+      ? requireRecentAuth(request)
+      : await requireAuthToAdd(request, 'sign-in-method', { emailRequired: emailEnabled() });
     await userHelper.setPassword(userId, data.password);
+    notifyPasswordChanged(userId);
   }
 );
 
@@ -1722,18 +1916,47 @@ registerPostRoute<
   '/requestEmailVerification',
   validators.API.User.requestEmailVerification,
   async (request, response, data) => {
+    // Mails a code that confirms `email` for the session's account. The
+    // address only becomes the account's address when the code comes back
+    // (User/verifyEmail) — that is how it changes on an instance with mail.
     const { user } = request.session;
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    await limitVerificationMail(request, response, data.email, user.id);
-    // avoid generating multiple tokens if the existing one is still valid
-    const token = await emailHelper.generateVerificationEmailToken(user.id);
-    try {
-      await emailUtils.sendVerificationEmail(data.email, token);
-    } catch (error) {
-      console.error(error);
+    if (!emailEnabled()) {
+      throw new Error(errors.server.EMAIL_DISABLED);
     }
+    const target = data.email.trim();
+    const current = await userHelper.getOwnDataById(user.id);
+    const sameAddress = !!current.email && normalizeEmail(current.email) === normalizeEmail(target);
+    if (sameAddress && current.emailVerified) {
+      // nothing to confirm
+      return;
+    }
+    if (!sameAddress) {
+      if (current.email && current.emailVerified) {
+        // replacing the verified address: step-up, before anything happens
+        requireRecentAuth(request);
+      }
+      else {
+        await requireAuthToAdd(request, 'email', { emailRequired: true });
+      }
+    }
+    await limitVerificationMail(request, response, target, user.id);
+    // Taken means: another account has it VERIFIED (an unverified holder does
+    // not block it, srv/repositories/users.ts setVerifiedEmail). Either way a
+    // code is pending for the address afterwards (getSecurityStatus shows
+    // it), and no mail is awaited — the answer looks the same.
+    const ownerId = await userHelper.getVerifiedUserIdByEmail(target);
+    const code = await issueEmailCode('verify', user.id, target);
+    if (ownerId !== null && ownerId !== user.id) {
+      // nobody receives this code; its owner hears about the attempt instead
+      emailUtils.sendAddressInUseEmail(target)
+        .catch(error => console.error("Error sending the address-in-use mail", error instanceof Error ? error.message : error));
+      return;
+    }
+    emailUtils.sendVerificationEmail(target, code)
+      .catch(error => console.error("Error sending the verification mail", error instanceof Error ? error.message : error));
   }
 );
 
@@ -1745,18 +1968,38 @@ registerPostRoute<
   '/verifyEmail',
   validators.API.User.verifyEmail,
   async (request, response, data) => {
-    const userId = await emailHelper.verifyEmail(data.email, data.token);
-    if (userId) {
-      const event: Events.User.OwnData = {
-        type: "cliUserOwnData",
-        data: {
-          emailVerified: true,
-        },
-      };
-      eventHelper.emit(event, {
-        userIds: [userId]
-      });
+    // the code is bound to the session's account and to the address it was
+    // sent to; it works once
+    const { user } = request.session;
+    if (!user) {
+      throw new Error(errors.server.LOGIN_REQUIRED);
     }
+    const current = await userHelper.getOwnDataById(user.id);
+    if (current.email && current.emailVerified && normalizeEmail(current.email) !== normalizeEmail(data.email)) {
+      // this replaces a verified address (the code may be a day old):
+      // step-up now as well, before the code is used up
+      requireRecentAuth(request);
+    }
+    const { email } = await consumeEmailCode('verify', user.id, data.email, data.token,
+      codeId => emailCodeAttemptLimiter(`verify:${codeId}`));
+    const previous = await userHelper.setVerifiedEmail(user.id, email);
+    if (previous.previousEmail && previous.previousVerified && normalizeEmail(previous.previousEmail) !== normalizeEmail(email)) {
+      notifyEmailChanged(previous.previousEmail);
+    }
+    for (const clearedUserId of previous.clearedFrom) {
+      // an account that held the address unverified loses it
+      eventHelper.emit({ type: "cliUserOwnData", data: { email: null, emailVerified: false } }, { userIds: [clearedUserId] });
+    }
+    const event: Events.User.OwnData = {
+      type: "cliUserOwnData",
+      data: {
+        email,
+        emailVerified: true,
+      },
+    };
+    eventHelper.emit(event, {
+      userIds: [user.id]
+    });
   }
 );
 
@@ -1778,13 +2021,159 @@ registerPostRoute<
     }
     const { email } = data;
     await limitOneTimePasswordMail(request, response, email);
-    const userId = await userHelper.getUserIdByEmail(email);
-    const otp = await emailHelper.generateVerificationEmailToken(userId);
-    try {
-      await emailUtils.sendOneTimePasswordEmail(email, otp);
-    } catch (error) {
-      console.error(error);
+    // A code only for the VERIFIED address of an account; the same answer for
+    // an unverified, a foreign and an unknown address. (Someone whose address
+    // was never confirmed signs in another way and confirms it in the
+    // settings — never logged out, where the address owner could confirm it
+    // for someone else's account.)
+    const userId = await userHelper.getVerifiedUserIdByEmail(email);
+    if (userId) {
+      const code = await issueEmailCode('login', userId, email);
+      // not awaited: the response takes as long with and without an account
+      emailUtils.sendOneTimePasswordEmail(email, code)
+        .catch(error => console.error("Error sending the login code mail", error instanceof Error ? error.message : error));
     }
+  }
+);
+
+registerPostRoute<
+  API.User.getSecurityStatus.Request,
+  API.User.getSecurityStatus.Response
+>(
+  userRouter,
+  '/getSecurityStatus',
+  validators.API.User.getSecurityStatus,
+  async (request) => {
+    // what the account-security step still needs (docs/auth-identity §11)
+    const { user } = request.session;
+    if (!user) {
+      throw new Error(errors.server.LOGIN_REQUIRED);
+    }
+    const { status, version } = await computeSecurityStatusVersioned(user.id, { emailRequired: emailEnabled() });
+    if (!status.required) {
+      rememberSecurityStepClear(request, user.id, version);
+    }
+    return {
+      ...status,
+      pendingEmail: emailEnabled() ? await getPendingEmail(user.id) : null,
+      // what is missing can be added in this session (else: sign in again
+      // or open a new transfer link)
+      recentSignIn: hasRecentAuth(request, { allow: ADD_SIGN_IN_METHOD_AUTH, maxAgeMs: SECURITY_STEP_AUTH_MAX_AGE_MS }),
+    };
+  }
+);
+
+registerPostRoute<
+  API.User.createTransferLink.Request,
+  API.User.createTransferLink.Response
+>(
+  userRouter,
+  '/createTransferLink',
+  validators.API.User.createTransferLink,
+  async (request, response, data) => {
+    // A one-time link that signs the session's own user in on the instance
+    // TRANSFER_TARGET_URL names (the app.cg gateway → cg.box). There is no
+    // way to mint one for anyone else.
+    const { user } = request.session;
+    if (!user) {
+      throw new Error(errors.server.LOGIN_REQUIRED);
+    }
+    const target = getTransferTargetOrigin();
+    if (!target) {
+      throw new Error(errors.server.NOT_SUPPORTED);
+    }
+    await transferCreateUserLimiter(user.id);
+    const nextPath = transferNextPath(data.nextPath, target);
+    const { token, expiresAt } = await transferTokenHelper.create(user.id, nextPath, TRANSFER_LINK_TTL_MS);
+    return {
+      url: transferLinkUrl(target, token),
+      expiresAt: new Date(expiresAt).getTime(),
+    };
+  }
+);
+
+registerPostRoute<
+  API.User.previewTransferLink.Request,
+  API.User.previewTransferLink.Response
+>(
+  userRouter,
+  '/previewTransferLink',
+  validators.API.User.previewTransferLink,
+  async (request, response, data) => {
+    // whose account a link signs in to — shown before the user confirms;
+    // the link stays usable
+    if (isLegacyCgidMode()) {
+      throw new Error(errors.server.NOT_SUPPORTED);
+    }
+    await transferFailureLimiter.assertBelow(request);
+    await transferRedeemIpLimiter(request, response);
+    const row = await transferTokenHelper.peek(data.token);
+    if (!row) {
+      await recordTransferFailure(request);
+      throw new Error(errors.server.TRANSFER_LINK_INVALID);
+    }
+    const ownData = await userHelper.getOwnDataById(row.userId);
+    const displayed = ownData.accounts.find(account => account.type === ownData.displayAccount);
+    return {
+      userId: row.userId,
+      displayName: getDisplayNameString(ownData),
+      // the unique handle (cg profile name), so look-alike names can't fool anyone
+      username: ownData.accounts.find(account => account.type === 'cg')?.displayName ?? null,
+      imageId: displayed?.imageId ?? null,
+      expiresAt: new Date(row.expiresAt).getTime(),
+    };
+  }
+);
+
+registerPostRoute<
+  API.User.redeemTransferLink.Request,
+  API.User.redeemTransferLink.Response
+>(
+  userRouter,
+  '/redeemTransferLink',
+  validators.API.User.redeemTransferLink,
+  async (request, response, data) => {
+    // Signs in with a transfer link: never into an existing login (the app
+    // signs out first, after asking), a new session, and the session counts
+    // as authenticated by 'transfer' — enough to add a sign-in method, never
+    // to remove or replace one.
+    if (isLegacyCgidMode()) {
+      throw new Error(errors.server.NOT_SUPPORTED);
+    }
+    if (request.session.user) {
+      throw new Error(errors.server.ALREADY_LOGGED_IN);
+    }
+    await transferFailureLimiter.assertBelow(request);
+    await transferRedeemIpLimiter(request, response);
+    const row = await transferTokenHelper.consume(data.token);
+    if (!row) {
+      await recordTransferFailure(request);
+      throw new Error(errors.server.TRANSFER_LINK_INVALID);
+    }
+    const { userId } = row;
+    const [ownData, communities, chats, { deviceId }, unreadNotificationCount] = await Promise.all([
+      userHelper.getOwnDataById(userId),
+      communityHelper.getOwnCommunities(userId),
+      chatHelper.getChats(userId),
+      deviceHelper.createDevice(userId, data.device.publicKey),
+      notificationHelper.getUnreadCount(userId),
+    ]);
+    const userAgent = UAParser(request.headers["user-agent"]);
+    await deviceHelper.updateDeviceInfo(deviceId, {
+      deviceBrowser: userAgent.browser.name,
+      deviceOS: userAgent.os.name,
+    });
+    await establishLoginSession(request, { userId, deviceId, method: 'transfer' });
+    return {
+      ownData,
+      communities,
+      chats,
+      deviceId,
+      webPushSubscription: null,
+      unreadNotificationCount,
+      securityStepRequired: await securityStepRequiredAfterLogin(request, userId),
+      nextPath: row.nextPath,
+    };
   }
 );
 

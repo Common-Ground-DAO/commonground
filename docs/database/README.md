@@ -5,7 +5,8 @@
 > ff0da06, 2026-10-31; `passkeys` against commit 54e2d73, 2026-10-31; the TypeORM CLI
 > compile step (`srv/tsconfig.typeorm-cli.json`) against commit d604544, 2026-10-31;
 > `transfer_tokens`, `users.passwordChangeRequired`, `security_step_db_required` and the
-> dropped verification-code columns against commit 9fc05a9, 2026-11-01
+> dropped verification-code columns against commit 9fc05a9, 2026-11-01;
+> `selfhost.sh restore --db-file` note against commit 818d4c6, 2026-11-01
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -1468,6 +1469,21 @@ docker run --rm -i cryptogram/db:18 pg_restore --schema-only -f - < ~/cryptogram
 For a self-host instance on PostgreSQL 14, `docker/SELFHOST.md`
 ([PostgreSQL 18](../../docker/SELFHOST.md#postgresql-18)) has the same steps in
 order, including the update itself.
+
+`./selfhost/selfhost.sh restore --db-file ~/cryptogram-pg14.pgc` (since
+2026-11-01, [docs/deployment §3.7](../deployment/README.md#37-backup-and-restore))
+runs the new-stack half of these commands in one go. Before it changes
+anything it runs the role pre-flight (refusing a dump that needs a role other
+than `postgres`/`writer`/`reader`/`mediasoup` that the cluster lacks) and
+refuses a non-empty database unless `--force`. Then it stops the stack, starts
+`db`, sets the role passwords from `.env.selfhost` (creating a missing
+`writer`/`reader`/`mediasoup`), renames an existing database to
+`cryptogram_pre_restore_<stamp>`, runs `pg_restore -j` and `vacuumdb
+--analyze-in-stages`, and drops the renamed one only when that succeeded (a
+failure prints `restore --undo <stamp>` to get it back). It does not create
+foreign roles or pass `--no-owner`; for a dump that needs either, use the
+manual steps above.
+TODO(verify): not yet run against a PostgreSQL 14 dump (tested with 18 dumps).
 
 **If `pg_restore` stops** (`--exit-on-error`; with `-j` there is no single
 transaction, so the database is left partially restored): fix the cause — e.g.

@@ -217,11 +217,17 @@ plus reviews. Lane B starts when F1+F2 are merged.
   log rotation; per-container resource limits; IPv6 address detection; drop the `docker-compose` v1 fallback in
   `selfhost.sh` (v1 ignores `COMPOSE_PROFILES`, so `calls`/`blockchain` would
   silently not start).
-- [ ] **F8 Backup / restore.** `selfhost.sh backup|restore` (or scripts):
+- [x] **F8 Backup / restore.** `selfhost.sh backup|restore` (or scripts):
   Postgres custom-format dump, SeaweedFS data, encrypted secrets bundle
   (`.env.selfhost`, `vapid_keys.json`, `s3_config/`, certs), retention,
   systemd timer, **off-server copy** (e.g. restic to a storage box). Done only
-  after a restore onto a fresh test VM was rehearsed.
+  after a restore onto a fresh test VM was rehearsed. (done 2026-11-01:
+  `selfhost.sh backup|restore` via restic, `docker pause` of `seaweed` for the
+  media copy, Valkey not backed up, `caddy-data` and the DKIM key included;
+  drill mode, timeline guard (`--take-over`), undoable restores; the restore
+  rehearsal on the wiped test VM passed — new-server restore, rollback and
+  `--undo`, see `docs/deployment/README.md` §3.7 — and its findings are fixed.
+  The production-sized timing comes with the dress rehearsal.)
 
 ### P2 — Major-version waves (after F6)
 
@@ -370,7 +376,7 @@ and a browser pass on the test VM:
   import (G5), gateway, transfer link, account-security step, farewell push
   against a test subscription, service-worker replacement with a browser that has
   the old production app installed (served under `app.test` before the switch).
-- [ ] Backup → restore onto a freshly reset test VM (F8).
+- [x] Backup → restore onto a freshly reset test VM (F8; passed 2026-11-01).
 - [ ] One real Let's Encrypt run on a publicly reachable server (the test VM only
   exercises `tls internal`), so the ACME path is proven before move day.
 - [ ] Time the import, so move-day downtime can be announced.

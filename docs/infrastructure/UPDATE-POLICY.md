@@ -2,7 +2,8 @@
 > "Held back on purpose", the security-fix rule (3 days) and its log against
 > commit ff0da06, 2026-10-31; the wave M1 changes (joi 18.3.1 in the security-fix
 > log, `typescript` held back, the Renovate majors list) against commit d604544,
-> 2026-10-31
+> 2026-10-31; the restic image pin (`RESTIC_IMAGE`) and its Renovate regex
+> manager against commit 818d4c6, 2026-11-01
 
 # Update policy: 7-day minimum release age (3 days for security fixes)
 
@@ -273,7 +274,8 @@ Updating a pin by hand:
    image appears in `docker/node/Dockerfile`, `docker/hardhat/Dockerfile`,
    `docker/backend/Dockerfile` and `docker/backend/Dockerfile_dev_stage_0`;
    the alpine helper image is `HELPER_IMAGE` in
-   `docker/selfhost/migrate_seaweed_volumes.sh`).
+   `docker/selfhost/migrate_seaweed_volumes.sh`, the restic image of the
+   backups `RESTIC_IMAGE` in `docker/selfhost/backup.sh`).
 4. Rebuild and run the affected checks (see the image's section in
    [README](README.md)).
 
@@ -385,9 +387,12 @@ repository root:
   re-enable it once they do.
 - `mediasoup` and `puppeteer` get their own PRs with a note to update the
   pinned binaries (see above).
-- Two regex managers cover pins outside Dockerfiles/compose files and
+- Three regex managers cover pins outside Dockerfiles/compose files and
   `package.json`: `HELPER_IMAGE` in `docker/selfhost/migrate_seaweed_volumes.sh`
-  (tag + digest, grouped with the docker images) and `COREPACK_VERSION` in the
+  and `RESTIC_IMAGE` in `docker/selfhost/backup.sh` (tag + digest, grouped
+  with the docker images; the restic one was added 2026-11-01 —
+  `renovate-config-validator --strict` with renovate 44.181.0 passes with
+  it, checked by the coordinator the same day), and `COREPACK_VERSION` in the
   four Node Dockerfiles (one `corepack` PR whose note asks for the matching
   `COREPACK_SHA512` — the builds fail until it is updated).
 - Locally built images (`cryptogram/*`, `commonground/*`, including

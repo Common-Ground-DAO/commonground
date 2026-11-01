@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import type express from "express";
+import { describeErrorForLog } from "./errorLog";
 
 export type AsyncErrorResponder = (response: express.Response, error: unknown) => void | Promise<void>;
 
@@ -29,7 +30,7 @@ export function asyncRequestHandler(
   return (request, response, next) => {
     const fail = (error: unknown) => {
       if (response.headersSent) {
-        console.error(`Request ${request.method} ${request.path} failed after the response was started:`, error);
+        console.error(`Request ${request.method} ${request.path} failed after the response was started:`, describeErrorForLog(error));
         if (!response.writableEnded) {
           next(error);
         }

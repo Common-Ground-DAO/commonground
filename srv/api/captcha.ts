@@ -5,11 +5,12 @@
 import express from "express";
 import { CAPTCHA_PROVIDER, createCaptchaChallenge } from "../util/captcha";
 import { asyncHandler } from "./asyncHandler";
+import { describeErrorForLog } from "./util";
 
 const captchaRouter = express.Router();
 
 function challengeFailed(response: express.Response, e: unknown) {
-  console.error("Failed to create ALTCHA challenge", e);
+  console.error("Failed to create ALTCHA challenge:", describeErrorForLog(e));
   response.status(500).json({ error: "challenge_failed" });
 }
 

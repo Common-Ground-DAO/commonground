@@ -909,7 +909,8 @@ never from how the session came about, and it is not enforced in legacy CG ID mo
 ### Logging
 
 Unexpected errors are logged as name, message and stack only (`describeErrorForLog`,
-`srv/api/util.ts`) — never the error object, which can hold request data (an HTTP client error
+`srv/util/errorLog.ts`, dependency-free and re-exported by `srv/api/util.ts`; also used by the
+async route wrappers and the memberlist process) — never the error object, which can hold request data (an HTTP client error
 carries the request it sent, a database error the row's values) — and a validation error only
 with the paths of the failing fields. Sign-in paths log no request bodies, passwords, codes or
 tokens.

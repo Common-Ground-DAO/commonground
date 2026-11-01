@@ -236,7 +236,10 @@ answering — e.g. a handler that already sent its own response — is caught) a
 the `memberlist` process' routes (`/getMemberListWindow`,
 `/getChannelMemberListWindow`, `/getUserCommunityRoleIds`: 500
 `{ error: 'memberlist_request_failed' }`, which the calling `Community` route
-answers with its generic error).
+answers with its generic error). Errors these wrappers, the gated-file routes,
+`/Captcha/challenge` and the memberlist routes log go through
+`describeErrorForLog` (name, message and stack only, see
+[auth-identity §11 "Logging"](../auth-identity/README.md#logging)).
 
 ### `srv/api/getRoutes.ts` -- Social Preview & SSR Routes
 

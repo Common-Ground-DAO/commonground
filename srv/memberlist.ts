@@ -9,6 +9,7 @@ import express from 'express';
 import { ChannelPermission, PredefinedRole, RoleType } from './common/enums';
 import { convertUuidToBinary, convertBinaryToUuid } from './util/memberListHelpers';
 import { asyncRequestHandler } from './util/asyncHandler';
+import { describeErrorForLog } from './util/errorLog';
 
 type PgNotifyEvent = Events.PgNotify.UserDataChange | Events.PgNotify.UserRoleChange | Events.PgNotify.CommunityRoleChange | Events.PgNotify.ChannelRolePermissionChange;
 
@@ -1279,7 +1280,7 @@ const ready = init();
 // a failing request (e.g. initialisation failed) answers 500; the api's caller
 // turns that into its generic error response
 function requestFailed(response: express.Response, error: unknown) {
-  console.error('memberlist request failed:', error);
+  console.error('memberlist request failed:', describeErrorForLog(error));
   response.status(500).json({ error: 'memberlist_request_failed' });
 }
 

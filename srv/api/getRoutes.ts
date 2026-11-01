@@ -7,7 +7,7 @@ import { createTranslator } from "short-uuid";
 import express from "express";
 import config from "../common/config";
 import articleHelper from "../repositories/articles";
-import { handleError, htmlToImage } from "./util";
+import { describeErrorForLog, handleError, htmlToImage } from "./util";
 import { asyncHandler } from "./asyncHandler";
 import fileHelper from "../repositories/files";
 import userHelper from "../repositories/users";
@@ -772,7 +772,7 @@ getRoutesRouter.get('/push-icon', asyncHandler(async (request, response) => {
 // the gated-file routes answer failures with a plain-text 500, not the API's
 // JSON (the app's default Content-Type is application/json)
 function gatedFileFailed(res: express.Response, err: unknown) {
-  console.error(err);
+  console.error(describeErrorForLog(err));
   res.status(500).type('text').send('Internal server error');
 }
 
@@ -784,7 +784,7 @@ function gatedFileFailed(res: express.Response, err: unknown) {
 function sendGatedFile(res: express.Response, file: fs.ReadStream, status: number, headers: Record<string, string | number>) {
   file.on('error', (err) => {
     if (res.headersSent) {
-      console.error(err);
+      console.error(describeErrorForLog(err));
       res.destroy();
       return;
     }

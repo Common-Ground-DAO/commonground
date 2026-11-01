@@ -27,7 +27,9 @@
 > room key list against commit eab2a27, 2026-11-01; `signOutOtherDevices`, the
 > sign-out after credential changes and the pre-login limits against commit
 > 23a4c1e, 2026-11-01; Express 5 (wave M2: the route registration pattern,
-> raw routes and `asyncHandler`, §8) against commit 56e7c34, 2026-11-01.
+> raw routes and `asyncHandler`, §8) against commit 56e7c34, 2026-11-01;
+> TypeORM 1.x (wave M2: `srv/util/datasource.ts`, §8) against commit 8dcbb42,
+> 2026-11-01.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -1382,7 +1384,10 @@ Configures the TypeORM DataSource for entity management and migrations. Uses the
 - Migrations loaded from `srv/migrations/*.js`
 - `synchronize: false` -- migrations must be run manually
 - `uuidExtension: 'pgcrypto'`
-- Exports `ormDataSource` and `getDataSource()` (async, initializes once)
+- Exports `ormDataSource` and `getDataSource()` (connects on the first call,
+  not on import: the TypeORM CLI loads the file and initializes
+  `ormDataSource` itself, and TypeORM 1.x refuses a second `initialize()`
+  while one is in flight)
 
 ### `srv/util/rateLimit.ts` -- IP Rate Limiting
 
@@ -1486,9 +1491,21 @@ Version constraints in `srv/package.json` that are not self-explanatory. The
 release, and the 2026-10-31 refresh (F6) to the newest in-major release that
 has passed the 7-day age gate — except `mediasoup` (3.23.2) and `puppeteer`
 (25.5.0), which move only together with their pinned worker / Chrome binaries
-(see `docs/infrastructure/UPDATE-POLICY.md`). Express 5 came with wave M2
-(see below); the remaining major jump (TypeORM 1.x) is scheduled in
-`docs/todo/ROADMAP_cg-box.md`.
+(see `docs/infrastructure/UPDATE-POLICY.md`). Express 5 and TypeORM 1.x came
+with wave M2 (see below).
+
+- **TypeORM 1.1.2** came with wave M2 (2026-11-01; was 0.3.31). TypeORM runs
+  only in the `migrate-db` process (`srv/migrateDb.ts` → `getDataSource()` →
+  `runMigrations()`, which loads the entities and migrations) and in the CLI
+  scripts; the request path never touches it — the repositories query
+  through `pg`, and the only entity imports outside `srv/entities/`
+  (`User` and `UserAccount` in `srv/repositories/users.ts`) are type-only
+  and compiled away. So the
+  1.x behaviour changes for find options (`null`/`undefined` in `where`
+  throwing, `INNER JOIN` for non-nullable relations, cascades) do not reach
+  the app. The `pg` (8.23.1) and `reflect-metadata` (0.2.2) peers needed no
+  bump, and 1.x's `redis` peer range now includes node-redis 6. Migrations,
+  the CLI and the schema comparison: [docs/database](../database/README.md#migration-strategy).
 
 - **Express 5** came with wave M2 (2026-11-01): Express 5.3.0 (router 2,
   path-to-regexp 8, body-parser 2). Route paths
@@ -1592,9 +1609,8 @@ has passed the 7-day age gate — except `mediasoup` (3.23.2) and `puppeteer`
   since 2026-10-31; node-redis, connect-redis 10, `@socket.io/redis-adapter`
   8.3 and `@socket.io/redis-emitter` 5.1 work against it unchanged (smoke-tested:
   sessions, cross-process fan-out, rate limits, the bot-presence Lua script).
-  TypeORM's peer
-  warning about `redis` versions concerns its optional query cache, which this
-  codebase does not use — inert.
+  TypeORM 1.x accepts node-redis 6 as its (optional, unused) query-cache peer;
+  the 0.3 peer warning is gone.
 - **Tests:** `yarn tests` in `srv/` runs jest 30 + ts-jest 29 (there is no
   ts-jest 30) over `tests/*.spec.ts` directly from the TypeScript sources —
   currently `ipPrefix`, `saveImage`, `imageFilter`, `stakingConfig`,

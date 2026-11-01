@@ -240,7 +240,10 @@ and a browser pass on the test VM:
 
 - [x] **M1** TypeScript 6, joi 18 (done 2026-10-31: TypeScript 6.0.3 and joi 18.3.1
   in every workspace, tsconfigs migrated; accepted on the test VM)
-- [ ] **M2** Express 5, TypeORM 1.x (runtime-critical; full backend pass)
+- [x] **M2** Express 5, TypeORM 1.x (done 2026-11-01 in two steps: Express 5.3.0
+  merged first, then TypeORM 1.1.2; TypeORM runs only in `migrate-db` and the
+  CLI, the schema of a fresh database is identical and nothing re-runs on an
+  existing one; e2e and conformance match the baseline)
 - [ ] **M3** react-router 7, Vite 8
 - [ ] **M4** Tailwind 4 (visual regressions — screenshot comparison of key views)
 

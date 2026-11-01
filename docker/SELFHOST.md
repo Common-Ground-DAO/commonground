@@ -946,7 +946,7 @@ they are.
 ./selfhost/selfhost.sh restore [--from local|remote] [--only secrets,db,media,caddy,mail]
                                [--force] [--with-secrets] [--drill] [--dry-run]
                                [--host NAME] <snapshot-id | latest>
-./selfhost/selfhost.sh restore --db-file <dump.pgc> [--force] [--dry-run]
+./selfhost/selfhost.sh restore --db-file <dump.pgc> [--force] [--drill] [--dry-run]
 ./selfhost/selfhost.sh restore --undo <stamp> [--force]
 ./selfhost/selfhost.sh restore --discard-undo <stamp> [--force]
 ```
@@ -1116,10 +1116,10 @@ A drill restores the production backup onto a throwaway server. With
 export CG_BACKUP_REPOSITORY='…'                            # production's
 read -rs CG_BACKUP_PASSWORD && export CG_BACKUP_PASSWORD   # its password, not echoed
 # + its SSH key and known_hosts in docker/backup/ssh/, or the CG_BACKUP_AWS_* keys
-./selfhost/selfhost.sh restore --drill --only secrets latest
+./selfhost/selfhost.sh restore --drill --only secrets latest   # + fresh vapid_keys.json
 unset CG_BACKUP_REPOSITORY CG_BACKUP_PASSWORD
 ./selfhost/selfhost.sh build
-./selfhost/selfhost.sh restore latest
+./selfhost/selfhost.sh restore latest                          # push subscriptions removed
 ./selfhost/selfhost.sh up
 ```
 
@@ -1141,11 +1141,43 @@ before `up`. On a drill instance:
 - the DKIM key is never restored (`--only mail` is refused);
 - `backup install-timer` is refused.
 
-The drill instance keeps production's `vapid_keys.json` (so the drill can
-check it) and its stored push subscriptions: anything that triggers a
-notification on the drill instance would reach real users' browsers. Do not
-create content there that notifies others, or block outbound traffic to the
-push services for the duration.
+A drill instance holds production's users, their addresses and their push
+subscriptions, so `--drill` also keeps it from reaching them:
+
+- **Web push**: production's `vapid_keys.json` is never restored onto a
+  drill. A fresh key pair is generated instead (in the same format `build`
+  generates); a drill server that already holds production's key pair (e.g.
+  from an earlier copy) gets a fresh one too, its old file kept as
+  `vapid_keys.json.pre-restore-<stamp>` (delete it once all is well); a key
+  pair of the drill's own is kept. Every database restore on a drill then
+  removes the stored push subscriptions (`devices."webPushSubscription"`; the
+  devices themselves stay); when the key pair is replaced without a database
+  restore (e.g. `--drill --only secrets` on a copy that already runs), they
+  are removed from the database in place. Browsers subscribed on production
+  get nothing from the drill; whoever uses the drill can subscribe there anew.
+- **Running services**: a drill restore of the secrets alone stops every
+  running service first, so none keeps the previous key pair (the api reads
+  it once at start) or mail settings; `up` starts them with the new ones.
+  Restores of other components stop the stack anyway.
+- **Mail** is off, and stays off: on a drill instance (`CG_BACKUP_DRILL=true`)
+  `selfhost.sh` ignores the mail settings in `.env.selfhost` — no `mail`
+  container, no SMTP server, no bounce receiver — even if they are switched
+  back on. Login codes, verification, notification and digest mails and
+  newsletters are therefore unavailable on a drill.
+- **Bots, plugins, blockchain**: nothing to switch off. Bots connect to the
+  instance, it never calls them (bots set up with production's address keep
+  talking to production); plugins run in the viewer's browser; the
+  `onchain` service only reads from the RPC endpoints (it shares their quota
+  with production) and nothing signs transactions. The background jobs work
+  on the drill's own database.
+
+Each restore on a drill instance ends with a `DRILL INSTANCE` summary of what
+it changed (the VAPID key pair, the number of removed push subscriptions,
+stopped services) and the drill settings in effect; `up` prints a
+`DRILL INSTANCE` banner. `--drill` works the same with `--db-file`: the
+instance's `.env.selfhost` gets the drill settings above (its own backup
+repository becomes the read-only `CG_BACKUP_DRILL_SOURCE`) before the dump
+is restored.
 
 #### Into another instance (test server, rehearsal)
 
@@ -1166,8 +1198,9 @@ unset CG_BACKUP_REPOSITORY CG_BACKUP_PASSWORD
 Access to that repository comes the same way as on a new server: the
 `CG_BACKUP_AWS_*` keys exported, or its SSH key and `known_hosts` in
 `docker/backup/ssh/`. The database gets this instance's role passwords; uploads
-work with this instance's S3 secret. Push subscriptions of the other instance
-do not work here (they belong to its `vapid_keys.json`).
+work with this instance's S3 secret. The other instance's push subscriptions
+are removed from the restored database (they belong to its
+`vapid_keys.json`); this instance keeps its own key pair.
 
 #### Only the database, from a dump file
 

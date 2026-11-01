@@ -19,6 +19,35 @@ if [ ! -f .env.selfhost ]; then
 fi
 source .env.selfhost
 
+# A restore drill (`restore --drill`, which writes CG_BACKUP_DRILL=true) holds
+# another instance's data, its users' addresses included. It never sends
+# mail, whatever the mail settings say: the exported values win over
+# .env.selfhost in docker compose, so no mail container, SMTP_HOST and the
+# bounce receiver stay empty/off for every service.
+DRILL_MAIL_OVERRIDDEN=0
+drill_instance() {
+  [ "${CG_BACKUP_DRILL:-false}" = "true" ]
+}
+if drill_instance; then
+  if [ "${CG_ENABLE_MAIL:-false}" = "true" ] || [ -n "${SMTP_HOST:-}" ]; then
+    DRILL_MAIL_OVERRIDDEN=1
+  fi
+  CG_ENABLE_MAIL=false
+  SMTP_HOST=
+  export CG_ENABLE_MAIL SMTP_HOST
+fi
+
+# says loudly that this is a drill copy
+drill_banner() {
+  drill_instance || return 0
+  echo "DRILL INSTANCE (CG_BACKUP_DRILL=true): a restored copy of another instance."
+  echo "  Mail is off (forced here), backups stay local; what the restore changed is in"
+  echo "  its DRILL INSTANCE summary — SELFHOST.md, \"A restore drill on a separate server\"."
+  if [ "$DRILL_MAIL_OVERRIDDEN" = 1 ]; then
+    echo "  Note: the mail settings in .env.selfhost are ignored on a drill instance."
+  fi
+}
+
 # Optional services live behind compose profiles. Calls and blockchain
 # default to ON, so an .env.selfhost written before these switches existed
 # keeps every service. The mail relay is the exception: it is on only when
@@ -319,6 +348,7 @@ case "${1:-}" in
     ;;
   up)
     backup_lock
+    drill_banner
     check_mail_config
     check_edge_config
     # --remove-orphans cleans up containers of services that are no longer
@@ -355,6 +385,7 @@ case "${1:-}" in
     # second half of `update`, run by the freshly pulled script
     backup_lock
     build
+    drill_banner
     check_mail_config
     check_edge_config
     start_stack

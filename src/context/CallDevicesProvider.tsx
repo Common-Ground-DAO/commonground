@@ -4,6 +4,7 @@
 
 import useLocalStorage from "hooks/useLocalStorage";
 import React, { useCallback, useEffect, useState } from "react";
+import { listInputDevices, reconcileDeviceSelection } from "./callDeviceSelection";
 
 interface CallDevicesState {
     selectedAudioDevice?: string;
@@ -23,22 +24,6 @@ export const CallDevicesContext = React.createContext<CallDevicesState>({
     updateDevices: async () => { return Promise.resolve(); },
 });
 
-const getAudioDevices = async (): Promise<MediaDeviceInfo[]> => {
-    //get audio devices
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const audioDevices = devices.filter(d => d.kind === "audioinput");
-    const filteredAudioDevices = audioDevices.filter(d => d.deviceId !== "");
-    return filteredAudioDevices || [];
-}
-
-const getVideoDevices = async (): Promise<MediaDeviceInfo[]> => {
-    //get video devices
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const videoDevices = devices.filter(d => d.kind === "videoinput");
-    const filteredVideoDevices = videoDevices.filter(d => d.deviceId !== "");
-    return filteredVideoDevices || [];
-}
-
 export function CallDevicesProvider(props: React.PropsWithChildren<{}>) {
 
     const [selectedAudioDevice, setSelectedAudioDevice] = useLocalStorage('', 'selectedAudioDeviceId');
@@ -47,21 +32,18 @@ export function CallDevicesProvider(props: React.PropsWithChildren<{}>) {
     const [availableWebCams, setAvailableWebCams] = useState<MediaDeviceInfo[]>([]);
 
     const updateDevices = useCallback(async () => {
-        const audioDevices = await getAudioDevices();
-        const videoDevices = await getVideoDevices();
+        const { audio: audioDevices, video: videoDevices } = await listInputDevices(navigator.mediaDevices);
         setAvailableAudioDevices(audioDevices);
         setAvailableWebCams(videoDevices);
-        if (selectedWebCam === '' && videoDevices.length > 0) {
-            setSelectedWebCam(videoDevices[0].deviceId);
+        // An empty list (no device, or no media permission yet) keeps the
+        // stored choice; see reconcileDeviceSelection.
+        const audioDeviceId = reconcileDeviceSelection(selectedAudioDevice, audioDevices);
+        if (audioDeviceId !== selectedAudioDevice) {
+            setSelectedAudioDevice(audioDeviceId);
         }
-        if (selectedAudioDevice === '' && audioDevices.length > 0) {
-            setSelectedAudioDevice(audioDevices[0].deviceId);
-        }
-        if (selectedAudioDevice !== '' && !audioDevices.find(d => d.deviceId === selectedAudioDevice)) {
-            setSelectedAudioDevice(audioDevices[0].deviceId);
-        }
-        if (selectedWebCam !== '' && !videoDevices.find(d => d.deviceId === selectedWebCam)) {
-            setSelectedWebCam(videoDevices[0].deviceId);
+        const webCamId = reconcileDeviceSelection(selectedWebCam, videoDevices);
+        if (webCamId !== selectedWebCam) {
+            setSelectedWebCam(webCamId);
         }
     }, [selectedAudioDevice, selectedWebCam, setSelectedAudioDevice, setSelectedWebCam]);
     

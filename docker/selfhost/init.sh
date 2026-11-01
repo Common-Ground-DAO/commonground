@@ -205,6 +205,35 @@ MAIL_DOMAIN=${CG_DOMAIN}
 MAIL_HOSTNAME=${CG_DOMAIN}
 MAIL_DKIM_SELECTOR=cg
 
+# Backups — SELFHOST.md, "Backup and restore". Set up with
+# ./selfhost/selfhost.sh backup init, schedule with backup install-timer.
+# Every backup is encrypted with CG_BACKUP_PASSWORD: keep a copy of it OFF
+# this server (password manager) — without it no backup can be restored.
+CG_BACKUP_PASSWORD=$(rand 32)
+# local repository + staging area (absolute path on this server)
+CG_BACKUP_DIR=/var/backups/commonground
+# off-server copy (strongly recommended; empty = local backups only, every
+# run warns) — any restic repository, e.g. a storage box over SFTP:
+#   CG_BACKUP_REPOSITORY=sftp://u123456@u123456.your-storagebox.de:23/cg-backup
+# or S3-compatible object storage (fill in the two keys below):
+#   CG_BACKUP_REPOSITORY=s3:https://fsn1.your-objectstorage.com/my-bucket/cg-backup
+CG_BACKUP_REPOSITORY=
+CG_BACKUP_AWS_ACCESS_KEY_ID=
+CG_BACKUP_AWS_SECRET_ACCESS_KEY=
+# retention, applied to both repositories
+CG_BACKUP_KEEP_DAILY=7
+CG_BACKUP_KEEP_WEEKLY=4
+CG_BACKUP_KEEP_MONTHLY=6
+# false: never forget/prune on the off-server repository (an append-only
+# target, whose retention runs elsewhere)
+CG_BACKUP_REMOTE_RETENTION=true
+# optional shell commands after a backup run (success) or a failed run or
+# check (failure), e.g. a dead-man switch:
+#   CG_BACKUP_ON_SUCCESS='curl -fsS -m 10 https://hc-ping.com/<uuid>'
+#   CG_BACKUP_ON_FAILURE='curl -fsS -m 10 https://hc-ping.com/<uuid>/fail'
+CG_BACKUP_ON_SUCCESS=
+CG_BACKUP_ON_FAILURE=
+
 ### Optional third-party integrations — leave empty to disable the feature.
 
 # Captcha (registration spam protection). The default provider is ALTCHA, a
@@ -286,6 +315,9 @@ if [ -f s3_config/s3.selfhost.json ]; then
   echo "s3_config/s3.selfhost.json already exists, leaving it untouched."
 else
   S3_SECRET_VAL=$(grep '^S3_SECRET=' .env.selfhost | cut -d= -f2)
+  # the directory holds no tracked file since the dev s3.json went untracked,
+  # so a fresh clone does not have it
+  mkdir -p s3_config
   cat > s3_config/s3.selfhost.json <<EOF
 {
   "identities": [

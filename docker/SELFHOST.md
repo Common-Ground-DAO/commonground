@@ -63,7 +63,8 @@ cd commonground/docker
 ```
 
 Caddy obtains Let's Encrypt certificates automatically on first start. After
-DNS propagates, the app is live at `https://chat.example.org`.
+DNS propagates, the app is live at `https://chat.example.org`. Then set up
+backups with an off-server copy — see [Backup and restore](#backup-and-restore).
 
 Operating:
 
@@ -74,6 +75,7 @@ Operating:
 ./selfhost/selfhost.sh update       # git pull + rebuild + restart
 ./selfhost/selfhost.sh down         # stop
 ./selfhost/selfhost.sh mail-dns     # DNS records for the built-in mail relay
+./selfhost/selfhost.sh backup run   # back up now (set up: "Backup and restore")
 ```
 
 ## Local test instance (no public DNS)
@@ -692,41 +694,534 @@ pg_dump -U postgres -Fc cryptogram > ~/cryptogram-pg14.pgc` and
 `pg_restore` stops, see `docs/database/README.md` ("Restoring a PostgreSQL 14
 database into 18").
 
-## Backups
+## Backup and restore
 
-All state lives in two named Docker volumes:
+`./selfhost/selfhost.sh backup …` and `./selfhost/selfhost.sh restore …`
+(implemented in `docker/selfhost/backup.sh`) back the instance up into an
+encrypted [restic](https://restic.net) repository on the server and copy every
+backup to a second repository **off the server**. restic runs in its official
+image (pinned by version and digest in the script), so the host needs nothing
+but Docker.
 
-- `pgdata` — the database (everything except uploaded files)
-- `seaweedfs-data` — uploaded media (blobs and filer metadata in one tree)
+### What a backup contains
 
-With the built-in mail relay there is a third, small one: `mail-data` — the
-DKIM key and the outgoing mail queue. Back up at least the key
-(`dkim_keys/` in that volume).
+One backup is one restic snapshot:
 
-Example database backup:
+| Part | Source | Notes |
+|---|---|---|
+| database | `pg_dump -Fc` of `cryptogram`, taken from the running `db` | online, a consistent snapshot; no downtime. The exact row count of every table is recorded in the same database snapshot, so a restore can prove it is complete |
+| secrets | `.env.selfhost`, `vapid_keys.json`, `s3_config/s3.selfhost.json`, `selfhost/certs/`, `backup/` (the SSH key of an sftp repository) | without `vapid_keys.json` every stored push subscription stops working |
+| media | the `seaweedfs-data` volume | see "Media and the freeze" below |
+| caddy | the `caddy-data` volume | the ACME account and certificates — and, on a `tls internal` instance, the local CA every client trusts. Restoring it means certificates are not issued again (Let's Encrypt limits duplicate certificates to 5 per week) and clients keep trusting the local CA |
+| mail | `dkim_keys/` of the `mail-data` volume (only with the mail relay) | a new key would mean publishing a new DKIM record. The queue is not backed up: restoring it would send mails twice |
+
+Not backed up, on purpose:
+
+- **Valkey** (`valkey-data`): sessions, rate-limit windows, email and login
+  codes, captcha replay guards, presence. All of it is short-lived or can be
+  rebuilt, and restoring sessions would revive logins that belong to another
+  point in time. A restore logs everyone out once (it removes `valkey-data`
+  when it restores the database). The cache instance keeps nothing on disk.
+- `caddy-config` (Caddy rebuilds it), `builder-cache`, the images and the
+  checkout itself — `git clone` and `./selfhost/selfhost.sh build` recreate them.
+
+Each backup also carries a manifest: time, domain, the server that made it
+(`machine-<id>`, a hash of `/etc/machine-id`, also a snapshot tag), code version
+(git commit), PostgreSQL version, the newest migration and the SHA-256 of the
+dump.
+
+**Media and the freeze.** SeaweedFS has no online-consistent backup: a copy of
+a running store can catch its filer index halfway through a change. So the
+media is read while the `seaweed` container is frozen (`docker pause`).
+Meanwhile uploads and media views **wait** — they do not fail unless the freeze
+outlasts their timeout (a download and an S3 read issued during an 8-second
+freeze both completed); chat, login and everything else keep working.
+
+To keep the freeze short, each backup reads everything twice:
+
+1. a **warm-up pass, unfrozen**: the dump, the secrets, `caddy-data` and all
+   new media go into the repository;
+2. the **frozen pass**, which uses the warm-up as its reference and so only
+   re-reads the files that changed in the seconds in between. restic reads a
+   changed file whole, so this is mostly the volume file SeaweedFS is
+   appending to — up to `SEAWEED_VOLUME_LIMIT_MB` (1 GB by default) — and the
+   filer's index files.
+
+The warm-up snapshot is deleted right after; its data is shared with the real
+one. Files that change or vanish during the warm-up are fine there (restic
+exit 3 is accepted); the frozen pass must read everything. Measured on the development VM: 1 s of freeze when nothing changed in
+between, 2 s when 50 MB were uploaded between the passes (a 100 MB volume file
+re-read from the page cache). The worst case is a full 1 GB volume file being
+appended to during the warm-up: expect several seconds from disk.
+
+The copy is crash-consistent, the state a power cut would leave, which
+SeaweedFS recovers from on start. Stopping the container instead would be no
+better: its shutdown does not finish within Docker's 10-second grace period and
+it is killed anyway, and after a restart it takes about 17 seconds until it
+serves files again. The database is dumped first, the media copied afterwards,
+so the media is never older than the database: a file uploaded in between is
+merely an unreferenced extra.
+
+### Setting it up
+
+1. **Settings.** `init.sh` writes a `CG_BACKUP_*` block into `.env.selfhost`.
+   An `.env.selfhost` from before backups existed gets the missing settings
+   from the first `backup init` (step 3): each `CG_BACKUP_*` key that has no
+   line yet — commented or not — is appended with its default, so nothing you
+   set (or commented out) is overridden. The password is never replaced: an
+   existing one stays; a password given in the environment is written to the
+   file if it has none; otherwise one is generated. Then set
+   `CG_BACKUP_REPOSITORY` (step 2) and run `backup init` again. Every setting
+   except the password has a default:
+
+   | Variable | Default | Meaning |
+   |---|---|---|
+   | `CG_BACKUP_PASSWORD` | generated | encrypts every backup — see "The password and the other keys" below |
+   | `CG_BACKUP_DIR` | `/var/backups/commonground` | local repository (`repo/`), restic cache, staging area for the dump. Needs room for the dump plus the deduplicated history; must not be inside `docker/backup/` or another part of the secrets bundle |
+   | `CG_BACKUP_REPOSITORY` | empty | the off-server repository (any restic repository URL); empty = local backups only, and every run warns |
+   | `CG_BACKUP_AWS_ACCESS_KEY_ID`, `CG_BACKUP_AWS_SECRET_ACCESS_KEY` (`CG_BACKUP_AWS_DEFAULT_REGION`) | empty | credentials for an `s3:` repository |
+   | `CG_BACKUP_KEEP_DAILY` / `_WEEKLY` / `_MONTHLY` | 7 / 4 / 6 | retention after every backup (`restic forget --prune`). Per day only the newest backup is kept, so a backup taken before a risky change disappears at the next backup on the same day; restic also keeps the oldest snapshot as long as a keep bucket is not full yet (the first days, or after a take-over) |
+   | `CG_BACKUP_REMOTE_RETENTION` | `true` | `false`: no `forget`/`prune` on the off-server repository — for an append-only target, whose retention runs elsewhere (see step 2) |
+   | `CG_BACKUP_ON_SUCCESS`, `CG_BACKUP_ON_FAILURE` | empty | shell commands run after a successful backup / a failed backup, check or verify, or a run that found another one holding the lock (environment: `CG_BACKUP_RESULT`, `CG_BACKUP_COMMAND`, `CG_BACKUP_EXIT_CODE`), e.g. `CG_BACKUP_ON_SUCCESS='curl -fsS -m 10 https://hc-ping.com/<uuid>'` as a dead-man switch |
+   | `CG_BACKUP_CHECK_SUBSET` | `5%` | share of the stored data `backup check` reads back |
+   | `CG_BACKUP_SCHEDULE`, `CG_BACKUP_CHECK_SCHEDULE` | `*-*-* 03:30:00`, `Sun *-*-* 05:00:00` | systemd calendar times used by `install-timer` |
+   | `CG_BACKUP_TIMEOUT` | `4h` | systemd `TimeoutStartSec` of the backup and check units |
+   | `CG_BACKUP_HOST` | `CG_DOMAIN` | the name snapshots are filed under; retention only ever touches this name's snapshots |
+   | `CG_BACKUP_MACHINE_ID` | `/etc/machine-id` | what identifies this server in the snapshots (only needed where there is no `/etc/machine-id`) |
+   | `CG_BACKUP_DRILL`, `CG_BACKUP_DRILL_SOURCE` | — | written by `restore --drill`, see "A restore drill on a separate server" |
+
+   Quote values that contain spaces or `$` with single quotes, as in the
+   hook example (the file is read by both bash and Docker Compose).
+
+2. **Off-server repository.** Any restic repository works. Two examples:
+
+   - **Storage box over SFTP** (e.g. a Hetzner Storage Box with SSH support
+     on; it listens on port 23):
+     `CG_BACKUP_REPOSITORY=sftp://u123456@u123456.your-storagebox.de:23/cg-backup`.
+     `backup init` creates an SSH key in `docker/backup/ssh/`, records the
+     host key (it prints the fingerprints — compare them with the ones your
+     provider publishes), prints the public key and stops. Authorize the key
+     for the storage account — for a Hetzner Storage Box, e.g.
+     `ssh -p 23 u123456@u123456.your-storagebox.de install-ssh-key < docker/backup/ssh/id_ed25519.pub`
+     — and run `backup init` again.
+   - **S3-compatible object storage**:
+     `CG_BACKUP_REPOSITORY=s3:https://<endpoint>/<bucket>/cg-backup` plus the
+     two `CG_BACKUP_AWS_*` keys (a key limited to that bucket).
+
+   With the defaults the server can delete what it wrote there (retention
+   needs that). To survive an attacker who controls the server, turn on the
+   provider's own snapshots or object versioning for that space, or use an
+   **append-only** target (a restic rest-server with `--append-only`, an
+   object-lock bucket): set `CG_BACKUP_REMOTE_RETENTION=false`, since
+   `forget --prune` would fail there, and run the retention from a trusted
+   machine instead (`restic forget --prune` with the same `--keep-*` and
+   `--host` values, using credentials that may delete).
+
+3. **Initialize** both repositories (safe to repeat):
+
+   ```bash
+   ./selfhost/selfhost.sh backup init
+   ```
+
+4. **First backup and a test restore of it:**
+
+   ```bash
+   ./selfhost/selfhost.sh backup run       # back up now
+   ./selfhost/selfhost.sh backup list      # snapshots (--remote: the off-server ones)
+   ./selfhost/selfhost.sh backup verify    # restore drill for the database, see below
+   ```
+
+5. **Schedule** a daily backup (03:30) and a weekly repository check (Sunday
+   05:00) as systemd timers:
+
+   ```bash
+   sudo ./selfhost/selfhost.sh backup install-timer
+   journalctl -u cg-backup -u cg-backup-check     # their logs
+   systemctl list-timers 'cg-backup*'
+   ```
+
+   The units run `selfhost.sh backup run` / `backup check` from this checkout
+   **as its owner** (who must be in the `docker` group, or be root —
+   `install-timer` checks that this user can read `.env.selfhost` and use
+   Docker), with `NoNewPrivileges`, a private `/tmp` and a start timeout of
+   `CG_BACKUP_TIMEOUT`. A scheduled run that fails on its settings still
+   calls `CG_BACKUP_ON_FAILURE` — also when it fails before it really
+   starts (image pull, password, machine id, lock, backup directory).
+   `CG_BACKUP_DIR` is created on first use owned by the checkout owner with
+   mode 700; `install-timer` takes over an existing one only if it holds
+   nothing but backup data (otherwise it warns and leaves it alone), and a run
+   by a user who cannot enter it stops right away. A failed run exits non-zero (the unit shows
+   as failed) and calls `CG_BACKUP_ON_FAILURE`; after every run, even one
+   killed by the timeout, `backup resume` makes sure `seaweed` is not left
+   frozen. `sudo ./selfhost/selfhost.sh backup uninstall-timer` removes the
+   units; the repositories stay.
+
+### The password and the other keys
+
+Every backup — the off-server copy included — is encrypted with
+`CG_BACKUP_PASSWORD`. It sits in `.env.selfhost` so the timer can run
+unattended, and **a copy must live somewhere else**: in a password manager
+and/or printed in a safe place. If the server is lost, the backups cannot be
+read without it. `backup init` never prints it; show it with
+`grep '^CG_BACKUP_PASSWORD=' .env.selfhost`.
+
+To restore onto a new server you also need access to the off-server
+repository: keep the S3 keys, or a copy of `docker/backup/ssh/` (the key
+`id_ed25519` and the pinned host key `known_hosts`), next to the password — or
+be able to authorize a new SSH key at the provider. Both are also inside every
+backup, but only readable with the password.
+
+Changing the password of existing repositories is not part of `selfhost.sh`
+(restic's `key passwd` on both repositories, then update `.env.selfhost`).
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `backup init` | adds `CG_BACKUP_PASSWORD` if missing, creates the local and the off-server repository with the same chunker parameters (so copies deduplicate), sets up SSH for an sftp repository |
+| `backup run [--take-over]` | dump + row counts, warm-up pass, freeze `seaweed`, snapshot to the local repository, resume, retention, copy to the off-server repository, retention there (unless `CG_BACKUP_REMOTE_RETENTION=false`). Without an off-server repository it warns loudly and still exits 0. `--take-over`: see "One server per backup timeline" |
+| `backup list [--remote]` | lists the snapshots |
+| `backup check [--read-data]` | `restic check` of both repositories, reading back `CG_BACKUP_CHECK_SUBSET` of the data (`--read-data`: all) |
+| `backup verify [--remote] [snapshot]` | restore drill without touching the instance: restores the snapshot's dump (default: the latest) into a throwaway PostgreSQL container, checks the dump's SHA-256 and compares every table's row count with the backup; the container and its volume are removed afterwards |
+| `backup resume` | resumes `seaweed` if an interrupted backup left it frozen (`./selfhost/selfhost.sh up` does that too); does nothing while a backup or restore holds the lock, so it never ends another run's freeze |
+| `backup install-timer` / `uninstall-timer` | (root) the systemd timers above |
+| `restore …` | see below; `restore --help` lists the options |
+
+Only one backup or restore of an instance runs at a time (lock file
+`/run/lock/cg-backup-<project>.lock`; without a usable `/run/lock` they refuse
+to run); a second one stops with "another backup or restore … is running" and,
+for backups, calls `CG_BACKUP_ON_FAILURE`. `selfhost.sh up`, `down` and
+`update` refuse to run while the lock is taken. Each locked command first
+removes what an interrupted run left behind (staging directories, a
+throwaway verify database).
+
+### One server per backup timeline
+
+Every snapshot names the server that made it. `backup run` refuses to write
+into a repository that holds backups of the same `CG_BACKUP_HOST` made by
+another server which this server has not accepted — two servers would
+interleave their backups in one timeline, and the retention would mix them up
+(think of a test copy that got the production secrets and a timer). The rule
+goes by identity, not by time, so the servers' clocks do not matter: the
+accepted snapshots are remembered in `CG_BACKUP_DIR` (`guard-*`), and a new one
+the other server makes later is caught again. After a restore onto a **new**
+server that replaces the old one, take over once (it accepts the old server's
+snapshots):
 
 ```bash
-./selfhost/selfhost.sh compose exec -T db pg_dump -U postgres cryptogram | gzip > backup.sql.gz
+./selfhost/selfhost.sh backup run --take-over
 ```
 
-For the media volume the blessed baseline is **stop → snapshot → start**:
+A drill or test copy must not take over; restore it with `--drill` (below).
+
+The check runs before anything is written: on the local repository and on the
+off-server one before the dump, so a refused run leaves no local snapshot. If
+the off-server repository cannot be read at that moment, the local backup still
+runs and the check is repeated before the copy — a refusal there comes after
+the local snapshot and the local retention.
+
+Each local snapshot is copied to the off-server repository exactly once: the
+copied ones are remembered in `CG_BACKUP_DIR` (`copied-*`; when that record is
+missing it is rebuilt from the copies already in the repository). So none is
+skipped because of a clock, and one that the off-server retention dropped is
+not copied there again. After a take-over the old server's snapshots stay as
+they are.
+
+- The server is told apart by `/etc/machine-id`. A VM **cloned** from a
+  snapshot or template shares it with the original: give the clone its own
+  (`sudo rm /etc/machine-id /var/lib/dbus/machine-id && sudo
+  systemd-machine-id-setup && sudo ln -sf /etc/machine-id
+  /var/lib/dbus/machine-id`), or run `sudo ./selfhost/selfhost.sh backup
+  uninstall-timer` on it. Where there is no `/etc/machine-id` (e.g. when the
+  script runs in a container), backups refuse to run until
+  `CG_BACKUP_MACHINE_ID` is set to a fixed value unique to the server.
+- `CG_BACKUP_HOST` defaults to `CG_DOMAIN`, so **changing the domain starts a
+  new timeline** (the old snapshots keep their old name and age out under
+  their own retention). To continue the timeline, set `CG_BACKUP_HOST` to the
+  old name explicitly before the first backup after the change.
+
+### Restoring
+
+```
+./selfhost/selfhost.sh restore [--from local|remote] [--only secrets,db,media,caddy,mail]
+                               [--force] [--with-secrets] [--drill] [--dry-run]
+                               [--host NAME] <snapshot-id | latest>
+./selfhost/selfhost.sh restore --db-file <dump.pgc> [--force] [--dry-run]
+./selfhost/selfhost.sh restore --undo <stamp> [--force]
+./selfhost/selfhost.sh restore --discard-undo <stamp> [--force]
+```
+
+A restore does not start while an earlier one is unfinished
+(`docker/restore-undo.pre-restore-<stamp>` exists) or left copies behind (a
+`.pre-restore-<stamp>` entry in a volume, a `cryptogram_pre_restore_<stamp>`
+database): first `--undo <stamp>` it, or keep its state and remove its copies
+with `--discard-undo <stamp>` (`--force` for one that did not finish).
+
+What `restore` does, in this order:
+
+1. Reads the snapshot (from the local repository if it exists, otherwise the
+   off-server one; `--from` chooses), prints its manifest and the stamp of
+   this restore (e.g. `20261101093913`). It warns when the backup's newest
+   migration is not in this checkout (the code is older than the backup —
+   `git pull` first).
+2. **Plans every component — nothing is changed yet**:
+   - secrets: missing files are restored, identical ones left alone; files
+     that **differ** are **kept** (the database role passwords then come from
+     the current `.env.selfhost`). With `--with-secrets --force` (or
+     `--only secrets --force`) they are replaced and the current file is kept
+     as `<file>.pre-restore-<stamp>`; `--with-secrets` without `--force` is
+     refused. An existing `docker/backup/` — the SSH access that just reached
+     the repository — is always kept. Restored files keep the owner and mode
+     they were backed up with (also under `sudo`: `s3.selfhost.json` stays
+     uid 1000 for seaweed); `.env.selfhost` and `backup/` belong to the owner
+     of the checkout.
+   - db: a **non-empty database is refused** without `--force`. To look
+     inside, `restore` starts `db` alone if it is not running (it says so).
+     The dump is fetched, its SHA-256 checked against the manifest, and a
+     dump that needs a database role this cluster lacks is refused.
+   - media: a **non-empty media volume is refused** without `--force`.
+   - caddy, mail: a non-empty `caddy-data` / an existing DKIM key is kept
+     without `--force`.
+   - space: Docker's storage needs room for a database of about three times
+     the dump plus the restored media and `caddy-data` (the old ones stay
+     until the end), `CG_BACKUP_DIR` for the dump; too little is refused
+     (`--ignore-space-check` overrides; `--force` does not). If both share a
+     filesystem, both amounts come out of the same free space.
+
+   Anything refused stops the restore here, with the instance untouched.
+   `--dry-run` always stops here.
+3. **Applies**: the secrets; then it stops every service and restores
+   - **db**: starts `db` alone (building its image if needed), sets the
+     passwords of `postgres`, `writer`, `reader` and `mediasoup` from the
+     current `.env.selfhost` (creating missing roles), renames a non-empty
+     database to `cryptogram_pre_restore_<stamp>`, restores the dump into a
+     fresh `cryptogram`, refreshes the planner statistics, **compares every
+     table's row count with the backup**, and removes the Valkey state volume
+     (everyone logs in again);
+   - **media / caddy**: moves the current contents into
+     `.pre-restore-<stamp>/` inside the volume (a rename, no copy) and restores
+     the backup's; restic verifies the restored files;
+   - **mail**: the same for `dkim_keys/`.
+
+   When the secrets restored or replaced `.env.selfhost` but the database is
+   not part of this restore, it still starts `db` and sets the role passwords
+   from the new file.
+4. Only when **everything** succeeded it retires the undo record — from here
+   on the restore counts as done and is never undone — and then drops
+   `cryptogram_pre_restore_<stamp>` and the `.pre-restore-<stamp>/`
+   directories, and leaves only `db` running. If that cleanup fails or is
+   interrupted, it says that the restore succeeded and names
+   `restore --discard-undo <stamp>` to remove the leftovers. Start the
+   instance with `./selfhost/selfhost.sh up`; `migrate-db` applies the
+   migrations of this checkout that the backup lacks.
+
+A `--force` restore over existing data therefore needs **free disk space for a
+second copy** of the database and of the media until it finishes.
+
+**If a restore fails** after it began changing things, it prints what it had
+already replaced, that the stack is stopped, and two commands: to go back to
+the state before the restore (`restore --undo <stamp>`, then `up`) or to undo
+and retry. `--undo` puts the previous database and volume contents and the
+replaced secrets back, removes what was restored into empty targets, and sets
+the role passwords from the then current `.env.selfhost` again (only the
+removed Valkey state does not come back — it holds sessions). It works from
+the record `docker/restore-undo.pre-restore-<stamp>`, which a successful
+restore retires; each step can be repeated, and a volume whose contents were
+only partly moved aside gets them moved back without anything being deleted.
+If services other than `db` were started after the failed restore, the
+instance has run on the restored data: `--undo` then asks for `--force`.
+
+#### Roll back on the same server
 
 ```bash
-./selfhost/selfhost.sh down
-# snapshot cg-selfhost_seaweedfs-data (LVM/ZFS snapshot, or a tar of its
-# mountpoint) — one volume, so blobs and filer metadata are always consistent
+./selfhost/selfhost.sh backup list
+./selfhost/selfhost.sh restore --dry-run --force <snapshot-id>
+./selfhost/selfhost.sh restore --force <snapshot-id>
 ./selfhost/selfhost.sh up
 ```
 
-SeaweedFS has no online-consistent backup mechanism, so a snapshot taken while
-the stack is running can capture a blob whose metadata was not written yet (or
-the reverse). Since the storage consolidation, blobs and metadata at least share
-a single volume, so one snapshot covers both.
+Everything written after that snapshot is lost. The secrets stay as they are
+(add `--with-secrets` to roll them back too); `--only db` or `--only media`
+rolls back one part. History that exists only off the server — e.g. older
+backups after a restore onto a new server, whose local repository starts
+empty — is listed with `backup list --remote` and restored with
+`restore --from remote <snapshot-id>`. To keep a rollback point from before a
+risky change, restore from it the same day: per day the retention keeps only
+the newest backup.
 
-The Valkey state instance keeps a snapshot in the `valkey-data` volume, so a
-restart or update keeps everyone logged in. It does not need a backup: losing
-it only logs everyone out once and resets rate-limit windows. The cache
-instance keeps nothing on disk.
+#### Onto a new server (the old one is gone)
+
+```bash
+git clone https://github.com/Common-Ground-DAO/commonground.git
+cd commonground/docker
+
+# the off-server repository from your notes; the password is asked for (typing
+# it keeps it out of the shell history)
+export CG_BACKUP_REPOSITORY='sftp://u123456@u123456.your-storagebox.de:23/cg-backup'
+# sftp: the saved key and known_hosts (s3: export the two CG_BACKUP_AWS_* keys)
+(umask 077; mkdir -p backup/ssh) && cp /path/to/saved/ssh/{id_ed25519,known_hosts} backup/ssh/
+
+./selfhost/selfhost.sh restore --only secrets latest   # brings back .env.selfhost & co.
+./selfhost/selfhost.sh build                           # vapid_keys.json is kept
+./selfhost/selfhost.sh restore latest                  # db, media, caddy, mail
+./selfhost/selfhost.sh up
+./selfhost/selfhost.sh backup init                     # a new local repository
+./selfhost/selfhost.sh backup run --take-over          # this server continues the timeline
+sudo ./selfhost/selfhost.sh backup install-timer
+```
+
+The copied `backup/ssh/` is kept as it is (the restore lists it as "in use");
+`backup init` recreates the missing `id_ed25519.pub`. Host keys are checked
+strictly. Without a saved `known_hosts`, create it from the provider's
+published fingerprints (`ssh-keyscan -p 23 <host> > backup/ssh/known_hosts`,
+then compare `ssh-keygen -lf backup/ssh/known_hosts`); a new SSH key works
+too once it is authorized at the provider. Before `up`, check the restored
+`.env.selfhost`: a new server usually has a new address, so update
+`CG_PUBLIC_IP` (and the DNS records), and `CG_BACKUP_DIR` if the new server
+keeps its backups elsewhere.
+
+Settings exported in the shell override `.env.selfhost` for the backup
+commands (`CG_BACKUP_DIR`, `CG_BACKUP_REPOSITORY`, `CG_BACKUP_PASSWORD`,
+`CG_BACKUP_HOST`, `CG_BACKUP_AWS_*`, `CG_BACKUP_MACHINE_ID`), as shell
+variables override the env file in Docker Compose.
+
+#### A planned move to a new server
+
+The same procedure, prepared so that the downtime is only the restore:
+
+1. **Before the downtime window**, on the new server: clone, put the
+   repository access in place, `restore --only secrets latest`, `build` (the
+   longest step: ~2.5 min on the 4-core test VM), DNS TTLs lowered. Measure a
+   full `restore` beforehand with a production-sized backup (a drill, below),
+   so the window can be announced.
+2. **Prove the off-site material from a third machine** — the password, the
+   repository address and the SSH key or S3 keys, exactly as stored: `backup
+   list --remote` must work there before you depend on it.
+3. **In the window**, on the old server: `./selfhost/selfhost.sh down`, then
+   the final `./selfhost/selfhost.sh backup run` (it starts `db` alone for the
+   dump; with the stack down nothing changes during the copy), and remove the
+   old server's schedule with `sudo ./selfhost/selfhost.sh backup
+   uninstall-timer` — it must not write into the timeline the new server
+   takes over.
+4. On the new server: `restore latest`, `up`, `backup init`,
+   `backup run --take-over`, `sudo … backup install-timer`; then switch DNS.
+5. Everyone logs in again (sessions live in Valkey, which is not restored).
+
+#### A restore drill on a separate server
+
+A drill restores the production backup onto a throwaway server. With
+`--drill`, that copy can never act as production:
+
+```bash
+export CG_BACKUP_REPOSITORY='…'                            # production's
+read -rs CG_BACKUP_PASSWORD && export CG_BACKUP_PASSWORD   # its password, not echoed
+# + its SSH key and known_hosts in docker/backup/ssh/, or the CG_BACKUP_AWS_* keys
+./selfhost/selfhost.sh restore --drill --only secrets latest
+unset CG_BACKUP_REPOSITORY CG_BACKUP_PASSWORD
+./selfhost/selfhost.sh build
+./selfhost/selfhost.sh restore latest
+./selfhost/selfhost.sh up
+```
+
+Right after the secrets are restored, `--drill` rewrites the copy's
+`.env.selfhost`: `CG_BACKUP_DRILL=true`; production's repository moves to
+`CG_BACKUP_DRILL_SOURCE` and `CG_BACKUP_REPOSITORY` is emptied;
+`CG_BACKUP_HOST=drill-<hostname>`; `CG_ENABLE_MAIL=false` and an empty
+`SMTP_HOST`, so it sends no mail; `CG_TLS_MODE=internal`, so Caddy issues its
+certificates from its own CA instead of renewing them on production's ACME
+account. To reach the drill instance under the production domain, map that
+name to the drill server in the `/etc/hosts` of the client machines, trust
+its CA (see [Local test instance](#local-test-instance-no-public-dns)), and
+set `CG_PUBLIC_IP` in its `.env.selfhost` to the drill server's address
+before `up`. On a drill instance:
+
+- the source repository is only read, without locks — no `backup init`,
+  `copy`, retention or `check` ever touches it; backups stay in the local
+  repository under the drill host name;
+- the DKIM key is never restored (`--only mail` is refused);
+- `backup install-timer` is refused.
+
+The drill instance keeps production's `vapid_keys.json` (so the drill can
+check it) and its stored push subscriptions: anything that triggers a
+notification on the drill instance would reach real users' browsers. Do not
+create content there that notifies others, or block outbound traffic to the
+push services for the duration.
+
+#### Into another instance (test server, rehearsal)
+
+An instance set up with its own `init.sh` secrets can take the data of
+another one. Differing secrets are kept by default, so restoring the data
+alone is enough. `--drill` keeps this instance away from the other one's
+repository for good (it also switches this instance's mail off and empties its
+own `CG_BACKUP_REPOSITORY`, as described above):
+
+```bash
+export CG_BACKUP_REPOSITORY='…'                  # the other instance's
+read -rs CG_BACKUP_PASSWORD && export CG_BACKUP_PASSWORD   # its password, not echoed
+./selfhost/selfhost.sh restore --drill --only db,media --force latest
+unset CG_BACKUP_REPOSITORY CG_BACKUP_PASSWORD
+./selfhost/selfhost.sh up
+```
+
+Access to that repository comes the same way as on a new server: the
+`CG_BACKUP_AWS_*` keys exported, or its SSH key and `known_hosts` in
+`docker/backup/ssh/`. The database gets this instance's role passwords; uploads
+work with this instance's S3 secret. Push subscriptions of the other instance
+do not work here (they belong to its `vapid_keys.json`).
+
+#### Only the database, from a dump file
+
+`restore --db-file <dump.pgc>` restores a plain `pg_dump -Fc` file — for
+example from another server — with the same safety rules, role handling and
+`--undo` (a dump that needs a role this cluster lacks is refused before
+anything is stopped; [docs/database](../docs/database/README.md#restoring-a-postgresql-14-database-into-18)
+covers dumps from PostgreSQL 14). There is no row-count comparison for such a
+file.
+
+### Restore drill
+
+A backup is only as good as the last restore that worked:
+
+- **Monthly:** `./selfhost/selfhost.sh backup verify --remote` — restores the
+  newest off-server dump into a throwaway database and compares the row
+  counts. The weekly `backup check` covers the integrity of the media data
+  (`backup check --read-data` reads all of it).
+- **Before relying on it, and after changing the setup:** a full drill on a
+  separate server with `--drill` (above), then check: the app loads, an
+  existing account logs in, an old image or attachment opens (it is served
+  through a signed `/files/` URL, so this proves media and the S3 secret fit
+  together), and `sha256sum vapid_keys.json` matches the production server.
+
+Measured on the development VM (2026-11-01, 50–300 MB of media, small
+database, everything on local disk; times grow with the data): `backup run`
+5–13 s, of which media requests waited 1–2 s; `backup verify` 4–5 s; a full
+restore onto a fresh server 12–15 s plus about 20 s until `up` is healthy; a
+`--force` restore over an existing instance about 25 s (stopping the stack
+takes 11–15 s of that).
+
+### Troubleshooting
+
+- **Uploads hang after an interrupted backup**: the backup was killed while
+  `seaweed` was frozen. `./selfhost/selfhost.sh backup resume` (or `up`, or the
+  next backup) resumes it; the systemd unit does it on its own.
+- **"the newest backup of … was made on another server"**: see "One server
+  per backup timeline".
+- **"CG_BACKUP_PASSWORD does not open the local repository"**: the password
+  in `.env.selfhost` is not the repository's.
+- **"restore … did not finish" / "left pre-restore copies behind"**: see the
+  paragraph at the start of "Restoring" — `--undo <stamp>` or
+  `--discard-undo <stamp>`.
+- **"A backup or restore of this instance is running"** from `up`/`down`/
+  `update`: wait for it (`journalctl -u cg-backup -f`).
+- **An unreachable off-server repository** is retried by restic for several
+  minutes before the run fails — the local backup is already made by then.
+
+### Before this release
+
+Older instances backed up by hand (`pg_dump` plus a snapshot of the stopped
+`seaweedfs-data` volume). Those copies stay restorable the manual way (see
+[PostgreSQL 18](#postgresql-18) for the dump); from now on use the commands
+above.
 
 ## Firewall summary
 

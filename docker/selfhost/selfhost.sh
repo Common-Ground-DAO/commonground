@@ -4,6 +4,15 @@
 set -euo pipefail
 cd "${0%/*}/.."   # docker/
 
+# Backup and restore live in their own script (docker/SELFHOST.md, "Backup and
+# restore"). A restore onto a fresh server runs before .env.selfhost exists —
+# it brings that file back — so this comes before the check below.
+case "${1:-}" in
+  backup|restore)
+    exec ./selfhost/backup.sh "$@"
+    ;;
+esac
+
 if [ ! -f .env.selfhost ]; then
   echo "No .env.selfhost found. Run ./selfhost/init.sh <domain> <acme-email> first."
   exit 1
@@ -42,6 +51,12 @@ compose_profiles() {
 # profile is inactive is still part of the compose file, so its container
 # (and, for mediasoup, the published media ports) would stay. Idempotent.
 start_stack() {
+  # a backup killed while seaweed was frozen (docker pause) leaves it paused,
+  # and `up` does not resume a paused container
+  if [ -n "$(docker_compose ps -q --status paused seaweed)" ]; then
+    echo "seaweed was left paused (an interrupted backup?) — resuming it"
+    docker_compose unpause seaweed
+  fi
   docker_compose up -d --remove-orphans
   local off=()
   if ! calls_enabled; then
@@ -190,6 +205,30 @@ check_edge_config() {
   fi
 }
 
+# up, down and update must not run while a backup or restore of this instance
+# does (backup.sh holds /run/lock/cg-backup-<project>.lock). The `compose`
+# passthrough, which backup.sh itself uses, takes no lock.
+backup_lock() {
+  if [ "${CG_BACKUP_LOCK_HELD:-}" = 1 ]; then
+    return 0
+  fi
+  local project lock
+  project="${COMPOSE_PROJECT_NAME:-$(sed -n 's/^name:[[:space:]]*//p' docker-compose.selfhost.yml | head -1)}"
+  lock="/run/lock/cg-backup-$project.lock"
+  # without /run/lock no backup can run either
+  if [ ! -d /run/lock ] || [ ! -w /run/lock ]; then
+    return 0
+  fi
+  (umask 022; : >> "$lock") 2>/dev/null || true
+  exec 8<"$lock" || return 0
+  if ! flock -n 8; then
+    echo "A backup or restore of this instance is running (lock $lock) — try again when it has finished."
+    exit 1
+  fi
+  # held across the exec of `update` into the pulled script
+  export CG_BACKUP_LOCK_HELD=1
+}
+
 docker_compose() {
   local profiles
   profiles="$(compose_profiles)"
@@ -279,6 +318,7 @@ case "${1:-}" in
     build
     ;;
   up)
+    backup_lock
     check_mail_config
     check_edge_config
     # --remove-orphans cleans up containers of services that are no longer
@@ -288,6 +328,7 @@ case "${1:-}" in
     docker_compose ps
     ;;
   down)
+    backup_lock
     docker_compose down --remove-orphans
     ;;
   logs)
@@ -303,6 +344,7 @@ case "${1:-}" in
     docker_compose "${@:2}"
     ;;
   update)
+    backup_lock
     git pull
     # Continue in the script that was just pulled: bash keeps running the old
     # copy, whose build steps may no longer match the pulled compose files.
@@ -311,6 +353,7 @@ case "${1:-}" in
     ;;
   _build-and-up)
     # second half of `update`, run by the freshly pulled script
+    backup_lock
     build
     check_mail_config
     check_edge_config
@@ -330,7 +373,9 @@ case "${1:-}" in
     printf "  stats    Show container resource usage\n"
     printf "  compose  Pass arguments to docker compose\n"
     printf "  update   git pull + rebuild + restart\n"
-    printf "  mail-dns Print the DNS records (SPF, DKIM, DMARC, PTR) for the built-in mail relay\n\n"
+    printf "  mail-dns Print the DNS records (SPF, DKIM, DMARC, PTR) for the built-in mail relay\n"
+    printf "  backup   Backups: init | run | list | check | verify | install-timer (see: backup help)\n"
+    printf "  restore  Restore a backup (see: restore --help)\n\n"
     printf "Optional services (set in .env.selfhost):\n"
     printf "  CG_ENABLE_CALLS=false       do not run mediasoup (no voice/video calls)\n"
     printf "  CG_ENABLE_BLOCKCHAIN=false  do not run onchain (no token gating/indexing)\n"

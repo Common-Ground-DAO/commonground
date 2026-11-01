@@ -3,7 +3,8 @@
 > commit ff0da06, 2026-10-31; the wave M1 changes (joi 18.3.1 in the security-fix
 > log, `typescript` held back, the Renovate majors list) against commit d604544,
 > 2026-10-31; the restic image pin (`RESTIC_IMAGE`) and its Renovate regex
-> manager against commit 818d4c6, 2026-11-01
+> manager against commit 818d4c6, 2026-11-01; Express 5 out of the Renovate
+> majors list (wave M2) against commit 56e7c34, 2026-11-01
 
 # Update policy: 7-day minimum release age (3 days for security fixes)
 
@@ -376,15 +377,16 @@ repository root:
 - PRs target `develop`, on Monday mornings (Europe/Berlin), grouped per
   workspace for minor/patch updates; at most 8 open / 4 per hour.
 - **Majors** are only opened after approval on the Dependency Dashboard. The
-  deferred majors (Express 5, react-router 7, Tailwind 4, Vite 8,
-  TypeORM 1.x; decision 7) are disabled outright — they are done by hand in
-  waves M2–M4; drop each from the list once its wave is merged. joi 18 and
-  TypeScript 6 (wave M1) left the list with that wave: a joi 19 major is
-  proposed normally (dashboard approval required). TypeScript majors stay
-  disabled through a rule of their own — TypeScript 7 ships no compiler API
-  yet, so ts-node (Hardhat in `contracts/` and `docker/hardhat/node/`),
-  ts-jest (`srv/`) and typescript-eslint (supports < 6.1.0) cannot use it;
-  re-enable it once they do.
+  deferred majors (react-router 7, Tailwind 4, Vite 8, TypeORM 1.x;
+  decision 7) are disabled outright — they are done by hand in waves M2–M4;
+  drop each from the list once its wave is merged. joi 18 and TypeScript 6
+  (wave M1) and Express 5 (wave M2: `express`, `@types/express`,
+  `@types/express-serve-static-core`) left the list with their wave: a joi 19
+  or Express 6 major is proposed normally (dashboard approval required).
+  TypeScript majors stay disabled through a rule of their own — TypeScript 7
+  ships no compiler API yet, so ts-node (Hardhat in `contracts/` and
+  `docker/hardhat/node/`), ts-jest (`srv/`) and typescript-eslint (supports
+  < 6.1.0) cannot use it; re-enable it once they do.
 - `mediasoup` and `puppeteer` get their own PRs with a note to update the
   pinned binaries (see above).
 - Three regex managers cover pins outside Dockerfiles/compose files and

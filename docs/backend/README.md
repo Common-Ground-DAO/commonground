@@ -26,7 +26,8 @@
 > 9fc05a9, 2026-11-01; `ensureSession`/`logout`, the `CgId` result room and the
 > room key list against commit eab2a27, 2026-11-01; `signOutOtherDevices`, the
 > sign-out after credential changes and the pre-login limits against commit
-> 23a4c1e, 2026-11-01.
+> 23a4c1e, 2026-11-01; Express 5 (wave M2: the route registration pattern,
+> raw routes and `asyncHandler`, §8) against commit 56e7c34, 2026-11-01.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -200,7 +201,9 @@ registerPostRoute<RequestType, ResponseType>(
 
 How it works:
 1. Registers an Express POST route with `express.json()` middleware
-2. Validates the request body against the Joi schema (if provided)
+2. Validates the request body against the Joi schema (if provided); a request
+   without a JSON body counts as `{}` (Express 5's parser leaves `body`
+   undefined there, Express 4 gave `{}`)
 3. Calls the handler with the validated data
 4. Wraps the response in `{ status: 'OK', data: result }`
 5. On error, calls `handleError()` which returns `{ status: 'ERROR', error: '...' }` -- known errors are passed through; Joi validation errors become `VALIDATION`; unknown errors are generic
@@ -219,8 +222,10 @@ How it works:
 the router instead of through `registerPostRoute`: the multipart `/File/uploadImage`
 (and its rate-limit middleware), `/Captcha/challenge`, the `emailUnsubscribe`
 pages and every `async` route in `srv/api/getRoutes.ts` (the passport
-`/twitter-callback` is plain middleware and is not wrapped). Express 4 ignores
-the promise an `async` handler returns, so each of them is wrapped with
+`/twitter-callback` is plain middleware and is not wrapped). Express 5 would
+hand a rejected handler promise to the error middleware (`apiErrorHandler`:
+HTTP 500 with the JSON error body) instead of the route's own error format, so
+each of them is wrapped with
 `asyncHandler(handler, onError?)` from `srv/api/asyncHandler.ts`: a throw or
 rejection anywhere in the handler — including from its own `catch` block — ends
 in `onError(response, error)`, which defaults to `handleError` and is the
@@ -1481,8 +1486,27 @@ Version constraints in `srv/package.json` that are not self-explanatory. The
 release, and the 2026-10-31 refresh (F6) to the newest in-major release that
 has passed the 7-day age gate — except `mediasoup` (3.23.2) and `puppeteer`
 (25.5.0), which move only together with their pinned worker / Chrome binaries
-(see `docs/infrastructure/UPDATE-POLICY.md`). The remaining major jumps
-(Express 5, TypeORM 1.x) are scheduled in `docs/todo/ROADMAP_cg-box.md`.
+(see `docs/infrastructure/UPDATE-POLICY.md`). Express 5 came with wave M2
+(see below); the remaining major jump (TypeORM 1.x) is scheduled in
+`docs/todo/ROADMAP_cg-box.md`.
+
+- **Express 5** came with wave M2 (2026-11-01): Express 5.3.0 (router 2,
+  path-to-regexp 8, body-parser 2). Route paths
+  follow path-to-regexp 8 — a wildcard needs a name (`/{*splat}` also matches
+  the root, as Express 4's `*` did), `?`, `+`, `(`, `)` and `[`, `]` are
+  reserved in string paths; the social-preview routes in
+  `srv/api/getRoutes.ts` stay `RegExp` objects, which Express 5 still matches
+  unanchored with the capture groups as `req.params[0]`, `[1]`, … Named
+  parameters are typed `string | string[]` in `@types/express` 5 (wildcards
+  yield arrays), hence the casts on `:userId` / `:filename`. The query parser
+  is the `simple` one now (Node's `querystring`, no nested `a[b]=` objects);
+  the few `req.query` readers take scalar values and validate them. A body
+  parser leaves `req.body` undefined when it does not parse the request
+  (`registerPostRoute` and `emailUnsubscribe` default it to `{}`).
+  `body-parser` is no longer imported directly (`express.json()` /
+  `express.text()`). Express-adjacent packages needed no bump:
+  `express-session` 1.19, `cors` 2.8, `cookie-parser` 1.4, `multer` 2,
+  `passport` 0.7 (+ `passport-twitter`), `connect-redis` 10.
 
 - **TypeScript 6 and joi 18** came with wave M1 (2026-10-31). joi 18.3.1 (the
   first 18.x that is not affected by GHSA-4528-x5fx-h6hg) needs Node ≥ 20 and
@@ -1497,12 +1521,11 @@ has passed the 7-day age gate — except `mediasoup` (3.23.2) and `puppeteer`
   default) carry over. The TypeORM CLI scripts compile through
   `srv/tsconfig.typeorm-cli.json`, see [docs/database](../database/README.md).
 
-- **`resolutions`**: `@types/express` / `@types/express-serve-static-core` →
-  `"4"`. Several `@types/*` packages (`express-session`, `express-ws`,
-  `passport`, `passport-twitter`, `multer`) depend on `@types/express@*` (and
-  `@types/cookie-parser` peer-depends on it), which resolves to 5.x and hoists
-  a second, incompatible `Request` type next to the v4 one. Drop both pins
-  with Express 5.
+- **No `resolutions`** any more: the `@types/express` /
+  `@types/express-serve-static-core` `"4"` pins (the `@types/*` packages of
+  `express-session`, `express-ws`, `passport`, `multer` etc. depend on
+  `@types/express@*`, which resolved to 5.x next to the v4 types) were dropped
+  with Express 5; every range now resolves to one copy (5.0.6 / 5.1.3).
 - **`sharp: "^0.35.5"`** — the floor is security-motivated: earlier releases
   bundle affected libheif/librsvg builds (GHSA-rgj7-g3m4-5g8c,
   GHSA-wq5f-xc86-pv6w). `@huggingface/transformers` 4.3 (the NSFW gate) asks

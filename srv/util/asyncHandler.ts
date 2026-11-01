@@ -13,10 +13,13 @@ export type AsyncErrorResponder = (response: express.Response, error: unknown) =
  * `asyncHandler` from `srv/api/asyncHandler.ts`, which defaults `onError` to
  * `handleError`).
  *
- * Express 4 ignores the promise a handler returns, so a rejection — a throw
- * outside the handler's own try/catch, or an error raised by its catch block —
- * would otherwise never reach a response. With this wrapper every failure ends
- * in `onError(response, error)`.
+ * Express 5 hands a rejected handler promise to the error middleware, which
+ * answers with HTTP 500 (the api: `apiErrorHandler`). With
+ * this wrapper every failure — a throw outside the handler's own try/catch,
+ * or an error raised by its catch block — ends in `onError(response, error)`
+ * instead, so each route keeps its own error format (the api's
+ * `{ status: 'ERROR', error }` envelope, an HTML page, plain text). The
+ * wrapper returns nothing, so Express never sees the handler's promise.
  *
  * If the response has already been started, nothing more is sent: the error
  * is logged, and an unfinished response is handed to `next(error)` so Express

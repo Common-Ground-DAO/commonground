@@ -112,6 +112,15 @@ that stack — confirm and delete:
   `yarn jest --detectOpenHandles` (or `--runInBand` per suite) on the F6 lockfile,
   then close the handle in that spec (or `.unref()` it in the module).
 
+- [ ] **Passkey sign-up conformance tests answer `INVALID_REQUEST`** (2026-11-01,
+  found during the M2 conformance run; 106 of 110 pass on develop `56e7c34`
+  with and without Express 5). Three passkey sign-up tests get
+  `User/createUser failed: INVALID_REQUEST`. The sign-up flow changed in G4
+  (email verified before the account exists) and G10 (8-digit codes, kind of
+  limit); the conformance suite probably still drives the old sequence.
+  Update the suite to the current flow, or fix the server if the flow it
+  drives is meant to work.
+
 - [ ] **`imageFilterThreshold` breaks the `r0-instance-config` conformance test**
   (2026-10-31, found during the Node 26 conformance run; 102 of 104 tests pass).
   `/api/v2/Instance/config` always sends `imageFilterThreshold`
@@ -348,8 +357,6 @@ wave has to *change*.
   resolution and would load it through `require(ESM)`, as it does puppeteer 25);
   re-check whether its `types` field (2.0.2: `./dist/index.d.ts`, `exports` has
   no `types` condition) resolves. joi 18 itself still depends on `^1.1.1`.
-- **Express 5 (M2)** — drop the `@types/express` and
-  `@types/express-serve-static-core` `"4"` resolutions in `srv/package.json`.
 - **TypeORM 1.x (M2)** — re-check its `redis` peer (today it warns against
   node-redis 6; inert, it is only for the unused query cache) and that a single
   `reflect-metadata` copy (0.2.2) survives; `emitDecoratorMetadata` was verified

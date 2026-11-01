@@ -12,7 +12,6 @@ import userHelper from "../repositories/users";
 import permissionHelper from "../repositories/permissions";
 import { CommunityPermission } from "../common/enums";
 import communityHelper from "../repositories/communities";
-import bodyParser from "body-parser";
 import eventHelper from "../repositories/event";
 import ipRateLimitHandler from "../util/rateLimit";
 import config from "../common/config";
@@ -75,7 +74,7 @@ const enforceUploadRateLimit = asyncHandler(async (req, res, next) => {
 fileRouter.post(
   '/uploadImage',
   enforceUploadRateLimit,
-  bodyParser.text({ type: '/' }),
+  express.text({ type: '/' }),
   uploadHandler.single('uploaded'),
   asyncHandler(async (req, res) => {
     const { user } = req.session;

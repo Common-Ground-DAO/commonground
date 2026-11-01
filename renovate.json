@@ -67,11 +67,8 @@
       "dependencyDashboardApproval": true
     },
     {
-      "description": "The deferred majors (roadmap decision 7) are done by hand in waves M2-M4 — no Renovate PRs. Drop a name from this list once its wave is merged (M1, joi 18 + TypeScript 6, is done; TypeScript majors have their own rule below).",
+      "description": "The deferred majors (roadmap decision 7) are done by hand in waves M2-M4 — no Renovate PRs. Drop a name from this list once its wave is merged (M1, joi 18 + TypeScript 6, is done, and Express 5 from M2; TypeScript majors have their own rule below).",
       "matchPackageNames": [
-        "express",
-        "@types/express",
-        "@types/express-serve-static-core",
         "react-router",
         "react-router-dom",
         "tailwindcss",

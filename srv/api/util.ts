@@ -75,7 +75,9 @@ export function registerPostRoute<RQ, RS>(
   // the try/catch answers handler errors; the wrapper catches what escapes it
   // (e.g. handleError itself failing because the handler already responded)
   router.post(route, express.json(options), asyncRequestHandler(async (request, response) => {
-    const data = request.body as RQ;
+    // Express 5's body parser leaves `body` undefined when the request has no
+    // JSON body; Express 4 always gave `{}`, which the validators expect
+    const data = (request.body ?? {}) as RQ;
     try {
       if (!!validator) {
         const validatedData = await validator.validateAsync(data);

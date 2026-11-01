@@ -191,7 +191,9 @@ app.use(botAllowlistMiddleware);
  * ==========  start server  ==========
  */
 
-app.options('*', () => undefined);
+// Express 5 (path-to-regexp 8): a wildcard needs a name; the braces make it
+// match the root path as well, like Express 4's '*'
+app.options('/{*splat}', () => undefined);
 
 app.listen(4000);
 

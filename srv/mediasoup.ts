@@ -6,7 +6,6 @@ import fs from 'fs';
 import https from 'https';
 import protoo from 'protoo-server';
 import express from "express";
-import bodyParser from 'body-parser';
 import cors from 'cors';
 import { AwaitQueue } from 'awaitqueue';
 import { createWorker } from "mediasoup";
@@ -285,7 +284,7 @@ async function runWebServer(): Promise<void> {
 async function runExpressApp() {
     console.info('creating Express app...');
     expressApp = express();
-    expressApp.use(bodyParser.json());
+    expressApp.use(express.json());
 
     expressApp.use(cors());
 

@@ -17,7 +17,8 @@
 > Caddy edge replacing the self-host nginx (§1, §2, §3 intro, 3.1–3.5, 3.8,
 > the instance-config note in §4) against commit fe3937f,
 > 2026-10-31; backup and restore (§3.1 backup settings, §3.2 commands, §3.7)
-> against commit 818d4c6, 2026-11-01
+> against commit 818d4c6, 2026-11-01; drill isolation (§3.7 drill mode, the
+> `up` row in §3.2) against commit f5f0639, 2026-11-01
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -210,7 +211,7 @@ Commands:
 | Command | Action |
 |---|---|
 | `build` | builds the builder image, installs frontend deps, sets a random build id, then type-checks, lints, builds and HTML-rewrite-checks the frontend in one builder run (`yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite`, `DEPLOYMENT=prod`, `NODE_OPTIONS=--max-old-space-size=4096`), rsyncs `build/` into `caddy/dist`, builds the caddy / backend / db images, and generates `vapid_keys.json` for web push if missing |
-| `up` | warns about mail settings that can't work together (see [3.9](#39-email-smtp-and-the-mail-relay)) and about an ignored `CG_ID_DOMAIN`, then `compose up -d --remove-orphans`, stops and removes the containers of switched-off optional services (`compose rm -sf`), and `ps` |
+| `up` | on a restore drill (`CG_BACKUP_DRILL=true`) prints a `DRILL INSTANCE` banner (mail is then forced off for every command, see [3.7](#37-backup-and-restore)); warns about mail settings that can't work together (see [3.9](#39-email-smtp-and-the-mail-relay)) and about an ignored `CG_ID_DOMAIN`, then `compose up -d --remove-orphans`, stops and removes the containers of switched-off optional services (`compose rm -sf`), and `ps` |
 | `down` | stop the stack (`--remove-orphans`) |
 | `logs [service]` | follow logs (all, or one service) |
 | `ps` | container status |
@@ -479,10 +480,70 @@ the source repository moved to `CG_BACKUP_DRILL_SOURCE` with
 `CG_ENABLE_MAIL=false`, empty `SMTP_HOST`, `CG_TLS_MODE=internal` (no
 renewals on production's ACME account). In drill mode the source is read
 with `--no-lock` and never written (no init, copy, retention or `check`
-there), the DKIM key is not restored, and `install-timer` is refused. The
-drill keeps production's VAPID keys and push subscriptions; notifications
-triggered on it would reach real browsers (documented as an operator
-precaution).
+there), the DKIM key is not restored, and `install-timer` is refused.
+
+A drill must not reach the source's users. What could:
+
+- *Web push.* The secrets bundle never brings the source's
+  `vapid_keys.json` onto a drill: a missing one is generated fresh (inside
+  the restic helper container: `ssh-keygen -t ecdsa -b 256 -m PEM`, the SEC1
+  DER key checked for its fixed P-256 layout and turned into the
+  `{"publicKey","privateKey"}` base64url JSON that `web-push
+  generate-vapid-keys --json` writes; mode 600, checkout owner), one identical
+  to the backup's (an earlier copy) is replaced by a fresh one (the old file
+  stays as `vapid_keys.json.pre-restore-<stamp>`, undoable), the drill's own
+  is kept — also with `--with-secrets --force`. Every database restore on a
+  drill (snapshot or `--db-file`) then sets `devices."webPushSubscription"`
+  to `NULL` (the only place push subscriptions are stored; the devices stay,
+  they are login keys) after the row-count comparison; a failure there fails
+  the restore. When a drill restore generates or renews the key pair without
+  restoring the database, it clears the column in the database already in
+  place (starting `db` alone; recorded as not undoable). Push services would
+  reject the old subscriptions anyway (they are bound to the source's public
+  key); clearing them keeps `sendWsOrWebPushNotificationEvent` from sending
+  to them at all. The api reads the key pair once at start
+  (`srv/repositories/notifications.ts`), so a drill restore of the secrets
+  alone stops every running service before it changes anything (`up`
+  recreates the containers whose settings changed); restores of other
+  components stop the stack anyway.
+- *Mail* (login codes, verification, notification and digest mails,
+  newsletters, the bounce receiver): `CG_ENABLE_MAIL=false` and an empty
+  `SMTP_HOST` in `.env.selfhost` (`emailEnabled()` is false, both mail jobs
+  skip their work, no `mail` container, `MAIL_BOUNCE_RECEIVER=false`), and
+  `selfhost.sh` enforces it: with `CG_BACKUP_DRILL=true` it exports
+  `CG_ENABLE_MAIL=false` and `SMTP_HOST=` before every compose call, which
+  win over the env file, so mail settings edited back into a drill's
+  `.env.selfhost` have no effect. The DKIM key is never restored, and the
+  relay's queue is not part of a backup.
+- *Bots* have no outbound channel: they connect to the instance (bearer
+  token, Socket.IO), the backend never calls them; bots configured with the
+  source's URL keep talking to the source.
+- *Plugins* are iframes in the viewer's browser; the backend verifies and
+  signs the messages they relay through it but never calls a plugin URL.
+- *Onchain/staking*: nothing signs or sends transactions — the `onchain`
+  service reads (events, balances, token metadata) from the configured RPC
+  endpoints, and staking accrual and premium renewal only write the drill's
+  own database. A drill uses the source's RPC URLs, and so their quota.
+- *Jobs* (`job-runner`): `premiumRenewal`, `callUpdateEmitter`,
+  `handleCommunityAirdrops`, `onlineStatusCheck`, `stakingAccrual` and
+  `activityScore` work on the database only (their notifications go out as
+  WebSocket events to connected clients, and as web push only to
+  subscriptions made on the drill); `emailNotifications` and
+  `newsletterDelivery` need mail; `bounceReceiver` is off.
+- Outbound requests that remain are made on behalf of someone using the
+  drill: link previews, reCAPTCHA verification (when configured), X/Twitter
+  and Farcaster login.
+
+`--db-file … --drill` writes the same drill settings into `.env.selfhost`
+(after stopping the stack, before the dump is restored; the instance's own
+`CG_BACKUP_REPOSITORY` becomes the read-only `CG_BACKUP_DRILL_SOURCE`).
+
+A restore on a drill ends with a summary of what it changed (the VAPID
+outcome, the number of cleared subscriptions, stopped services) and the
+mail, TLS and backup settings in effect — with a warning if `.env.selfhost`
+lacks `CG_BACKUP_DRILL=true`. `selfhost.sh up`/`update` print a
+`DRILL INSTANCE` banner that states only what `selfhost.sh` itself enforces
+(mail off, local backups).
 
 **Scheduling.** `backup install-timer` (root) writes `cg-backup.service` /
 `.timer` (daily, `CG_BACKUP_SCHEDULE`, default 03:30) and
@@ -530,6 +591,16 @@ a password login, a signed `/files/` download, byte-identical media and
 identical VAPID keys where the secrets were restored. After the third review:
 no re-copy of an old snapshot after a take-over, no filters with an explicit
 snapshot id, a quiet image pull on a fresh server, `CG_BACKUP_DIR` mode 700.
+Drill isolation (same day, throwaway projects): a source with VAPID keys and
+two push subscriptions restored with `--drill` from its repository — fresh
+keys (65/32 bytes, the pair consistent, accepted by `web-push`, a VAPID JWT
+verifying against the new public key), subscriptions 0 of 3 devices, row
+counts matching; the `renew` case with `--only secrets --force`; the own key
+kept on a later restore; `--db-file` on the drill clearing them too; mail
+settings switched back on in the drill's `.env.selfhost` still giving no
+`mail` service, an empty `SMTP_HOST` and `MAIL_BOUNCE_RECEIVER=false` in
+`compose config`; a restore without `--drill` still bringing the source's
+keys back.
 
 **Restore rehearsal on the test VM, 2026-11-01: passed.** A new-server restore
 following SELFHOST.md, `backup verify`, a same-server rollback and `--undo`

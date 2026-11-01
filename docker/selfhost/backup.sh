@@ -156,6 +156,9 @@ RESTORE_DRILL=0
 # A drill instance (restore --drill) holds another instance's data. It reads
 # that instance's repository (CG_BACKUP_DRILL_SOURCE) but never writes to it.
 drill_mode() { [ "$CG_BACKUP_DRILL" = true ] || [ "$RESTORE_DRILL" = 1 ]; }
+# what a restore changed because this is a drill; printed at its end
+DRILL_NOTES=()
+drill_note() { DRILL_NOTES+=("$*"); }
 
 # the off-server repository: CG_BACKUP_REPOSITORY, or — on a drill instance,
 # for reading only — the repository it was restored from
@@ -1089,7 +1092,7 @@ UNDO_FILE=""
 restore_usage() {
   cat <<'EOF'
 Usage: ./selfhost/selfhost.sh restore [options] <snapshot-id | latest>
-       ./selfhost/selfhost.sh restore --db-file <dump.pgc> [--force] [--dry-run]
+       ./selfhost/selfhost.sh restore --db-file <dump.pgc> [--force] [--drill] [--dry-run]
        ./selfhost/selfhost.sh restore --undo <stamp> [--force]
        ./selfhost/selfhost.sh restore --discard-undo <stamp> [--force]
 
@@ -1105,7 +1108,8 @@ Usage: ./selfhost/selfhost.sh restore [options] <snapshot-id | latest>
                        by --only secrets). Without it they are kept.
   --drill              this server is a drill/test copy: never write to the
                        source repository, mail off, its own backup host name,
-                       no DKIM key, no timer
+                       fresh VAPID keys, push subscriptions removed, no DKIM
+                       key, no timer
   --dry-run            print what would happen, change nothing
   --db-file FILE       restore a plain pg_dump -Fc file (e.g. from another
                        server) into the database instead of a snapshot
@@ -1144,6 +1148,7 @@ describe_undo() {
       "mail restore") echo "  - DKIM key: restored" ;;
       "mail replace") echo "  - DKIM key: replaced (previous: dkim_keys.pre-restore-$STAMP in $b)" ;;
       "valkey removed") echo "  - Valkey state removed (sessions; not undoable, not needed)" ;;
+      "push cleared") echo "  - web-push subscriptions removed from the database (not undoable, not needed)" ;;
       "roles set") echo "  - database role passwords set from .env.selfhost" ;;
     esac
   done < "$UNDO_FILE"
@@ -1303,7 +1308,8 @@ cmd_restore() {
     echo "  NOTE: this instance is $CG_DOMAIN, the backup comes from $(manifest_get "$manifest" domain)."
   fi
   if drill_mode; then
-    echo "  DRILL: nothing is written to the source repository; mail stays off"
+    echo "  DRILL: nothing is written to the source repository; mail stays off;"
+    echo "         fresh VAPID keys instead of the backup's, push subscriptions removed"
   fi
   warn_newer_migration "$(manifest_get "$manifest" last_migration)"
   echo
@@ -1355,6 +1361,19 @@ cmd_restore() {
   # ---- apply
   APPLY_STARTED=1
   : > "$UNDO_FILE"
+  # A drill restore of the secrets alone (e.g. turning a running copy into a
+  # drill) changes the VAPID key pair and the mail settings under running
+  # services: the api holds the key pair in memory, every container its
+  # environment. They are stopped first; `up` starts them with the new ones
+  # (and recreates those whose settings changed). With other components the
+  # stack is stopped below anyway.
+  if drill_mode && [ ${#rest[@]} -eq 0 ] && [ -f .env.selfhost ] \
+      && [ -n "$(sh_compose ps -q --status running)" ]; then
+    CURRENT_STEP="stopping the stack"
+    log "drill: stopping every service, so none keeps running with the previous key pair or mail settings"
+    STACK_STOPPED=1
+    sh_compose_q stop >/dev/null
+  fi
   if [[ " ${todo[*]} " == *" secrets "* ]]; then
     CURRENT_STEP="restoring the secrets"
     apply_secrets
@@ -1382,9 +1401,21 @@ cmd_restore() {
     apply_drill_env "$source_repo"
     load_settings
   fi
+  # a new key pair without a database restore: the subscriptions in the
+  # existing database belong to the previous one (a database restore in this
+  # run removes them itself)
+  if drill_mode && [ "$VAPID_REPLACED" = 1 ] && [[ " ${rest[*]} " != *" db "* ]]; then
+    CURRENT_STEP="removing the web-push subscriptions"
+    drill_clear_existing_db
+  fi
   if [ ${#rest[@]} -eq 0 ]; then
     finalize_restore
     log "done"
+    if [ "$STACK_STOPPED" = 1 ]; then
+      log "the stack is stopped (db may be running). Start it with: ./selfhost/selfhost.sh up"
+      drill_note "services: stopped before the change; ./selfhost/selfhost.sh up starts them with the new key pair and settings"
+    fi
+    drill_summary
     return
   fi
   [ -f .env.selfhost ] || die "no .env.selfhost"
@@ -1408,9 +1439,7 @@ cmd_restore() {
   echo
   log "restore finished. Start the instance with: ./selfhost/selfhost.sh up"
   log "(migrate-db applies the migrations of this checkout that the backup lacks)"
-  if drill_mode; then
-    log "drill instance: backups here stay local (host $CG_BACKUP_HOST); install-timer is refused"
-  fi
+  drill_summary
 }
 
 # warns when the backup's newest migration is not in this checkout (the code
@@ -1441,6 +1470,32 @@ apply_drill_env() {
   # certificates from Caddy's local CA, never from production's ACME account
   env_set CG_TLS_MODE internal
   CG_BACKUP_DRILL=true
+  drill_note ".env.selfhost rewritten: CG_BACKUP_DRILL=true, CG_BACKUP_DRILL_SOURCE, CG_BACKUP_REPOSITORY='', CG_BACKUP_HOST, CG_ENABLE_MAIL=false, SMTP_HOST='', CG_TLS_MODE=internal"
+}
+
+# prints what this restore changed because it is a drill, and the drill
+# settings now in effect (read from .env.selfhost, never a secret)
+drill_summary() {
+  drill_mode || return 0
+  echo
+  log "DRILL INSTANCE — what keeps it away from the source's users and backups:"
+  local n
+  for n in "${DRILL_NOTES[@]}"; do
+    echo "  - $n"
+  done
+  if [ "$CG_BACKUP_DRILL" != true ]; then
+    echo "  - WARNING: .env.selfhost does not mark this instance as a drill (CG_BACKUP_DRILL=true is"
+    echo "    missing), so selfhost.sh does not keep mail off — run the restore again with --drill"
+  elif [ "${CG_ENABLE_MAIL:-false}" != true ] && [ -z "${SMTP_HOST:-}" ]; then
+    echo "  - mail: off (CG_ENABLE_MAIL=false, SMTP_HOST empty; selfhost.sh keeps it off on a drill) —"
+    echo "    no relay, no outgoing mail, no bounce receiver"
+  else
+    echo "  - mail: off — selfhost.sh ignores the mail settings .env.selfhost switches on (CG_ENABLE_MAIL /"
+    echo "    SMTP_HOST) on a drill instance; set CG_ENABLE_MAIL=false and SMTP_HOST= there"
+  fi
+  echo "  - TLS: CG_TLS_MODE=${CG_TLS_MODE:-acme} (internal: Caddy's local CA, not the source's ACME account)"
+  echo "  - backups: local only (host $CG_BACKUP_HOST); the source repository is only read; install-timer is refused"
+  echo "  - DKIM key: never restored"
 }
 
 plan_secrets() {
@@ -1466,15 +1521,49 @@ plan_secrets() {
 # that differs is kept unless secrets were asked for (--with-secrets / --only
 # secrets); then it needs --force. An existing backup/ (the SSH access that
 # just reached the repository) is always kept.
+# On a drill, vapid_keys.json is never the backup's: the stored push
+# subscriptions belong to that key pair, and with it a drill could send push
+# notifications to the source's users. A missing one is generated fresh, one
+# identical to the backup's (from an earlier copy) is replaced by a fresh one,
+# the drill's own is kept.
 secrets_script() {
   local script='
 set -eu
-mode=$1 with=$2 force=$3 stamp=$4 uid=$5 gid=$6
-shift 6
+mode=$1 with=$2 force=$3 stamp=$4 uid=$5 gid=$6 drill=$7
+shift 7
+# writes a fresh web-push (VAPID) key pair to $1 in the format of
+# `web-push generate-vapid-keys --json` (what selfhost.sh build runs): the
+# uncompressed P-256 public key (65 bytes) and the private scalar (32 bytes),
+# base64url without padding. ssh-keygen -m PEM writes the SEC1 DER key, whose
+# layout for P-256 is fixed: 121 bytes, starting 30 77 02 01 01 04 20, then
+# the scalar, the curve, and the public point as the last 65 bytes.
+vapid_generate() {
+  t="$(mktemp -d)"
+  ssh-keygen -q -t ecdsa -b 256 -m PEM -N "" -C "" -f "$t/k" >/dev/null
+  sed "1d;\$d" "$t/k" | base64 -d > "$t/der"
+  if [ "$(wc -c < "$t/der")" -ne 121 ] \
+      || [ "$(head -c 7 "$t/der" | od -An -tx1 | tr -d " \n")" != 30770201010420 ] \
+      || [ "$(tail -c 65 "$t/der" | head -c 1 | od -An -tx1 | tr -d " \n")" != 04 ]; then
+    rm -rf "$t"
+    echo "vapid_keys.json: unexpected key format from ssh-keygen" >&2
+    exit 1
+  fi
+  pub="$(tail -c 65 "$t/der" | base64 | tr -d "\n=" | tr "+/" "-_")"
+  priv="$(head -c 39 "$t/der" | tail -c 32 | base64 | tr -d "\n=" | tr "+/" "-_")"
+  rm -rf "$t"
+  (umask 077; printf "{\"publicKey\":\"%s\",\"privateKey\":\"%s\"}\n" "$pub" "$priv" > "$1.new")
+  chown "$uid:$gid" "$1.new"
+  mv "$1.new" "$1"
+}
 for p in "$@"; do
   src="/src/$p" dst="/dst/$p"
   [ -e "$src" ] || continue
-  if [ ! -e "$dst" ]; then state=new
+  if [ "$drill" = 1 ] && [ "$p" = vapid_keys.json ]; then
+    if [ ! -e "$dst" ]; then state=generate
+    elif diff -r "$src" "$dst" >/dev/null 2>&1; then state=renew
+    else state=own
+    fi
+  elif [ ! -e "$dst" ]; then state=new
   elif diff -r "$src" "$dst" >/dev/null 2>&1; then state=same
   elif [ "$p" = backup ]; then state=inuse
   elif [ "$with" != 1 ]; then state=keep
@@ -1489,6 +1578,9 @@ for p in "$@"; do
       inuse) echo "  in use     $p (the SSH access in place is kept, never replaced)" ;;
       replace) echo "  replace    $p (the current one is kept as $p.pre-restore-$stamp)" ;;
       differs) echo "  DIFFERS    $p" ;;
+      generate) echo "  generate   $p (drill: a fresh key pair, not the backup'"'"'s)" ;;
+      renew) echo "  renew      $p (drill: it is the backup'"'"'s — replaced by a fresh key pair, the current one kept as $p.pre-restore-$stamp)" ;;
+      own) echo "  own        $p (drill: this instance'"'"'s own key pair is kept, never the backup'"'"'s)" ;;
     esac
     continue
   fi
@@ -1499,6 +1591,9 @@ for p in "$@"; do
       cp -a "$src" "$dst"; echo "  restored   $p" ;;
     replace) mv "$dst" "$dst.pre-restore-$stamp"; cp -a "$src" "$dst"
       echo "  replaced   $p (the previous version is $p.pre-restore-$stamp)" ;;
+    generate) vapid_generate "$dst"; echo "  generated  $p (a fresh key pair)" ;;
+    renew) mv "$dst" "$dst.pre-restore-$stamp"; vapid_generate "$dst"
+      echo "  generated  $p (a fresh key pair; the previous one is $p.pre-restore-$stamp)" ;;
     *) continue ;;
   esac
   case $p in
@@ -1506,24 +1601,36 @@ for p in "$@"; do
     backup) chown -R "$uid:$gid" "$dst" ;;
   esac
 done'
+  local drill=0
+  if drill_mode; then drill=1; fi
   helper -v "$CG_BACKUP_DIR/$RESTORE_TMP/secrets:/src:ro" -v "$DOCKER_DIR:/dst" -- "$script" \
-    "$1" "$RESTORE_WITH_SECRETS" "$RESTORE_FORCE" "$STAMP" "$CHECKOUT_UID" "$CHECKOUT_GID" "${SECRET_PATHS[@]}"
+    "$1" "$RESTORE_WITH_SECRETS" "$RESTORE_FORCE" "$STAMP" "$CHECKOUT_UID" "$CHECKOUT_GID" "$drill" "${SECRET_PATHS[@]}"
 }
 
 SECRETS_ENV_CHANGED=0
+# 1: a drill restore generated or renewed vapid_keys.json
+VAPID_REPLACED=0
 apply_secrets() {
   local state p
   # record first, so a failure halfway is still undone completely
   while read -r state p _; do
     case "$state" in
-      restore) undo_record secret new "$p" ;;
-      replace) undo_record secret replace "$p" ;;
+      restore|generate) undo_record secret new "$p" ;;
+      replace|renew) undo_record secret replace "$p" ;;
     esac
     if [ "$p" = .env.selfhost ] && { [ "$state" = restore ] || [ "$state" = replace ]; }; then
       SECRETS_ENV_CHANGED=1
     fi
+    if [ "$p" = vapid_keys.json ]; then
+      case "$state" in generate|renew) VAPID_REPLACED=1 ;; esac
+      case "$state" in
+        generate) drill_note "web push: vapid_keys.json generated fresh, the backup's key pair is not restored" ;;
+        renew) drill_note "web push: vapid_keys.json was the backup's — replaced by a fresh key pair (the previous file: vapid_keys.json.pre-restore-$STAMP)" ;;
+        own) drill_note "web push: this instance's own vapid_keys.json is kept, not the backup's" ;;
+      esac
+    fi
   done <<< "$SECRETS_PLAN"
-  if ! grep -qE '^  (restore|replace) ' <<< "$SECRETS_PLAN"; then
+  if ! grep -qE '^  (restore|replace|generate|renew) ' <<< "$SECRETS_PLAN"; then
     return 0
   fi
   echo "secrets:"
@@ -1682,6 +1789,9 @@ plan_db() {
   if [ "${ACTION[db]}" != refuse ]; then
     echo "         then: role passwords from .env.selfhost, pg_restore, row counts compared"
     echo "         with the backup, Valkey state removed (everyone logs in again)"
+    if drill_mode; then
+      echo "         drill: the stored web-push subscriptions are removed"
+    fi
   fi
 }
 
@@ -1772,6 +1882,10 @@ EOF
     fi
   fi
 
+  if drill_mode; then
+    drill_clear_push_subscriptions
+  fi
+
   # sessions and short-lived state in Valkey belong to the old database
   local vk; vk="$(volume_name valkey-data)"
   if volume_exists "$vk"; then
@@ -1782,6 +1896,40 @@ EOF
   fi
 }
 
+# Drill: the restored database holds the source's web-push subscriptions
+# (devices."webPushSubscription"). They belong to the source's VAPID key pair,
+# which a drill never uses, so they could only fail — or, with that key pair,
+# reach real browsers. Each one is removed; the devices (login keys) stay.
+drill_clear_push_subscriptions() {
+  local n
+  n="$(printf '%s\n' \
+    "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'public'
+       AND table_name = 'devices' AND column_name = 'webPushSubscription') AS has_push \\gset" \
+    '\if :has_push' \
+    'WITH c AS (UPDATE public.devices SET "webPushSubscription" = NULL
+       WHERE "webPushSubscription" IS NOT NULL RETURNING 1) SELECT count(*) FROM c;' \
+    '\else' "SELECT 0;" '\endif' | db_psql -d cryptogram)" \
+    || die "drill: could not remove the web-push subscriptions"
+  log "drill: web-push subscriptions removed: $n (devices.\"webPushSubscription\")"
+  drill_note "web push: stored push subscriptions removed from the database: $n (the devices stay)"
+}
+
+# the same for the database already in place (a drill restore that replaced
+# the key pair but restores no database); starts db alone for it
+drill_clear_existing_db() {
+  if ! volume_exists "$(volume_name pgdata)"; then
+    drill_note "web push: no database yet — the database restore removes the stored push subscriptions"
+    return 0
+  fi
+  start_db
+  if ! db_exists; then
+    drill_note "web push: no database yet — the database restore removes the stored push subscriptions"
+    return 0
+  fi
+  undo_record push cleared
+  drill_clear_push_subscriptions
+}
+
 restore_db_file_cmd() {
   [ -f "$RESTORE_DB_FILE" ] || die "no such file: $RESTORE_DB_FILE"
   require_env_file
@@ -1789,6 +1937,12 @@ restore_db_file_cmd() {
   file="$(cd "$(dirname "$RESTORE_DB_FILE")" && pwd)/$(basename "$RESTORE_DB_FILE")"
   echo "Restoring the database from $file ($(du -h "$file" | cut -f1), sha256 $(sha256sum "$file" | cut -d' ' -f1))"
   echo "This restore: $STAMP"
+  if [ "$RESTORE_DRILL" = 1 ] && [ "$CG_BACKUP_DRILL" != true ]; then
+    echo "DRILL: this instance becomes a drill instance (.env.selfhost: mail off, local CA,"
+    echo "       its backup repository read-only for it); push subscriptions are removed"
+  elif drill_mode; then
+    echo "DRILL: the restored database's push subscriptions are removed"
+  fi
   declare -gA ACTION=()
   plan_db
   if [ "${ACTION[db]}" != refuse ]; then
@@ -1810,11 +1964,19 @@ restore_db_file_cmd() {
   log "stopping every service"
   STACK_STOPPED=1
   sh_compose_q stop >/dev/null
+  # the same drill settings as a snapshot restore with --drill writes; the
+  # repository this instance had becomes the read-only drill source
+  if [ "$RESTORE_DRILL" = 1 ]; then
+    CURRENT_STEP="switching this instance to drill mode"
+    apply_drill_env "$(remote_url)"
+    load_settings
+  fi
   CURRENT_STEP="restoring the database"
   apply_db "$file" ""
   CURRENT_STEP="removing the pre-restore copies"
   finalize_restore
   log "restore finished. Start the instance with: ./selfhost/selfhost.sh up"
+  drill_summary
 }
 
 # decides what happens to volume $2 (compose name; $1 = label). $3 = 1: a

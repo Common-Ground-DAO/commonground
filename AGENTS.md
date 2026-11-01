@@ -27,6 +27,7 @@ Common Ground is a full-stack TypeScript application:
 ├── tools/                  # Developer utility scripts
 ├── public/                 # Static assets (PWA manifest, icons)
 ├── docs/                   # Living documentation (see below) + docs/todo/ working documents
+├── e2e/                    # End-to-end browser suite (puppeteer in the backend image) + its disposable instance
 ├── run.sh                  # Main CLI entry point for dev workflows
 └── AGENTS.md               # This file
 ```
@@ -42,6 +43,7 @@ Common Ground is a full-stack TypeScript application:
 ./run.sh up | down         # Start/stop Docker stack
 ./run.sh compose <args>    # Pass-through to docker compose
 ./run.sh shell             # Bash in the builder container
+./run.sh e2e --instance    # End-to-end browser suite against the disposable instance (e2e/README.md)
 ./run.sh make_migration <name>       # Generate a TypeORM migration
 ./run.sh make_empty_migration <name> # Generate an empty migration file
 ```

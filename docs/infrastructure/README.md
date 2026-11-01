@@ -20,7 +20,9 @@
 > Caddy edge that replaced nginx in the dev and self-host stacks (§1 `caddy`,
 > `vite-tls`, `mediasoup`, TLS certificates; §2 build steps and the HTML check;
 > §3; §6 commands; §7) against commit fe3937f, 2026-10-31;
-> `TRANSFER_TARGET_URL` against commit 9fc05a9, 2026-11-01
+> `TRANSFER_TARGET_URL` against commit 9fc05a9, 2026-11-01; the end-to-end
+> browser suite (§6 `e2e`/`e2e_instance` commands and "End-to-end browser
+> suite") against commit 01db4cc, 2026-11-01
 
 # Common Ground Infrastructure Documentation
 
@@ -197,7 +199,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 
 #### `mailpit`
 - **Image:** `axllent/mailpit:v1.32.0` (pinned by digest)
-- **Purpose:** Mail catcher. The dev defaults point `api` and `job-runner` at it (`SMTP_HOST=mailpit`, port 1025, `SMTP_SECURITY=none`), so every mail the dev stack sends ends up here and nothing leaves the machine. **Dev stack only** — the self-host stack has the `mail` relay instead.
+- **Purpose:** Mail catcher. The dev defaults point `api` and `job-runner` at it (`SMTP_HOST=mailpit`, port 1025, `SMTP_SECURITY=none`), so every mail the dev stack sends ends up here and nothing leaves the machine. Not part of a self-host deployment, which has the `mail` relay instead; the end-to-end suite's disposable instance (`e2e/docker-compose.e2e.yml`) adds the same pinned image as its catcher (see [End-to-end browser suite](#end-to-end-browser-suite)).
 - **Ports:** `${EXTERNAL_LISTEN_IP}:8025:8025` — web UI (and its REST API); SMTP 1025 stays inside the `cryptogram` network. Messages are kept in memory (lost on restart). The UI has no login and shows every caught mail, login codes included — keep `EXTERNAL_LISTEN_IP` on `127.0.0.1` unless the network is trusted.
 
 #### `hardhat`
@@ -899,6 +901,8 @@ still name the merged `feat/reference-client` branch — see
 | `./run.sh down` | Stops all services. |
 | `./run.sh compose <args…>` | Passthrough to `docker compose` with the right file(s). |
 | `./run.sh shell` | Interactive bash in `cg-builder` (project mounted at `/cg`). |
+| `./run.sh e2e <options…>` | End-to-end browser suite (`e2e/run.sh`) in a container, see [End-to-end browser suite](#end-to-end-browser-suite). |
+| `./run.sh e2e_instance build\|up\|down\|status\|logs` | The suite's disposable instance (`e2e/instance.sh`). |
 | `./run.sh make_migration <name>` | New TypeORM migration via `tools/makeMigration.sh`. |
 | `./run.sh make_empty_migration <name>` | Empty migration via `tools/makeEmptyMigration.sh`. |
 
@@ -909,6 +913,34 @@ still name the merged `feat/reference-client` branch — see
 3. **After backend changes:** `./run.sh update_backend`.
 4. **After frontend changes (production build test):** `./run.sh update_frontend`.
 5. **Schema changes:** `./run.sh make_migration <name>`, edit the file, then `./run.sh update_backend` (migrations run automatically on startup via `migrate-db`).
+
+### End-to-end browser suite
+
+`e2e/` drives real Chrome (puppeteer) through the main user flows — sign-up
+and login (password, passkey), reload robustness, communities and real-time
+chat, image uploads, settings and the wallet modal, two-user calls with fake
+media, articles and plugins — and fails a flow on any uncaught page error,
+error-boundary screen, console error, CSP violation or unexpected
+`status: 'ERROR'` API response (`e2e/src/allowlist.ts` holds the documented
+exceptions). It runs inside the backend image, which already ships the
+pinned Chrome for Testing and `puppeteer`; `e2e/` has no dependencies of its
+own. Details, options and how to add a flow: [`e2e/README.md`](../../e2e/README.md).
+
+- `./run.sh e2e_instance build` / `up` / `down` — a disposable self-host
+  instance from the checkout: compose project `cg-e2e`, image tags
+  `cg-e2e/*`, generated secrets in `e2e/.instance/` (gitignored), domain
+  `cg-e2e.test` with Caddy's local CA, a Mailpit catcher, no host ports (the
+  runner container joins the stack's network). `e2e/docker-compose.e2e.yml`
+  layers it on `docker-compose.selfhost.yml` + `docker-compose.selfhost.calls.yml`;
+  its edge config `e2e/Caddyfile.e2e` is the self-host site plus one test-only
+  rule (a per-browser cookie becomes the client address, so the per-address
+  sign-up limit does not cap the suite).
+- `./run.sh e2e --instance` runs the suite against it; `e2e/run.sh --url
+  https://<host> --ca <root.crt>` against any other instance (a private CA is
+  verified by the suite, which then pins only the instance's leaf
+  certificate keys in Chrome).
+- Output: per-flow summary, `e2e/results/<timestamp>/report.json` with every
+  guard finding, screenshots of failed steps; non-zero exit on failure.
 
 ---
 

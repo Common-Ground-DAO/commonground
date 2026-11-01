@@ -295,6 +295,9 @@ class NotificationHelper {
       UPDATE devices
       SET "webPushSubscription" = ${format("%L::JSONB", JSON.stringify(data))}
       WHERE "id" = ${format("%L::UUID", deviceId)}
+        AND "deletedAt" IS NULL
+        -- not a key the account signed out (docs/auth-identity §2)
+        AND "generation" >= session_generation_of("userId")
     `);
     if (result.rowCount !== 1) {
       throw new Error(errors.server.NOT_FOUND);
@@ -353,6 +356,8 @@ class NotificationHelper {
           ON d."userId" = ucs."userId"
           AND d."deletedAt" IS NULL
           AND d."webPushSubscription" IS NOT NULL
+          -- not a key the account signed out (docs/auth-identity §2)
+          AND d."generation" >= session_generation_of(d."userId")
 
         WHERE ucs."communityId" = $1
           AND ucs."userId" = $2
@@ -395,6 +400,8 @@ class NotificationHelper {
         WHERE d."userId" = ${format("%L::UUID", userId)}
           AND d."webPushSubscription" IS NOT NULL
           AND d."deletedAt" IS NULL
+          -- not a key the account signed out (docs/auth-identity §2)
+          AND d."generation" >= u."sessionGeneration"
       `);
       devicesWithPush = result.rows;
     }

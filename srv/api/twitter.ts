@@ -5,7 +5,10 @@
 import express from "express";
 import { TwitterApi } from 'twitter-api-v2';
 import errors from "../common/errors";
-import { registerPostRoute } from "./util";
+import { handleError, registerPostRoute } from "./util";
+import ipRateLimitHandler from "../util/rateLimit";
+import { RateLimitError } from "../util/rateLimitError";
+import { AUTH_LIMITS } from "../util/authLimits";
 import validators from "../validators";
 import userHelper from "../repositories/users";
 import { dockerSecret } from "../util";
@@ -40,8 +43,25 @@ passport.deserializeUser((twitterUserData: any, done) => {
   done(null, twitterUserData);
 });
 
+// The redirect stores the OAuth request token in a session (a new one for a
+// visitor without): limited per client network (srv/util/authLimits.ts
+// "preLogin")
+const xRedirectLimiter = ipRateLimitHandler({
+  bucket: 'twitter:start-login',
+  ...AUTH_LIMITS.preLogin.xRedirect,
+});
+
 // Check getRoutes.ts for the twitter-callback route
-twitterRouter.get('/startLogin', passport.authenticate("twitter"));
+twitterRouter.get('/startLogin', (request, response, next) => {
+  xRedirectLimiter(request, response).then(() => next(), (e) => {
+    if (e instanceof RateLimitError) {
+      // a page navigation (the X popup): the popup's page says it
+      response.redirect(`/twitter-login?error=rate-limited&retryAfter=${e.retryAfterSeconds}`);
+      return;
+    }
+    handleError(response, e);
+  });
+}, passport.authenticate("twitter"));
 
 registerPostRoute<
   API.Twitter.finishLogin.Request,

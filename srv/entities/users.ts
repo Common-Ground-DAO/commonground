@@ -123,6 +123,17 @@ export class User {
     @Column({ type: 'boolean', nullable: false, default: false, select: false })
     passwordChangeRequired!: boolean;
 
+    /**
+     * The account's session generation (docs/auth-identity §2, "Signing out
+     * other devices"): raised to the next `session_generation_seq` value when
+     * the account signs out its other devices. Sessions, device keys and
+     * transfer links of a lower generation are no longer valid.
+     */
+    // partial index ("sessionGeneration" > 0), created by the migration
+    @Index('idx_users_sessionGeneration', { synchronize: false })
+    @Column({ type: 'bigint', nullable: false, default: 0, select: false })
+    sessionGeneration!: string;
+
     @Column({ type: 'integer', nullable: false, default: 0 })
     pointBalance!: number;
 

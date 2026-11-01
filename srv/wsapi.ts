@@ -561,6 +561,15 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
           roleIds: ids.roleIds,
           communityIds: ids.communityIds,
         });
+        // the key may have become invalid (the account signed out its other
+        // devices: srv/util/signOutOtherDevices.ts) after it was verified
+        // above and before the rooms were joined — after the disconnect that
+        // sign-out sent: leave again
+        if (!(await deviceHelper.isLiveDevice(data.deviceId))) {
+          callback("ERROR");
+          socket.disconnect(false);
+          return;
+        }
         await userHelper.setUserOnlineStatus(userId, 'online');
         // Only acknowledge success once identity, room membership, and presence
         // are fully established.

@@ -315,6 +315,8 @@ class WalletHelper {
       type: "wallet",
       preWallet,
       ownerId,
+      walletIdentifier: walletIdentifier?.toLowerCase(),
+      walletType: data.type,
       result: {
         walletExists,
         walletValid,
@@ -344,16 +346,20 @@ class WalletHelper {
    * last sign-in method (srv/repositories/loginMethods.ts); `rpId` is the
    * passkey relying party whose passkeys count.
    */
-  public async updateWallet(userId: string, data: API.User.updateWallet.Request, keepLoginMethod?: { rpId: string | null }): Promise<void> {
-    if (!keepLoginMethod || data.loginEnabled !== false) {
+  public async updateWallet(userId: string, data: API.User.updateWallet.Request, keepLoginMethod?: { rpId: string | null }, beforeCommit?: (client: PoolClient) => Promise<void>): Promise<void> {
+    if ((!keepLoginMethod || data.loginEnabled !== false) && !beforeCommit) {
       await _updateWallet(pool, userId, data);
       return;
     }
     const client = await pool.connect();
     await client.query("BEGIN");
     try {
-      await assertWalletIsNotLastLoginMethod(client, userId, keepLoginMethod.rpId, data.id);
+      if (keepLoginMethod && data.loginEnabled === false) {
+        await assertWalletIsNotLastLoginMethod(client, userId, keepLoginMethod.rpId, data.id);
+      }
       await _updateWallet(client, userId, data);
+      // the caller's own step in the same transaction
+      await beforeCommit?.(client);
       await client.query("COMMIT");
     }
     catch (e) {
@@ -366,7 +372,7 @@ class WalletHelper {
   }
 
   /** `keepLoginMethod`: as for updateWallet — the account's last sign-in method cannot be deleted. */
-  public async deleteWallet(userId: string, data: API.User.deleteWallet.Request, keepLoginMethod?: { rpId: string | null }): Promise<void> {
+  public async deleteWallet(userId: string, data: API.User.deleteWallet.Request, keepLoginMethod?: { rpId: string | null }, beforeCommit?: (client: PoolClient) => Promise<void>): Promise<void> {
     const client = await pool.connect();
     let roleData: Awaited<ReturnType<typeof this._walletDeleted_clearBalancesAndGetAffectedRoles>> | undefined;
     await client.query("BEGIN");
@@ -376,6 +382,8 @@ class WalletHelper {
       }
       await _deleteWallet(client, userId, data);
       roleData = await this._walletDeleted_clearBalancesAndGetAffectedRoles(client, userId, data.id);
+      // the caller's own step in the same transaction
+      await beforeCommit?.(client);
       await client.query("COMMIT");
     }
     catch (e) {
@@ -596,6 +604,21 @@ class WalletHelper {
         address: Common.Address;
       }[];
     }[];
+  }
+
+  /**
+   * Whether the wallet is (still) a live, login-enabled wallet of `userId`:
+   * checked again when a prepared signature is used, since the wallet may
+   * have been removed or its sign-in switched off since.
+   */
+  public async isSignInWallet(userId: string, walletIdentifier: string, type: Models.Wallet.Type): Promise<boolean> {
+    const result = await pool.query(`
+      SELECT 1
+      FROM wallets
+      WHERE "walletIdentifier" = $1 AND "type" = $2 AND "userId" = $3
+        AND "loginEnabled" = TRUE AND "deletedAt" IS NULL
+    `, [walletIdentifier.toLowerCase(), type, userId]);
+    return result.rows.length === 1;
   }
 
   /** loginEnabled flag of one of the user's live wallets, or null if it is not theirs. */

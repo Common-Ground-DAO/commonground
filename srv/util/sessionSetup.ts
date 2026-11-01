@@ -12,6 +12,8 @@ import config from '../common/config';
 import serverconfig from '../serverconfig';
 import urls from './urls';
 import { isLegacyCgidMode } from './passkeyConfig';
+import { SIGNUP_CAPTCHA_TTL_MS } from './signupEmail';
+import { sessionGenerationGuard } from './userSessions';
 
 // Session setup of the api process (srv/util/express.ts).
 //
@@ -35,18 +37,66 @@ import { isLegacyCgidMode } from './passkeyConfig';
 // that would bring a logged-out session back. Left open: a request whose
 // response was complete on the server before the revocation but reaches the
 // browser after the new cookie (delivery reordering) can still set the old id.
+//
+// A session without a logged-in user (the device login's challenge, a sign-up
+// in progress, a WebAuthn ceremony) is kept in the store for a short time only
+// (sessionStoreTtlSeconds); from login on, the full 12 hours apply.
 
 export const sessionSecret = dockerSecret('redis_secret') || process.env.REDIS_SECRET as string;
+
+/** key prefix of the sessions in the store (connect-redis' default) */
+export const SESSION_KEY_PREFIX = 'sess:';
+
+const SESSION_MAX_AGE_MS = 12*60*60*1000; // 12 hours
 
 // kept in its own binding because `SessionOptions['cookie']` is a union with a
 // per-request callback since express-session 1.19 — indexing into it directly
 // no longer type-checks
 export const sessionCookieOptions: session.CookieOptions = {
-  maxAge: 12*60*60*1000, // 12 hours
+  maxAge: SESSION_MAX_AGE_MS,
   httpOnly: true,
   secure: config.DEPLOYMENT !== "dev",
   sameSite: 'lax',
 };
+
+/**
+ * How long the store keeps a session without a logged-in user after its last
+ * request. Every request refreshes it, so does the web app's keepalive
+ * (User/ensureSession, every 29 minutes) while a tab is open — twice within
+ * the hour, so one keepalive that a throttled background tab or a sleeping
+ * laptop delays does not lose a sign-up or wallet step in progress.
+ */
+export const ANONYMOUS_SESSION_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Store TTL of a session, in seconds (connect-redis `ttl`): the rest of the
+ * cookie's lifetime for a logged-in session; for any other session at most
+ * ANONYMOUS_SESSION_TTL_MS — longer only while a sign-up in it needs its state:
+ * until the verified address or the code runs out (`expiresAt`, at most an
+ * hour) and while the solved captcha still counts for a new code
+ * (SIGNUP_CAPTCHA_TTL_MS). Never beyond the cookie. A request that loads the
+ * session computes it again, so the short TTL ends with the login.
+ */
+export function sessionStoreTtlSeconds(
+  sess: Omit<Partial<session.SessionData>, 'cookie'> & { cookie?: { expires?: Date | string | null } },
+  now = Date.now(),
+): number {
+  const expires = sess.cookie?.expires;
+  const cookieMs = expires ? new Date(expires).getTime() - now : SESSION_MAX_AGE_MS;
+  let keepMs = cookieMs;
+  if (!sess.user) {
+    keepMs = ANONYMOUS_SESSION_TTL_MS;
+    const signup = sess.signupEmail;
+    if (signup) {
+      keepMs = Math.max(keepMs, signup.expiresAt - now);
+      if (typeof signup.captchaAt === 'number') {
+        keepMs = Math.max(keepMs, signup.captchaAt + SIGNUP_CAPTCHA_TTL_MS - now);
+      }
+    }
+    keepMs = Math.min(keepMs, cookieMs);
+  }
+  return Math.ceil(keepMs / 1000);
+}
 
 // Legacy CG ID mode only: scope the session cookie to all subdomains so the
 // app and the CG ID app (id.<domain>) share a session (.app.cg unchanged).
@@ -151,13 +201,18 @@ export function createSessionMiddlewares(store: session.Store, revocations: Sess
     skipBots(sessionMiddleware),
     // after the session middleware: wraps res.end around express-session's
     skipBots(revokedSessionGuard(revocations)),
+    // after the revocation guard: a session of an older generation than its
+    // user's (signed out from another device) ends here, and the guard above
+    // keeps it from being saved or re-sent (srv/util/sessionGenerations.ts)
+    skipBots(sessionGenerationGuard()),
     skipBots(passportInitializeMiddleware),
     skipBots(passportSessionMiddleware),
     skipBots(legacyDomainCookieMiddleware),
   ];
 }
 
-function hasStoredData(current: session.Session & Partial<session.SessionData>): boolean {
+/** the session holds data (it was loaded from the store or written in this request) */
+export function hasStoredData(current: session.Session & Partial<session.SessionData>): boolean {
   return Object.keys(current).some(key => key !== 'cookie');
 }
 

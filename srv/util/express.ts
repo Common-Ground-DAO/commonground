@@ -15,7 +15,11 @@ import type { ChallengeEntry, PendingPasskey } from './passkeys';
 import type { AuthMethod } from './authSession';
 import { isLegacyCgidMode } from './passkeyConfig';
 import { botAllowlistMiddleware, botAuthenticationMiddleware } from './botPrincipal';
-import { createSessionMiddlewares, redisSessionRevocations, withSessionRevocation } from './sessionSetup';
+import { createSessionMiddlewares, redisSessionRevocations, SESSION_KEY_PREFIX, sessionStoreTtlSeconds, withSessionRevocation } from './sessionSetup';
+import { redisUserSessionIndex, withUserSessionIndex } from './userSessions';
+import { GenerationReconciler, redisSessionGenerations } from './sessionGenerations';
+import userHelper from '../repositories/users';
+import deviceHelper from '../repositories/device';
 import { appOrigins } from './origins';
 
 // TYPES
@@ -31,6 +35,10 @@ declare module 'express-session' {
     // when the login session was created (establishLoginSession); nothing
     // reads it
     createdAt?: Date;
+    // the session generation read when the session's login started
+    // (establishLoginSession); a lower one than its user's ends the session
+    // (srv/util/sessionGenerations.ts)
+    gen?: number;
     passport?: any;
 
     twitter?: {
@@ -152,12 +160,31 @@ app.use(cookieParser());
 
 // Sessions are only created when something is stored in them, and only the
 // cookie of a logged-in session is re-sent on every response
-// (srv/util/sessionSetup.ts).
+// (srv/util/sessionSetup.ts). A session without a logged-in user is kept for
+// a short time only (sessionStoreTtlSeconds); the logged-in sessions of each
+// user are indexed, and a per-user session generation ends every session
+// whose login started before the user's last sign-out of other devices
+// (srv/util/userSessions.ts, srv/util/sessionGenerations.ts).
 app.use(botAuthenticationMiddleware);
 const sessionRevocations = redisSessionRevocations(redisManager.getClient('session'));
-app.use(createSessionMiddlewares(withSessionRevocation(new RedisStore({
-  client: redisManager.getClient('session')
-}), sessionRevocations), sessionRevocations));
+const sessionGenerations = redisSessionGenerations(redisManager.getClient('session'));
+const sessionStore = withUserSessionIndex(new RedisStore({
+  client: redisManager.getClient('session'),
+  prefix: SESSION_KEY_PREFIX,
+  ttl: sessionStoreTtlSeconds,
+}), redisUserSessionIndex(redisManager.getClient('session')), {
+  generations: sessionGenerations,
+  generationsReady: () => generationReconciler.ready,
+  currentGeneration: (userId) => userHelper.getSessionGeneration(userId),
+  discardDevice: (deviceId) => deviceHelper.deleteDevice(deviceId),
+});
+// copies the generations committed since its last run to Valkey: at start
+// (retried until Valkey and PostgreSQL answer; logged-in requests fail until
+// then) and every 30 s — a copy that failed at sign-out, or one lost with a
+// Valkey restored from an older snapshot, arrives within one interval
+const generationReconciler = new GenerationReconciler(sessionGenerations, (after) => userHelper.sessionGenerationsSince(after));
+generationReconciler.start();
+app.use(createSessionMiddlewares(withSessionRevocation(sessionStore, sessionRevocations), sessionRevocations));
 app.use(botAllowlistMiddleware);
 
   /**

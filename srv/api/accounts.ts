@@ -10,8 +10,16 @@ import walletHelper from "../repositories/wallets";
 import userHelper from "../repositories/users";
 import { fetchRemoteImage } from "../util/safeFetch";
 import fileHelper from "../repositories/files";
+import ipRateLimitHandler from "../util/rateLimit";
+import { AUTH_LIMITS } from "../util/authLimits";
 
 const accountsRouter = express.Router();
+
+// the check asks the Farcaster registry (srv/util/authLimits.ts "preLogin")
+const farcasterSignatureLimiter = ipRateLimitHandler({
+  bucket: 'accounts:farcaster:verify-login',
+  ...AUTH_LIMITS.preLogin.signatureCheck,
+});
 
 registerPostRoute<
   API.Accounts.Farcaster.verifyLogin.Request,
@@ -21,6 +29,7 @@ registerPostRoute<
   '/Farcaster/verifyLogin',
   validators.API.Accounts.Farcaster.verifyLogin,
   async (request, response, data) => {
+    await farcasterSignatureLimiter(request, response);
     const siweData = walletHelper.parseAndVerifySiweData(data);
     const issuedAt = new Date(siweData.issuedAt);
     if (Math.abs(Date.now() - issuedAt.getTime()) > 60_000) {

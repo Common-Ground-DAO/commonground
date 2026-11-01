@@ -9,8 +9,16 @@ import validators from "../validators";
 import onchainHelper from "../repositories/onchain";
 import userHelper from "../repositories/users";
 import { SIGNABLE_SECRET_LENGTH } from "./user";
+import ipRateLimitHandler from "../util/rateLimit";
+import { AUTH_LIMITS } from "../util/authLimits";
 
 const luksoUniversalProfileRouter = express.Router();
+
+// the check asks the chain (srv/util/authLimits.ts "preLogin")
+const signatureCheckLimiter = ipRateLimitHandler({
+  bucket: 'lukso:prepare-action',
+  ...AUTH_LIMITS.preLogin.signatureCheck,
+});
 
 registerPostRoute<
   API.Lukso.PrepareLuksoAction.Request,
@@ -20,6 +28,7 @@ registerPostRoute<
   '/PrepareLuksoAction',
   validators.API.Lukso.PrepareLuksoAction,
   async (request, response, data) => {
+    await signatureCheckLimiter(request, response);
     try {
       const { signSecret } = request.session;
       const secret = data.message.match(new RegExp(`Nonce: ([a-zA-Z0-9]{${SIGNABLE_SECRET_LENGTH}})`))?.[1];

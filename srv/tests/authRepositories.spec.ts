@@ -148,22 +148,22 @@ describe('password login check', () => {
 });
 
 describe('transfer token statements', () => {
-  it('stores only the hash, with the user and an expiry', async () => {
+  it('stores only the hash, with the user, an expiry and the minting session\'s generation', async () => {
     poolQuery.mockResolvedValue({ rows: [{ expiresAt: new Date() }] });
-    const { token } = await transferTokenHelper.create(USER, '/c/x/', 600000);
+    const { token } = await transferTokenHelper.create(USER, '/c/x/', 600000, 7);
     const insert = poolQuery.mock.calls.find(([sql]) => sql.includes('INSERT INTO transfer_tokens'))!;
-    expect(insert[1]).toEqual([USER, hashTransferToken(token), '/c/x/', 600000]);
+    expect(insert[1]).toEqual([USER, hashTransferToken(token), '/c/x/', 600000, 7]);
     expect(JSON.stringify(poolQuery.mock.calls)).not.toContain(token);
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 
-  it('redemption is one conditional UPDATE: unused, unexpired, live account', async () => {
+  it('redemption is one conditional UPDATE: unused, unexpired, live account, not below the account\'s generation', async () => {
     poolQuery.mockResolvedValue({ rows: [] });
     await expect(transferTokenHelper.consume('t'.repeat(43))).resolves.toBeNull();
     const [sql, params] = poolQuery.mock.calls[0];
     const statement = normalize(sql);
     expect(statement).toMatch(/^UPDATE transfer_tokens t SET "usedAt" = now\(\) WHERE t\."tokenHash" = \$1 AND t\."usedAt" IS NULL AND t\."expiresAt" > now\(\)/);
-    expect(statement).toContain('u."deletedAt" IS NULL AND u.is_bot = FALSE');
+    expect(statement).toContain('u."deletedAt" IS NULL AND u.is_bot = FALSE AND t."generation" >= u."sessionGeneration"');
     expect(statement).toContain('RETURNING t."userId", t."nextPath"');
     expect(params).toEqual([hashTransferToken('t'.repeat(43))]);
     expect(poolQuery).toHaveBeenCalledTimes(1);

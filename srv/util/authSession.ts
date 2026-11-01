@@ -5,6 +5,7 @@
 import type express from "express";
 import errors from "../common/errors";
 import { clearSessionCookie, legacyDomainCookieCleanupActive } from "./sessionSetup";
+import { loginGeneration, userSessionIndexOf, userSessionsOf } from "./userSessions";
 
 /**
  * How the session's current authentication came about. Interactive logins,
@@ -119,12 +120,19 @@ export async function establishLoginSession(
       }
     }
   }
+  const replaced = previous.user ? { userId: previous.user.id, sid: request.sessionID } : null;
   await new Promise<void>((resolve, reject) => {
     request.session.regenerate((e) => (e ? reject(e) : resolve()));
   });
+  if (replaced) {
+    await forgetSession(request, replaced.userId, replaced.sid);
+  }
   const { session } = request;
   Object.assign(session, carried);
   session.createdAt = new Date();
+  // the generation taken before the credential was checked
+  const gen = loginGeneration(request);
+  session.gen = gen;
   markLegacyDomainCookieCleared(session);
   session.user = { id: login.userId, deviceId: login.deviceId };
   if (login.method !== "device") {
@@ -132,6 +140,22 @@ export async function establishLoginSession(
     session.authMethod = login.method;
   }
   await saveSession(session);
+  // The account signed out its other devices after this login started (so
+  // it may have checked a credential that is gone now): the new session and
+  // the device key this login created go again. Read after the save and
+  // after the device was created; a bump only happens after the change
+  // committed, so a login that started after it checked the new state.
+  const currentGeneration = userSessionsOf(request.sessionStore)?.currentGeneration;
+  if (currentGeneration && (await currentGeneration(login.userId)) > gen) {
+    const sessions = userSessionsOf(request.sessionStore);
+    await endLoginSession(request);
+    if (login.method !== "device") {
+      await sessions?.discardDevice?.(login.deviceId).catch((e) => {
+        console.error("Error deleting the device of a signed-out login", e instanceof Error ? e.message : e);
+      });
+    }
+    throw new Error(login.method === "device" ? errors.server.NOT_FOUND : errors.server.NOT_ALLOWED);
+  }
 }
 
 function markLegacyDomainCookieCleared(session: express.Request["session"]) {
@@ -149,12 +173,24 @@ function markLegacyDomainCookieCleared(session: express.Request["session"]) {
  * any session whose id changed.)
  */
 export async function endLoginSession(request: express.Request): Promise<void> {
+  const ended = request.session.user ? { userId: request.session.user.id, sid: request.sessionID } : null;
   await new Promise<void>((resolve, reject) => {
     request.session.destroy((e) => (e ? reject(e) : resolve()));
   });
+  if (ended) {
+    await forgetSession(request, ended.userId, ended.sid);
+  }
   if (request.res) {
     clearSessionCookie(request.res);
   }
+}
+
+/**
+ * Drops a session that is gone from the index of the user's sessions
+ * (srv/util/userSessions.ts). A store without an index has nothing to drop.
+ */
+async function forgetSession(request: express.Request, userId: string, sid: string) {
+  await userSessionIndexOf(request.sessionStore)?.forget(userId, sid);
 }
 
 /** Records a successful re-authentication of the session's user. */

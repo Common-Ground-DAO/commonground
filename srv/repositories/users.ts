@@ -104,6 +104,14 @@ let dummyPasswordHash: Promise<string> | undefined;
  */
 export const BCRYPT_COST = 12;
 
+/**
+ * Advisory lock key: held exclusively by a sign-out of other devices until
+ * its commit, shared by each login start (nextSessionGeneration).
+ */
+const SESSION_GENERATION_LOCK = 7312001;
+/** how long a sign-out of other devices waits for a lock before it gives up */
+const BUMP_LOCK_TIMEOUT = '5s';
+
 async function _hashPassword(password: string) {
   const generatedSalt = await bcrypt.genSalt(BCRYPT_COST);
   return await bcrypt.hash(password, generatedSalt);
@@ -1424,6 +1432,140 @@ class UserHelper {
     return result;
   }
 
+  /**
+   * A login starts (docs/auth-identity §2, "Signing out other devices"): the
+   * next session generation, taken before any credential is checked. It waits
+   * while a sign-out of other devices is being committed (they hold the lock
+   * exclusively until their commit), so a value above that sign-out's
+   * generation is only handed out once its change is visible.
+   */
+  public async nextSessionGeneration(): Promise<number> {
+    const result = await pool.query<{ gen: string }>(`
+      WITH lock AS MATERIALIZED (SELECT pg_advisory_xact_lock_shared($1))
+      SELECT nextval('session_generation_seq') AS gen FROM lock
+    `, [SESSION_GENERATION_LOCK]);
+    return Number(result.rows[0].gen);
+  }
+
+  /** the user's session generation (0: never signed out other devices) */
+  public async getSessionGeneration(userId: string): Promise<number> {
+    const result = await pool.query<{ gen: string }>(`
+      SELECT "sessionGeneration" AS gen FROM users WHERE "id" = $1
+    `, [userId]);
+    return Number(result.rows[0]?.gen ?? 0);
+  }
+
+  /**
+   * Signs the user out of every other session, device key and transfer link,
+   * inside the caller's transaction (`client`, together with the change that
+   * caused it, right before its COMMIT): raises the user's generation to the
+   * next sequence value and gives the caller's own device that generation.
+   * Refused (LOGIN_REQUIRED) when the calling session's generation is below
+   * the user's — a session that was signed out itself cannot sign out
+   * anyone. Locks the user row first, then — for the last statement only —
+   * the advisory lock that logins wait on; a lock that is not granted within
+   * BUMP_LOCK_TIMEOUT fails the transaction (SERVICE_UNAVAILABLE, retryable)
+   * instead of making logins wait. Returns the new generation.
+   */
+  public async bumpSessionGeneration(client: PoolClient, userId: string, callerGeneration: number, keepDeviceId: string): Promise<number> {
+    try {
+      await client.query(`SET LOCAL lock_timeout = '${BUMP_LOCK_TIMEOUT}'`);
+      const current = await client.query<{ gen: string }>(`
+        SELECT "sessionGeneration" AS gen FROM users WHERE "id" = $1 FOR UPDATE
+      `, [userId]);
+      if (current.rows.length !== 1) {
+        throw new Error(errors.server.NOT_FOUND);
+      }
+      if (callerGeneration < Number(current.rows[0].gen)) {
+        throw new Error(errors.server.LOGIN_REQUIRED);
+      }
+      // from here to the COMMIT, logins that start wait (nextSessionGeneration)
+      await client.query(`SELECT pg_advisory_xact_lock($1)`, [SESSION_GENERATION_LOCK]);
+      const bumped = await client.query<{ gen: string }>(`
+        WITH bumped AS (
+          UPDATE users SET "sessionGeneration" = nextval('session_generation_seq')
+          WHERE "id" = $1
+          RETURNING "sessionGeneration"
+        ), kept AS (
+          UPDATE devices SET "generation" = (SELECT "sessionGeneration" FROM bumped)
+          WHERE "id" = $2 AND "userId" = $1 AND "deletedAt" IS NULL
+        )
+        SELECT "sessionGeneration" AS gen FROM bumped
+      `, [userId, keepDeviceId]);
+      return Number(bumped.rows[0].gen);
+    }
+    catch (e) {
+      if ((e as { code?: string }).code === '55P03') {
+        // lock_not_available: the caller rolls back; the client may retry
+        throw new Error(errors.server.SERVICE_UNAVAILABLE);
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * The users whose generation changed since `after` (a value of the
+   * sequence), for copying to Valkey, and the sequence value up to which the
+   * answer is complete: read while holding the advisory lock shared, so no
+   * sign-out is between its new generation and its COMMIT — every generation
+   * up to that value is committed or will never be a user's.
+   */
+  public async sessionGenerationsSince(after: number): Promise<{ upTo: number; rows: { userId: string; gen: number }[] }> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SELECT pg_advisory_xact_lock_shared($1)`, [SESSION_GENERATION_LOCK]);
+      // separate statements: in READ COMMITTED each sees what was committed when it started
+      const sequence = await client.query<{ upTo: string }>(`SELECT CASE WHEN is_called THEN last_value ELSE last_value - 1 END AS "upTo" FROM session_generation_seq`);
+      const result = await client.query<{ userId: string; gen: string }>(`
+        SELECT "id" AS "userId", "sessionGeneration" AS gen
+        FROM users
+        WHERE "sessionGeneration" > 0 AND "sessionGeneration" > $1
+        ORDER BY "sessionGeneration"
+      `, [after]);
+      await client.query('COMMIT');
+      return {
+        upTo: Number(sequence.rows[0].upTo),
+        rows: result.rows.map(row => ({ userId: row.userId, gen: Number(row.gen) })),
+      };
+    }
+    catch (e) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw e;
+    }
+    finally {
+      client.release();
+    }
+  }
+
+  /** bumpSessionGeneration in a transaction of its own (a sign-out without a change) */
+  public async bumpSessionGenerationAlone(userId: string, callerGeneration: number, keepDeviceId: string): Promise<number> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const gen = await this.bumpSessionGeneration(client, userId, callerGeneration, keepDeviceId);
+      await client.query('COMMIT');
+      return gen;
+    }
+    catch (e) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw e;
+    }
+    finally {
+      client.release();
+    }
+  }
+
+  /** the provider id of the user's live account of that type (X, LUKSO, Farcaster), or null */
+  public async getLinkedAccountId(userId: string, accountType: Exclude<Models.User.ProfileItemType, "cg" | "bot">): Promise<string | null> {
+    const result = await pool.query<{ id: string | null }>(`
+      SELECT ua."data"->>'id' AS "id"
+      FROM user_accounts ua
+      WHERE ua."userId" = $1 AND ua."type" = $2 AND ua."deletedAt" IS NULL
+    `, [userId, accountType]);
+    return result.rows[0]?.id ?? null;
+  }
+
   public async getUserByAccount(accountType: Exclude<Models.User.ProfileItemType, "cg" | "bot">, accountId: string): Promise<Models.User.OwnData> {
     const query = `
       SELECT "userId"
@@ -1452,7 +1594,12 @@ class UserHelper {
    * unconfirmed claim never blocks the owner); `clearedFrom` names those
    * accounts. EXISTS_ALREADY when another account has it verified.
    */
-  public async setVerifiedEmail(userId: string, email: string): Promise<{ previousEmail: string | null; previousVerified: boolean; clearedFrom: string[] }> {
+  public async setVerifiedEmail(
+    userId: string,
+    email: string,
+    /** the caller's own step in the same transaction, given whether a verified address was replaced */
+    beforeCommit?: (client: PoolClient, replaced: { previousEmail: string | null; previousVerified: boolean }) => Promise<void>,
+  ): Promise<{ previousEmail: string | null; previousVerified: boolean; clearedFrom: string[] }> {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -1474,6 +1621,7 @@ class UserHelper {
       if (result.rows.length !== 1) {
         throw new Error(errors.server.NOT_FOUND);
       }
+      await beforeCommit?.(client, result.rows[0]);
       await client.query('COMMIT');
       return { ...result.rows[0], clearedFrom: cleared.rows.map(row => row.id) };
     }
@@ -1564,14 +1712,36 @@ class UserHelper {
   }
 
   /** Sets (or replaces) the password; a pending password change is done with it. */
-  public async setPassword(userId: string, password: string): Promise<void> {
-    const result = await pool.query(`
-      UPDATE users
-      SET "password" = $2, "passwordChangeRequired" = FALSE, "updatedAt" = now()
-      WHERE "id" = $1 AND "deletedAt" IS NULL
-    `, [userId, await _hashPassword(password)]);
-    if (result.rowCount !== 1) {
-      throw new Error(errors.server.NOT_FOUND);
+  /** `beforeCommit`: the caller's own step in the same transaction */
+  public async setPassword(userId: string, password: string, beforeCommit?: (client: PoolClient) => Promise<void>): Promise<void> {
+    const hash = await _hashPassword(password);
+    const update = async (db: Pool | PoolClient) => {
+      const result = await db.query(`
+        UPDATE users
+        SET "password" = $2, "passwordChangeRequired" = FALSE, "updatedAt" = now()
+        WHERE "id" = $1 AND "deletedAt" IS NULL
+      `, [userId, hash]);
+      if (result.rowCount !== 1) {
+        throw new Error(errors.server.NOT_FOUND);
+      }
+    };
+    if (!beforeCommit) {
+      await update(pool);
+      return;
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await update(client);
+      await beforeCommit(client);
+      await client.query('COMMIT');
+    }
+    catch (e) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw e;
+    }
+    finally {
+      client.release();
     }
   }
 
@@ -1581,7 +1751,9 @@ class UserHelper {
       previewImageId?: string
     } & {
       bannerImageId?: string | null
-    }>
+    }>,
+    /** the caller's own step in the same transaction */
+    beforeCommit?: (client: PoolClient) => Promise<void>,
   ): Promise<void> {
     if (data.displayAccount === UserProfileTypeEnum.BOT) {
       throw new Error(errors.server.INVALID_REQUEST);
@@ -1592,11 +1764,31 @@ class UserHelper {
     if ("updatedAt" in data || "id" in data || "extraData" in data) {
       throw new Error(errors.server.INVALID_REQUEST);
     }
-    const result = await _updateUser(pool, {
+    const update = (db: Pool | PoolClient) => _updateUser(db, {
       // type-safe override of displayAccount (enum vs type)
       ...data,
       id: userId,
     });
+    let result: Awaited<ReturnType<typeof update>>;
+    if (!beforeCommit) {
+      result = await update(pool);
+    }
+    else {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        result = await update(client);
+        await beforeCommit(client);
+        await client.query('COMMIT');
+      }
+      catch (e) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw e;
+      }
+      finally {
+        client.release();
+      }
+    }
 
     // preview image should not be delivered as an update
     delete data.previewImageId;
@@ -1721,7 +1913,9 @@ class UserHelper {
 
   public async addUserAccount(
     userId: string,
-    data: CreateHumanUserAccountData
+    data: CreateHumanUserAccountData,
+    /** the caller's own step in the same transaction */
+    beforeCommit?: (client: PoolClient) => Promise<void>,
   ): Promise<void> {
     if ((data as CreateUserAccountData).type === UserProfileTypeEnum.BOT) {
       throw new Error(errors.server.INVALID_REQUEST);
@@ -1751,6 +1945,7 @@ class UserHelper {
       await eventHelper.emit(event, {
         userIds: [userId],
       });
+      await beforeCommit?.(client);
       await client.query('COMMIT');
     } catch (e) {
       await client.query('ROLLBACK');
@@ -1776,6 +1971,8 @@ class UserHelper {
     userId: string,
     type: UserProfileTypeEnum,
     keepLoginMethod?: { rpId: string | null },
+    /** the caller's own step in the same transaction */
+    beforeCommit?: (client: PoolClient) => Promise<void>,
   ): Promise<void> {
     if (type === UserProfileTypeEnum.BOT) {
       throw new Error(errors.server.INVALID_REQUEST);
@@ -1812,6 +2009,7 @@ class UserHelper {
           deletedWalletId = deleteWalletResult.rows[0].id;
         }
       }
+      await beforeCommit?.(client);
       await client.query("COMMIT");
     }
     catch (e) {

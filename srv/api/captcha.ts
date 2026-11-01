@@ -4,13 +4,19 @@
 
 import express from "express";
 import { CAPTCHA_PROVIDER, createCaptchaChallenge } from "../util/captcha";
+import { asyncHandler } from "./asyncHandler";
 
 const captchaRouter = express.Router();
+
+function challengeFailed(response: express.Response, e: unknown) {
+  console.error("Failed to create ALTCHA challenge", e);
+  response.status(500).json({ error: "challenge_failed" });
+}
 
 // Serves a fresh ALTCHA proof-of-work challenge. The ALTCHA widget fetches this
 // URL directly and expects the raw challenge JSON (not the {status, data}
 // envelope used by the POST API), so this is a plain GET route.
-captchaRouter.get("/challenge", async (request, response) => {
+captchaRouter.get("/challenge", asyncHandler(async (request, response) => {
   if (CAPTCHA_PROVIDER !== "altcha") {
     response.status(404).json({ error: "captcha_not_altcha" });
     return;
@@ -20,10 +26,9 @@ captchaRouter.get("/challenge", async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
     response.json(challenge);
   } catch (e) {
-    console.error("Failed to create ALTCHA challenge", e);
-    response.status(500).json({ error: "challenge_failed" });
+    challengeFailed(response, e);
   }
-});
+}, challengeFailed));
 
 // The effective provider, so the frontend can render the widget the backend
 // actually verifies against instead of guessing from serve-time config (which

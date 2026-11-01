@@ -10,6 +10,7 @@ import puppeteer from 'puppeteer';
 import axios from "../util/axios";
 import emailHelper from "../repositories/emails";
 import { recoverPersonalSignature } from '@metamask/eth-sig-util';
+import { asyncRequestHandler } from "../util/asyncHandler";
 
 export const OK: API.AjaxResponse<void> = { status: 'OK' };
 export const ERROR: API.AjaxResponse<void> = { status: "ERROR", error: errors.server.UNKNOWN };
@@ -63,7 +64,9 @@ export function registerPostRoute<RQ, RS>(
   ) => (RS | Promise<RS>),
   options?: Parameters<typeof express.json>[0],
 ) {
-  router.post(route, express.json(options), async (request, response) => {
+  // the try/catch answers handler errors; the wrapper catches what escapes it
+  // (e.g. handleError itself failing because the handler already responded)
+  router.post(route, express.json(options), asyncRequestHandler(async (request, response) => {
     const data = request.body as RQ;
     try {
       if (!!validator) {
@@ -78,7 +81,7 @@ export function registerPostRoute<RQ, RS>(
     } catch (e) {
       handleError(response, e);
     }
-  });
+  }, handleError));
 }
 
 export function convertEventPermissionToCallPermission(rolePermissions: API.Community.createCommunityEvent.Request['rolePermissions']): API.Community.startCall.Request['rolePermissions'] {

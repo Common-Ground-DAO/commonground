@@ -8,6 +8,7 @@ import { fakeHealthcheck } from './healthcheck';
 import express from 'express';
 import { ChannelPermission, PredefinedRole, RoleType } from './common/enums';
 import { convertUuidToBinary, convertBinaryToUuid } from './util/memberListHelpers';
+import { asyncRequestHandler } from './util/asyncHandler';
 
 type PgNotifyEvent = Events.PgNotify.UserDataChange | Events.PgNotify.UserRoleChange | Events.PgNotify.CommunityRoleChange | Events.PgNotify.ChannelRolePermissionChange;
 
@@ -1275,7 +1276,14 @@ async function init() {
 
 const ready = init();
 
-app.post('/getMemberListWindow', express.json(), async (req, res) => {
+// a failing request (e.g. initialisation failed) answers 500; the api's caller
+// turns that into its generic error response
+function requestFailed(response: express.Response, error: unknown) {
+  console.error('memberlist request failed:', error);
+  response.status(500).json({ error: 'memberlist_request_failed' });
+}
+
+app.post('/getMemberListWindow', express.json(), asyncRequestHandler(async (req, res) => {
   const { communityId, offset, limit, search, roleId } = req.body as API.Community.getMemberList.Request;
   await ready;
   const memberList = getMemberListWindow({
@@ -1286,9 +1294,9 @@ app.post('/getMemberListWindow', express.json(), async (req, res) => {
     roleId,
   });
   res.json(memberList);
-});
+}, requestFailed));
 
-app.post('/getChannelMemberListWindow', express.json(), async (req, res) => {
+app.post('/getChannelMemberListWindow', express.json(), asyncRequestHandler(async (req, res) => {
   const { communityId, channelId, offset, limit, search, startsWithSearch } = req.body as API.Community.getChannelMemberList.Request;
   await ready;
   const memberList = getChannelMemberListWindow({
@@ -1300,9 +1308,9 @@ app.post('/getChannelMemberListWindow', express.json(), async (req, res) => {
     startsWithSearch,
   });
   res.json(memberList);
-});
+}, requestFailed));
 
-app.post('/getUserCommunityRoleIds', express.json(), async (req, res) => {
+app.post('/getUserCommunityRoleIds', express.json(), asyncRequestHandler(async (req, res) => {
   const { userId, communityId } = req.body as API.Community.getUserCommunityRoleIds.Request;
   await ready;
   const userData = userDataByUserId.get(userId);
@@ -1312,7 +1320,7 @@ app.post('/getUserCommunityRoleIds', express.json(), async (req, res) => {
     return;
   }
   res.json(Array.from(communityRoleData.keys()).filter(roleId => userData.roleIds.has(roleId)));
-});
+}, requestFailed));
 
 app.listen(4000);
 

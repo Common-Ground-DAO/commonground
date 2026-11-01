@@ -8,6 +8,7 @@ import express from "express";
 import config from "../common/config";
 import articleHelper from "../repositories/articles";
 import { handleError, htmlToImage } from "./util";
+import { asyncHandler } from "./asyncHandler";
 import fileHelper from "../repositories/files";
 import userHelper from "../repositories/users";
 import communityHelper from "../repositories/communities";
@@ -96,7 +97,7 @@ function getWorkingHost(hostname: string): string {
 }
 
 // User Profile
-getRoutesRouter.get(`/${config.URL_USER}/:userId/image.jpeg`, async (req, res) => {
+getRoutesRouter.get(`/${config.URL_USER}/:userId/image.jpeg`, asyncHandler(async (req, res) => {
   try {
     const userId = translator.toUUID(req.params.userId.replace('~', ''));
     const data = await userHelper.getSocialPreviewData({ userId });
@@ -112,8 +113,8 @@ getRoutesRouter.get(`/${config.URL_USER}/:userId/image.jpeg`, async (req, res) =
     }
     res.sendStatus(404);
   } catch (e) { handleError(res, e) }
-});
-getRoutesRouter.get(new RegExp(`/${config.URL_USER}/([^/]+)/?`), async (req, res) => {
+}));
+getRoutesRouter.get(new RegExp(`/${config.URL_USER}/([^/]+)/?`), asyncHandler(async (req, res) => {
   try {
     const userId = translator.toUUID(req.params[0].replace('~', ''));
     const baseUrl = [
@@ -145,10 +146,10 @@ getRoutesRouter.get(new RegExp(`/${config.URL_USER}/([^/]+)/?`), async (req, res
       res.send(indexHtml);
     }
   } catch (e) { handleError(res, e) }
-});
+}));
 
 // Community Article
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_ARTICLE}/([^/]+)/image.jpeg`), async (req, res) => {
+getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_ARTICLE}/([^/]+)/image.jpeg`), asyncHandler(async (req, res) => {
   try {
     const communityUrl = req.params[0];
     const articleUri = req.params[1];
@@ -170,8 +171,8 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_AR
     }
     res.sendStatus(404);
   } catch (e) { handleError(res, e) }
-});
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_ARTICLE}/([^/]+)(/?.*)?`), async (req, res) => {
+}));
+getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_ARTICLE}/([^/]+)(/?.*)?`), asyncHandler(async (req, res) => {
   try {
     const communityUrl = req.params[0];
     const articleUri = req.params[1];
@@ -204,10 +205,10 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_AR
       res.send(indexHtml);
     }
   } catch (e) { handleError(res, e) }
-});
+}));
 
 // Community events
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_EVENT}/([^/]+)/image.jpeg`), async (req, res) => {
+getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_EVENT}/([^/]+)/image.jpeg`), asyncHandler(async (req, res) => {
   try {
     const eventUri = req.params[1];
     const eventIdOrUrl = parseIdOrUrl(eventUri);
@@ -301,8 +302,8 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_EV
     }
     res.sendStatus(404);
   } catch (e) { handleError(res, e) }
-});
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_EVENT}/([^/]+)(/?.*)?`), async (req, res) => {
+}));
+getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_EVENT}/([^/]+)(/?.*)?`), asyncHandler(async (req, res) => {
   try {
     const communityUrl = req.params[0];
     const eventUri = req.params[1];
@@ -333,10 +334,10 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_EV
       res.send(indexHtml);
     }
   } catch (e) { handleError(res, e) }
-});
+}));
 
 // Community plugin
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_PLUGIN}/([^/]+)/image.jpeg`), async (req, res) => {
+getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_PLUGIN}/([^/]+)/image.jpeg`), asyncHandler(async (req, res) => {
   try {
     const pluginId = req.params[1];
     const communityPlugin = await pluginHelper.getCommunityPlugin(pluginId);
@@ -427,8 +428,8 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_PL
     }
     res.sendStatus(404);
   } catch (e) { handleError(res, e) }
-});
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_PLUGIN}/([^/]+)(/?.*)?`), async (req, res) => {
+}));
+getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_PLUGIN}/([^/]+)(/?.*)?`), asyncHandler(async (req, res) => {
   try {
     const communityUrl = req.params[0];
     const pluginId = req.params[1];
@@ -458,10 +459,10 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_PL
       res.send(indexHtml);
     }
   } catch (e) { handleError(res, e) }
-});
+}));
 
 // Appstore plugin
-getRoutesRouter.get(new RegExp(`/${config.URL_APPSTORE}/([^/]+)/image.jpeg`), async (req, res) => {
+getRoutesRouter.get(new RegExp(`/${config.URL_APPSTORE}/([^/]+)/image.jpeg`), asyncHandler(async (req, res) => {
   try {
     const pluginId = req.params[0];
     const plugin = await pluginHelper.getAppstorePlugin(pluginId);
@@ -510,8 +511,8 @@ getRoutesRouter.get(new RegExp(`/${config.URL_APPSTORE}/([^/]+)/image.jpeg`), as
     }
     res.sendStatus(404);
   } catch (e) { handleError(res, e) }
-});
-getRoutesRouter.get(new RegExp(`/${config.URL_APPSTORE}/([^/]+)(/?.*)?`), async (req, res) => {
+}));
+getRoutesRouter.get(new RegExp(`/${config.URL_APPSTORE}/([^/]+)(/?.*)?`), asyncHandler(async (req, res) => {
   try {
     const pluginId = req.params[0];
         
@@ -538,10 +539,10 @@ getRoutesRouter.get(new RegExp(`/${config.URL_APPSTORE}/([^/]+)(/?.*)?`), async 
       res.send(indexHtml);
     }
   } catch (e) { handleError(res, e) }
-});
+}));
 
 // Community
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/image.jpeg`), async (req, res) => {
+getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/image.jpeg`), asyncHandler(async (req, res) => {
   try {
     const communityUrl = req.params[0];
     const data = await communityHelper.getCommunitySocialPreview({ communityUrl });
@@ -634,8 +635,8 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/image.jpeg`), a
     }
     res.sendStatus(404);
   } catch (e) { handleError(res, e) }
-});
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)(/.*)?`), async (req, res) => {
+}));
+getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)(/.*)?`), asyncHandler(async (req, res) => {
   try {
     const communityUrl = req.params[0];
     const baseUrl = [
@@ -660,9 +661,9 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)(/.*)?`), async 
       res.send(indexHtml);
     }
   } catch (e) { handleError(res, e) }
-});
+}));
 
-getRoutesRouter.get('/sitemap.xml', async (req, res) => {
+getRoutesRouter.get('/sitemap.xml', asyncHandler(async (req, res) => {
   try {
     const sitemap = await communityHelper.getSitemap();
 
@@ -671,7 +672,7 @@ getRoutesRouter.get('/sitemap.xml', async (req, res) => {
     res.send(sitemap);
     
   } catch (e) { handleError(res, e) }
-});
+}));
 
 //////////////// TWITTER ////////////////
 
@@ -688,26 +689,26 @@ getRoutesRouter.get('/twitter-callback', passport.authenticate("twitter", twitte
 
 // Fallback twitter callback route for when service worker
 // is not installed (return indexhtml either way)
-getRoutesRouter.get('/twitter-login', async (request, response) => {
+getRoutesRouter.get('/twitter-login', asyncHandler(async (request, response) => {
   response.setHeader('Content-Type', 'text/html');
   response.send(indexhtml);
-});
+}));
 
 // verify-email callback route for when service worker
 // is not installed (return indexhtml either way)
-getRoutesRouter.get('/verify-email', async (request, response) => {
+getRoutesRouter.get('/verify-email', asyncHandler(async (request, response) => {
   response.setHeader('Content-Type', 'text/html');
   response.send(indexhtml);
-});
+}));
 
-getRoutesRouter.get('/store', async (request, response) => {
+getRoutesRouter.get('/store', asyncHandler(async (request, response) => {
   response.setHeader('Content-Type', 'text/html');
   response.send(indexhtml);
-});
+}));
 
 // token page route for when the service worker
 // is not installed (return indexhtml either way)
-getRoutesRouter.get('/token', async (request, response) => {
+getRoutesRouter.get('/token', asyncHandler(async (request, response) => {
   const host = getWorkingHost(request.hostname);
   response.setHeader('Content-Type', 'text/html');
   response.setHeader('Cache-Control', 'public, max-age=30, must-revalidate');
@@ -719,9 +720,9 @@ getRoutesRouter.get('/token', async (request, response) => {
     `${host}/images/tokensale_social_preview.png`,
   );
   response.send(indexHtml);
-});
+}));
 
-getRoutesRouter.get('/push-icon', async (request, response) => {
+getRoutesRouter.get('/push-icon', asyncHandler(async (request, response) => {
   const userId = request.query["userId"] as string | undefined;
   const communityId = request.query["communityId"] as string | undefined;
 
@@ -766,7 +767,36 @@ getRoutesRouter.get('/push-icon', async (request, response) => {
   catch (e) {
     handleError(response, e);
   }
-});
+}));
+
+// the gated-file routes answer failures with a plain-text 500, not the API's
+// JSON (the app's default Content-Type is application/json)
+function gatedFileFailed(res: express.Response, err: unknown) {
+  console.error(err);
+  res.status(500).type('text').send('Internal server error');
+}
+
+/**
+ * Streams a gated file. A read error (e.g. the file vanished between stat and
+ * read) answers 500 while nothing has been sent yet and otherwise aborts the
+ * response; a client that goes away early releases the file handle.
+ */
+function sendGatedFile(res: express.Response, file: fs.ReadStream, status: number, headers: Record<string, string | number>) {
+  file.on('error', (err) => {
+    if (res.headersSent) {
+      console.error(err);
+      res.destroy();
+      return;
+    }
+    for (const header of Object.keys(headers)) {
+      res.removeHeader(header);
+    }
+    gatedFileFailed(res, err);
+  });
+  res.on('close', () => file.destroy());
+  res.status(status).set(headers);
+  file.pipe(res);
+}
 
 async function getGatedFileData(filename: string, userId: string) {
   const fileData = await pool.query<{ type: 'download' | 'video', isAllowed: boolean }>(`
@@ -785,7 +815,7 @@ async function getGatedFileData(filename: string, userId: string) {
   return fileData.rows[0];
 }
 
-getRoutesRouter.get('/gated-videos/:filename', async (req, res) => {
+getRoutesRouter.get('/gated-videos/:filename', asyncHandler(async (req, res) => {
   const { user } = req.session;
   const { filename } = req.params;
 
@@ -835,24 +865,22 @@ getRoutesRouter.get('/gated-videos/:filename', async (req, res) => {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
       };
-      res.status(206).set(headers);
-      file.pipe(res);
+      sendGatedFile(res, file, 206, headers);
     } else {
+      const file = fs.createReadStream(filePath);
       const headers = {
         'Content-Type': contentType,
         'Content-Length': fileSize,
         'Accept-Ranges': 'bytes',
       };
-      res.status(200).set(headers);
-      fs.createReadStream(filePath).pipe(res);
+      sendGatedFile(res, file, 200, headers);
     }
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Internal server error');
+    gatedFileFailed(res, err);
   }
-});
+}, gatedFileFailed));
 
-getRoutesRouter.get('/gated-files/:filename', async (req, res) => {
+getRoutesRouter.get('/gated-files/:filename', asyncHandler(async (req, res) => {
   const { user } = req.session;
   const { filename } = req.params;
 
@@ -889,17 +917,16 @@ getRoutesRouter.get('/gated-files/:filename', async (req, res) => {
     const stat = fs.statSync(filePath);
     const fileSize = stat.size;
 
+    const file = fs.createReadStream(filePath);
     const headers = {
       'Content-Type': contentType,
       'Content-Length': fileSize,
     };
-    res.status(200).set(headers);
-    fs.createReadStream(filePath).pipe(res);
+    sendGatedFile(res, file, 200, headers);
 
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Internal server error');
+    gatedFileFailed(res, err);
   }
-});
+}, gatedFileFailed));
 
 export default getRoutesRouter;

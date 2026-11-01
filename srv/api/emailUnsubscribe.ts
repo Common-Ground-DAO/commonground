@@ -12,6 +12,7 @@ import ipRateLimitHandler from '../util/rateLimit';
 import urlConfig from '../util/urls';
 import { verifyUnsubscribeToken, type UnsubscribeTarget } from '../util/unsubscribeToken';
 import { unsubscribeTokenKey } from './emails';
+import { asyncHandler } from './asyncHandler';
 
 /**
  * One-click unsubscribe for notification mails (RFC 8058).
@@ -131,7 +132,7 @@ function handleFailure(response: express.Response, e: unknown) {
 }
 
 export function registerEmailUnsubscribeRoutes(router: express.Router) {
-  router.get('/emailUnsubscribe', async (request, response) => {
+  router.get('/emailUnsubscribe', asyncHandler(async (request, response) => {
     try {
       await getRateLimiter(request, response);
       const target = await readTarget(request);
@@ -149,11 +150,11 @@ export function registerEmailUnsubscribeRoutes(router: express.Router) {
     } catch (e) {
       handleFailure(response, e);
     }
-  });
+  }, handleFailure));
 
   // RFC 8058: the body is "List-Unsubscribe=One-Click", form-encoded (or
   // multipart, which is left unparsed here) — the signed token alone decides
-  router.post('/emailUnsubscribe', express.urlencoded({ extended: false, limit: '1kb' }), async (request, response) => {
+  router.post('/emailUnsubscribe', express.urlencoded({ extended: false, limit: '1kb' }), asyncHandler(async (request, response) => {
     try {
       await postRateLimiter(request, response);
       await validators.API.User.emailUnsubscribeBody.validateAsync(request.body ?? {});
@@ -172,5 +173,5 @@ export function registerEmailUnsubscribeRoutes(router: express.Router) {
       }
       handleFailure(response, e);
     }
-  });
+  }, handleFailure));
 }

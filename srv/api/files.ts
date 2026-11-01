@@ -16,6 +16,7 @@ import bodyParser from "body-parser";
 import eventHelper from "../repositories/event";
 import ipRateLimitHandler from "../util/rateLimit";
 import config from "../common/config";
+import { asyncHandler } from "./asyncHandler";
 
 const fileRouter = express.Router();
 const uploadHandler = multer({
@@ -62,26 +63,27 @@ const uploadImageRateLimiter = ipRateLimitHandler({
  * backend reached without the edge (Caddy) in front would trip on every upload — but a dev
  * instance has no reason to throttle either branch.
  */
-const enforceUploadRateLimit: express.RequestHandler = (req, res, next) => {
+const enforceUploadRateLimit = asyncHandler(async (req, res, next) => {
   if (config.DEPLOYMENT === 'dev') {
     next();
     return;
   }
-  uploadImageRateLimiter(req, res).then(() => next(), (e) => handleError(res, e));
-};
+  await uploadImageRateLimiter(req, res);
+  next();
+});
 
 fileRouter.post(
   '/uploadImage',
   enforceUploadRateLimit,
   bodyParser.text({ type: '/' }),
   uploadHandler.single('uploaded'),
-  async (req, res) => {
+  asyncHandler(async (req, res) => {
     const { user } = req.session;
-    const file = req.file;
-    if (!file) {
-      throw new Error(errors.server.INVALID_REQUEST);
-    }
     try {
+      const file = req.file;
+      if (!file) {
+        throw new Error(errors.server.INVALID_REQUEST);
+      }
       const _options = JSON.parse(req.body["options"] || 'null');
       const options = await validators.API.Files.uploadOptionsValidator.validateAsync(_options);
 
@@ -246,7 +248,7 @@ fileRouter.post(
     } catch (e) {
       handleError(res, e);
     }
-  }
+  })
 )
 
 registerPostRoute<

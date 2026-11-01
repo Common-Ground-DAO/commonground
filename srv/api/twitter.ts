@@ -25,7 +25,7 @@ if (TWITTER_API_KEY && TWITTER_API_SECRET) {
     consumerKey: TWITTER_API_KEY,
     consumerSecret: TWITTER_API_SECRET,
     callbackURL: TWITTER_CALLBACK_URL
-  }, async (token, tokenSecret, profile, done) => {
+  }, (token, tokenSecret, profile, done) => {
     return done(null, profile); // Pass the data to the session
   }));
 }

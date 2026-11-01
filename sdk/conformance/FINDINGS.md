@@ -61,16 +61,16 @@ branch as reviewable commits.
 ## Recorded (documented behavior, maintainer may want changes)
 
 - **F-03 — Rate-limit keying trusts the leftmost `X-Forwarded-For` entry.**
-  `srv/util/rateLimit.ts` buckets by the *first* XFF address, and the selfhost
-  nginx uses `$proxy_add_x_forwarded_for`, which **appends** to any
-  client-supplied header. Behind caddy (which replaces client XFF) this is
-  safe; anyone terminating on nginx directly is spoofable — a client can dodge
-  the createUser limit (2/24h per /64) by minting XFF values. The conformance
-  suite exploits exactly this against its own disposable instance for fixture
-  isolation (sdk/conformance/src/fixtures.ts), which doubles as proof.
-  Suggested hardening: have nginx *set* (not append) the header from
-  `$remote_addr` when it is the TLS edge, or make the API prefer the
-  rightmost-trusted entry.
+  `srv/util/rateLimit.ts` buckets by the *first* XFF address. The dev and
+  self-host edge (Caddy, `docker/caddy/`) sets the header itself and drops a
+  client-supplied one, so behind it the bucket is the client's own address; a
+  proxy that *appends* to a client-supplied header (as the former nginx edge
+  did with `$proxy_add_x_forwarded_for`) would let each request choose its
+  bucket. The disposable conformance instance relies on exactly that for
+  fixture isolation (sdk/conformance/src/fixtures.ts): its Caddy config
+  (`docker/caddy/Caddyfile.conformance`) deliberately trusts XFF from private
+  addresses. Suggested hardening: make the API prefer the rightmost-trusted
+  entry.
 
 - **F-04 — Password policy is absent server-side.** `common.Password` is a
   bare `Joi.string()`: no minimum length, no complexity, and in

@@ -6,9 +6,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * `getInstanceConfig()` is the single accessor for `window.__CG_INSTANCE__`,
- * the script the API (`srv/util/instanceConfig.ts`) and the selfhost nginx
- * entrypoint (`docker/nginx/inject-instance-config.sh`) inject into the shipped
- * HTML shell at serve time. It is a whitelist validator: the injected object is
+ * which the Caddy edge declares in `/instance-config.js`
+ * (`docker/caddy/instance-config.js`) and the API can inject into the HTML
+ * shell it serves (`srv/util/instanceConfig.ts`). It is a whitelist validator: the injected object is
  * attacker-reachable in a self-hosted deployment, so anything not explicitly
  * accepted has to be dropped rather than passed through.
  *

@@ -7,12 +7,13 @@
 // Historically the app derived its deployment mode and URLs from a hardcoded
 // list of domains (app.cg, staging.app.cg) — any other domain silently ran
 // with dev semantics. Self-hosted instances instead declare who they are at
-// serve time: the server injects
+// serve time: both HTML shells load /instance-config.js, which the Caddy edge
+// renders per instance as
 //
-//   <script>window.__CG_INSTANCE__ = {...}</script>
+//   window.__CG_INSTANCE__ = {...};
 //
-// into index.html / index_cgid.html (see srv/util/instanceConfig.ts and
-// docker/nginx/inject-instance-config.sh). This module is the single, safe
+// (docker/caddy/instance-config.js; the backend builds the same object in
+// srv/util/instanceConfig.ts). This module is the single, safe
 // accessor for that global. When the global is absent, callers fall back to
 // the legacy domain-based detection, so app.cg and local dev are unaffected.
 

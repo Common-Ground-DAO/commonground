@@ -48,7 +48,7 @@ export function absoluteSocialMeta(publicUrl: string | undefined): Plugin {
 
     transformIndexHtml: {
       // After vite:build-html, so the tag shape is the one that ships — and the
-      // one `srv/api/getRoutes.ts` and the selfhost nginx sed have to match.
+      // one `srv/api/getRoutes.ts` has to match.
       order: 'post',
       handler(html) {
         if (!origin) return html;

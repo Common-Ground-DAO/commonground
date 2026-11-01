@@ -12,7 +12,7 @@
 > dnd-kit strategy/transform/trailing-click/ordering notes against commit
 > 54e2d73, 2026-10-31; the TypeScript 6 / joi 18 notes (type-check row,
 > project-relative imports, "Dependency pins and constraints") against commit
-> d604544, 2026-10-31
+> d604544, 2026-10-31; the `/e/*` route note against commit fe3937f, 2026-10-31
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -667,7 +667,7 @@ Key route structure (paths are derived from `getUrl(...)` / `config.URL_*`):
 ```
 /token-sale                   -> TokenSaleRedirect
 /token/                       -> TokenSale
-/e/*                          -> redirect to / (legacy ecosystem URLs; nginx's SPA fallback
+/e/*                          -> redirect to / (legacy ecosystem URLs; the edge's shell rule
                                  only matches one segment, so /e/x/y 404s before React)
 /feed/                        -> ContentBrowser
 /c/:communityUrl/*            -> CommunityRouter

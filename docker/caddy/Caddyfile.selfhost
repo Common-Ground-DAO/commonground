@@ -1,0 +1,105 @@
+# Edge of a self-hosted Common Ground instance (docker-compose.selfhost.yml):
+# TLS, routing, static frontend, security headers (docs/infrastructure,
+# "Caddy"; docker/SELFHOST.md).
+#
+# Environment (set by docker-compose.selfhost.yml from .env.selfhost):
+#   CG_DOMAIN        the instance's domain
+#   CG_TLS_MODE      where the certificates come from:
+#     acme      Caddy obtains and renews Let's Encrypt certificates — the
+#               domain must point to this server in public DNS and ports
+#               80/443 must be reachable from the internet.
+#     internal  Caddy issues every certificate from its own local CA (root in
+#               the caddy-data volume, /data/caddy/pki/authorities/local/).
+#               For local/LAN test instances without public DNS; browsers
+#               only accept it once that root is trusted — see SELFHOST.md.
+#     Any other value fails at startup ("File to import not found").
+#   CG_CALLS_EDGE    "on" serves call signalling on :4443
+#                    (docker-compose.selfhost.calls.yml, added by selfhost.sh
+#                    when calls are enabled; also publishes the port)
+#   CG_CGID_VHOST    "on" serves the legacy CG ID mini-app on CG_ID_DOMAIN and
+#                    routes /api/v2/CgId/ — only for the legacy CG ID gateway
+#                    (selfhost.sh sets it when CG_LEGACY_CGID=true and
+#                    CG_ID_DOMAIN is set); off everywhere else
+#   CG_ID_DOMAIN     the CG ID mini-app's domain (only with CG_CGID_VHOST=on)
+#   plus the CG_* variables of templates/instance-config.js
+
+(tls_mode_acme) {
+	email {$CG_ACME_EMAIL}
+}
+
+(tls_mode_internal) {
+	# every site, including the :4443 call-signalling one, gets a cert from
+	# the local CA; don't try to install that root into the container's own
+	# trust store (pointless — the browsers that need it are elsewhere)
+	local_certs
+	skip_install_trust
+}
+
+{
+	import tls_mode_{$CG_TLS_MODE:acme}
+}
+
+import /etc/caddy/common.caddy
+
+# main app
+{$CG_DOMAIN} {
+	import cg_app "https://{$CG_DOMAIN}:* wss://{$CG_DOMAIN}:*" "https:" https {$CG_CGID_VHOST:off} on
+}
+
+# Legacy CG ID mini-app (passkeys on a separate origin): the gateway that
+# keeps old logins working during the move needs it; a normal instance —
+# including one that has CG_ID_DOMAIN in an older .env.selfhost — does not
+# serve it at all. Its shell loads only its own assets; the main origin is
+# needed for images (img-src) and its API calls (connect-src).
+(cgid_vhost_on) {
+	{$CG_ID_DOMAIN} {
+		import cg_hsts_on site
+		request_body {
+			max_size 16MiB
+		}
+		encode zstd gzip
+		import cg_common_headers
+		import cg_access_log
+		handle_errors {
+			import cg_common_headers
+			import cg_hsts_on errors
+			header >Cache-Control "no-store"
+			respond "" {err.status_code}
+		}
+		header >Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' https://{$CG_DOMAIN}; connect-src 'self' https://{$CG_DOMAIN}:* wss://{$CG_DOMAIN}:*; script-src-elem 'self'; style-src 'self' 'unsafe-inline'; manifest-src 'self'"
+		route {
+			@dotsegments vars_regexp {path} (^|/)\.\.?(/|$)
+			handle @dotsegments {
+				respond 400
+			}
+			handle /index.html {
+				respond 403
+			}
+			import cg_instance_config
+			handle / {
+				root * /srv
+				header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+				rewrite * /index_cgid.html
+				file_server
+			}
+			handle {
+				root * /srv
+				header Cache-Control "private, must-revalidate, proxy-revalidate, max-age=0"
+				file_server
+			}
+		}
+	}
+}
+(cgid_vhost_off) {
+}
+import cgid_vhost_{$CG_CGID_VHOST:off}
+
+# mediasoup call signalling (wss), only when calls are enabled
+(calls_edge_on) {
+	{$CG_DOMAIN}:4443 {
+		import cg_calls_edge
+	}
+}
+(calls_edge_off) {
+}
+import calls_edge_{$CG_CALLS_EDGE:off}

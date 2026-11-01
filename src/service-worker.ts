@@ -143,6 +143,37 @@ self.addEventListener('activate', (event) => {
   )
 });
 
+// /instance-config.js declares this instance to the app (window.__CG_INSTANCE__,
+// src/common/instance.ts). The edge renders it per request, so it is not part
+// of the precache. Network first, so a changed instance config applies on the
+// next load; the last good copy is the fallback — also for an error response
+// (e.g. a 502 while the edge restarts) — so such a start still runs with this
+// instance's settings instead of the built-in detection.
+const INSTANCE_CONFIG_CACHE = 'cg-instance-config';
+registerRoute(
+  ({ url }: { url: URL }) => url.origin === self.location.origin && url.pathname === '/instance-config.js',
+  async ({ request }) => {
+    const cache = await caches.open(INSTANCE_CONFIG_CACHE);
+    let response: Response;
+    try {
+      response = await fetch(request);
+    }
+    catch (e) {
+      const cached = await cache.match(request);
+      if (cached) {
+        return cached;
+      }
+      throw e;
+    }
+    if (response.ok) {
+      await cache.put(request, response.clone());
+      return response;
+    }
+    return (await cache.match(request)) ?? response;
+  },
+  "GET"
+);
+
 // Set up App Shell-style routing, so that all navigation requests
 // are fulfilled with your index.html shell. Learn more at
 // https://developers.google.com/web/fundamentals/architecture/app-shell

@@ -64,26 +64,33 @@ describe("Instance/config", () => {
   it("is served with no-store caching", async () => {
     const response = await fetch(`${BASE_URL}/api/v2/Instance/config`);
     expect(response.status).toBe(200);
-    // The app sets no-store; nginx appends its blanket no-cache on API routes,
-    // so through the proxy this reads "no-store, no-cache". Assert the
-    // contract-relevant part: the response is marked non-storable.
+    // The app sets no-store; the edge's no-cache on API routes is only a
+    // default for responses without their own (older nginx edges appended it,
+    // giving "no-store, no-cache"). Assert the contract-relevant part: the
+    // response is marked non-storable.
     expect(response.headers.get("cache-control")).toContain("no-store");
     expect(response.headers.get("content-type")).toContain("application/json");
   });
 
-  it("matches the config the web app gets via HTML injection", async () => {
-    // The endpoint and the injected window.__CG_INSTANCE__ must agree —
-    // two clients (web, native) must not see different instance identities.
-    const [config, html] = await Promise.all([
+  it("matches the config the web app gets", async () => {
+    // The endpoint and the web app's window.__CG_INSTANCE__ must agree — two
+    // clients (web, native) must not see different instance identities. The
+    // self-host edge (Caddy) declares it in /instance-config.js, rendered
+    // from its own settings (docker/caddy/instance-config.js); a shell
+    // without that script gets it inlined by the API.
+    const [config, script, html] = await Promise.all([
       client.getInstanceConfig(),
+      fetch(`${BASE_URL}/instance-config.js`).then((r) => (r.ok ? r.text() : "")),
       fetch(`${BASE_URL}/`).then((r) => r.text()),
     ]);
-    const match = html.match(/window\.__CG_INSTANCE__ = (\{.*?\});<\/script>/);
+    const match =
+      script.match(/window\.__CG_INSTANCE__ = (\{.*\});/) ??
+      html.match(/window\.__CG_INSTANCE__ = (\{.*?\});<\/script>/);
     if (!match) {
-      // Instances that don't inject (official app.cg) have nothing to compare.
+      // Instances that declare nothing (official app.cg) have nothing to compare.
       return;
     }
-    const injected = JSON.parse(match[1]);
-    expect(config).toEqual(injected);
+    const webConfig = JSON.parse(match[1]);
+    expect(config).toEqual(webConfig);
   });
 });

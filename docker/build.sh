@@ -27,27 +27,14 @@ printf "\n---\n--- Stopping containers & cleaning build environment\n---\n"
 docker_compose down --remove-orphans
 docker_compose build cg-builder
 
-printf "\n---\n--- Generating certificates\n---\n"
-if [ -f nginx/certs/nginx_certs/certificate_ip ]
-then
-  CERT_IP=$(cat nginx/certs/nginx_certs/certificate_ip)
-else
-  CERT_IP="different than LOCAL_CERTIFICATE_IP"
-fi
+# Browser-facing certificates come from caddy's local CA (created on its
+# first start); only the internal caddy->mediasoup hop needs one of its own
+mediasoup/ensureInternalCert.sh
+checkError
 
-if [ "$LOCAL_CERTIFICATE_IP" != "$CERT_IP" ]
-then
-  nginx/certs/recreate_root_cert.sh &&
-  nginx/certs/recreate_server_certs.sh
-  checkError
-  printf "$LOCAL_CERTIFICATE_IP" > nginx/certs/nginx_certs/certificate_ip
-else
-  printf "Local ip did not change, skipping..."
-fi
-
-printf "\n---\n--- Building frontend and nginx image\n---\n"
+printf "\n---\n--- Building frontend and caddy image\n---\n"
 rm -rf backend/dist/* && \
-rm -rf nginx/dist/* && \
+mkdir -p caddy/dist && rm -rf caddy/dist/* && \
 docker_compose run --rm cg-builder yarn install --immutable
 checkError
 
@@ -69,10 +56,10 @@ checkError
 # thin headroom.
 docker_compose run --rm -e NODE_OPTIONS="--max-old-space-size=4096" -e DEPLOYMENT=prod cg-builder \
   bash -c "yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite" && \
-rsync -a ../build/* nginx/dist/
+rsync -a ../build/* caddy/dist/
 checkError
 
-docker_compose build --no-cache nginx
+docker_compose build --no-cache caddy
 checkError
 
 if [ ! -f vapid_keys.json ];

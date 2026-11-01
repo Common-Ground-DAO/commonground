@@ -59,6 +59,6 @@ Verify with `sha256sum -c` from this directory.
 
 ## Self-hosting is mandatory
 
-The nginx CSP `connect-src` allowlist blocks third-party model CDNs, and
+The edge's CSP `connect-src` allowlist blocks third-party model CDNs, and
 selfhost/airgapped instances have no outbound access at all. Do not change the
 loader to a remote URL.

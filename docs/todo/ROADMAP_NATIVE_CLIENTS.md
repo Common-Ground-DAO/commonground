@@ -47,8 +47,8 @@ Server/API work that all three clients need. Each item is small; together they
 turn "the web client's private protocol" into "the Common Ground client API".
 
 - [ ] **Instance config endpoint.** Today the config travels as a
-  `window.__CG_INSTANCE__` script injected into `index.html` (nginx or API
-  server). Native clients don't parse HTML: add `GET /api/v2/Instance/config`
+  `window.__CG_INSTANCE__` script (today `/instance-config.js`, rendered by the
+  Caddy edge, or injected into `index.html` by the API server). Native clients don't parse HTML: add `GET /api/v2/Instance/config`
   returning the same object (deployment, appUrl, cgidUrl, captcha provider,
   active chains, feature flags, giphy/walletconnect keys). The web client can
   keep the injection as a fast path.

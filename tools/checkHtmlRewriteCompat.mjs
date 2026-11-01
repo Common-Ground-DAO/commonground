@@ -4,52 +4,47 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 /**
- * Verifies that emitted HTML shells stay rewritable by the two consumers that
- * patch them at serve time. Both work with plain string/regex surgery and fail
- * *silently* when the markup shape drifts — a duplicated or leftover meta tag,
- * or an instance config that never gets injected — so this check exists to make
- * that drift loud.
+ * Verifies that the emitted HTML shells still fit the two consumers that
+ * depend on their exact markup at serve time. Both fail *silently* when the
+ * markup shape drifts — a duplicated or leftover meta tag, an instance config
+ * that never loads, an inline script the CSP blocks — so this check exists to
+ * make that drift loud.
  *
- *   1. `srv/api/getRoutes.ts` — injects `window.__CG_INSTANCE__` after the
- *      literal `<head>`, strips the default social meta tags with two regexes
- *      and splices per-item og/twitter meta in before `</head>`. This is on the
- *      critical path for deep links: nginx proxies all `/c/…`, `/u/…` requests
- *      to the API.
- *   2. `docker/nginx/inject-instance-config.sh` — the selfhost nginx entrypoint
- *      hook, which seds the same script tag after the first `<head>` in both
- *      `/www/index.html` and `/www/index_cgid.html`.
+ *   1. `srv/api/getRoutes.ts` — strips the default social meta tags with two
+ *      regexes and splices per-item og/twitter meta in before `</head>`; it
+ *      injects `window.__CG_INSTANCE__` inline after the literal `<head>` only
+ *      when the shell does not load `/instance-config.js`. This is on the
+ *      critical path for deep links: Caddy proxies all `/c/…`, `/u/…`
+ *      requests to the API.
+ *   2. The Caddy edge (`docker/caddy/common.caddy`, `Caddyfile.selfhost`) —
+ *      renders `/instance-config.js` per instance, which both shells must load
+ *      as a deferred classic script ahead of the entry module, and allows
+ *      inline scripts only by hash: every inline `<script>` of `index.html`
+ *      must have its sha256 in the CSP of `common.caddy`, and `index_cgid.html`
+ *      (served by the CG ID vhost, whose CSP allows no inline script) must
+ *      have none.
  *
- * The logic below is copied verbatim from those two files; keep it in sync.
+ * The rewrite logic below is copied verbatim from getRoutes.ts; keep it in
+ * sync.
  *
  * Usage: node tools/checkHtmlRewriteCompat.mjs [distDir]   (default: build)
  */
 
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const distDir = path.resolve(process.argv[2] ?? 'build');
+const caddyCommon = fileURLToPath(new URL('../docker/caddy/common.caddy', import.meta.url));
 
-// --- srv/api/getRoutes.ts:52-54,62-64,65-85 -------------------------------
+// --- srv/api/getRoutes.ts:56-57,66-68,76-87 -------------------------------
 const STRIP_OG = /<meta +property="(og:title|og:description|og:type|og:image|og:url)" +content="[^"]+" *\/?>/g;
 const STRIP_TWITTER = /<meta +name="(twitter:title|twitter:description|twitter:image|description)" +content="[^"]+" *\/?>/g;
-// srv/util/instanceConfig.ts:61-65
-const INSTANCE_SCRIPT = '<script>window.__CG_INSTANCE__ = {"deployment":"dev"};</script>';
+const INSTANCE_CONFIG_TAG = 'src="/instance-config.js"';
 
-// --- docker/nginx/inject-instance-config.sh:54 ----------------------------
-// `sed -i "s|<head>|<head>$snippet|"` — sed substitutes the first match per
-// *line*, so the marker has to be a literal, attribute-less, lowercase `<head>`.
-/**
- * @param {string} html
- * @param {string} from
- * @param {string} to
- * @returns {string}
- */
-function sedFirstPerLine(html, from, to) {
-  return html
-    .split('\n')
-    .map((line) => (line.includes(from) ? line.replace(from, to) : line))
-    .join('\n');
-}
+// inline scripts: <script> elements without a src attribute
+const INLINE_SCRIPT = /<script(?![^>]*\ssrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi;
 
 let failures = 0;
 /**
@@ -63,11 +58,21 @@ function check(label, ok, detail) {
   if (!ok) failures++;
 }
 
+/** @returns {Set<string>} the `'sha256-…'` sources in the edge's app CSP */
+function cspScriptHashes() {
+  if (!existsSync(caddyCommon)) {
+    check('docker/caddy/common.caddy exists', false, caddyCommon);
+    return new Set();
+  }
+  const caddy = readFileSync(caddyCommon, 'utf8');
+  return new Set(caddy.match(/'sha256-[A-Za-z0-9+/=]+'/g) ?? []);
+}
+
 /**
  * @param {string} file
- * @param {{ expectSocialMeta: boolean }} options
+ * @param {{ expectSocialMeta: boolean, allowedInlineHashes: Set<string> }} options
  */
-function checkFile(file, { expectSocialMeta }) {
+function checkFile(file, { expectSocialMeta, allowedInlineHashes }) {
   const full = path.join(distDir, file);
   console.log(`\n${file}`);
   if (!existsSync(full)) {
@@ -76,23 +81,45 @@ function checkFile(file, { expectSocialMeta }) {
   }
   const html = readFileSync(full, 'utf8');
 
+  // --- consumer 2: the Caddy edge -----------------------------------------
+  const configTags = html.match(/<script\b[^>]*\bsrc="\/instance-config\.js"[^>]*>\s*<\/script>/g) ?? [];
+  check('loads /instance-config.js exactly once', configTags.length === 1, `found ${configTags.length}`);
+  if (configTags.length === 1) {
+    const tag = configTags[0];
+    check('/instance-config.js is a deferred classic script', /\sdefer[\s>]/.test(tag) && !/type="module"/.test(tag), tag);
+    const firstModule = html.search(/<script\b[^>]*type="module"/);
+    check(
+      '/instance-config.js comes before the entry module',
+      firstModule === -1 || html.indexOf(tag) < firstModule,
+      'a module script precedes it',
+    );
+  }
+
+  const inline = [...html.matchAll(INLINE_SCRIPT)];
+  for (const [, body] of inline) {
+    const hash = `'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`;
+    check(
+      `inline script ${hash} is allowed by the edge CSP`,
+      allowedInlineHashes.has(hash),
+      `add it to script-src-elem in docker/caddy/common.caddy (and drop the stale hash)`,
+    );
+  }
+  check('no inline script declares __CG_INSTANCE__', !inline.some(([, body]) => body.includes('__CG_INSTANCE__')));
+
   // --- consumer 1: the API's index.html rewriting ------------------------
   const headCount = (html.match(/<head>/g) ?? []).length;
   check('literal `<head>` present exactly once', headCount === 1, `found ${headCount}`);
   check('no attributed/uppercase head tag', !/<head\s[^>]*>/i.test(html) && !/<HEAD>/.test(html));
-
-  const injected = html.replace('<head>', `<head>${INSTANCE_SCRIPT}`);
-  check('instance config injects after `<head>`', injected.includes(`<head>${INSTANCE_SCRIPT}`));
-  check('injection is idempotent (guard sees the marker)', injected.includes('__CG_INSTANCE__'));
+  check('API leaves the instance config to /instance-config.js', html.includes(INSTANCE_CONFIG_TAG));
 
   const closeCount = (html.match(/<\/head>/g) ?? []).length;
   check('literal `</head>` present exactly once', closeCount === 1, `found ${closeCount}`);
 
-  const stripped = injected.replace(STRIP_OG, '').replace(STRIP_TWITTER, '');
+  const stripped = html.replace(STRIP_OG, '').replace(STRIP_TWITTER, '');
   const ogLeft = (stripped.match(/property="og:(title|description|type|image)"/g) ?? []).length;
   const twLeft = (stripped.match(/name="(twitter:title|twitter:description|twitter:image|description)"/g) ?? []).length;
   if (expectSocialMeta) {
-    const ogBefore = (injected.match(/property="og:(title|description|type|image)"/g) ?? []).length;
+    const ogBefore = (html.match(/property="og:(title|description|type|image)"/g) ?? []).length;
     check('default og meta present to strip', ogBefore === 4, `found ${ogBefore}`);
     check('all strippable og meta removed', ogLeft === 0, `${ogLeft} left`);
     check('all strippable twitter/description meta removed', twLeft === 0, `${twLeft} left`);
@@ -116,18 +143,12 @@ function checkFile(file, { expectSocialMeta }) {
     '<meta name="description" content="x" />' +
     stripped.substring(insertPos);
   check('spliced meta lands inside head', rewritten.indexOf('<meta name="description" content="x" />') < rewritten.indexOf('</head>'));
-
-  // --- consumer 2: the selfhost nginx entrypoint sed ---------------------
-  const sedSnippet = '<script>window.__CG_INSTANCE__ = {"deployment":"prod"};</script>';
-  const sedded = sedFirstPerLine(html, '<head>', `<head>${sedSnippet}`);
-  check('nginx sed hook injects', sedded.includes(`<head>${sedSnippet}`));
-  check('nginx sed hook injects exactly once', (sedded.match(/__CG_INSTANCE__/g) ?? []).length === 1);
-  check('nginx sed hook is idempotent (grep guard hits)', /__CG_INSTANCE__/.test(sedded));
 }
 
 console.log(`HTML rewrite-compatibility check — ${distDir}`);
-checkFile('index.html', { expectSocialMeta: true });
-checkFile('index_cgid.html', { expectSocialMeta: true });
+checkFile('index.html', { expectSocialMeta: true, allowedInlineHashes: cspScriptHashes() });
+// the CG ID vhost's CSP (Caddyfile.selfhost) allows no inline script at all
+checkFile('index_cgid.html', { expectSocialMeta: true, allowedInlineHashes: new Set() });
 
 console.log('');
 if (failures > 0) {

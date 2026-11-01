@@ -231,7 +231,7 @@ const RoutedContent = () => {
       <Route path={'/token-sale'} element={<TokenSaleRedirect />} />
       <Route path={removeInitialSlash(getUrl({ type: 'token' }))} element={<TokenSale />} />
       {/* Legacy ecosystem URLs (removed 2026-08-01) — send them home. Reachable one
-          segment deep only: nginx's SPA fallback matches `e/[^/]+`. */}
+          segment deep only: the edge's shell rule matches `e/[^/]+`. */}
       <Route path="e/*" element={<Navigate to="/" replace />} />
       <Route path={removeInitialSlash(getUrl({ type: 'feed' }))} element={<ContentBrowser />} />
       <Route path={`${config.URL_COMMUNITY}/:communityUrl/*`} element={

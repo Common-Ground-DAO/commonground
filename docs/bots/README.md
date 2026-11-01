@@ -1,6 +1,6 @@
 # Bot Accounts
 
-> Status: verified against commit 523fceccd, 2026-07-25
+> Status: verified against commit 523fceccd, 2026-07-25; Bot API v1 surface (edge routing) against commit fe3937f, 2026-10-31
 
 Common Ground supports **bot accounts**: programmable actors that read and post
 in community channels through a small, versioned bearer API and Socket.IO
@@ -308,9 +308,9 @@ pipeline (`srv/util/express.ts`):
 ## Bot API v1 surface
 
 The public bearer protocol is mounted at `/BotV1` (`srv/api.ts`,
-`app.use('/BotV1', botV1Router)`). The nginx configs expose it publicly as
-`/api/bot/v1/…`, rewriting to `/BotV1/…`
-(`docker/nginx/nginx.conf`, `nginx_selfhost.conf`, `nginx_dev.conf`), kept
+`app.use('/BotV1', botV1Router)`). The edge exposes it publicly as
+`/api/bot/v1/…`, rewriting to `/BotV1/…` (`docker/caddy/common.caddy` for the
+dev and self-host stacks, `docker/nginx/nginx.conf` for the hosted one), kept
 deliberately separate from the web app's `/api/v2` namespace. The protocol
 version constant is `'1'` (`srv/common/botProtocol.ts`).
 

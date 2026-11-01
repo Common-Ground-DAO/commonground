@@ -115,7 +115,7 @@ const MediaImageRenderer: React.FC<Common.Content.ArticleImage> = (props) => {
 
 const MediaEmbedRenderer: React.FC<Common.Content.ArticleEmbed> = (props) => {
   return <div className={`mediaEmbedVideoContainer ${props.size}`}>
-    {/** Note: https://www.youtube.com is the only allowed frame-src, configured in nginx.conf */}
+    {/** Note: frames are subject to the edge's CSP frame-src (docker/caddy/common.caddy) */}
     {/** Also note: Iframes always need sandbox="allow-forms allow-scripts" for security reasons */}
     <YoutubeIframe
       embedId={props.embedId}

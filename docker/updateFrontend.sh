@@ -23,8 +23,8 @@ function checkError {
   fi
 }
 
-printf "\n---\n--- Building frontend and nginx image\n---\n"
-rm -rf nginx/dist/* && \
+printf "\n---\n--- Building frontend and caddy image\n---\n"
+mkdir -p caddy/dist && rm -rf caddy/dist/* && \
 cd ../docker && \
 docker_compose build cg-builder
 checkError
@@ -35,10 +35,6 @@ buildId=$(dd if=/dev/random bs=1 count=10 status=none | base64) && \
 sed -i 's#^const buildId =.*$#const buildId = "'$buildId'";#' ../src/common/random_build_id.ts && \
 docker_compose run --rm -e NODE_OPTIONS="--max-old-space-size=4096" -e DEPLOYMENT=prod cg-builder \
   bash -c "yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite" && \
-rsync -a ../build/* nginx/dist/ && \
-docker_compose up -d --no-deps --build nginx
-checkError
-
-printf "\n---\n--- Build finished, restarting\n---\n"
-docker_compose start nginx
+rsync -a ../build/* caddy/dist/ && \
+docker_compose up -d --no-deps --build caddy
 checkError

@@ -1,11 +1,12 @@
 # Self-hosted, single-server production deployment of Common Ground.
 #
 # Differences from the dev compose file (docker-compose.yml):
-#   - caddy terminates TLS for the app, the CG ID subdomain and mediasoup
-#     call signalling — Let's Encrypt by default, or its own local CA with
-#     CG_TLS_MODE=internal (LAN/test instances without public DNS)
-#   - nginx is built from Dockerfile_selfhost (real domains, instance-config
-#     injection, parameterized CSP)
+#   - caddy (docker/caddy, Caddyfile.selfhost) is the edge: TLS for the app
+#     and mediasoup call signalling — Let's Encrypt by default, or its own
+#     local CA with CG_TLS_MODE=internal (LAN/test instances without public
+#     DNS) — plus the frontend, the routing and the instance config
+#   - call signalling (:4443) is added by docker-compose.selfhost.calls.yml,
+#     which selfhost.sh includes only when calls are enabled
 #   - DEPLOYMENT=prod: full production semantics on any domain
 #   - no hardhat dev chain, no test contracts
 #   - postgres actually loads the tuned postgresql.conf
@@ -29,41 +30,31 @@ name: cg-selfhost
 
 services:
   caddy:
-    image: caddy:2.11.6-alpine@sha256:d44355d3c2149dc580ce2cac735955d1c08d3d00882c30489c241aa51a5c10d9
+    build:
+      context: ./caddy
+    image: cryptogram/caddy-selfhost
     ports:
       - "80:80"
       - "443:443"
       - "443:443/udp"
-      - "4443:4443"
     environment:
       - CG_DOMAIN=${CG_DOMAIN}
-      - CG_ID_DOMAIN=${CG_ID_DOMAIN}
       - CG_ACME_EMAIL=${CG_ACME_EMAIL}
       - CG_TLS_MODE=${CG_TLS_MODE:-acme}
-    volumes:
-      - ./selfhost/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    networks:
-      - cryptogram
-    restart: unless-stopped
-
-  nginx:
-    build:
-      context: ./nginx
-      dockerfile: Dockerfile_selfhost
-      args:
-        - SERVER_NAME=${CG_DOMAIN}
-        - CGID_SERVER_NAME=${CG_ID_DOMAIN}
-    image: cryptogram/nginx-selfhost
-    environment:
+      # on: docker-compose.selfhost.calls.yml (calls enabled)
+      - CG_CALLS_EDGE=off
+      # the legacy CG ID mini-app's vhost and API route; selfhost.sh sets
+      # CG_CGID_VHOST=on only when CG_LEGACY_CGID=true and CG_ID_DOMAIN is set
+      - CG_CGID_VHOST=${CG_CGID_VHOST:-off}
+      - CG_ID_DOMAIN=${CG_ID_DOMAIN:-}
+      # instance config served as /instance-config.js
+      # (docker/caddy/instance-config.js): passkeys on this origin unless
+      # CG_LEGACY_CGID=true; CG_CGID_URL is only emitted in legacy mode
       - CG_DEPLOYMENT=prod
       - CG_APP_URL=https://${CG_DOMAIN}
-      # instance config (inject-instance-config.sh): passkeys on this origin
-      # unless CG_LEGACY_CGID=true; CG_CGID_URL is only emitted in legacy mode
       - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - CG_PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
-      - CG_CGID_URL=https://${CG_ID_DOMAIN:-}/#
+      - CG_CGID_URL=${CG_ID_DOMAIN:+https://${CG_ID_DOMAIN}/#}
       - CG_RECAPTCHA_SITE_KEY=${CG_RECAPTCHA_SITE_KEY}
       - CG_CAPTCHA_PROVIDER=${CAPTCHA_PROVIDER:-}
       - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
@@ -74,6 +65,9 @@ services:
       - CG_IMAGE_FILTER_THRESHOLD=${CG_IMAGE_FILTER_THRESHOLD:-}
       - CG_GIPHY_API_KEY=${CG_GIPHY_API_KEY}
       - CG_WALLETCONNECT_PROJECT_ID=${CG_WALLETCONNECT_PROJECT_ID}
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
     depends_on:
       - api
     networks:
@@ -262,7 +256,7 @@ services:
       - DEPLOYMENT=prod
       - BASE_URL=https://${CG_DOMAIN}
       # read only with CG_LEGACY_CGID=true (the CG ID app's RP and CORS origin)
-      - CGID_URL=https://${CG_ID_DOMAIN:-}
+      - CGID_URL=${CG_ID_DOMAIN:+https://${CG_ID_DOMAIN}}
       - S3_SECRET=${S3_SECRET}
       - STAKING_CHAIN=${STAKING_CHAIN:-}
       - STAKING_TOKEN_ADDRESS=${STAKING_TOKEN_ADDRESS:-}

@@ -24,31 +24,15 @@ function checkError {
 }
 
 printf "\n---\n--- Stopping containers & cleaning build environment\n---\n"
-docker_compose stop wsapi api onchain nginx mediasoup memberlist hardhat job-runner
+# caddy keeps running: it resolves the backend containers per request
+docker_compose stop wsapi api onchain mediasoup memberlist hardhat job-runner
 docker_compose rm -f
 docker_compose build cg-builder
 
-
-docker_compose build --no-cache nginx
+# the internal caddy->mediasoup certificate (browser-facing ones come from
+# caddy's local CA)
+mediasoup/ensureInternalCert.sh
 checkError
-
-printf "\n---\n--- Generating certificates\n---\n"
-if [ -f nginx/certs/nginx_certs/certificate_ip ]
-then
-  CERT_IP=$(cat nginx/certs/nginx_certs/certificate_ip)
-else
-  CERT_IP="different than LOCAL_CERTIFICATE_IP"
-fi
-
-if [ "$LOCAL_CERTIFICATE_IP" != "$CERT_IP" ]
-then
-  nginx/certs/recreate_root_cert.sh &&
-  nginx/certs/recreate_server_certs.sh
-  checkError
-  printf "$LOCAL_CERTIFICATE_IP" > nginx/certs/nginx_certs/certificate_ip
-else
-  printf "Local ip did not change, skipping...\n"
-fi
 
 if [ ! -f vapid_keys.json ];
 then

@@ -7,12 +7,15 @@
 # Usage: ./init.sh [--tls-internal] <domain> <acme-email> [id-domain] [public-ip]
 #   e.g.: ./init.sh chat.example.org admin@example.org
 #
+#   id-domain       only for the legacy CG ID gateway (CG_LEGACY_CGID=true);
+#                   leave it out, or pass "-" when a public IP follows
+#
 #   --tls-internal  local/LAN test instance without public DNS: Caddy issues
 #                   all certificates from its own local CA instead of Let's
 #                   Encrypt (CG_TLS_MODE=internal). The ACME email is unused —
 #                   pass "-" — and the public IP must be given explicitly
 #                   (the address browsers reach the machine at, e.g. its LAN IP):
-#     ./init.sh --tls-internal cg.test - id.cg.test 192.168.122.44
+#     ./init.sh --tls-internal cg.test - - 192.168.122.44
 #
 # Safe to re-run: existing files are never overwritten.
 set -euo pipefail
@@ -21,7 +24,7 @@ cd "${0%/*}/.."   # docker/
 usage() {
   echo "Usage: $0 [--tls-internal] <domain> <acme-email> [id-domain] [public-ip]"
   echo "  e.g. $0 chat.example.org admin@example.org"
-  echo "       $0 --tls-internal cg.test - id.cg.test 192.168.122.44   (local test instance)"
+  echo "       $0 --tls-internal cg.test - - 192.168.122.44   (local test instance)"
   exit 1
 }
 
@@ -48,7 +51,11 @@ done
 
 CG_DOMAIN="${1:-}"
 CG_ACME_EMAIL="${2:-}"
-CG_ID_DOMAIN="${3:-id.${CG_DOMAIN}}"
+# the CG ID domain is only for the legacy CG ID gateway; "-" = none
+CG_ID_DOMAIN="${3:-}"
+if [ "$CG_ID_DOMAIN" = "-" ]; then
+  CG_ID_DOMAIN=""
+fi
 CG_PUBLIC_IP="${4:-}"
 
 if [ -z "$CG_DOMAIN" ]; then
@@ -91,15 +98,16 @@ else
 # KEEP THIS FILE SECRET — it contains all credentials of your instance.
 
 CG_DOMAIN=${CG_DOMAIN}
-CG_ID_DOMAIN=${CG_ID_DOMAIN}
 # Passkeys (docs/auth-identity §7) are bound to PASSKEY_RP_ID: empty = the
 # host of CG_DOMAIN (the usual choice); otherwise that host or a parent domain
 # of it. Never change it once passkeys exist. CG_LEGACY_CGID=true is only for
-# the legacy CG ID gateway (passkeys on CG_ID_DOMAIN); keep false.
+# the legacy CG ID gateway (passkeys on the CG ID app at CG_ID_DOMAIN, which
+# Caddy then serves as a second site); keep false and CG_ID_DOMAIN empty.
 PASSKEY_RP_ID=
 CG_LEGACY_CGID=false
+CG_ID_DOMAIN=${CG_ID_DOMAIN}
 # Where Caddy gets its TLS certificates from:
-#   acme      Let's Encrypt (default). Both domains need public DNS records
+#   acme      Let's Encrypt (default). The domain needs a public DNS record
 #             pointing here, and ports 80/443 must be reachable from the
 #             internet. CG_ACME_EMAIL is the ACME account contact.
 #   internal  Caddy's own local CA, for LAN/test instances without public DNS.
@@ -348,13 +356,14 @@ fi
 echo
 echo "Initialization complete. Next steps:"
 if [ "$CG_TLS_MODE" = "internal" ]; then
-  echo "  1. On every client machine, map ${CG_DOMAIN} and ${CG_ID_DOMAIN} to ${CG_PUBLIC_IP}"
+  echo "  1. On every client machine, map ${CG_DOMAIN} to ${CG_PUBLIC_IP}"
   echo "     (/etc/hosts or local DNS), and after the first start trust Caddy's root"
   echo "     certificate there — see SELFHOST.md, \"Local test instance\""
 else
-  echo "  1. Point DNS A/AAAA records for ${CG_DOMAIN} and ${CG_ID_DOMAIN} to ${CG_PUBLIC_IP}"
+  echo "  1. Point DNS A/AAAA records for ${CG_DOMAIN} to ${CG_PUBLIC_IP}"
 fi
-echo "  2. Open ports 80, 443 (tcp+udp), 4443 (tcp) and 40000-40099 (udp+tcp) in your firewall"
+echo "  2. Open ports 80, 443 (tcp+udp) in your firewall, plus 4443 (tcp) and 40000-40099"
+echo "     (udp+tcp) for calls (CG_ENABLE_CALLS)"
 echo "  3. Run: ./selfhost/selfhost.sh build"
 echo "  4. Run: ./selfhost/selfhost.sh up"
 if grep -q '^CG_ENABLE_MAIL=true' .env.selfhost; then

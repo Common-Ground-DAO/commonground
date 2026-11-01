@@ -19,9 +19,13 @@ mail_enabled() {
   [ "${CG_ENABLE_MAIL:-false}" = "true" ]
 }
 
+calls_enabled() {
+  [ "${CG_ENABLE_CALLS:-true}" != "false" ]
+}
+
 compose_profiles() {
   local profiles=""
-  if [ "${CG_ENABLE_CALLS:-true}" != "false" ]; then
+  if calls_enabled; then
     profiles="calls"
   fi
   if [ "${CG_ENABLE_BLOCKCHAIN:-true}" != "false" ]; then
@@ -31,6 +35,27 @@ compose_profiles() {
     profiles="${profiles:+$profiles,}mail"
   fi
   echo "$profiles"
+}
+
+# Starts the stack and removes the containers of optional services that are
+# switched off. `--remove-orphans` does not cover those: a service whose
+# profile is inactive is still part of the compose file, so its container
+# (and, for mediasoup, the published media ports) would stay. Idempotent.
+start_stack() {
+  docker_compose up -d --remove-orphans
+  local off=()
+  if ! calls_enabled; then
+    off+=(mediasoup)
+  fi
+  if [ "${CG_ENABLE_BLOCKCHAIN:-true}" = "false" ]; then
+    off+=(onchain)
+  fi
+  if ! mail_enabled; then
+    off+=(mail)
+  fi
+  if [ ${#off[@]} -gt 0 ]; then
+    docker_compose rm -s -f "${off[@]}"
+  fi
 }
 
 # loopback or a single-label name (a compose service such as the relay);
@@ -140,13 +165,44 @@ queue and retries for about three days (./selfhost/selfhost.sh logs mail).
 EOF
 }
 
+# The legacy CG ID mini-app (passkeys on a separate CG ID origin) is served
+# only by the legacy CG ID gateway: both CG_LEGACY_CGID=true and a
+# CG_ID_DOMAIN are needed. Older .env.selfhost files carry a CG_ID_DOMAIN
+# from init.sh; on a normal instance it is ignored.
+cgid_vhost() {
+  if [ "${CG_LEGACY_CGID:-false}" = "true" ] && [ -n "${CG_ID_DOMAIN:-}" ]; then
+    echo on
+  else
+    echo off
+  fi
+}
+
+# warns (never fails) about edge settings that do not do what they look like
+check_edge_config() {
+  if [ -n "${CG_ID_DOMAIN:-}" ] && [ "$(cgid_vhost)" = "off" ]; then
+    echo "Note: CG_ID_DOMAIN is set, but the CG ID app is served only with CG_LEGACY_CGID=true"
+    echo "      (the legacy CG ID gateway). Passkeys run on ${CG_DOMAIN:-CG_DOMAIN} itself; you can"
+    echo "      remove CG_ID_DOMAIN from .env.selfhost and its DNS record."
+  fi
+  if [ "${CG_LEGACY_CGID:-false}" = "true" ] && [ -z "${CG_ID_DOMAIN:-}" ]; then
+    echo "Warning: CG_LEGACY_CGID=true needs CG_ID_DOMAIN (the CG ID app's domain); without it"
+    echo "         the backend refuses to start. Set CG_ID_DOMAIN, or CG_LEGACY_CGID=false."
+  fi
+}
+
 docker_compose() {
   local profiles
   profiles="$(compose_profiles)"
+  local files=(-f docker-compose.selfhost.yml)
+  if calls_enabled; then
+    files+=(-f docker-compose.selfhost.calls.yml)
+  fi
+  export CG_CGID_VHOST
+  CG_CGID_VHOST="$(cgid_vhost)"
   if docker compose version >/dev/null 2>&1; then
-    COMPOSE_PROFILES="$profiles" docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml "$@"
+    COMPOSE_PROFILES="$profiles" docker compose --env-file .env.selfhost "${files[@]}" "$@"
   elif docker-compose version >/dev/null 2>&1; then
-    COMPOSE_PROFILES="$profiles" docker-compose --env-file .env.selfhost -f docker-compose.selfhost.yml "$@"
+    COMPOSE_PROFILES="$profiles" docker-compose --env-file .env.selfhost "${files[@]}" "$@"
   else
     echo "Neither docker compose nor docker-compose is available."
     exit 1
@@ -186,11 +242,11 @@ build() {
   docker_compose run --rm -e NODE_OPTIONS="--max-old-space-size=4096" -e DEPLOYMENT=prod cg-builder \
     bash -c "yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite"
   checkError
-  rm -rf nginx/dist/* && rsync -a ../build/* nginx/dist/
+  mkdir -p caddy/dist && rm -rf caddy/dist/* && rsync -a ../build/* caddy/dist/
   checkError
 
-  printf "\n---\n--- Building nginx image\n---\n"
-  docker_compose build --no-cache nginx
+  printf "\n---\n--- Building caddy image\n---\n"
+  docker_compose build --no-cache caddy
   checkError
 
   if [ ! -f vapid_keys.json ]; then
@@ -224,10 +280,11 @@ case "${1:-}" in
     ;;
   up)
     check_mail_config
+    check_edge_config
     # --remove-orphans cleans up containers of services that are no longer
-    # part of the stack — e.g. after switching a profile off, or after the
-    # three redis instances were merged into one
-    docker_compose up -d --remove-orphans
+    # part of the stack (e.g. after the three redis instances were merged
+    # into one); start_stack also removes switched-off optional services
+    start_stack
     docker_compose ps
     ;;
   down)
@@ -247,16 +304,25 @@ case "${1:-}" in
     ;;
   update)
     git pull
+    # Continue in the script that was just pulled: bash keeps running the old
+    # copy, whose build steps may no longer match the pulled compose files.
+    # (cwd is docker/ here, see the top of the script.)
+    exec ./selfhost/selfhost.sh _build-and-up
+    ;;
+  _build-and-up)
+    # second half of `update`, run by the freshly pulled script
     build
     check_mail_config
-    docker_compose up -d --remove-orphans
+    check_edge_config
+    start_stack
+    docker_compose ps
     ;;
   mail-dns)
     mail_dns
     ;;
   *)
     printf "Usage: ./selfhost.sh <command>\n\n"
-    printf "  build    Build frontend, backend, nginx and db images\n"
+    printf "  build    Build frontend, backend, caddy and db images\n"
     printf "  up       Start the instance (detached)\n"
     printf "  down     Stop the instance\n"
     printf "  logs     Follow logs (optionally: logs <service>)\n"

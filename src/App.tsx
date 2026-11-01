@@ -116,7 +116,6 @@ const CreateUserPostView = React.lazy(() => import('views/CreateUserPostView/Cre
 // const EditBlogView = React.lazy(() => import('views/EditBlogView/EditBlogView'));
 const Home = React.lazy(() => import('./views/Home/Home'));
 const TokenSale = React.lazy(() => import('./views/TokenSale/TokenSale'));
-const TokenSaleRedirect = React.lazy(() => import('./views/TokenSale/TokenSaleRedirect'));
 const LearnMore = React.lazy(() => import('./views/LearnMore/LearnMore'));
 // const MemberManagementView = React.lazy(() => import('views/MemberManagementView/MemberManagementView'));
 const ChatView = React.lazy(() => import('./views/ChatView/ChatView'));
@@ -228,7 +227,6 @@ const RoutedContent = () => {
 
   const routesWithLayout = useMemo(() => {
     const routes = <Routes>
-      <Route path={'/token-sale'} element={<TokenSaleRedirect />} />
       <Route path={removeInitialSlash(getUrl({ type: 'token' }))} element={<TokenSale />} />
       {/* Legacy ecosystem URLs (removed 2026-08-01) — send them home. Reachable one
           segment deep only: the edge's shell rule matches `e/[^/]+`. */}

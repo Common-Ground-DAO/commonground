@@ -665,7 +665,6 @@ The `RoutedContent` component defines all top-level routes inside a responsive l
 
 Key route structure (paths are derived from `getUrl(...)` / `config.URL_*`):
 ```
-/token-sale                   -> TokenSaleRedirect
 /token/                       -> TokenSale
 /e/*                          -> redirect to / (legacy ecosystem URLs; the edge's shell rule
                                  only matches one segment, so /e/x/y 404s before React)

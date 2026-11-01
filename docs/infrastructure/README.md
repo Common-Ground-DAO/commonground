@@ -602,12 +602,11 @@ Routes are tried in this order; the first match wins.
 | `/api/v2/(Captcha\|Instance\|Chat\|Community\|File\|Message\|User\|Contract\|Notification\|Twitter\|Lukso\|Passkey\|Accounts\|Plugins\|Search\|Report\|Bot\|Staking\|Feed)/…` | `api:4000` (prefix stripped) | the web API allowlist |
 | `/api/ws/…` | `wsapi:4000` | Socket.IO, websocket upgrade included |
 | any other `/api/…` | 404 | |
-| `/(c\|u\|gated-videos\|gated-files)/…`, `/sitemap.xml`, `/twitter-callback`, `/twitter-login`, `/verify-email`, `/push-icon`, `/token-sale`, `/token`, `/store` | `api:4000` | share links (the SPA shell with per-item social meta), images, gated media, callbacks. HTML responses get `Cache-Control: no-cache`; anything else `private,max-age=86400,must-revalidate` unless the backend set its own. |
+| `/(c\|u\|gated-videos\|gated-files)/…`, `/sitemap.xml`, `/twitter-callback`, `/twitter-login`, `/verify-email`, `/push-icon`, `/token`, `/store` | `api:4000` | share links (the SPA shell with per-item social meta), images, gated media, callbacks. HTML responses get `Cache-Control: no-cache`; anything else `private,max-age=86400,must-revalidate` unless the backend set its own. |
 | `/instance-config.js` | template | see [Instance config](#instance-config) |
 | `/robots.txt` | `/srv` | the build's robots.txt plus a `Sitemap:` line for the requesting host (template) |
 | `/(fonts\|icons\|images\|static\|audio\|downloads)/…` | `/srv` | no SPA fallback (missing file = uncached 404). Content-hashed files under `static/` — `name.<8 hex>.ext` and `name.<8 hex>.chunk.js`, plus the `.map` of each (everything Vite emits, see `vite.config.ts`) — get `public,max-age=31536000,immutable`; every other existing file `private,max-age=86400,must-revalidate` |
 | `/`, `/index.html`, `/service-worker.js`, `/e/<x>` | `/srv` | `Cache-Control: no-cache`; falls back to the shell |
-| `/community/<10 alphanumerics>…` | 301 → `/c/<id>/` | legacy community links |
 | `/index_cgid.html` | 403 | the CG ID shell is served only by the CG ID vhost (dev: served here, see below) |
 | `/enable-cross-origin-security…`, `/disable-cross-origin-security…` | `/srv/index.html` | `no-store`; the "enable" page adds `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` (the service worker precaches both) |
 | anything else | `/srv` | an existing file (manifest, logo, models, …) with `private,max-age=86400,must-revalidate`; any other path is a client-side route and gets the shell with `no-cache`, so deep links work before the service worker takes over |

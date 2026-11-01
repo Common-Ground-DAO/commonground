@@ -254,7 +254,7 @@
 		# gated media, the sitemap and a few callbacks. Unless the backend
 		# sets its own Cache-Control, HTML (the shell) is revalidated on every
 		# load and anything else may be cached for a day.
-		@backendpages path_regexp ^/((c|u|gated-videos|gated-files)/|(sitemap\.xml|twitter-callback|twitter-login|verify-email|push-icon|token-sale|token|store)/?$)
+		@backendpages path_regexp ^/((c|u|gated-videos|gated-files)/|(sitemap\.xml|twitter-callback|twitter-login|verify-email|push-icon|token|store)/?$)
 		handle @backendpages {
 			import cg_csp {args[0]} {args[1]}
 			header ?Cache-Control "private,max-age=86400,must-revalidate"
@@ -312,12 +312,6 @@
 			header Cache-Control "no-cache"
 			try_files {path} /index.html
 			file_server
-		}
-
-		# legacy community links
-		@community path_regexp community ^/community/([a-zA-Z0-9]{10})
-		handle @community {
-			redir * /c/{re.community.1}/ permanent
 		}
 
 		# Cross-origin isolation on/off pages (the service worker precaches

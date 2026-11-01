@@ -559,12 +559,11 @@ short:
 | `/api/ws/` | `http://wsapi:4000` | Socket.IO (WebSocket upgrade) |
 | `/files/{id}/{sig}/{date}/{expires}` | `http://s3.local:8333` | Direct S3 proxy (rewritten to a signed S3 URL) |
 | `/c/`, `/u/`, `/gated-videos/`, `/gated-files/` | `http://api:4000` | Social previews / gated content (SSR) |
-| `/sitemap.xml`, `/twitter-callback`, `/twitter-login`, `/verify-email`, `/push-icon`, `/token-sale`, `/token`, `/store` | `http://api:4000` | Server-rendered pages |
+| `/sitemap.xml`, `/twitter-callback`, `/twitter-login`, `/verify-email`, `/push-icon`, `/token`, `/store` | `http://api:4000` | Server-rendered pages |
 | `/instance-config.js` | Caddy template | the instance config |
 | `/fonts/`, `/icons/`, `/images/`, `/static/`, `/audio/`, `/downloads/` | the built frontend | Static assets (404 if missing) |
 | `/index.html`, `/service-worker.js`, `/e/*` | the built frontend | SPA entry point (fallback to index.html) |
 | `/index_cgid.html` | refused (403) | served only by the CG ID site (legacy gateway) and, in dev, on the main origin |
-| `/community/{10-char}` | 301 redirect | Legacy community URLs rewritten to `/c/{url}/` |
 | `/enable-cross-origin-security`, `/disable-cross-origin-security` | the built frontend | COOP/COEP toggling entry points |
 | Everything else | the built frontend | an existing file, otherwise the SPA shell |
 

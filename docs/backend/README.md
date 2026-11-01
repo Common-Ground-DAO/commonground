@@ -227,7 +227,7 @@ An Express router that handles GET requests for social media previews (Open Grap
 - `GET /twitter-callback` -- Twitter OAuth callback (Passport)
 - `GET /twitter-login` -- Post-auth Twitter redirect
 - `GET /verify-email` -- Email verification redirect
-- `GET /token-sale`, `/token` -- Token/Spark page (redirect + OG tags)
+- `GET /token` -- Token/Spark page (OG tags)
 - `GET /store` -- App store redirect
 - `GET /push-icon` -- Push notification icon
 - `GET /gated-videos/:filename` -- Role-gated video streaming

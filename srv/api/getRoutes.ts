@@ -700,16 +700,12 @@ getRoutesRouter.get('/verify-email', async (request, response) => {
   response.send(indexhtml);
 });
 
-getRoutesRouter.get('/token-sale', async (request, response) => {
-  response.redirect('/token');
-});
-
 getRoutesRouter.get('/store', async (request, response) => {
   response.setHeader('Content-Type', 'text/html');
   response.send(indexhtml);
 });
 
-// token-sale callback route for when service worker
+// token page route for when the service worker
 // is not installed (return indexhtml either way)
 getRoutesRouter.get('/token', async (request, response) => {
   const host = getWorkingHost(request.hostname);

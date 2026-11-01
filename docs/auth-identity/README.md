@@ -3,7 +3,7 @@
 > instance) against commit ff0da06, 2026-10-31; sessions (§2), the login endpoint (§4), passkeys
 > (§5.3, §7), the recovery-phrase gate (§5.2), sign-up (§6), step-up (§7), the keepalive (§10)
 > and the client side of sign-up, passkeys and step-up (§6, §7, §10) against commit 54e2d73,
-> 2026-10-31
+> 2026-10-31; `trust proxy` row against the Caddy edge replacing nginx (feat/f5-caddy, base d604544), 2026-10-31
 
 # Authentication & Identity
 
@@ -82,7 +82,7 @@ Sessions are managed by `express-session` with a Redis-backed store, configured 
 | `rolling` | `true` (cookie/expiry refresh on every request) | `srv/util/express.ts:154` |
 | `saveUninitialized` | `true` (a session row is created for every visitor) | `srv/util/express.ts:153` |
 | `resave` | `false` | `srv/util/express.ts:152` |
-| `proxy` / `trust proxy` | `true` (behind nginx) | `srv/util/express.ts:127,145` |
+| `proxy` / `trust proxy` | `true` (behind the Caddy edge, which sets `X-Forwarded-*` itself) | `srv/util/express.ts:127,145` |
 
 ### Cookie scoping
 

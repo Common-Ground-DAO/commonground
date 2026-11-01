@@ -3,7 +3,9 @@
 > Status: verified against commit 91efa7c82, 2026-08-04; call-server
 > connection handling (startup, ended-call check, authentication flow) against
 > commit e44dac1, 2026-10-31; Redis/Valkey instances, clients, key prefixes and
-> outage behaviour against commit ff0da06, 2026-10-31
+> outage behaviour against commit ff0da06, 2026-10-31; the `MEDIASOUP_TRUST_PROXY`
+> note (Caddy in front of 4443 in dev too) against branch feat/f5-caddy (base
+> d604544), 2026-10-31
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -325,7 +327,7 @@ Limits of the login phase:
 
 - 5 s to complete it;
 - at most 8 messages of any kind (including binary or unparsable frames) and at most 4096 characters per message before login; any method other than `getSignableSecret`/`login` is answered with `LOGIN_REQUIRED`;
-- at most 500 connections in the login phase in total and 10 per source, where a source is an IPv4 address or an IPv6 /64; beyond that the upgrade is refused with 429. The source is the socket address, or, with `MEDIASOUP_TRUST_PROXY=true`, the last `X-Forwarded-For` entry (the one the proxy added). Only set that flag when 4443 is reachable through the proxy alone: the self-host stack sets it (Caddy in front), the dev stack, which publishes 4443 directly, does not.
+- at most 500 connections in the login phase in total and 10 per source, where a source is an IPv4 address or an IPv6 /64; beyond that the upgrade is refused with 429. The source is the socket address, or, with `MEDIASOUP_TRUST_PROXY=true`, the last `X-Forwarded-For` entry (the one the proxy added). Only set that flag when 4443 is reachable through the proxy alone: the self-host and dev stacks set it (Caddy terminates TLS on 4443 in front of mediasoup, which publishes no signalling port of its own); the conformance stack, which publishes mediasoup's 4443 directly, sets it to `false`.
 
 The room's call type (default/broadcast), creator, slots and flags are taken from the stored call (`calls` row); the `callType` and `callCreator` query parameters are not used by the server.
 

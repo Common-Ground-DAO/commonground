@@ -12,7 +12,7 @@ Common Ground is a full-stack TypeScript application:
 - **Bots**: first-class bot accounts with a bearer-token Bot API v1 (`/api/bot/v1`)
 - **Staking**: CgStaking contract + event indexing + Spark accrual
 - **Smart Contracts**: Solidity (Hardhat; Foundry for staking)
-- **Infrastructure**: Docker Compose stack (nginx, PostgreSQL, Redis, SeaweedFS/S3); single-server selfhost profile with Caddy TLS
+- **Infrastructure**: Docker Compose stack (Caddy, PostgreSQL, Valkey, SeaweedFS/S3); single-server selfhost profile
 - **PWA**: installable, push notifications, multi-tab coordination via service worker
 
 ## Repository Structure
@@ -22,7 +22,7 @@ Common Ground is a full-stack TypeScript application:
 ├── src/                    # React frontend (components in atoms/molecules/organisms/templates, views, data layer, hooks, context)
 ├── srv/                    # Backend (api/, entities/, migrations/, repositories/, validators/, jobs/, onchain/, mediasoup/, redis/)
 ├── contracts/              # Solidity contracts (Hardhat; contracts/staking = Foundry)
-├── docker/                 # Compose stacks (dev + selfhost), build scripts, nginx/Caddy config
+├── docker/                 # Compose stacks (dev + selfhost), build scripts, Caddy edge (docker/caddy/)
 ├── pipelines/              # LEGACY: Azure DevOps pipelines (replacement: GitHub Actions, planned)
 ├── tools/                  # Developer utility scripts
 ├── public/                 # Static assets (PWA manifest, icons)
@@ -86,7 +86,7 @@ Living documentation lives in `docs/`, one section per topic area:
 | [docs/staking/](docs/staking/) | Staking feature end-to-end |
 | [docs/bots/](docs/bots/) | Bot accounts architecture ([docs/BOT-API.md](docs/BOT-API.md) = wire protocol) |
 | [docs/plugins/](docs/plugins/) | Plugin system |
-| [docs/infrastructure/](docs/infrastructure/) | Docker stack, build, nginx, env vars |
+| [docs/infrastructure/](docs/infrastructure/) | Docker stack, build, Caddy edge, env vars |
 | [docs/deployment/](docs/deployment/) | Deployment matrix, selfhost profile, CI/CD |
 | [docs/email-notifications/](docs/email-notifications/) | Email, newsletters, notification preferences |
 

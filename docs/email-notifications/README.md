@@ -2,7 +2,7 @@
 
 > Status: verified against commit a3c3f7608, 2026-08-01; SMTP sending layer,
 > Mailchimp removal, one-click unsubscribe, send limits, bounce policy and ICS
-> invites against commit e44dac1, 2026-10-31.
+> invites against commit e44dac1, 2026-10-31.; `CG_FEATURE_EMAIL` note against the Caddy edge replacing nginx (feat/f5-caddy, base d604544), 2026-10-31
 
 This document covers every email path in Common Ground: transactional mail (verification, one-time-password login, event mails), the weekly digest and per-community article newsletters, one-click unsubscribe, send limits, bounce handling, and the user/community preference model that gates them. Web push and in-app notifications are a separate delivery channel — see [docs/realtime](../realtime/README.md) (§ Push Notifications) — and the boundary between the two is described in [Boundary to web push](#boundary-to-web-push). Running a mail server for a self-hosted instance (the `mail` relay, SPF/DKIM/DMARC/PTR) is covered in [docs/deployment §3.9](../deployment/README.md#39-email-smtp-and-the-mail-relay) and [`docker/SELFHOST.md`](../../docker/SELFHOST.md#email).
 
@@ -62,7 +62,7 @@ When email is disabled:
 - `sendEmail` logs a warning, drops the message, and throws `EMAIL_DISABLED` (`srv/common/errors`).
 - The `newsletterDelivery` and `emailNotifications` jobs exit early without doing work (each run logs that it is skipping).
 - `POST /user/sendOneTimePasswordForLogin` rejects with `EMAIL_DISABLED` instead of pretending a code was sent.
-- The instance config ships `features.email: false` (`srv/util/instanceConfig.ts` applies the same `parseMailConfig()` rule), so the frontend hides email features. The selfhost nginx injection (`CG_FEATURE_EMAIL`) only checks that `SMTP_HOST` is non-empty, so on pages served by nginx an otherwise invalid configuration still shows the email UI while the backend has email off — the `api` startup log names the reason.
+- The instance config ships `features.email: false` (`srv/util/instanceConfig.ts` applies the same `parseMailConfig()` rule), so the frontend hides email features. The instance config the selfhost Caddy edge serves (`/instance-config.js`, `CG_FEATURE_EMAIL`) only checks that `SMTP_HOST` is non-empty, so in the web app an otherwise invalid configuration still shows the email UI while the backend has email off — the `api` startup log names the reason.
 
 ---
 

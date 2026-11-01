@@ -10,7 +10,7 @@
 > the `passkeyRpId` / `features.passkeys` instance fields, `cgidUrl`, the auth
 > UI (AuthFlow, `/login`, passkeys, step-up, plugin origin guard, §10) and the
 > dnd-kit strategy/transform/trailing-click/ordering notes against commit
-> 54e2d73, 2026-10-31
+> 54e2d73, 2026-10-31; `/e/*` route note against the Caddy edge replacing nginx (feat/f5-caddy, base d604544), 2026-10-31
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -665,7 +665,7 @@ Key route structure (paths are derived from `getUrl(...)` / `config.URL_*`):
 ```
 /token-sale                   -> TokenSaleRedirect
 /token/                       -> TokenSale
-/e/*                          -> redirect to / (legacy ecosystem URLs; nginx's SPA fallback
+/e/*                          -> redirect to / (legacy ecosystem URLs; the edge's shell rule
                                  only matches one segment, so /e/x/y 404s before React)
 /feed/                        -> ContentBrowser
 /c/:communityUrl/*            -> CommunityRouter

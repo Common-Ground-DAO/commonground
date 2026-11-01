@@ -127,12 +127,13 @@ that stack — confirm and delete:
 - [ ] **`imageFilterThreshold` breaks the `r0-instance-config` conformance test**
   (2026-10-31, found during the Node 26 conformance run; 102 of 104 tests pass).
   `/api/v2/Instance/config` always sends `imageFilterThreshold`
-  (`srv/util/instanceConfig.ts`), the nginx injection
-  (`docker/nginx/inject-instance-config.sh`) only adds it when
-  `CG_IMAGE_FILTER_THRESHOLD` is set, and the SDK's `InstanceConfig` mirror
-  (`sdk/conformance/src/r0-instance-config.test.ts` allowlist, SDK type) does not
-  list it. Add the field to the SDK mirror and make the two sources agree on when
-  it is present.
+  (`srv/util/instanceConfig.ts`), the Caddy-rendered `/instance-config.js`
+  (`docker/caddy/instance-config.js`) only adds it when
+  `CG_IMAGE_FILTER_THRESHOLD` is set. The SDK mirror lists the field by now;
+  what remains is the "matches the config the web app gets" case, which
+  compares `/instance-config.js` with the endpoint and fails on exactly this
+  field. Make the two sources agree on when it is present (e.g. the template
+  emits the backend's default too).
 
 - [ ] **Community creation copies a welcome article that only exists on app.cg**
   (2026-10-31, seen on the self-host test instance): every community creation
@@ -191,17 +192,6 @@ that stack — confirm and delete:
   — nothing references it; `src/views/TokenSale/TokenSale.tsx:106` uses the `.webp`. It
   ships in every build. (`public/images/tokensale_social_preview.png` **is** used, by
   `srv/api/getRoutes.ts` — do not delete that one.) Belongs to the token-sale removal.
-- [ ] **Prune what is left of the CG ID vhost's cross-origin allowances** (2026-08-03,
-  Vite workstream) — `8f90fc2b4` removed the main-origin entries that the CRA
-  `PUBLIC_URL` layout needed, but two allowances of the same vintage are still there:
-  `https://analytics.{prod,staging}.app.cg` in the CG ID `script-src-elem`/`connect-src`
-  (`docker/nginx/nginx.conf:100-101`), although Matomo is injected only by `src/index.tsx`
-  — the *main* entry — and never by the CG ID mini-app; and the `$cg_allow_origin` ACAO
-  rule on the main vhost (`nginx.conf:110`, `nginx_selfhost.conf:77`), which exists for
-  asset loads from the CG ID origin that are same-origin since the cutover. Both are
-  widenings, not breakage. Needs the same built-image check the CSP prune had.
-  Natural point: the nginx → Caddy rewrite (`ROADMAP_cg-box.md` F5), which drops the
-  CG ID vhost on cg.box but keeps it for the gateway's `id.app.cg`.
 - [ ] **`docker/updateFrontend.sh` does not refresh `docker/backend/dist/index.html`**
   (2026-08-03) — after `./run.sh update_frontend` the API keeps serving the *previous*
   build's shell (pointing at hashed assets that no longer exist) on every deep-link/share
@@ -320,7 +310,7 @@ that stack — confirm and delete:
   confine them: `-ip.bind=127.0.0.1` with `-s3.ip.bind=0.0.0.0` does bind the internal
   planes to loopback, but writes then fail because the components dial each other at the
   advertised `-ip`. Confining them would have to come from compose-level network
-  segmentation — e.g. a second network joined only by `nginx`, `api` and `job-runner`.
+  segmentation — e.g. a second network joined only by `caddy`, `api` and `job-runner`.
   Hardening nice-to-have, unchanged from the pre-consolidation topology.
 - [ ] **Wire `yarn test` into the build scripts once there is a suite worth gating on**
   (2026-08-03). Vitest is set up (`vitest.config.ts`); the suite is still a handful of

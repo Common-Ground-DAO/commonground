@@ -16,7 +16,7 @@
 > `srv/util/passkeys.ts`, `passkeyConfig.ts`, `authSession.ts`,
 > `signupEmail.ts`, `srv/repositories/passkeys.ts`), the new `User` auth
 > routes, step-up, the plugin URL check and the passkey test files against
-> commit 54e2d73, 2026-10-31.
+> commit 54e2d73, 2026-10-31.; `Instance` allowlist note against the Caddy edge replacing nginx (feat/f5-caddy, base d604544), 2026-10-31
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -248,8 +248,8 @@ breaks existing links.
   `Cache-Control: no-store`. It exists for clients that never load
   `index.html` — native apps, bots, the reference client in `sdk/` — and is the
   first call such a client makes; the web app keeps the HTML injection as its
-  fast path. The `Instance` prefix is in the `/api/v2/` allowlist of every
-  nginx config.
+  fast path. The `Instance` prefix is in the `/api/v2/` allowlist of the edge
+  (`docker/caddy/common.caddy`, and the hosted `docker/nginx/nginx.conf`).
 
 ### `srv/api/community.ts` -- Community Routes
 

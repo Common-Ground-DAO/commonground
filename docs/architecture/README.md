@@ -2,7 +2,9 @@
 > against commit e44dac1, 2026-10-31; Valkey instances, Redis clients and key
 > prefixes against commit ff0da06, 2026-10-31; passkey/session notes (§3), the
 > router table, the CG ID note and the instance-config example against commit
-> 54e2d73, 2026-10-31
+> 54e2d73, 2026-10-31; the edge (Caddy replacing nginx in the dev and
+> self-host stacks: §1, the request flows, Pattern 5, §7, the routing
+> appendix) against branch feat/f5-caddy (base d604544), 2026-10-31
 
 # Common Ground - Architecture Documentation
 
@@ -14,7 +16,7 @@ This document describes the system architecture of Common Ground, a browser-base
 
 ### High-Level Architecture
 
-The reference (cloud) deployment terminates TLS at Cloudflare and routes everything through a single nginx reverse proxy in front of the backend services:
+Every deployment routes everything through a single edge in front of the backend services: **Caddy** in the dev stack and the self-host profile (`docker/caddy/`, TLS included), and — until the hosted stack is shut down after the move to the self-host profile — nginx behind Cloudflare on the hosted `app.cg` deployment. The hosted shape:
 
 ```
                                   +---------------------+
@@ -60,20 +62,20 @@ The reference (cloud) deployment terminates TLS at Cloudflare and routes everyth
    +----------------+  +----------------+  +----------------+  +----------------+
 ```
 
-A single-server self-hosting profile is also supported; it places **Caddy** (automatic Let's Encrypt TLS) in front of the same nginx + backend stack. See [§7 Self-Host Topology](#7-self-host-topology).
+The single-server self-hosting profile has the same shape with Caddy in nginx's place (automatic Let's Encrypt TLS, no Cloudflare). See [§7 Self-Host Topology](#7-self-host-topology).
 
 ### Component Summary
 
 | Component | Technology | Docker Service | Purpose |
 |-----------|-----------|----------------|---------|
-| **Frontend** | React SPA (TypeScript) | Served via nginx | Single-page application; communicates via REST + Socket.IO |
+| **Frontend** | React SPA (TypeScript) | Served by the edge (`caddy`) | Single-page application; communicates via REST + Socket.IO |
 | **API Server** | Express.js (TypeScript) | `api` | REST API for all CRUD operations, session management, authentication, bot protocol |
 | **WebSocket Server** | Socket.IO (TypeScript) | `wsapi` | Real-time event broadcasting (messages, presence, notifications), bot socket streams |
 | **Database** | PostgreSQL | `db` | Primary persistent data store; uses LISTEN/NOTIFY for some inter-service signaling |
 | **Redis protocol (state)** | Valkey 9.1 | `redis` | Express session storage via `connect-redis`, the Socket.IO pub/sub adapter for multi-instance broadcasting, and short-lived state (rate limiting, replay guards, captcha key, bot presence). `noeviction`, persisted (RDB) |
 | **Redis protocol (cache)** | Valkey 9.1 | `redis-cache` | Rebuildable cache data (URL previews). `allkeys-lru`, own memory budget, unpersisted — a full cache cannot break sessions |
 | **File Storage** | SeaweedFS (S3-compatible) | `seaweed` | S3-compatible object storage for uploaded files and images. One all-in-one `weed server` (master + volume + filer + S3 gateway) since 2026-08-02; other services only ever reach its S3 port 8333 via the alias `s3.local` |
-| **Reverse Proxy** | nginx | `nginx` | TLS termination (cloud), routing, static file serving, S3 file proxying, instance-config injection (self-host) |
+| **Edge** | Caddy (dev, self-host); nginx (hosted) | `caddy` | TLS termination, routing, static file serving, S3 file proxying, security headers, `/instance-config.js` |
 | **WebRTC SFU** | MediaSoup | `mediasoup` | Selective Forwarding Unit for voice/video calls |
 | **Blockchain Watcher** | Custom (ethers.js) | `onchain` | Monitors multi-chain token balances for role gating; indexes staking contract events |
 | **Job Runner** | Node.js worker threads | `job-runner` | Scheduled and permanent background tasks |
@@ -95,7 +97,7 @@ A single-server self-hosting profile is also supported; it places **Caddy** (aut
 - **WebRTC**: `srv/mediasoup/` + `srv/mediasoup.ts`
 - **Blockchain**: `srv/onchain/` + `srv/onchain.ts`
 - **Infrastructure**: `docker/docker-compose.yml` (cloud/dev), `docker/docker-compose.selfhost.yml` (self-host)
-- **nginx config**: `docker/nginx/nginx_dev.conf`, `docker/nginx/nginx_selfhost.conf`
+- **Edge config**: `docker/caddy/` (`common.caddy` + `Caddyfile.dev` / `Caddyfile.selfhost`); the hosted stack's `docker/nginx/nginx.conf`
 
 ---
 
@@ -113,7 +115,7 @@ A single-server self-hosting profile is also supported; it places **Caddy** (aut
    - Content-Type: application/json
            |
            v
- nginx receives request
+ the edge (Caddy) receives request
    - Matches: /api/v2/Message/...
    - Rewrites: strips /api/v2 prefix
    - Proxies to: http://api:4000/Message/sendMessage
@@ -173,7 +175,7 @@ This makes the public **Bot API** a bearer-only surface that shares the same Exp
    - URL format: /files/{fileId}/{signature}/{date}T{time}Z/{expires}
            |
            v
- nginx matches file pattern
+ the edge matches file pattern
    - Rewrites to S3 pre-signed URL format
    - Proxies directly to the SeaweedFS S3 gateway (http://s3.local:8333)
    - Adds Cache-Control: private,max-age=604800,immutable
@@ -186,19 +188,20 @@ This makes the public **Bot API** a bearer-only surface that shares the same Exp
  Bot/crawler requests: /c/{communityUrl}/  (or /u/, /gated-videos/, /gated-files/)
            |
            v
- nginx proxies to API server (matches ^/(c|u|gated-videos|gated-files)/)
+ the edge proxies to API server (matches ^/(c|u|gated-videos|gated-files)/)
            |
            v
  getRoutes.ts (srv/api/getRoutes.ts)
    - Parses community URL or short UUID
    - Fetches metadata from PostgreSQL
    - Injects OpenGraph meta tags into the index.html template
-   - Injects the instance-config <script> (window.__CG_INSTANCE__) into <head>
-     if not already present (see instanceConfigScriptTag())
+   - The template already loads /instance-config.js (served by the edge);
+     only a shell without that tag gets an inline window.__CG_INSTANCE__
+     script (instanceConfigScriptTag())
    - Returns server-rendered HTML with social-preview data
 ```
 
-Every `index.html` the backend serves for share links / previews is stamped with a `window.__CG_INSTANCE__` script that declares the instance's identity (deployment mode, URLs, capability flags). See [§7 Instance Config](#instance-configuration-__cg_instance__).
+Every `index.html` the backend serves for share links / previews loads `/instance-config.js`, which declares the instance's identity (deployment mode, URLs, capability flags), like the static shell does. See [§7 Instance Config](#instance-configuration-__cg_instance__).
 
 ---
 
@@ -214,7 +217,7 @@ Sessions are managed by `express-session` with a Redis-backed store. Key configu
 - **Cookie domain**: for non-dev deployments the cookie domain is set to `.{APP_HOSTNAME}` (derived from `BASE_URL`), so the app and the CG ID app (`id.<domain>`) share a session. Self-hosted instances get their own domain automatically.
 - **Secret**: loaded from Docker secret `redis_secret` or `REDIS_SECRET` env var
 - **saveUninitialized**: `true` (sessions are created for every non-bot request)
-- **trust proxy / proxy**: enabled (nginx/Caddy sit in front)
+- **trust proxy / proxy**: enabled (the edge sits in front and sets `X-Forwarded-*` itself)
 
 ### CORS Configuration
 
@@ -372,7 +375,7 @@ Several services use PostgreSQL's built-in LISTEN/NOTIFY for event-driven commun
 
 ### API-to-Onchain Communication
 
-The `api` service communicates with the internal-only `onchain` service via HTTP within the Docker network (not exposed through nginx). Available endpoints (`srv/onchain.ts`):
+The `api` service communicates with the internal-only `onchain` service via HTTP within the Docker network (not exposed through the edge). Available endpoints (`srv/onchain.ts`):
 
 - `POST /getContractData` — contract metadata (chain, address)
 - `POST /checkRoleClaimability` — whether a user qualifies for a token-gated role
@@ -414,7 +417,7 @@ The job runner (`srv/jobs.ts`) spawns Node.js `worker_threads` in three modes:
 All REST endpoints follow the `registerPostRoute` helper (`srv/api/util.ts`):
 
 ```
-Client                    nginx                  API Server
+Client                    edge                   API Server
   |                         |                        |
   |-- POST /api/v2/X/y --> |-- rewrite /X/y ------> |
   |                         |                        |-- express.json() parse body
@@ -478,11 +481,11 @@ Client Browser
 
 ### Pattern 4: Inter-Service HTTP (Internal)
 
-`api` calls the internal `onchain` service over HTTP within the Docker network (see [§4](#api-to-onchain-communication)). Neither the `onchain` nor `memberlist` internal servers are exposed through nginx.
+`api` calls the internal `onchain` service over HTTP within the Docker network (see [§4](#api-to-onchain-communication)). Neither the `onchain` nor `memberlist` internal servers are exposed through the edge.
 
-### Pattern 5: nginx as S3 Proxy
+### Pattern 5: The Edge as S3 Proxy
 
-File serving bypasses the API server. nginx rewrites the signed file path into standard AWS S3 query parameters and proxies to the SeaweedFS S3 gateway (`http://s3.local:8333`). The signature/date/expiry are embedded in the URL path; the API server generates these signed URLs when returning file references.
+File serving bypasses the API server. The edge rewrites the signed file path into standard AWS S3 query parameters and proxies to the SeaweedFS S3 gateway (`http://s3.local:8333`). The signature/date/expiry are embedded in the URL path; the API server generates these signed URLs when returning file references.
 
 ---
 
@@ -511,23 +514,22 @@ File serving bypasses the API server. nginx rewrites the signed file path into s
 
 Common Ground ships a **single-server self-hosting profile** (`docker/docker-compose.selfhost.yml`, documented in `docker/SELFHOST.md`) that runs the full stack on one machine. It differs from the cloud/dev profile in a few structural ways:
 
-- **Caddy** is added in front of nginx. Caddy owns ports 80/443 (and forwards mediasoup's 4443/tcp), obtains Let's Encrypt certificates automatically for the app domain and the CG ID subdomain, and reverse-proxies into the internal nginx. There is no Cloudflare layer.
-- **nginx** uses `nginx_selfhost.conf` (image `cryptogram/nginx-selfhost`). Upstreams are **resolved dynamically** via Docker's embedded DNS (`resolver 127.0.0.11; set $upstream ...; proxy_pass $upstream;`) so nginx starts even if a backend container is not yet up, instead of failing at config-load time on a static upstream.
+- **Caddy** is the whole edge (image `cryptogram/caddy-selfhost`, `docker/caddy/Caddyfile.selfhost`): it owns ports 80/443 (and 4443/tcp for mediasoup call signalling when calls are enabled), obtains Let's Encrypt certificates automatically for the app domain, serves the frontend and `/instance-config.js`, and routes to the backend. Upstreams are resolved per connection, so Caddy starts even if a backend container is not yet up. There is no Cloudflare layer and no nginx.
 - **No dev-chain / test-contract services** (`hardhat` is dev-only). Blockchain features work against public RPC endpoints and are optional.
 - All backend containers (`api`, `wsapi`, `mediasoup`, `onchain`, `job-runner`, `memberlist`, `migrate-db`) run from the same `cryptogram/backend` image, alongside Postgres, the two Valkey instances (`redis`, `redis-cache`), and the single `seaweed` container — the same topology as the dev profile. (The hosted Swarm stack, which lives in a separate infrastructure repository, still runs the pre-consolidation three-service SeaweedFS topology until it is migrated; the application is agnostic to either, since it only ever talks to `s3.local:8333`.)
 
-Passkeys live on the app origin itself (RP ID = the app host, [docs/auth-identity §7](../auth-identity/README.md#7-passkeys)); the CG ID subdomain is only used by a legacy CG ID (gateway) process. TODO(verify): the selfhost Caddyfile and `init.sh` still provision `CG_ID_DOMAIN`; removing that vhost is tracked with the Caddy work.
+Passkeys live on the app origin itself (RP ID = the app host, [docs/auth-identity §7](../auth-identity/README.md#7-passkeys)); a CG ID subdomain is only used by a legacy CG ID (gateway) instance, and Caddy serves it only there (`CG_LEGACY_CGID=true` plus `CG_ID_DOMAIN`; [docs/infrastructure §3](../infrastructure/README.md#legacy-cg-id-mini-app)).
 
 ### Instance Configuration (`__CG_INSTANCE__`)
 
-Historically the frontend inferred its deployment mode and URLs from a hardcoded domain list (`app.cg`, `staging.app.cg`); any other domain silently ran with dev semantics. That coupling has been removed. An instance now **declares its identity at serve time** through a single global:
+Historically the frontend inferred its deployment mode and URLs from a hardcoded domain list (`app.cg`, `staging.app.cg`); any other domain silently ran with dev semantics. That coupling has been removed. An instance now **declares its identity at serve time** through a single global, set by `/instance-config.js`:
 
-```html
-<script>window.__CG_INSTANCE__ = {"deployment":"prod","appUrl":"https://chat.example.org","passkeyRpId":"chat.example.org", ...}</script>
+```js
+window.__CG_INSTANCE__ = {"deployment":"prod","appUrl":"https://chat.example.org","passkeyRpId":"chat.example.org", ...};
 ```
 
 - **Build** (`srv/util/instanceConfig.ts`): `buildInstanceConfig()` assembles the object (`deployment`, `appUrl`, `passkeyRpId` — or `cgidUrl` in legacy CG ID mode —, optional `recaptchaSiteKey`, `activeChains`, `features`, `giphyApiKey`, `walletConnectProjectId`) and `instanceConfigScriptTag()` renders a `<`-escaped `<script>`.
-- **Injection**: the API server injects the tag into any `index.html` it serves (share links / SSR, in `getRoutes.ts`); the self-host nginx image performs the equivalent injection into the statically served `index.html`/`index_cgid.html` at container start (`docker/nginx/inject-instance-config.sh`, driven by `CG_*` env vars in the compose file).
+- **Delivery**: both HTML shells load `<script defer src="/instance-config.js">` ahead of the entry module. The Caddy edge renders that script per request from `CG_*` env vars in the compose file (`docker/caddy/instance-config.js`, JSON-encoded by Go's encoder); the share-link pages the API serves (`getRoutes.ts`) carry the same tag, and the API injects its own inline tag only into a shell without it. `GET /api/v2/Instance/config` returns `buildInstanceConfig()` as JSON for clients that never load the HTML.
 - **Consumption** (`src/common/instance.ts`): `getInstanceConfig()` is the single, validating accessor. When the global is absent it falls back to the legacy domain-based detection, so `app.cg` and local dev are unaffected. The same build artifacts therefore work for any domain — the domain is configuration, not code.
 
 ### Graceful Degradation & Capability Flags
@@ -544,23 +546,28 @@ An **absent** flag means "feature available" (the behaviour on official instance
 
 ---
 
-## Appendix: nginx Routing Summary
+## Appendix: Edge Routing Summary
 
-Based on `docker/nginx/nginx_dev.conf` and `docker/nginx/nginx_selfhost.conf`, request routing:
+The full, ordered route table of the dev and self-host edge (Caddy) is in
+[docs/infrastructure §3](../infrastructure/README.md#3-caddy-the-edge). In
+short:
 
 | URL Pattern | Destination | Notes |
 |-------------|-------------|-------|
 | `/api/bot/v1/...` | `http://api:4000` | Public bot protocol; rewritten to `/BotV1/...` |
-| `/api/v2/{Router}/...` | `http://api:4000` | REST API; prefix stripped. Router whitelist: `Chat\|Community\|File\|Message\|User\|Contract\|Notification\|Twitter\|Lukso\|CgId\|Passkey\|Accounts\|Plugins\|Search\|Report\|Bot\|Staking` |
+| `/api/v2/{Router}/...` | `http://api:4000` | REST API; prefix stripped. Router allowlist: `Captcha\|Instance\|Chat\|Community\|File\|Message\|User\|Contract\|Notification\|Twitter\|Lukso\|Passkey\|Accounts\|Plugins\|Search\|Report\|Bot\|Staking\|Feed` (`CgId` only for the legacy CG ID mini-app); any other `/api/` path is a 404 |
 | `/api/ws/` | `http://wsapi:4000` | Socket.IO (WebSocket upgrade) |
 | `/files/{id}/{sig}/{date}/{expires}` | `http://s3.local:8333` | Direct S3 proxy (rewritten to a signed S3 URL) |
-| `/c/`, `/u/`, `/gated-videos/`, `/gated-files/` | `http://api:4000` | Social previews / gated content (SSR + instance-config injection) |
+| `/c/`, `/u/`, `/gated-videos/`, `/gated-files/` | `http://api:4000` | Social previews / gated content (SSR) |
 | `/sitemap.xml`, `/twitter-callback`, `/twitter-login`, `/verify-email`, `/push-icon`, `/token-sale`, `/token`, `/store` | `http://api:4000` | Server-rendered pages |
-| `/fonts/`, `/icons/`, `/images/`, `/static/`, `/audio/`, `/downloads/` | Local filesystem `/www` | Static assets |
-| `/index.html`, `/service-worker.js`, `/e/*` | Local filesystem `/www` | SPA entry point (fallback to index.html) |
-| `/index_cgid.html` | Local filesystem `/www` | CG ID subdomain entry point |
+| `/instance-config.js` | Caddy template | the instance config |
+| `/fonts/`, `/icons/`, `/images/`, `/static/`, `/audio/`, `/downloads/` | the built frontend | Static assets (404 if missing) |
+| `/index.html`, `/service-worker.js`, `/e/*` | the built frontend | SPA entry point (fallback to index.html) |
+| `/index_cgid.html` | refused (403) | served only by the CG ID site (legacy gateway) and, in dev, on the main origin |
 | `/community/{10-char}` | 301 redirect | Legacy community URLs rewritten to `/c/{url}/` |
-| `/enable-cross-origin-security`, `/disable-cross-origin-security` | Local filesystem `/www` | COOP/COEP toggling entry points |
-| Everything else | Local filesystem `/www` | Static files, 404 if not found |
+| `/enable-cross-origin-security`, `/disable-cross-origin-security` | the built frontend | COOP/COEP toggling entry points |
+| Everything else | the built frontend | an existing file, otherwise the SPA shell |
 
-In the self-host config the same routes are used, but every proxied `location` resolves its upstream dynamically through Docker DNS (`resolver 127.0.0.11 valid=10s ipv6=off`) rather than binding the upstream at config-load time.
+The hosted stack's `docker/nginx/nginx.conf` has the same routes, with
+`CgId` always allowed, no `/api/` 404 (unknown paths get the shell) and one
+extra redirect for a renamed community.

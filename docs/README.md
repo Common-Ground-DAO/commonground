@@ -19,7 +19,7 @@ maintaining these docs live in [AGENTS.md](../AGENTS.md) (sections "Documentatio
 | [staking/](staking/README.md) | Staking feature end-to-end |
 | [bots/](bots/README.md) | Bot accounts architecture; [BOT-API.md](BOT-API.md) is the wire protocol |
 | [plugins/](plugins/README.md) | Plugin system |
-| [infrastructure/](infrastructure/README.md) | Docker stack, build, nginx, env vars |
+| [infrastructure/](infrastructure/README.md) | Docker stack, build, Caddy edge, env vars |
 | [deployment/](deployment/README.md) | Deployment matrix, selfhost profile, CI/CD |
 | [email-notifications/](email-notifications/README.md) | Email, newsletters, notification preferences |
 

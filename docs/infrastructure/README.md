@@ -16,7 +16,10 @@
 > behaviour against commit ff0da06, 2026-10-31; git-dependency and `npx` rows
 > of §2 and the age-gate bullet against commit ff0da06, 2026-10-31; `Passkey`
 > in the API allowlist, the passkey fields of the injected instance config and
-> the passkey/legacy CG ID variables against commit 54e2d73, 2026-10-31
+> the passkey/legacy CG ID variables against commit 54e2d73, 2026-10-31; the
+> Caddy edge that replaced nginx in the dev and self-host stacks (§1 `caddy`,
+> `vite-tls`, `mediasoup`, TLS certificates; §2 build steps and the HTML check;
+> §3; §6 commands; §7) against branch feat/f5-caddy (base d604544), 2026-10-31
 
 # Common Ground Infrastructure Documentation
 
@@ -24,7 +27,7 @@ This document covers the full infrastructure stack for Common Ground, a Discord 
 
 There are two deployment shapes, each with its own compose file:
 
-- **Dev / internal stack** — `docker/docker-compose.yml`, driven by `run.sh`. Includes a local Hardhat dev chain and test-contract deployment; TLS is self-signed; `DEPLOYMENT` is configurable.
+- **Dev / internal stack** — `docker/docker-compose.yml`, driven by `run.sh`. Includes a local Hardhat dev chain and test-contract deployment; TLS comes from Caddy's local CA (`tls internal`); `DEPLOYMENT` is configurable.
 - **Self-hosted single-server production** — `docker/docker-compose.selfhost.yml`, driven by `docker/selfhost/selfhost.sh`. Caddy terminates real Let's Encrypt TLS (or, for LAN/test instances, TLS from its own local CA), `DEPLOYMENT=prod` on any domain, no dev chain, secrets are generated. See [section 7](#7-self-hosted-single-server-deployment).
 
 ---
@@ -33,7 +36,7 @@ There are two deployment shapes, each with its own compose file:
 
 1. [Docker Compose Stack (dev)](#1-docker-compose-stack-dev)
 2. [Build Process](#2-build-process)
-3. [nginx Configuration](#3-nginx-configuration)
+3. [Caddy (the edge)](#3-caddy-the-edge)
 4. [Environment Variables](#4-environment-variables)
 5. [CI/CD Pipelines](#5-cicd-pipelines)
 6. [Developer Workflow](#6-developer-workflow)
@@ -99,13 +102,13 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Image:** `cryptogram/backend` (built from `docker/backend/Dockerfile_dev_stage_1`)
 - **Purpose:** Main HTTP REST API server. Handles all `/api/v2/*` requests plus the Bot API v1 (`/BotV1/*`): authentication, community management, file uploads, messaging, contracts, notifications, Twitter/Lukso integrations, search, reporting, bots, and staking.
 - **Command:** `node /dist/api.js`
-- **Port:** Internal only (reached by nginx on port 4000 over the Docker network)
+- **Port:** Internal only (reached by Caddy on port 4000 over the Docker network)
 - **Depends on:** `db`, `redis`, `redis-cache`, `seaweed`, `memberlist`
 - **Volumes:**
   - `./vapid_keys.json:/run/secrets/vapid_keys_json:ro` — VAPID keys for web push notifications
   - `./api_data:/api_data:ro` — static API data
 - **Key environment variables:** `DB_TYPE=writer`, `PG_PASSWORD` (writer), `REDIS_PASSWORD`, `REDIS_SECRET`, `DEPLOYMENT`, `BASE_URL`, `CGID_URL` (read only in legacy CG ID mode), `S3_SECRET`, the `SMTP_*`/`EMAIL_FROM*` set (see [Email](#email-smtp)), `GOOGLE_RECAPTCHA_SECRET_KEY`, Twitter OAuth credentials, the `STAKING_*` set, and the bot limits (`PLATFORM_OPERATOR_USER_IDS`, `BOT_USER_OWNER_LIMIT`, `BOT_COMMUNITY_OWNER_LIMIT`, `BOT_PLATFORM_OWNER_LIMIT`, `BOT_ACTIVE_TOKEN_LIMIT`, `BOT_API_RATE_LIMIT_PER_MINUTE`, `BOT_MESSAGE_RATE_LIMIT_PER_MINUTE`).
-- **Passkey variables (every backend process — api, wsapi, migrate-db, job-runner, onchain, memberlist, mediasoup — with the same values; both compose files pass `PASSKEY_RP_ID=${PASSKEY_RP_ID:-}` and `CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}` to each, from `docker/.env` / `.env.selfhost`):** `PASSKEY_RP_ID` (empty = the `BASE_URL` host — on selfhost the `CG_DOMAIN` host; otherwise that host or a parent domain; must never change once passkeys exist — the selfhost nginx gets the same value as `CG_PASSKEY_RP_ID`) and `CG_LEGACY_CGID=true` (legacy CG ID / gateway mode only). `CGID_URL` is passed to `api` only and read only in legacy mode (the CG ID app's RP and CORS origin). Shared code reads the RP ID in whichever process it runs, see [docs/auth-identity §7](../auth-identity/README.md#7-passkeys).
+- **Passkey variables (every backend process — api, wsapi, migrate-db, job-runner, onchain, memberlist, mediasoup — with the same values; both compose files pass `PASSKEY_RP_ID=${PASSKEY_RP_ID:-}` and `CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}` to each, from `docker/.env` / `.env.selfhost`):** `PASSKEY_RP_ID` (empty = the `BASE_URL` host — on selfhost the `CG_DOMAIN` host; otherwise that host or a parent domain; must never change once passkeys exist — the selfhost caddy gets the same value as `CG_PASSKEY_RP_ID` for the instance config) and `CG_LEGACY_CGID=true` (legacy CG ID / gateway mode only). `CGID_URL` is passed to `api` only and read only in legacy mode (the CG ID app's RP and CORS origin). Shared code reads the RP ID in whichever process it runs, see [docs/auth-identity §7](../auth-identity/README.md#7-passkeys).
 
 #### `wsapi`
 - **Image:** `cryptogram/backend`
@@ -132,10 +135,10 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Purpose:** WebRTC media server for voice/video calls. Uses the mediasoup library for SFU (Selective Forwarding Unit) functionality. Spawns one media worker per CPU core.
 - **Command:** `node /dist/mediasoup.js`
 - **Ports:**
-  - `${EXTERNAL_LISTEN_IP}:4443:4443/tcp` — HTTPS signaling
   - `${EXTERNAL_LISTEN_IP}:40000-40099:40000-40099/udp` — RTP media transport (100 UDP ports). mediasoup also listens on TCP `40000+n` (ICE-TCP fallback, see [docs/realtime](../realtime/README.md#mediasoup-configuration)); the dev stack does not publish that, the self-host stack does.
-- **Volumes:** `./nginx/certs:/dist/mediasoup/certs` — SSL certificates for DTLS (uses `nginx_certs/server-complete.pem` + `key.pem`)
-- **Key environment variables:** `DB_TYPE=mediasoup`, `PG_PASSWORD` (from `PG_MEDIASOUP_PASSWORD`), `MEDIASOUP_ANNOUNCED_IP`, `DOMAIN`, `DEBUG=mediasoup*`, `INTERACTIVE=false`, `MEDIASOUP_DISABLE_LIBURING`, `LOCAL_CERTIFICATE_IP`
+  - Signalling (wss, container port 4443) is not published by mediasoup: the `caddy` service terminates TLS on `${EXTERNAL_LISTEN_IP}:4443` and proxies to it.
+- **Volumes:** `./mediasoup/certs:/run/mediasoup-certs:ro` — only `server.crt` + `server.key`, a self-signed certificate for the caddy→mediasoup hop (mediasoup serves HTTPS only; caddy does not verify it, no browser sees it). `docker/mediasoup/ensureInternalCert.sh` creates it when missing (`run.sh up`, `build.sh`, `updateBackend.sh`); the directory is gitignored.
+- **Key environment variables:** `DB_TYPE=mediasoup`, `PG_PASSWORD` (from `PG_MEDIASOUP_PASSWORD`), `HTTPS_CERT_FULLCHAIN`/`HTTPS_CERT_PRIVKEY` (the internal certificate), `MEDIASOUP_ANNOUNCED_IP`, `DOMAIN`, `INTERACTIVE=false`, `MEDIASOUP_DISABLE_LIBURING`, `LOCAL_CERTIFICATE_IP`, `MEDIASOUP_TRUST_PROXY=true` (signalling arrives only through caddy, which sets `X-Forwarded-For`)
 - **Depends on:** `migrate-db` with `condition: service_completed_successfully` — the tables and the `mediasoup` role's table privileges come from the migrations, and the role itself where `docker/db/init.sh` did not create it (`1689160339881-addMediasoupRole`), so an earlier start fails. Same in the self-host stack.
 - **Restart:** `"no"` — does not auto-restart in the dev stack.
 
@@ -163,7 +166,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
   - `-s3.port.iceberg=0` disables the Iceberg REST catalog that SeaweedFS (since 4.40) otherwise starts on 8181 — nothing in this stack speaks Iceberg.
   - `weed server`, not `weed mini` (upstream's default CMD), on purpose: `mini` bundles WebDAV, an Admin UI and the Iceberg catalog, enables an embedded IAM API on the S3 port by default, and upstream reserves the right to evolve its defaults — `server` keeps a stable flag surface and no extra listeners.
   - Single-copy replication via `WEED_MASTER_VOLUME_GROWTH_COPY_1=1` / `..._OTHER=1`.
-- **Ports (all internal to the `cryptogram` network):** S3 8333, master 9333, volume 8080, filer 8888, plus their gRPC siblings (port + 10000). **Only 8333 is consumed by anything else in the stack** — nginx proxies file requests to it and `srv/repositories/files.ts` uses it as its endpoint, both via the network alias `s3.local`.
+- **Ports (all internal to the `cryptogram` network):** S3 8333, master 9333, volume 8080, filer 8888, plus their gRPC siblings (port + 10000). **Only 8333 is consumed by anything else in the stack** — Caddy proxies file requests to it and `srv/repositories/files.ts` uses it as its endpoint, both via the network alias `s3.local`.
 - **Network alias:** `s3.local`
 - **Volumes:** `./s3_config/s3.json:/etc/seaweedfs/s3.json:ro` (dev, generated by `docker/ensureEnv.sh`; `s3.selfhost.json` for self-host) and `seaweedfs-data:/data`
 - **Data layout under `/data`:** volume blobs (`.dat`/`.idx`/`.vif`) at the root, filer leveldb in `filerldb2/`, master raft/sequence state in `m9333/`. Because blobs and filer metadata now share one volume, a filesystem snapshot of `/data` is atomic across both — which the former two-volume split could never be. See [docs/deployment](../deployment/) for the backup baseline.
@@ -174,14 +177,21 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Garage (v2.3.0) and versitygw (v1.7.0) — credible, but not worth the move.** Garage is the community default for this profile and versitygw stores objects as plain POSIX files (the best possible backup story), but either swap means an S3-level data migration across every existing deployment — hosted and every self-host install — for no user-visible gain.
 - The application's coupling is thin (`srv/repositories/files.ts` speaks plain S3 against one `cg-media` bucket), so a swap stays *possible*; re-evaluate only when a concrete need appears.
 
-#### `nginx`
-- **Image:** `cryptogram/nginx` (built from `docker/nginx/Dockerfile_dev`)
-- **Purpose:** Reverse proxy and static file server. Routes traffic to backend services and serves the React frontend.
-- **Ports:**
-  - `${EXTERNAL_LISTEN_IP}:8000:80` — HTTP
-  - `${EXTERNAL_LISTEN_IP}:8001:443` — HTTPS (self-signed certs for local dev)
-- **Build args:** `NGINX_EXPOSED_ON=${LOCAL_CERTIFICATE_IP}` (injected into `nginx_dev.conf` at build time)
+#### `caddy`
+- **Image:** `cryptogram/caddy` (built from `docker/caddy/`, config `Caddyfile.dev`) — see [section 3](#3-caddy-the-edge)
+- **Purpose:** The edge: serves the built frontend, routes to `api`, `wsapi`, `seaweed` and `mediasoup`, sets the security headers and serves the instance config.
+- **Ports** (the container uses the same numbers):
+  - `${EXTERNAL_LISTEN_IP}:8000` — HTTP
+  - `${EXTERNAL_LISTEN_IP}:8001` — HTTPS
+  - `${EXTERNAL_LISTEN_IP}:4443` — call signalling (wss) in front of mediasoup
+- **Certificates:** Caddy's local CA (`tls internal`) in the `caddy-data` volume, for `localhost`, `127.0.0.1`, `app.cg.local`, `bs-local.com` and, when set, `LOCAL_CERTIFICATE_IP` (see [Dev stack](#dev-stack-caddyfiledev) for connections to an IP address). `./run.sh export_ca` writes the root certificate to `docker/caddy-local-root.crt` for importing into a browser.
+- **Health check:** healthy once the local CA exists and `http://127.0.0.1:8000/robots.txt` answers; `vite-tls` waits for it, so the two never create a CA each on a fresh volume.
 - **Depends on:** `api`
+
+#### `vite-tls`
+- **Image:** the stock pinned `caddy` image with `docker/caddy/Caddyfile.vite` bind-mounted; compose profile `vite-tls`.
+- **Purpose:** TLS in front of the Vite dev server for `./run.sh start_https`, which starts it and removes it again when the dev server exits. Shares `caddy-data` with `caddy`, so the certificate comes from the same local CA; it starts only once `caddy` is healthy (CA created), which also brings the stack up if it is not.
+- **Port:** `${EXTERNAL_LISTEN_IP}:3000`; upstream `cg-builder:3000` (the dev-server container, run with `--use-aliases`).
 
 #### `mailpit`
 - **Image:** `axllent/mailpit:v1.32.0` (pinned by digest)
@@ -218,6 +228,8 @@ The formerly commented-out Blockscout explorer stack (`blockscout`, `blockscout-
 | `pgadmin-data` | `pgadmin` (commented out) | pgAdmin data |
 | `seaweedfs-data` | `seaweed` | File blobs, filer metadata and master state (one `/data` tree) |
 | `builder-cache` | `cg-builder` | Yarn package cache across builds |
+| `caddy-data` | `caddy`, `vite-tls` | Caddy's local CA (root + key) and the certificates it issued |
+| `caddy-config` | `caddy` | Caddy's autosaved config |
 
 ### S3 Configuration
 
@@ -225,18 +237,18 @@ The formerly commented-out Blockscout explorer stack (`blockscout`, `blockscout-
 
 The SeaweedFS S3-compatible API is configured with two identities:
 - **`anonymous`** — read-only access to the `cg-media` bucket, so uploaded media can be fetched without authentication.
-- **an admin identity** (`cg_admin_user`; the dev `s3.json` that was tracked until 2026-10-31 calls it `some_admin_user` — the name is only a label, nothing references it) — full access (Admin, Read, List, Tagging, Write) using access key `cgadmin` and a secret key matching the `S3_SECRET` environment variable. Presigned `/files/...` URLs generated by the backend are verified against this key by nginx's rewrite.
+- **an admin identity** (`cg_admin_user`; the dev `s3.json` that was tracked until 2026-10-31 calls it `some_admin_user` — the name is only a label, nothing references it) — full access (Admin, Read, List, Tagging, Write) using access key `cgadmin` and a secret key matching the `S3_SECRET` environment variable. Presigned `/files/...` URLs generated by the backend are turned back into presigned S3 requests by Caddy and verified by SeaweedFS against this key.
 
-### SSL Certificate Generation (dev)
+### TLS certificates (dev)
 
-**Files:** `docker/nginx/certs/`
-
-Self-signed certificates for local development are generated by the build scripts when `LOCAL_CERTIFICATE_IP` changes:
-1. `recreate_root_cert.sh` generates a root CA.
-2. `recreate_server_certs.sh` generates a server certificate signed by that CA, with SANs for `localhost`, `app.cg.local`, `127.0.0.1`, and the `LOCAL_CERTIFICATE_IP` value.
-3. Certificates are mounted into the nginx and mediasoup containers.
-
-The generated IP is stored in `nginx/certs/nginx_certs/certificate_ip` so builds can skip regeneration when it is unchanged.
+There are no certificate scripts any more. Every certificate a browser sees
+(`:8001`, `:4443`, and `:3000` under `start_https`) is issued by Caddy's local
+CA, which Caddy creates on its first start in the `caddy-data` volume; its key
+never leaves the volume. Trust the root once per machine (`./run.sh export_ca`
+→ `docker/caddy-local-root.crt`). The only other certificate is the
+self-signed one for the internal caddy→mediasoup hop (see `mediasoup` above).
+Checkouts from before the switch still have the old generated certificates in
+`docker/nginx/certs/` (gitignored, unused) — delete them.
 
 ### Network
 
@@ -337,11 +349,11 @@ The complete build pipeline, for first-time setup or full rebuilds.
    no network fetch. (The former "Missing .yarn directory" repair blocks and
    `yarn set version` calls are gone; on a dev host, run `corepack enable`
    once to get the same resolution outside the containers.)
-3. **Generate SSL certificates:** compare `LOCAL_CERTIFICATE_IP` with the stored `certificate_ip`; if changed, regenerate root CA and server certs.
-4. **Clear `backend/dist/` and `nginx/dist/`**, then install frontend dependencies (`docker compose run --rm cg-builder yarn install --immutable`).
+3. **Internal mediasoup certificate:** `mediasoup/ensureInternalCert.sh` creates the self-signed caddy→mediasoup certificate if it is missing (browser-facing certificates come from Caddy's local CA, see [section 1](#tls-certificates-dev)).
+4. **Clear `backend/dist/` and `caddy/dist/`**, then install frontend dependencies (`docker compose run --rm cg-builder yarn install --immutable`).
 5. **Generate random build ID:** a random base64 string is written into `src/common/random_build_id.ts` for cache-busting / new-build detection.
-6. **Type-check, lint and build the frontend:** one builder run of `yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite`, with `DEPLOYMENT=prod` and `NODE_OPTIONS=--max-old-space-size=4096`. Output goes to `../build/`, then `rsync`ed into `nginx/dist/`. See [Frontend build steps](#frontend-build-steps) for what each step does and why it is a separate step now.
-7. **Build nginx image:** `docker compose build --no-cache nginx`.
+6. **Type-check, lint and build the frontend:** one builder run of `yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite`, with `DEPLOYMENT=prod` and `NODE_OPTIONS=--max-old-space-size=4096`. Output goes to `../build/`, then `rsync`ed into `caddy/dist/`. See [Frontend build steps](#frontend-build-steps) for what each step does and why it is a separate step now.
+7. **Build the caddy image:** `docker compose build --no-cache caddy`.
 8. **Generate VAPID keys:** if `vapid_keys.json` doesn't exist, generate Web Push VAPID keys via `npx web-push generate-vapid-keys`.
 9. **Build the backend:** clear `backend/dist/`, `rsync` `srv/` (excluding `node_modules` and `.yarn`), copy `build/index.html` into `backend/dist/` (used for server-rendered meta tags), build `commonground/backend_stage_0`, then build the `api` image (stage 1 runs `yarn tsc`).
 10. **Build and start the database:** `docker compose build --no-cache db && docker compose up -d db`.
@@ -351,15 +363,15 @@ The complete build pipeline, for first-time setup or full rebuilds.
 
 ### Backend-Only Update: `docker/updateBackend.sh` (`./run.sh update_backend`)
 
-Faster rebuild that only recompiles the backend: stops backend services, rebuilds `cg-builder` and nginx, regenerates certs/VAPID keys if needed, re-copies `srv/` sources and `build/index.html` into `backend/dist/`, builds the stage-0 and stage-1 backend images, then starts the stack and redeploys contracts.
+Faster rebuild that only recompiles the backend: stops the backend services (caddy keeps running — it resolves the containers per request), rebuilds `cg-builder`, creates the internal mediasoup certificate and the VAPID keys if missing, re-copies `srv/` sources and `build/index.html` into `backend/dist/`, builds the stage-0 and stage-1 backend images, then starts the stack and redeploys contracts.
 
 ### Frontend-Only Update: `docker/updateFrontend.sh` (`./run.sh update_frontend`)
 
-Rebuilds only the frontend and nginx:
-1. Clear `nginx/dist/`, rebuild `cg-builder`.
+Rebuilds only the frontend and the caddy image:
+1. Clear `caddy/dist/`, rebuild `cg-builder`.
 2. Install dependencies, generate a new random build ID.
 3. Run `yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite` with `DEPLOYMENT=prod` and **`NODE_OPTIONS=--max-old-space-size=4096`** (see [Frontend build steps](#frontend-build-steps)).
-4. `rsync` the build output into `nginx/dist/`, then `docker compose up -d --no-deps --build nginx` and restart nginx.
+4. `rsync` the build output into `caddy/dist/`, then `docker compose up -d --no-deps --build caddy`.
 
 ### Frontend build steps
 
@@ -372,7 +384,7 @@ legacy Azure pipelines — runs the same four steps in this order:
 | type-check | `yarn typecheck` | `tsc --noEmit` for `src/**` plus `tsconfig.node.json` for the Vite-side files. The old webpack build ran ForkTsChecker inline; a Vite build type-checks nothing, so without this a type error ships silently. |
 | lint | `yarn lint` | `eslint .` against `eslint.config.mjs`. Same reason: react-scripts ran ESLintPlugin inline. Errors fail the build, warnings do not — the same contract CRA had. |
 | build | `yarn build` | `vite build` → `build/`. |
-| HTML rewrite check | `yarn check:html-rewrite` | Runs the real rewrite logic of `srv/api/getRoutes.ts` and `docker/nginx/inject-instance-config.sh` against both emitted shells. Both patch the HTML with string/regex surgery at serve time and fail *silently* when the markup shape drifts. |
+| HTML rewrite check | `yarn check:html-rewrite` | `tools/checkHtmlRewriteCompat.mjs` checks both emitted shells against their two serve-time consumers, which fail *silently* when the markup shape drifts: the real meta-rewrite logic of `srv/api/getRoutes.ts`, and the Caddy edge — each shell loads `/instance-config.js` once as a deferred classic script before the entry module, every inline script of `index.html` has its sha256 in the CSP of `docker/caddy/common.caddy`, and `index_cgid.html` has no inline script. |
 
 **Environment.** `DEPLOYMENT=prod` and `NODE_OPTIONS=--max-old-space-size=4096`
 are the only variables the build reads. `NODE_OPTIONS` is not optional: a plain
@@ -411,29 +423,33 @@ mini-app served at `id.app.cg` loaded its JS, CSS and PWA manifest
 `^/(fonts|icons|images|static|audio|downloads)/` location exist for. The shell's
 own assets are same-origin now, so the main-origin entries were pruned from
 `script-src-elem`, `style-src` and `manifest-src` on both the prod/staging and
-the self-host CG ID vhosts. Two directives keep the main origin, because the
+the self-host CG ID vhosts; the Caddy edge that replaced the self-host nginx
+(2026-10-31) has no `Access-Control-Allow-Origin` allowance for the CG ID
+origin at all, and its CG ID site allows no inline script (see
+[section 3](#legacy-cg-id-mini-app)). The hosted `nginx.conf` keeps both
+widenings until the hosted stack is shut down. Two directives keep the main origin, because the
 mini-app genuinely still reaches it: `img-src` (it renders
 `${APP_URL}/icons/128.png`, e.g. `src/cgid/login.tsx`) and `connect-src` (its
 API calls go to `APP_URL/api/v2/CgId/`). `manifest-src 'self'` is load-bearing:
 `/manifest_wallet.json` is now served from the CG ID origin, and on the
 prod/staging vhosts the directive did not carry `'self'` before the cutover
-(`nginx_selfhost.conf` always had it — self-hosted instances never set
+(the self-host config always had it — self-hosted instances never set
 `PUBLIC_URL`).
 
-**Output layout** (`build/`), pinned to keep the nginx rules untouched:
+**Output layout** (`build/`), pinned to keep the edge's rules (Caddy, and the hosted `nginx.conf`) untouched:
 
 - `build/index.html`, `build/index_cgid.html` — both entry shells at the web
-  root under exactly these names. `srv/api/getRoutes.ts`,
-  `docker/nginx/inject-instance-config.sh` and the `{CGID_SERVER_NAME}` vhost
-  all depend on that. The shells are **not minified** any more (CRA ran
+  root under exactly these names. `srv/api/getRoutes.ts` and the Caddy
+  routes (`/index.html`, the CG ID site's `/index_cgid.html`) depend on that. The shells are **not minified** any more (CRA ran
   HtmlWebpackPlugin minification; Vite ships the templates verbatim apart from
   the injected module script and, with `PUBLIC_URL`, three absolutised meta
   tags). That is intended, not a regression: both rewrite consumers match on
   literal markup, and an HTML minifier would put their regexes back at risk to
   save ~7 KB of comments and whitespace.
 - `build/static/js|css|media/` — `assetsDir: 'static'`, hex `[hash:8]` content
-  hashes. nginx's cache rule keys on
-  `^/(fonts|icons|images|static|audio|downloads)/`, and the service worker's
+  hashes. Caddy's cache rules key on
+  `^/(fonts|icons|images|static|audio|downloads)/` and give the hashed files
+  under `static/` a year-long `immutable` lifetime, and the service worker's
   `dontCacheBustURLsMatching: /\.[0-9a-f]{8}\./` needs hex, not rollup's
   default base64url alphabet.
 - `build/service-worker.js` at the root, built by `vite/serviceWorker.ts`
@@ -545,56 +561,191 @@ are tracked in `docs/todo/TODO.md`).
 
 ---
 
-## 3. nginx Configuration
+## 3. Caddy (the edge)
 
-There are three nginx configs, one per build target:
+Caddy is the edge of both the dev stack and the self-host profile: TLS, the
+built frontend, the routing to the backend services, security headers and the
+instance config. It replaced nginx there on 2026-10-31 (the Caddy config for
+both lives in one place); the hosted Swarm deployment (`app.cg`, CI/CD) still
+uses `docker/nginx/nginx.conf` + `docker/nginx/Dockerfile` until it is shut
+down after the move.
 
-| Config | Dockerfile | Used by |
+**Image** — `docker/caddy/Dockerfile`: stock `caddy` (`2.11.x-alpine`, exact
+tag + digest pinned; no plugins — a custom build would pull third-party Go
+modules outside the [update policy](UPDATE-POLICY.md)), plus the frontend build
+in `/srv`, the Caddyfiles in `/etc/caddy/` and the instance-config template in
+`/etc/caddy/templates/`. `Caddyfile.vite` and `Caddyfile.conformance` are not in the image (bind-mounted by their compose files). Nothing instance-specific is baked in, so one image
+serves any domain; the compose file picks the config with `command` and passes
+everything else as environment. Tags: `cryptogram/caddy` (dev) and
+`cryptogram/caddy-selfhost` (self-host), kept apart so the two stacks on one
+host never share a frontend build.
+
+| File | Used by |
+|---|---|
+| `common.caddy` | imported by the three configs below: the app's routing (`cg_app`), CSP, common headers, HSTS, access log, instance config, CG ID variants, call-signalling proxy |
+| `Caddyfile.dev` | dev stack, service `caddy` |
+| `Caddyfile.selfhost` | self-host stack ([section 7](#7-self-hosted-single-server-deployment)) |
+| `Caddyfile.conformance` | the disposable conformance stack (`docker-compose.conformance.yml`, which bind-mounts it — it is not in the image): the self-host routing as plain HTTP for any host. Test-only: it trusts `X-Forwarded-For` from private addresses, because the suite isolates its fixture clients by address (`sdk/conformance/src/fixtures.ts`) |
+| `Caddyfile.vite` | dev stack, service `vite-tls` (TLS for `./run.sh start_https`; runs the stock image with this file bind-mounted) |
+| `instance-config.js` | Go template behind `/instance-config.js` |
+
+### Routing (`common.caddy`, snippet `cg_app`)
+
+Routes are tried in this order; the first match wins.
+
+| Path | Goes to | Notes |
 |---|---|---|
-| `nginx_dev.conf` | `Dockerfile_dev` | dev stack (`docker-compose.yml`) |
-| `nginx.conf` | `Dockerfile` | CI/CD (staging/prod, `app.cg`) |
-| `nginx_selfhost.conf` | `Dockerfile_selfhost` | self-host stack ([section 7](#7-self-hosted-single-server-deployment)) |
+| any path with a `.` or `..` segment (also percent-encoded) | 400 | Caddy's path matchers see the cleaned path, the upstream would get the path as sent — so no prefix rule can be walked out of |
+| `/files/<id>/<sig>/<YYYYMMDD>T<HHMMSS>Z/<expires>` | `s3.local:8333` | rewritten to the S3 presigned GET the backend signed (`getSignedUrls` in `srv/repositories/files.ts`): bucket `cg-media`, `Host: <host>:8333` (the signature covers it). CSP `default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; sandbox`, `nosniff`, `Access-Control-Allow-Origin` = own origin; successful responses get `Cache-Control: private,max-age=604800,immutable` (errors are not cacheable). Cookies and `Authorization` are stripped towards S3 and `Set-Cookie` back, as are `X-Forwarded-Host` (SeaweedFS would check the signature against it) and SeaweedFS' own CORS/owner headers; S3 error bodies are replaced by an empty body with the same status. Other `/files/` paths: 404. |
+| `/api/bot/v1/…` | `api:4000` as `/BotV1/…` | Bot API v1 ([docs/BOT-API.md](../BOT-API.md)) |
+| `/api/v2/CgId/…` | `api:4000` (prefix stripped) | only when the legacy CG ID mini-app is on (see below) |
+| `/api/v2/(Captcha\|Instance\|Chat\|Community\|File\|Message\|User\|Contract\|Notification\|Twitter\|Lukso\|Passkey\|Accounts\|Plugins\|Search\|Report\|Bot\|Staking\|Feed)/…` | `api:4000` (prefix stripped) | the web API allowlist |
+| `/api/ws/…` | `wsapi:4000` | Socket.IO, websocket upgrade included |
+| any other `/api/…` | 404 | |
+| `/(c\|u\|gated-videos\|gated-files)/…`, `/sitemap.xml`, `/twitter-callback`, `/twitter-login`, `/verify-email`, `/push-icon`, `/token-sale`, `/token`, `/store` | `api:4000` | share links (the SPA shell with per-item social meta), images, gated media, callbacks. HTML responses get `Cache-Control: no-cache`; anything else `private,max-age=86400,must-revalidate` unless the backend set its own. |
+| `/instance-config.js` | template | see [Instance config](#instance-config) |
+| `/robots.txt` | `/srv` | the build's robots.txt plus a `Sitemap:` line for the requesting host (template) |
+| `/(fonts\|icons\|images\|static\|audio\|downloads)/…` | `/srv` | no SPA fallback (missing file = uncached 404). Content-hashed files under `static/` — `name.<8 hex>.ext` and `name.<8 hex>.chunk.js`, plus the `.map` of each (everything Vite emits, see `vite.config.ts`) — get `public,max-age=31536000,immutable`; every other existing file `private,max-age=86400,must-revalidate` |
+| `/`, `/index.html`, `/service-worker.js`, `/e/<x>` | `/srv` | `Cache-Control: no-cache`; falls back to the shell |
+| `/community/<10 alphanumerics>…` | 301 → `/c/<id>/` | legacy community links |
+| `/index_cgid.html` | 403 | the CG ID shell is served only by the CG ID vhost (dev: served here, see below) |
+| `/enable-cross-origin-security…`, `/disable-cross-origin-security…` | `/srv/index.html` | `no-store`; the "enable" page adds `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` (the service worker precaches both) |
+| anything else | `/srv` | an existing file (manifest, logo, models, …) with `private,max-age=86400,must-revalidate`; any other path is a client-side route and gets the shell with `no-cache`, so deep links work before the service worker takes over |
 
-### Development: `docker/nginx/nginx_dev.conf`
+The `Cache-Control` of the API routes is `no-cache` unless the backend set one
+itself (e.g. `no-store` on `GET /Instance/config`).
 
-The `{NGINX_EXPOSED_ON}` placeholder is replaced at Docker build time with `LOCAL_CERTIFICATE_IP`.
+**On every response** (deferred, so an upstream value never wins):
+`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
+`Referrer-Policy: strict-origin-when-cross-origin`,
+`Permissions-Policy: publickey-credentials-get=(self), publickey-credentials-create=(self), geolocation=(), payment=()`
+(passkey ceremonies only in the origin's own documents, never in a frame;
+camera, microphone and display capture keep the browser default because the
+plugin host delegates them to plugin frames through their `allow` attribute),
+and no `Server` / `Via` / `X-Powered-By`. Errors raised inside Caddy (e.g. a missing static file) get the same headers, `Cache-Control: no-store` and an empty body (`handle_errors`). The self-host sites add
+`Strict-Transport-Security: max-age=31536000` on HTTPS responses, error
+responses included (no `includeSubDomains`, no preload; fifth argument of
+`cg_app`); the dev and conformance sites do not (HSTS on `localhost` would
+break the plain-HTTP dev ports).
 
-**Listeners:** port 80 (HTTP) and port 443 (HTTPS, self-signed).
-**Server names:** `localhost`, `bs-local.com`, `app.cg.local`, `{NGINX_EXPOSED_ON}`.
+**Content-Security-Policy** (snippet `cg_csp`, on the shell, the static files
+and the API routes): `default-src 'self'`, `base-uri 'self'`,
+`object-src 'none'`, `frame-ancestors 'none'`, `worker-src 'self' blob: data:`,
+the style/font/img allowlists, `connect-src 'self'` + the instance's own host
+on any port (`wss://<host>:4443` call signalling) + the wallet/RPC/Giphy hosts
+the app talks to — for WalletConnect/Reown exactly the hosts the installed
+`@walletconnect/*` 2.21 and `@reown/appkit*` 1.7 packages contact:
+`wss://relay.walletconnect.org`, `https://rpc.walletconnect.org`,
+`https://verify.walletconnect.org` / `.com`, `https://pulse.walletconnect.org`
+and `https://api.web3modal.org` (the latter also in `img-src`; its iframes,
+e.g. `secure.walletconnect.org`, fall under `frame-src`); `script-src 'self' 'wasm-unsafe-eval'` and
+`script-src-elem 'self' 'sha256-…' https://www.google.com https://www.gstatic.com`.
+There is no `'unsafe-inline'` for scripts: the instance config is a
+same-origin script, and the one inline script of `index.html` (the initial
+dark-mode switch) is allowed by its hash. `tools/checkHtmlRewriteCompat.mjs`
+(`yarn check:html-rewrite`, part of every build) fails when an inline script of
+the built shell has no matching hash in `common.caddy`, and when
+`index_cgid.html` has any inline script at all. `frame-src` is `https:` on
+self-host instances (plugins and embeds come from arbitrary origins) and `*` in
+dev (dev plugins on other localhost ports).
 
-**Routing rules:**
+**Body size:** `request_body max_size 16MiB` (the old
+`client_max_body_size 16M`); larger requests get a 413.
 
-| Location Pattern | Upstream | Purpose |
+**Forwarded headers.** Caddy sets `X-Forwarded-For` (the client address),
+`X-Forwarded-Host` and `X-Forwarded-Proto` on every proxied request and
+replaces whatever the client sent: no `trusted_proxies` are configured. Keep
+it that way unless a CDN or another proxy is put in front — then trust only its
+address ranges. The backend runs with `trust proxy` and its rate limits key on
+`X-Forwarded-For`. On self-host sites `X-Forwarded-Proto` is always `https`
+(Caddy serves plain HTTP only to redirect, and in the loopback-only
+conformance stack); the backend sets its secure session cookie only for HTTPS
+requests. In dev it is the request's real scheme.
+
+**Edge rate limits:** none — stock Caddy has no rate-limit handler, and a
+plugin build is ruled out above. Rate limiting is the backend's job.
+
+**Access log:** to stdout (`docker compose logs caddy`). The `token` and
+`email` query values (verification, login and unsubscribe links) and the
+signature segment of `/files/` URLs are redacted, and the `Referer` header —
+which repeats such URLs — is not logged; Caddy itself redacts `Cookie` and
+`Authorization`.
+
+### Instance config
+
+`/instance-config.js` declares the instance to the frontend
+(`window.__CG_INSTANCE__ = {...};`, validated by `src/common/instance.ts`).
+Caddy renders it per request from `/etc/caddy/templates/instance-config.js`, a
+Go template that reads the `CG_*` variables of the container; the object is
+produced by Go's JSON encoder (`toJson`), so no value is ever pasted into
+script text. Without `CG_APP_URL` (the dev stack) the file declares nothing
+and the frontend falls back to its built-in detection, as on the Vite dev
+server (which serves the placeholder `public/instance-config.js`). The rules
+match `srv/util/instanceConfig.ts`, which builds the same object for
+`GET /api/v2/Instance/config` — keep them in sync. Served with
+`Cache-Control: no-cache`; the service worker fetches it network-first and
+keeps the last good copy for starts without network or with an error
+response.
+
+Both shells load it as `<script defer src="/instance-config.js">` ahead of the
+entry module (deferred scripts run in document order, so the config is set
+before any module code). The share-link pages the backend renders
+(`srv/api/getRoutes.ts`) carry the same tag and therefore the same config;
+the backend injects an inline copy only into a shell without that tag.
+
+### Legacy CG ID mini-app
+
+The fourth argument of `cg_app` decides what happens to the CG ID mini-app
+(passkeys on a separate `id.` origin, only needed by the legacy CG ID gateway
+— docs/auth-identity):
+
+- `off` (self-host default): `/api/v2/CgId/` is not routed, `/index_cgid.html`
+  is refused, there is no CG ID site.
+- `on` (self-host with `CG_CGID_VHOST=on`, which `selfhost.sh` sets only when
+  `CG_LEGACY_CGID=true` **and** `CG_ID_DOMAIN` is set): the CgId API is routed
+  on the main site, and Caddy serves a second site for `CG_ID_DOMAIN` — the
+  mini-app's shell at `/` (`no-store`), its own assets, `/instance-config.js`,
+  and `index.html` refused. Its CSP allows its own origin plus the main origin
+  for images and API calls, and no inline script. There is no cross-origin
+  (`Access-Control-Allow-Origin`) allowance for the CG ID origin on the main
+  site: the mini-app's assets are same-origin, and its API calls are covered
+  by the backend's own CORS (`CGID_URL`).
+- `samehost` (dev): the CgId API is routed and the shell is served on the main
+  origin at `/index_cgid.html` (the dev stack's `CGID_URL`).
+
+### Dev stack: `Caddyfile.dev`
+
+The container listens on the host's port numbers, so the URLs the frontend
+derives from its own location (`src/data/util/urls.ts`) match what Caddy sees:
+
+| Port | Site | |
 |---|---|---|
-| `/files/<id>/<sig>/<date>/<expires>` | `http://s3.local:8333` | File/media downloads. Rewrites to an S3 presigned request (AWS4-HMAC-SHA256). Cached 7 days, immutable. |
-| `/api/bot/v1/...` | `http://api:4000` | **Bot API v1.** Rewrites to `/BotV1/...`. Stable, bearer-token-only namespace kept separate from the web-app API. |
-| `/api/v2/(Captcha\|Chat\|Community\|File\|Message\|User\|Contract\|Notification\|Twitter\|Lukso\|CgId\|Passkey\|Accounts\|Plugins\|Search\|Report\|Bot\|Staking)/` | `http://api:4000` | REST API. Strips `/api/v2/`. No caching. (`Captcha`, `Report`, `Bot`, `Staking` are the newer groups.) |
-| `/api/ws/` | `http://wsapi:4000` | WebSocket upgrade (HTTP/1.1, `Upgrade: websocket`). |
-| `/(c\|u\|gated-videos\|gated-files)/` | `http://api:4000` | Community pages, profiles, gated content. Cached 24h. |
-| `/(sitemap.xml\|twitter-callback\|twitter-login\|verify-email\|push-icon\|token-sale\|token\|store)` | `http://api:4000` | Misc server-rendered endpoints. Cached 24h. |
-| `/(fonts\|icons\|images\|static\|audio\|downloads)/` | Static `/www` | Built frontend assets. Cached 24h. |
-| `/(index.html\|service-worker.js\|e/...)` | Static `/www` | SPA entry point; falls back to `index.html`. No caching. |
-| `/community/<10-char-id>*` | Redirect | Legacy redirect from `/community/X` to `/c/X/`. |
-| `/index_cgid.html` | Static `/www` | CG ID (wallet) page. |
-| `/enable-cross-origin-security` | Static `/www/index.html` | Serves index.html with `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: require-corp` (required for SharedArrayBuffer). |
-| `/disable-cross-origin-security` | Static `/www/index.html` | Serves index.html without cross-origin isolation headers. |
+| 8000 | `http://:8000` | plain HTTP, any host name |
+| 8001 | `https://` `localhost`, `127.0.0.1`, `app.cg.local`, `bs-local.com`, and `LOCAL_CERTIFICATE_IP` when set | `tls internal` |
+| 4443 | the same names | call signalling, proxied to `https://mediasoup:4443` |
 
-**Security headers (applied to responses):** `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, a per-server-name `Content-Security-Policy`, and `server_tokens off`.
+Every certificate comes from Caddy's local CA, kept in the `caddy-data`
+volume (the CA key never leaves it). Caddy issues one certificate per name,
+and browsers send no SNI for an IP address, so a connection to an IP gets the
+one default certificate (`default_sni`): the `LOCAL_CERTIFICATE_IP` one when
+it is set (other devices reach the machine only by it), else `127.0.0.1`'s.
+With `LOCAL_CERTIFICATE_IP` set, use `https://localhost:…` (or the LAN
+address) on the machine itself — `https://127.0.0.1:…` then gets the LAN
+address's certificate. (The former nginx certificate carried all names in
+one certificate.) Set `LOCAL_CERTIFICATE_IP` to the LAN address, never to
+`127.0.0.1`: Caddy refuses two sites with the same name. `./run.sh export_ca` writes the root
+certificate to `docker/caddy-local-root.crt` for importing into a browser or
+OS trust store (once per machine; the root lives as long as the volume). The
+dev CSP allows the own host on every port and scheme plus the hardhat chain
+(`http://127.0.0.1:8545`), and `frame-src *`.
 
-**Other settings:** `client_max_body_size 16M`; gzip level 6 for text/CSS/JS/JSON/XML/SVG; real-IP extraction from Cloudflare and private ranges via `X-Forwarded-For`; Docker DNS resolver at `127.0.0.11` for S3 proxy resolution.
-
-### Production (CI/CD): `docker/nginx/nginx.conf`
-
-Placeholders `{SERVER_NAME}` and `{CGID_SERVER_NAME}` are substituted at Docker build time.
-
-**Key differences from dev:**
-- Listens only on port 80 (TLS terminated upstream by Cloudflare/edge).
-- A **second server block** for the CG ID subdomain (`id.app.cg` / `id.staging.app.cg`) serves the wallet app (`index_cgid.html`); `index_cgid.html` is denied on the main domain and `index.html` is denied on the ID domain.
-- CSP includes production analytics/RPC domains; static-asset CORS `Access-Control-Allow-Origin` is set to the corresponding `id.*` subdomain.
-
-**Production domains:** main app `app.cg` (prod) / `staging.app.cg` (staging); CG ID wallet `id.app.cg` / `id.staging.app.cg`.
-
-The self-host config (`nginx_selfhost.conf`) is described in [section 7](#7-self-hosted-single-server-deployment).
+`./run.sh start_https` starts the `vite-tls` service (stock Caddy image,
+`Caddyfile.vite`, same `caddy-data` volume and so the same CA) on port 3000
+and runs the Vite dev server as a `cg-builder` container with the service's
+network alias (`--use-aliases`), on plain HTTP inside the stack network. The
+browser still talks to port 3000 (the service-worker manager depends on it),
+Vite's HMR websocket goes through the same proxy, and `vite-tls` is removed
+when the dev server exits.
 
 ---
 
@@ -602,7 +753,7 @@ The self-host config (`nginx_selfhost.conf`) is described in [section 7](#7-self
 
 ### `docker/.env` — Dev Compose Environment
 
-`docker/.env` is the dev stack's configuration: `run.sh`, `docker/build.sh`, `docker/updateBackend.sh`, `docker/updateFrontend.sh` (compose only), the `tools/` migration/test scripts and `docker/nginx/certs/recreate_server_certs.sh` source it, and docker compose reads it for the `${VAR}` references in `docker-compose.yml`. It is **gitignored and local to each checkout**; the tracked template is **`docker/.env.example`**, which lists every variable with grouped comments and holds no real secret.
+`docker/.env` is the dev stack's configuration: `run.sh`, `docker/build.sh`, `docker/updateBackend.sh`, `docker/updateFrontend.sh` (compose only), and the `tools/` migration/test scripts source it, and docker compose reads it for the `${VAR}` references in `docker-compose.yml`. It is **gitignored and local to each checkout**; the tracked template is **`docker/.env.example`**, which lists every variable with grouped comments and holds no real secret.
 
 **Generation — `docker/ensureEnv.sh`.** Every script above calls it before using `docker/.env`; `run.sh`, `build.sh`, `updateBackend.sh` and `updateFrontend.sh` then export `CG_ENV_ENSURED=1`, so the scripts they invoke skip the repeat. It:
 
@@ -652,8 +803,8 @@ The table describes purpose; `.env.example` has the defaults.
 | `BUILDER_UID` / `BUILDER_GID` | Host UID/GID for the builder container (avoids mounted-volume permission issues). `0` (root) is accepted. |
 | `RECALCULATE_BALANCES_AND_ROLES` | If `true`, recomputes all token balances/roles on `onchain` startup. |
 | `MEDIASOUP_DISABLE_LIBURING` | Disables io_uring in mediasoup (workaround for some kernels/containers). |
-| `MEDIASOUP_TRUST_PROXY` | `true` = the call server takes the client address for its pre-login connection limits from `X-Forwarded-For`. Only for a call server reachable solely through a reverse proxy; the self-host stack sets it, the dev stack leaves it unset. |
-| `LOCAL_CERTIFICATE_IP` | IP baked into self-signed certs. Empty = no certs generated; set a LAN IP for multi-device testing. |
+| `MEDIASOUP_TRUST_PROXY` | `true` = the call server takes the client address for its pre-login connection limits from `X-Forwarded-For`. Only for a call server reachable solely through a reverse proxy; the self-host and dev stacks set it (Caddy in front of 4443), the conformance stack, which publishes 4443 directly, sets `false`. |
+| `LOCAL_CERTIFICATE_IP` | The LAN address for multi-device testing: an extra certificate name of the dev Caddy (`:8001`, `:4443`, and `:3000` under `start_https`) and its certificate for connections without SNI. Empty = no LAN name, and `127.0.0.1` is the SNI-less default. Also added to the backend's CORS origins. |
 | `MEDIASOUP_ANNOUNCED_IP` | IP mediasoup advertises for WebRTC ICE candidates; must be client-reachable. |
 | `EXTERNAL_LISTEN_IP` | Host port-binding interface. `127.0.0.1` = localhost only, `0.0.0.0` = all interfaces. |
 | `QUIKNODE_*` | Per-chain RPC endpoint URLs used by `onchain` (name is historical — any JSON-RPC URL works). Includes `QUIKNODE_LUKSO`, which falls back to the public LUKSO RPC when empty. |
@@ -711,8 +862,8 @@ OpenAPI drift check plus the `sdk/` conformance suite (see `sdk/README.md`).
 It builds the selfhost images, runs `sdk/tools/generate-openapi.sh --check`,
 starts a disposable API-only instance (`sdk/conformance/tools/disposable-instance.sh`,
 which layers `docker/docker-compose.conformance.yml` over the selfhost compose
-file under its own project name, env file and volumes, with nginx published
-on `127.0.0.1:18080` and no TLS edge), then runs the suite against it: the R0 +
+file under its own project name, env file and volumes, with Caddy serving
+plain HTTP on `127.0.0.1:18080` and no TLS), then runs the suite against it: the R0 +
 R1 subset on PRs into `develop` that touch `srv/` or `sdk/`, the full suite
 nightly (on `develop`). Its push trigger and one of its nightly branches
 still name the merged `feat/reference-client` branch — see
@@ -738,11 +889,12 @@ still name the merged `feat/reference-client` branch — see
 | Command | Effect |
 |---|---|
 | `./run.sh start` | Vite dev server (HMR) on `http://localhost:3000`, run via `yarn dev` in `cg-builder`. Backend stack must already be up. Port 3000 is load-bearing: the service-worker registration manager disables itself on that origin, which is what keeps the dev server SW-free. Vite checks the `Host` header on **plain-HTTP** dev servers and accepts only `localhost`, `*.localhost` and IP literals — reaching this dev server through a custom hostname (e.g. `app.cg.local`) needs that host in `server.allowedHosts`. CRA had no such check; `start_https` is exempt (the check is skipped for HTTPS servers). |
-| `./run.sh start_https` | Same, but HTTPS with the self-signed certs under `docker/nginx/certs/` — required for WebRTC calls and LAN multi-device testing. **Aborts** if the certs are missing; there is no HTTP fallback. |
+| `./run.sh start_https` | Same, but on `https://localhost:3000` — required for WebRTC calls and LAN multi-device testing. Vite itself stays plain HTTP inside the stack network; the `vite-tls` service (Caddy, `Caddyfile.vite`) terminates TLS on port 3000 with a certificate from the stack's local CA and is removed when the dev server exits (see [section 3](#dev-stack-caddyfiledev)). Works before `build_full` ever ran. |
+| `./run.sh export_ca` | Writes the root certificate of the stack's local CA to `docker/caddy-local-root.crt`, for importing into a browser / OS trust store (needs one earlier start of `caddy` or `vite-tls`). |
 | `./run.sh build_full` | Runs the full `docker/build.sh` pipeline. |
 | `./run.sh update_backend` | Recompiles backend TypeScript, rebuilds backend images. |
-| `./run.sh update_frontend` | Rebuilds only the frontend + nginx (production build). |
-| `./run.sh up` | `docker compose up -d` then tails logs. |
+| `./run.sh update_frontend` | Rebuilds only the frontend + the caddy image (production build). |
+| `./run.sh up` | Creates the internal mediasoup certificate if missing, `docker compose up -d`, then tails logs. |
 | `./run.sh down` | Stops all services. |
 | `./run.sh compose <args…>` | Passthrough to `docker compose` with the right file(s). |
 | `./run.sh shell` | Interactive bash in `cg-builder` (project mounted at `/cg`). |
@@ -761,15 +913,14 @@ still name the merged `feat/reference-client` branch — see
 
 ## 7. Self-Hosted Single-Server Deployment
 
-**Files:** `docker/docker-compose.selfhost.yml`, `docker/SELFHOST.md`, `docker/selfhost/` (`init.sh`, `selfhost.sh`, `Caddyfile`), `docker/nginx/Dockerfile_selfhost`, `docker/nginx/nginx_selfhost.conf`, `docker/nginx/inject-instance-config.sh`.
+**Files:** `docker/docker-compose.selfhost.yml`, `docker/docker-compose.selfhost.calls.yml`, `docker/SELFHOST.md`, `docker/selfhost/` (`init.sh`, `selfhost.sh`), `docker/caddy/` (image, `Caddyfile.selfhost`, `common.caddy`, `instance-config.js`).
 
 This profile runs the **entire stack on one server** with real production semantics on your own domain. A 4–8 core / 16 GB machine is enough (idle < 2 GB; RAM is mostly consumed under call/upload load). Full walkthrough in `docker/SELFHOST.md`.
 
 ### How it differs from the dev stack
 
 - **Distinct Compose project name** (`name: cg-selfhost`), so its containers and volumes never collide with the dev stack even in the same directory.
-- **Caddy** (`caddy:2-alpine` line, exact tag + digest pinned in `docker-compose.selfhost.yml`) fronts everything and obtains/renews **Let's Encrypt** certificates automatically for the app domain, the CG ID domain, and mediasoup call signalling (port 4443) — or, with `CG_TLS_MODE=internal`, issues all three from its own local CA (LAN/test instances without public DNS).
-- **nginx** is built from `Dockerfile_selfhost` (real domains, parameterized CSP, instance-config injection) instead of the dev image.
+- **Caddy** (image `cryptogram/caddy-selfhost`, built from `docker/caddy/` on the pinned `caddy:2.11.x-alpine` base, config `Caddyfile.selfhost` — see [section 3](#3-caddy-the-edge)) is the whole edge: it serves the frontend and the instance config, routes to the backend, and obtains/renews **Let's Encrypt** certificates automatically for the app domain and mediasoup call signalling (port 4443) — or, with `CG_TLS_MODE=internal`, issues them from its own local CA (LAN/test instances without public DNS). There is no nginx in this profile any more.
 - **`DEPLOYMENT=prod`** on any domain — full production behaviour without hardcoding `app.cg`.
 - **No `hardhat` dev chain, no test-contract deployment.**
 - **Postgres loads the tuned `postgresql.conf`** (same `config_file` command as dev).
@@ -787,33 +938,42 @@ This profile runs the **entire stack on one server** with real production semant
   - Generates `docker/.env.selfhost` with fresh random secrets (`openssl rand`) — all DB/Redis/S3 credentials, the relay login `SMTP_PASSWORD` (with `CG_ENABLE_MAIL=true`, `SMTP_HOST=mail` and the `MAIL_*` settings), resource-tuning defaults sized for 16 GB, bot limits, and a fully-commented set of optional-integration keys. Written `chmod 600`.
   - Generates `docker/s3_config/s3.selfhost.json` with an S3 secret matching the generated `S3_SECRET`. Seaweed reads it as its in-container uid 1000, so it is made owned by `1000:1000` with mode `600` (run as uid 1000 or root); any other user can't `chown`, gets mode `644` and a printed note on how to tighten it as root.
   - Generates a self-signed cert in `docker/selfhost/certs/` for the internal caddy→mediasoup hop only (clients only ever see Caddy's cert).
+  - The third argument (`id-domain`, or `-`) is only for the legacy CG ID gateway; by default `CG_ID_DOMAIN` is written empty.
   - The generated `.env.selfhost` prefills the RPC endpoints with **free public JSON-RPC URLs** and `CG_ACTIVE_CHAINS=eth,arbitrum,xdai,base,matic,lukso`, so token-gating works out of the box.
-- **`docker/selfhost/selfhost.sh <cmd>`** — build/operate wrapper. Requires `.env.selfhost`; runs Compose with `--env-file .env.selfhost -f docker-compose.selfhost.yml`. Commands: `build`, `up`, `down`, `logs [service]`, `ps`, `stats`, `compose <args>`, `update` (git pull + rebuild + restart), `mail-dns` (SPF/DKIM/DMARC/PTR records for the mail relay). `up` and `update` first warn about contradictory mail settings. It sets `COMPOSE_PROFILES` from the `CG_ENABLE_CALLS` / `CG_ENABLE_BLOCKCHAIN` / `CG_ENABLE_MAIL` switches and runs `up`/`down`/`update` with `--remove-orphans`, so a service whose switch was flipped off is actually removed. The `build` command mirrors `build.sh` (same type-check/lint/build/check chain, same `NODE_OPTIONS=--max-old-space-size=4096`) and builds the nginx image from `Dockerfile_selfhost`. Sourcemaps ship here too — see [Frontend build steps](#frontend-build-steps).
+- **`docker/selfhost/selfhost.sh <cmd>`** — build/operate wrapper. Requires `.env.selfhost`; runs Compose with `--env-file .env.selfhost -f docker-compose.selfhost.yml`, plus `-f docker-compose.selfhost.calls.yml` when calls are enabled (publishes `4443` and switches on Caddy's call-signalling site), and exports `CG_CGID_VHOST=on` only when `CG_LEGACY_CGID=true` and `CG_ID_DOMAIN` is set (the legacy CG ID site; `up`/`update` note a `CG_ID_DOMAIN` that is ignored). Commands: `build`, `up`, `down`, `logs [service]`, `ps`, `stats`, `compose <args>`, `update` (git pull + rebuild + restart), `mail-dns` (SPF/DKIM/DMARC/PTR records for the mail relay). `up` and `update` first warn about contradictory mail settings. It sets `COMPOSE_PROFILES` from the `CG_ENABLE_CALLS` / `CG_ENABLE_BLOCKCHAIN` / `CG_ENABLE_MAIL` switches and runs `up`/`down`/`update` with `--remove-orphans`; `up` and `update` also stop and remove the container of a service whose switch was flipped off (`compose rm -sf` — `--remove-orphans` does not touch profile-disabled services), so e.g. the media ports are no longer published once calls are off. `update` runs `git pull` and continues in the pulled script. The `build` command mirrors `build.sh` (same type-check/lint/build/check chain, same `NODE_OPTIONS=--max-old-space-size=4096`) and builds the caddy image from `docker/caddy/` with the frontend in it. Sourcemaps ship here too — see [Frontend build steps](#frontend-build-steps).
 
-### Caddy (`docker/selfhost/Caddyfile`)
+### Caddy (`docker/caddy/Caddyfile.selfhost`)
 
-Env-driven (`CG_DOMAIN`, `CG_ID_DOMAIN`, `CG_ACME_EMAIL`, `CG_TLS_MODE`):
-- The global options block does `import tls_mode_{$CG_TLS_MODE:acme}`: snippet `tls_mode_acme` sets `email {$CG_ACME_EMAIL}` (Let's Encrypt — the adapted JSON is identical to the pre-switch Caddyfile), `tls_mode_internal` sets `local_certs` + `skip_install_trust` (every site from Caddy's local CA; root in the `caddy-data` volume under `/data/caddy/pki/authorities/local/`). Any other value fails at startup. Compose passes `CG_TLS_MODE=${CG_TLS_MODE:-acme}`, so an `.env.selfhost` without the key stays on ACME.
-- `{$CG_DOMAIN}` and `{$CG_ID_DOMAIN}` → `reverse_proxy nginx:80` (zstd/gzip).
-- `{$CG_DOMAIN}:4443` → `reverse_proxy https://mediasoup:4443` with `tls_insecure_skip_verify` (the internal hop trusts mediasoup's self-signed cert).
-- Ports published: `80`, `443` (tcp+udp, HTTP/3), `4443` (tcp). WebRTC media `40000–40099` (UDP and TCP) is published directly by the mediasoup container.
+The routing, headers and instance config are described in
+[section 3](#3-caddy-the-edge); specific to the self-host config:
 
-### Instance identity injection
+- Env-driven: `CG_DOMAIN`, `CG_ACME_EMAIL`, `CG_TLS_MODE`,
+  `CG_CALLS_EDGE`, `CG_CGID_VHOST`, `CG_ID_DOMAIN`, plus the instance-config
+  variables. Nothing is templated into the config or the image at build time,
+  so the image does not depend on the domain.
+- The global options block does `import tls_mode_{$CG_TLS_MODE:acme}`: snippet `tls_mode_acme` sets `email {$CG_ACME_EMAIL}` (Let's Encrypt), `tls_mode_internal` sets `local_certs` + `skip_install_trust` (every site from Caddy's local CA; root in the `caddy-data` volume under `/data/caddy/pki/authorities/local/`). Any other value fails at startup. Compose passes `CG_TLS_MODE=${CG_TLS_MODE:-acme}`, so an `.env.selfhost` without the key stays on ACME.
+- The main site imports `cg_app` with `X-Forwarded-Proto: https`, `frame-src https:`, `connect-src` for `https://` and `wss://` on the own domain, and adds HSTS (`max-age=31536000`, HTTPS responses only).
+- `{$CG_DOMAIN}:4443` → `reverse_proxy https://mediasoup:4443` with `tls_insecure_skip_verify` (the internal hop trusts mediasoup's self-signed cert) — only with `CG_CALLS_EDGE=on`, which `docker-compose.selfhost.calls.yml` sets together with publishing the port.
+- The legacy CG ID site (`{$CG_ID_DOMAIN}`) exists only with `CG_CGID_VHOST=on` (see [Legacy CG ID mini-app](#legacy-cg-id-mini-app)); `CG_ID_DOMAIN` is otherwise unused, and an `.env.selfhost` from before 2026-10-31 that still carries it no longer gets a second site or certificate.
+- Ports published: `80`, `443` (tcp+udp, HTTP/3), and `4443` (tcp) with calls. WebRTC media `40000–40099` (UDP and TCP) is published directly by the mediasoup container.
 
-The same build artifacts serve any domain: identity is configuration, not code. At container start, `inject-instance-config.sh` (an nginx `/docker-entrypoint.d/` hook, activated only when `CG_APP_URL` is set) injects
+### Instance identity
 
-```html
-<script>window.__CG_INSTANCE__ = {"deployment":"prod","appUrl":"https://chat.example.org", ...}</script>
-```
-
-into `/www/index.html` and `/www/index_cgid.html` (skipping files already configured). The object carries `deployment`, `appUrl`, `passkeyRpId` (from `CG_PASSKEY_RP_ID`, default the host of `CG_APP_URL`; must match the backend's `PASSKEY_RP_ID`) — or, only with `CG_LEGACY_CGID=true`, `cgidUrl` from `CG_CGID_URL` —, `activeChains`, a `features` map (`email`, `twitterAuth`, `calls`, `imageFilter`, `passkeys`), `giphyApiKey`, `walletConnectProjectId`, and `recaptchaSiteKey`. Compose derives the boolean feature flags from whether the corresponding key is set (e.g. `CG_FEATURE_EMAIL=${SMTP_HOST:+true}`), so the frontend hides or honestly labels features that aren't configured. The backend performs the equivalent injection for share links. See `src/common/instance.ts`.
-
-### `nginx_selfhost.conf` specifics
-
-- **Two server blocks** (main domain + CG ID domain), like the CI prod config, with `{SERVER_NAME}` / `{CGID_SERVER_NAME}` substituted at build time.
-- **Upstreams resolved dynamically** via `resolver 127.0.0.11` + `set $upstream ...` variables, so nginx starts even if a backend container isn't up yet (rather than failing at config-load time on an unresolved host).
-- **Parameterized CSP** built from `map $server_name` blocks; the self-host `connect-src` allowlist includes the instance's own origin plus the public RPC/wallet/service hosts the app talks to (including `*.drpc.org`, added so the default drpc.org RPC endpoints are reachable).
-- Serves `/api/bot/v1/` → `/BotV1/`, the same `/api/v2/(…|Report|Bot|Staking)/` group as dev, `/api/ws/`, the community/SSR routes, static assets, and the cross-origin-isolation toggles; `index_cgid.html` is denied on the main domain and `index.html` on the ID domain.
+The same build artifacts serve any domain: identity is configuration, not
+code. Caddy renders `/instance-config.js` per request from the `CG_*`
+variables of its container ([Instance config](#instance-config)); it is
+active only when `CG_APP_URL` is set (always, in this profile). The object
+carries `deployment`, `appUrl`, `passkeyRpId` (from `CG_PASSKEY_RP_ID`, default
+the host of `CG_APP_URL`; must match the backend's `PASSKEY_RP_ID`) — or, only
+with `CG_LEGACY_CGID=true`, `cgidUrl` from `CG_CGID_URL` (compose derives it
+from `CG_ID_DOMAIN`) —, `activeChains`, a `features` map (`email`,
+`twitterAuth`, `calls`, `imageFilter`, `passkeys`), `imageFilterThreshold`,
+`giphyApiKey`, `walletConnectProjectId`, `recaptchaSiteKey` and
+`captchaProvider`. Compose derives the boolean feature flags from whether the
+corresponding key is set (e.g. `CG_FEATURE_EMAIL=${SMTP_HOST:+true}`), so the
+frontend hides or honestly labels features that aren't configured. The
+backend builds the same object for `GET /api/v2/Instance/config`. See
+`src/common/instance.ts`.
 
 ### Optional integrations & graceful degradation
 
@@ -829,4 +989,4 @@ Off by default. To enable, deploy your own non-custodial `CgStaking` contract (`
 
 ### Backups & firewall
 
-State lives in two named volumes: `pgdata` (database) and `seaweedfs-data` (uploaded media), plus `mail-data` (DKIM key and outgoing queue) when the mail relay runs. `valkey-data` holds the state instance's RDB snapshot (sessions, rate-limit windows, replay guards); it needs no backup — losing it logs everyone out once. The cache instance is unpersisted. Ports to open: `80/tcp` (ACME + HTTPS redirect), `443/tcp+udp` (app + CG ID, HTTP/3), `4443/tcp` (call signalling), `40000–40099/udp+tcp` (WebRTC media; TCP is the fallback for UDP-blocking client networks). The mail relay needs outbound `25/tcp` only.
+State lives in two named volumes: `pgdata` (database) and `seaweedfs-data` (uploaded media), plus `mail-data` (DKIM key and outgoing queue) when the mail relay runs. `valkey-data` holds the state instance's RDB snapshot (sessions, rate-limit windows, replay guards); it needs no backup — losing it logs everyone out once. The cache instance is unpersisted. Ports to open: `80/tcp` (ACME + HTTPS redirect), `443/tcp+udp` (app, HTTP/3), `4443/tcp` (call signalling, with calls), `40000–40099/udp+tcp` (WebRTC media; TCP is the fallback for UDP-blocking client networks). The mail relay needs outbound `25/tcp` only.

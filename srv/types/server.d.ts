@@ -30,6 +30,7 @@ declare {
                 signableSecret?: string;
                 temporaryCommunityId?: string;
                 walletRequestId?: string;
+                cgIdRequestId?: string;
             }
         }
     }

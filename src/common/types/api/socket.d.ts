@@ -25,6 +25,13 @@ declare global {
                 type Response = void;
             }
 
+            namespace watchCgIdRequest {
+                type Request = {
+                    frontendRequestId: string;
+                };
+                type Response = void;
+            }
+
             namespace joinCommunityVisitorRoom {
                 type Request = {
                     communityId: string;

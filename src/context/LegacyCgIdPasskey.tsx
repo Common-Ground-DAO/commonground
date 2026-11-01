@@ -5,7 +5,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import connectionManager from 'data/appstate/connection';
-import { randomString } from '../util';
 import urlConfig from '../data/util/urls';
 import webSocketManager from 'data/appstate/webSocket';
 import errors from 'common/errors';
@@ -13,8 +12,8 @@ import { browserSupportsWebAuthn } from '@simplewebauthn/browser';
 
 // Legacy CG ID (gateway) instances only (docs/auth-identity §7): passkeys live
 // on the separate CG ID app, opened as a popup; its result arrives by socket
-// event or postMessage, and `loginManager.login({ account: 'passkey-legacy' })`
-// redeems it. This is the pre-G4 PasskeyProvider, moved here (login only — the
+// event (this tab's socket watches the request id) or postMessage, and
+// `loginManager.login({ account: 'passkey-legacy' })` redeems it. This is the pre-G4 PasskeyProvider, moved here (login only — the
 // CG ID app registers no passkeys any more); on every other instance
 // PasskeyProvider runs the ceremonies on this origin.
 
@@ -33,6 +32,21 @@ export const LegacyCgIdPasskeyContext = React.createContext<LegacyCgIdPasskeySta
     status: 'idle',
 });
 
+/** 20 characters of base64url from 15 random bytes */
+function randomRequestId() {
+    const bytes = crypto.getRandomValues(new Uint8Array(15));
+    return btoa(String.fromCharCode(...Array.from(bytes))).replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+function cgIdOrigin(): string | null {
+    try {
+        return new URL(urlConfig.CGID_URL).origin;
+    }
+    catch {
+        return null;
+    }
+}
+
 export function LegacyCgIdPasskeyProvider(props: React.PropsWithChildren<{}>) {
     const { isMobile } = useWindowSizeContext();
     const [status, setStatus] = useState<PasskeyProcessStatus>('idle');
@@ -42,7 +56,8 @@ export function LegacyCgIdPasskeyProvider(props: React.PropsWithChildren<{}>) {
     const passkeyAction = useCallback((action: 'login', timeout = 60_000) => {
         if (status === 'idle') {
             setStatus('executing');
-            const requestId = randomString(20);
+            // unguessable: the socket room of the popup's result is named after it
+            const requestId = randomRequestId();
             let timeoutId: any = undefined;
             let handled = false;
 
@@ -60,6 +75,7 @@ export function LegacyCgIdPasskeyProvider(props: React.PropsWithChildren<{}>) {
                     const y = window.screen.height / 2 - 230;
                     features = "width=600,height=460,left=" + x + ",top=" + y;
                 }
+                webSocketManager.watchCgIdRequest(requestId);
                 const win = window.open(`${urlConfig.CGID_URL}/${action}/${requestId}`, "cgPassportSignWindow", features);
                 if (win) {
                     const checkWindowClosedInterval = setInterval(() => {
@@ -99,7 +115,8 @@ export function LegacyCgIdPasskeyProvider(props: React.PropsWithChildren<{}>) {
             };
 
             const passkeyResultPostMessageListener = function (this: Window, event: MessageEvent<Events.CgId.SignResponse>) {
-                if (event?.data?.type !== "cliCgIdSignResponse") {
+                // only the CG ID popup posts here (src/cgid/helpers.ts)
+                if (event.origin !== cgIdOrigin() || event?.data?.type !== "cliCgIdSignResponse") {
                     return;
                 }
                 passkeyResultListener(event.data, true);
@@ -112,6 +129,7 @@ export function LegacyCgIdPasskeyProvider(props: React.PropsWithChildren<{}>) {
                     timeoutId = undefined;
                 }
                 connectionManager.unregisterClientEventHandler("cliCgIdSignResponse", passkeyResultListener);
+                webSocketManager.unwatchCgIdRequest(requestId);
                 window.removeEventListener("message", passkeyResultPostMessageListener);
                 connectionManager.removeListener("webSocketStateChange", webSocketStateListener);
                 setStatus('idle');

@@ -177,10 +177,11 @@ export const reload: Flow = {
     });
 
     // --- diagnostics: the session cookie going back to an outdated id.
-    // The server answers every API request with a Set-Cookie of the session
-    // the request came with; a response to a request that left with the
-    // pre-login cookie and arrives after the device login's response can put
-    // an outdated (or a fresh anonymous) session id back into the browser.
+    // A response with a Set-Cookie of another session id that arrives after
+    // the device login's response puts an outdated (or a fresh anonymous)
+    // session id back into the browser. The server only sends the session
+    // cookie when a session is created or changed, or for a logged-in session
+    // (srv/util/sessionSetup.ts), so this should not happen any more.
     const requestUrls = new Map<string, string>();
     let sessionCookie: string | undefined;
     let loginSid: string | undefined;

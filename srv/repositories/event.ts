@@ -6,6 +6,7 @@ import { Emitter } from "@socket.io/redis-emitter";
 import {
   articleRoomKey,
   botTokenRoomKey,
+  cgIdRequestRoomKey,
   communityRoomKey,
   deviceRoomKey,
   expressSessionRoomKey,
@@ -34,6 +35,8 @@ class EventHelper {
       deviceIds?: string[];
       sessionIds?: string[];
       articleIds?: string[];
+      // legacy CG ID: the socket that watches the popup request
+      cgIdRequestIds?: string[];
     },
     except?: {
       userIds?: string[];
@@ -64,6 +67,9 @@ class EventHelper {
     }
     for (const articleId of target.articleIds || []) {
       rooms.push(articleRoomKey(articleId));
+    }
+    for (const frontendRequestId of target.cgIdRequestIds || []) {
+      rooms.push(cgIdRequestRoomKey(frontendRequestId));
     }
     if (!!except) {
       for (const userId of except.userIds || []) {

@@ -195,5 +195,6 @@ export const communityRoomKey = (communityId: string) => `community:${communityI
 export const roleRoomKey = (roleId: string) => `role:${roleId}`;
 export const deviceRoomKey = (deviceId: string) => `device:${deviceId}`;
 export const expressSessionRoomKey = (sessionId: string) => `expressSession:${sessionId}`;
+export const cgIdRequestRoomKey = (frontendRequestId: string) => `cgIdRequest:${frontendRequestId}`;
 export const articleRoomKey = (articleId: string) => `article:${articleId}`;
 export const botTokenRoomKey = (tokenId: string) => `botToken:${tokenId}`;

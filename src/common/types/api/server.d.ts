@@ -17,6 +17,9 @@ declare global {
                     callback: (data: API.Socket.login.Response) => void,
                 ) => Promise<void>,
                 "logout": () => void,
+                "watchCgIdRequest": (
+                    data: API.Socket.watchCgIdRequest.Request,
+                ) => void,
                 "joinCommunityVisitorRoom": (
                     data: { communityId: string },
                 ) => void,

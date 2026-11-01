@@ -4,20 +4,18 @@
 
 import express from 'express';
 import cors from 'cors';
-import session from 'express-session';
+import 'express-session';
 import { RedisStore } from 'connect-redis';
 import cookieParser from 'cookie-parser';
 import redisManager from '../redis';
-import { dockerSecret } from '.';
 import config from '../common/config';
 import serverconfig from '../serverconfig';
-import urls from './urls';
 import { UserV2 } from 'twitter-api-v2';
-import passport from 'passport';
 import type { ChallengeEntry, PendingPasskey } from './passkeys';
 import type { AuthMethod } from './authSession';
 import { isLegacyCgidMode } from './passkeyConfig';
 import { botAllowlistMiddleware, botAuthenticationMiddleware } from './botPrincipal';
+import { createSessionMiddlewares, redisSessionRevocations, withSessionRevocation } from './sessionSetup';
 import { appOrigins } from './origins';
 
 // TYPES
@@ -30,6 +28,8 @@ declare module 'express-session' {
   interface SessionData {
     user?: User;
     signSecret?: string;
+    // when the login session was created (establishLoginSession); nothing
+    // reads it
     createdAt?: Date;
     passport?: any;
 
@@ -100,7 +100,8 @@ declare module 'express-session' {
       expiresAt: number;
     };
 
-    // set once the obsolete subdomain-scoped session cookie was expired
+    // set at login once the obsolete subdomain-scoped session cookie was
+    // expired (srv/util/sessionSetup.ts, establishLoginSession)
     legacyDomainCookieCleared?: boolean;
 
     // the session user's account was found complete (account-security step,
@@ -149,80 +150,14 @@ app.use(cookieParser());
 // promise API (no `legacyMode` client any more). The default key prefix is
 // still `sess:`, so sessions written by the old store keep working.
 
-// kept in its own binding because `SessionOptions['cookie']` is a union with a
-// per-request callback since express-session 1.19 — indexing into it directly
-// no longer type-checks
-const sessionCookieOptions: session.CookieOptions = {
-  maxAge: 12*60*60*1000, // 12 hours
-  httpOnly: true,
-  secure: config.DEPLOYMENT !== "dev",
-  sameSite: 'lax',
-};
-
-const sessionOptions: session.SessionOptions = {
-  store: new RedisStore({
-    client: redisManager.getClient('session')
-  }),
-  name: serverconfig.SESSION_COOKIE_NAME,
-  secret: dockerSecret('redis_secret') || process.env.REDIS_SECRET as string,
-  proxy: true,
-  cookie: sessionCookieOptions,
-  resave: false,
-  saveUninitialized: true,
-  rolling: true,
-};
-
-// Legacy CG ID mode only: scope the session cookie to all subdomains so the
-// app and the CG ID app (id.<domain>) share a session (.app.cg unchanged).
-// Everywhere else the cookie is host-only — no other host under the domain
-// ever receives it.
-if (config.DEPLOYMENT !== 'dev' && isLegacyCgidMode()) {
-  sessionCookieOptions.domain = `.${urls.APP_HOSTNAME}`;
-}
-
-const sessionMiddleware = session(sessionOptions);
-const passportInitializeMiddleware = passport.initialize();
-const passportSessionMiddleware = passport.session();
-
+// Sessions are only created when something is stored in them, and only the
+// cookie of a logged-in session is re-sent on every response
+// (srv/util/sessionSetup.ts).
 app.use(botAuthenticationMiddleware);
-app.use((request, response, next) => {
-  if (request.botPrincipal) return next();
-  sessionMiddleware(request, response, next);
-});
-app.use((request, response, next) => {
-  if (request.botPrincipal) return next();
-  passportInitializeMiddleware(request, response, next);
-});
-app.use((request, response, next) => {
-  if (request.botPrincipal) return next();
-  passportSessionMiddleware(request, response, next);
-});
-
-app.use((request, response, next) => {
-  if (request.botPrincipal) return next();
-  if (!request.session.createdAt) {
-    request.session.createdAt = new Date();
-  }
-  next();
-});
-// Instances upgraded in place used to scope the session cookie to
-// `.<APP_HOSTNAME>`; the cookie is host-only now. Expire such an old
-// subdomain-scoped cookie once per session so the browser does not keep
-// sending two cookies of the same name (legacy CG ID mode keeps the old scope).
-app.use((request, response, next) => {
-  if (request.botPrincipal || config.DEPLOYMENT === 'dev' || isLegacyCgidMode()) return next();
-  if (!request.session.legacyDomainCookieCleared) {
-    response.clearCookie(serverconfig.SESSION_COOKIE_NAME, {
-      domain: `.${urls.APP_HOSTNAME}`,
-      path: '/',
-      httpOnly: true,
-      secure: true,
-      sameSite: 'lax',
-    });
-    request.session.legacyDomainCookieCleared = true;
-  }
-  next();
-});
+const sessionRevocations = redisSessionRevocations(redisManager.getClient('session'));
+app.use(createSessionMiddlewares(withSessionRevocation(new RedisStore({
+  client: redisManager.getClient('session')
+}), sessionRevocations), sessionRevocations));
 app.use(botAllowlistMiddleware);
 
   /**

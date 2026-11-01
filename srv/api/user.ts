@@ -545,18 +545,11 @@ registerPostRoute<
   '/ensureSession',
   Validators.API.User.ensureSession,
   async (request) => {
-    // session keepalive: saving refreshes the rolling cookie and the store TTL
-    await new Promise<void>((resolve, reject) => {
-      request.session.save((e) => {
-        if (e) {
-          console.error("Error saving session", e);
-          reject(e);
-        }
-        else {
-          resolve();
-        }
-      });
-    });
+    // Session keepalive (the web app calls it every 29 minutes). Nothing to
+    // do: every response refreshes an existing session's store TTL, and the
+    // cookie of a logged-in one (srv/util/sessionSetup.ts). It stores nothing,
+    // so it never creates or rewrites a session — it may run in parallel with
+    // a login.
   }
 );
 
@@ -733,8 +726,9 @@ registerPostRoute<
     if (!!user) {
       await deviceHelper.deleteDevice(user.deviceId);
     }
-    // a new, empty session: nothing of the old one (user, step-up state,
-    // ceremonies, provider data) survives, and its id is dead
+    // the session is destroyed and its id revoked: nothing of it (user,
+    // step-up state, ceremonies, provider data) survives, and no new one
+    // takes its place
     await endLoginSession(request);
   }
 );

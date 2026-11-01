@@ -98,6 +98,10 @@ id.app.cg ──┤          (develop, gateway mode)   SeaweedFS             │
 21. **Sign-up and login must never lock out a person who makes mistakes**:
     limits only against volumes that look like abuse, every limit message says
     how long to wait and what else to do (Auth UX package, G10).
+22. **Email codes have 8 digits, and code-login failure budgets reset hourly**
+    (10 per network, 30 overall per address): a lockout of someone else's code
+    login lasts at most an hour, and the longer code keeps guessing harder
+    than the earlier daily budget with 6 digits did (2026-11-01).
 
 ## Phases
 
@@ -341,12 +345,17 @@ and a browser pass on the test VM:
   tag or rewrite it in the instance-config injection like the other social meta);
   external service settings for cg.box: Twitter callback URL,
   WalletConnect origin allowlist, email sender domain.
-- [ ] **G10 Auth UX.** Walk every login and sign-up path on the test VM with a
+- [x] **G10 Auth UX.** Walk every login and sign-up path on the test VM with a
   screenshot of each step and each error message; rework from the maintainer's
   notes. Limits per decision 21 (account creation per network far above 2 per
   day; the server returns the remaining wait time and the UI shows it with an
   alternative path, a countdown on "send again"); input errors caught in the
-  form before anything reaches the server. After G2+G3.
+  form before anything reaches the server. After G2+G3. (done 2026-11-01:
+  account creation 20/h and 50/day per network, checked before the code is
+  sent; every limit answer carries `retryAfterSeconds` and the kind of limit,
+  the UI shows the wait and another way in; countdowns on "send again"; input
+  checks in the forms; 8-digit email codes and hourly code-login failure
+  budgets per the maintainer's review of the screenshot walkthrough.)
 
 ### P4 — Security gate (before the rehearsal is signed off)
 

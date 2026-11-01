@@ -1,4 +1,5 @@
-> Status: verified against commit 91efa7c82, 2026-08-04; `features.email` row
+> Status: verified against commit 91efa7c82, 2026-08-04; the 8-digit email login code against
+> commit 2fad7d3, 2026-11-01; `features.email` row
 > against commit e44dac1, 2026-10-31; Valkey instances, Redis clients and key
 > prefixes against commit ff0da06, 2026-10-31; passkey/session notes (§3), the
 > router table, the CG ID note and the instance-config example against commit
@@ -265,7 +266,7 @@ The login endpoint at `POST /User/login` (in `srv/api/user.ts`) supports multipl
 5. **Twitter OAuth (`type: "twitter"`)** — Passport.js flow in `getRoutes.ts`; Twitter user id read from `session.passport`.
 6. **Lukso Universal Profile (`type: "lukso"`)** — on-chain signature over the nonce, verified via `onchainHelper.luksoIsValidSignature()`.
 7. **Farcaster (`type: "farcaster"`)** — SIWE flow verified via `/Farcaster/verifyLogin`, checking the Farcaster id registry on-chain.
-8. **Email login code (`type: "verificationCode"`)** — passwordless; a single-use 6-digit code bound to the address (`srv/util/emailCodes.ts`), throttled per IP, account and code.
+8. **Email login code (`type: "verificationCode"`)** — passwordless; a single-use 8-digit code bound to the address (`srv/util/emailCodes.ts`), throttled per IP, account and code.
 
 A ninth way in is the **transfer link** (`POST /User/redeemTransferLink`, [docs/auth-identity §11](../auth-identity/README.md#11-transfer-links-and-the-account-security-step)), and every login ends in the **account-security step** when the account lacks a sign-in method that works here or a verified email.
 

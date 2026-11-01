@@ -1,6 +1,7 @@
 # Common Ground Backend Documentation
 
-> Status: verified against commit 0f1d72d66, 2026-08-03; rate-limit section
+> Status: verified against commit 0f1d72d66, 2026-08-03; `RateLimitError`, `peek` and the
+> auth throttle summary against commit 2fad7d3, 2026-11-01; rate-limit section
 > against the 2026-08-04 dependency-update wave 1a; image-moderation sections
 > against the fix/image-filter-review-53 branch, 2026-08-15; upload rate limit,
 > `Instance` route, URL-preview note, OpenAPI drift check, axios note and §8
@@ -409,12 +410,13 @@ sign-in wallet, a first password, an X/LUKSO/Farcaster account, an address while
 none is verified) goes through `requireAuthToAdd()` (`srv/util/securityStep.ts`)
 instead: a sign-in within the hour suffices while the account lacks exactly that (the account-security
 step), otherwise a recent authentication where a transfer-link session counts.
-Throttles (all numbers in `srv/util/authLimits.ts`; off on a dev stack, like
-the sign-up limit): password login 60 attempts per 15 minutes per IP and, per
+Throttles (all numbers in `srv/util/authLimits.ts`, table in
+[auth-identity §4 "Limits"](../auth-identity/README.md#limits); off on a dev
+stack, like the account limit of 20 per network and hour, 50 per day): password login 60 attempts per 15 minutes per IP and, per
 identifier as typed, 10 **failed** attempts per 15 minutes from the client's
 network (IPv4 /24, IPv6 /56) and 100 per hour from everywhere; email-code login
-60 per IP, five guesses per code and, per address, 30 failed guesses a day per
-network and 200 overall; transfer links 120 per IP and 20 failures per IP.
+60 per IP, five guesses per code and, per address, 10 failed guesses an hour per
+network and 30 overall; transfer links 120 per IP and 20 failures per IP.
 Login failure budgets reserve their slot atomically before the check and give
 it back on success (`failureBudget` / `reserveFailures`), so parallel attempts
 cannot overrun them; the transfer failures use `ipFailureLimiter`
@@ -1235,7 +1237,7 @@ Reusable Joi schemas:
 - `OnlineStatus` -- online, away, dnd, invisible
 - `Tag` / `Tags` -- Tag strings, max 50 unique tags
 - `Emoji` -- Unicode emoji
-- `Password` (a new password: 8–1024 characters), `PasswordAttempt` (a password typed to sign in or re-authenticate: 1–1024), `EmailCode` (6 digits), `TransferToken` (43 base64url characters), `Secret`, `DateString`, `EIP712Signature`
+- `Password` (a new password: 8–1024 characters), `PasswordAttempt` (a password typed to sign in or re-authenticate: 1–1024), `EmailCode` (8 digits, `src/common/authInputRules.ts`), `TransferToken` (43 base64url characters), `Secret`, `DateString`, `EIP712Signature`
 
 ### Content Validators (`srv/validators/content.ts`)
 
@@ -1377,9 +1379,11 @@ Redis-based rate limiter using sorted sets for sliding window counting.
 1. Extracts IP from `x-forwarded-for` header (supports IPv4 and IPv6 with /48, /56, /64 subnets)
 2. Checks counts in Redis sorted sets per URL+IP combination (`options.bucket` replaces the URL as the counter name — needed when the query string carries per-request data, e.g. the unsubscribe token)
 3. Applies separate limits for IPv4/IPv6-64, IPv6-56, and IPv6-48 prefixes
-4. Throws `RATE_LIMIT_EXCEEDED` if any limit is breached
+4. Throws `RateLimitError` (`srv/util/rateLimitError.ts`: message `RATE_LIMIT_EXCEEDED`, plus `retryAfterSeconds` — the longest wait of the prefixes that refused — and `limit`, the limiter's `kind`: `accounts`, `mail` or `attempts`) if any limit is breached; `handleError` puts both into the envelope and the wait into a `Retry-After` header. If one prefix refuses, the hits counted in the others are taken back.
 
-`keyRateLimitHandler({ bucket, windowMs, limit })` -- the same sliding window on a key the caller computes (e.g. a hashed target address or an account id) instead of the IP; used by the mail send limits in `srv/util/mailSendLimits.ts`.
+The returned function also has `peek(req)` (refuses the same way when the next request would be refused, without counting one) and `buckets(req)`. `enforceLimits(buckets)` / `peekLimits(buckets)` count or check the buckets of several limiters together — all or none, the longest wait: the account limit's hour and day, the mail limits' client and target address.
+
+`keyRateLimitHandler({ bucket, windowMs, limit, kind? })` -- the same sliding window (with `.buckets(key)`) on a key the caller computes (e.g. a hashed target address or an account id) instead of the IP; used by the mail send limits in `srv/util/mailSendLimits.ts`. `failureBudget` / `keyFailureLimiter` refuse with `RateLimitError` as well; the wait is the time until enough of the oldest entries have left the window.
 
 The IP classification itself lives in `srv/util/ipPrefix.ts` (2026-08: built on
 `node:net` `isIPv4`/`isIPv6`, replacing the unmaintained `ip` package). IPv6
@@ -1416,7 +1420,7 @@ Derives application URLs from `BASE_URL` env var or deployment settings:
 - `passkeyConfig.ts` -- the WebAuthn relying party of the process: `getMainRp()` (RP ID `PASSKEY_RP_ID` or the `BASE_URL` host, origin exactly `BASE_URL`, dev adds `localhost:3000/8000`) or, with `CG_LEGACY_CGID=true`, `getLegacyCgidRp()` (host/origin of `CGID_URL`). `validatePasskeyConfigAtStartup()` stops the api process on an RP ID that is not the app host or a parent domain of it.
 - `passkeys.ts` -- shared ceremony core: challenge map in the session (max 5, TTL, consumed before verification and marked used in Redis), registration/authentication options and verification with user verification required, lookup by `(rpId, credentialID)`, counter check.
 - `authSession.ts` -- `establishLoginSession()` (every login), `requireRecentAuth()` (step-up guard, `REAUTH_REQUIRED`), `recordReauthentication()`.
-- `signupEmail.ts` -- sign-up email code state in the session (hashed 6-digit code bound to the address, 15 min, 5 attempts).
+- `signupEmail.ts` -- sign-up email code state in the session (hashed 8-digit code bound to the address, 15 min, 5 attempts).
 
 ### `srv/util/memberListHelpers.ts` -- Member List Binary Conversion
 

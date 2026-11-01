@@ -2,7 +2,8 @@
 
 > Status: verified against commit a3c3f7608, 2026-08-01; SMTP sending layer,
 > Mailchimp removal, one-click unsubscribe, send limits, bounce policy and ICS
-> invites against commit e44dac1, 2026-10-31; `CG_FEATURE_EMAIL` note against commit fe3937f, 2026-10-31;
+> invites against commit e44dac1, 2026-10-31; send limits per IP, the limit error and the 8-digit codes against commit
+> 2fad7d3, 2026-11-01; `CG_FEATURE_EMAIL` note against commit fe3937f, 2026-10-31;
 > verification and login codes, the notice mails of the account-security changes against commit 9fc05a9, 2026-11-01.
 
 This document covers every email path in Common Ground: transactional mail (verification, one-time-password login, event mails), the weekly digest and per-community article newsletters, one-click unsubscribe, send limits, bounce handling, and the user/community preference model that gates them. Web push and in-app notifications are a separate delivery channel — see [docs/realtime](../realtime/README.md) (§ Push Notifications) — and the boundary between the two is described in [Boundary to web push](#boundary-to-web-push). Running a mail server for a self-hosted instance (the `mail` relay, SPF/DKIM/DMARC/PTR) is covered in [docs/deployment §3.9](../deployment/README.md#39-email-smtp-and-the-mail-relay) and [`docker/SELFHOST.md`](../../docker/SELFHOST.md#email).
@@ -89,9 +90,9 @@ User-provided values (post titles, community and event names, image URLs) are HT
 
 | Mail | Composer | Triggered from | Notes |
 |------|----------|----------------|-------|
-| Email verification | `sendVerificationEmail` | `POST /user/requestEmailVerification` (and account creation on an instance without the sign-up code step) | A 6-digit code plus a link to `<APP_URL>/verify-email?email=…&token=<code>` (both URI-component-encoded) that works while signed in to the account that asked; a dev setup that wants the link on the Vite dev server sets `BASE_URL` accordingly. Send limits apply ([Send limits](#send-limits)). |
+| Email verification | `sendVerificationEmail` | `POST /user/requestEmailVerification` (and account creation on an instance without the sign-up code step) | An 8-digit code plus a link to `<APP_URL>/verify-email?email=…&token=<code>` (both URI-component-encoded) that works while signed in to the account that asked; a dev setup that wants the link on the Vite dev server sets `BASE_URL` accordingly. Send limits apply ([Send limits](#send-limits)). |
 | Address in use | `sendAddressInUseEmail` | `POST /user/requestEmailVerification` for an address another account has verified | Notice instead of a code; the requester gets the same answer as for a free address. Send limits apply ([Send limits](#send-limits)). |
-| One-time password login | `sendOneTimePasswordEmail` | `POST /user/sendOneTimePasswordForLogin` | Emails a 6-digit login code (15 minutes) only to the **verified** address of an account; nothing is sent for an unconfirmed or unknown address, the answer is the same. Requires `emailEnabled()`; send limits apply. |
+| One-time password login | `sendOneTimePasswordEmail` | `POST /user/sendOneTimePasswordForLogin` | Emails an 8-digit login code (15 minutes) only to the **verified** address of an account; nothing is sent for an unconfirmed or unknown address, the answer is the same. Requires `emailEnabled()`; send limits apply. |
 | Password changed | `sendPasswordChangedEmail` | `POST /user/setPassword` | Notice to the verified address. |
 | Address changed | `sendEmailChangedEmail` | `POST /user/verifyEmail` replacing a verified address | Notice to the previous address. |
 | Event mails | `sendEventEmail` | See [Event notification mails](#event-notification-mails) | — |
@@ -100,7 +101,7 @@ Transactional mails carry **no** unsubscribe headers. The notification mails —
 
 ### Verification and login codes
 
-`srv/util/emailCodes.ts` keeps two kinds of 6-digit codes (CSPRNG) for existing accounts, in
+`srv/util/emailCodes.ts` keeps two kinds of 8-digit codes (CSPRNG, leading zeros kept) for existing accounts, in
 Valkey with the expiry as TTL — only a hash, bound to the account, the purpose and the address the
 code was sent to:
 
@@ -205,14 +206,15 @@ RFC 8058 receivers only honour the headers when the message's DKIM signature cov
 
 ## Send limits
 
-Two endpoints make the server mail an address the caller chooses. Both are limited in three dimensions (`srv/util/mailSendLimits.ts`, sliding windows in Redis via `srv/util/rateLimit.ts`), checked before the mail is generated:
+Three endpoints make the server mail an address the caller chooses. They are limited in up to three dimensions (`srv/util/mailSendLimits.ts`, numbers in `srv/util/authLimits.ts`, sliding windows in Redis via `srv/util/rateLimit.ts`), checked before the mail is generated:
 
 | Endpoint | Per client IP | Per target address | Per account |
 |----------|---------------|--------------------|-------------|
-| `POST /user/sendOneTimePasswordForLogin` (no login) | 10/h per IPv4 address or IPv6 /64 (30 per /56, 60 per /48) | 1/min and 10/h | — |
-| `POST /user/requestEmailVerification` (login required) | 10/h, same prefixes | 5/h | 5/h |
+| `POST /user/sendOneTimePasswordForLogin` (no login) | 30/h per IPv4 address or IPv6 /64 (90 per /56, 180 per /48) | 1/min and 10/h | — |
+| `POST /user/requestSignupEmailCode` (no login) | 40/h, same prefixes | 1/min and 5/h | — |
+| `POST /user/requestEmailVerification` (login required) | 30/h, same prefixes | 5/h | 5/h |
 
-The per-address buckets are keyed by an HMAC of the lower-cased address, with a key derived from the session secret (`REDIS_SECRET`, label `cg-mail-send-limit-v1`, like the unsubscribe key), so no address is stored in Redis in clear and the keys can't be matched against a list of known addresses; they stop one inbox from being flooded from many IPs or accounts. For the login code that limit is also a lever against the address owner: anyone who knows an address can use up its budget and keep the owner from getting a code. The short cooldown (one code per minute) with a higher hourly cap (10) keeps that window short while still capping the mail volume to one inbox. Every check of a request counts, even when a later one rejects it. Over the limit the endpoint answers `RATE_LIMIT_EXCEEDED`. Account creation with email (`POST /user/createUser`) sends one verification mail and is covered by the signup limit (2 per IP per day). The selfhost relay additionally caps submissions at 50 messages/s and 10 in parallel (`limits` in `docker/mail/maddy.conf`); maddy has no limit on the queue size.
+The per-address buckets are keyed by an HMAC of the lower-cased address, with a key derived from the session secret (`REDIS_SECRET`, label `cg-mail-send-limit-v1`, like the unsubscribe key), so no address is stored in Redis in clear and the keys can't be matched against a list of known addresses; they stop one inbox from being flooded from many IPs or accounts. For the login code that limit is also a lever against the address owner: anyone who knows an address can use up its budget and keep the owner from getting a code. The short cooldown (one code per minute) with a higher hourly cap (10) keeps that window short while still capping the mail volume to one inbox. The limits of a request are counted together (`enforceLimits`): a refused request counts in none of them, and the refusal names the longest wait. Over the limit the endpoint answers `RATE_LIMIT_EXCEEDED` with `retryAfterSeconds` (and a `Retry-After` header, [auth-identity §4 "Limits"](../auth-identity/README.md#limits)); the web app's "send again" buttons count down the per-address minute. Account creation with email (`POST /user/createUser`) sends at most one verification mail and is covered by the account limit (20 per network per hour, 50 per day). The selfhost relay additionally caps submissions at 50 messages/s and 10 in parallel (`limits` in `docker/mail/maddy.conf`); maddy has no limit on the queue size.
 
 ---
 

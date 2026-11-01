@@ -183,7 +183,8 @@ plus reviews. Lane B starts when F1+F2 are merged.
   node-redis / connect-redis / `@socket.io/redis-adapter` against Valkey. Keep
   sessions safe from cache memory pressure (separate instance or eviction
   policy per use) and give every client an error listener.
-- [ ] **F5 Caddy replaces nginx** (self-host + dev). Custom Caddy image carrying
+- [x] **F5 Caddy replaces nginx** (done 2026-10-31; accepted on the test VM incl.
+  the upgrade path from an nginx install) (self-host + dev). Custom Caddy image carrying
   the frontend dist and the instance-config injection. Reproduce every nginx rule
   in order: `/files/` S3-presign rewrite (exact `Host <host>:8333`), `/api/v2/`
   allowlist strip-prefix, `/api/bot/v1/` → `/BotV1/`, `/api/ws/`, share/OG
@@ -308,9 +309,7 @@ and a browser pass on the test VM:
   `index.html` (every self-hosted instance ships it in social previews — drop the
   tag or rewrite it in the instance-config injection like the other social meta);
   external service settings for cg.box: Twitter callback URL,
-  WalletConnect origin allowlist, email sender domain. The old
-  `/community/P0mI8SYrpO` → `/c/commonground/` redirect of the hosted nginx (not
-  carried into the Caddy config).
+  WalletConnect origin allowlist, email sender domain.
 - [ ] **G10 Auth UX.** Walk every login and sign-up path on the test VM with a
   screenshot of each step and each error message; rework from the maintainer's
   notes. Limits per decision 21 (account creation per network far above 2 per
@@ -377,6 +376,8 @@ and a browser pass on the test VM:
   that, the reference-client pipeline (`pipelines/reference-client-conformance.yml`:
   OpenAPI drift check + conformance suite) moves to GitHub Actions, or both stop
   running — see TODO.md.
+- [ ] The `/e/*` → `/` route for the ecosystem URLs removed in 2026-08 is
+  dropped (`src/App.tsx`).
 - [ ] Ansible management suite (`cg setup`, backup/restore, update/status/logs/
   config), GHCR images, VM-based development environment for contributors
   (`cg dev-setup`) — own roadmaps.

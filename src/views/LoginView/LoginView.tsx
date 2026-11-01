@@ -8,7 +8,7 @@ import AuthFlow from 'components/organisms/AuthFlow/AuthFlow';
 import loginManager from 'data/appstate/login';
 import { useUserOnboardingContext } from 'context/UserOnboarding';
 import { getUrl } from 'common/util';
-import { safeNextPath } from './safeNextPath';
+import { safeNextPath } from 'common/safeNextPath';
 
 /**
  * /login (and /login?mode=signup): the login / sign-up flow as a page, the

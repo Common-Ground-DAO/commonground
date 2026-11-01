@@ -22,6 +22,7 @@ vi.mock('data/appstate/login', () => ({ default: { loginRequiredErrorHandler } }
 
 import BaseApiConnector from './baseConnector';
 import stepUpManager from 'data/auth/stepUp';
+import securityStepState from 'data/auth/securityStep';
 
 type Reply = { status: 'OK'; data?: unknown } | { status: 'ERROR'; error: string };
 
@@ -194,5 +195,16 @@ describe('stepUpManager freshness', () => {
     expect(stepUpManager.isFresh(now + 5 * 60 * 1000)).toBe(false);
     stepUpManager.clear();
     expect(stepUpManager.isFresh(now)).toBe(false);
+  });
+});
+
+describe('account-security step', () => {
+  it('SECURITY_STEP_REQUIRED switches the app to the step and is not retried', async () => {
+    replies = [{ status: 'ERROR', error: 'SECURITY_STEP_REQUIRED' }];
+    expect(securityStepState.required).toBe(false);
+    await expect(connector.get('x')).rejects.toThrow('SECURITY_STEP_REQUIRED');
+    expect(securityStepState.required).toBe(true);
+    expect(sent).toHaveLength(1);
+    securityStepState.set(false);
   });
 });

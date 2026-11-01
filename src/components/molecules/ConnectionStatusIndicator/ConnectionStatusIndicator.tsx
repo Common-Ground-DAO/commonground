@@ -15,6 +15,12 @@ import { useCallContext } from 'context/CallProvider';
 
 const DELAY_BEFORE_SHOW = 3000;
 const DELAY_BEFORE_HIDE = 1200;
+/**
+ * After a (re)load the socket starts out "disconnected" until the tab has
+ * found out whether it is the active one and connected. That is no outage:
+ * "Disconnected" is only shown once the first connection had a fair chance.
+ */
+const INITIAL_CONNECT_GRACE = 10000;
 
 export default function ConnectionStatusIndicator() {
   const { webSocketState, serviceWorkerState, onlineState, finishInstallation, visibilityState } = useConnectionContext();
@@ -26,6 +32,13 @@ export default function ConnectionStatusIndicator() {
   const preRenderState = useRef<typeof state>(state);
   const [ isVisible, _setIsVisible ] = useState<boolean>(false);
   const preRenderVisible = useRef<boolean>(false);
+  const [ initialGrace, setInitialGrace ] = useState(true);
+  const everConnected = useRef(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setInitialGrace(false), INITIAL_CONNECT_GRACE);
+    return () => clearTimeout(timer);
+  }, []);
 
   const clearTimeouts = useCallback(() => {
     if (!!visibilityTimeoutRef.current) {
@@ -45,7 +58,7 @@ export default function ConnectionStatusIndicator() {
     if (visibilityState === "visible") {
       clearTimeouts();
       visibilityTimeoutRef.current = setTimeout(() => {
-        if (preRenderState.current !== 'connected') {
+        if (preRenderState.current !== 'connected' && preRenderState.current !== 'hidden') {
           setIsVisible(true);
         }
       }, DELAY_BEFORE_SHOW);
@@ -62,6 +75,9 @@ export default function ConnectionStatusIndicator() {
       _setState(newState);
       if (newState === "offline" || newState === "updated" || newState === "updating") {
         setIsVisible(true);
+      }
+      else if (newState === "hidden") {
+        setIsVisible(false);
       }
       else if (newState === "connected") {
         visibilityTimeoutRef.current = setTimeout(() => {
@@ -95,6 +111,7 @@ export default function ConnectionStatusIndicator() {
     } else if (serviceWorkerState === "updating") {
       if (state !== serviceWorkerState) setState("updating");
     } else if (webSocketState === "connected") {
+      everConnected.current = true;
       if (state !== webSocketState) setState("connected");
     } else if (webSocketState === "version-update") {
       // The socket is connected when it learns about a new version; the
@@ -105,9 +122,13 @@ export default function ConnectionStatusIndicator() {
     } else if (webSocketState === "connecting") {
       if (state !== webSocketState) setState("connecting");
     } else if (webSocketState === "disconnected") {
-      if (state !== webSocketState) setState("disconnected");
+      if (initialGrace && !everConnected.current) {
+        // the first connection is still being set up (see INITIAL_CONNECT_GRACE)
+        if (state !== "hidden") setState("hidden");
+      }
+      else if (state !== webSocketState) setState("disconnected");
     }
-  }, [webSocketState, onlineState, serviceWorkerState, clearTimeouts, setState, state]);
+  }, [webSocketState, onlineState, serviceWorkerState, clearTimeouts, setState, state, initialGrace]);
 
   let content: React.JSX.Element;
   if (state === "connected") {

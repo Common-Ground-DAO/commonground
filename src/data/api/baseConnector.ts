@@ -5,6 +5,7 @@
 import urlConfig from "../util/urls";
 import errors from "common/errors";
 import stepUpManager, { stepUpRequestForRoute } from "../auth/stepUp";
+import securityStepState from "../auth/securityStep";
 
 function unwrapResult<T>(result: API.AjaxResponse<T> | undefined, fallbackError: string): T {
   if (result && result.status === "OK") {
@@ -99,6 +100,11 @@ export default class BaseApiConnector {
         }
       }
       else {
+        if (result.error === errors.server.SECURITY_STEP_REQUIRED) {
+          // the account has to finish the account-security step first: the
+          // app shows that step instead of the page (SecurityStepView)
+          securityStepState.set(true);
+        }
         throw new Error(result.error);
       }
       retried = true;

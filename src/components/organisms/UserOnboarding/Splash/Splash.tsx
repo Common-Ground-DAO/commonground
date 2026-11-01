@@ -16,6 +16,7 @@ import { useWindowSizeContext } from "context/WindowSizeProvider";
 import { useNotificationContext } from "context/NotificationProvider";
 import TextInputField from "components/molecules/inputs/TextInputField/TextInputField";
 import { validateEmailInput } from "common/validators";
+import config from "common/config";
 import newsletter1 from './imgs/newsletter1.webp';
 import newsletter2 from './imgs/newsletter2.webp';
 import push1 from './imgs/push1.webp';
@@ -65,12 +66,19 @@ const Splash: React.FC = () => {
             setNewsletterState((state) => ({ ...state, loading: false }));
             return;
           }
-          const emailAvailable = await userApi.isEmailAvailable({ email: newsletterState.email });
-          if (!emailAvailable) {
-            setNewsletterState((state) => ({ ...state, loading: false, error: 'This email address is already in use' }));
-            return;
+          if (config.EMAIL_ENABLED) {
+            // the address becomes the account's address once it is confirmed
+            await userApi.requestEmailVerification({ email: newsletterState.email });
+            await data.user.updateOwnData({ newsletter: true });
           }
-          await data.user.updateOwnData({ newsletter: true, email: newsletterState.email });
+          else {
+            const emailAvailable = await userApi.isEmailAvailable({ email: newsletterState.email });
+            if (!emailAvailable) {
+              setNewsletterState((state) => ({ ...state, loading: false, error: 'This email address is already in use' }));
+              return;
+            }
+            await data.user.updateOwnData({ newsletter: true, email: newsletterState.email });
+          }
         }
       }
       catch (e) {

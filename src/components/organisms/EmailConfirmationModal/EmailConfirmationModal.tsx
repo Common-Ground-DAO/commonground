@@ -11,6 +11,7 @@ import TextInputField from 'components/molecules/inputs/TextInputField/TextInput
 import { validateEmailInput } from 'common/validators';
 import Tag from 'components/atoms/Tag/Tag';
 import userApi from 'data/api/user';
+import EmailCodeConfirm from 'components/molecules/EmailCodeConfirm/EmailCodeConfirm';
 
 export type EmailConfirmationModalState = 'signup' | 'pending' | 'confirmed';
 
@@ -55,8 +56,8 @@ const EmailConfirmationModal: React.FC<Props> = ({ onClose, modalState, setModal
         setShowEmailError(true);
         return;
       }
-      await userApi.updateOwnData({ email });
-      await userApi.requestEmailVerification({email});
+      // the address becomes the account's address once it is confirmed
+      await userApi.requestEmailVerification({ email });
       setModalState('pending');
       setCountdown(60);
     } else if (modalState === 'confirmed') {
@@ -105,7 +106,8 @@ const EmailConfirmationModal: React.FC<Props> = ({ onClose, modalState, setModal
         </>}
         {modalState === 'pending' && <>
           <h2 className='text-center'>Check your email</h2>
-          <span className='cg-text-lg-400 text-center'>{`We’ve sent an email to ${email}. Please open it and confirm your email.`}</span>
+          <span className='cg-text-lg-400 text-center'>{`We’ve sent a code to ${email}. Enter it below, or open the link in the mail.`}</span>
+          <EmailCodeConfirm email={email} subLabel='' onConfirmed={() => setModalState('confirmed')} />
         </>}
         {modalState === 'confirmed' && <>
           <h2 className='text-center'>Your email was confirmed!</h2>
@@ -117,7 +119,7 @@ const EmailConfirmationModal: React.FC<Props> = ({ onClose, modalState, setModal
         {modalState !== 'pending' && <span className='cg-text-md-400 cg-text-secondary text-center'>You can manage emails in your user settings</span>}
         {modalState === 'pending' && <Button
           role='secondary'
-          text={`Resend Email${countdown > 0 ? ` (${countdown}s)`: ''}`}
+          text={`Send confirmation again${countdown > 0 ? ` (${countdown} s)`: ''}`}
           className='flex-1'
           onClick={onResendEmail}
           disabled={countdown > 0}

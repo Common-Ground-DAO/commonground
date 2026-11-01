@@ -357,10 +357,6 @@ wave has to *change*.
   resolution and would load it through `require(ESM)`, as it does puppeteer 25);
   re-check whether its `types` field (2.0.2: `./dist/index.d.ts`, `exports` has
   no `types` condition) resolves. joi 18 itself still depends on `^1.1.1`.
-- **TypeORM 1.x (M2)** — re-check its `redis` peer (today it warns against
-  node-redis 6; inert, it is only for the unused query cache) and that a single
-  `reflect-metadata` copy (0.2.2) survives; `emitDecoratorMetadata` was verified
-  by entity-metadata registration (37 tables / 325 columns at the time).
 - **react-router 7 (M3)** — closes GHSA-wrjc-x8rr-h8h6 (fixed only in 7.18.0;
   the old `6.30.1` security-hold resolution is gone since F6 — 6.30.6 fixed
   GHSA-jjmj-jmhj-qwj2), rewrite `SuspenseRouter` off the `history`

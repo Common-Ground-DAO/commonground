@@ -8,7 +8,10 @@
 > dropped verification-code columns against commit 9fc05a9, 2026-11-01;
 > `selfhost.sh restore --db-file` note against commit 818d4c6, 2026-11-01; session generations
 > (`session_generation_seq`, `users.sessionGeneration`, `devices.generation`,
-> `transfer_tokens.generation`, `session_generation_of`) against commit 23a4c1e, 2026-11-01
+> `transfer_tokens.generation`, `session_generation_of`) against commit 23a4c1e, 2026-11-01;
+> TypeORM 1.x (the data source, the CLI, the entity metadata of the GIN index and the
+> `roles_contracts_contracts` foreign key, the schema comparison) against commit 8dcbb42,
+> 2026-11-01
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -1093,6 +1096,41 @@ Defined in `srv/util/datasource.ts` (TypeORM DataSource) and `srv/util/postgres.
   entities, migrations and this data source to `srv/__tmp` with
   `srv/tsconfig.typeorm-cli.json` (extends `srv/tsconfig.json`, i.e. the
   backend build settings) and point the CLI at `__tmp/util/datasource.js`
+- TypeORM **1.1.2** (wave M2, 2026-11-01; was 0.3.31). Nothing in the app
+  used the APIs 1.x removed (`Connection`, the global `getRepository` etc.,
+  `findByIds`, string `relations`/`select`); the only call sites are
+  `migrateDb.ts` (`runMigrations()`) and the migrations' `queryRunner.query()`
+  (`initdb` reads the database name from `queryRunner.dataSource.options`; the
+  old `manager.connection` is a deprecated alias in 1.x). The data source is
+  initialized on the first `getDataSource()` call, not on import: the CLI
+  loads the file and initializes `ormDataSource` itself, and 1.x refuses a
+  second `initialize()` while one is in flight (0.3 let both connect). The
+  migration table (`migrations`), the class-name timestamps and the default
+  transaction mode (`all`: one transaction for the whole run) are unchanged,
+  so an existing database runs none of the 167 migrations again and a fresh
+  one runs all of them. No migration uses the schema-builder helpers
+  (`createTable`, `TableColumn`, `addColumn`, …) — only raw
+  `queryRunner.query()`. Checked with 1.1.2 against a throwaway database:
+  `migration:generate` (what `./run.sh make_migration` runs) writes a file,
+  `migration:revert` (`tools/revertLastMigration.sh`) reverts the last
+  migration and `migration:run` applies it again
+- Schema comparison (`typeorm migration:generate --dr` against a freshly
+  migrated database) now also compares **index types** and defaults the
+  **inverse side** of a many-to-many junction's foreign key to `CASCADE`.
+  Two entities therefore spell out what the database already has, so the
+  upgrade adds no diff: `@Index('idx_groups_tsv_description', { type: 'gin' })`
+  on `communities.tsv_description`, and `{ onDelete: 'NO ACTION', onUpdate:
+  'NO ACTION' }` on `Contract.roles` (the `roles_contracts_contracts.contractsId`
+  key from `1676888170060-rolesAndPermissions`). What `--dr` still reports is
+  the drift that 0.3.31 reported as well: the bot tables (foreign-key and
+  index names, `CHECK` constraints, enum order), `staking_positions`
+  (constraint names, `CHECK`), and indexes created by migrations only
+  (`idx_users_suggest_popular`, `idx_roles_users_users_role_user`, the
+  `*_articles_feed` indexes) — the same 36 `up()` statements (in another
+  order); its `down()` now spells out the default index method (`USING
+  btree`). A database migrated by 0.3.31 and one migrated by 1.1.2 have an
+  identical `pg_dump --schema-only` and an identical `migrations` table
+  (structure and rows)
 
 **Raw pg Pool** (`srv/util/postgres.ts`):
 - A raw `pg.Pool` instance with the same connection credentials
@@ -1362,7 +1400,7 @@ These GIN trigram indexes support `LIKE`/`ILIKE` queries and similarity-based se
 
 The project maintains two parallel database access methods:
 
-1. **TypeORM DataSource** (`srv/util/datasource.ts`): Used for migrations and entity metadata. Accessed via `getDataSource()`.
+1. **TypeORM DataSource** (`srv/util/datasource.ts`): Used for migrations and entity metadata. Accessed via `getDataSource()` (connects on the first call).
 2. **Raw `pg` Pool** (`srv/util/postgres.ts`): Used by all repository files for queries. Most application queries are written as raw SQL using `pg-format` for parameterization.
 
 Transactions in repositories follow this pattern:
@@ -1420,7 +1458,8 @@ clusters have data checksums on (the 18 `initdb` default).
 The migration chain produces the same schema on 18 as on 14 (same tables,
 indexes, triggers, role privileges and extensions; TypeORM's `schema:log`
 reports the same statements on both). TypeORM 0.3.31 and node-postgres 8.22
-(`srv/yarn.lock`) need no changes. The remaining `pg_dump --schema-only`
+(`srv/yarn.lock`) needed no changes (today: TypeORM 1.1.2 since wave M2,
+node-postgres 8.23). The remaining `pg_dump --schema-only`
 differences are version noise:
 
 - 18 records `NOT NULL` as named constraints; columns created under an older

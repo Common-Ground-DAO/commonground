@@ -4,7 +4,8 @@
 > log, `typescript` held back, the Renovate majors list) against commit d604544,
 > 2026-10-31; the restic image pin (`RESTIC_IMAGE`) and its Renovate regex
 > manager against commit 818d4c6, 2026-11-01; Express 5 out of the Renovate
-> majors list (wave M2) against commit 56e7c34, 2026-11-01
+> majors list (wave M2) against commit 56e7c34, 2026-11-01; TypeORM 1.x out of the
+> Renovate majors list and the `glob` chain (wave M2) against commit 8dcbb42, 2026-11-01
 
 # Update policy: 7-day minimum release age (3 days for security fixes)
 
@@ -137,8 +138,9 @@ The two fixes that were still younger than 7 days (`joi` 17.13.9,
   `useCookie` hook uses it, and the Giphy bundle does not.
 - **Build and test tooling** (root, `srv/`): `minimatch` < 11.0.1
   (GHSA-g3hv-75wg-m249) and `glob` 9–14.0.1 (GHSA-3g3m-2fjr-6pw4) under
-  typescript-eslint, eslint-plugin-react, workbox-build 7.4.1, jest and
-  typeorm 0.3 (glob patterns come from our own config, no AbortSignal);
+  typescript-eslint, eslint-plugin-react, workbox-build 7.4.1 and jest
+  (glob patterns come from our own config, no AbortSignal; TypeORM 1.x uses
+  `tinyglobby` instead);
   `postcss-selector-parser` 6.0.10 (GHSA-rj75-hqrm-r3gf, pinned exactly by
   `@tailwindcss/typography`; parses our own CSS at build time); `deepmerge`
   via jest-config; deprecated `eslint` 9 (ESLint 10 is a major) and
@@ -377,12 +379,13 @@ repository root:
 - PRs target `develop`, on Monday mornings (Europe/Berlin), grouped per
   workspace for minor/patch updates; at most 8 open / 4 per hour.
 - **Majors** are only opened after approval on the Dependency Dashboard. The
-  deferred majors (react-router 7, Tailwind 4, Vite 8, TypeORM 1.x;
-  decision 7) are disabled outright — they are done by hand in waves M2–M4;
-  drop each from the list once its wave is merged. joi 18 and TypeScript 6
-  (wave M1) and Express 5 (wave M2: `express`, `@types/express`,
-  `@types/express-serve-static-core`) left the list with their wave: a joi 19
-  or Express 6 major is proposed normally (dashboard approval required).
+  deferred majors (react-router 7, Tailwind 4, Vite 8; decision 7) are
+  disabled outright — they are done by hand in waves M3–M4; drop each from
+  the list once its wave is merged. joi 18 and TypeScript 6 (wave M1) and
+  Express 5 and TypeORM 1.x (wave M2: `express`, `@types/express`,
+  `@types/express-serve-static-core`, `typeorm`) left the list with their
+  wave: a joi 19, Express 6 or TypeORM 2 major is proposed normally
+  (dashboard approval required).
   TypeScript majors stay disabled through a rule of their own — TypeScript 7
   ships no compiler API yet, so ts-node (Hardhat in `contracts/` and
   `docker/hardhat/node/`), ts-jest (`srv/`) and typescript-eslint (supports

@@ -158,8 +158,13 @@ function makeRequest(data: Record<string, unknown> = {}, cookieSid?: string): an
         attach({});
         cb();
       },
+      destroy(cb: (e?: unknown) => void) {
+        sessionStore.delete(id);
+        delete request.session;
+        cb();
+      },
       save(cb?: (e?: unknown) => void) {
-        const { regenerate, save, ...rest } = session;
+        const { regenerate, destroy, save, ...rest } = session;
         sessionStore.set(id, JSON.parse(JSON.stringify(rest)));
         cb?.();
       },
@@ -773,12 +778,21 @@ describe('legacy CG ID mode', () => {
     expect(verified).toBe(true);
     expect(request.session.passkeyData).toMatchObject({ step: 'success', passkeyId: row.id, userId: USER });
     expect(request.session.passkeyData.expiresAt).toBeGreaterThan(Date.now());
-    expect(event.emit).toHaveBeenCalledWith(expect.objectContaining({ type: 'cliCgIdSignResponse' }), { sessionIds: [request.sessionID] });
+    expect(event.emit).toHaveBeenCalledWith(expect.objectContaining({ type: 'cliCgIdSignResponse' }), { cgIdRequestIds: ['req-1'], sessionIds: [request.sessionID] });
 
     const result = await call('User/login', request, { type: 'passkey-success', device: { publicKey: DEVICE_KEY } });
     expect(result.ownData.id).toBe(USER);
     expect(request.session.passkeyData).toBeUndefined();
     expect(request.session.authMethod).toBe('passkey');
+  });
+
+  it('the keepalives store nothing (no session is created by them)', async () => {
+    for (const route of ['User/ensureSession', 'CgId/ensureSession']) {
+      const request = makeRequest();
+      await call(route, request, {});
+      const { regenerate, destroy, save, ...fields } = request.session;
+      expect(fields).toEqual({});
+    }
   });
 
   it('a cg.box credential is unknown to the legacy relying party', async () => {

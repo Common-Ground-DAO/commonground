@@ -38,17 +38,8 @@ registerPostRoute<
   '/ensureSession',
   undefined,
   async (request) => {
-    await new Promise<void>((resolve, reject) => {
-      request.session.save((e) => {
-        if (e) {
-          console.error("Error saving session", e);
-          reject(e);
-        }
-        else {
-          resolve();
-        }
-      })
-    });
+    // keepalive only, like User/ensureSession: it stores nothing and creates
+    // no session; the first write (the ceremony's challenge) does
   }
 );
 
@@ -110,6 +101,10 @@ registerPostRoute<
       },
       frontendRequestId: data.frontendRequestId,
     }, {
+      // the main window's socket watches the request (wsapi
+      // watchCgIdRequest); the session room is kept for clients that
+      // predate it
+      cgIdRequestIds: [data.frontendRequestId],
       sessionIds: [request.sessionID],
     });
     return true;

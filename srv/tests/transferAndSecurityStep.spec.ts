@@ -239,8 +239,13 @@ function makeRequest(data: Record<string, unknown> = {}): any {
         attach({});
         cb();
       },
+      destroy(cb: (e?: unknown) => void) {
+        sessionStore.delete(id);
+        delete request.session;
+        cb();
+      },
       save(cb?: (e?: unknown) => void) {
-        const { regenerate, save, ...rest } = session;
+        const { regenerate, destroy, save, ...rest } = session;
         sessionStore.set(id, JSON.parse(JSON.stringify(rest)));
         cb?.();
       },
@@ -812,15 +817,13 @@ describe('password login throttling', () => {
 
 // ===========================================================================
 describe('logout', () => {
-  it('ends the session: a new, empty one', async () => {
+  it('ends the session: destroyed, no new one', async () => {
     const request = fresh(USER);
     request.session.webauthnChallenges = { c: {} };
     const oldSid = request.sessionID;
     await call('User/logout', request, undefined);
     expect(sessionStore.has(oldSid)).toBe(false);
-    expect(request.session.user).toBeUndefined();
-    expect(request.session.authAt).toBeUndefined();
-    expect(request.session.webauthnChallenges).toBeUndefined();
+    expect(request.session).toBeUndefined();
     expect(devices.deleteDevice).toHaveBeenCalledWith('device-1');
   });
 });

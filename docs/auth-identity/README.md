@@ -5,7 +5,9 @@
 > and the client side of sign-up, passkeys and step-up (§6, §7, §10) against commit 54e2d73,
 > 2026-10-31; `trust proxy` row against commit fe3937f, 2026-10-31; logout, password login and
 > policy (§5.4), email codes (§5.5, §8), the wallet message domain (§5.2), the add-method rule (§7)
-> and transfer links / the account-security step (§11) against commit 9fc05a9, 2026-11-01
+> and transfer links / the account-security step (§11) against commit 9fc05a9, 2026-11-01;
+> session creation, cookie, middleware order, logout and keepalive (§2, §4, §7, §10) against
+> commit eab2a27, 2026-11-01
 
 # Authentication & Identity
 
@@ -71,21 +73,50 @@ public profile fields (bio, links, etc.).
 ## 2. Session Infrastructure
 
 Sessions are managed by `express-session` with a Redis-backed store, configured in
-`srv/util/express.ts`.
+`srv/util/sessionSetup.ts` (wired into the api app by `srv/util/express.ts`).
 
 | Setting | Value | Source |
 |---------|-------|--------|
 | Store | `connect-redis` 10 (`RedisStore`) on the `redis` Valkey state instance (`sess:` prefix; `noeviction`, persisted — sessions survive restarts, a full cache cannot evict them) | `srv/util/express.ts` |
-| Cookie name | `connect.sid` in prod, `cg_<deployment>.sid` otherwise | `srv/serverconfig.ts:25` |
-| Secret | Docker secret `redis_secret`, else `REDIS_SECRET` env | `srv/util/express.ts:144` |
-| `maxAge` | 12 hours | `srv/util/express.ts:147` |
-| `httpOnly` | `true` | `srv/util/express.ts:148` |
-| `secure` | `true` except when `DEPLOYMENT === 'dev'` | `srv/util/express.ts:149` |
-| `sameSite` | `lax` | `srv/util/express.ts:150` |
-| `rolling` | `true` (cookie/expiry refresh on every request) | `srv/util/express.ts:154` |
-| `saveUninitialized` | `true` (a session row is created for every visitor) | `srv/util/express.ts:153` |
-| `resave` | `false` | `srv/util/express.ts:152` |
-| `proxy` / `trust proxy` | `true` (behind the Caddy edge, which sets `X-Forwarded-*` itself) | `srv/util/express.ts:127,145` |
+| Cookie name | `connect.sid` in prod, `cg_<deployment>.sid` otherwise | `srv/serverconfig.ts` |
+| Secret | Docker secret `redis_secret`, else `REDIS_SECRET` env | `srv/util/sessionSetup.ts` |
+| `maxAge` | 12 hours | `srv/util/sessionSetup.ts` |
+| `httpOnly` | `true` | `srv/util/sessionSetup.ts` |
+| `secure` | `true` except when `DEPLOYMENT === 'dev'` | `srv/util/sessionSetup.ts` |
+| `sameSite` | `lax` | `srv/util/sessionSetup.ts` |
+| `saveUninitialized` | `false` — a session (and its cookie) exists only once a request stores something in it, see below | `srv/util/sessionSetup.ts` |
+| `rolling` | `false` — the cookie of a **logged-in** session is still re-sent on every response (`rollLoggedInSessionCookie`), any other session's only when it changes | `srv/util/sessionSetup.ts` |
+| `resave` | `false` | `srv/util/sessionSetup.ts` |
+| `proxy` / `trust proxy` | `true` (behind the Caddy edge, which sets `X-Forwarded-*` itself) | `srv/util/sessionSetup.ts`, `srv/util/express.ts` |
+
+### When a session exists
+
+An anonymous request that stores nothing in the session creates none: no `sess:` key, no
+`Set-Cookie`. A session is created by the first request that writes to it — `getSignableSecret`
+(the device login's and SIWE challenge), WebAuthn ceremonies (`webauthnChallenges`), sign-up email
+verification (`signupEmail`), `pendingPasskey`, wallet/LUKSO/Farcaster/X preparation, a login — and
+that response sets the cookie. This matters on a page load without a valid session (cookie expired,
+cleared or unknown to the store): the app's parallel requests used to mint one anonymous session
+each, and their cookies could arrive after — and overwrite — the one the device login had just set.
+
+Sliding expiry is kept for logged-in sessions only: `rolling` is off, and a hook that runs right
+before the headers go out re-sends the cookie of a session with `user` (signed like
+express-session signs it) unless express-session set it in that response itself. A response to a
+request that left with the anonymous pre-login cookie (the one holding the device login's
+challenge) therefore cannot put that id back into the browser after the login replaced it. Every
+request still refreshes the store TTL of an existing session (connect-redis `touch`). Code that
+needs a stable `request.sessionID` only runs once the session holds data (the sign-up code attempt
+limiter keys on `sessionID` + the stored code id).
+
+A session id that is destroyed (logout) or replaced (`regenerate()`: login) is **revoked** for an
+hour (`sess-revoked:<id>`, `withSessionRevocation` around the store): the store refuses to write that
+id again (and re-checks after each write, removing it if a destroy overtook the write), and a
+request that loaded the session before it went away ends without it (`revokedSessionGuard`, one
+key lookup per request with a stored session, made before the response starts — before `res.end`
+or the first write of a streamed response) — no Set-Cookie of the old id, no save that would
+bring a logged-out session back. Left open: a response that the server had finished before the
+revocation but that reaches the browser after the new cookie (delivery reordering) can still set
+the old id; the store no longer knows it, so the browser is anonymous until the next login.
 
 ### Cookie scoping
 
@@ -97,15 +128,18 @@ see [§7](#legacy-cg-id-gateway-only)) sets the cookie `domain` to `.<APP_HOSTNA
 
 ### Middleware order
 
-`srv/util/express.ts:168-189` wires the middleware chain. Bot-token authentication runs **first**; if
-a request is authenticated as a bot, the session / passport middlewares are skipped entirely:
+`srv/util/express.ts` wires the middleware chain (`createSessionMiddlewares()` in
+`srv/util/sessionSetup.ts`). Bot-token authentication runs **first**; if a request is authenticated
+as a bot, the session / passport middlewares are skipped entirely:
 
 ```
 botAuthenticationMiddleware      # sets request.botPrincipal if a valid Bearer token is present
+  → logged-in cookie hook (skipped if botPrincipal; registered before the session so it runs
+                                   after express-session's own Set-Cookie decision)
   → session (skipped if botPrincipal)
   → passport.initialize (skipped if botPrincipal)
   → passport.session (skipped if botPrincipal)
-  → createdAt stamp (skipped if botPrincipal)
+  → old-scope cookie cleanup (skipped if botPrincipal, see §7; writes nothing to the session)
   → botAllowlistMiddleware       # restricts bot principals to explicitly allow-listed routes
 ```
 
@@ -119,7 +153,7 @@ The authenticated identity plus in-flight login state live on the session (`Sess
 | `user` | `{ id, deviceId }` — set only after a successful login. Its presence *is* the "logged in" signal. |
 | `authAt` / `authMethod` | When and how the session last authenticated interactively (login, account creation, `User/reauthenticate`). Never set by a device-key login. Read by the step-up guard ([§7](#step-up-for-sensitive-actions)). |
 | `signSecret` | One-time random challenge (20 chars) for signature-based flows. |
-| `createdAt` | First-seen timestamp. |
+| `createdAt` | When the login session was created (`establishLoginSession`). Nothing reads it. |
 | `passport` / `twitter` | Twitter OAuth data (via Passport.js). |
 | `lukso` | Prepared LUKSO Universal Profile login/creation data. |
 | `farcaster` | Prepared Farcaster login/creation data (FID, address, profile). |
@@ -127,7 +161,7 @@ The authenticated identity plus in-flight login state live on the session (`Sess
 | `webauthnChallenges` | WebAuthn ceremonies in flight, keyed by challenge ([§7](#ceremony-state)). |
 | `pendingPasskey` | A passkey registered during sign-up, waiting for `createUser` ([§7](#sign-up-with-a-passkey)). |
 | `signupEmail` | Sign-up address verification: hashed code bound to the address, expiry, attempts, then `verifiedAt` ([§6](#6-signup-flow--captcha)). |
-| `legacyDomainCookieCleared` | Set once an obsolete subdomain-scoped session cookie has been expired ([§7](#session-cookie-on-upgraded-instances)). |
+| `legacyDomainCookieCleared` | Set at login: an obsolete subdomain-scoped session cookie has been expired ([§7](#session-cookie-on-upgraded-instances)). |
 | `securityStepClearFor` | The session user's account was found complete for the account-security step ([§11](#11-transfer-links-and-the-account-security-step)); a new login starts without it. |
 | `passkeyData` | Legacy CG ID mode only: `{ step: 'success', passkeyId, userId }` left by `CgId/verifyAuthenticationResponse`. |
 | `temporaryArticleIds` | Unrelated to auth (draft article ownership). |
@@ -206,9 +240,11 @@ The challenge used by signature methods comes from `POST /User/getSignableSecret
 consumed on use (`signSecret` is deleted after login).
 
 `POST /User/checkLoginStatus` returns `{ userId | null }` for the current session,
-`POST /User/ensureSession` saves the session (keepalive for the rolling cookie), and
-`POST /User/logout` deletes the device and replaces the session with a new, empty one
-(`endLoginSession()`: regenerate, awaited save — the old session id is dead).
+`POST /User/ensureSession` is the keepalive: it stores nothing and creates no session, in every
+mode (the response itself refreshes an existing session's store TTL and re-sends a logged-in
+session's cookie).
+`POST /User/logout` deletes the device, destroys the session (`endLoginSession()`; the old id is
+dead) and expires the cookie; no new session takes its place.
 
 Every login response also carries `securityStepRequired`: whether the account has to finish the
 account-security step before anything else works ([§11](#11-transfer-links-and-the-account-security-step)),
@@ -653,7 +689,14 @@ A process started with `CG_LEGACY_CGID=true` (the `app.cg` gateway during the mo
 `/CgId/generateAuthenticationOptions` (empty `allowCredentials`, no user id parameter) and
 `/CgId/verifyAuthenticationResponse` through the shared core, plus `/CgId/ensureSession`. There is no
 registration. A successful assertion leaves `session.passkeyData = {step:'success', ...}` and emits
-`cliCgIdSignResponse` to the `expressSession:<sid>` room; the main window then calls
+`cliCgIdSignResponse` to the `cgIdRequest:<frontendRequestId>` room — the main window's socket
+joins it with the `watchCgIdRequest` socket event before it opens the popup, so the result does not
+depend on which session cookie the socket connected with — and, for clients from before that
+event, to the `expressSession:<sid>` room; the popup also posts the result to its opener, which
+accepts it only from the CG ID origin. The request id is 120 random bits (`crypto.getRandomValues`). Popup and
+main window share the session through the subdomain-scoped cookie: the popup's first write (the
+challenge) creates it if there is none. `/CgId/ensureSession` is a keepalive like
+`User/ensureSession` and creates nothing. The main window then calls
 `User/login {type:'passkey-success'}`, which is accepted only in this mode and within 5 minutes
 (`passkeyData.expiresAt`). Only in this mode does
 the session cookie cover subdomains, does the API CORS list include the `CGID_URL` origin and does
@@ -670,8 +713,10 @@ does not restrict it.
 
 Outside legacy mode the session cookie is host-only. A browser may still hold the
 subdomain-scoped cookie (`Domain=.<APP_HOSTNAME>`) of an instance that ran an older version; the
-api expires it once per session (`legacyDomainCookieCleared`), and the session it pointed to stays
-valid. Release note for in-place upgrades: users keep their sessions; nothing to do.
+api expires it in the response to every request that carries a session cookie until a login marks
+the session (`legacyDomainCookieCleared`, set by `establishLoginSession`). The cleanup only adds a
+header and never writes to the session, so it creates none. The session the old cookie pointed to
+stays valid. Release note for in-place upgrades: users keep their sessions; nothing to do.
 
 ## 8. Account Linking (user_accounts & wallets)
 
@@ -780,7 +825,9 @@ The client login lifecycle is owned by `LoginManager` (`src/data/appstate/login.
   device-signature races across tabs.
 - **`checkLoginStatus`** compares the server's `userId` against the cached one and logs out on
   mismatch.
-- **Keepalive**: `WebSocketManager` calls `POST /User/ensureSession` on start and every 29 minutes.
+- **Keepalive**: `WebSocketManager` calls `POST /User/ensureSession` every 29 minutes (it creates
+  no session, [§4](#4-the-login-endpoint)); there is no call on start — the socket needs no session
+  cookie.
 - **Post-login setup** (`setupAfterLogin`): seeds the local Dexie databases (user, communities, chats,
   notifications), logs the socket in, and registers the push subscription.
 

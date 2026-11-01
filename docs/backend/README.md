@@ -22,7 +22,8 @@
 > gated-file streaming note and the test list against commit 6934817, 2026-11-01;
 > transfer links, the account-security step, password policy, login throttling,
 > email codes, the SIWE domain check and the auth-path logging against commit
-> 9fc05a9, 2026-11-01.
+> 9fc05a9, 2026-11-01; `ensureSession`/`logout`, the `CgId` result room and the
+> room key list against commit eab2a27, 2026-11-01.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -373,11 +374,11 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/verifyCaptcha` -- Verify a captcha token (provider abstraction in `srv/util/captcha.ts`: ALTCHA default / reCAPTCHA / off; ALTCHA challenges via `GET /Captcha/challenge`, the effective provider via `GET /Captcha/config` — both public, `srv/api/captcha.ts`)
 - `/login` -- every interactive and device-key login; each branch ends in `establishLoginSession()` (`srv/util/authSession.ts`: new session id, user set, `authAt`/`authMethod` recorded except for device-key logins, awaited save). `type: 'passkey'` verifies a WebAuthn assertion in the same call; `type: 'passkey-success'` exists only in legacy CG ID mode
 - `/reauthenticate` -- step-up: passkey (`stepup` assertion), password or a fresh signature of a login-enabled wallet; refreshes `authAt` and returns `{ validUntil }`; rate-limited per IP and per user
-- `/ensureSession` -- session keepalive (the web client calls it every 29 minutes)
+- `/ensureSession` -- session keepalive (the web client calls it every 29 minutes); stores nothing and creates no session
 - `/requestSignupEmailCode`, `/verifySignupEmailCode` -- verify the sign-up address before the account exists (`srv/util/signupEmail.ts`)
 - `/clearLoginSession` -- Clear session
 - `/checkLoginStatus` -- Check if logged in
-- `/logout` -- Log out (the session is replaced by a new, empty one)
+- `/logout` -- Log out (the session is destroyed, its id revoked and the cookie expired; no new session)
 - `/getSecurityStatus` -- what the account-security step still needs (`srv/util/securityStep.ts`)
 - `/createTransferLink` -- a one-time link for the session's own user to the instance `TRANSFER_TARGET_URL` names (off without it); limited per user
 - `/previewTransferLink`, `/redeemTransferLink` -- show whose account a link signs in to; redeem it (logged out only, one conditional `UPDATE`, failed attempts limited per IP); not on a legacy CG ID process (`srv/util/transferLink.ts`, `srv/repositories/transferTokens.ts`)
@@ -523,9 +524,9 @@ authentication of existing credentials of the CG ID relying party (host of
 `CGID_URL`) through the shared core — no registration, no user id from the
 client.
 
-- `/ensureSession` -- Ensure a valid session exists
+- `/ensureSession` -- keepalive like `User/ensureSession`; stores nothing
 - `/generateAuthenticationOptions` -- options with empty `allowCredentials` (IP rate-limited)
-- `/verifyAuthenticationResponse` -- verifies the assertion, leaves `session.passkeyData` for `/User/login {type:'passkey-success'}` and emits `cliCgIdSignResponse` to the session room
+- `/verifyAuthenticationResponse` -- verifies the assertion, leaves `session.passkeyData` for `/User/login {type:'passkey-success'}` and emits `cliCgIdSignResponse` to the `cgIdRequest:` room the main window's socket watches (and the session room)
 
 ### `srv/api/accounts.ts` -- External Account Routes
 
@@ -1347,6 +1348,7 @@ Located in `srv/util/`.
   - `roleRoomKey(roleId)` -> `role:<id>`
   - `deviceRoomKey(deviceId)` -> `device:<id>`
   - `expressSessionRoomKey(sessionId)` -> `expressSession:<id>`
+  - `cgIdRequestRoomKey(frontendRequestId)` -> `cgIdRequest:<id>`
   - `articleRoomKey(articleId)` -> `article:<id>`
 
 ### `srv/util/postgres.ts` -- PostgreSQL Connection Pool

@@ -5,7 +5,8 @@
 > 54e2d73, 2026-10-31; the edge (Caddy replacing nginx in the dev and
 > self-host stacks: §1, the request flows, Pattern 5, §7, the routing
 > appendix) against commit fe3937f, 2026-10-31; the login list (§3) against
-> commit 9fc05a9, 2026-11-01
+> commit 9fc05a9, 2026-11-01; session settings and the socket's session room
+> against commit eab2a27, 2026-11-01
 
 # Common Ground - Architecture Documentation
 
@@ -210,14 +211,14 @@ Every `index.html` the backend serves for share links / previews loads `/instanc
 
 ### Session Infrastructure
 
-Sessions are managed by `express-session` with a Redis-backed store. Key configuration from `srv/util/express.ts` and `srv/serverconfig.ts`:
+Sessions are managed by `express-session` with a Redis-backed store. Key configuration from `srv/util/sessionSetup.ts` and `srv/serverconfig.ts` (detail: [docs/auth-identity §2](../auth-identity/README.md#2-session-infrastructure)):
 
 - **Store**: `connect-redis` backed by the `redis` (state) Valkey instance (`sess:` key prefix; persisted, so a planned restart keeps everyone logged in)
 - **Cookie name**: `connect.sid` when `DEPLOYMENT === 'prod'`; otherwise `cg_{deployment}.sid` (`SESSION_COOKIE_NAME` in `srv/serverconfig.ts`)
-- **Cookie settings**: `httpOnly`, `secure` (except in dev), `sameSite: lax`, 12-hour max age, `rolling: true` (refreshed on every request)
-- **Cookie domain**: for non-dev deployments the cookie domain is set to `.{APP_HOSTNAME}` (derived from `BASE_URL`), so the app and the CG ID app (`id.<domain>`) share a session. Self-hosted instances get their own domain automatically.
+- **Cookie settings**: `httpOnly`, `secure` (except in dev), `sameSite: lax`, 12-hour max age; the cookie of a logged-in session is re-sent (expiry refreshed) on every response, other sessions' only when they change (`rolling: false` plus a hook for logged-in sessions)
+- **Cookie domain**: host-only; only legacy CG ID mode (`CG_LEGACY_CGID=true`, non-dev) sets it to `.{APP_HOSTNAME}` (derived from `BASE_URL`), so the app and the CG ID app (`id.<domain>`) share a session.
 - **Secret**: loaded from Docker secret `redis_secret` or `REDIS_SECRET` env var
-- **saveUninitialized**: `true` (sessions are created for every non-bot request)
+- **saveUninitialized**: `false` (a session exists only once a request stores something in it; anonymous requests that store nothing get no session and no cookie)
 - **trust proxy / proxy**: enabled (the edge sits in front and sets `X-Forwarded-*` itself)
 
 ### CORS Configuration
@@ -291,7 +292,7 @@ The Bot API is versioned (`BOT_PROTOCOL_VERSION` in `srv/common/botProtocol.ts`)
 The WebSocket server (`srv/wsapi.ts`) has its own auth flow, separate from the REST session:
 
 1. On connection, the session cookie is decoded from `socket.handshake.headers.cookie`.
-2. The socket joins an `expressSession:{sessionId}` room (server-to-socket signalling).
+2. If the handshake carries a validly signed session cookie, the socket joins its `expressSession:{sessionId}` room (server-to-socket signalling; only legacy CG ID clients from before `watchCgIdRequest` rely on it). A socket without one (anonymous visitor) stays connected.
 3. The socket requests a `signableSecret` via `getSignableSecret`, then sends a `login` event with `{ deviceId, secret, base64Signature }`.
 4. The server verifies the device signature (same mechanism as REST device auth).
 5. On success the socket joins rooms for the user (`user:{userId}`), each role (`role:{roleId}`), each community (`community:{communityId}`), and the device (`device:{deviceId}`), and the user is marked `online`.
@@ -450,6 +451,7 @@ Socket.IO is used primarily for server-to-client event broadcasting. Events are 
 | `role:{roleId}` | Events for all users with a specific role |
 | `community:{communityId}` | Events broadcast to an entire community |
 | `expressSession:{sessionId}` | Events tied to an HTTP session |
+| `cgIdRequest:{frontendRequestId}` | Legacy CG ID: the result of a CG ID popup request |
 | `botTokenRoomKey(tokenId)` | Events for a specific bot connection |
 
 **Event flow (e.g., new message)**:

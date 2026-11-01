@@ -12,6 +12,7 @@ import {
   communityRoomKey,
   deviceRoomKey,
   expressSessionRoomKey,
+  cgIdRequestRoomKey,
   articleRoomKey,
   botTokenRoomKey,
   dockerSecret,
@@ -39,14 +40,16 @@ import cookieParser from 'cookie-parser';
 import cookie from 'cookie';
 const secret = dockerSecret('redis_secret') || process.env.REDIS_SECRET as string;
 
-function decodeSessionId(cookieHeader: string) {
+/** the session id of a validly signed session cookie, else undefined */
+function decodeSessionId(cookieHeader: string): string | undefined {
   // Parse the cookies
   const cookies = cookieParser.signedCookies(cookie.parse(cookieHeader), secret);
 
-  // `connect.sid` is the default name for the session cookie
-  const sessionCookie = cookies[serverconfig.SESSION_COOKIE_NAME] as string;
+  // `connect.sid` is the default name for the session cookie; a missing or
+  // unsigned cookie is absent here, a bad signature is `false`
+  const sessionCookie = cookies[serverconfig.SESSION_COOKIE_NAME];
 
-  return sessionCookie;
+  return typeof sessionCookie === 'string' && sessionCookie ? sessionCookie : undefined;
   /* if (sessionCookie && sessionCookie.startsWith('s:')) {
     // Remove the 's:' prefix and try to unsign it
     const unsignedSessionId = signature.unsign(sessionCookie.slice(2), secret);
@@ -425,14 +428,40 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
       return;
     }
 
+    // Anonymous visitors have no session (and no cookie) until something is
+    // stored in one, so a socket without a session cookie is normal. With one,
+    // the socket joins its session's room (kept for legacy CG ID clients that
+    // predate watchCgIdRequest). Login on the socket is by device key, not by
+    // session.
     const { cookie } = socket.handshake.headers;
-    if (!cookie) {
-      socket.disconnect(true);
-      console.error("No express sessionId cookie found, closing socket...");
-      return;
+    const sessionId = cookie ? decodeSessionId(cookie) : undefined;
+    if (sessionId) {
+      socket.join(expressSessionRoomKey(sessionId));
     }
-    const sessionId = decodeSessionId(cookie);
-    socket.join(expressSessionRoomKey(sessionId));
+
+    // Legacy CG ID: the main window watches the popup request it opened; the
+    // popup's result (cliCgIdSignResponse) is emitted to this room. Unlike
+    // the session room it does not depend on which session cookie the socket
+    // connected with. One request per socket.
+    socket.on("watchCgIdRequest", async (rawData) => {
+      let data: API.Socket.watchCgIdRequest.Request;
+      try {
+        data = await validators.API.Socket.watchCgIdRequest.validateAsync(rawData);
+      }
+      catch (e) {
+        console.error("Error during watchCgIdRequest", e);
+        return;
+      }
+      // no await between reading and replacing the watched id: concurrent
+      // events cannot leave the socket in two request rooms
+      const previous = socket.data.cgIdRequestId;
+      socket.data.cgIdRequestId = data.frontendRequestId;
+      const logError = (e: unknown) => console.error("Error during watchCgIdRequest", e);
+      if (previous && previous !== data.frontendRequestId) {
+        Promise.resolve(socket.leave(cgIdRequestRoomKey(previous))).catch(logError);
+      }
+      Promise.resolve(socket.join(cgIdRequestRoomKey(data.frontendRequestId))).catch(logError);
+    });
 
     socket.on("getSignableSecret", (callback) => {
       const signableSecret = realRandomHexString(32);

@@ -42,10 +42,12 @@ class WebSocketManager {
   private tabId: string = randomString(20);
   private _tabState: Common.TabState = 'unknown';
   private __fastInterval: any = undefined;
+  /** legacy CG ID popup requests this tab's socket watches (re-sent on reconnect) */
+  private cgIdRequestIds = new Set<string>();
   public sendStateBroadcastUpdates = true;
 
   constructor() {
-    // keep the session alive
+    // keep the session alive (it stores nothing and creates no session)
     setInterval(() => {
       userApi.ensureSession().catch(e => {
         console.error('Error during ensureSession call in WebSocketManager', e);
@@ -79,13 +81,15 @@ class WebSocketManager {
     });
 
     (async () => {
+      // The socket does not need a session cookie (anonymous visitors have no
+      // session until something is stored in one), so there is no
+      // ensureSession first: it would run in parallel with the device login.
       const [
         serviceWorkerManager,
         connectionManager,
       ] = await Promise.all([
         (await import('./serviceWorker')).default,
         (await import('./connection')).default,
-        userApi.ensureSession(),
       ]);
 
       document.addEventListener('visibilitychange', () => {
@@ -415,6 +419,10 @@ class WebSocketManager {
             this.lastPongLocalTimeDelta = Date.now() - timestamp;
           });
 
+          for (const frontendRequestId of this.cgIdRequestIds) {
+            socket.emit("watchCgIdRequest", { frontendRequestId });
+          }
+
           clearInterval(this.pingInterval)
           this.pingInterval = setInterval(() => {
             this.pingIntervalHandler();
@@ -664,6 +672,23 @@ class WebSocketManager {
     if (!!this._socket) {
       this._socket.cg_loggedin = 0;
     }
+  }
+
+  /**
+   * Legacy CG ID: receive the result of the CG ID popup request
+   * `frontendRequestId` (cliCgIdSignResponse) on this socket. The server keeps
+   * one watched request per socket.
+   */
+  public watchCgIdRequest(frontendRequestId: string) {
+    this.cgIdRequestIds.clear();
+    this.cgIdRequestIds.add(frontendRequestId);
+    if (!!this._socket && this._socket.connected) {
+      this._socket.emit("watchCgIdRequest", { frontendRequestId });
+    }
+  }
+
+  public unwatchCgIdRequest(frontendRequestId: string) {
+    this.cgIdRequestIds.delete(frontendRequestId);
   }
 
   /**

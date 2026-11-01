@@ -4,6 +4,7 @@
 
 import type express from "express";
 import errors from "../common/errors";
+import { clearSessionCookie, legacyDomainCookieCleanupActive } from "./sessionSetup";
 
 /**
  * How the session's current authentication came about. Interactive logins,
@@ -93,6 +94,9 @@ const SAME_USER_CARRY_OVER = [
  *   cookie arrived. The step-up time is left exactly as it was.
  *
  * The save is awaited, so the response only goes out once the session exists.
+ * The login also marks the session as clear of the obsolete subdomain-scoped
+ * cookie: the session middlewares expired it in this response
+ * already if the request carried a session cookie (srv/util/sessionSetup.ts).
  */
 export async function establishLoginSession(
   request: express.Request,
@@ -103,6 +107,7 @@ export async function establishLoginSession(
     previous.user = { id: login.userId, deviceId: login.deviceId };
     // the challenge of this login is used up
     delete previous.signSecret;
+    markLegacyDomainCookieCleared(previous);
     await saveSession(previous);
     return;
   }
@@ -120,6 +125,7 @@ export async function establishLoginSession(
   const { session } = request;
   Object.assign(session, carried);
   session.createdAt = new Date();
+  markLegacyDomainCookieCleared(session);
   session.user = { id: login.userId, deviceId: login.deviceId };
   if (login.method !== "device") {
     session.authAt = Date.now();
@@ -128,17 +134,27 @@ export async function establishLoginSession(
   await saveSession(session);
 }
 
+function markLegacyDomainCookieCleared(session: express.Request["session"]) {
+  if (legacyDomainCookieCleanupActive()) {
+    session.legacyDomainCookieCleared = true;
+  }
+}
+
 /**
- * Logout: the session is replaced by a new, empty one (the old id is
- * destroyed in the store, so a copy of the old cookie is worthless) and the
- * save is awaited.
+ * Logout: the session is destroyed in the store (a copy of its cookie is
+ * worthless from now on) and the response expires the cookie. No new session
+ * takes its place — anonymous requests need none, and an empty one would be
+ * neither saved nor sent anyway; the rest of this request runs without
+ * `request.session`. (A regenerated session would be: express-session saves
+ * any session whose id changed.)
  */
 export async function endLoginSession(request: express.Request): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    request.session.regenerate((e) => (e ? reject(e) : resolve()));
+    request.session.destroy((e) => (e ? reject(e) : resolve()));
   });
-  request.session.createdAt = new Date();
-  await saveSession(request.session);
+  if (request.res) {
+    clearSessionCookie(request.res);
+  }
 }
 
 /** Records a successful re-authentication of the session's user. */

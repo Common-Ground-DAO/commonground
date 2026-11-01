@@ -39,6 +39,14 @@
       "autoReplaceStringTemplate": "HELPER_IMAGE=\"{{{depName}}}:{{{newValue}}}@{{{newDigest}}}\""
     },
     {
+      "description": "restic image of the self-host backup script (docker run, not a Dockerfile or compose file)",
+      "customType": "regex",
+      "managerFilePatterns": ["/^docker/selfhost/backup\\.sh$/"],
+      "matchStrings": ["RESTIC_IMAGE=\"(?<depName>[a-z0-9./_-]+):(?<currentValue>[^@\"]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""],
+      "datasourceTemplate": "docker",
+      "autoReplaceStringTemplate": "RESTIC_IMAGE=\"{{{depName}}}:{{{newValue}}}@{{{newDigest}}}\""
+    },
+    {
       "description": "corepack, installed from the npm tarball in the Node-based Dockerfiles (Node >= 25 no longer bundles it)",
       "customType": "regex",
       "managerFilePatterns": [

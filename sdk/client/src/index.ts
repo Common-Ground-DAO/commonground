@@ -23,6 +23,8 @@ export type {
   PasskeyRegistrationResponse,
   PasskeyRequestOptions,
   PasskeyVerifyRegistrationResult,
+  SecurityStatus,
+  TransferLinkPreview,
 } from "./auth/types.js";
 export {
   CommunityApi,

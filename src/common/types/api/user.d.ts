@@ -81,6 +81,18 @@ declare global {
                     communities: Models.Community.DetailViewFromApi[];
                     chats: Models.Chat.ChatFromApi[];
                     unreadNotificationCount: number;
+                    /**
+                     * the account must finish the account-security step before
+                     * anything else works (User/getSecurityStatus); absent on
+                     * older servers
+                     */
+                    securityStepRequired?: boolean;
+                    /**
+                     * epoch ms until which the session's last interactive
+                     * authentication counts for sensitive actions (null: it
+                     * does not); also after a silent device re-login
+                     */
+                    stepUpValidUntil?: number | null;
                 };
             }
 
@@ -509,6 +521,78 @@ declare global {
                     email: string;
                 };
                 type Response = void;
+            }
+
+            /** what the account-security step still needs (docs/auth-identity §11) */
+            namespace getSecurityStatus {
+                type Request = Record<string, never>;
+                type Response = {
+                    /** anything below is missing: only the step's endpoints work */
+                    required: boolean;
+                    /** no passkey here, no password and no sign-in wallet */
+                    needsSignInMethod: boolean;
+                    /** no verified email (only on an instance that sends mail) */
+                    needsVerifiedEmail: boolean;
+                    /** the password signed in but is shorter than the policy */
+                    needsNewPassword: boolean;
+                    email: string | null;
+                    emailVerified: boolean;
+                    hasPassword: boolean;
+                    /** passkeys of this instance */
+                    passkeys: number;
+                    /** login-enabled wallets */
+                    loginWallets: number;
+                    /** an address a confirmation code was sent to and not yet confirmed */
+                    pendingEmail?: string | null;
+                    /**
+                     * the session signed in (or came with a transfer link) recently
+                     * enough to add what is missing; false: sign in again
+                     */
+                    recentSignIn?: boolean;
+                };
+            }
+
+            /** a one-time link that signs the session's user in on the transfer target */
+            namespace createTransferLink {
+                type Request = {
+                    /** a same-site path on the target to continue to */
+                    nextPath?: string;
+                };
+                type Response = {
+                    /** `<target>/transfer#<token>` */
+                    url: string;
+                    /** epoch ms */
+                    expiresAt: number;
+                };
+            }
+
+            namespace previewTransferLink {
+                type Request = {
+                    token: string;
+                };
+                type Response = {
+                    userId: string;
+                    displayName: string;
+                    /** the unique handle (cg profile name), if the account has one */
+                    username: string | null;
+                    /** profile image of the displayed account */
+                    imageId: string | null;
+                    /** epoch ms */
+                    expiresAt: number;
+                };
+            }
+
+            namespace redeemTransferLink {
+                type Request = {
+                    token: string;
+                    device: {
+                        publicKey: any;
+                    };
+                };
+                type Response = login.Response & {
+                    /** where to continue (a same-site path), or null */
+                    nextPath: string | null;
+                };
             }
         }
     }

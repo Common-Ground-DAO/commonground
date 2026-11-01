@@ -298,6 +298,7 @@ services:
       # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
       - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
       - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
+      - BASE_URL=${BASE_URL}
       - DB_TYPE=mediasoup
       - PG_PASSWORD=${PG_MEDIASOUP_PASSWORD}
       - DEPLOYMENT=${DEPLOYMENT}

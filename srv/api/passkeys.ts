@@ -24,6 +24,7 @@ import { requireRecentAuth } from "../util/authSession";
 import { getVerifiedSignupEmail } from "../util/signupEmail";
 import { emailEnabled } from "./emails";
 import { notifyNewSignInMethod } from "../util/signInNotice";
+import { requireAuthToAdd } from "../util/securityStep";
 
 // Passkeys on the instance's own origin (docs/auth-identity §7). Mounted only
 // when the process is NOT in legacy CG ID mode. Login with a passkey is
@@ -101,7 +102,9 @@ registerPostRoute<
     const { user } = request.session;
     if (user) {
       // adding a sign-in method to an existing account
-      requireRecentAuth(request);
+      // (while the account has no sign-in method here at all, a sign-in
+      // within the hour is enough — srv/util/securityStep.ts)
+      await requireAuthToAdd(request, 'sign-in-method', { emailRequired: emailEnabled() });
       const [ownData, existing, existingHandle] = await Promise.all([
         userHelper.getOwnDataById(user.id),
         passkeyHelper.listUserPasskeys(user.id, rp.rpId),
@@ -153,7 +156,7 @@ registerPostRoute<
     const { user } = request.session;
     const name = data.name || defaultPasskeyName(request);
     if (user) {
-      requireRecentAuth(request);
+      await requireAuthToAdd(request, 'sign-in-method', { emailRequired: emailEnabled() });
       const passkey = await verifyRegistration(rp, request.session, data.registrationResponse, {
         userId: user.id,
         name,

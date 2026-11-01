@@ -26,6 +26,7 @@ import format from 'pg-format';
 import { type PoolClient } from 'pg';
 import validators from './validators';
 import deviceHelper from './repositories/device';
+import { isSecurityStepRequiredForRealtime } from './util/securityStep';
 import { uuidRe } from './util';
 import { authenticateProtooTransport, connectionSourceKey, PendingConnectionLimiter } from './mediasoup/connectionGate';
 
@@ -408,6 +409,10 @@ async function verifyProtooLogin(data: unknown, secret: string): Promise<string>
         throw new Error(errors.server.INVALID_SECRET);
     }
     const { userId } = await deviceHelper.verifyDeviceAndGetUserId(login.deviceId, secret, login.base64Signature);
+    if (await isSecurityStepRequiredForRealtime(userId, { useApiRecord: false })) {
+        // the account must finish the account-security step first
+        throw new Error(errors.server.SECURITY_STEP_REQUIRED);
+    }
     return userId;
 }
 

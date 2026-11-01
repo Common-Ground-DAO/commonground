@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { type PoolClient } from "pg";
+import { type Pool, type PoolClient } from "pg";
 import errors from "../common/errors";
 import { UserProfileTypeEnum } from "../common/enums";
 
@@ -51,6 +51,58 @@ export async function countLoginMethods(
   `, [userId, rpId, except.passkeyId ?? null, except.walletId ?? null]);
   const row = result.rows[0];
   return Number(row.passkeys) + (row.password ? 1 : 0) + Number(row.wallets);
+}
+
+/** What the account-security step is derived from (srv/util/securityStep.ts). */
+export type SecurityFacts = {
+  email: string | null;
+  emailVerified: boolean;
+  hasPassword: boolean;
+  passwordChangeRequired: boolean;
+  /** passkeys of `rpId` */
+  passkeys: number;
+  /** login-enabled EVM wallets */
+  loginWallets: number;
+};
+
+/** null: no such (live, human) account */
+export async function getSecurityFacts(
+  db: Pool | PoolClient,
+  userId: string,
+  rpId: string | null,
+): Promise<SecurityFacts | null> {
+  const result = await db.query<{
+    email: string | null;
+    emailVerified: boolean;
+    hasPassword: boolean;
+    passwordChangeRequired: boolean;
+    passkeys: string;
+    loginWallets: string;
+  }>(`
+    SELECT
+      u."email",
+      u."emailVerified",
+      u."password" IS NOT NULL AS "hasPassword",
+      u."passwordChangeRequired",
+      (SELECT COUNT(*) FROM passkeys
+        WHERE "userId" = u."id" AND "rpId" = $2 AND "deletedAt" IS NULL) AS "passkeys",
+      (SELECT COUNT(*) FROM wallets
+        WHERE "userId" = u."id" AND "type" = 'evm' AND "loginEnabled" = TRUE AND "deletedAt" IS NULL) AS "loginWallets"
+    FROM users u
+    WHERE u."id" = $1 AND u."deletedAt" IS NULL AND u.is_bot = FALSE
+  `, [userId, rpId]);
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    email: row.email,
+    emailVerified: row.emailVerified === true,
+    hasPassword: row.hasPassword === true,
+    passwordChangeRequired: row.passwordChangeRequired === true,
+    passkeys: Number(row.passkeys),
+    loginWallets: Number(row.loginWallets),
+  };
 }
 
 /** Throws LAST_LOGIN_METHOD unless a method remains besides the excluded ones. */

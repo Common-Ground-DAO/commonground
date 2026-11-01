@@ -18,6 +18,7 @@ import type { ChallengeEntry, PendingPasskey } from './passkeys';
 import type { AuthMethod } from './authSession';
 import { isLegacyCgidMode } from './passkeyConfig';
 import { botAllowlistMiddleware, botAuthenticationMiddleware } from './botPrincipal';
+import { appOrigins } from './origins';
 
 // TYPES
 export type User = {
@@ -102,32 +103,19 @@ declare module 'express-session' {
     // set once the obsolete subdomain-scoped session cookie was expired
     legacyDomainCookieCleared?: boolean;
 
+    // the session user's account was found complete (account-security step,
+    // srv/util/securityStep.ts); a new login regenerates the session
+    securityStepClearFor?: { userId: string; version: string | null };
+
     temporaryArticleIds?: string[];
   }
 }
 
 // APP SETUP
 const app = express();
-const allowedOrigins = [ process.env.BASE_URL as string ];
-if (config.DEPLOYMENT === 'dev') {
-  allowedOrigins.push('http://localhost:3000');
-  allowedOrigins.push('https://localhost:3000');
-  allowedOrigins.push('http://localhost:8000');
-  allowedOrigins.push('https://localhost:8001');
-  allowedOrigins.push('http://app.cg.local:3000');
-  allowedOrigins.push('https://app.cg.local:3000');
-  allowedOrigins.push('http://app.cg.local:8000');
-  allowedOrigins.push('https://app.cg.local:8001');
-  allowedOrigins.push('https://bs-local.com:3000');
-  allowedOrigins.push('https://bs-local.com:8001');
-  if (!!process.env.LOCAL_CERTIFICATE_IP) {
-    allowedOrigins.push(`http://${process.env.LOCAL_CERTIFICATE_IP}:3000`);
-    allowedOrigins.push(`https://${process.env.LOCAL_CERTIFICATE_IP}:3000`);
-    allowedOrigins.push(`http://${process.env.LOCAL_CERTIFICATE_IP}:8000`);
-    allowedOrigins.push(`https://${process.env.LOCAL_CERTIFICATE_IP}:8001`);
-  }
-}
-else if (isLegacyCgidMode() && process.env.CGID_URL) {
+// BASE_URL itself (as given), its origin, and the dev origins in dev
+const allowedOrigins = [ process.env.BASE_URL as string, ...appOrigins() ];
+if (config.DEPLOYMENT !== 'dev' && isLegacyCgidMode() && process.env.CGID_URL) {
   // legacy CG ID app on its own origin (gateway mode only)
   allowedOrigins.push(new URL(process.env.CGID_URL).origin);
 }

@@ -62,7 +62,9 @@ const userApi = {
     Joi.object({
       type: Joi.equal("password").required(),
       aliasOrEmail: Joi.alternatives().try(common.CgProfileDisplayName, TldSafeEmailValidator).required(),
-      password: common.Password.required(),
+      // a password that predates the policy still signs in (and then has to
+      // be replaced: User/getSecurityStatus needsNewPassword)
+      password: common.PasswordAttempt.required(),
       device: newDeviceValidator.required(),
     }).strict(true),
     Joi.object({
@@ -82,7 +84,7 @@ const userApi = {
     Joi.object({
       type: Joi.equal("verificationCode").required(),
       email: TldSafeEmailValidator.required(),
-      code: Joi.string().required(),
+      code: common.EmailCode.required(),
       device: newDeviceValidator.required(),
     }),
   ).required().strict(true),
@@ -96,7 +98,7 @@ const userApi = {
     }).strict(true),
     Joi.object({
       type: Joi.equal("password").required(),
-      password: common.Password.max(1024).required(),
+      password: common.PasswordAttempt.required(),
     }).strict(true),
     Joi.object({
       // proof: a fresh User/prepareWalletAction of a login-enabled wallet
@@ -123,7 +125,7 @@ const userApi = {
     usePreparedFarcaster: Joi.bool().strict(),
     useEmailAndPassword: Joi.object<API.User.createUser.Request["useEmailAndPassword"]>({
       email: TldSafeEmailValidator.required(),
-      password: common.Password,
+      password: common.Password.required(),
     }).strict(true),
     useCgProfile: Joi.object<API.User.createUser.Request["useCgProfile"]>({
       type: Joi.string().valid("cg").required(),
@@ -355,16 +357,34 @@ const userApi = {
   }).strict(true).required(),
 
   requestEmailVerification: Joi.object<API.User.requestEmailVerification.Request>({
-    email: TldSafeEmailValidator.required(),
+    email: TldSafeEmailValidator.max(320).required(),
   }).strict(true).required(),
 
   verifyEmail: Joi.object<API.User.verifyEmail.Request>({
     email: TldSafeEmailValidator.required(),
-    token: Joi.string().required(),
+    token: common.EmailCode.required(),
   }).strict(true).required(),
 
   sendOneTimePasswordForLogin: Joi.object<API.User.sendOneTimePasswordForLogin.Request>({
     email: TldSafeEmailValidator.required(),
+  }).strict(true).required(),
+
+  getSecurityStatus: Joi.object<API.User.getSecurityStatus.Request>({}).strict(true),
+
+  // transfer links (srv/util/transferLink.ts): minted for the session's own
+  // user only — there is no user id parameter
+  createTransferLink: Joi.object<API.User.createTransferLink.Request>({
+    // a same-site path to continue to after the transfer
+    nextPath: Joi.string().max(2048),
+  }).strict(true).required(),
+
+  previewTransferLink: Joi.object<API.User.previewTransferLink.Request>({
+    token: common.TransferToken.required(),
+  }).strict(true).required(),
+
+  redeemTransferLink: Joi.object<API.User.redeemTransferLink.Request>({
+    token: common.TransferToken.required(),
+    device: newDeviceValidator.required(),
   }).strict(true).required(),
 }
 

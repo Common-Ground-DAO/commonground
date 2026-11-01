@@ -67,6 +67,36 @@ export interface LoginResponse {
   communities: unknown[];
   chats: unknown[];
   unreadNotificationCount: number;
+  /** the account must finish the account-security step first (getSecurityStatus) */
+  securityStepRequired?: boolean;
+  /** epoch ms until which the session's last interactive sign-in counts for sensitive actions, or null */
+  stepUpValidUntil?: number | null;
+}
+
+/** API.User.getSecurityStatus.Response */
+export interface SecurityStatus {
+  required: boolean;
+  needsSignInMethod: boolean;
+  needsVerifiedEmail: boolean;
+  needsNewPassword: boolean;
+  email: string | null;
+  emailVerified: boolean;
+  hasPassword: boolean;
+  passkeys: number;
+  loginWallets: number;
+  pendingEmail?: string | null;
+  /** the session's sign-in is recent enough to add what is missing */
+  recentSignIn?: boolean;
+}
+
+/** API.User.previewTransferLink.Response */
+export interface TransferLinkPreview {
+  userId: string;
+  displayName: string;
+  /** the unique handle (cg profile name), if the account has one */
+  username: string | null;
+  imageId: string | null;
+  expiresAt: number;
 }
 
 export interface DeviceDescriptor {

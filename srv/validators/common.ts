@@ -4,6 +4,7 @@
 
 import Joi from "joi";
 import config from "../common/config";
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "../common/passwordPolicy";
 
 // mirrored in src/common/util.ts, change in both places
 export const itemUrlRegex = /^[a-z0-9-]{3,50}$/i;
@@ -91,7 +92,15 @@ const common = {
   ChainIdentifier: Joi.string().valid(...allowedChainIdentifiers),
   EIP712Signature: Joi.string(),
   DateString: Joi.string().isoDate(),
-  Password: Joi.string(),
+  // a new password: the password policy (src/common/passwordPolicy.ts)
+  Password: Joi.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH),
+  // a password typed to sign in or re-authenticate: older passwords may be
+  // shorter than the policy (the account then has to choose a new one)
+  PasswordAttempt: Joi.string().min(1).max(PASSWORD_MAX_LENGTH),
+  // the one-time token of a transfer link (srv/util/transferLink.ts)
+  TransferToken: Joi.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  // a 6-digit email code
+  EmailCode: Joi.string().regex(/^[0-9]{6}$/),
   // Signable login secrets. Two generations coexist: wsapi still issues
   // 20-char alphanumeric secrets (randomString), the call server issues
   // 64-char hex secrets (realRandomHexString(32)) since the mediasoup

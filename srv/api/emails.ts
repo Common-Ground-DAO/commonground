@@ -151,32 +151,84 @@ class EmailUtils {
         }
     }
 
-    public async sendVerificationEmail(to: string, verificationToken: string) {
+    /**
+     * Confirms an address for an existing account: the 6-digit code, plus a
+     * link that confirms it when opened while signed in to that account.
+     */
+    public async sendVerificationEmail(to: string, code: string) {
         // every mail link comes from the configured BASE_URL, never from the
         // request (Host / X-Forwarded-Host are client-controlled)
-        const emailLink = `${urlConfig.APP_URL}/verify-email?email=${encodeURIComponent(to)}&token=${encodeURIComponent(verificationToken)}`;
-        const subject = 'Verify your Common Ground email account';
+        const emailLink = `${urlConfig.APP_URL}/verify-email?email=${encodeURIComponent(to)}&token=${encodeURIComponent(code)}`;
+        const subject = 'Confirm your email address for Common Ground';
         const html = `
         <tr>
             <td colspan="4" style="background-color:#f8f8f8;padding:20px;text-align:center;">
-                <h2> Click <a href="${escapeHtml(emailLink)}">here</a> to verify your email address </h2>
+                <h2> Your confirmation code: ${escapeHtml(code)} </h2>
+                <p> Enter it where you asked for it, or <a href="${escapeHtml(emailLink)}">open this link</a> in the browser where you are signed in. It is valid for 24 hours. If you did not ask for this, you can ignore this mail. </p>
             </td>
         </tr>`;
         const htmlTemplate = this.getHTMLTemplate(html, false);
-        const text = `Click the following link to verify your email address:\n\n${emailLink}\n`;
+        const text = `Your confirmation code: ${code}\n\nEnter it where you asked for it, or open this link in the browser where you are signed in:\n\n${emailLink}\n\nIt is valid for 24 hours. If you did not ask for this, you can ignore this mail.\n`;
         await this.sendEmail({ to, subject, text, html: htmlTemplate });
     }
 
-    public async sendOneTimePasswordEmail(to: string, verificationToken: string) {
-        const subject = "Here's your Common Ground one time password";
+    /** Email login: the 6-digit one-time code. */
+    public async sendOneTimePasswordEmail(to: string, code: string) {
+        const subject = 'Your Common Ground login code';
         const html = `
         <tr>
             <td colspan="4" style="background-color:#f8f8f8;padding:20px;text-align:center;">
-                <h2> Use the following password to log in: ${escapeHtml(verificationToken)} </h2>
+                <h2> Your login code: ${escapeHtml(code)} </h2>
+                <p> It is valid for 15 minutes. If you did not try to log in, you can ignore this mail. </p>
             </td>
         </tr>`;
         const htmlTemplate = this.getHTMLTemplate(html, false);
-        const text = `Use the following password to log in: ${verificationToken}\n`;
+        const text = `Your login code: ${code}\n\nIt is valid for 15 minutes. If you did not try to log in, you can ignore this mail.\n`;
+        await this.sendEmail({ to, subject, text, html: htmlTemplate });
+    }
+
+    /** Someone asked to confirm an address that already belongs to another account (no code is sent). */
+    public async sendAddressInUseEmail(to: string) {
+        const subject = 'Email address confirmation on Common Ground';
+        const html = `
+        <tr>
+            <td colspan="4" style="background-color:#f8f8f8;padding:20px;text-align:center;">
+                <h2> Someone tried to add this address to a Common Ground account. </h2>
+                <p> This address already belongs to an account, so nothing was changed. If this was not you, you can ignore this mail. </p>
+            </td>
+        </tr>`;
+        const htmlTemplate = this.getHTMLTemplate(html, false);
+        const text = `Someone tried to add this address to a Common Ground account. This address already belongs to an account, so nothing was changed. If this was not you, you can ignore this mail.\n`;
+        await this.sendEmail({ to, subject, text, html: htmlTemplate });
+    }
+
+    /** The account's address was changed: told to the previous address. */
+    public async sendEmailChangedEmail(to: string) {
+        const subject = 'The email address of your Common Ground account was changed';
+        const html = `
+        <tr>
+            <td colspan="4" style="background-color:#f8f8f8;padding:20px;text-align:center;">
+                <h2> The email address of your account was changed. </h2>
+                <p> Mails for your account now go to the new address. If this was not you, sign in and review your account settings right away. </p>
+            </td>
+        </tr>`;
+        const htmlTemplate = this.getHTMLTemplate(html, false);
+        const text = `The email address of your account was changed. Mails for your account now go to the new address. If this was not you, sign in and review your account settings right away.\n`;
+        await this.sendEmail({ to, subject, text, html: htmlTemplate });
+    }
+
+    /** The account's password was set or changed. */
+    public async sendPasswordChangedEmail(to: string) {
+        const subject = 'The password of your Common Ground account was changed';
+        const html = `
+        <tr>
+            <td colspan="4" style="background-color:#f8f8f8;padding:20px;text-align:center;">
+                <h2> The password of your account was set or changed. </h2>
+                <p> If this was you, there is nothing to do. If not, sign in and review the sign-in methods in your account settings right away. </p>
+            </td>
+        </tr>`;
+        const htmlTemplate = this.getHTMLTemplate(html, false);
+        const text = `The password of your account was set or changed. If this was you, there is nothing to do. If not, sign in and review the sign-in methods in your account settings right away.\n`;
         await this.sendEmail({ to, subject, text, html: htmlTemplate });
     }
 

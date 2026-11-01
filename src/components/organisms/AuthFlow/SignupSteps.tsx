@@ -14,10 +14,14 @@ import { usePasskeyContext } from 'context/PasskeyProvider';
 import errors from 'common/errors';
 import { validateEmailInput, validatePassword } from 'common/validators';
 import { PASSWORD_MIN_LENGTH } from 'common/passwordPolicy';
+import { EMAIL_CODE_GUESSES, EMAIL_CODE_LENGTH, EMAIL_CODE_PATTERN, normalizeEmailCode, PROFILE_NAME_PATTERN, PROFILE_NAME_RULE } from 'common/authInputRules';
 import userApi from 'data/api/user';
+import { limitKindOf, retryAfterSecondsOf } from 'data/api/apiError';
+import { isRateLimited, rateLimitMessage } from 'data/auth/authErrors';
+import { cooldownLabel, startCooldownFor, useCooldown } from 'hooks/useCooldown';
 import { signalUnknownCredential } from 'data/auth/passkeyCeremony';
 import { getSignalRpId } from 'data/auth/authMode';
-import { captchaAtCreateUser, emailAlreadyVerified, needsEmailVerification, signupMethods, type SignupData } from './authFlowMachine';
+import { accountLimitMessage, captchaAtCreateUser, emailAlreadyVerified, needsEmailVerification, signupMethods, type SignupData } from './authFlowMachine';
 import { errorCode, StepError, StepHeader, type StepProps } from './shared';
 
 /** `captchaToken`: only where createUser checks the captcha itself (no email code step) */
@@ -48,11 +52,43 @@ function useCreateUserCaptcha(config: StepProps['config']) {
 }
 
 const MIN_PASSWORD_LENGTH = PASSWORD_MIN_LENGTH;
-const RATE_LIMITED = "Too many attempts. Please wait a few minutes and try again.";
-const RESEND_COOLDOWN_MS = 30_000;
-const DISPLAY_NAME_PATTERN = /^[a-z0-9_-]{3,30}$/i;
-const NAME_RULE = "Use 3-30 characters: letters, numbers, - and _.";
-let lastSignupCodeAt = 0;
+/** a code mailed in this flow still works this long (the server keeps it 15 minutes) */
+const CODE_REUSE_MS = 10 * 60 * 1000;
+let lastSignupCode: { email: string; at: number } | null = null;
+
+const signupCodeKey = (email: string) => `signup:${email.trim().toLowerCase()}`;
+
+/** a code for this address was mailed in this flow and still works: no new one (and no captcha) needed */
+function recentSignupCode(email: string) {
+  return !!lastSignupCode
+    && lastSignupCode.email === email.trim().toLowerCase()
+    && Date.now() - lastSignupCode.at < CODE_REUSE_MS;
+}
+
+function rememberSignupCode(email: string) {
+  lastSignupCode = { email: email.trim().toLowerCase(), at: Date.now() };
+  startCooldownFor(signupCodeKey(email));
+}
+
+/**
+ * The code of this flow can't be relied on any more (it failed, ran out or
+ * the server wants a new captcha): the next "Continue" asks for a new one,
+ * with the captcha.
+ */
+function forgetSignupCode() {
+  lastSignupCode = null;
+}
+
+/** a refused code request (sign-up): the account limit of the network, or the mail limits */
+function signupCodeLimitMessage(e: unknown) {
+  if (limitKindOf(e) === 'accounts') {
+    return accountLimitMessage(retryAfterSecondsOf(e));
+  }
+  return rateLimitMessage(e, {
+    what: "Too many codes were requested from your network or for this address right now.",
+    alternative: "Or use another network (e.g. mobile data instead of Wi-Fi). Already have an account? Log in instead.",
+  });
+}
 
 // ---------------------------------------------------------------------------
 // 1. Display name (doubles as username), email — and the captcha, which the
@@ -69,19 +105,21 @@ export const SignupDetails: React.FC<StepProps> = ({ state, dispatch, config }) 
   // already confirmed in this flow (came back from the method step)
   const alreadyVerified = emailAlreadyVerified(state.signup, email);
   const verifyEmail = needsEmailVerification(config) && !alreadyVerified;
+  // came back from the code step with the same address: that code still works
+  const reuseCode = verifyEmail && recentSignupCode(email);
 
   const submit = useCallback(async () => {
     const name = displayName.trim();
     const address = email.trim();
     // same rule as the server's CgProfileDisplayName
-    let nameProblem = DISPLAY_NAME_PATTERN.test(name) ? undefined : NAME_RULE;
+    let nameProblem = PROFILE_NAME_PATTERN.test(name) ? undefined : PROFILE_NAME_RULE;
     const emailProblem = validateEmailInput(address);
     setEmailError(emailProblem);
     if (nameProblem || emailProblem) {
       setNameError(nameProblem);
       return;
     }
-    if (verifyEmail && !captchaToken) {
+    if (verifyEmail && !reuseCode && !captchaToken) {
       dispatch({ type: 'ERROR', message: CAPTCHA_FIRST });
       return;
     }
@@ -94,19 +132,19 @@ export const SignupDetails: React.FC<StepProps> = ({ state, dispatch, config }) 
       }
       catch (e) {
         nameProblem = errorCode(e) === errors.server.VALIDATION
-          ? NAME_RULE
+          ? PROFILE_NAME_RULE
           : "The name could not be checked, please try again.";
       }
       setNameError(nameProblem);
       if (nameProblem) {
         return;
       }
-      if (verifyEmail) {
+      if (verifyEmail && !reuseCode) {
         // the server answers the same way whether or not the address is
         // taken; the owner of a taken address gets a notice instead of a code
         // (the captcha is checked here, before any mail goes out)
         await userApi.requestSignupEmailCode({ email: address, recaptchaToken: captchaToken });
-        lastSignupCodeAt = Date.now();
+        rememberSignupCode(address);
       }
       else if (!needsEmailVerification(config) && !(await userApi.isEmailAvailable({ email: address }))) {
         setEmailError("This email address is already in use.");
@@ -118,27 +156,30 @@ export const SignupDetails: React.FC<StepProps> = ({ state, dispatch, config }) 
     catch (e) {
       const code = errorCode(e);
       if (code === errors.server.CAPTCHA_FAILED) {
-        // single-use token: a new one is needed
-        setCaptchaToken('');
-        setCaptchaKey(key => key + 1);
+        // the server wants the captcha: show it, even for an address with a code
+        forgetSignupCode();
       }
+      // the token is single-use and may be spent: solve again for the next try
+      setCaptchaToken('');
+      setCaptchaKey(key => key + 1);
       dispatch({
         type: 'ERROR',
-        message: code === errors.server.RATE_LIMIT_EXCEEDED ? RATE_LIMITED
+        message: isRateLimited(e) ? signupCodeLimitMessage(e)
           : code === errors.server.CAPTCHA_FAILED ? "Please solve the captcha again."
-            : "Something went wrong, please try again.",
+            : code === errors.server.VALIDATION ? "That email doesn’t seem right, please double check."
+              : "Something went wrong, please try again.",
       });
     }
     finally {
       setLoading(false);
     }
-  }, [displayName, email, captchaToken, verifyEmail, config, dispatch]);
+  }, [displayName, email, captchaToken, verifyEmail, reuseCode, config, dispatch]);
 
   return (
     <div className='auth-flow-step'>
       <StepHeader title='Create your account' subtitle='Already have one?' />
       <Button className='auth-flow-inline-link' role='textual' text='Log in instead' onClick={() => dispatch({ type: 'SHOW_LOGIN' })} />
-      <form className='auth-flow-form' onSubmit={ev => { ev.preventDefault(); submit(); }}>
+      <form className='auth-flow-form' noValidate onSubmit={ev => { ev.preventDefault(); submit(); }}>
         <TextInputField
           label='Display name'
           subLabel='Also your username. Letters, numbers, - and _'
@@ -154,7 +195,7 @@ export const SignupDetails: React.FC<StepProps> = ({ state, dispatch, config }) 
         />
         <TextInputField
           label='Email address'
-          subLabel={alreadyVerified ? "Confirmed." : verifyEmail ? "We'll send you a code to confirm it." : undefined}
+          subLabel={alreadyVerified ? "Confirmed." : reuseCode ? "We already sent you a code." : verifyEmail ? "We'll send you a code to confirm it." : undefined}
           iconLeft={<EnvelopeIcon className='w-5 h-5' />}
           value={email}
           onChange={value => { setEmail(value); setEmailError(undefined); }}
@@ -164,7 +205,7 @@ export const SignupDetails: React.FC<StepProps> = ({ state, dispatch, config }) 
           autoComplete='email'
           name='email'
         />
-        {verifyEmail && <SignupCaptcha key={captchaKey} onChange={setCaptchaToken} />}
+        {verifyEmail && !reuseCode && <SignupCaptcha key={captchaKey} onChange={setCaptchaToken} />}
         <StepError message={state.error} />
         <Button className='w-full' role='primary' text='Continue' loading={loading} disabled={loading} />
       </form>
@@ -179,67 +220,103 @@ export const SignupVerify: React.FC<StepProps> = ({ state, dispatch }) => {
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState<'verify' | 'resend' | null>(null);
   const [info, setInfo] = useState<string | undefined>();
+  // wrong guesses of the current code: it stops working after EMAIL_CODE_GUESSES
+  const [wrongGuesses, setWrongGuesses] = useState(0);
   const { email } = state.signup;
+  const { left: resendLeft, start: startResendCooldown } = useCooldown(undefined, signupCodeKey(email));
+  const codeUsedUp = wrongGuesses >= EMAIL_CODE_GUESSES;
 
   const verify = useCallback(async () => {
-    const value = code.replace(/\s+/g, '');
-    if (!/^[0-9]{6}$/.test(value)) {
-      dispatch({ type: 'ERROR', message: "Enter the 6-digit code from the email." });
+    const value = normalizeEmailCode(code);
+    if (!EMAIL_CODE_PATTERN.test(value)) {
+      dispatch({ type: 'ERROR', message: `Enter the ${EMAIL_CODE_LENGTH}-digit code from the email (numbers only).` });
+      return;
+    }
+    if (codeUsedUp) {
+      dispatch({ type: 'ERROR', message: "This code was entered wrong too often and no longer works. Send a new one." });
       return;
     }
     setLoading('verify');
+    setInfo(undefined);
     try {
       await userApi.verifySignupEmailCode({ email, code: value });
       dispatch({ type: 'EMAIL_VERIFIED' });
     }
     catch (e) {
       const errCode = errorCode(e);
-      dispatch({
-        type: 'ERROR',
-        message: errCode === errors.server.VERIFY_EMAIL_EXPIRED_TOKEN ? "This code has expired. Send a new one."
-          : errCode === errors.server.RATE_LIMIT_EXCEEDED ? "Too many wrong codes. Send a new one."
-            : "That code isn't right. Check the email and try again.",
-      });
+      // going back to the details asks for a new code from now on
+      forgetSignupCode();
+      let message: string;
+      if (errCode === errors.server.VERIFY_EMAIL_EXPIRED_TOKEN) {
+        message = "This code has expired (codes work for 15 minutes). Send a new one.";
+      }
+      else if (isRateLimited(e)) {
+        setWrongGuesses(EMAIL_CODE_GUESSES);
+        message = "This code was entered wrong too often and no longer works. Send a new one.";
+      }
+      else if (errCode !== errors.server.VERIFY_EMAIL_INVALID_TOKEN) {
+        // not a guess (network, server): nothing counted
+        message = "Something went wrong, please try again.";
+      }
+      else {
+        const guesses = wrongGuesses + 1;
+        setWrongGuesses(guesses);
+        const left = EMAIL_CODE_GUESSES - guesses;
+        message = left <= 0 ? "That code isn't right, and it was the last try for this code. Send a new one."
+          : left <= 2 ? `That code isn't right. Check the email and try again (${left} ${left === 1 ? 'try' : 'tries'} left for this code).`
+            : "That code isn't right. Check the email and try again.";
+      }
+      dispatch({ type: 'ERROR', message });
     }
     finally {
       setLoading(null);
     }
-  }, [code, email, dispatch]);
+  }, [code, email, codeUsedUp, wrongGuesses, dispatch]);
 
   const resend = useCallback(async () => {
-    const wait = lastSignupCodeAt + RESEND_COOLDOWN_MS - Date.now();
-    if (wait > 0) {
-      setInfo(`You can request a new code in ${Math.ceil(wait / 1000)} seconds.`);
-      return;
-    }
     setLoading('resend');
     try {
       // same address, same session: the captcha solved before still counts
       await userApi.requestSignupEmailCode({ email });
-      lastSignupCodeAt = Date.now();
+      rememberSignupCode(email);
+      startResendCooldown();
       setCode('');
-      setInfo("We sent you a new code.");
+      setWrongGuesses(0);
+      setInfo("We sent you a new code. It replaces the previous one.");
       dispatch({ type: 'ERROR', message: '' });
     }
     catch (e) {
       const errCode = errorCode(e);
       if (errCode === errors.server.CAPTCHA_FAILED) {
         // the captcha window ran out: back to the details for a new one
+        forgetSignupCode();
         dispatch({ type: 'SIGNUP_FAILED', code: errCode });
         return;
       }
-      dispatch({ type: 'ERROR', message: errCode === errors.server.RATE_LIMIT_EXCEEDED ? RATE_LIMITED : "The code could not be sent. Please try again." });
+      if (isRateLimited(e)) {
+        startResendCooldown(retryAfterSecondsOf(e));
+      }
+      setInfo(undefined);
+      dispatch({
+        type: 'ERROR',
+        message: !isRateLimited(e) ? "The code could not be sent. Please try again."
+          : limitKindOf(e) === 'accounts' ? accountLimitMessage(retryAfterSecondsOf(e))
+            : rateLimitMessage(e, {
+              what: "We can't send another code to this address right now.",
+              alternative: "Check your spam folder for the last one.",
+            }),
+      });
     }
     finally {
       setLoading(null);
     }
-  }, [email, dispatch]);
+  }, [email, dispatch, startResendCooldown]);
 
   return (
     <div className='auth-flow-step'>
       <StepHeader
         title='Check your email'
-        subtitle={<>We sent a 6-digit code to <b>{email}</b>.</>}
+        subtitle={<>We sent an {EMAIL_CODE_LENGTH}-digit code to <b>{email}</b>.</>}
         onBack={() => dispatch({ type: 'BACK' })}
       />
       <form className='auth-flow-form' onSubmit={ev => { ev.preventDefault(); verify(); }}>
@@ -247,17 +324,25 @@ export const SignupVerify: React.FC<StepProps> = ({ state, dispatch }) => {
           label='Code'
           value={code}
           onChange={setCode}
-          placeholder='123456'
+          placeholder='12345678'
           autoComplete='one-time-code'
+          inputMode='numeric'
           name='code'
-          maxLetters={7}
+          maxLetters={EMAIL_CODE_LENGTH + 1}
           autoFocus
         />
         <StepError message={state.error} />
-        {!!info && <span className='cg-text-md-400 cg-text-secondary'>{info}</span>}
+        {!!info && <span className='cg-text-md-400 cg-text-secondary' role='status'>{info}</span>}
         <Button className='w-full' role='primary' text='Confirm email' loading={loading === 'verify'} disabled={loading !== null} />
       </form>
-      <Button className='w-full' role='textual' text='Send a new code' onClick={resend} loading={loading === 'resend'} disabled={loading !== null} />
+      <Button
+        className='w-full'
+        role='textual'
+        text={cooldownLabel('Send a new code', resendLeft)}
+        onClick={resend}
+        loading={loading === 'resend'}
+        disabled={loading !== null || resendLeft > 0}
+      />
       <Button className='w-full' role='textual' text='Use a different email' onClick={() => dispatch({ type: 'BACK' })} disabled={loading !== null} />
     </div>
   );
@@ -377,7 +462,7 @@ export const SignupPassword: React.FC<StepProps & { createAccount: CreateAccount
   return (
     <div className='auth-flow-step'>
       <StepHeader title='Choose a password' onBack={() => dispatch({ type: 'BACK' })} />
-      <form className='auth-flow-form' onSubmit={ev => { ev.preventDefault(); submit(); }}>
+      <form className='auth-flow-form' noValidate onSubmit={ev => { ev.preventDefault(); submit(); }}>
         {/* lets password managers store the new password under the right account */}
         <input type='email' name='email' autoComplete='username' value={state.signup.email} readOnly hidden />
         <PasswordField

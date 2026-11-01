@@ -11,6 +11,7 @@ import CgLogoIcon from 'components/atoms/icons/misc/Logo/logo.svg?react';
 import { StepError, StepHeader, errorCode } from 'components/organisms/AuthFlow/shared';
 import { useConnectionContext } from 'context/ConnectionProvider';
 import errors from 'common/errors';
+import { rateLimitMessage } from 'data/auth/authErrors';
 import { safeNextPath } from 'common/safeNextPath';
 import { getUrl } from 'common/util';
 import userApi from 'data/api/user';
@@ -20,7 +21,13 @@ import 'components/organisms/AuthFlow/AuthFlow.css';
 import 'components/organisms/SecurityStep/SecurityStep.css';
 
 const INVALID = "This link has expired or was already used. Go back to the site you came from and get a new one.";
-const RATE_LIMITED = "Too many attempts. Please wait a few minutes and try again.";
+
+function transferLimitMessage(e: unknown) {
+  return rateLimitMessage(e, {
+    what: "Too many sign-in links were tried from your network.",
+    alternative: "If this account already has a password or a passkey here, you can also log in directly.",
+  });
+}
 
 /**
  * `/transfer#<token>`: a one-time link from another instance (the app.cg
@@ -60,7 +67,7 @@ const TransferView: React.FC = () => {
       })
       .catch(e => {
         if (!cancelled) {
-          setError(errorCode(e) === errors.server.RATE_LIMIT_EXCEEDED ? RATE_LIMITED : INVALID);
+          setError(errorCode(e) === errors.server.RATE_LIMIT_EXCEEDED ? transferLimitMessage(e) : INVALID);
         }
       });
     return () => {
@@ -94,7 +101,7 @@ const TransferView: React.FC = () => {
     }
     catch (e) {
       const code = errorCode(e);
-      setError(code === errors.server.RATE_LIMIT_EXCEEDED ? RATE_LIMITED
+      setError(code === errors.server.RATE_LIMIT_EXCEEDED ? transferLimitMessage(e)
         : code === errors.server.TRANSFER_LINK_INVALID ? INVALID
           : "Signing in didn't work. Please try again.");
     }

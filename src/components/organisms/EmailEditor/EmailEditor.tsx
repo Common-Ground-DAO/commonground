@@ -91,7 +91,7 @@ const EmailEditor: React.FC<Props> = () => {
 
   const codeField = pendingEmail ? <EmailCodeConfirm
     email={pendingEmail}
-    subLabel={`We sent a 6-digit code to ${pendingEmail}. You can also open the link in that mail.`}
+    subLabel={`We sent an 8-digit code to ${pendingEmail}. You can also open the link in that mail.`}
     onConfirmed={() => {
       setPendingEmail(null);
       showSnackbar({ type: 'info', text: 'E-mail updated' });

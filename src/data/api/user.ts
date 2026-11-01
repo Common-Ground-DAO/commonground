@@ -59,7 +59,7 @@ class UserApiConnector extends BaseApiConnector {
     );
   }
 
-  /** sign-up step 1: mails a 6-digit code to the address the account will get */
+  /** sign-up step 1: mails an 8-digit code to the address the account will get */
   public async requestSignupEmailCode(data: API.User.requestSignupEmailCode.Request): Promise<void> {
     return await this.ajax<void>(
       "POST",

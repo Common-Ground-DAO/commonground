@@ -77,12 +77,16 @@ metrics) and screenshots of every failed step under `<out>/<flow>/`.
   secure context, service worker and WebAuthn work. Caddy renews internal
   leaves with a new key, so the run refuses to start when a leaf expires
   within 20 minutes (and warns below an hour).
-- **Accounts.** Flows sign up their own users. The backend allows **2
-  sign-ups per client address and day**; the disposable instance's edge maps
-  a per-browser cookie to the client address (`e2e/Caddyfile.e2e`, test
-  only), a real instance does not — a full run there needs about a dozen
-  sign-ups, so run single flows, or the rest skip/fail with
-  `RATE_LIMIT_EXCEEDED`.
+- **Accounts.** Flows sign up their own users. The backend allows **20
+  sign-ups per client address and hour (50 per day)**; the disposable
+  instance's edge maps a per-browser cookie to the client address
+  (`e2e/Caddyfile.e2e`, test only), a real instance does not — a full run
+  there needs about a dozen sign-ups, which fits, but repeated full runs
+  within an hour do not.
+- **Limit messages.** `E2E_AUTH_LIMITS='{"createUser.hour":1}' e2e/instance.sh
+  compose up -d api` restarts the disposable instance's api with single auth
+  limits lowered (`CG_TEST_AUTH_LIMITS`, `srv/util/authLimits.ts`; it can
+  only lower them), to see a limit message without hundreds of requests.
 - **Mail.** An instance that sends mail verifies the address before the
   account exists; without `--mailpit` the flows that need a user skip with a
   message.

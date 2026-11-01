@@ -8,10 +8,12 @@ import { logout, waitAppReady } from '../lib/app.ts';
 import { assert, clickText, waitText } from '../lib/ui.ts';
 
 const WRONG_CREDENTIALS = "That email, username or password isn't right.";
+const INVALID_IDENTIFIER = "Usernames have 3-30 letters, numbers, - and _.";
 
 /**
  * Sign-up, logout and login with a password (ALTCHA + the mailed code) and
- * with a passkey (CDP virtual authenticator), plus the wrong-password message.
+ * with a passkey (CDP virtual authenticator), plus the wrong-password message
+ * and an input error caught in the form.
  */
 export const auth: Flow = {
   id: 'auth',
@@ -26,6 +28,11 @@ export const auth: Flow = {
       return a;
     });
     await t.step('log out', () => logout(t, pw.page));
+    await t.step('an identifier that is neither an email nor a username is caught in the form', async () => {
+      // nothing reaches the server: a VALIDATION answer would fail the guards
+      await loginWithPassword(t, pw.page, 'not an email', 'whatever');
+      await waitText(pw.page, INVALID_IDENTIFIER);
+    });
     await t.step('wrong password is refused with a message', async () => {
       await t.expectApiErrors(['NOT_ALLOWED', 'NOT_FOUND'], async () => {
         await loginWithPassword(t, pw.page, account.email, `${account.password}-wrong`);

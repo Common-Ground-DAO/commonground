@@ -132,9 +132,12 @@ describe('AuthFlow sign-up', () => {
 
   it('stays on the step for other failures, with a message', () => {
     const atMethod = run(noMailInstance, [{ type: 'SHOW_SIGNUP' }, { type: 'DETAILS_SUBMITTED', data: details }]);
-    const state = run(noMailInstance, [{ type: 'SIGNUP_FAILED', code: 'RATE_LIMIT_EXCEEDED' }], atMethod);
+    const state = run(noMailInstance, [{ type: 'SIGNUP_FAILED', code: 'RATE_LIMIT_EXCEEDED', retryAfterSeconds: 240 }], atMethod);
     expect(state.step).toBe('signup-method');
-    expect(state.error).toBeTruthy();
+    // the account limit says when, and what else works
+    expect(state.error).toContain('in 4 minutes');
+    expect(state.error).toContain('another network');
+    expect(state.error).toContain('Log in instead');
     // the next transition clears it
     expect(run(noMailInstance, [{ type: 'CHOOSE_METHOD', method: 'wallet' }], state).error).toBeUndefined();
   });

@@ -6,6 +6,7 @@ import urlConfig from "../util/urls";
 import errors from "common/errors";
 import stepUpManager, { stepUpRequestForRoute } from "../auth/stepUp";
 import securityStepState from "../auth/securityStep";
+import { ApiRequestError } from "./apiError";
 
 function unwrapResult<T>(result: API.AjaxResponse<T> | undefined, fallbackError: string): T {
   if (result && result.status === "OK") {
@@ -14,7 +15,10 @@ function unwrapResult<T>(result: API.AjaxResponse<T> | undefined, fallbackError:
     }
     return undefined as unknown as T;
   }
-  throw new Error((result && result.status === "ERROR" && result.error) || fallbackError);
+  if (result && result.status === "ERROR" && result.error) {
+    throw new ApiRequestError(result.error, result.retryAfterSeconds, result.limit);
+  }
+  throw new Error(fallbackError);
 }
 
 export default class BaseApiConnector {
@@ -105,7 +109,7 @@ export default class BaseApiConnector {
           // app shows that step instead of the page (SecurityStepView)
           securityStepState.set(true);
         }
-        throw new Error(result.error);
+        throw new ApiRequestError(result.error, result.retryAfterSeconds, result.limit);
       }
       retried = true;
       result = await getData();

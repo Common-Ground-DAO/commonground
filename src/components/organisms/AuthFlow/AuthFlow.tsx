@@ -9,6 +9,7 @@ import { Key as PasskeyIcon } from '@phosphor-icons/react';
 import config from 'common/config';
 import errors from 'common/errors';
 import userApi from 'data/api/user';
+import { retryAfterSecondsOf } from 'data/api/apiError';
 import data from 'data';
 import { usePasskeyContext } from 'context/PasskeyProvider';
 import { useSnackbarContext } from 'context/SnackbarContext';
@@ -173,7 +174,7 @@ const AuthFlow: React.FC<Props> = ({ initialMode = 'login', variant, onLoggedIn,
       return true;
     }
     catch (e) {
-      dispatch({ type: 'SIGNUP_FAILED', code: errorCode(e) || errors.server.UNKNOWN });
+      dispatch({ type: 'SIGNUP_FAILED', code: errorCode(e) || errors.server.UNKNOWN, retryAfterSeconds: retryAfterSecondsOf(e) });
       return false;
     }
   }, [state.signup, flowConfig]);

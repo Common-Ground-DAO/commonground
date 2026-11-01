@@ -12,7 +12,8 @@
 > dnd-kit strategy/transform/trailing-click/ordering notes against commit
 > 54e2d73, 2026-10-31; the TypeScript 6 / joi 18 notes (type-check row,
 > project-relative imports, "Dependency pins and constraints") against commit
-> d604544, 2026-10-31
+> d604544, 2026-10-31; the `cuer` resolution and the WalletConnect QR note
+> against commit 8c6bc41 (fix/walletconnect-qr), 2026-10-31
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -862,6 +863,7 @@ Blockchain wallet integration:
 - RPC providers: on official instances an Alchemy provider with a public fallback; on self-hosted instances keyless public RPC endpoints (per chain id) with a public fallback.
 - Used for: wallet-based login (SIWE), token-gated roles, community tokens, and **staking** (`StakeTab` reads/writes the staking contract via wagmi hooks).
 - **The wallet list is spelled out** in `getDefaultConfig({ wallets })` (injected, Safe, Rainbow, Coinbase, MetaMask, Rabby, Brave, WalletConnect — the set RainbowKit 1 offered plus Rabby and Brave). RainbowKit 2's default set differs (it drops Coinbase Wallet for Base Account and the generic injected entry). The connect modal only lists wallets that have an entry here — an extension missing from the list does not show up as its own option.
+- **The WalletConnect QR code** ("Scan with your phone" in the connect modal) is drawn by RainbowKit through `cuer` → `qr`; RainbowKit's own `cuer` pin is overridden to 0.0.4 because 0.0.3 crashes against current `qr` — see "Dependency pins and constraints" below.
 - **The Lukso UP login signs through the raw EIP-1193 provider on purpose.** `UniversalProfileProvider` signs the SIWE message with `eth_sign`; viem's `signMessage` would send `personal_sign` instead, which that verification path rejects. Do not "modernise" it onto viem's wallet client. `signatureHelper` also talks to `window.ethereum` directly (its `eth_signTypedData_v4` method `metamaskSignData` is dead code, see `docs/todo/TODO.md`; `getFractalSignature` uses `personal_sign`).
 - **Transaction receipts:** viem 2 defaults `waitForTransactionReceipt` to a 180 s timeout (viem 1 waited forever), so every receipt wait (`UserOnchainProvider`, `StakeTab`, `PaySpark`) passes an explicit 30-minute timeout. Raw viem calls resolve reverted transactions instead of throwing, so `UserOnchainProvider` (and `StakeTab`) check `receipt.status`; wagmi's `useWaitForTransactionReceipt` throws on a revert, which is what `PaySpark`'s `isSuccess` relies on.
 - wagmi stays on **v2** because RainbowKit 2 targets wagmi 2. Two viem copies ship: WalletConnect's `@walletconnect/utils` exact-pins its own (it loads only with the lazily split WalletConnect connector), which cannot be collapsed without force-resolving an exact transitive pin. `ethers` is not a frontend dependency but still resolves transitively (v6, via `@farcaster/auth-kit`).
@@ -1061,6 +1063,17 @@ remaining major jumps (react-router 7, Vite 8, Tailwind 4) are scheduled in
 - **`resolutions`**: `@types/react` → `"19"` keeps every `@types/react@*`
   consumer on one copy; a second copy makes components from other packages fail
   with `TS2786`.
+- **`resolutions`**: `@rainbow-me/rainbowkit/cuer` → `"0.0.4"`. RainbowKit
+  2.2.11 draws the WalletConnect QR code with `cuer`, which it pins exactly to
+  0.0.3; cuer depends on `qr: "~0"`, and the lockfile resolves that to a qr
+  ≥ 0.6 (0.6.0 since the RainbowKit 2 move on 2026-08-04, 0.7.2 since the F6
+  refresh). qr ≥ 0.6 rejects cuer 0.0.3's `border: 0` with
+  `RangeError: invalid border=0`, thrown while the connect modal renders, so
+  clicking "WalletConnect" crashed the app to its error page. cuer 0.0.4 asks
+  for `border: 1` and slices the ring off (same module matrix as before).
+  `src/common/walletConnectQr.test.ts` guards it (it resolves cuer/qr from
+  RainbowKit's location and decodes the matrix back to the URI). Drop the
+  entry once RainbowKit depends on cuer ≥ 0.0.4 itself.
 - **`react-router-dom: "^6.30.6"`** — the floor is security-motivated: 6.30.2–6.30.5
   are affected by GHSA-jjmj-jmhj-qwj2 (open redirect → XSS), which is why the
   tree was held on 6.30.1 by a resolution until 6.30.6 shipped the fix (the

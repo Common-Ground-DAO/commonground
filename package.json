@@ -132,7 +132,8 @@
     "workbox-build": "7.4.1"
   },
   "resolutions": {
-    "@types/react": "19"
+    "@types/react": "19",
+    "@rainbow-me/rainbowkit/cuer": "0.0.4"
   },
   "dependenciesMeta": {
     "esbuild": {

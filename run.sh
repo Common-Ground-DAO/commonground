@@ -102,6 +102,18 @@ elif [ "$1" = "shell" ]
 then
   docker_compose run --rm cg-builder bash
 
+elif [ "$1" = "e2e" ]
+then
+  # end-to-end browser suite in a container (e2e/README.md), e.g.
+  #   ./run.sh e2e --instance                 the disposable e2e instance
+  #   ./run.sh e2e --url https://cg.test --ca root.crt --add-host cg.test:<ip>
+  exec ../e2e/run.sh "${@:2}"
+
+elif [ "$1" = "e2e_instance" ]
+then
+  # the disposable instance for the suite: build | up | down | status | logs
+  exec ../e2e/instance.sh "${@:2}"
+
 elif [ "$1" = "make_migration" ]
 then
   ../tools/makeMigration.sh $2
@@ -122,6 +134,8 @@ else
   printf "\e[1mdown\e[0m\nStop the stack.\n\n"
   printf "\e[1mcompose <arg_1> <arg_2> ...\e[0m\nRun docker compose commands. For example, to run 'docker compose ps', use './run.sh compose ps'.\n\n"
   printf "\e[1mshell\e[0m\nStart a shell in the cg-builder container (node) and mount the project directory into it. It can then be used to run yarn commands.\n\n"
+  printf "\e[1me2e <options>\e[0m\nRun the end-to-end browser suite in a container (see e2e/README.md), e.g. './run.sh e2e --instance'.\n\n"
+  printf "\e[1me2e_instance build|up|down|status|logs\e[0m\nBuild, start or remove the disposable instance the e2e suite runs against.\n\n"
   printf "\e[1mmake_migration <migration_name>\e[0m\nCreate a new migration with the given name.\n\n"
   printf "\e[1mmake_empty_migration <migration_name>\e[0m\nCreate a new empty migration with the given name.\n\n\n"
 

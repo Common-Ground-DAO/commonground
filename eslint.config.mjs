@@ -51,6 +51,9 @@ export default tseslint.config(
       'srv/**',
       'sdk/**',
       'contracts/**',
+      // the end-to-end suite: Node + puppeteer code run inside the backend
+      // image, type-checked by its own e2e/tsconfig.json (e2e/README.md)
+      'e2e/**',
       // Not source.
       'public/**',
       'docker/**',

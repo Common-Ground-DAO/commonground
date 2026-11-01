@@ -133,6 +133,7 @@ const ACTIONS: Record<string, string> = {
   "Passkey/registrationOptions": "add a passkey",
   "Passkey/verifyRegistration": "add a passkey",
   "Passkey/remove": "remove a passkey",
+  "User/signOutOtherDevices": "sign out your other devices",
   "Bot/tokens/issue": "issue a bot token",
   "Bot/disable": "disable a bot",
 };

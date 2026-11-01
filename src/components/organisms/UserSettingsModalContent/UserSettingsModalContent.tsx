@@ -259,7 +259,7 @@ const UserSettingsModalContent: React.FC<Props> = (props) => {
         <CommunityNotificationsPage />
       </AnimatedTabPage>
       <AnimatedTabPage visible={currentPage === 'accounts'} className='' >
-        <AccountsPage setCurrentWallet={setCurrentWallet} setCurrentAccount={setCurrentAccount} setPage={setCurrentPage} />
+        <AccountsPage setCurrentWallet={setCurrentWallet} setCurrentAccount={setCurrentAccount} setPage={setCurrentPage} lockModal={lockModal} />
       </AnimatedTabPage>
       <AnimatedTabPage visible={currentPage === 'become-supporter'} className='' >
         <BecomeSupporter setCurrentPage={setCurrentPage} />

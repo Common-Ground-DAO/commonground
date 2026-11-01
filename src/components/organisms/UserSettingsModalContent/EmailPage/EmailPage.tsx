@@ -16,6 +16,7 @@ import userApi from 'data/api/user';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {useEmailConfirmationContext} from 'context/EmailConfirmationProvider';
 import { securityActionErrorMessage } from 'data/auth/authErrors';
+import { signedOutDevicesText } from 'data/auth/signedOut';
 import EmailCodeConfirm from 'components/molecules/EmailCodeConfirm/EmailCodeConfirm';
 import ConfirmEmailAgain from 'components/molecules/EmailCodeConfirm/ConfirmEmailAgain';
 
@@ -98,11 +99,13 @@ const EmailPage: React.FC<Props> = ({ saveOnCloseMode, goBack }) => {
           await data.user.updateOwnData({ email });
         }
       }
-      if (password) await userApi.setPassword({ password });
+      // a replaced password signs the other devices out
+      const changed = password ? await userApi.setPassword({ password }) : null;
+      const signedOut = changed ? signedOutDevicesText(changed.signedOutDevices, changed.signOutDelayed) : null;
 
       if (!pending || password) {
         const updateText = pending ? 'Password updated' : 'E-mail' + (password ? ' and password' : '') + ' updated';
-        showSnackbar({ type: 'info', text: updateText });
+        showSnackbar({ type: 'info', text: signedOut ? `${updateText}. ${signedOut}` : updateText });
       }
       return pending ? 'pending' : 'done';
     } catch (e) {

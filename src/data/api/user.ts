@@ -50,6 +50,15 @@ class UserApiConnector extends BaseApiConnector {
     );
   }
 
+  /** signs the account out on every other device (step-up) */
+  public async signOutOtherDevices(): Promise<API.User.signOutOtherDevices.Response> {
+    return await this.ajax<API.User.signOutOtherDevices.Response>(
+      "POST",
+      "/signOutOtherDevices",
+      {}
+    );
+  }
+
   /** step-up: proves again that the session user is at the keyboard */
   public async reauthenticate(data: API.User.reauthenticate.Request): Promise<API.User.reauthenticate.Response> {
     return await this.ajax<API.User.reauthenticate.Response>(

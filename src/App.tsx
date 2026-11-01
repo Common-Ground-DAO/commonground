@@ -90,6 +90,7 @@ import { PluginIframeProvider } from 'context/PluginIframeProvider';
 import "@farcaster/auth-kit/styles.css";
 import { AuthKitProvider } from "@farcaster/auth-kit";
 import UserInfoManager from 'components/atoms/UserInfoManager/UserInfoManager';
+import SignedOutNotice from 'components/organisms/SignedOutNotice/SignedOutNotice';
 import { PluginDetailsModalProvider } from 'context/PluginDetailsModalProvider';
 import { IsolationModeProvider } from 'context/IsolationModeProvider';
 import { ReportModalProvider } from 'context/ReportModalProvider';
@@ -338,6 +339,7 @@ function Inner() {
       <PluginIframeProvider>
         <UserInfoManager />
         <ConnectionStatusIndicator />
+        <SignedOutNotice />
         <RoutedContent />
       </PluginIframeProvider>
       </UserOnchainProvider>

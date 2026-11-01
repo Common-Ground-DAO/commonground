@@ -5,7 +5,7 @@
 import type { Flow } from '../lib/harness.ts';
 import { loginWithPassword, signUp, skipPasskeyOffer, waitLoggedIn } from '../lib/account.ts';
 import { logout, waitAppReady } from '../lib/app.ts';
-import { assert, clickText, waitText } from '../lib/ui.ts';
+import { assert, clickText, until, waitText } from '../lib/ui.ts';
 
 const WRONG_CREDENTIALS = "That email, username or password isn't right.";
 const INVALID_IDENTIFIER = "Usernames have 3-30 letters, numbers, - and _.";
@@ -13,7 +13,8 @@ const INVALID_IDENTIFIER = "Usernames have 3-30 letters, numbers, - and _.";
 /**
  * Sign-up, logout and login with a password (ALTCHA + the mailed code) and
  * with a passkey (CDP virtual authenticator), plus the wrong-password message
- * and an input error caught in the form.
+ * and an input error caught in the form; a password change on one device
+ * signs a second device of the account out.
  */
 export const auth: Flow = {
   id: 'auth',
@@ -55,6 +56,51 @@ export const auth: Flow = {
       await loginWithPassword(t, pw.page, account.name, account.password!);
       await skipPasskeyOffer(pw.page);
       assert(await waitLoggedIn(pw.page) === account.userId, 'username login ended up as another user');
+    });
+
+    // --- a password change signs the account's other devices out
+    const other = await t.session('password-other-device');
+    await t.step('sign in to the same account on a second device', async () => {
+      await loginWithPassword(t, other.page, account.email, account.password!);
+      await skipPasskeyOffer(other.page);
+      assert(await waitLoggedIn(other.page) === account.userId, 'second device: logged in as another user');
+      await waitAppReady(other.page);
+    });
+    const newPassword = `${account.password}-new`;
+    await t.step('change the password on the first device: the second one is signed out', async () => {
+      await waitAppReady(pw.page);
+      // the login above is a fresh authentication: no "Confirm it's you"
+      const result = await pw.page.evaluate(async (password: string) => {
+        const response = await fetch('/api/v2/User/setPassword', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ password }),
+        });
+        return response.json() as Promise<{ status: string; data?: { signedOutDevices: number }; error?: string }>;
+      }, newPassword);
+      assert(result.status === 'OK', `setPassword answered ${JSON.stringify(result)}`);
+      assert(result.data?.signedOutDevices === 1, `signed out ${result.data?.signedOutDevices} devices, expected 1`);
+      // the second device hears it over its socket, signs out and says why
+      await t.expectApiErrors(['LOGIN_REQUIRED', 'NOT_FOUND'], async () => {
+        await waitText(other.page, 'You were signed out', 20_000);
+        await until('the second device to be logged out', async () => other.page.evaluate(() => {
+          const raw = localStorage.getItem('CG_CURRENT_USER');
+          return !raw || raw === 'null';
+        }), 20_000);
+      });
+      // the first device is still signed in
+      const status = await pw.page.evaluate(async () => (await fetch('/api/v2/User/checkLoginStatus', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      })).json() as Promise<{ data?: { userId: string | null } }>);
+      assert(status.data?.userId === account.userId, 'the device that changed the password was signed out');
+      account.password = newPassword;
+    });
+    await t.step('the signed-out device signs in again with the new password', async () => {
+      await clickText(other.page, 'Not now', { selector: 'button' });
+      await loginWithPassword(t, other.page, account.email, account.password!);
+      await skipPasskeyOffer(other.page);
+      assert(await waitLoggedIn(other.page) === account.userId, 'second device: new password did not sign in');
     });
 
     // --- passkey

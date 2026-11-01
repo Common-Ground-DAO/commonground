@@ -54,7 +54,7 @@ const ExternalAccountPage: React.FC<Props> = (props) => {
       }
       return;
     }
-    showSnackbar({type: 'info', text: 'Account removed'});
+    showSnackbar({type: 'info', text: 'Account removed. Your other devices were signed out.'});
     goBack();
   }
 

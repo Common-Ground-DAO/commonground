@@ -13,6 +13,7 @@ import XIcon from '../../../atoms/icons/24/X.svg?react';
 import EthereumIcon from '../../../atoms/icons/24/Ethereum.svg?react';
 import LuksoIcon from '../../../atoms/icons/24/Lukso.svg?react';
 import FarcasterIcon from '../../../atoms/icons/24/Farcaster.svg?react';
+import SignOutOtherDevices from './SignOutOtherDevices';
 
 export type ExternalAccountType = Exclude<Models.User.ProfileItemType, 'cg' | 'bot'>;
 
@@ -20,6 +21,7 @@ type Props = {
   setPage: (pageType: PageType) => void;
   setCurrentWallet: (walletId: string) => void;
   setCurrentAccount: (account: ExternalAccountType) => void;
+  lockModal: (lock: boolean) => void;
 };
 
 const isExternalAccount = (
@@ -56,7 +58,7 @@ const getWalletIcon = (type: Models.Wallet.Type) => {
 }
 
 const AccountsPage: React.FC<Props> = (props) => {
-  const { setCurrentWallet, setCurrentAccount, setPage } = props;
+  const { setCurrentWallet, setCurrentAccount, setPage, lockModal } = props;
   const ownUser = useOwnUser();
   const wallets = useOwnWallets();
   return (<div className='flex flex-col px-4 gap-4 cg-text-main'>
@@ -101,6 +103,8 @@ const AccountsPage: React.FC<Props> = (props) => {
     rightElement={<ChevronRightIcon className='w-5 h-5' />}
     onClick={() => setPage('passkey-settings')}
   />
+  <div className='cg-separator' />
+  <SignOutOtherDevices lockModal={lockModal} />
 </div>);
 }
 

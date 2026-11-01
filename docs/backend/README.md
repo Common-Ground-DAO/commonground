@@ -17,7 +17,9 @@
 > `signupEmail.ts`, `srv/repositories/passkeys.ts`), the new `User` auth
 > routes, step-up, the plugin URL check and the passkey test files against
 > commit 54e2d73, 2026-10-31; the TypeScript 6 / joi 18 note in §8 against
-> commit d604544, 2026-10-31.
+> commit d604544, 2026-10-31; `asyncHandler` (raw-route error handling), the
+> `/uploadImage` error note, the gated-file streaming note and the test list against the
+> fix/async-route-errors branch, 2026-10-31.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -206,6 +208,33 @@ How it works:
 - `convertEventPermissionToCallPermission(...)` -- Map event permissions to call permissions
 - `htmlToImage(...)` -- Use Puppeteer to render HTML to image (for social previews)
 
+**Raw routes and `asyncHandler`.** A few routes are registered directly on
+the router instead of through `registerPostRoute`: the multipart `/File/uploadImage`
+(and its rate-limit middleware), `/Captcha/challenge`, the `emailUnsubscribe`
+pages and every `async` route in `srv/api/getRoutes.ts` (the passport
+`/twitter-callback` is plain middleware and is not wrapped). Express 4 ignores
+the promise an `async` handler returns, so each of them is wrapped with
+`asyncHandler(handler, onError?)` from `srv/api/asyncHandler.ts`: a throw or
+rejection anywhere in the handler — including from its own `catch` block — ends
+in `onError(response, error)`, which defaults to `handleError` and is the
+route's own error page or status where it answers differently
+(`/Captcha/challenge`: 500 `{ error: 'challenge_failed' }`; `emailUnsubscribe`:
+its HTML error page; `/gated-videos`, `/gated-files`: plain-text 500 `Internal
+server error`). If the response was already started, the error is only logged
+(an unfinished response goes to `next(error)` so Express closes it); if
+`onError` throws or its promise rejects, the error goes to `next(error)` and
+`apiErrorHandler` answers. New raw `router.get/post/use(...)` registrations
+with an `async` function must use `asyncHandler` as well.
+
+`asyncHandler` is a thin default over the dependency-free
+`asyncRequestHandler(handler, onError)` in `srv/util/asyncHandler.ts`, which
+also wraps `registerPostRoute`'s own handler (so an error raised while
+answering — e.g. a handler that already sent its own response — is caught) and
+the `memberlist` process' routes (`/getMemberListWindow`,
+`/getChannelMemberListWindow`, `/getUserCommunityRoleIds`: 500
+`{ error: 'memberlist_request_failed' }`, which the calling `Community` route
+answers with its generic error).
+
 ### `srv/api/getRoutes.ts` -- Social Preview & SSR Routes
 
 An Express router that handles GET requests for social media previews (Open Graph / Twitter Cards). Uses `short-uuid` to translate between short IDs and UUIDs. For each entity type, there are two routes: one for the preview image (`/image.jpeg`) and one for the HTML page with meta tags.
@@ -232,6 +261,10 @@ An Express router that handles GET requests for social media previews (Open Grap
 - `GET /push-icon` -- Push notification icon
 - `GET /gated-videos/:filename` -- Role-gated video streaming
 - `GET /gated-files/:filename` -- Role-gated file downloads
+
+  Both stream from `/api_data`. A read error answers a plain-text 500
+  `Internal server error` while nothing has been sent yet and otherwise aborts the response;
+  a client that disconnects early releases the file handle.
 
 Short links (here and in the frontend) are `short-uuid` translations with the
 library's default flickrBase58 alphabet and 22-character length. Every shared
@@ -479,6 +512,9 @@ client.
   Every stored variant passes the NSFW gate (see
   [`srv/moderation/imageFilter.ts`](#srvmoderationimagefilterts--nsfw-image-gate));
   rejected content answers `{ status: 'ERROR', error: 'IMAGE_CONTENT_REJECTED' }`.
+  A request without an `uploaded` file answers `{ status: 'ERROR', error: 'INVALID_REQUEST' }`;
+  multer and body-parser errors (file over 8 MB, unexpected field) go to
+  `apiErrorHandler`.
 - `/getSignedUrls` -- Get pre-signed S3 URLs for file access
 
 ### `srv/api/search.ts` -- Search Routes
@@ -1497,7 +1533,8 @@ has passed the 7-day age gate — except `mediasoup` (3.23.2) and `puppeteer`
   `configuredSecret`, `onchainHelper`, `messageAccess`, `messageRepository`,
   `safeFetch`, `urlPreview`, `redisManager`, `pluginRequest`, `protooConnectionGate`,
   `typingCache`, `userArticleVisibility`, `userArticleRoute`, `passkeyCore`,
-  `passkeyRoutes`, `passkeyConfig` and `signupEmail` (the passkey tests drive
+  `passkeyRoutes`, `passkeyConfig`, `signupEmail`, `asyncHandler`,
+  `registerPostRoute`, `uploadImageRoute` and `gatedFileRoute` (the passkey tests drive
   a software authenticator, `tests/helpers/softAuthenticator.ts`). `npx tsc --noEmit`
   does not cover `tests/` (see `docs/todo/TODO.md`). ts-jest compiles the specs
   with `srv/tsconfig.json`, which therefore lists `"types": ["node", "jest"]`:

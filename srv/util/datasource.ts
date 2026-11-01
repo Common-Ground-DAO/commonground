@@ -40,14 +40,12 @@ if (ssl_ca && ssl_key && ssl_cert) {
 
 export const ormDataSource = new DataSource(connectionOptions);
 
-const dataSourcePromise = new Promise<DataSource>(async (resolve, reject) => {
-  try {
-    await ormDataSource.initialize();
-    resolve(ormDataSource);
-  } catch (e) {
-    reject(e);
-  }
-});
-export async function getDataSource() {
-  return await dataSourcePromise;
+// Connected on first use (migrateDb.ts), not on import: the TypeORM CLI
+// (tools/makeMigration.sh, revertLastMigration.sh, testEntities.sh) loads
+// this file and initializes `ormDataSource` itself, and TypeORM 1.x refuses
+// a second initialize() while one is in flight.
+let dataSourcePromise: Promise<DataSource> | undefined;
+export function getDataSource(): Promise<DataSource> {
+  dataSourcePromise ??= ormDataSource.initialize();
+  return dataSourcePromise;
 }

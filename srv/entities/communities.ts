@@ -103,7 +103,9 @@ export class Community {
     @ManyToMany(() => CommunityChannel, (communityChannel) => communityChannel.community)
     communityChannels!: CommunityChannel[];
 
-    @Index('idx_groups_tsv_description', { fulltext: true })
+    // a GIN index in the database (migration 1656085644390); TypeORM 1.x
+    // compares index types, so the entity names it
+    @Index('idx_groups_tsv_description', { fulltext: true, type: 'gin' })
     @Column({ type: 'tsvector', nullable: true, select: false, default: () => `to_tsvector('simple', '')` })
     tsv_description!: string;
 

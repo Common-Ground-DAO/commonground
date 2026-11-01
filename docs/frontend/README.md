@@ -12,7 +12,8 @@
 > dnd-kit strategy/transform/trailing-click/ordering notes against commit
 > 54e2d73, 2026-10-31; the TypeScript 6 / joi 18 notes (type-check row,
 > project-relative imports, "Dependency pins and constraints") against commit
-> d604544, 2026-10-31
+> d604544, 2026-10-31; transfer links, the account-security step, the email
+> confirmation flows and `/verify-email` (§10) against branch feat/g2g3-transfer-security (on 8c6bc41), 2026-10-31
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -100,7 +101,7 @@ Composed of atoms; represent small, functional UI units.
 | `UserProfilePhoto` | User avatar with optional status indicator |
 | `UserProfileV2` | Compact user profile card |
 | `UsernameWithVerifiedIcon` | Username with optional verification badge |
-| `ConnectionStatusIndicator` | Shows websocket/network connection status banner |
+| `ConnectionStatusIndicator` | Shows websocket/network connection status banner. Right after a (re)load the socket starts out disconnected until the tab connected; "Disconnected" is held back for the first 10 s (unless a connection had already been made), so a slow first connect is no outage banner |
 | `CommunityCard` | Community discovery card |
 | `CommunitySkeletonCard` | Loading skeleton for community card |
 | `CommunityContentSkeletonCard` | Loading skeleton for community content |
@@ -1151,6 +1152,59 @@ After a **password** login, if the account has no passkey on this instance: once
 ### Step-up (`src/data/auth/stepUp.ts`, `StepUpProvider`, `ReauthDialog`)
 
 The server answers protected actions (password, email change, passkey add/remove, sign-in wallets, X/LUKSO/Farcaster accounts, bot tokens, …) with `REAUTH_REQUIRED` when the last authentication is older than 5 minutes. `BaseApiConnector` then calls `stepUpManager.request(...)` (also after a `LOGIN_REQUIRED` device re-login — at most one re-login and one step-up per request); `StepUpProvider` shows `ReauthDialog` — "Confirm it's you to {action}" with a passkey (if the account has one here), the password, or a sign-in wallet — and the request is retried once (`User/reauthenticate`). The action text comes from the route (`stepUpRequestForRoute`). The wallet option is hidden while `User/addPreparedWallet` waits (a wallet confirmation would replace the prepared wallet); the settings pages that add a sign-in wallet therefore call `useStepUp().ensureRecentAuth(...)` before the wallet signature. `stepUpManager` tracks a client-side freshness estimate (interactive login, `createUser`, `reauthenticate`) so screens can confirm before starting a WebAuthn ceremony. A cancelled dialog surfaces as `REAUTH_REQUIRED`, which `securityActionErrorMessage` (`src/data/auth/authErrors.ts`) maps to "show nothing".
+
+### Transfer links (`/transfer`, `TransferView`)
+
+A link from another instance (`/transfer#<token>`, [auth-identity §11](../auth-identity/README.md#11-transfer-links-and-the-account-security-step)).
+`captureTransferToken()` (`src/data/auth/transferToken.ts`) runs at the top of `src/index.tsx`,
+before the app loads anything: it takes the token out of the address bar (`history.replaceState`)
+and keeps it in memory only — a reload drops it. `TransferView` (outside the layouts, like `/login`)
+shows the account the link signs in to (`User/previewTransferLink`: display name, `@handle`,
+profile image — `Jdenticon` when there is none) and asks
+"Continue as …?"; if another account is signed in, it says that continuing signs it out, and does
+so (`loginManager.logout()`) before `loginManager.redeemTransferLink(token)`. Then it goes to the
+link's `nextPath` (`safeNextPath`) or home. "This isn't me" leaves without using the link; the
+same account already signed in just continues.
+
+### Account-security step (`SecurityStepView`, `SecurityStep`)
+
+`securityStepState` (`src/data/auth/securityStep.ts`, `useSecurityStepRequired`) is set from the
+login response's `securityStepRequired` and by `BaseApiConnector` on `SECURITY_STEP_REQUIRED`, and
+remembered per account in `localStorage` (`CG_SECURITY_STEP`): after a reload it is known before the
+automatic re-login answers, so the normal app never mounts first (`showSecurityStep`, unit-tested).
+While it is set and the user is signed in or being signed in again, `RoutedContent` renders `SecurityStepView` on every
+route except `/login`, `/transfer`, `/verify-email` and `/twitter-login`; the realtime login and
+the push subscription are skipped. `Home` no longer sends confirmation mails or opens the
+newsletter-confirmation modal on its own (the step owns the address; only a legacy CG ID instance
+keeps that behaviour), the modal is never shown over the step, and a loader whose request is refused
+with `SECURITY_STEP_REQUIRED` is no page error (a global `unhandledrejection` filter in
+`src/index.tsx`). The organism `SecurityStep` (AuthFlow building blocks and
+styles) loads `User/getSecurityStatus` and asks, in this order: confirm an email address (code,
+`requestEmailVerification`, then the `EmailCodeConfirm` molecule → `verifyEmail`), choose a new password (when the old one is below the
+policy — the server's step-up asks for the current one first), set up how to sign in (create a
+passkey, use a password, or use a wallet — a new wallet is added as a sign-in wallet, an already
+linked one gets sign-in switched on). "Sign out" is always there. If the account has no sign-in method
+here and the session's sign-in is older than an hour (`recentSignIn: false`), the step instead asks
+to sign out and sign in again, or to get a new link from the old site. A socket login refused with
+`SECURITY_STEP_REQUIRED` also switches the app to the step. When nothing is missing any more, the
+page reloads, so the app starts normally.
+
+### Email address changes
+
+With mail (`features.email`), settings (`EmailPage`, `EmailEditor`), the newsletter prompt
+(`EmailConfirmationModal`) and the onboarding newsletter step (`Splash`) no longer write `email`
+through `updateOwnData`: they call `User/requestEmailVerification` and then show the
+`EmailCodeConfirm` molecule (`src/components/molecules/EmailCodeConfirm/`, also used by the security
+step) for the code; the address changes once the code or the link comes back. `/verify-email`
+(`VerifyEmailView`) waits for the automatic sign-in and then confirms with the link's code while
+signed in to that account; signed out it offers "Sign in" (`/login?next=…`). Without mail the old
+direct update stays.
+
+An address that was never confirmed gets "Send confirmation again" (with a 60-second countdown;
+the server's send limits still apply) in the settings email page (`ConfirmEmailAgain` molecule,
+then the code field), in the account-security step and in the newsletter prompt — always for the
+signed-in account only. The login form's code step tells logged-out users that codes only go to
+confirmed addresses and how to get theirs confirmed.
 
 ### Plugin origin guard
 

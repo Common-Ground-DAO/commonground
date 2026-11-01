@@ -14185,6 +14185,79 @@
         ]
       }
     },
+    "/api/v2/User/createTransferLink": {
+      "post": {
+        "operationId": "User_createTransferLink",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "nextPath": {
+                    "maxLength": 2048,
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "User/createTransferLink",
+        "tags": [
+          "User"
+        ]
+      }
+    },
     "/api/v2/User/createUser": {
       "post": {
         "operationId": "User_createUser",
@@ -14353,11 +14426,14 @@
                         "type": "string"
                       },
                       "password": {
+                        "maxLength": 1024,
+                        "minLength": 8,
                         "type": "string"
                       }
                     },
                     "required": [
-                      "email"
+                      "email",
+                      "password"
                     ],
                     "type": "object"
                   },
@@ -15388,6 +15464,73 @@
         ]
       }
     },
+    "/api/v2/User/getSecurityStatus": {
+      "post": {
+        "operationId": "User_getSecurityStatus",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "User/getSecurityStatus",
+        "tags": [
+          "User"
+        ]
+      }
+    },
     "/api/v2/User/getSuggestedUsers": {
       "post": {
         "operationId": "User_getSuggestedUsers",
@@ -16129,6 +16272,8 @@
                         "type": "object"
                       },
                       "password": {
+                        "maxLength": 1024,
+                        "minLength": 1,
                         "type": "string"
                       },
                       "type": {
@@ -16464,6 +16609,7 @@
                     "additionalProperties": false,
                     "properties": {
                       "code": {
+                        "pattern": "^[0-9]{6}$",
                         "type": "string"
                       },
                       "device": {
@@ -16730,6 +16876,82 @@
         ]
       }
     },
+    "/api/v2/User/previewTransferLink": {
+      "post": {
+        "operationId": "User_previewTransferLink",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "token": {
+                    "pattern": "^[A-Za-z0-9_-]{43}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "token"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "User/previewTransferLink",
+        "tags": [
+          "User"
+        ]
+      }
+    },
     "/api/v2/User/reauthenticate": {
       "post": {
         "operationId": "User_reauthenticate",
@@ -16835,6 +17057,7 @@
                     "properties": {
                       "password": {
                         "maxLength": 1024,
+                        "minLength": 1,
                         "type": "string"
                       },
                       "type": {
@@ -16917,6 +17140,146 @@
           }
         },
         "summary": "User/reauthenticate",
+        "tags": [
+          "User"
+        ]
+      }
+    },
+    "/api/v2/User/redeemTransferLink": {
+      "post": {
+        "operationId": "User_redeemTransferLink",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "device": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "publicKey": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "alg": {
+                            "enum": [
+                              "ES256",
+                              "ES384"
+                            ]
+                          },
+                          "crv": {
+                            "enum": [
+                              "P-256",
+                              "P-384"
+                            ]
+                          },
+                          "ext": {
+                            "enum": [
+                              true
+                            ]
+                          },
+                          "key_ops": {
+                            "items": {
+                              "enum": [
+                                "verify"
+                              ]
+                            },
+                            "maxItems": 1,
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          "kty": {
+                            "enum": [
+                              "EC"
+                            ]
+                          },
+                          "x": {
+                            "maxLength": 150,
+                            "type": "string"
+                          },
+                          "y": {
+                            "maxLength": 150,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "crv",
+                          "ext",
+                          "key_ops",
+                          "kty",
+                          "x",
+                          "y"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "publicKey"
+                    ],
+                    "type": "object"
+                  },
+                  "token": {
+                    "pattern": "^[A-Za-z0-9_-]{43}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "device",
+                  "token"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "User/redeemTransferLink",
         "tags": [
           "User"
         ]
@@ -17014,6 +17377,7 @@
                 "properties": {
                   "email": {
                     "format": "email",
+                    "maxLength": 320,
                     "type": "string"
                   }
                 },
@@ -17408,6 +17772,8 @@
                 "additionalProperties": false,
                 "properties": {
                   "password": {
+                    "maxLength": 1024,
+                    "minLength": 8,
                     "type": "string"
                   }
                 },
@@ -18393,6 +18759,7 @@
                     "type": "string"
                   },
                   "token": {
+                    "pattern": "^[0-9]{6}$",
                     "type": "string"
                   }
                 },

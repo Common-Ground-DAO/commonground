@@ -17,7 +17,9 @@
 > `signupEmail.ts`, `srv/repositories/passkeys.ts`), the new `User` auth
 > routes, step-up, the plugin URL check and the passkey test files against
 > commit 54e2d73, 2026-10-31; the TypeScript 6 / joi 18 note in §8 against
-> commit d604544, 2026-10-31.
+> commit d604544, 2026-10-31; transfer links, the account-security step,
+> password policy, login throttling, email codes, the SIWE domain check and
+> the auth-path logging against branch feat/g2g3-transfer-security (on 8c6bc41), 2026-10-31.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -338,7 +340,10 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/requestSignupEmailCode`, `/verifySignupEmailCode` -- verify the sign-up address before the account exists (`srv/util/signupEmail.ts`)
 - `/clearLoginSession` -- Clear session
 - `/checkLoginStatus` -- Check if logged in
-- `/logout` -- Log out
+- `/logout` -- Log out (the session is replaced by a new, empty one)
+- `/getSecurityStatus` -- what the account-security step still needs (`srv/util/securityStep.ts`)
+- `/createTransferLink` -- a one-time link for the session's own user to the instance `TRANSFER_TARGET_URL` names (off without it); limited per user
+- `/previewTransferLink`, `/redeemTransferLink` -- show whose account a link signs in to; redeem it (logged out only, one conditional `UPDATE`, failed attempts limited per IP); not on a legacy CG ID process (`srv/util/transferLink.ts`, `srv/repositories/transferTokens.ts`)
 
 **User creation and profile:**
 - `/createUser` -- Create new user account
@@ -350,8 +355,8 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/getUserProfileDetails` -- Get detailed user profile
 - `/setOwnStatus` -- Set online status
 - `/isCgProfileNameAvailable` -- Check profile name availability
-- `/isEmailAvailable` -- Check email availability
-- `/setPassword` -- Set/change password (step-up)
+- `/isEmailAvailable` -- Check email availability; only on an instance without mail (or in legacy CG ID mode), IP rate-limited — with mail every address flow answers the same for taken and free addresses
+- `/setPassword` -- Set/change password: replacing one needs a step-up, a first password adds a sign-in method (see below); new passwords need at least 8 characters (`common.Password`, `src/common/passwordPolicy.ts`)
 
 Sensitive actions call `requireRecentAuth()` (`srv/util/authSession.ts`)
 before anything else and fail with `REAUTH_REQUIRED` unless the session
@@ -361,7 +366,28 @@ authenticated interactively within the last 5 minutes: `/setPassword`, an
 changing `loginEnabled`, `/deleteWallet` of a login-enabled wallet, the passkey
 add/remove routes and `Bot` `/tokens/issue` and `/disable`.
 `srv/tests/passkeyRoutes.spec.ts` keeps every `User`, `Passkey` and `Bot` route
-classified as protected or not. Removing or switching off the account's last
+classified as protected or not. Adding a way into the account (a passkey, a
+sign-in wallet, a first password, an X/LUKSO/Farcaster account, an address while
+none is verified) goes through `requireAuthToAdd()` (`srv/util/securityStep.ts`)
+instead: a sign-in within the hour suffices while the account lacks exactly that (the account-security
+step), otherwise a recent authentication where a transfer-link session counts.
+Throttles (all numbers in `srv/util/authLimits.ts`; off on a dev stack, like
+the sign-up limit): password login 60 attempts per 15 minutes per IP and, per
+identifier as typed, 10 **failed** attempts per 15 minutes from the client's
+network (IPv4 /24, IPv6 /56) and 100 per hour from everywhere; email-code login
+60 per IP, five guesses per code and, per address, 30 failed guesses a day per
+network and 200 overall; transfer links 120 per IP and 20 failures per IP.
+Login failure budgets reserve their slot atomically before the check and give
+it back on success (`failureBudget` / `reserveFailures`), so parallel attempts
+cannot overrun them; the transfer failures use `ipFailureLimiter`
+(`srv/util/rateLimit.ts`).
+
+The api mounts `securityStepMiddleware` in front of every API router and the
+gated file routes (not the page routes): a session whose
+account still has to finish the account-security step reaches only that step's
+endpoints, everything else answers `SECURITY_STEP_REQUIRED`
+([docs/auth-identity §11](../auth-identity/README.md#11-transfer-links-and-the-account-security-step)).
+Removing or switching off the account's last
 sign-in method (passkey of this RP, password, login-enabled wallet) fails with
 `LAST_LOGIN_METHOD` (`srv/repositories/loginMethods.ts`, checked under a lock
 on the user row).
@@ -389,8 +415,8 @@ on the user row).
 **Misc:**
 - `/getUserCommunityIds` -- Get IDs of communities the user belongs to
 - `/getTransactionData` -- Get point transaction history
-- `/requestEmailVerification`, `/verifyEmail`
-- `/sendOneTimePasswordForLogin` -- OTP login
+- `/requestEmailVerification`, `/verifyEmail` -- a code bound to the session's account and the address it was sent to; the address changes only when the code comes back (`srv/util/emailCodes.ts`)
+- `/sendOneTimePasswordForLogin` -- OTP login (same answer for unknown addresses)
 - `/requestEmailVerification` and `/sendOneTimePasswordForLogin` are send-limited per client IP, per target address and (verification) per account -- `srv/util/mailSendLimits.ts`, numbers in [docs/email-notifications](../email-notifications/README.md#send-limits)
 
 ### `srv/api/messages.ts` -- Messaging Routes
@@ -552,7 +578,8 @@ All entities use TypeORM decorators and live in `srv/entities/`. The database is
 
 **`User`** (`srv/entities/users.ts`, table: `users`)
 - `id` (UUID, PK, auto-generated)
-- `password` (text, nullable, select: false) -- bcrypt hash
+- `password` (text, nullable, select: false) -- bcrypt hash (cost 12; older hashes are replaced on the next successful check)
+- `passwordChangeRequired` (boolean, select: false) -- a password below the policy signed in; the account-security step asks for a new one
 - `onlineStatus` (enum: OFFLINE, ONLINE, AWAY, DND, INVISIBLE)
 - `onlineStatusUpdatedAt` (timestamptz)
 - `email` (varchar 64, nullable, select: false)
@@ -992,7 +1019,7 @@ The `db: Pool | PoolClient` parameter pattern enables functions to work both sta
 ### Repository Files
 
 **`srv/repositories/users.ts`** -- `userHelper`
-- User CRUD, account management, password hashing (bcrypt, 8 salt rounds)
+- User CRUD, account management, password hashing (bcrypt, cost `BCRYPT_COST` = 12, rehash on login), `checkPasswordLogin` / `findPasswordLoginUserId`, `setVerifiedEmail`
 - Social preview data, profile details, own data retrieval
 - User creation (complex: creates user + accounts + wallets + device in transaction)
 - Account operations: add/update/remove accounts, contract wallet management
@@ -1167,7 +1194,7 @@ Reusable Joi schemas:
 - `OnlineStatus` -- online, away, dnd, invisible
 - `Tag` / `Tags` -- Tag strings, max 50 unique tags
 - `Emoji` -- Unicode emoji
-- `Password`, `Secret`, `DateString`, `EIP712Signature`
+- `Password` (a new password: 8–1024 characters), `PasswordAttempt` (a password typed to sign in or re-authenticate: 1–1024), `EmailCode` (6 digits), `TransferToken` (43 base64url characters), `Secret`, `DateString`, `EIP712Signature`
 
 ### Content Validators (`srv/validators/content.ts`)
 

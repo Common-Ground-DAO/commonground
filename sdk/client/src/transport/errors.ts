@@ -88,13 +88,27 @@ export class ApiError extends Error {
   /** HTTP status of the response (usually 200 — RPC errors ride 200). */
   readonly httpStatus: number;
   readonly route: string;
+  /**
+   * RATE_LIMIT_EXCEEDED: seconds until the limit lets the next attempt
+   * through (`retryAfterSeconds` of the envelope, also the `Retry-After`
+   * header); undefined for other errors.
+   */
+  readonly retryAfterSeconds?: number;
+  /** RATE_LIMIT_EXCEEDED: what was limited — "accounts" (per network), "mail" or "attempts" */
+  readonly limit?: "accounts" | "mail" | "attempts";
 
-  constructor(code: ApiErrorCode, route: string, httpStatus: number) {
+  constructor(code: ApiErrorCode, route: string, httpStatus: number, retryAfterSeconds?: number, limit?: string) {
     super(`${route} failed: ${code}`);
     this.name = "ApiError";
     this.code = code;
     this.route = route;
     this.httpStatus = httpStatus;
+    if (typeof retryAfterSeconds === "number" && Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+      this.retryAfterSeconds = retryAfterSeconds;
+    }
+    if (limit === "accounts" || limit === "mail" || limit === "attempts") {
+      this.limit = limit;
+    }
   }
 }
 

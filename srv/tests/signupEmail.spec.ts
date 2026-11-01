@@ -12,19 +12,20 @@ import {
   hasSignupCaptcha,
   SIGNUP_CAPTCHA_TTL_MS,
   startSignupEmailVerification,
+  startSignupWithoutCode,
   verifiedSignupPassedCaptcha,
 } from '../util/signupEmail';
 
 const NOW = Date.parse('2026-10-31T12:00:00Z');
 
 function wrongCode(code: string) {
-  return code === '000000' ? '000001' : '000000';
+  return code === '00000000' ? '00000001' : '00000000';
 }
 
 describe('sign-up email verification', () => {
-  it('codes are six digits', () => {
+  it('codes are eight digits, leading zeros included', () => {
     for (let i = 0; i < 50; i++) {
-      expect(generateSignupCode()).toMatch(/^[0-9]{6}$/);
+      expect(generateSignupCode()).toMatch(/^[0-9]{8}$/);
     }
   });
 
@@ -45,7 +46,18 @@ describe('sign-up email verification', () => {
     const session: any = {};
     const code = startSignupEmailVerification(session, 'a@example.org', NOW);
     expect(() => checkSignupEmailCode(session, 'a@example.org', code, NOW + SIGNUP_CODE_TTL_MS + 1)).toThrow('VERIFY_EMAIL_EXPIRED_TOKEN');
-    expect(session.signupEmail).toBeUndefined();
+    // the code is gone, the address stays (a new code needs no new captcha)
+    expect(session.signupEmail.codeHash).toBeUndefined();
+    expect(session.signupEmail.email).toBe('a@example.org');
+    expect(() => checkSignupEmailCode(session, 'a@example.org', code, NOW + SIGNUP_CODE_TTL_MS + 2)).toThrow('VERIFY_EMAIL_EXPIRED_TOKEN');
+  });
+
+  it('a taken address (no code) answers like a real one, also once expired', () => {
+    const session: any = {};
+    startSignupWithoutCode(session, 'a@example.org', NOW, NOW);
+    expect(() => checkSignupEmailCode(session, 'a@example.org', '12345678', NOW)).toThrow('VERIFY_EMAIL_INVALID_TOKEN');
+    expect(() => checkSignupEmailCode(session, 'a@example.org', '12345678', NOW + SIGNUP_CODE_TTL_MS + 1)).toThrow('VERIFY_EMAIL_EXPIRED_TOKEN');
+    expect(hasSignupCaptcha(session, 'a@example.org', NOW + SIGNUP_CODE_TTL_MS + 1)).toBe(true);
   });
 
   it(`gives up after ${SIGNUP_CODE_MAX_ATTEMPTS} wrong guesses`, () => {
@@ -55,6 +67,16 @@ describe('sign-up email verification', () => {
       expect(() => checkSignupEmailCode(session, 'a@example.org', wrongCode(code), NOW)).toThrow('VERIFY_EMAIL_INVALID_TOKEN');
     }
     expect(() => checkSignupEmailCode(session, 'a@example.org', code, NOW)).toThrow('VERIFY_EMAIL_INVALID_TOKEN');
+  });
+
+  it('a spent code keeps the solved captcha for a new code to the same address', () => {
+    const session: any = {};
+    const code = startSignupEmailVerification(session, 'a@example.org', NOW, NOW);
+    for (let i = 0; i < SIGNUP_CODE_MAX_ATTEMPTS; i++) {
+      expect(() => checkSignupEmailCode(session, 'a@example.org', wrongCode(code), NOW)).toThrow('VERIFY_EMAIL_INVALID_TOKEN');
+    }
+    expect(hasSignupCaptcha(session, 'a@example.org', NOW + 1)).toBe(true);
+    expect(hasSignupCaptcha(session, 'b@example.org', NOW + 1)).toBe(false);
   });
 
   it('a new request replaces the previous verification', () => {

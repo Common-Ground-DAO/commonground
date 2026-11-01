@@ -30,6 +30,8 @@ beforeAll(async () => {
   const router = express.Router();
   registerPostRoute<undefined, { answer: number }>(router, '/ok', undefined, async () => ({ answer: 42 }));
   registerPostRoute<undefined, never>(router, '/fails', undefined, async () => { throw new Error('NOT_FOUND'); });
+  const { RateLimitError } = await import('../util/rateLimitError');
+  registerPostRoute<undefined, never>(router, '/limited', undefined, async () => { throw new RateLimitError(299.2, 'mail'); });
   registerPostRoute<{ id: string }, string>(router, '/invalid', Joi.object({ id: Joi.string().required() }).required(), async () => 'unreachable');
   registerPostRoute<undefined, string>(router, '/answers-itself', undefined, async (_request, response) => {
     response.status(204).end();
@@ -77,6 +79,13 @@ describe('registerPostRoute', () => {
 
   it('answers a handler error with handleError', async () => {
     expect(await (await post('/fails')).json()).toEqual({ status: 'ERROR', error: 'NOT_FOUND' });
+  });
+
+  it('answers a limit with the wait: in the envelope and as Retry-After', async () => {
+    const response = await post('/limited');
+    expect(response.status).toBe(200);
+    expect(response.headers.get('retry-after')).toBe('300');
+    expect(await response.json()).toEqual({ status: 'ERROR', error: 'RATE_LIMIT_EXCEEDED', retryAfterSeconds: 300, limit: 'mail' });
   });
 
   it('answers a validation error with VALIDATION', async () => {

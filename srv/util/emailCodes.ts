@@ -6,9 +6,10 @@ import { createHash, randomInt, randomUUID, timingSafeEqual } from "node:crypto"
 import redisManager from "../redis";
 import errors from "../common/errors";
 import { normalizeEmail } from "./signupEmail";
+import { EMAIL_CODE_GUESSES, EMAIL_CODE_LENGTH } from "../common/authInputRules";
 
 /**
- * 6-digit codes mailed to an existing account (docs/auth-identity §5.5, §8):
+ * 8-digit codes mailed to an existing account (docs/auth-identity §5.5, §8):
  *
  * - `login`: the one-time code of the email login (User/sendOneTimePasswordForLogin
  *   → User/login {type:'verificationCode'}), valid LOGIN_CODE_TTL_MS;
@@ -28,7 +29,8 @@ export type EmailCodePurpose = "login" | "verify";
 
 export const LOGIN_CODE_TTL_MS = 15 * 60 * 1000;
 export const VERIFY_CODE_TTL_MS = 24 * 60 * 60 * 1000;
-export const EMAIL_CODE_MAX_ATTEMPTS = 5;
+// the guesses per code, shared with the web app (src/common/authInputRules.ts)
+export const EMAIL_CODE_MAX_ATTEMPTS = EMAIL_CODE_GUESSES;
 
 type StoredCode = {
   codeId: string;
@@ -44,7 +46,8 @@ function codeHash(purpose: EmailCodePurpose, userId: string, email: string, code
 }
 
 export function generateEmailCode(): string {
-  return randomInt(0, 1_000_000).toString().padStart(6, "0");
+  // uniform over 00000000-99999999 (CSPRNG), leading zeros kept
+  return randomInt(0, 10 ** EMAIL_CODE_LENGTH).toString().padStart(EMAIL_CODE_LENGTH, "0");
 }
 
 /** Issues a new code for `userId`, bound to `email`; returns the code to mail. */

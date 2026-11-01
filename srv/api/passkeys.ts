@@ -11,6 +11,7 @@ import eventHelper from "../repositories/event";
 import userHelper from "../repositories/users";
 import passkeyHelper, { type PasskeyRow } from "../repositories/passkeys";
 import ipRateLimitHandler from "../util/rateLimit";
+import { AUTH_LIMITS } from "../util/authLimits";
 import { getMainRp } from "../util/passkeyConfig";
 import {
   createAuthenticationOptions,
@@ -32,20 +33,13 @@ import { requireAuthToAdd } from "../util/securityStep";
 
 const passkeyRouter = express.Router();
 
-const HOUR = 60 * 60 * 1000;
 const anonymousRegistrationLimiter = ipRateLimitHandler({
   bucket: 'passkey:register:anon',
-  windowMs: HOUR,
-  limit_v4_v6_64: 20,
-  limit_v6_56: 60,
-  limit_v6_48: 120,
+  ...AUTH_LIMITS.passkey.signupRegistration,
 });
 const loginOptionsLimiter = ipRateLimitHandler({
   bucket: 'passkey:login:options',
-  windowMs: HOUR,
-  limit_v4_v6_64: 120,
-  limit_v6_56: 400,
-  limit_v6_48: 800,
+  ...AUTH_LIMITS.passkey.loginOptions,
 });
 
 /**

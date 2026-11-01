@@ -12,6 +12,7 @@ import emailHelper from "../repositories/emails";
 import { recoverPersonalSignature } from '@metamask/eth-sig-util';
 import { asyncRequestHandler } from "../util/asyncHandler";
 import { describeErrorForLog } from "../util/errorLog";
+import { RateLimitError } from "../util/rateLimitError";
 
 export { describeErrorForLog };
 
@@ -20,7 +21,13 @@ export const ERROR: API.AjaxResponse<void> = { status: "ERROR", error: errors.se
 const allowedErrorMessages = new Set<string>(Object.values(errors.server));
 
 export function handleError(response: express.Response, e: unknown) {
-  if (e instanceof Error && allowedErrorMessages.has(e.message)) {
+  if (e instanceof RateLimitError) {
+    // the envelope stays on HTTP 200 like every RPC error; the wait goes
+    // into the envelope (what clients read) and the standard header
+    response.set('Retry-After', String(e.retryAfterSeconds));
+    const body: API.AjaxResponse<void> = { status: 'ERROR', error: e.message, retryAfterSeconds: e.retryAfterSeconds, limit: e.limit };
+    response.send(body);
+  } else if (e instanceof Error && allowedErrorMessages.has(e.message)) {
     response.send({ ...ERROR, error: e.message });
   } else if (e instanceof Joi.ValidationError) {
     // the message names the offending field; it can quote its value, so

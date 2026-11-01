@@ -123,7 +123,7 @@ export class AuthApi {
 
   /**
    * POST /User/requestSignupEmailCode — step 1 of sign-up on instances that
-   * send mail: a 6-digit code goes to `email` (EMAIL_DISABLED otherwise).
+   * send mail: an 8-digit code goes to `email` (EMAIL_DISABLED otherwise).
    * The sign-up captcha is checked here (CAPTCHA_FAILED); a resend to the same
    * address in the same session needs no new token, and createUser after the
    * verified code needs none at all.

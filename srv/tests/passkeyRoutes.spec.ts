@@ -16,6 +16,7 @@ delete process.env.CG_LEGACY_CGID;
 import { SoftAuthenticator } from './helpers/softAuthenticator';
 import * as memoryPasskeys from './helpers/memoryPasskeys';
 import * as memoryRedis from './helpers/memoryRedis';
+import { SIGNUP_CODE_TTL_MS } from '../util/signupEmail';
 
 type Handler = (request: any, response: any, data: any) => Promise<any>;
 const routes: Record<string, { handler: Handler; validator?: { validateAsync: (data: unknown) => Promise<any> } }> = {};
@@ -28,16 +29,25 @@ jest.doMock('../api/util', () => ({
 }));
 jest.doMock('../redis', () => require('./helpers/memoryRedis'));
 jest.doMock('../repositories/passkeys', () => require('./helpers/memoryPasskeys'));
-jest.doMock('../util/rateLimit', () => ({
+jest.doMock('../util/rateLimit', () => {
+  const actual = jest.requireActual('../util/rateLimit');
+  return {
   __esModule: true,
-  default: () => jest.fn(async () => undefined),
-  keyRateLimitHandler: () => jest.fn(async () => undefined),
+  default: () => Object.assign(jest.fn(async () => undefined), { peek: jest.fn(async () => undefined), buckets: () => [] }),
+  // the guess budget per sign-up code is the real one (on the in-memory
+  // Valkey): taken and free addresses must answer alike through it
+  keyRateLimitHandler: (options: { bucket: string }) => options.bucket === 'user:signup-code:attempts'
+    ? actual.keyRateLimitHandler(options)
+    : Object.assign(jest.fn(async () => undefined), { buckets: () => [] }),
+  enforceLimits: actual.enforceLimits,
+  peekLimits: actual.peekLimits,
   failureBudget: () => ({ reserve: jest.fn(async () => ({ release: jest.fn(async () => undefined) })) }),
   reserveFailures: jest.fn(async () => ({ release: jest.fn(async () => undefined) })),
   clientPrefixKey: () => 'v4:203.0.113',
   ipFailureLimiter: () => ({ assertBelow: jest.fn(async () => undefined), recordFailure: jest.fn(async () => undefined) }),
   extractIpFromRequest: () => ({ ipString: '203.0.113.1' }),
-}));
+  };
+});
 const verifyCaptchaToken = jest.fn(async (token: string) => token === 'captcha');
 jest.doMock('../util/captcha', () => ({ verifyCaptchaToken }));
 jest.doMock('../util/safeFetch', () => ({ fetchRemoteImage: jest.fn() }));
@@ -529,7 +539,57 @@ describe('User/createUser', () => {
     expect(request.session.signupEmail.codeHash).toBeUndefined();
     users.isEmailAvailable.mockResolvedValueOnce(false);
     await expect(call('User/requestSignupEmailCode', request, { email: 'taken@example.org' })).resolves.toBeUndefined();
-    await expect(call('User/verifySignupEmailCode', request, { email: 'taken@example.org', code: '123456' })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
+    await expect(call('User/verifySignupEmailCode', request, { email: 'taken@example.org', code: '12345678' })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
+  });
+
+  it('a taken and a free address answer alike: wrong codes, the guess limit, expiry, a new code', async () => {
+    mailEnabled = true;
+    const clock = jest.spyOn(Date, 'now');
+    const run = async (taken: boolean) => {
+      let now = Date.parse('2026-11-01T10:00:00Z');
+      clock.mockImplementation(() => now);
+      users.isEmailAvailable.mockResolvedValue(!taken);
+      emailUtils.sendSignupCodeEmail.mockClear();
+      const email = taken ? 'taken@example.org' : 'free@example.org';
+      const request = makeRequest();
+      const outcomes: unknown[] = [];
+      const attempt = async () => {
+        const sent = (emailUtils.sendSignupCodeEmail.mock.calls.at(-1) as any)?.[1];
+        const code = sent === '00000000' ? '00000001' : '00000000';
+        try {
+          await call('User/verifySignupEmailCode', request, { email, code });
+          outcomes.push('ok');
+        }
+        catch (e: any) {
+          outcomes.push({ error: e.message, retryAfterSeconds: e.retryAfterSeconds, limit: e.limit });
+        }
+      };
+      await call('User/requestSignupEmailCode', request, { email, recaptchaToken: 'captcha' });
+      for (let i = 0; i < 7; i++) {
+        now += 1000;
+        await attempt();
+      }
+      // a new code (the captcha still counts), then it expires
+      now += 61_000;
+      await call('User/requestSignupEmailCode', request, { email });
+      now += SIGNUP_CODE_TTL_MS + 1;
+      await attempt();
+      // after the expiry, a new code still needs no new captcha
+      await expect(call('User/requestSignupEmailCode', request, { email })).resolves.toBeUndefined();
+      return outcomes;
+    };
+    try {
+      const free = await run(false);
+      const taken = await run(true);
+      expect(taken).toEqual(free);
+      expect(free.slice(0, 5)).toEqual(Array(5).fill({ error: 'VERIFY_EMAIL_INVALID_TOKEN', retryAfterSeconds: undefined, limit: undefined }));
+      expect(free[5]).toEqual({ error: 'RATE_LIMIT_EXCEEDED', retryAfterSeconds: expect.any(Number), limit: 'attempts' });
+      expect(free[7]).toEqual({ error: 'VERIFY_EMAIL_EXPIRED_TOKEN', retryAfterSeconds: undefined, limit: undefined });
+    }
+    finally {
+      clock.mockRestore();
+      users.isEmailAvailable.mockResolvedValue(true);
+    }
   });
 
   it('checks the sign-up captcha before any code mail goes out', async () => {

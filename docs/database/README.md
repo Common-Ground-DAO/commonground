@@ -6,7 +6,9 @@
 > compile step (`srv/tsconfig.typeorm-cli.json`) against commit d604544, 2026-10-31;
 > `transfer_tokens`, `users.passwordChangeRequired`, `security_step_db_required` and the
 > dropped verification-code columns against commit 9fc05a9, 2026-11-01;
-> `selfhost.sh restore --db-file` note against commit 818d4c6, 2026-11-01
+> `selfhost.sh restore --db-file` note against commit 818d4c6, 2026-11-01; session generations
+> (`session_generation_seq`, `users.sessionGeneration`, `devices.generation`,
+> `transfer_tokens.generation`, `session_generation_of`) against commit 23a4c1e, 2026-11-01
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -52,6 +54,7 @@ Primary user table. One row per registered user.
 | `emailVerified` | `boolean` | Default `false` |
 | `extraData` | `jsonb` | Default `{}` |
 | `passwordChangeRequired` | `boolean` | Default `false`, `select: false`. Set when a password below the policy signed in; the account-security step asks for a new one ([auth-identity §11](../auth-identity/README.md#11-transfer-links-and-the-account-security-step)) |
+| `sessionGeneration` | `bigint` | Default `0`, `select: false`. Raised to the next `session_generation_seq` value when the account signs out its other devices; sessions, device keys and transfer links below it are no longer valid ([session generations](#session-generations)). Partial index `idx_users_sessionGeneration` where > 0 (declared on the entity with `synchronize: false`) |
 | `pointBalance` | `integer` | Default `0` |
 | `tags` | `text[]` | Nullable, indexed |
 | `createdAt` | `timestamptz(3)` | Auto |
@@ -136,6 +139,7 @@ One-time sign-in links from an instance on the same database (the app.cg gateway
 | `createdAt` | `timestamptz(3)` | Default `now()` |
 | `expiresAt` | `timestamptz(3)` | About 10 minutes after creation, indexed |
 | `usedAt` | `timestamptz(3)` | Nullable; set by the single statement that redeems the token |
+| `generation` | `bigint` | Default `0`. The generation of the session that minted it; redeemable only while not below the user's `sessionGeneration` |
 
 Rows that expired more than a day ago are deleted whenever a new link is minted. Added by
 `1793520000000-transferLinksAndSecurityStep`, which also drops `users.verificationCode` /
@@ -161,7 +165,24 @@ User devices for push notifications and encryption.
 | `publicKey` | `jsonb` | JWK public key for E2E encryption |
 | `webPushSubscription` | `jsonb` | Nullable, web push subscription data |
 | `deviceInfo` | `jsonb` | Nullable, device metadata |
+| `generation` | `bigint` | Default `0`, `select: false`. The generation of the login that created the key (or of the account's last sign-out of other devices, for the device that did it); the key signs in only while it is not below the user's `sessionGeneration` |
 | `createdAt/updatedAt/deletedAt` | `timestamptz(3)` | Standard timestamps |
+
+#### Session generations
+Added by `1793560000000-sessionGenerations` ([auth-identity §2](../auth-identity/README.md#signing-out-other-devices)):
+
+- `session_generation_seq` (`bigint`): one sequence for all generations. A login takes the next
+  value before it checks a credential; a sign-out of other devices raises `users.sessionGeneration`
+  to the next value in the transaction of the change that caused it (user row locked first, then
+  the advisory lock 7312001 exclusively for its last statement until COMMIT; logins and the
+  reconciler take it shared; `lock_timeout` 5 s). `USAGE, SELECT, UPDATE` for `writer`, `SELECT`
+  for `reader`.
+- `users.sessionGeneration`, `devices.generation`, `transfer_tokens.generation` (see the tables
+  above); existing rows got 0 and stay valid until their account's first sign-out of other devices.
+- `session_generation_of(p_user_id uuid) RETURNS bigint`: the user's generation (0 if unknown),
+  `SECURITY DEFINER` with a pinned `search_path`; `EXECUTE` revoked from `PUBLIC` and granted to
+  `writer`, `reader` and `mediasoup` — the device-key lookup uses it, also under the call server's
+  role, which may not read `users`.
 
 #### `followers`
 User-to-user follow relationships. Composite PK: `(userId, otherUserId)`.

@@ -66,6 +66,7 @@ Payloads below are the object **minus `type`**. Most are
 | `cliUserData` | `{ data: Partial<UserData> & {id} }` (presence) | store-applied (R2/R3) |
 | `cliUserOwnData` | `{ data: Partial<OwnData> }` | store-applied (R2) |
 | `cliWalletEvent` | `new` / `update` / `delete` wallet | catalog-only |
+| `cliSignedOut` | *flat* `{}` — sent to the devices of an account that were just signed out from elsewhere ([auth-identity §2](../auth-identity/README.md#signing-out-other-devices)); the server disconnects their sockets right after | catalog-only |
 | `cliCallEvent` | `new` / `update` / `delete` call | catalog-only (see protoo for media) |
 | `cliTypingEvent` | *flat* `{ access, userId, isTyping }` typing presence | r2-typing start/stop delivery, self-exclusion |
 | `cliBotScopesEvent` | bot token scope change | catalog-only |

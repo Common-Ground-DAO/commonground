@@ -7,7 +7,8 @@
 > self-host stacks: §1, the request flows, Pattern 5, §7, the routing
 > appendix) against commit fe3937f, 2026-10-31; the login list (§3) against
 > commit 9fc05a9, 2026-11-01; session settings and the socket's session room
-> against commit eab2a27, 2026-11-01
+> against commit eab2a27, 2026-11-01; the session store TTLs, `sess-user:`, the session
+> generations and signing out other devices (§3, key prefixes) against commit 23a4c1e, 2026-11-01
 
 # Common Ground - Architecture Documentation
 
@@ -214,7 +215,8 @@ Every `index.html` the backend serves for share links / previews loads `/instanc
 
 Sessions are managed by `express-session` with a Redis-backed store. Key configuration from `srv/util/sessionSetup.ts` and `srv/serverconfig.ts` (detail: [docs/auth-identity §2](../auth-identity/README.md#2-session-infrastructure)):
 
-- **Store**: `connect-redis` backed by the `redis` (state) Valkey instance (`sess:` key prefix; persisted, so a planned restart keeps everyone logged in)
+- **Store**: `connect-redis` backed by the `redis` (state) Valkey instance (`sess:` key prefix; persisted, so a planned restart keeps everyone logged in). Store TTL: the rest of the cookie's 12 hours for a logged-in session, an hour after the last request for any other (`sessionStoreTtlSeconds`)
+- **Other devices**: each user's logged-in sessions are indexed (`sess-user:<userId>`) and a per-account session generation (PostgreSQL `users."sessionGeneration"`, raised in the transaction of the change; device keys and transfer links carry theirs; sessions are checked against a copy in Valkey, `sess-gen:<userId>`, which a reconciler in the api keeps up to date) ends every session, key and link from before it, so `User/signOutOtherDevices` and every change that removes or replaces a way into the account can end all other sessions and device keys ([auth-identity §2](../auth-identity/README.md#signing-out-other-devices))
 - **Cookie name**: `connect.sid` when `DEPLOYMENT === 'prod'`; otherwise `cg_{deployment}.sid` (`SESSION_COOKIE_NAME` in `srv/serverconfig.ts`)
 - **Cookie settings**: `httpOnly`, `secure` (except in dev), `sameSite: lax`, 12-hour max age; the cookie of a logged-in session is re-sent (expiry refreshed) on every response, other sessions' only when they change (`rolling: false` plus a hook for logged-in sessions)
 - **Cookie domain**: host-only; only legacy CG ID mode (`CG_LEGACY_CGID=true`, non-dev) sets it to `.{APP_HOSTNAME}` (derived from `BASE_URL`), so the app and the CG ID app (`id.<domain>`) share a session.
@@ -364,12 +366,12 @@ Two Valkey instances (Redis-protocol compatible) split by what may be lost: the 
 
 | Client | Instance | Purpose | Why it is separate |
 |--------|----------|---------|--------------------|
-| `session` | state | Express session storage (connect-redis, `sess:`). Used by `api` only — `wsapi` unsigns the session cookie itself and never reads the store. | historical — it used to be the one client needing `legacyMode`; kept because collapsing connections is a behaviour change |
+| `session` | state | Express session storage (connect-redis, `sess:`), revoked ids (`sess-revoked:`), each user's session index (`sess-user:`) and the copies of the session generations (`sess-gen:`, `sess-keep:`). Used by `api` only — `wsapi` unsigns the session cookie itself and never reads the store. | historical — it used to be the one client needing `legacyMode`; kept because collapsing connections is a behaviour change |
 | `socketIOPub` / `socketIOSub` | state | Socket.IO adapter pub/sub (`v2:`) for broadcasting across `wsapi` instances; `socketIOPub` alone also carries the emitter used by `api`, `onchain` and job workers. | a subscribing connection cannot issue normal commands |
 | `data` | state | `UserDataManager`, rate limiting, captcha key and replay guards, plugin replay keys, bot connection-presence leases. | plain command connection |
 | `cache` | cache | URL-preview cache (`urlpreview:`), skipped (not waited for) while the cache instance is unreachable. | lives on the evicting instance |
 
-Key prefixes are pairwise disjoint (`sess:`, `ratelimit:`, `bot-ratelimit:`, `bot-presence:`, `captcha:`, `pluginRequest:`, `ud:`/`us:`, `tmp:`, `online-user-addresses`, and the adapter's `v2:` on the state instance; `urlpreview:` on the cache instance). The split between the instances is load-bearing: a cache filling a shared `noeviction` instance would make session writes fail — see [docs/infrastructure](../infrastructure/README.md#redis-and-redis-cache-valkey). New cache data (anything that can be rebuilt) belongs on the `cache` client; anything whose loss changes behaviour belongs on `data`.
+Key prefixes are pairwise disjoint (`sess:`, `sess-revoked:`, `sess-user:`, `sess-gen:`, `sess-keep:`, `ratelimit:`, `bot-ratelimit:`, `bot-presence:`, `captcha:`, `pluginRequest:`, `ud:`/`us:`, `tmp:`, `online-user-addresses`, and the adapter's `v2:` on the state instance; `urlpreview:` on the cache instance). The split between the instances is load-bearing: a cache filling a shared `noeviction` instance would make session writes fail — see [docs/infrastructure](../infrastructure/README.md#redis-and-redis-cache-valkey). New cache data (anything that can be rebuilt) belongs on the `cache` client; anything whose loss changes behaviour belongs on `data`.
 
 ### PostgreSQL LISTEN/NOTIFY
 

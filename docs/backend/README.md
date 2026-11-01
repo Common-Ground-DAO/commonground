@@ -24,7 +24,9 @@
 > transfer links, the account-security step, password policy, login throttling,
 > email codes, the SIWE domain check and the auth-path logging against commit
 > 9fc05a9, 2026-11-01; `ensureSession`/`logout`, the `CgId` result room and the
-> room key list against commit eab2a27, 2026-11-01.
+> room key list against commit eab2a27, 2026-11-01; `signOutOtherDevices`, the
+> sign-out after credential changes and the pre-login limits against commit
+> 23a4c1e, 2026-11-01.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -371,7 +373,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 ### `srv/api/user.ts` -- User Routes
 
 **Authentication** (details: [docs/auth-identity](../auth-identity/README.md)):
-- `/getSignableSecret` -- Get a nonce for signing
+- `/getSignableSecret` -- Get a nonce for signing (a call that starts a session is limited per client network)
 - `/verifyCaptcha` -- Verify a captcha token (provider abstraction in `srv/util/captcha.ts`: ALTCHA default / reCAPTCHA / off; ALTCHA challenges via `GET /Captcha/challenge`, the effective provider via `GET /Captcha/config` — both public, `srv/api/captcha.ts`)
 - `/login` -- every interactive and device-key login; each branch ends in `establishLoginSession()` (`srv/util/authSession.ts`: new session id, user set, `authAt`/`authMethod` recorded except for device-key logins, awaited save). `type: 'passkey'` verifies a WebAuthn assertion in the same call; `type: 'passkey-success'` exists only in legacy CG ID mode
 - `/reauthenticate` -- step-up: passkey (`stepup` assertion), password or a fresh signature of a login-enabled wallet; refreshes `authAt` and returns `{ validUntil }`; rate-limited per IP and per user
@@ -380,6 +382,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/clearLoginSession` -- Clear session
 - `/checkLoginStatus` -- Check if logged in
 - `/logout` -- Log out (the session is destroyed, its id revoked and the cookie expired; no new session)
+- `/signOutOtherDevices` -- step-up; ends every other session of the user (session generation in PostgreSQL + index) and deletes every other device key and unused transfer link, returns `{ devices }` (`srv/util/signOutOtherDevices.ts`, `srv/util/userSessions.ts`)
 - `/getSecurityStatus` -- what the account-security step still needs (`srv/util/securityStep.ts`)
 - `/createTransferLink` -- a one-time link for the session's own user to the instance `TRANSFER_TARGET_URL` names (off without it); limited per user
 - `/previewTransferLink`, `/redeemTransferLink` -- show whose account a link signs in to; redeem it (logged out only, one conditional `UPDATE`, failed attempts limited per IP); not on a legacy CG ID process (`srv/util/transferLink.ts`, `srv/repositories/transferTokens.ts`)
@@ -403,7 +406,12 @@ authenticated interactively within the last 5 minutes: `/setPassword`, an
 `email` change through `/updateOwnData` (only an actual change),
 `/addUserAccount` and `/removeUserAccount` of an X/LUKSO/Farcaster account, `/addPreparedWallet` with `loginEnabled`, `/updateWallet`
 changing `loginEnabled`, `/deleteWallet` of a login-enabled wallet, the passkey
-add/remove routes and `Bot` `/tokens/issue` and `/disable`.
+add/remove routes, `/signOutOtherDevices` and `Bot` `/tokens/issue` and `/disable`.
+Of these, every change that removes or replaces a way in (a replaced password or
+verified address, a removed passkey, sign-in wallet or X/LUKSO/Farcaster account)
+then signs the account out on its other devices (`signOutOtherDevices()`,
+[auth-identity §2](../auth-identity/README.md#signing-out-other-devices)); adding
+one does not.
 `srv/tests/passkeyRoutes.spec.ts` keeps every `User`, `Passkey` and `Bot` route
 classified as protected or not. Adding a way into the account (a passkey, a
 sign-in wallet, a first password, an X/LUKSO/Farcaster account, an address while

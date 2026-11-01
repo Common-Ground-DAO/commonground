@@ -16609,7 +16609,7 @@
                     "additionalProperties": false,
                     "properties": {
                       "code": {
-                        "pattern": "^[0-9]{6}$",
+                        "pattern": "^[0-9]{8}$",
                         "type": "string"
                       },
                       "device": {
@@ -17933,6 +17933,73 @@
         ]
       }
     },
+    "/api/v2/User/signOutOtherDevices": {
+      "post": {
+        "operationId": "User_signOutOtherDevices",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "User/signOutOtherDevices",
+        "tags": [
+          "User"
+        ]
+      }
+    },
     "/api/v2/User/subscribeNewsletter": {
       "post": {
         "operationId": "User_subscribeNewsletter",
@@ -18759,7 +18826,7 @@
                     "type": "string"
                   },
                   "token": {
-                    "pattern": "^[0-9]{6}$",
+                    "pattern": "^[0-9]{8}$",
                     "type": "string"
                   }
                 },
@@ -18836,7 +18903,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "code": {
-                    "pattern": "^[0-9]{6}$",
+                    "pattern": "^[0-9]{8}$",
                     "type": "string"
                   },
                   "email": {

@@ -300,6 +300,25 @@ and a browser pass on the test VM:
   re-login are never written back or re-sent, the legacy CG ID popup result
   goes to a per-request socket room instead of the session room; e2e reload
   flow 0/40 failures, before 6/40.)
+- [x] **G12 Session housekeeping.** Changing credentials signs out the other
+  devices: replacing the password or the verified email and removing a
+  sign-in method end every other session of the user and delete every other
+  device key (adding a way in does not, so the transfer flow and the
+  account-security step leave the other devices alone); an explicit "Sign out
+  other devices" in Settings → Accounts (step-up, says how many); the signed-out
+  devices get `cliSignedOut` and drop to logged-out with a notice. Mechanism:
+  per-account session generations in PostgreSQL (one sequence; raised in the
+  transaction of the change; device keys and transfer links carry theirs and
+  are checked in the SQL that looks them up; a login takes its value before
+  the credential check; sessions are checked against a copy in Valkey that a
+  reconciler keeps in step every 30 s) plus an index of each user's sessions
+  (`sess-user:`) to end and count them through G11's revocation; unused
+  transfer links are deleted; prepared wallet signatures are re-checked at
+  login. Pre-login sessions live an hour in the store (12 hours from login on, sign-up state keeps
+  its session as long as it needs it), and every endpoint that starts one is
+  limited per network (decision 21). docs/auth-identity §2, §4. (done
+  2026-11-01; race tests against real PostgreSQL 18 and Valkey 9 with the
+  application roles.)
 - [x] **G4 Passkeys on the main origin + new account-creation UI.** (done
   2026-10-31: passkeys bound to their RP (`rpId` per row; `id.app.cg` rows are
   gateway-only), one login form with passkey autofill, sign-up with the email

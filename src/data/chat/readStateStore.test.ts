@@ -252,4 +252,50 @@ describe('ReadStateStore: level-triggered marking', () => {
     await settle();
     expect(store.get(C)).toMatchObject({ unread: 1, seq: 2, lastRead: a.createdAt });
   });
+
+  it('a local mark whose call failed is sent again after a reload (server behind, same local value)', async () => {
+    const { server, store, persisted } = setup();
+    const [m] = server.seed(C, 1);
+    server.fail('setChannelLastRead', new Error('Network down'));
+    store.createMarker(C).update({ atLatest: true, atBottom: true, newest: newestOf(m) });
+    await settle();
+    // displayed as read locally, and persisted that way
+    expect(store.get(C)!.lastRead).toBe(m.createdAt);
+    expect(persisted.some(i => i.kind === 'lastRead' && i.lastRead === m.createdAt)).toBe(true);
+    store.dispose();
+    server.unfail('setChannelLastRead');
+    expect(server.channels.get(C)!.lastRead.get(ME)).toBeUndefined();
+
+    // "reload": a new store fed the persisted local value as a seq-less snapshot
+    const access = server.addChannel(C);
+    const reloaded = createReadStateStore({ api: server, events: server, clock: systemClock, getAccess: () => access });
+    reloaded.apply({ kind: 'snapshot', channelId: C, lastRead: m.createdAt, unread: 0, lastMessageDate: m.createdAt });
+    expect(reloaded.get(C)!.lastRead).toBe(m.createdAt);
+    const before = server.callsOf('setChannelLastRead').length;
+    reloaded.createMarker(C).update({ atLatest: true, atBottom: true, newest: newestOf(m) });
+    await settle();
+    expect(server.callsOf('setChannelLastRead')).toHaveLength(before + 1);
+    expect(server.channels.get(C)!.lastRead.get(ME)).toBe(m.createdAt);
+    reloaded.dispose();
+  });
+
+  it('a snapshot with syncSeq counts as acknowledged: no redundant call', async () => {
+    const { server, store } = setup();
+    const [m] = server.seed(C, 1);
+    store.apply({ kind: 'snapshot', channelId: C, lastRead: m.createdAt, unread: 0, syncSeq: 1, lastMessageDate: m.createdAt });
+    store.createMarker(C).update({ atLatest: true, atBottom: true, newest: newestOf(m) });
+    await settle();
+    expect(server.callsOf('setChannelLastRead')).toHaveLength(0);
+  });
+
+  it('a getSyncState showing the server behind lets the mark be sent again', async () => {
+    const { server, store } = setup();
+    const [m] = server.seed(C, 1);
+    store.apply({ kind: 'lastRead', channelId: C, lastRead: m.createdAt });
+    await live(server);
+    expect(store.get(C)!.lastRead).toBe(m.createdAt);
+    store.createMarker(C).update({ atLatest: true, atBottom: true, newest: newestOf(m) });
+    await settle();
+    expect(server.callsOf('setChannelLastRead')).toHaveLength(1);
+  });
 });

@@ -460,9 +460,10 @@ export type ChannelReadState = {
  *   count stays (the snapshot is older than a local mark or another
  *   snapshot). `lastMessageDate := max`.
  * - `snapshot` WITHOUT syncSeq (login response, getOwnCommunities, getChats,
- *   community/chat events): sets `unread` only while stored `seq === 0`, and
- *   only if its lastRead >= stored lastRead; never changes `seq`/`counted`.
- *   `lastMessageDate := max`.
+ *   community/chat events): sets `unread` only while stored `seq === 0`,
+ *   only if its lastRead >= stored lastRead, and only if its lastMessageDate
+ *   >= stored lastMessageDate (otherwise it predates a live message already
+ *   counted); never changes `seq`/`counted`. `lastMessageDate := max`.
  * - `lastRead` (cliChannelLastRead, setChannelLastRead response, own mark):
  *   its `unread` is trusted only with a `syncSeq` >= stored seq and a lastRead
  *   >= stored lastRead; then handled like a seq'd snapshot. Without syncSeq,
@@ -535,7 +536,12 @@ export interface ReadMarker {
  * its markers has `atLatest && atBottom && newest`, AND
  * ChatEventSource.visible AND a user is logged in. Re-evaluated on every
  * marker update, visibility change and user change: a level, not an edge.
- * Sent only if newer than max(lastRead, last sent value); the first call
+ * Sent only if newer than max(server-acknowledged lastRead, last value the
+ * server accepted from this tab) — not the merged local lastRead, which also
+ * holds own marks and persisted local values (display only), so a mark whose
+ * call never landed is sent again. Acknowledged: getSyncState snapshots,
+ * cliChannelLastRead, setChannelLastRead responses, own posts; via `apply`
+ * only inputs with a syncSeq (or own posts). The first call
  * immediately, then a trailing throttle of MARK_READ_THROTTLE_MS. While
  * logged out or failing, the value stays pending and is sent on the next
  * login, live signal or trigger. `messageId` (= `newest.id`) is added once

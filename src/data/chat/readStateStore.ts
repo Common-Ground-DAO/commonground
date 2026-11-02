@@ -59,7 +59,12 @@ const noop = () => undefined;
 
 class ReadStateStoreImpl implements ReadStateStore {
   private readonly states = new Map<string, ChannelReadState>();
-  /** max lastRead (ms) from server sources (snapshots, events, responses); own marks excluded */
+  /**
+   * Server-acknowledged lastRead (ms): getSyncState snapshots, cliChannelLastRead
+   * events, setChannelLastRead responses, own posts. Decides whether a mark is
+   * sent; the merged state (incl. own marks and persisted local values) is for
+   * display only, so a mark whose call never landed is sent again.
+   */
   private readonly serverLastRead = new Map<string, number>();
   private readonly listeners = new Set<(state: ChannelReadState) => void>();
   private readonly markers = new Map<string, Set<MarkerImpl>>();
@@ -102,15 +107,23 @@ class ReadStateStoreImpl implements ReadStateStore {
   }
 
   apply(input: ReadStateInput): ChannelReadState {
-    return this.applyInput(input, 'server');
+    return this.applyInput(input, 'external');
   }
 
-  private applyInput(input: ReadStateInput, source: 'server' | 'own-mark'): ChannelReadState {
+  /**
+   * `ack`: from the server in this store (events, getSyncState, responses).
+   * `external`: fed in by the façade; may come from local persistence, so it
+   * counts as acknowledged only when it carries a syncSeq (or is an own post).
+   * `own-mark`: this tab's mark, display only.
+   */
+  private applyInput(input: ReadStateInput, source: 'ack' | 'external' | 'own-mark'): ChannelReadState {
     const before = this.states.get(input.channelId);
     const merged = mergeReadState(before, input);
     // own posts are marked read by the server itself
     const serverValue = input.kind === 'message' ? (input.own ? input.createdAt : null) : input.lastRead;
-    if (source === 'server' && serverValue) {
+    const acknowledged = source === 'ack'
+      || (source === 'external' && (input.kind === 'message' || typeof input.syncSeq === 'number'));
+    if (acknowledged && serverValue) {
       const t = isoTime(serverValue);
       if (t > (this.serverLastRead.get(input.channelId) ?? -Infinity)) this.serverLastRead.set(input.channelId, t);
     }
@@ -135,7 +148,7 @@ class ReadStateStoreImpl implements ReadStateStore {
     const input: ReadStateInput = { kind: 'lastRead', channelId: event.channelId, lastRead: event.lastRead };
     if (typeof event.unread === 'number') input.unread = event.unread;
     if (typeof event.syncSeq === 'number') input.syncSeq = event.syncSeq;
-    this.applyInput(input, 'server');
+    this.applyInput(input, 'ack');
     this.evaluate(event.channelId);
   }
 
@@ -151,7 +164,7 @@ class ReadStateStoreImpl implements ReadStateStore {
       own: data.creatorId === this.deps.events.userId,
     };
     if (typeof data.syncSeq === 'number') input.syncSeq = data.syncSeq;
-    this.applyInput(input, 'server');
+    this.applyInput(input, 'ack');
   }
 
   // ----- catch-up ----------------------------------------------------------
@@ -186,7 +199,7 @@ class ReadStateStoreImpl implements ReadStateStore {
                 unread: c.unread,
                 syncSeq: c.syncSeq,
                 lastMessageDate: c.lastMessageDate,
-              }, 'server');
+              }, 'ack');
             }
           } catch (e) {
             if (isHttpNotFound(e)) this.noSyncState = true;
@@ -290,7 +303,7 @@ class ReadStateStoreImpl implements ReadStateStore {
           ? { kind: 'lastRead', channelId, lastRead: resp.lastRead, unread: resp.unread }
           : { kind: 'lastRead', channelId, lastRead: value.createdAt.toISOString() };
         if (resp && typeof resp.syncSeq === 'number' && input.kind === 'lastRead') input.syncSeq = resp.syncSeq;
-        this.applyInput(input, resp ? 'server' : 'own-mark');
+        this.applyInput(input, resp ? 'ack' : 'own-mark');
         this.trySend(channelId);
       },
       () => {

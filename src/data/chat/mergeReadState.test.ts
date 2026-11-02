@@ -154,6 +154,25 @@ describe('mergeReadState: snapshot without syncSeq (older snapshots)', () => {
     expect(out).toMatchObject({ unread: 2, seq: 7, counted: [8], lastMessageDate: T(6) });
   });
 
+  it('a snapshot fetched before a live message does not undo its count', () => {
+    let s = state({ lastRead: T(2), lastMessageDate: T(2), unread: 0 });
+    s = mergeReadState(s, msg(T(3)));
+    expect(s.unread).toBe(1);
+    const stale = mergeReadState(s, snap({ lastRead: T(2), unread: 0, lastMessageDate: T(2) }));
+    expect(stale).toMatchObject({ unread: 1, lastMessageDate: T(3), lastRead: T(2) });
+  });
+
+  it('a snapshot that knows the newest message is taken (equal or newer lastMessageDate)', () => {
+    const s = state({ lastRead: T(2), lastMessageDate: T(3), unread: 1 });
+    expect(mergeReadState(s, snap({ lastRead: T(2), unread: 4, lastMessageDate: T(3) })).unread).toBe(4);
+    expect(mergeReadState(s, snap({ lastRead: T(2), unread: 5, lastMessageDate: T(6) }))).toMatchObject({ unread: 5, lastMessageDate: T(6) });
+  });
+
+  it('a snapshot without lastMessageDate never sets the count over a known one', () => {
+    const s = state({ lastRead: T(2), lastMessageDate: T(3), unread: 1 });
+    expect(mergeReadState(s, snap({ lastRead: T(2), unread: 0, lastMessageDate: null })).unread).toBe(1);
+  });
+
   it('is ignored for the count when older than our lastRead', () => {
     const s = state({ lastRead: T(4), lastMessageDate: T(6), unread: 1 });
     const out = mergeReadState(s, snap({ lastRead: T(2), unread: 9, lastMessageDate: T(6) }));

@@ -17,7 +17,7 @@ import { registerTeardown } from './cleanup';
  * events are not simulated — listen where the spec fires.
  */
 
-export type LocksMode = 'auto' | 'real' | 'fake';
+export type LocksMode = 'shared' | 'isolated' | 'real';
 
 export interface BrowserEnvOptions {
   /** Initial page visibility (default `visible`). */
@@ -27,10 +27,13 @@ export interface BrowserEnvOptions {
   /** `window.location` (default `http://localhost:3000/`). */
   url?: string;
   /**
-   * `navigator.locks`: `auto` (default) uses Node's real LockManager when the
-   * runtime has one, else the fake; `fake` forces the resettable fake.
-   * Node's real manager is process-wide: every simulated tab shares it, and a
-   * lock a test never releases stays held for the rest of the test file.
+   * `navigator.locks`:
+   * - `shared` (default): this env's client view of the per-test shared
+   *   `FakeLockManager` (`sharedLockManager()`), so several envs (tabs)
+   *   contend for the same locks. Reset after every test.
+   * - `isolated`: a client view of a manager of its own.
+   * - `real`: Node's LockManager — process-wide, cannot be reset or released
+   *   per tab; a lock a test never releases stays held for the whole file.
    */
   locks?: LocksMode;
   /**
@@ -127,8 +130,10 @@ export interface BrowserEnv {
   readonly localStorage: MemoryStorage;
   readonly sessionStorage: MemoryStorage;
   readonly locks: LockManager;
-  /** True when `locks` is the fake (resettable) LockManager. */
+  /** True when `locks` is a fake (resettable) LockManager view. */
   readonly fakeLocks: boolean;
+  /** Lock client id of this env (the `clientId` in `locks.query()`). */
+  readonly clientId: string;
 
   /** Sets `document.visibilityState`; fires `visibilitychange` only on a change. */
   setVisibility(state: DocumentVisibilityState): void;
@@ -151,10 +156,15 @@ export interface BrowserEnv {
 
   /**
    * Back to the initial state: visibility, onLine, both storages cleared,
-   * fake locks dropped. Listeners stay (they belong to the code under test);
+   * this tab's fake locks released. Listeners stay (they belong to the code under test);
    * for fresh listeners, create a fresh env.
    */
   reset(): void;
+  /**
+   * The tab goes away: releases every lock it holds and rejects its pending
+   * lock requests, as a browser does when a tab closes (fake locks only).
+   */
+  closeTab(): void;
   /** Restores the previous globals and closes tracked BroadcastChannels (installed envs only). */
   uninstall(): void;
 }
@@ -173,13 +183,15 @@ export function createBrowserEnv(options: BrowserEnvOptions = {}): BrowserEnv {
   const initialOnLine = options.onLine ?? true;
   let onLine = initialOnLine;
 
-  const realLocks = nodeLocks;
-  const useFake = options.locks === 'fake' || (options.locks !== 'real' && !realLocks);
-  if (options.locks === 'real' && !realLocks) {
+  const locksMode = options.locks ?? 'shared';
+  if (locksMode === 'real' && !nodeLocks) {
     throw new Error('installBrowserEnv: this runtime has no navigator.locks');
   }
-  const fakeLockManager = useFake ? new FakeLockManager() : undefined;
-  const locks = fakeLockManager ? (fakeLockManager as unknown as LockManager) : realLocks!;
+  const clientId = `tab-${++envCounter}`;
+  const lockClient = locksMode === 'real'
+    ? undefined
+    : (locksMode === 'shared' ? sharedLockManager() : new FakeLockManager()).client(clientId);
+  const locks: LockManager = lockClient ?? nodeLocks!;
 
   const document = new FakeDocument();
   document.visibilityState = initialVisibility;
@@ -210,7 +222,8 @@ export function createBrowserEnv(options: BrowserEnvOptions = {}): BrowserEnv {
     localStorage,
     sessionStorage,
     locks,
-    fakeLocks: !!fakeLockManager,
+    fakeLocks: !!lockClient,
+    clientId,
 
     setVisibility(state) {
       if (document.visibilityState === state) return;
@@ -274,7 +287,11 @@ export function createBrowserEnv(options: BrowserEnvOptions = {}): BrowserEnv {
       onLine = initialOnLine;
       localStorage.clear();
       sessionStorage.clear();
-      fakeLockManager?.reset();
+      lockClient?.release();
+    },
+    closeTab() {
+      if (!lockClient) throw new Error('closeTab: not supported with real Web Locks');
+      lockClient.release();
     },
     uninstall() {
       // not installed: nothing to restore
@@ -284,6 +301,7 @@ export function createBrowserEnv(options: BrowserEnvOptions = {}): BrowserEnv {
 }
 
 let installed: BrowserEnv | undefined;
+let envCounter = 0;
 
 const GLOBAL_KEYS = ['window', 'self', 'document', 'navigator', 'localStorage', 'sessionStorage', 'location', 'BroadcastChannel'] as const;
 
@@ -371,6 +389,7 @@ const nodeLocks: LockManager | undefined = (() => {
 // ---------------------------------------------------------------------------
 
 interface LockRequest {
+  clientId: string;
   name: string;
   mode: LockMode;
   callback: (lock: Lock | null) => unknown;
@@ -378,10 +397,19 @@ interface LockRequest {
   reject: (reason: unknown) => void;
   signal?: AbortSignal;
   onAbort?: () => void;
-  /** No longer in the held list (released, stolen or dropped by reset). */
+  /** No longer in the held list (released, stolen, its tab closed, or reset). */
   released?: boolean;
-  /** Taken away by a `steal` request; its promise has already rejected. */
-  stolen?: boolean;
+  /** Its request promise is settled already (stolen) or must never settle (tab closed). */
+  orphaned?: boolean;
+}
+
+type LockCallback = (lock: Lock | null) => unknown;
+
+/** One tab's view of a `FakeLockManager`: a `LockManager` plus `release()`. */
+export interface FakeLockClient extends LockManager {
+  readonly clientId: string;
+  /** Releases this client's held locks and rejects its pending requests. */
+  release(): void;
 }
 
 function abortError(message: string): Error {
@@ -389,15 +417,78 @@ function abortError(message: string): Error {
 }
 
 /**
- * Minimal single-process `LockManager`: exclusive/shared modes, FIFO per
- * name, `ifAvailable`, `steal`, `signal`, `query()`. `reset()` drops every
- * held lock and rejects every pending request.
+ * Minimal `LockManager` for one origin: exclusive/shared modes, FIFO per
+ * name, `ifAvailable`, `steal`, `signal`, `query()` (with `clientId`).
+ * `client(id)` hands out a per-tab view; `releaseClient(id)` is what a
+ * closing tab does. `reset()` drops every held lock and rejects every
+ * pending request.
  */
 export class FakeLockManager {
   #held = new Map<string, LockRequest[]>();
   #pending: LockRequest[] = [];
+  #clientCounter = 0;
+  readonly #onUse?: () => void;
 
-  request(name: string, optionsOrCallback: LockOptions | ((lock: Lock | null) => unknown), maybeCallback?: (lock: Lock | null) => unknown): Promise<unknown> {
+  /** `onUse` runs on every request (the shared manager registers its reset there). */
+  constructor(options: { onUse?: () => void } = {}) {
+    this.#onUse = options.onUse;
+  }
+
+  /** A `LockManager` view whose requests belong to `clientId`. */
+  client(clientId = `client-${++this.#clientCounter}`): FakeLockClient {
+    const request = ((name: string, a: LockOptions | LockCallback, b?: LockCallback) =>
+      this.#request(clientId, name, a, b)) as LockManager['request'];
+    return {
+      clientId,
+      request,
+      query: () => this.query(),
+      release: () => this.releaseClient(clientId),
+    };
+  }
+
+  /** Requests as the client `default`. */
+  request(name: string, optionsOrCallback: LockOptions | LockCallback, maybeCallback?: LockCallback): Promise<unknown> {
+    return this.#request('default', name, optionsOrCallback, maybeCallback);
+  }
+
+  async query(): Promise<LockManagerSnapshot> {
+    const info = (r: LockRequest): LockInfo => ({ name: r.name, mode: r.mode, clientId: r.clientId });
+    return {
+      held: [...this.#held.values()].flat().map(info),
+      pending: this.#pending.map(info),
+    };
+  }
+
+  /**
+   * The tab `clientId` is gone: its held locks are released (their request
+   * promises never settle, nobody is left to observe them) and its pending
+   * requests reject with an AbortError.
+   */
+  releaseClient(clientId: string): void {
+    for (const [name, held] of this.#held) {
+      for (const request of held.filter(r => r.clientId === clientId)) {
+        request.released = true;
+        request.orphaned = true;
+        held.splice(held.indexOf(request), 1);
+      }
+      if (held.length === 0) this.#held.delete(name);
+    }
+    const mine = this.#pending.filter(r => r.clientId === clientId);
+    this.#pending = this.#pending.filter(r => r.clientId !== clientId);
+    for (const request of mine) request.reject(abortError('lock client released'));
+    this.#process();
+  }
+
+  reset(): void {
+    for (const held of [...this.#held.values()].flat()) held.released = true;
+    this.#held.clear();
+    const pending = this.#pending;
+    this.#pending = [];
+    for (const request of pending) request.reject(abortError('lock manager reset'));
+  }
+
+  #request(clientId: string, name: string, optionsOrCallback: LockOptions | LockCallback, maybeCallback?: LockCallback): Promise<unknown> {
+    this.#onUse?.();
     const options: LockOptions = typeof optionsOrCallback === 'function' ? {} : optionsOrCallback;
     const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback;
     if (typeof callback !== 'function') return Promise.reject(new TypeError('callback required'));
@@ -406,11 +497,11 @@ export class FakeLockManager {
     if (options.signal?.aborted) return Promise.reject(options.signal.reason ?? abortError('aborted'));
 
     return new Promise((resolve, reject) => {
-      const request: LockRequest = { name, mode, callback, resolve, reject, signal: options.signal };
+      const request: LockRequest = { clientId, name, mode, callback, resolve, reject, signal: options.signal };
       if (options.steal) {
         for (const held of this.#held.get(name) ?? []) {
           held.released = true;
-          held.stolen = true;
+          held.orphaned = true;
           held.reject(abortError('lock stolen'));
         }
         this.#held.set(name, []);
@@ -434,22 +525,6 @@ export class FakeLockManager {
       this.#pending.push(request);
       this.#process();
     });
-  }
-
-  async query(): Promise<LockManagerSnapshot> {
-    const info = (r: LockRequest): LockInfo => ({ name: r.name, mode: r.mode });
-    return {
-      held: [...this.#held.values()].flat().map(info),
-      pending: this.#pending.map(info),
-    };
-  }
-
-  reset(): void {
-    for (const held of [...this.#held.values()].flat()) held.released = true;
-    this.#held.clear();
-    const pending = this.#pending;
-    this.#pending = [];
-    for (const request of pending) request.reject(abortError('lock manager reset'));
   }
 
   #grantable(name: string, mode: LockMode): boolean {
@@ -495,12 +570,37 @@ export class FakeLockManager {
       .then(
         (value) => {
           release();
-          if (!request.stolen) request.resolve(value);
+          if (!request.orphaned) request.resolve(value);
         },
         (error) => {
           release();
-          if (!request.stolen) request.reject(error);
+          if (!request.orphaned) request.reject(error);
         },
       );
   }
+}
+
+let sharedManager: FakeLockManager | undefined;
+let sharedResetRegistered = false;
+
+/**
+ * The per-test shared lock manager every `locks: 'shared'` env (the default)
+ * gets a client view of — one "origin" for all simulated tabs. Reset after
+ * the test that first used it.
+ */
+export function sharedLockManager(): FakeLockManager {
+  sharedManager ??= new FakeLockManager({ onUse: ensureSharedReset });
+  ensureSharedReset();
+  return sharedManager;
+}
+
+// Registered on first use in each test, so an env created in `beforeAll`
+// (persistent) still gets its locks reset after every test that uses them.
+function ensureSharedReset(): void {
+  if (sharedResetRegistered) return;
+  sharedResetRegistered = true;
+  registerTeardown(() => {
+    sharedResetRegistered = false;
+    sharedManager?.reset();
+  });
 }

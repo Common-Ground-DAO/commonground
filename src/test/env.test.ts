@@ -93,10 +93,58 @@ describe('installBrowserEnv', () => {
     expect(() => a.postMessage('late')).toThrow();
   });
 
-  it('uses Node\'s real Web Locks by default when present', async () => {
-    const env = installBrowserEnv();
+  it('uses Node\'s real Web Locks only when asked to', async () => {
+    const env = installBrowserEnv({ locks: 'real' });
     expect(env.fakeLocks).toBe(false);
+    expect(() => env.closeTab()).toThrow(/real Web Locks/);
     expect(await navigator.locks.request('cg:test', async lock => lock?.name)).toBe('cg:test');
+  });
+});
+
+describe('Web Locks across tabs', () => {
+  it('lets two tabs contend for one lock; closeTab() releases the closed tab\'s locks', async () => {
+    const tabA = installBrowserEnv();
+    const tabB = createBrowserEnv();
+    expect(tabA.fakeLocks).toBe(true);
+    expect(navigator.locks).toBe(tabA.locks);
+    const order: string[] = [];
+    void tabA.locks.request('cg:login', () => {
+      order.push('A holds');
+      return new Promise(() => {}); // the tab dies while holding the lock
+    });
+    const b = tabB.locks.request('cg:login', () => order.push('B holds'));
+    await flushMicrotasks();
+    expect(order).toEqual(['A holds']);
+    const snapshot = await tabB.locks.query();
+    expect(snapshot.held).toEqual([{ name: 'cg:login', mode: 'exclusive', clientId: tabA.clientId }]);
+    expect(snapshot.pending).toEqual([{ name: 'cg:login', mode: 'exclusive', clientId: tabB.clientId }]);
+
+    tabA.closeTab();
+    await b;
+    expect(order).toEqual(['A holds', 'B holds']);
+  });
+
+  it('closeTab() rejects the tab\'s pending requests', async () => {
+    const tabA = createBrowserEnv();
+    const tabB = createBrowserEnv();
+    void tabA.locks.request('l', () => new Promise(() => {}));
+    const pending = tabB.locks.request('l', () => 'never');
+    await flushMicrotasks();
+    tabB.closeTab();
+    await expect(pending).rejects.toThrow(/released/);
+  });
+
+  it('a lock left held by the previous test is free again (per-test reset)', async () => {
+    const tab = createBrowserEnv();
+    expect(await tab.locks.request('l', { ifAvailable: true }, lock => lock?.name ?? null)).toBe('l');
+  });
+
+  it('locks: isolated gives a tab a manager of its own', async () => {
+    const tabA = createBrowserEnv({ locks: 'isolated' });
+    const tabB = createBrowserEnv();
+    void tabB.locks.request('l', () => new Promise(() => {}));
+    await flushMicrotasks();
+    expect(await tabA.locks.request('l', { ifAvailable: true }, lock => lock?.name ?? null)).toBe('l');
   });
 });
 
@@ -172,9 +220,11 @@ describe('FakeLockManager', () => {
     expect(await locks.request('l', () => 'free')).toBe('free');
   });
 
-  it('is what installBrowserEnv({ locks: "fake" }) installs', () => {
-    const env = installBrowserEnv({ locks: 'fake' });
-    expect(env.fakeLocks).toBe(true);
-    expect(navigator.locks).toBe(env.locks);
+  it('hands out client views that report their clientId', async () => {
+    const locks = new FakeLockManager();
+    const a = locks.client('a');
+    await a.request('l', async () => {
+      expect((await locks.query()).held).toEqual([{ name: 'l', mode: 'exclusive', clientId: 'a' }]);
+    });
   });
 });

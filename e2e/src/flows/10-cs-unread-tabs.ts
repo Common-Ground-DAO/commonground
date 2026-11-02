@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import type { HTTPRequest, Page } from 'puppeteer';
+import type { HTTPRequest, HTTPResponse, Page } from 'puppeteer';
 import type { Flow, Session } from '../lib/harness.ts';
 import { openChannel, sendMessage, waitAppReady } from '../lib/app.ts';
 import { liveTab, ownerAndMember } from '../lib/chatsync.ts';
@@ -18,9 +18,9 @@ const OTHER = 'elsewhere';
  * B has two tabs; tab 2 is in the background. A posts in a channel B is not
  * in: tab 1 shows the unread dot. B reads the channel in tab 1, reloads: the
  * dot stays cleared — in tab 1 and, once in front, in tab 2, also after
- * reloading that one — and the server's `lastRead` (as the app loads it,
- * Community/getCommunityDetailView)
- * never moves backwards.
+ * reloading that one — and the server's `lastRead` (as the app loads it:
+ * Message/getSyncState, or Community/getCommunityDetailView on servers
+ * without it) never moves backwards, nor does any lastRead a tab sends.
  */
 export const csUnreadTabs: Flow = {
   id: 'cs-unread-tabs',
@@ -31,44 +31,66 @@ export const csUnreadTabs: Flow = {
 
     // every lastRead the server reported for READ, in order: [where, ISO]
     const serverReads: [string, string][] = [];
-    const posted: string[] = [];
-    let readChannelId: string | undefined;
+    // every lastRead B's tabs sent for READ (setChannelLastRead), in order: [tab, ISO]
+    const sent: [string, string][] = [];
+    const readChannelId = await t.step(`the server's id of "${READ}"`, async () => (await serverChannelState(member.page, community.path, READ)).channelId);
     const record = (where: string, lastRead: string | null | undefined) => {
       if (lastRead) {
         serverReads.push([where, lastRead]);
       }
     };
-    /** fails when any value the server reported is older than one it reported before */
-    const assertNeverRegressed = () => {
+    /** fails when a value in `list` is older than one before it */
+    const assertMonotonic = (list: [string, string][], what: string) => {
       let newest: [string, string] | undefined;
-      for (const entry of serverReads) {
+      for (const entry of list) {
         assert(!newest || Date.parse(entry[1]) >= Date.parse(newest[1]),
-          `the server's lastRead of "${READ}" went back from ${newest?.[1]} (${newest?.[0]}) to ${entry[1]} (${entry[0]})`);
+          `${what} of "${READ}" went back from ${newest?.[1]} (${newest?.[0]}) to ${entry[1]} (${entry[0]})`);
         if (!newest || Date.parse(entry[1]) > Date.parse(newest[1])) {
           newest = entry;
         }
       }
     };
+    /** the server never reported an older lastRead, and no tab ever sent an older one than was sent before */
+    const assertNeverRegressed = () => {
+      assertMonotonic(serverReads, "the server's lastRead");
+      assertMonotonic(sent, 'a lastRead the member\'s tabs sent (setChannelLastRead)');
+    };
     const serverState = async (page: Page, where: string) => {
-      const state = await serverChannelState(page, community.path, READ);
-      readChannelId = state.channelId;
+      const state = await serverChannelState(page, community.path, READ, readChannelId);
+      t.metric('serverStateSource', state.source);
       record(where, state.lastRead);
       assertNeverRegressed();
       return state;
     };
-    // what B's tabs send (setChannelLastRead; the server answers without a value), for the report
+    // what B's tabs send for READ and what the server answers (newer servers echo the stored lastRead)
     const watchLastRead = (s: Session) => {
       s.page.on('request', (request: HTTPRequest) => {
-        if (request.url().includes('/api/v2/Message/setChannelLastRead')) {
-          try {
-            const body = JSON.parse(request.postData() ?? '{}') as { access?: { channelId?: string }; lastRead?: string };
-            if (!readChannelId || body.access?.channelId === readChannelId) {
-              posted.push(`${s.name}: ${body.lastRead}`);
-            }
+        if (!request.url().includes('/api/v2/Message/setChannelLastRead')) {
+          return;
+        }
+        try {
+          const body = JSON.parse(request.postData() ?? '{}') as { access?: { channelId?: string }; lastRead?: string };
+          if (body.access?.channelId === readChannelId && body.lastRead) {
+            sent.push([s.name, body.lastRead]);
           }
-          catch {
-            // not JSON
+        }
+        catch {
+          // not JSON
+        }
+      });
+      s.page.on('response', async (response: HTTPResponse) => {
+        if (!response.url().includes('/api/v2/Message/setChannelLastRead')) {
+          return;
+        }
+        try {
+          const body = JSON.parse(response.request().postData() ?? '{}') as { access?: { channelId?: string } };
+          const result = JSON.parse(await response.text()) as { status?: string; data?: { lastRead?: string } };
+          if (body.access?.channelId === readChannelId && result.status === 'OK') {
+            record(`setChannelLastRead answer to ${s.name}`, result.data?.lastRead);
           }
+        }
+        catch {
+          // no body
         }
       });
     };
@@ -116,7 +138,8 @@ export const csUnreadTabs: Flow = {
       const deadline = Date.now() + ms;
       while (Date.now() < deadline) {
         const unread = await channelUnread(page, READ);
-        assert(unread !== true, `${who}: the unread dot of "${READ}" is back (${where})`);
+        assert(unread !== null, `${who}: "${READ}" is not in the channel list (${where})`);
+        assert(unread === false, `${who}: the unread dot of "${READ}" is back (${where})`);
         await sleep(300);
       }
       const s = await serverState(page, where);
@@ -154,15 +177,9 @@ export const csUnreadTabs: Flow = {
     });
 
     t.metric('serverLastReadHistory', serverReads);
-    await t.step('the server lastRead never moved backwards', async () => {
+    t.metric('setChannelLastReadSent', sent);
+    await t.step('neither the server lastRead nor a tab\'s sent lastRead ever moved backwards', async () => {
       assertNeverRegressed();
     });
-    t.metric('setChannelLastReadSent', posted);
-    // a tab that sends an older lastRead than one sent before: the server keeps the newer one (soft)
-    const sentTimes = posted.map(p => Date.parse(p.split(': ')[1] ?? '')).filter(n => !Number.isNaN(n));
-    const backwards = sentTimes.filter((v, i) => i > 0 && v < Math.max(...sentTimes.slice(0, i))).length;
-    if (backwards) {
-      t.note(`FINDING: ${backwards} setChannelLastRead request(s) sent an older lastRead than an earlier one (the server kept the newer value)`);
-    }
   },
 };

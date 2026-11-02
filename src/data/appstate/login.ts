@@ -522,7 +522,8 @@ class LoginManager {
         uniqueDb.uniques.get("OwnData") as Promise<Unique.OwnData | undefined>,
         notificationsApi.getUnreadCount(undefined),
       ]);
-      if (!!ownData) {
+      // a logout or user switch during the awaits must not get this count
+      if (!!ownData && this._currentUser === stored) {
         notificationDatabase.setupAfterLogin(Number(unreadCount));
       }
     } catch (e) {

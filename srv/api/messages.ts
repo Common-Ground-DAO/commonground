@@ -297,6 +297,47 @@ async function emitMessageEvents(events: Events.Message.Message[], access: API.M
   }
 }
 
+/**
+ * The events of a (soft) delete: one `delete` with every deleted id, its
+ * highest `syncSeq` and all of them in `syncSeqs` (a multi-row delete bumps
+ * the channel sequence once per row), plus an `update` for every reply whose
+ * parent was deleted (`parentMessageId: null`, with its own `syncSeq`).
+ */
+export function deleteResultEvents(
+  channelId: string,
+  result: Awaited<ReturnType<typeof messageHelper.deleteMessage>>,
+): Events.Message.Message[] {
+  const events: Events.Message.Message[] = [];
+  if (result.deletedIds.length > 0) {
+    events.push({
+      type: "cliMessageEvent",
+      action: "delete",
+      data: {
+        channelId,
+        deletedIds: result.deletedIds,
+        ...(result.deletedSyncSeqs.length > 0 ? {
+          syncSeq: result.deletedSyncSeqs.reduce((max, seq) => Math.max(max, seq)),
+          syncSeqs: result.deletedSyncSeqs,
+        } : {}),
+      },
+    });
+  }
+  for (const parent of result.updatedParents) {
+    events.push({
+      type: "cliMessageEvent",
+      action: "update",
+      data: {
+        id: parent.id,
+        channelId,
+        parentMessageId: null,
+        updatedAt: result.dbNow,
+        syncSeq: parent.syncSeq,
+      },
+    });
+  }
+  return events;
+}
+
 async function createMessage(
   user: User,
   data: API.Messages.createMessage.Request,
@@ -390,11 +431,21 @@ async function createMessage(
       messageIds: [data.parentMessageId],
     }))[0];
     if (!parentMessage) {
+      // a retry of a create whose parent was deleted in the meantime
+      const stored = await messageHelper.getOwnStoredMessage(user.id, access.channelId, data.id);
+      if (stored) {
+        return stored;
+      }
       throw new Error(errors.server.NOT_FOUND);
     }
   }
 
-  const { message, userAlias } = await messageHelper.createMessage(user.id, data);
+  const { message, userAlias, created } = await messageHelper.createMessage(user.id, data);
+  if (!created) {
+    // a retry of a create that is stored already: its events and
+    // notifications went out with the first one
+    return message;
+  }
 
   const event: Events.Message.Message = {
     type: "cliMessageEvent",
@@ -703,6 +754,8 @@ registerPostRoute<
         id,
         channelId: access.channelId,
         updatedAt: result.updatedAt,
+        editedAt: result.editedAt,
+        syncSeq: result.syncSeq,
       },
     };
 
@@ -710,6 +763,8 @@ registerPostRoute<
 
     const returnVal: API.Messages.editMessage.Response = {
       editedAt: result.editedAt,
+      updatedAt: result.updatedAt,
+      syncSeq: result.syncSeq,
     }
     if (updateData.attachments) {
       returnVal.attachments = updateData.attachments;
@@ -786,31 +841,10 @@ registerPostRoute<
       channelId: access.channelId,
       creatorId: message.creatorId,
     });
-    const events: Events.Message.Message[] = [{
-      type: "cliMessageEvent",
-      action: "delete",
-      data: {
-        channelId: access.channelId,
-        deletedIds: [data.messageId],
-      },
-    }];
-
-    if (!!result && result.updatedParentIdToNull.length > 0) {
-      result.updatedParentIdToNull.forEach(messageId => {
-        events.push({
-          type: "cliMessageEvent",
-          action: "update",
-          data: {
-            id: messageId,
-            channelId: access.channelId,
-            parentMessageId: null,
-            updatedAt: result.dbNow,
-          },
-        });
-      })
+    const events = deleteResultEvents(access.channelId, result);
+    if (events.length > 0) {
+      emitMessageEvents(events, data.access);
     }
-
-    emitMessageEvents(events, data.access);
   }
 );
 
@@ -842,29 +876,10 @@ registerPostRoute<
 
     const result = await messageHelper.deleteAllUserMessages(data);
 
-    const events: Events.Message.Message[] = [];
-    events.push({
-      type: "cliMessageEvent",
-      action: "delete",
-      data: {
-        channelId: data.access.channelId,
-        deletedIds: result.deletedIds,
-      },
-    });
-    for (const updatedMessageId of result.updatedParentIdToNull) {
-      events.push({
-        type: "cliMessageEvent",
-        action: "update",
-        data: {
-          channelId: data.access.channelId,
-          id: updatedMessageId,
-          updatedAt: result.dbNow,
-          parentMessageId: null,
-        },
-      });
+    const events = deleteResultEvents(data.access.channelId, result);
+    if (events.length > 0) {
+      emitMessageEvents(events, access);
     }
-
-    emitMessageEvents(events, access);
   }
 );
 
@@ -944,6 +959,7 @@ registerPostRoute<
           id: data.messageId,
           updatedAt: result.updatedAt,
           reactions: result.reactions,
+          syncSeq: result.syncSeq,
         },
       };
       emitMessageEvents([event], access, { userIds: [user.id] });
@@ -986,6 +1002,7 @@ registerPostRoute<
           id: data.messageId,
           updatedAt: result.updatedAt,
           reactions: result.reactions,
+          syncSeq: result.syncSeq,
         },
       };
       emitMessageEvents([event], access, { userIds: [user.id] });
@@ -1015,17 +1032,48 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
+    const { access } = data;
+    await checkMessageReadAccess(access, user.id);
     // the stored value: newer than the posted one if another tab got further
-    const lastRead = await messageHelper.setChannelLastRead(user.id, data);
+    const { lastRead, unread, syncSeq } = await messageHelper.setChannelLastRead(user.id, data);
 
     const event: Events.Channel.LastRead = {
       type: 'cliChannelLastRead',
-      channelId: data.access.channelId,
+      channelId: access.channelId,
       lastRead,
+      unread,
+      syncSeq,
     };
+    if ('communityId' in access) {
+      event.communityId = access.communityId;
+    }
+    else if ('chatId' in access) {
+      event.chatId = access.chatId;
+    }
     eventHelper.emit(event, {
       userIds: [user.id],
     });
+
+    return { lastRead, unread, syncSeq };
+  }
+);
+
+/**
+ * chat-sync catch-up of one channel (contract: API.Messages.getChanges).
+ * Same read access as `loadMessages`; not on the bot allowlist.
+ */
+registerPostRoute<
+  API.Messages.getChanges.Request,
+  API.Messages.getChanges.Response
+>(
+  messagingRouter,
+  '/getChanges',
+  validators.API.Message.getChanges,
+  async (request, response, data) => {
+    const userId = request.session.user?.id;
+    await checkMessageReadAccess(data.access, userId);
+
+    return await messageHelper.getChanges(userId, data);
   }
 );
 

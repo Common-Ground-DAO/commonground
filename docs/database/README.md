@@ -12,7 +12,11 @@
 > TypeORM 1.x (the data source, the CLI, the entity metadata of the GIN index and the
 > `roles_contracts_contracts` foreign key, the schema comparison) against commit 8dcbb42,
 > 2026-11-01; `channelreadstate` write rule and the `calls` open-calls index against commit
-> 591e6cf, 2026-11-02
+> 591e6cf, 2026-11-02; the message sync sequence (`channel_sync_state`, `messages.syncSeq`,
+> the `messages_sync_seq_*` triggers, the delete lock order, the migration's write stall),
+> `idx_messages_channelId_createdAt_live` and the idempotent message insert against commit
+> 30ce83e, 2026-11-02; the `createMessage` channel lock and `createdAt` rule against commits
+> 959064f and 1963d4f, 2026-11-02
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -495,11 +499,32 @@ Per-user, per-channel settings. Composite PK: `(userId, channelId, communityId)`
 ### Messaging
 
 #### `messages`
-All messages across all channel types. Unique constraint on `(channelId, createdAt)`.
+All messages across all channel types. Unique constraint on `(channelId, createdAt)`
+(`UQ_6df0905b0802e8402e6570c6505`; ms precision, database clock).
+`messageHelper.createMessage` inserts in a transaction that first locks the channel's
+`channel_sync_state` row (`INSERT … ON CONFLICT DO UPDATE … WHERE false`, which locks
+without writing) and then sets `createdAt` = `updatedAt` = `GREATEST(clock_timestamp(),
+newest createdAt of the channel + 1 ms)`, so creates in one channel get distinct,
+increasing timestamps in sequence order even in bursts. The +1 ms chain is followed only
+while it stays within 5 s of the clock: after a clock that ran ahead was corrected, a new
+message takes `clock_timestamp()` instead of a future time. A collision with a writer that
+does not take the lock first (an API process from before this change, during a deploy) is
+retried, up to 3 attempts. The insert is idempotent on the
+client-chosen `id`: a known id is answered from a lookup without an INSERT (an INSERT
+that inserts nothing would still take a sync seq), checked again under the channel lock,
+and `ON CONFLICT ("id") DO NOTHING` covers a same-id create in another channel racing it;
+the creator's `channelreadstate` (`lastRead` = the message's `createdAt`) is only
+written for a new row. Partial indexes from migration `1793635200000-chatSyncSeq`:
+`idx_messages_channelId_syncSeq` on `("channelId", "syncSeq") WHERE "syncSeq" IS NOT
+NULL` (see [Message sync sequence](#message-sync-sequence)) and
+`idx_messages_channelId_createdAt_live` on `("channelId", "createdAt") INCLUDE
+("creatorId") WHERE "deletedAt" IS NULL`, which makes the capped unread counts
+(`setChannelLastRead`, `getSyncState`: other users' live messages after `lastRead`)
+index-only scans.
 
 | Column | Type | Notes |
 |--------|------|-------|
-| `id` | `uuid` PK | Auto-generated |
+| `id` | `uuid` PK | Chosen by the client on create (idempotency key) |
 | `creatorId` | `uuid` | FK -> `users.id` (CASCADE) |
 | `channelId` | `uuid` | FK -> `channels.id` (CASCADE), indexed |
 | `body` | `jsonb` | Message content (rich text) |
@@ -511,6 +536,62 @@ All messages across all channel types. Unique constraint on `(channelId, created
 | `createdAt` | `timestamptz(3)` | Indexed |
 | `updatedAt` | `timestamptz(3)` | Indexed |
 | `deletedAt` | `timestamptz(3)` | Soft delete, indexed |
+| `syncSeq` | `bigint` | Nullable, `select: false`. Channel sequence of the row's last write, set only by the `messages_sync_seq_*` triggers; NULL for rows not written since migration `1793635200000-chatSyncSeq` (no backfill) |
+
+#### Message sync sequence
+Per-channel, commit-ordered change sequence for messages (chat-sync catch-up,
+`Message/getChanges`; migration `1793635200000-chatSyncSeq`):
+
+- `channel_sync_state("channelId" uuid PK, "seq" bigint NOT NULL)` holds the last
+  sequence assigned in a channel. A channel without a row has seq 0. GRANT `SELECT,
+  INSERT, UPDATE` to `writer`, `SELECT` to `reader`. Entity
+  `srv/entities/channel-sync-state.ts`.
+- Function `messages_set_sync_seq()` (plpgsql, `SECURITY INVOKER`, table name
+  schema-qualified) upserts the channel's row (`INSERT … VALUES (NEW."channelId", 1) ON
+  CONFLICT DO UPDATE SET seq = seq + 1`) and stores the new value in `NEW."syncSeq"`.
+  Triggers: `messages_sync_seq_insert` (`BEFORE INSERT … FOR EACH ROW`) and
+  `messages_sync_seq_update` (`BEFORE UPDATE … FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM
+  NEW.*)`, so an update that changes no column takes no sequence). An explicit
+  `syncSeq` in a write is overwritten.
+- Every write is covered: create, edit, reactions (the counter update on `messages`), soft
+  deletes (a tombstone keeps its seq; deletion is terminal) and the reply cleanup that
+  sets `parentMessageId` to NULL. A multi-row write takes one seq per row.
+- Commit order: the upsert keeps the channel's row locked until the writing transaction
+  ends, so writers of one channel are serialised and commit in sequence order. A statement
+  that reads `seq = S` and the channel's messages in one snapshot sees every row whose
+  last write had a seq `<= S` and none above. A rolled-back write releases its seq (no
+  gap); an `INSERT … ON CONFLICT DO NOTHING` that inserts nothing still takes one (BEFORE
+  triggers fire before the conflict check), which is why `createMessage` looks a known id
+  up first (and again under the channel lock); only a create that loses a same-id race against a create in another channel leaves such a gap. Writes to different
+  channels do not wait for each other.
+- Lock order of the writers: `set/unsetReaction` lock the reaction row, then the message
+  row, then the sequence row; an edit locks the message row, then the sequence row; `createMessage` locks the sequence row first (then inserts); a new
+  reply (or a changed `parentMessageId`) takes the sequence row first and then `FOR KEY
+  SHARE` on the parent (foreign-key check). The soft delete
+  (`messageHelper.deleteMessage`/`deleteAllUserMessages`) writes several rows and runs in
+  one transaction that follows the same order: it selects its targets, locks their
+  reaction rows (`FOR UPDATE`, key order), then the targets and their replies (`FOR NO KEY
+  UPDATE`, id order — the strength of an update of non-key columns, which does not block
+  the `KEY SHARE` of a concurrent reply insert), and writes exactly the rows it locked, so
+  it never waits for a row while holding the sequence row. A reply committed after that
+  lock keeps its `parentMessageId`, the same outcome as a reply committed after the
+  delete. During a rolling deploy, API processes from before this change delete without
+  the pre-lock; a deadlock with them is possible for that window only (PostgreSQL aborts
+  one of the two transactions, the request fails and can be repeated).
+- Cost: one primary-key upsert on a small table per message write. Adding the column is
+  catalog-only; while every row is NULL the `syncSeq` index build is one sequential scan of
+  `messages`; the `createdAt_live` index build took 2.3 s on 6.5M messages (measured during
+  review). Covered by `srv/tests/chatSyncSeqDb.spec.ts` (real PostgreSQL, opt-in
+  `CG_TEST_PG_HOST`; it also checks that the unread count is an index-only scan).
+- **Write stall on a live deploy:** the `ALTER TABLE … ADD "syncSeq"` takes an `ACCESS
+  EXCLUSIVE` lock on `messages` and both indexes are built without `CONCURRENTLY`.
+  `migrateDb.ts` runs `runMigrations()` with TypeORM's default transaction mode `all` (all
+  pending migrations in one transaction), and TypeORM 1.1.2 refuses a per-migration
+  `transaction = false` in that mode (`ForbiddenTransactionModeOverrideError`), so
+  `CREATE INDEX CONCURRENTLY` is not available. Reads and writes of `messages` therefore
+  wait until the whole migration run commits, and the locks taken by later migrations of
+  the same deploy are held until then as well. The runtime on the production dump is timed
+  in the cg.box dress rehearsal.
 
 #### `chats`
 Direct message conversations. Currently supports 1:1 chats with provision for group chats (see code TODO).
@@ -534,7 +615,7 @@ User reactions on items (messages, articles, etc.). Composite PK: `(userId, item
 | `createdAt/updatedAt/deletedAt` | `timestamptz(3)` | All indexed |
 
 #### `channelreadstate`
-Tracks the last-read timestamp per user per channel. Composite PK: `(channelId, userId)`. Every upsert keeps the later of the stored and the new value (`ON CONFLICT … DO UPDATE SET "lastRead" = GREATEST(channelreadstate."lastRead", EXCLUDED."lastRead")`), so `lastRead` never moves backwards; `/setChannelLastRead` also clamps a posted time to the server's `now()`.
+Tracks the last-read timestamp per user per channel. Composite PK: `(channelId, userId)`. Every upsert keeps the later of the stored and the new value (`ON CONFLICT … DO UPDATE SET "lastRead" = GREATEST(channelreadstate."lastRead", EXCLUDED."lastRead")`), so `lastRead` never moves backwards; `/setChannelLastRead` also clamps a posted time to the server's `now()` (or takes the `createdAt` of a posted `messageId` in the channel). The own-message upsert in `createMessage` runs only when the message row is new.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -1426,7 +1507,7 @@ Four login roles exist in every cluster:
 | Role | Created by | Privileges | Used by |
 |---|---|---|---|
 | `postgres` | the image entrypoint (`POSTGRES_PASSWORD` = `PG_SU_PASSWORD`) | superuser, owns every object | `migrate-db`, `cg-builder` (migration tooling) |
-| `writer` | `docker/db/init.sh` (`PG_WRITER_PASSWORD`) | `ALL PRIVILEGES` on every table except `logging` (`INSERT` only); `USAGE, SELECT` on `migrations_id_seq` | api, wsapi, memberlist, job-runner, onchain |
+| `writer` | `docker/db/init.sh` (`PG_WRITER_PASSWORD`) | `ALL PRIVILEGES` on every table except `logging` (`INSERT` only) and `channel_sync_state` (`SELECT, INSERT, UPDATE`, written by the `messages` triggers under the writing role); `USAGE, SELECT` on `migrations_id_seq` | api, wsapi, memberlist, job-runner, onchain |
 | `reader` | `docker/db/init.sh` (`PG_READER_PASSWORD`) | `SELECT` on every table except `logging` (`INSERT` only); `USAGE, SELECT` on `migrations_id_seq` | no service today |
 | `mediasoup` | `docker/db/init.sh` (`PG_MEDIASOUP_PASSWORD`); migration `1689160339881-addMediasoupRole` creates it only if it is missing (`PG_MEDIASOUP_PASSWORD` empty at initialization) | `SELECT` on seven tables, `INSERT`/`UPDATE` on `calls`, `callmembers`, `callservers` (`1689160339881`, `1689184137878`, `1689258457796`, `1690444603969`) | mediasoup |
 

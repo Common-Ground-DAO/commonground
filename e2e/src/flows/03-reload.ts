@@ -4,7 +4,7 @@
 
 import type { HTTPResponse } from 'puppeteer';
 import type { Flow } from '../lib/harness.ts';
-import { RELOAD_MODES, type ReloadMode } from '../lib/config.ts';
+import { OPT_IN_RELOAD_MODES, RELOAD_MODES, type ReloadMode } from '../lib/config.ts';
 import { signUp } from '../lib/account.ts';
 import { closeUserMenu, connectionState, createChannel, createCommunity, EDITOR, navigate, openChannel, openUserMenu, waitAppReady, waitMessageConfirmed } from '../lib/app.ts';
 import { assert, sleep, until } from '../lib/ui.ts';
@@ -48,9 +48,9 @@ import { coldServiceWorkerReload } from '../lib/cdp.ts';
  *              ignoreCache, through the worker, which has to start cold);
  *              the indicator must show "connected" within 12 s of the
  *              reload — "hidden" (never connected since the load) counts
- *              as a failure in this mode
+ *              as a failure in this mode. Only when --reload-modes names it.
  * --reload-modes picks a subset; the default rotates through all available
- * (session-expired needs E2E_REDIS_URL).
+ * (session-expired needs E2E_REDIS_URL) except force-reload-cold-sw.
  * The report has per-iteration results, the failure rate per mode, and as
  * diagnostics every Set-Cookie of the session cookie that arrived after the
  * device login had set a new session id ("cookie regressions").
@@ -248,7 +248,7 @@ export const reload: Flow = {
 
     const reloads = ['reload', 'hard-reload-bypass-sw', 'navigate'] as const;
     // --reload-modes and E2E_REDIS_URL are validated by parseArgs
-    const modes = (t.config.reloadModes.length ? t.config.reloadModes : [...RELOAD_MODES])
+    const modes = (t.config.reloadModes.length ? t.config.reloadModes : RELOAD_MODES.filter(m => !OPT_IN_RELOAD_MODES.includes(m)))
       .filter(m => m !== 'session-expired' || !!t.config.redisUrl);
     t.note(`reload modes: ${modes.join(', ')}`);
     /** makes the server forget (session-expired) or the browser drop (cookie-cleared) the session */

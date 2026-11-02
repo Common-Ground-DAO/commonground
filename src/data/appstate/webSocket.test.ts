@@ -36,11 +36,18 @@ vi.mock('data/api/user', () => ({
 
 type Tab = Awaited<ReturnType<typeof openTab>>;
 
+// constants of webSocket.ts (it reads `window` at import; checked in openTab)
+const SOCKET_LOGIN_ACK_TIMEOUT_MS = 20_000;
+const SOCKET_LOGIN_RETRY_MS = [5_000, 15_000, 60_000] as const;
+
 async function openTab(options: BrowserEnvOptions & { deviceId?: string; start?: boolean } = {}) {
   const { deviceId, start = true, ...envOptions } = options;
   fake.io = createFakeIo();
   const env: BrowserEnv = installBrowserEnv({ url: 'https://app.test/', ...envOptions });
-  const { default: ws } = await importAsNewTab(() => import('data/appstate/webSocket'));
+  const wsModule = await importAsNewTab(() => import('data/appstate/webSocket'));
+  expect(wsModule.SOCKET_LOGIN_ACK_TIMEOUT_MS).toBe(SOCKET_LOGIN_ACK_TIMEOUT_MS);
+  expect(wsModule.SOCKET_LOGIN_RETRY_MS).toEqual(SOCKET_LOGIN_RETRY_MS);
+  const ws = wsModule.default;
   const lives: LiveKind[] = [];
   const resumes: ResumeReason[] = [];
   const liveChanges: boolean[] = [];
@@ -125,12 +132,73 @@ describe('live = connected and socket login acked', () => {
 
     // the server answers again from now on
     tab.socket.handle('login', () => 'OK');
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(SOCKET_LOGIN_ACK_TIMEOUT_MS);
     await settle(tab);
     expect(settled).toBe('socket login timed out');
-    // the connection was restarted and the next connect logged in again
+    // one timeout: the login is retried after the (randomised) first backoff, on the same connection
+    await vi.advanceTimersByTimeAsync(SOCKET_LOGIN_RETRY_MS[0] * 1.5);
+    await settle(tab);
     expect(tab.ws.live).toBe(true);
-    expect(tab.lives).toEqual(['established', 'restored']);
+    expect(tab.lives).toEqual(['established', 'user']);
+    expect(fake.io!.last.sentOf('login')).toHaveLength(2);
+  });
+
+  it('ack timeouts back off and reconnect only after two in a row (no storm)', async () => {
+    useDataLayerFakeTimers();
+    const tab = await openTab({ start: false });
+    await tab.ws.login('dev-1');
+    tab.ws.start();
+    await flushMicrotasks();
+    let connects = 0;
+    tab.socket.on('connect', () => { connects++; });
+    tab.socket.handle('login', () => NO_ACK);
+    for (let i = 0; i < 300; i++) {
+      await vi.advanceTimersByTimeAsync(1_000);
+      await settle(tab, 1);
+    }
+    // 5 minutes of an unanswering server: a handful of attempts, not one per 10 s
+    expect(tab.socket.sentOf('login').length).toBeLessThanOrEqual(7);
+    expect(connects).toBeLessThanOrEqual(4);
+    expect(connects).toBeGreaterThanOrEqual(1);
+    expect(tab.ws.live).toBe(false);
+  });
+
+  it('the first timeout retries the login, the second one restarts the connection', async () => {
+    useDataLayerFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5); // no jitter
+    const tab = await openTab({ deviceId: 'dev-1' });
+    await settle(tab);
+    tab.socket.handle('login', () => NO_ACK);
+    tab.socket.drop('transport close');
+    tab.socket.accept();
+    await settle(tab);
+    const connectsBefore = tab.socket.sentOf('cgPing').length;
+    await vi.advanceTimersByTimeAsync(SOCKET_LOGIN_ACK_TIMEOUT_MS + SOCKET_LOGIN_RETRY_MS[0]);
+    await settle(tab);
+    // retried on the same connection
+    expect(tab.socket.sentOf('login')).toHaveLength(3);
+    expect(tab.socket.sentOf('cgPing').length).toBe(connectsBefore);
+    await vi.advanceTimersByTimeAsync(SOCKET_LOGIN_ACK_TIMEOUT_MS + SOCKET_LOGIN_RETRY_MS[1]);
+    await settle(tab);
+    // a new connection (its connect pings) and a new login on it
+    expect(tab.socket.sentOf('cgPing').length).toBeGreaterThan(connectsBefore);
+    expect(tab.socket.sentOf('login')).toHaveLength(4);
+    vi.mocked(Math.random).mockRestore();
+  });
+
+  it('a device signature that never settles times out instead of blocking later logins', async () => {
+    useDataLayerFakeTimers();
+    const device = await import('data/util/device');
+    const sign = vi.spyOn(device, 'signApiSecret').mockImplementationOnce(() => new Promise(() => undefined));
+    const tab = await openTab();
+    await settle(tab);
+    const first = tab.ws.login('dev-1').catch((e: Error) => e.message);
+    await settle(tab);
+    await vi.advanceTimersByTimeAsync(SOCKET_LOGIN_ACK_TIMEOUT_MS);
+    expect(await first).toBe('device signature timed out');
+    await tab.ws.login('dev-1');
+    expect(tab.ws.live).toBe(true);
+    sign.mockRestore();
   });
 
   it('an anonymous tab is live once connected, after re-sending its socket-scoped joins', async () => {
@@ -155,6 +223,12 @@ describe('live = connected and socket login acked', () => {
     await expect(tab.ws.login('dev-1')).rejects.toThrow('SECURITY_STEP_REQUIRED');
     expect(tab.ws.live).toBe(false);
     expect(securityStepState.required).toBe(true);
+
+    // a visibility return does not ask again on the same connection
+    tab.env.hide();
+    tab.env.show();
+    await settle(tab);
+    expect(tab.socket.loginCount).toBe(1);
   });
 
   it('ERROR is not live; the socket login is retried with a backoff', async () => {
@@ -166,7 +240,7 @@ describe('live = connected and socket login acked', () => {
     expect(tab.ws.live).toBe(false);
     // retried with backoff while visible
     tab.socket.loginResult = 'OK';
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(SOCKET_LOGIN_RETRY_MS[0] * 1.5);
     await settle(tab);
     expect(tab.ws.live).toBe(true);
     expect(tab.lives).toEqual(['established', 'user']);

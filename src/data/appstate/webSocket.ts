@@ -43,10 +43,17 @@ type CgSocket = Socket<
   API.Server.ServerToClientEvents
 >;
 
-/** Timeout of each ack of the socket login (`getSignableSecret`, `login`). */
-export const SOCKET_LOGIN_ACK_TIMEOUT_MS = 10_000;
-/** Backoff of socket-login retries after an "ERROR" ack (visible tabs only). */
+/** Timeout of each ack of the socket login (`getSignableSecret`, `login`) and of the device signature. */
+export const SOCKET_LOGIN_ACK_TIMEOUT_MS = 20_000;
+/**
+ * Backoff of socket-login retries (after "ERROR", a failed signature or an
+ * ack timeout; visible tabs only), each randomised by
+ * ±SOCKET_LOGIN_RETRY_RANDOMIZATION so clients do not retry in step.
+ */
 export const SOCKET_LOGIN_RETRY_MS = [5_000, 15_000, 60_000] as const;
+export const SOCKET_LOGIN_RETRY_RANDOMIZATION = 0.5;
+/** Consecutive ack timeouts before the retry restarts the connection instead of only the login. */
+export const SOCKET_LOGIN_TIMEOUTS_BEFORE_RECONNECT = 2;
 const PING_INTERVAL_MS = 59_000;
 /** A pong older than this means the connection is dead although it looks open. */
 const PONG_STALE_MS = 110_000;
@@ -59,6 +66,14 @@ const debugLog = (...args: any[]) => {
 };
 
 class SocketLoginError extends Error { }
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 function emitAll<A extends unknown[]>(listeners: Set<(...args: A) => void>, ...args: A) {
   for (const listener of Array.from(listeners)) {
@@ -99,6 +114,10 @@ export class WebSocketManager implements Transport {
   private _loginSync?: Promise<void>;
   private _loginRetryTimer?: ReturnType<typeof setTimeout>;
   private _loginRetryCount = 0;
+  /** consecutive socket-login ack timeouts (reset when live) */
+  private _ackTimeouts = 0;
+  /** `<epoch>:<deviceId>` of a socket login answered SECURITY_STEP_REQUIRED: not retried on that connection */
+  private _securityStepLogin?: string;
 
   // policy
   private _holds = new Set<object>();
@@ -331,6 +350,7 @@ export class WebSocketManager implements Transport {
     this._liveEpoch = this._connectionEpoch;
     this._live = true;
     this._loginRetryCount = 0;
+    this._ackTimeouts = 0;
     debugLog('WebSocketManager live', kind);
     this.updateState();
     emitAll(this._liveChangeListeners, true);
@@ -405,8 +425,12 @@ export class WebSocketManager implements Transport {
       return;
     }
     if (this._socket?.connected) {
-      // connected but not logged in (a failed or pending socket login): try again
-      this.syncSocketLogin().catch(() => undefined);
+      // connected but not logged in (a failed or pending socket login): try
+      // again — unless the server asked for the security step on this
+      // connection and nothing changed
+      if (this._securityStepLogin !== `${this._connectionEpoch}:${this._deviceId}`) {
+        this.syncSocketLogin().catch(() => undefined);
+      }
       return;
     }
     this.connect();
@@ -651,7 +675,7 @@ export class WebSocketManager implements Transport {
         const secret = await socket.timeout(SOCKET_LOGIN_ACK_TIMEOUT_MS).emitWithAck("getSignableSecret");
         this.throwIfStale(epoch);
         const { signApiSecret } = await import('data/util/device');
-        const signedData = await signApiSecret(desired, secret);
+        const signedData = await withTimeout(signApiSecret(desired, secret), SOCKET_LOGIN_ACK_TIMEOUT_MS, 'device signature timed out');
         this.throwIfStale(epoch);
         result = await socket.timeout(SOCKET_LOGIN_ACK_TIMEOUT_MS).emitWithAck("login", signedData);
         this.throwIfStale(epoch);
@@ -660,13 +684,17 @@ export class WebSocketManager implements Transport {
           throw e instanceof SocketLoginError ? e : new SocketLoginError('socket disconnected during login');
         }
         if (e instanceof Error && e.message === 'operation has timed out') {
-          // the connection answers no acks: it is not usable, start over
-          console.warn('Socket login timed out, reconnecting');
-          if (!this._policyClosed) this.forceReconnect();
+          // the server answers no acks (overloaded, or the connection is not
+          // usable): retry with a backoff; after repeated timeouts start the
+          // connection over
+          this._ackTimeouts++;
+          const reconnect = this._ackTimeouts >= SOCKET_LOGIN_TIMEOUTS_BEFORE_RECONNECT;
+          console.warn(`Socket login timed out (${this._ackTimeouts}), retrying${reconnect ? ' with a new connection' : ''}`);
+          this.scheduleLoginRetry(reconnect ? 'reconnect' : 'login');
           throw new SocketLoginError('socket login timed out');
         }
         // signing failed (device key gone): the login manager finds out on its HTTP login
-        this.scheduleLoginRetry();
+        this.scheduleLoginRetry('login');
         throw e;
       }
 
@@ -679,11 +707,12 @@ export class WebSocketManager implements Transport {
       }
       if (result === 'SECURITY_STEP_REQUIRED') {
         // no realtime until the account finished the step: show it
+        this._securityStepLogin = `${epoch}:${desired}`;
         securityStepState.set(true);
         throw new SocketLoginError('SECURITY_STEP_REQUIRED');
       }
       console.error('Socket login failed (ERROR)');
-      this.scheduleLoginRetry();
+      this.scheduleLoginRetry('login');
       throw new SocketLoginError('ERROR');
     }
   }
@@ -694,16 +723,22 @@ export class WebSocketManager implements Transport {
     }
   }
 
-  private scheduleLoginRetry() {
+  private scheduleLoginRetry(action: 'login' | 'reconnect') {
     this.clearLoginRetry();
     if (this._deviceId === undefined) return;
-    const delay = SOCKET_LOGIN_RETRY_MS[Math.min(this._loginRetryCount, SOCKET_LOGIN_RETRY_MS.length - 1)];
+    const base = SOCKET_LOGIN_RETRY_MS[Math.min(this._loginRetryCount, SOCKET_LOGIN_RETRY_MS.length - 1)];
+    const delay = base * (1 - SOCKET_LOGIN_RETRY_RANDOMIZATION + Math.random() * 2 * SOCKET_LOGIN_RETRY_RANDOMIZATION);
     this._loginRetryCount++;
     this._loginRetryTimer = setTimeout(() => {
       this._loginRetryTimer = undefined;
-      // hidden tabs retry when they become visible (onReturn -> connect does not
-      // re-login a connected socket, so check here as well)
-      if (document.visibilityState === 'visible' && this._socket?.connected && !this._live) {
+      // hidden tabs retry when they become visible (onReturn)
+      if (document.visibilityState !== 'visible' || !this._socket?.connected || this._live) {
+        return;
+      }
+      if (action === 'reconnect' && !this._policyClosed) {
+        this._ackTimeouts = 0;
+        this.forceReconnect();
+      } else {
         this.syncSocketLogin().catch(() => undefined);
       }
     }, delay);

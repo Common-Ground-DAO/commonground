@@ -41,6 +41,14 @@ function debugLog(...args: any[]) {
 // phrase some old clients kept in localStorage for a silent re-login.
 const MNEMONIC_KEY = 'CRYPTOGRAM_USER_MNEMONIC';
 const CURRENT_USER_KEY = 'CG_CURRENT_USER';
+/**
+ * Backoff of the page's device login after a failure other than NOT_FOUND
+ * (network, server error, a lost lock), each ±50 % random; also retried at
+ * once on the next visibility/online check.
+ */
+export const DEVICE_LOGIN_RETRY_MS = [5_000, 15_000, 60_000] as const;
+/** deviceLoginRequest: the hold cap took the lock before the next step */
+const LOCK_LOST = 'LOCK_LOST' as const;
 
 export type LoginOptions =
   { account: 'wallet' } |
@@ -62,6 +70,8 @@ class LoginManager {
   private _loginInProgress?: Promise<API.User.login.Response | 'taken-over'>;
   /** a login of this tab is running (`_loginInProgress` lingers for a tick after it) */
   private _loginRunning = false;
+  private _deviceLoginRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  private _deviceLoginRetryCount = 0;
   private _currentUser: CurrentUser | null = JSON.parse(localStorage.getItem(CURRENT_USER_KEY) || 'null');
   private _windowReloadTriggered = false;
   private _waitBeforeWindowReload?: Promise<any>;
@@ -195,7 +205,11 @@ class LoginManager {
             triedLogin = true;
             const outcome = await this._login({ deviceId: this.currentUser.deviceId }, true);
             if (outcome === 'taken-over') {
-              // another tab had just logged in: its session serves this tab too
+              // another tab had just logged in: its session serves this tab
+              // too; or the stored user changed meanwhile: follow it
+              if (!this._currentUser) {
+                await this.followStoredUser();
+              }
               return;
             }
             result = outcome;
@@ -207,6 +221,9 @@ class LoginManager {
                 await this.signedOutElsewhere();
                 return;
               }
+            }
+            if (this.needsDeviceLoginRetry()) {
+              this.scheduleDeviceLoginRetry();
             }
             throw e;
           }
@@ -261,6 +278,10 @@ class LoginManager {
    * it is never logged out from here.
    */
   public async checkLoginStatus() {
+    if (this.needsDeviceLoginRetry()) {
+      this.retryDeviceLoginIfNeeded();
+      return;
+    }
     if (this.state === "loggedin" && !this._loginRunning && !this.logoutPromise) {
       try {
         const { userId } = await userApi.checkLoginStatus();
@@ -512,30 +533,86 @@ class LoginManager {
    * replace this one. `requestStartedAt` is taken right before the login
    * request (the snapshot is not older).
    */
-  private async deviceLoginRequest(deviceId: string): Promise<{ response: API.User.login.Response; requestStartedAt: number }> {
-    const [keyPairObj, signableSecret] = await Promise.all([
-      getDeviceKeyPair(deviceId),
-      userApi.getSignableSecret()
-    ]);
-    const encoder = new TextEncoder();
-    const signature_arrayBuffer = await crypto.subtle.sign(
-      {
-        name: "ECDSA",
-        hash: "SHA-384"
-      },
-      keyPairObj.keyPair.privateKey as any,
-      encoder.encode(signableSecret)
+  private async deviceLoginRequest(
+    deviceId: string,
+    signal: AbortSignal,
+  ): Promise<{ response: API.User.login.Response; requestStartedAt: number } | typeof LOCK_LOST> {
+    for (let attempt = 0; ; attempt++) {
+      const [keyPairObj, signableSecret] = await Promise.all([
+        getDeviceKeyPair(deviceId),
+        userApi.getSignableSecret()
+      ]);
+      // the lock is gone (hold cap): no next step outside it
+      if (signal.aborted) return LOCK_LOST;
+      const encoder = new TextEncoder();
+      const signature_arrayBuffer = await crypto.subtle.sign(
+        {
+          name: "ECDSA",
+          hash: "SHA-384"
+        },
+        keyPairObj.keyPair.privateKey as any,
+        encoder.encode(signableSecret)
+      );
+      const uint8arr = new Uint8Array(signature_arrayBuffer);
+      const base64Signature = btoa(String.fromCharCode(...Array.from(uint8arr)));
+      if (signal.aborted) return LOCK_LOST;
+      const requestStartedAt = Date.now();
+      try {
+        const response = await userApi.login({
+          type: "device",
+          deviceId,
+          base64Signature,
+          secret: signableSecret
+        });
+        return { response, requestStartedAt };
+      } catch (e) {
+        // a late secret request of another tab (one that lost the lock, or a
+        // page without the lock) replaced ours: once more with a fresh one
+        if (attempt === 0 && e instanceof Error && e.message === errors.server.INVALID_SECRET && !signal.aborted) {
+          continue;
+        }
+        throw e;
+      }
+    }
+  }
+
+  /**
+   * After a failed page device login (not NOT_FOUND): the tab is anonymous
+   * but still knows its stored device — try again with a backoff.
+   */
+  private scheduleDeviceLoginRetry() {
+    if (this._deviceLoginRetryTimer !== undefined) {
+      return;
+    }
+    const base = DEVICE_LOGIN_RETRY_MS[Math.min(this._deviceLoginRetryCount, DEVICE_LOGIN_RETRY_MS.length - 1)];
+    this._deviceLoginRetryCount++;
+    this._deviceLoginRetryTimer = setTimeout(() => {
+      this._deviceLoginRetryTimer = undefined;
+      this.retryDeviceLoginIfNeeded();
+    }, base * (0.5 + Math.random()));
+  }
+
+  private clearDeviceLoginRetry() {
+    if (this._deviceLoginRetryTimer !== undefined) {
+      clearTimeout(this._deviceLoginRetryTimer);
+      this._deviceLoginRetryTimer = undefined;
+    }
+  }
+
+  /** a failed device login left this tab anonymous with its stored device: retry */
+  private needsDeviceLoginRetry(): boolean {
+    return (
+      this.state === "anonymous" && !!this._currentUser && !this._loginRunning && !this.logoutPromise &&
+      this.readStoredUser()?.deviceId === this._currentUser.deviceId
     );
-    const uint8arr = new Uint8Array(signature_arrayBuffer);
-    const base64Signature = btoa(String.fromCharCode(...Array.from(uint8arr)));
-    const requestStartedAt = Date.now();
-    const response = await userApi.login({
-      type: "device",
-      deviceId,
-      base64Signature,
-      secret: signableSecret
-    });
-    return { response, requestStartedAt };
+  }
+
+  private retryDeviceLoginIfNeeded() {
+    if (!this.needsDeviceLoginRetry() || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+      return;
+    }
+    this.clearDeviceLoginRetry();
+    this.autoLogin().catch(e => console.error("Error in device login retry", e));
   }
 
   private readStoredUser(): CurrentUser | null {
@@ -603,7 +680,10 @@ class LoginManager {
     const { userId, deviceId } = this.currentUser;
     let result: { response: API.User.login.Response; requestStartedAt: number } | 'other-user' | undefined;
     try {
-      result = await withLoginLock(async () => {
+      result = await withLoginLock(async ({ signal }) => {
+        if (this.readStoredUser()?.deviceId !== deviceId) {
+          return 'other-user' as const;
+        }
         const status = await userApi.checkLoginStatus().catch(() => null);
         if (!!status && status.userId !== null && status.userId !== userId) {
           return 'other-user' as const;
@@ -611,7 +691,9 @@ class LoginManager {
         if (this.state !== "loggedin" || this.currentUser?.userId !== userId) {
           return undefined;
         }
-        return this.deviceLoginRequest(deviceId);
+        const request = await this.deviceLoginRequest(deviceId, signal);
+        // lost the lock before the request: the next restored refreshes
+        return request === LOCK_LOST ? undefined : request;
       });
     } catch (e) {
       if (e instanceof Error && e.message === errors.server.NOT_FOUND) {
@@ -722,26 +804,59 @@ class LoginManager {
             const { deviceId } = options;
             // secret, signature and login under one lock: the server keeps
             // one signable secret per session (shared by all tabs)
-            const outcome = await withLoginLock(async ({ waited }) => {
-              if (waited && mayTakeOver) {
+            type Outcome =
+              { kind: 'superseded' } | { kind: 'take-over'; stored: CurrentUser } | { kind: 'cancelled' } |
+              { kind: 'lock-lost' } | { kind: 'response'; response: API.User.login.Response; requestStartedAt: number };
+            let outcome: Outcome = { kind: 'lock-lost' };
+            // a holder that lost the lock before its request queues once more
+            for (let round = 0; round < 2 && outcome.kind === 'lock-lost'; round++) {
+              outcome = await withLoginLock(async ({ waited, signal }): Promise<Outcome> => {
                 const stored = this.readStoredUser();
-                const status = await userApi.checkLoginStatus().catch(() => null);
-                if (!!stored && stored.deviceId === deviceId && status?.userId === stored.userId) {
-                  return { takeOver: stored };
+                if (!stored || stored.deviceId !== deviceId) {
+                  // another tab logged out or in as someone else meanwhile
+                  return { kind: 'superseded' };
                 }
-              }
-              if (this.state !== 'loggingin') {
-                return undefined;
-              }
-              return this.deviceLoginRequest(deviceId);
-            });
-            if (!!outcome && 'takeOver' in outcome) {
-              await this.takeOverSession(outcome.takeOver);
+                if ((waited || round > 0) && mayTakeOver) {
+                  const status = await userApi.checkLoginStatus().catch(() => null);
+                  if (status?.userId === stored.userId) {
+                    return { kind: 'take-over', stored };
+                  }
+                }
+                if (this.state !== 'loggingin') {
+                  return { kind: 'cancelled' };
+                }
+                const result = await this.deviceLoginRequest(deviceId, signal);
+                return result === LOCK_LOST ? { kind: 'lock-lost' } : { kind: 'response', ...result };
+              });
+            }
+            if (outcome.kind === 'lock-lost') {
+              throw new Error("LOGIN_LOCK_LOST");
+            }
+            if (outcome.kind === 'take-over') {
+              await this.takeOverSession(outcome.stored);
+              this._deviceLoginRetryCount = 0;
               resolve('taken-over');
               return;
             }
-            responseData = outcome?.response;
-            requestStartedAt = outcome?.requestStartedAt;
+            if (outcome.kind === 'superseded') {
+              // this tab's device is not the stored one any more
+              this._currentUser = null;
+              if (!this.readStoredUser()) {
+                // another tab logged out
+                securityStepState.setUser(null);
+                webSocketManager.logout();
+                channelDatabaseManager.userId = undefined;
+                this.state = "anonymous";
+              }
+              // else another tab logged in: autoLogin follows the stored user
+              // once this login is over
+              resolve('taken-over');
+              return;
+            }
+            if (outcome.kind === 'response') {
+              responseData = outcome.response;
+              requestStartedAt = outcome.requestStartedAt;
+            }
           } else {
             const keyPair = await generateNewKeyPair();
             const publicKey = await window.crypto.subtle.exportKey(
@@ -828,6 +943,8 @@ class LoginManager {
               securityStepState.set(responseData.securityStepRequired === true);
               await this.setupAfterLogin(responseData, requestStartedAt);
               this.state = "loggedin";
+              this._deviceLoginRetryCount = 0;
+              this.clearDeviceLoginRetry();
               broadcastLoggedIn(responseData.ownData.id);
               resolve(responseData);
             }

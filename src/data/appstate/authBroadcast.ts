@@ -33,64 +33,77 @@ export const authTabId = randomSocketId();
 
 /**
  * How long a tab may hold the login lock (one login: secret, signature,
- * request). A hung request must not block the other tabs' logins: after this
- * the caller gets LOGIN_LOCK_HOLD_TIMEOUT and the lock is released — before
- * waiting tabs give up on the lock (LOGIN_LOCK_WAIT_MS).
+ * request). A slow request must not block the other tabs' logins: after this
+ * the lock is released (before waiting tabs give up on it,
+ * LOGIN_LOCK_WAIT_MS) and `info.signal` aborts, but the holder's own call
+ * goes on and its result is returned — the holder only must not start a new
+ * step outside the lock (check `signal.aborted` between steps).
  */
 export const LOGIN_LOCK_HOLD_MAX_MS = 10_000;
-
-export const LOGIN_LOCK_HOLD_TIMEOUT = 'LOGIN_LOCK_HOLD_TIMEOUT';
 
 export type LoginLockInfo = {
   /** another tab held the lock first (it may just have logged in) */
   waited: boolean;
+  /** aborts when this tab no longer holds the lock (hold cap) */
+  signal: AbortSignal;
 };
 
-function holdLimited<T>(run: () => Promise<T>): Promise<T> {
+/**
+ * Runs `fn` in the lock callback and returns once `fn` settled or the hold
+ * cap is reached, whichever comes first; `result` is `fn`'s own promise.
+ */
+function startHeld<T>(fn: (info: LoginLockInfo) => Promise<T>, waited: boolean): { held: Promise<void>; result: Promise<T> } {
+  const controller = new AbortController();
+  const result = Promise.resolve().then(() => fn({ waited, signal: controller.signal }));
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(LOGIN_LOCK_HOLD_TIMEOUT)), LOGIN_LOCK_HOLD_MAX_MS);
+  const cap = new Promise<void>(resolve => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve();
+    }, LOGIN_LOCK_HOLD_MAX_MS);
   });
-  return Promise.race([run(), timeout]).finally(() => clearTimeout(timer));
+  const held = Promise.race([result.then(() => undefined, () => undefined), cap]).finally(() => clearTimeout(timer));
+  return { held, result };
 }
 
 /**
- * Runs `fn` while holding the login lock, at most LOGIN_LOCK_HOLD_MAX_MS.
- * Without `navigator.locks`, or when the lock cannot be had within
- * LOGIN_LOCK_WAIT_MS, `fn` runs unserialised. `info.waited` tells whether
- * another tab held the lock first. Never call it from inside `fn` (the lock
- * is not reentrant).
+ * Runs `fn` while holding the login lock (released at the latest after
+ * LOGIN_LOCK_HOLD_MAX_MS, see there). Without `navigator.locks`, or when the
+ * lock cannot be had within LOGIN_LOCK_WAIT_MS, `fn` runs unserialised.
+ * `info.waited` tells whether another tab held the lock first. Never call it
+ * from inside `fn` (the lock is not reentrant).
  */
 export async function withLoginLock<T>(fn: (info: LoginLockInfo) => Promise<T>): Promise<T> {
   const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
   if (!locks || typeof locks.request !== 'function') {
-    return holdLimited(() => fn({ waited: false }));
+    return startHeld(fn, false).result;
   }
-  const NOT_AVAILABLE = Symbol('not available');
-  const immediate = await locks.request(LOGIN_LOCK_NAME, { ifAvailable: true }, (lock) => {
-    return lock ? holdLimited(() => fn({ waited: false })) : NOT_AVAILABLE;
+  let run: { held: Promise<void>; result: Promise<T> } | undefined;
+  await locks.request(LOGIN_LOCK_NAME, { ifAvailable: true }, (lock) => {
+    if (!lock) return undefined;
+    run = startHeld(fn, false);
+    return run.held;
   });
-  if (immediate !== NOT_AVAILABLE) {
-    return immediate as T;
+  if (run) {
+    return run.result;
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), LOGIN_LOCK_WAIT_MS);
-  let started = false;
   try {
-    return await locks.request(LOGIN_LOCK_NAME, { signal: controller.signal }, () => {
-      started = true;
+    await locks.request(LOGIN_LOCK_NAME, { signal: controller.signal }, () => {
       clearTimeout(timer);
-      return holdLimited(() => fn({ waited: true }));
-    }) as T;
+      run = startHeld(fn, true);
+      return run.held;
+    });
   } catch (e) {
-    if (!started) {
+    if (!run) {
       // timed out waiting (or the lock manager failed): do not block the login
       console.warn('Login lock not available, logging in without it', e);
       clearTimeout(timer);
-      return holdLimited(() => fn({ waited: true }));
+      return startHeld(fn, true).result;
     }
-    throw e;
   }
+  return run!.result;
 }
 
 function openChannel(name: string): BroadcastChannel | undefined {

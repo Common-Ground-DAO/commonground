@@ -38,6 +38,12 @@ const fake = vi.hoisted(() => {
     invalidSecrets: 0,
     /** when set, User/login never answers */
     hangLogin: false,
+    /** when set, the next getSignableSecret reaches the server (writes its secret) only once resolved */
+    secretGate: undefined as Deferred<void> | undefined,
+    /** when set, the next User/login reaches the server (checks the secret) only once resolved */
+    preLoginGate: undefined as Deferred<void> | undefined,
+    /** when set, the next User/login fails with this error (before the secret check) */
+    failNextLogin: undefined as string | undefined,
   };
   return {
     io: undefined as FakeIo | undefined,
@@ -57,13 +63,30 @@ vi.mock('data/api/user', () => ({
     ensureSession: async () => undefined,
     getSignableSecret: async () => {
       await Promise.resolve();
-      fake.server.secret = `http-secret-${++fake.server.secretCounter}`;
-      return fake.server.secret;
+      const secret = `http-secret-${++fake.server.secretCounter}`;
+      if (fake.server.secretGate) {
+        const gate = fake.server.secretGate;
+        fake.server.secretGate = undefined;
+        await gate.promise;
+      }
+      // written when the (possibly late) request reaches the server
+      fake.server.secret = secret;
+      return secret;
     },
     checkLoginStatus: async () => ({ userId: fake.server.sessionUserId }),
     login: async (request: { type: string; deviceId?: string; secret?: string }) => {
       const { server } = fake;
       if (server.hangLogin) return new Promise(() => undefined);
+      if (server.failNextLogin) {
+        const error = server.failNextLogin;
+        server.failNextLogin = undefined;
+        throw new Error(error);
+      }
+      if (server.preLoginGate) {
+        const gate = server.preLoginGate;
+        server.preLoginGate = undefined;
+        await gate.promise;
+      }
       if (request.type === 'device') {
         // one secret per session, used once (srv/api/user.ts)
         if (!request.secret || request.secret !== server.secret) {
@@ -151,6 +174,9 @@ function resetServer() {
     secret: undefined,
     invalidSecrets: 0,
     hangLogin: false,
+    secretGate: undefined,
+    preLoginGate: undefined,
+    failNextLogin: undefined,
     sessionUserId: null,
     loginCalls: 0,
     logoutCalls: 0,
@@ -181,6 +207,23 @@ async function settle(rounds = 10) {
     for (const socket of fake.io?.sockets ?? []) await socket.settle();
     await new Promise<void>(resolve => setImmediate(resolve));
   }
+}
+
+/** until some tab holds the login lock (signing takes real time) */
+async function waitHeld() {
+  for (let i = 0; i < 1000 && (await navigator.locks.query()).held!.length === 0; i++) {
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+}
+
+/** real event-loop turns (crypto and the fake server need them) */
+async function spin(turns = 300) {
+  for (let i = 0; i < turns; i++) await new Promise<void>(resolve => setImmediate(resolve));
+}
+
+/** real event-loop turns until `condition` holds (at most a few thousand) */
+async function until(condition: () => boolean) {
+  for (let i = 0; i < 5000 && !condition(); i++) await new Promise<void>(resolve => setImmediate(resolve));
 }
 
 function setup() {
@@ -260,28 +303,120 @@ describe('login lock', () => {
     expect(fake.snapshots.every(s => typeof s.options?.requestStartedAt === 'number')).toBe(true);
   });
 
-  it('a hung login request releases the lock after LOGIN_LOCK_HOLD_MAX_MS', async () => {
+  it('a slow login releases the lock after LOGIN_LOCK_HOLD_MAX_MS and still completes', async () => {
     useDataLayerFakeTimers();
     setup();
     storeUser('u1', 'dev-1');
     const a = await openTab();
     const b = await openTab();
-    fake.server.hangLogin = true;
+    const gate = deferred();
+    fake.server.loginGate = gate; // A's User/login is inside the server (secret used)
     const loginA = a.loginManager.autoLogin().then(() => 'ok', (e: Error) => e.message);
-    for (let i = 0; i < 1000 && (await navigator.locks.query()).held!.length === 0; i++) {
-      await new Promise<void>(resolve => setImmediate(resolve));
-    }
+    await waitHeld();
+    await until(() => fake.server.concurrentLogins === 1);
+    expect(fake.server.concurrentLogins).toBe(1);
     const loginB = b.loginManager.autoLogin().then(() => 'ok', (e: Error) => e.message);
-    await settle();
-    fake.server.hangLogin = false;
+    await spin(50);
     const { LOGIN_LOCK_HOLD_MAX_MS } = await import('data/appstate/authBroadcast');
     await vi.advanceTimersByTimeAsync(LOGIN_LOCK_HOLD_MAX_MS);
-    for (let i = 0; i < 1000 && fake.server.loginCalls === 0; i++) {
-      await new Promise<void>(resolve => setImmediate(resolve));
-    }
-    expect(await loginA).toBe('LOGIN_LOCK_HOLD_TIMEOUT');
+    // B got the lock after the hold cap (not after its own 15 s wait) and logged in
     expect(await loginB).toBe('ok');
     expect(b.loginManager.state).toBe('loggedin');
+    // A's own request was not abandoned
+    gate.resolve();
+    expect(await loginA).toBe('ok');
+    expect(a.loginManager.state).toBe('loggedin');
+    expect(fake.server.invalidSecrets).toBe(0);
+  });
+
+  it('R2: a single tab whose login takes longer than the hold cap ends logged in', async () => {
+    useDataLayerFakeTimers();
+    setup();
+    storeUser('u1', 'dev-1');
+    const tab = await openTab();
+    const gate = deferred();
+    fake.server.loginGate = gate;
+    const login = tab.loginManager.autoLogin().then(() => 'ok', (e: Error) => e.message);
+    await waitHeld();
+    await until(() => fake.server.concurrentLogins === 1);
+    await vi.advanceTimersByTimeAsync(12_000);
+    gate.resolve();
+    expect(await login).toBe('ok');
+    expect(tab.loginManager.state).toBe('loggedin');
+    expect(fake.server.loginCalls).toBe(1);
+  });
+
+  it('R3: a late secret of a holder that lost the lock does not break the next tab (one retry with a fresh secret)', async () => {
+    useDataLayerFakeTimers();
+    setup();
+    storeUser('u1', 'dev-1');
+    const a = await openTab();
+    const b = await openTab();
+    const secretA = deferred();
+    fake.server.secretGate = secretA; // A's getSignableSecret reaches the server late
+    const loginA = a.loginManager.autoLogin().then(() => 'ok', (e: Error) => e.message);
+    await waitHeld();
+    const loginB = b.loginManager.autoLogin().then(() => 'ok', (e: Error) => e.message);
+    await spin(50);
+    const { LOGIN_LOCK_HOLD_MAX_MS } = await import('data/appstate/authBroadcast');
+    const preLoginB = deferred();
+    fake.server.preLoginGate = preLoginB; // B's login is in flight when A's late secret lands
+    await vi.advanceTimersByTimeAsync(LOGIN_LOCK_HOLD_MAX_MS + 10);
+    await spin();
+    secretA.resolve(); // replaces B's secret on the server
+    await spin();
+    preLoginB.resolve();
+    await spin();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await Promise.all([loginA, loginB])).toEqual(['ok', 'ok']);
+    await settle();
+    expect(fake.server.invalidSecrets).toBe(1);
+    expect(a.loginManager.state).toBe('loggedin');
+    expect(b.loginManager.state).toBe('loggedin');
+    // A did not sign outside the lock: it took B's fresh session over
+    expect(fake.server.loginCalls).toBe(1);
+  });
+
+  it('(c) a tab that got the lock follows a stored user that changed since it started', async () => {
+    setup();
+    storeUser('u1', 'dev-1');
+    const tab = await openTab();
+    // another tab logged in interactively as u2 (its storage event is late)
+    storeUser('u2', 'dev-2');
+    fake.server.sessionUserId = 'u2';
+    await tab.loginManager.autoLogin();
+    await settle();
+    expect(fake.server.loginCalls).toBe(0); // no login of dev-1 over u2's session
+    expect(fake.server.sessionUserId).toBe('u2');
+    expect(tab.loginManager.state).toBe('loggedin');
+    expect(tab.loginManager.currentUser?.userId).toBe('u2');
+    expect(socketLoggedInAs(tab.socket)).toBe('dev-2');
+  });
+
+  it('a failed device login (not NOT_FOUND) is retried with a backoff and on the next status check', async () => {
+    useDataLayerFakeTimers();
+    setup();
+    storeUser('u1', 'dev-1');
+    const tab = await openTab();
+    fake.server.failNextLogin = 'SERVICE_UNAVAILABLE';
+    await expect(tab.loginManager.autoLogin()).rejects.toThrow('SERVICE_UNAVAILABLE');
+    expect(tab.loginManager.state).toBe('anonymous');
+    expect(tab.loginManager.currentUser?.userId).toBe('u1');
+    const { DEVICE_LOGIN_RETRY_MS } = await import('data/appstate/login');
+    await vi.advanceTimersByTimeAsync(DEVICE_LOGIN_RETRY_MS[0] * 1.5);
+    await until(() => tab.loginManager.state === 'loggedin');
+    expect(tab.loginManager.state).toBe('loggedin');
+
+    // the visibility/online check retries at once
+    await tab.loginManager.logout();
+    storeUser('u1', 'dev-1');
+    const second = await openTab();
+    fake.server.failNextLogin = 'SERVICE_UNAVAILABLE';
+    await second.loginManager.autoLogin().catch(() => undefined);
+    expect(second.loginManager.state).toBe('anonymous');
+    await second.loginManager.checkLoginStatus();
+    await until(() => second.loginManager.state === 'loggedin');
+    expect(second.loginManager.state).toBe('loggedin');
   });
 
   it('does not wait forever for a lock held by a frozen tab', async () => {

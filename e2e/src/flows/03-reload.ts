@@ -9,6 +9,7 @@ import { signUp } from '../lib/account.ts';
 import { closeUserMenu, connectionState, createChannel, createCommunity, EDITOR, navigate, openChannel, openUserMenu, waitAppReady, waitMessageConfirmed } from '../lib/app.ts';
 import { assert, sleep, until } from '../lib/ui.ts';
 import { sessionIdFromCookie, valkeyCommands } from '../lib/valkey.ts';
+import { coldServiceWorkerReload } from '../lib/cdp.ts';
 
 /**
  * Reload robustness. Every page load of a logged-in app runs a device-key
@@ -41,6 +42,13 @@ import { sessionIdFromCookie, valkeyCommands } from '../lib/valkey.ts';
  *              key in Valkey; only with E2E_REDIS_URL, i.e. the disposable
  *              instance): the browser sends a cookie the server no longer
  *              knows
+ *   force-reload-cold-sw  the service worker is stopped (CDP
+ *              ServiceWorker.stopAllWorkers, as the browser does with an
+ *              idle worker) and the page hard-reloaded (Page.reload
+ *              ignoreCache, through the worker, which has to start cold);
+ *              the indicator must show "connected" within 12 s of the
+ *              reload — "hidden" (never connected since the load) counts
+ *              as a failure in this mode
  * --reload-modes picks a subset; the default rotates through all available
  * (session-expired needs E2E_REDIS_URL).
  * The report has per-iteration results, the failure rate per mode, and as
@@ -51,13 +59,15 @@ import { sessionIdFromCookie, valkeyCommands } from '../lib/valkey.ts';
 const SETTLE_MS = 12_000;
 const MAX_HOLD_MS = 4_000;
 const LOGIN_HOLD_MS = 800;
+/** force-reload-cold-sw: "connected" within this time of the load */
+const COLD_SW_CONNECT_MS = 12_000;
 
 type Mode = ReloadMode;
 
 type Iteration = {
   i: number;
   mode: Mode;
-  reload: 'reload' | 'hard-reload-bypass-sw' | 'navigate';
+  reload: 'reload' | 'hard-reload-bypass-sw' | 'navigate' | 'cold-sw-reload';
   deviceLogins: number;
   heldResponses: number;
   loginRequired: string[];
@@ -267,7 +277,7 @@ export const reload: Flow = {
         const it: Iteration = {
           i,
           mode: modes[i % modes.length],
-          reload: reloads[Math.floor(i / modes.length) % 3],
+          reload: modes[i % modes.length] === 'force-reload-cold-sw' ? 'cold-sw-reload' : reloads[Math.floor(i / modes.length) % 3],
           deviceLogins: 0,
           heldResponses: 0,
           loginRequired: [],
@@ -307,7 +317,11 @@ export const reload: Flow = {
             loginInFlight = false;
             sentDuringLogin.clear();
           }
-          if (it.reload === 'reload') {
+          if (it.reload === 'cold-sw-reload') {
+            const workers = await coldServiceWorkerReload(page, s.cdp);
+            it.actions.push(`stopped ${workers.versions} service worker version(s) (${workers.running.join(',') || '-'})`);
+          }
+          else if (it.reload === 'reload') {
             await page.reload({ waitUntil: 'domcontentloaded' });
           }
           else if (it.reload === 'hard-reload-bypass-sw') {
@@ -342,10 +356,12 @@ export const reload: Flow = {
             await navigate(t, page, account.channel);
           }
 
-          // settle: the indicator must end up connected (or hidden again)
+          // settle: the indicator must end up connected (or hidden again;
+          // with a cold service worker only connected counts)
+          const settled = it.mode === 'force-reload-cold-sw' ? ['connected'] : ['connected', 'hidden'];
           it.finalState = await until('the connection to settle', async () => {
             const state = await connectionState(page);
-            return state === 'connected' || state === 'hidden' ? state : null;
+            return settled.includes(state) ? state : null;
           }, SETTLE_MS).catch(async () => {
             const state = await connectionState(page);
             it.failures.push(`connection indicator still "${state}" ${SETTLE_MS / 1000}s after the reload`);
@@ -366,6 +382,16 @@ export const reload: Flow = {
         const shownBad = it.indicatorStates.filter(state => /:(offline|disconnected)$/.test(state));
         if (shownBad.length) {
           it.failures.push(`connection indicator showed ${shownBad.join(', ')}`);
+        }
+        if (it.mode === 'force-reload-cold-sw') {
+          // "<ms since the load>ms:connected" must come within COLD_SW_CONNECT_MS
+          const connectedAt = it.indicatorStates.map(state => /^(\d+)ms:connected/.exec(state)).find(Boolean);
+          if (!connectedAt) {
+            it.failures.push(`never connected after the cold service-worker reload (indicator: ${it.indicatorStates.join(' ') || '-'})`);
+          }
+          else if (Number(connectedAt[1]) > COLD_SW_CONNECT_MS) {
+            it.failures.push(`connected only ${connectedAt[1]} ms after the cold service-worker reload (limit ${COLD_SW_CONNECT_MS} ms)`);
+          }
         }
         if (it.loginRequired.length) {
           it.failures.push(`LOGIN_REQUIRED: ${it.loginRequired.join(', ')}`);

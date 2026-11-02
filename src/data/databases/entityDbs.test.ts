@@ -485,3 +485,38 @@ describe('review fixes', () => {
     expect((await tables.roles.get(['com1', 'r1'])).title).toBe('Role renamed');
   });
 });
+
+describe('community URL taken over by another community', () => {
+  it('does not navigate away from a community that now owns a URL another one gave up', async () => {
+    const [a, b] = await twoTabs('http://localhost:3000/c/foo/channel/general/');
+    await emit(a, { type: 'cliCommunityEvent', action: 'new-or-full-update', data: communityFixture({ id: 'com1', url: 'foo' }) });
+    expect(await b.community.getCommunityByUrl('foo')).toBeDefined();
+    // com1 is renamed foo -> bar (both tabs follow), then com2 claims "foo"
+    const rename = { type: 'cliCommunityEvent', action: 'update', data: { id: 'com1', url: 'bar', updatedAt: T(1) } };
+    await emit(a, rename);
+    await emit(b, rename);
+    a.navigations.length = 0;
+    b.navigations.length = 0;
+    await emit(a, { type: 'cliCommunityEvent', action: 'new-or-full-update', data: communityFixture({ id: 'com2', url: 'foo', updatedAt: T(2) }) });
+    // tab b browses com2 at /c/foo/… (still the global location)
+    expect((await b.community.getCommunityByUrl('foo'))?.id).toBe('com2');
+
+    // a later com1 edit carries its url again (the request is spread into the payload)
+    const edit = { type: 'cliCommunityEvent', action: 'update', data: { id: 'com1', url: 'bar', description: 'x', updatedAt: T(3) } };
+    await emit(a, edit);
+    await emit(b, edit);
+    expect(a.navigations).toEqual([]);
+    expect(b.navigations).toEqual([]);
+  });
+
+  it('does not navigate even if this tab never looked the new owner up', async () => {
+    const [a, b] = await twoTabs('http://localhost:3000/c/foo/channel/general/');
+    await emit(a, { type: 'cliCommunityEvent', action: 'new-or-full-update', data: communityFixture({ id: 'com1', url: 'foo' }) });
+    expect(await b.community.getCommunityByUrl('foo')).toBeDefined();
+    await emit(a, { type: 'cliCommunityEvent', action: 'update', data: { id: 'com1', url: 'bar', updatedAt: T(1) } });
+    // only tab a stored com2 with "foo"; tab b still lists foo for com1
+    await emit(a, { type: 'cliCommunityEvent', action: 'new-or-full-update', data: communityFixture({ id: 'com2', url: 'foo', updatedAt: T(2) }) });
+    await emit(b, { type: 'cliCommunityEvent', action: 'update', data: { id: 'com1', url: 'bar', description: 'x', updatedAt: T(3) } });
+    expect(b.navigations).toEqual([]);
+  });
+});

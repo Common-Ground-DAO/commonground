@@ -472,12 +472,32 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
   private knownUrlsByCommunityId = new Map<string, Set<string>>();
   private rememberCommunityUrl(communityId: string | undefined, url: string | null | undefined) {
     if (!communityId || !url) return;
+    // a URL belongs to one community at a time: another one may take over a
+    // URL a renamed community gave up
+    for (const [otherId, otherUrls] of this.knownUrlsByCommunityId) {
+      if (otherId !== communityId) otherUrls.delete(url);
+    }
     let urls = this.knownUrlsByCommunityId.get(communityId);
     if (!urls) {
       urls = new Set();
       this.knownUrlsByCommunityId.set(communityId, urls);
     }
     urls.add(url);
+  }
+
+  /** does a stored community (or list view) other than `communityId` have this URL now? */
+  private async urlBelongsToOtherCommunity(url: string, communityId: string): Promise<boolean> {
+    const [community, listView] = await Promise.all([
+      this.db.communities.where('url').equals(url).first(),
+      this.db.communityListViews.where('url').equals(url).first(),
+    ]);
+    for (const other of [community, listView]) {
+      if (other && other.id !== communityId) {
+        this.rememberCommunityUrl(other.id, url);
+        return true;
+      }
+    }
+    return false;
   }
 
   private async applyCommunityUpdate(data: Extract<Events.Community.Community, { action: 'update' }>['data']) {
@@ -545,7 +565,8 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
       !!urlInPath &&
       pathHasTrailingSegment &&
       urlInPath !== currentUrl &&
-      !!this.knownUrlsByCommunityId.get(data.id)?.has(urlInPath)
+      !!this.knownUrlsByCommunityId.get(data.id)?.has(urlInPath) &&
+      !(await this.urlBelongsToOtherCommunity(urlInPath, data.id))
     ) {
       const newPathname = prefix + currentUrl + oldPathname.slice(prefix.length + urlInPath.length) + window.location.search + window.location.hash;
       // Todo: find a better solution than using the serviceWorkerMananger navigate reference

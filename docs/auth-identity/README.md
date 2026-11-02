@@ -13,7 +13,7 @@
 > without a user, the index of each user's sessions, signing out other devices and the pre-login
 > limits (§2, §3, §4, §5.4, §7, §8, §10, §11) against commit 23a4c1e, 2026-11-01; the per-tab
 > login state, login lock, cross-tab broadcast, `checkLoginStatus`, LOGIN_REQUIRED handling and
-> the signed-out path across tabs (§10) against commit f897de7, 2026-11-02
+> the signed-out path across tabs (§10) against commit 964f6b3, 2026-11-02
 
 # Authentication & Identity
 
@@ -1128,7 +1128,13 @@ The client login lifecycle is owned by `LoginManager` (`src/data/appstate/login.
   `User/login` together: the session keeps one signable secret, which a concurrent login in another
   tab would replace. A tab that had to wait for the lock and then finds the session logged in as
   the stored user takes it over instead of logging in again. A tab waits at most 15 s for the lock
-  (a frozen tab keeps its locks) and holds it at most 10 s (a hung request), then goes on without it.
+  (a frozen tab keeps its locks). After 10 s a slow request releases the lock for the other tabs,
+  but its tab keeps waiting for it and starts no further step without the lock (it queues again
+  once). An `INVALID_SECRET` (a late secret request of another tab replaced the secret) is retried
+  once under the lock with a fresh secret. Inside the lock a tab compares the stored current user
+  with the device it is about to log in and follows the stored user if they differ (no login over
+  another user's new session). A page device login that fails with anything but `NOT_FOUND` is
+  retried with a backoff (5/15/60 s, ±50 %) and on the next visibility/online check.
   After its socket was live again following a gap, a visible tab re-runs the device `User/login`
   for its snapshot (debounced, under the lock; no login-state change). On another tab's logout a tab drops its own login (socket `logout`, in-memory state)
   without a second `User/logout`; on another tab's login an anonymous tab checks

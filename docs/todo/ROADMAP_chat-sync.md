@@ -429,6 +429,7 @@ flows (outside `07-call.ts`) can start before.
 
 - [x] srv-presence — presence grace period (30 s), cluster-wide batched offline
   check, change-only events, stale job emits offline — merge `6c9b07a`
+- [x] srv-sync — `syncSeq` trigger + migration, `getChanges`, idempotent `createMessage` with per-channel createdAt ordering, `setChannelLastRead` additions, deadlock-safe delete — merge `7f4cbbe`
 - [x] store-core — `ChannelStore`/windows, `ReadStateStore` + markers, `NotificationStore`, `mergeReadState`, fake server, `getChanges`/`getSyncState` connectors — merge `20479a2`
 - [x] entity-dbs — idempotent/order-safe community, chats, user writers; seq-guarded unread; `serverLastRead` send guard; snapshot deletions guarded — merge `04b5c57`
 - [x] sw — service-worker tab-role referee removed, one-release compat answer for old pages — merge `7d4442e`

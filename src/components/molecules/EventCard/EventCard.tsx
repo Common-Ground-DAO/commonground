@@ -11,7 +11,7 @@ import { getCommunityDisplayName } from '../../../util';
 import { MicrophoneIcon } from '@heroicons/react/20/solid';
 import Tag from 'components/atoms/Tag/Tag';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 import MemberPreview2 from 'components/atoms/MemberPreview/MemberPreview2';
 import { AllContentRenderer } from '../MesssageBodyRenderer/MessageBodyRenderer';

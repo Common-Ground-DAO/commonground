@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import Button from 'components/atoms/Button/Button';
 import Jdenticon from 'components/atoms/Jdenticon/Jdenticon';
 import { useSignedUrl } from 'hooks/useSignedUrl';

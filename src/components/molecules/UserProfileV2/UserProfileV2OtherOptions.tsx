@@ -14,7 +14,7 @@ import { useSafeCommunityContext } from 'context/CommunityProvider';
 import { useChats } from 'context/OwnDataProvider';
 import communityApi from 'data/api/community';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import Dropdown from '../Dropdown/Dropdown';
 import { useUserSettingsContext } from 'context/UserSettingsProvider';
 import { useCopiedToClipboardContext } from 'context/CopiedToClipboardDialogContext';

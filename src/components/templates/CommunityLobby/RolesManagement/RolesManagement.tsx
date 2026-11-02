@@ -13,7 +13,7 @@ import SpinnerIcon from '../../../atoms/icons/16/Spinner.svg?react';
 import { PredefinedRole } from 'common/enums';
 import _ from 'lodash';
 import SaveRoleWarningModal from './SaveRoleWarningModal';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import Scrollable from 'components/molecules/Scrollable/Scrollable';
 import { useNavigationContext } from 'components/SuspenseRouter/SuspenseRouter';
 import { useSnackbarContext } from 'context/SnackbarContext';

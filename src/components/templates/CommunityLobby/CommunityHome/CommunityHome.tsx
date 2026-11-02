@@ -4,7 +4,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import "./CommunityHome.css";
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import useLocalStorage, { VisitedCommunitiesState } from '../../../../hooks/useLocalStorage';
 import { useSignedUrl } from '../../../../hooks/useSignedUrl';

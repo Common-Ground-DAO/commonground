@@ -9,7 +9,7 @@ import React, { useMemo } from 'react';
 import { getCommunityDisplayName } from '../../../util';
 import Button from 'components/atoms/Button/Button';
 import { usePluginDetailsModalContext } from 'context/PluginDetailsModalProvider';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 import { Plug, ShareNetwork } from '@phosphor-icons/react';
 import { useSnackbarContext } from 'context/SnackbarContext';

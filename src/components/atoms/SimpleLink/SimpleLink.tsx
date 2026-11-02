@@ -4,7 +4,7 @@
 
 import React, { useState } from 'react'
 import './SimpleLink.css';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useExternalModalContext } from 'context/ExternalModalProvider';
 import { useAsyncMemo } from 'hooks/useAsyncMemo';
 import { fetchInternalLinkData } from 'components/molecules/LinkPreview/LinkPreview.helper';

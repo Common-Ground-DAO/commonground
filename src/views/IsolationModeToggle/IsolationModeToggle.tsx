@@ -4,7 +4,7 @@
 
 import { useManageIsolationMode } from "context/IsolationModeProvider";
 import React, { useEffect, useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router";
 
 type IsolationModeToggleProps = {
     mode: 'enable' | 'disable';

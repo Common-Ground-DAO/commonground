@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
 import { getDisplayName } from "../../../util";
 import { getUrl } from "common/util";

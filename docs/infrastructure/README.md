@@ -29,7 +29,8 @@
 > state instance's session keys (`sess-revoked:`, `sess-user:`, `sess-gen:`, `sess-keep:`) and the
 > one-hour pre-login sessions in that runbook against commit 23a4c1e, 2026-11-01;
 > Vite 8 / Rolldown (§2 package-manager allowlist, "Frontend build steps",
-> output layout, chunking; §6 dev-server commands) against commit a1460cb, 2026-11-01
+> output layout incl. the worker's buffered scripts, chunking; §6 dev-server commands)
+> against commit a1460cb, 2026-11-01
 
 # Common Ground Infrastructure Documentation
 
@@ -485,7 +486,9 @@ prod/staging vhosts the directive did not carry `'self'` before the cutover
   under a new version string and no `injectManifest` option was renamed). The
   build **fails**
   if the nested worker bundle is not exactly that one file, or if any emitted
-  JS/CSS chunk is missing from the precache manifest. The precache size cap is
+  JS/CSS chunk is missing from the precache manifest. The worker serves
+  precached scripts with the body read first, not streamed from Cache Storage
+  (Vite 8 start-up failures, wave M3 — [docs/frontend §9](../frontend/README.md#service-worker-and-module-scripts)). The precache size cap is
   workbox's CRA-era **5 MiB** — it was raised to 8 MiB while Vite's default
   chunking still emitted one ~5.6 MB app chunk, and went back down once the
   `manualChunks` vendor groups (below) capped the largest chunk at ~2.2 MiB

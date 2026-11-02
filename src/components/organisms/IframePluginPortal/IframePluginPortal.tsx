@@ -8,7 +8,7 @@ import { useWindowSizeContext } from "context/WindowSizeProvider";
 import { usePluginIframeContext } from "context/PluginIframeProvider";
 import { createPortal } from "react-dom";
 import { Resize, X } from "@phosphor-icons/react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { getUrl } from "common/util";
 import communityDatabase from "data/databases/community";
 import { isPluginUrlAllowed } from "data/auth/pluginOrigin";

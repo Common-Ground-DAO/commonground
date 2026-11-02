@@ -15,7 +15,7 @@ import EmptyState from 'components/molecules/EmptyState/EmptyState';
 import { useSidebarDataDisplayContext } from 'context/SidebarDataDisplayProvider';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import { useSentinelLoadMore } from 'hooks/useSentinelLoadMore';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { usePluginDetailsModalContext } from 'context/PluginDetailsModalProvider';
 
 type Props = {

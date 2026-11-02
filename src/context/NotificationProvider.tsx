@@ -4,7 +4,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import data from "data";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import connectionManager from "../data/appstate/connection";
 import serviceWorkerManager from "../data/appstate/serviceWorker";

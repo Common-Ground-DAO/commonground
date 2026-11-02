@@ -8,7 +8,7 @@ import CornerDownRightIcon from '../../atoms/icons/20/CornerDownRight.svg?react'
 import { XMarkIcon } from '@heroicons/react/20/solid';
 import NotificationDot from 'components/atoms/NotificationDot/NotificationDot';
 import { getUrl } from '../../../common/util';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import { Tooltip } from 'components/atoms/Tooltip/Tooltip';
 import { useCommunitySidebarContext } from 'components/organisms/CommunityViewSidebar/CommunityViewSidebarContext';

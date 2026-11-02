@@ -9,7 +9,7 @@ import React, { useCallback, useMemo } from 'react'
 
 import RoleIcon from '../../../atoms/icons/20/Role.svg?react';
 import { HandArrowDown, Info } from '@phosphor-icons/react';
-import { createSearchParams, useNavigate } from 'react-router-dom';
+import { createSearchParams, useNavigate } from 'react-router';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import { getUrl } from 'common/util';
 import { useManagementContentModalContext } from 'components/organisms/ManagementContentModal/ManagementContentModalContext';

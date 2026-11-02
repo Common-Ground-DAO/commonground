@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { FloatingDelayGroup } from "@floating-ui/react";
 
 import { useLoadedCommunityContext } from "../../../../context/CommunityProvider";

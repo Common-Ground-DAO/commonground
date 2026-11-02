@@ -4,7 +4,7 @@
 
 import "./ArticleManagement.css";
 
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useLoadedCommunityContext } from "../../../../context/CommunityProvider";
 import { getUrl } from 'common/util';

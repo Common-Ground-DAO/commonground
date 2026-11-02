@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { useMemo } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 
 import Jdenticon from "../../../atoms/Jdenticon/Jdenticon";
 import MessageBodyRenderer from "../../../molecules/MesssageBodyRenderer/MessageBodyRenderer";

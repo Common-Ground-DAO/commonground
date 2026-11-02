@@ -16,7 +16,7 @@ import Button from "components/atoms/Button/Button";
 import TextInputField from "components/molecules/inputs/TextInputField/TextInputField";
 import { useCallContext } from "context/CallProvider";
 import ScreenAwareModal from "components/atoms/ScreenAwareModal/ScreenAwareModal";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { getUrl } from "common/util";
 import RolePermissionToggle, {
   PermissionType,

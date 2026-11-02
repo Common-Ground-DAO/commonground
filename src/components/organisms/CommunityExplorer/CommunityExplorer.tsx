@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import community from '../../../data/api/community';
 import { dataStateReducer, Filters, initialState } from './CommunityExplorer.reducer';

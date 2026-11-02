@@ -4,7 +4,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import PluginCardDetails from "components/organisms/PluginAppstore/PluginCardDetails";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 
 type PluginDetailsModalProps = {
   plugin: Models.Plugin.PluginListView;

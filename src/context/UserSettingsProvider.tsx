@@ -4,7 +4,7 @@
 
 import { allPageTypes, PageType } from "components/organisms/UserSettingsModalContent/UserSettingsModalContent";
 import React, { useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 
 type UserSettingsContextState = {
   isOpen: boolean;

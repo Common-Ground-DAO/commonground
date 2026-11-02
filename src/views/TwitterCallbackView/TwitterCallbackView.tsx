@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import useLocalStorage from "hooks/useLocalStorage";
 import { useState } from "react";
 import twitterApi from "data/api/twitter";

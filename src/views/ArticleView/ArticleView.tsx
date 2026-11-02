@@ -4,7 +4,7 @@
 
 import "./ArticleView.css";
 import React, { useCallback, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 
 import { useLoadedCommunityContext } from "../../context/CommunityProvider";
 import { useWindowSizeContext } from "../../context/WindowSizeProvider";

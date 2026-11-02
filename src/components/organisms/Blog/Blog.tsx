@@ -4,7 +4,7 @@
 
 import './Blog.css';
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { blogViewReducer, initialState } from './Blog.reducer';
 import { getUrl } from "common/util";
 import userArticleManager from 'data/managers/userArticleManager';

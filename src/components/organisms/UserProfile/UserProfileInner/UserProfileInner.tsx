@@ -14,7 +14,7 @@ import { useMultipleUserData, useUserData } from "context/UserDataProvider";
 import Button from "components/atoms/Button/Button";
 import { ArrowLeftIcon } from "@heroicons/react/20/solid";
 import { ArrowsOutSimple } from "@phosphor-icons/react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { getUrl } from "common/util";
 import Jdenticon from "components/atoms/Jdenticon/Jdenticon";
 import { getDisplayName } from "../../../../util";

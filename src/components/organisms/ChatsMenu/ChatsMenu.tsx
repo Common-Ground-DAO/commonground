@@ -5,7 +5,7 @@
 import React from 'react';
 import './ChatsMenu.css';
 import { FloatingDelayGroup } from '@floating-ui/react';
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useGlobalDictionaryContext } from '../../../context/GlobalDictionaryProvider';
 import ChatElement from './ChatElement/ChatElement';
 import Scrollable from '../../molecules/Scrollable/Scrollable';

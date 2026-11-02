@@ -83,7 +83,54 @@ preloadData.push(...[
   {revision: buildId, url: '/disable-cross-origin-security'},
 ]);
 
-const precacheController = new PrecacheController();
+/**
+ * Serves precached JavaScript as a fully read body instead of streaming it
+ * out of Cache Storage.
+ *
+ * Measured in wave M3 (Chrome for Testing in the e2e image, repeated fresh page
+ * loads with this worker in control): Chrome now and then cancels
+ * (`net::ERR_ABORTED`) some of the module-script requests a page loads at
+ * once — `<link rel="modulepreload">` fetches and module-graph fetches alike —
+ * when the worker answers them with a response read straight from Cache
+ * Storage, even though the worker settled `respondWith` with a 200 within a
+ * few milliseconds. The module graph then fails ("Failed to fetch dynamically
+ * imported module"), and because the browser keeps that failure for the URL a
+ * second `import()` fails too: the app shows its error screen. ~1.5 % of loads
+ * with the Vite 8 build (~45 chunks requested at once); 0 of 208 with the
+ * Vite 7 build (~20). Answering the same requests from the network, or from
+ * the cache with the body read into memory first, gave 0 of 480 each; only the
+ * streamed Cache Storage body fails, and with this plugin 600 loads gave 0.
+ * The cost is holding a chunk (at most ~3.4 MiB, `vendor-web3`) in worker
+ * memory until it is handed over. Chromium-side cause not identified; drop
+ * this once a Chrome version is known not to need it (re-measure with the M3
+ * fresh-load harness).
+ *
+ * Scripts only (`destination === 'script'`, module and classic): every failure
+ * was a script request. Fonts, audio and images keep streaming.
+ */
+const bufferCachedScripts = {
+  cachedResponseWillBeUsed: async ({ event, cachedResponse }: { event?: ExtendableEvent; cachedResponse?: Response }) => {
+    const request = (event as FetchEvent | undefined)?.request;
+    if (!cachedResponse || request?.destination !== 'script') {
+      return cachedResponse ?? null;
+    }
+    let body: ArrayBuffer;
+    try {
+      body = await cachedResponse.arrayBuffer();
+    } catch {
+      // unreadable cache entry: no cached response, so PrecacheStrategy
+      // falls back to the network
+      return null;
+    }
+    return new Response(body, {
+      status: cachedResponse.status,
+      statusText: cachedResponse.statusText,
+      headers: cachedResponse.headers,
+    });
+  },
+};
+
+const precacheController = new PrecacheController({ plugins: [bufferCachedScripts] });
 precacheController.addToCacheList(preloadData);
 const precacheRoute = new PrecacheRoute(precacheController);
 registerRoute(precacheRoute);

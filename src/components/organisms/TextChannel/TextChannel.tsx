@@ -6,7 +6,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ChatIcon from '../../../components/atoms/icons/16/Chat.svg?react';
 import Modal from '../../atoms/Modal/Modal';
 import { useWindowSizeContext } from '../../../context/WindowSizeProvider';
-import { createSearchParams, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { createSearchParams, useLocation, useNavigate, useSearchParams } from 'react-router';
 import MemberListPreview from '../../../components/molecules/MemberListPreview/MemberListPreview';
 import TextChannelNotificationHeader from './TextChannelNotificationHeader';
 

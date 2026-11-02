@@ -8,7 +8,7 @@ import {
   HashRouter,
   Route,
   Routes,
-} from 'react-router-dom';
+} from 'react-router';
 import { browserSupportsWebAuthn } from '@simplewebauthn/browser';
 
 import CgIdHome from 'cgid/home';

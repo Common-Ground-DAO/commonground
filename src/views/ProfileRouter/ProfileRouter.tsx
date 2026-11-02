@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes } from "react-router";
 
 import SpinnerIcon from '../../components/atoms/icons/16/Spinner.svg?react';
 

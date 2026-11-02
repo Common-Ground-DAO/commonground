@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import ChevronLeftIcon from '../../components/atoms/icons/16/ChevronLeft.svg?react';
 

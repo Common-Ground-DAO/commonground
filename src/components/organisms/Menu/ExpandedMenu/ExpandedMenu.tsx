@@ -4,7 +4,7 @@
 
 import React from 'react'
 import { useCallback } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router";
 
 import config from "../../../../common/config";
 

@@ -10,7 +10,7 @@ import Scrollable from "../../components/molecules/Scrollable/Scrollable";
 import UserOnboarding from '../../components/organisms/UserOnboarding/UserOnboarding';
 import './DesktopLayout.css';
 import config from "common/config";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 
 type Props = {
   useScrollbar?: boolean;

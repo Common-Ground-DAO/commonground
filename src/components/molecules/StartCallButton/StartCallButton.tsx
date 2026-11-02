@@ -9,7 +9,7 @@ import { useLoadedCommunityContext } from "context/CommunityProvider";
 import { useCallback, useMemo, useState } from "react";
 import { StartCallModal } from "components/organisms/StartCallModal/StartCallModal";
 import ScheduleEventModal from "components/organisms/ScheduleEventModal/ScheduleEventModal";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { getUrl } from "common/util";
 import config from "common/config";
 

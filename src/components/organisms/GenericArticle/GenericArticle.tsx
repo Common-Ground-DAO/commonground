@@ -7,7 +7,7 @@ import './GenericArticle.css';
 import Button from '../../../components/atoms/Button/Button';
 import UserTag from '../../atoms/UserTag/UserTag';
 import { useSignedUrl } from '../../../hooks/useSignedUrl';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import useLocalStorage, { ReadArticlesState } from '../../../hooks/useLocalStorage';
 import dayjs from 'dayjs';
 import ShareButton from '../../../components/atoms/ShareButton/ShareButton';

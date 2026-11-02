@@ -17,7 +17,7 @@ import { UserWidgetContent } from 'components/molecules/UserWidget/UserWidget';
 import TextInputField from 'components/molecules/inputs/TextInputField/TextInputField';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import Scrollable from 'components/molecules/Scrollable/Scrollable';
 import { useUserSettingsContext } from 'context/UserSettingsProvider';
 import ManagementHeader2 from 'components/molecules/ManagementHeader2/ManagementHeader2';

@@ -11,7 +11,7 @@ import './GenericMessageList.css';
 import { useWindowSizeContext } from '../../../context/WindowSizeProvider';
 import { useMobileLayoutContext } from '../../../views/Layout/MobileLayout';
 import Button from 'components/atoms/Button/Button';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { ArrowLeftIcon } from '@heroicons/react/20/solid';
 import { ArrowDownCircleIcon } from '@heroicons/react/24/solid';
 import useLocalStorage from 'hooks/useLocalStorage';

@@ -6,7 +6,7 @@
 import { useWindowSizeContext } from "../../context/WindowSizeProvider";
 
 import Scrollable from "../../components/molecules/Scrollable/Scrollable";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useLoadedCommunityContext } from "context/CommunityProvider";
 import { getUrl } from 'common/util';
 import CommunityHeaderSimple from "components/organisms/CommunityHeader/CommunityHeaderSimple";

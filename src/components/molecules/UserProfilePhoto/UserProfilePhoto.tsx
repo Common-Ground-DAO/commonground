@@ -11,7 +11,7 @@ import Button from "../../../components/atoms/Button/Button";
 import config from "../../../common/config";
 import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
 import { notifyIfImageRejected } from "moderation/imageUploadError";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { getUrl } from 'common/util';
 
 import "./UserProfilePhoto.css";

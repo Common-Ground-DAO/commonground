@@ -13,7 +13,7 @@ import './RoleAccessEditor.css';
 import { formatUnits } from 'viem';
 import { HandArrowDown, HandDeposit, LockKey } from '@phosphor-icons/react';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
-import { createSearchParams, useLocation, useNavigate } from 'react-router-dom';
+import { createSearchParams, useLocation, useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 
 type Props = {

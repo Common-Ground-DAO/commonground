@@ -7,7 +7,7 @@ import Scrollable, { ScrollableHandle } from "../../components/molecules/Scrolla
 import { useWindowSizeContext } from "../../context/WindowSizeProvider";
 import NotificationMessage from '../../components/molecules/NotificationMessage/NotificationMessage';
 import NotificationsTypeSelector from '../../components/molecules/NotificationTypeSelector/NotificationTypeSelector';
-import { createSearchParams, useNavigate, useParams } from 'react-router-dom';
+import { createSearchParams, useNavigate, useParams } from 'react-router';
 import ToggleInputField from '../../components/molecules/inputs/ToggleInputField/ToggleInputField';
 import SearchField from '../../components/atoms/SearchField/SearchField';
 import SpinnerIcon from '../../components/atoms/icons/16/Spinner.svg?react';

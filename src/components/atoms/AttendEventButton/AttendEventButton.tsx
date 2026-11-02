@@ -7,7 +7,7 @@ import config from 'common/config';
 import Button from '../Button/Button';
 import { CheckIcon, ChevronDownIcon, LockClosedIcon } from '@heroicons/react/20/solid';
 import { useCallContext } from 'context/CallProvider';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 import communityApi from 'data/api/community';
 import { useOwnUser } from 'context/OwnDataProvider';

@@ -15,7 +15,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import { useAsyncMemo } from 'hooks/useAsyncMemo';
 import Jdenticon from 'components/atoms/Jdenticon/Jdenticon';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 import JoinCommunityButton from 'components/atoms/JoinCommunityButton/JoinCommunityButton';
 

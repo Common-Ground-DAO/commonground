@@ -6,7 +6,7 @@ import React from 'react';
 import Button from '../../atoms/Button/Button';
 import CreateCommunityButton from '../../../components/molecules/CreateCommunityButton/CreateCommunityButton';
 import SectionEnd from '../SectionEnd/SectionEnd';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import AddIcon from '../../../components/atoms/icons/16/Add.svg?react';
 import HomeIcon from '../../../components/atoms/icons/24/HomeIcon.svg?react';

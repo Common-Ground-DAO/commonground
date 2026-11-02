@@ -4,7 +4,7 @@
 
 import "./LiveCallCard.css";
 import { useCallback, useMemo } from "react";
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useWindowSizeContext } from '../../../context/WindowSizeProvider';
 import { useLiveQuery } from "dexie-react-hooks";
 import data from "data";

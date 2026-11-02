@@ -21,7 +21,7 @@ import { useOwnCommunities } from 'context/OwnDataProvider';
 import { useAsyncMemo } from 'hooks/useAsyncMemo';
 import communityDatabase from 'data/databases/community';
 import { useSnackbarContext } from 'context/SnackbarContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 import { useLiveQuery } from 'dexie-react-hooks';
 

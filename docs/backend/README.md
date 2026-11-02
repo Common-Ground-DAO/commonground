@@ -33,7 +33,7 @@
 > and the test list against commit 591e6cf, 2026-11-02; `onlineStatusCheck.ts` against commit
 > fc15832, 2026-11-02; the chat-sync message routes (`/getChanges`, idempotent
 > `/createMessage`, `/setChannelLastRead` answer, `syncSeq`), the `ChannelSyncState` entity
-> and the test list against commit 2c680a8, 2026-11-02.
+> and the test list against commit 30ce83e, 2026-11-02.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -480,7 +480,7 @@ on the user row).
 
 ### `srv/api/messages.ts` -- Messaging Routes
 
-- `/createMessage` -- Create a new message. Idempotent on the client-chosen `id`: the insert is `ON CONFLICT ("id") DO NOTHING`; when the id exists, a request by the same creator in the same channel (message not deleted) succeeds with the stored message and emits no events or notifications, anything else fails with `NOT_ALLOWED`. A retry whose parent message was deleted in the meantime also returns the stored message. A collision on `UNIQUE(channelId, createdAt)` (two inserts into one channel in the same millisecond) is retried once.
+- `/createMessage` -- Create a new message. Idempotent on the client-chosen `id`: a known id is looked up first and answered without an INSERT (so it takes no sync seq), and the insert is `ON CONFLICT ("id") DO NOTHING` for two same-id creates racing; when the id exists, a request by the same creator in the same channel (message not deleted) succeeds with the stored message and emits no events or notifications, anything else fails with `NOT_ALLOWED`. A retry whose parent message was deleted in the meantime also returns the stored message. A collision on `UNIQUE(channelId, createdAt)` (two inserts into one channel in the same millisecond) is retried once.
 - `/createModerationMessage` -- Create a moderation-flagged message (same insert)
 - `/editMessage` -- Edit an existing message. Response `{editedAt, updatedAt, syncSeq}` (+ `attachments`)
 - `/deleteMessage` -- Delete a message. Creator and channel are read from the stored message (`messageHelper.getMessageOwnership`), not from the request: the message must live in `access.channelId`, deleting another user's message needs `CHANNEL_MODERATE` / `CALL_MODERATE` there (chats and article comments: own messages only), and the `UPDATE` filters on creator, channel and id.

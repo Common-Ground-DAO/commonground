@@ -11,7 +11,7 @@
 > the call-ending safety net (Room Lifecycle, Call Flow) against commit 591e6cf, 2026-11-02;
 > human online status (grace period, batched cluster-wide offline check with one retry, touch
 > sets, change-only events, the stale job's events) against commit fc15832, 2026-11-02;
-> the chat-sync fields of `cliMessageEvent` and `cliChannelLastRead` against commit 0ec82f6,
+> the chat-sync fields of `cliMessageEvent` and `cliChannelLastRead` against commit 30ce83e,
 > 2026-11-02
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
@@ -155,7 +155,7 @@ All fields below are additive; clients that do not know them ignore them.
 A client that misses events (disconnect, reload, frozen tab) catches up per channel with
 `POST /Message/getChanges` from its last contiguous `syncSeq` (see
 [docs/backend](../backend/README.md#srvapimessagests----messaging-routes)). Seq bumps
-without an event exist (an `ON CONFLICT DO NOTHING` insert, a retried create), so a gap in
+without an event exist (two creates with the same id racing: the loser's `ON CONFLICT DO NOTHING` insert), so a gap in
 the received seqs is a hint to call `getChanges`, not proof of a lost event.
 
 ### Event Emission (Server-Side)

@@ -13,8 +13,9 @@
 > `roles_contracts_contracts` foreign key, the schema comparison) against commit 8dcbb42,
 > 2026-11-01; `channelreadstate` write rule and the `calls` open-calls index against commit
 > 591e6cf, 2026-11-02; the message sync sequence (`channel_sync_state`, `messages.syncSeq`,
-> the `messages_sync_seq_*` triggers, the delete lock order) and the idempotent message insert against commit
-> 2c680a8, 2026-11-02
+> the `messages_sync_seq_*` triggers, the delete lock order, the migration's write stall),
+> `idx_messages_channelId_createdAt_live` and the idempotent message insert against commit
+> 30ce83e, 2026-11-02
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -501,10 +502,16 @@ All messages across all channel types. Unique constraint on `(channelId, created
 (`UQ_6df0905b0802e8402e6570c6505`; `createdAt` comes from the database clock at ms
 precision, so two inserts into one channel in the same millisecond collide and
 `messageHelper.createMessage` retries the insert once). The insert is idempotent on the
-client-chosen `id` (`ON CONFLICT ("id") DO NOTHING`; the creator's `channelreadstate`
-is only written for a new row). Partial index `idx_messages_channelId_syncSeq` on
-`("channelId", "syncSeq") WHERE "syncSeq" IS NOT NULL` (see [Message sync
-sequence](#message-sync-sequence)).
+client-chosen `id`: a known id is answered from a lookup without an INSERT (an INSERT
+that inserts nothing would still take a sync seq), and `ON CONFLICT ("id") DO NOTHING`
+covers two creates racing with the same id; the creator's `channelreadstate` is only
+written for a new row. Partial indexes from migration `1793635200000-chatSyncSeq`:
+`idx_messages_channelId_syncSeq` on `("channelId", "syncSeq") WHERE "syncSeq" IS NOT
+NULL` (see [Message sync sequence](#message-sync-sequence)) and
+`idx_messages_channelId_createdAt_live` on `("channelId", "createdAt") INCLUDE
+("creatorId") WHERE "deletedAt" IS NULL`, which makes the capped unread counts
+(`setChannelLastRead`, `getSyncState`: other users' live messages after `lastRead`)
+index-only scans.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -544,19 +551,38 @@ Per-channel, commit-ordered change sequence for messages (chat-sync catch-up,
   ends, so writers of one channel are serialised and commit in sequence order. A statement
   that reads `seq = S` and the channel's messages in one snapshot sees every row whose
   last write had a seq `<= S` and none above. A rolled-back write releases its seq (no
-  gap); an `INSERT … ON CONFLICT DO NOTHING` that inserts nothing still takes one
-  (harmless gap). Writes to different channels do not wait for each other.
-- Lock order: an `UPDATE` locks its message row before the trigger takes the channel's
-  sequence row. A statement that writes several message rows must therefore lock all of
-  them first: `messageHelper.deleteMessage`/`deleteAllUserMessages` run in a transaction
-  that takes `SELECT … ORDER BY id FOR UPDATE` on the deleted rows and their replies before
-  the soft delete, so a concurrent edit or reaction on one of those rows cannot deadlock
-  with it.
+  gap); an `INSERT … ON CONFLICT DO NOTHING` that inserts nothing still takes one (BEFORE
+  triggers fire before the conflict check), which is why `createMessage` looks a known id
+  up first; only a lost race of two same-id creates leaves such a gap. Writes to different
+  channels do not wait for each other.
+- Lock order of the writers: `set/unsetReaction` lock the reaction row, then the message
+  row, then the sequence row; an edit locks the message row, then the sequence row; a new
+  reply (or a changed `parentMessageId`) takes the sequence row first and then `FOR KEY
+  SHARE` on the parent (foreign-key check). The soft delete
+  (`messageHelper.deleteMessage`/`deleteAllUserMessages`) writes several rows and runs in
+  one transaction that follows the same order: it selects its targets, locks their
+  reaction rows (`FOR UPDATE`, key order), then the targets and their replies (`FOR NO KEY
+  UPDATE`, id order — the strength of an update of non-key columns, which does not block
+  the `KEY SHARE` of a concurrent reply insert), and writes exactly the rows it locked, so
+  it never waits for a row while holding the sequence row. A reply committed after that
+  lock keeps its `parentMessageId`, the same outcome as a reply committed after the
+  delete. During a rolling deploy, API processes from before this change delete without
+  the pre-lock; a deadlock with them is possible for that window only (PostgreSQL aborts
+  one of the two transactions, the request fails and can be repeated).
 - Cost: one primary-key upsert on a small table per message write. Adding the column is
-  catalog-only; while every row is NULL the partial index build is one sequential scan of
-  `messages`. The migration's runtime on the production dump is measured in the cg.box
-  dress rehearsal. Covered by `srv/tests/chatSyncSeqDb.spec.ts` (real PostgreSQL, opt-in
-  `CG_TEST_PG_HOST`).
+  catalog-only; while every row is NULL the `syncSeq` index build is one sequential scan of
+  `messages`; the `createdAt_live` index build took 2.3 s on 6.5M messages (measured during
+  review). Covered by `srv/tests/chatSyncSeqDb.spec.ts` (real PostgreSQL, opt-in
+  `CG_TEST_PG_HOST`; it also checks that the unread count is an index-only scan).
+- **Write stall on a live deploy:** the `ALTER TABLE … ADD "syncSeq"` takes an `ACCESS
+  EXCLUSIVE` lock on `messages` and both indexes are built without `CONCURRENTLY`.
+  `migrateDb.ts` runs `runMigrations()` with TypeORM's default transaction mode `all` (all
+  pending migrations in one transaction), and TypeORM 1.1.2 refuses a per-migration
+  `transaction = false` in that mode (`ForbiddenTransactionModeOverrideError`), so
+  `CREATE INDEX CONCURRENTLY` is not available. Reads and writes of `messages` therefore
+  wait until the whole migration run commits, and the locks taken by later migrations of
+  the same deploy are held until then as well. The runtime on the production dump is timed
+  in the cg.box dress rehearsal.
 
 #### `chats`
 Direct message conversations. Currently supports 1:1 chats with provision for group chats (see code TODO).

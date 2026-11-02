@@ -29,8 +29,9 @@ export type StoredReadStateFields = {
    * The highest lastRead the server is known to hold (ISO): from server
    * snapshots, chat-sync lastRead answers (with a count) and own messages
    * (the server marks own posts read). `lastRead` can be ahead of it when a
-   * local mark never reached the server; channel.ts's send guard is seeded
-   * from this value, so such a mark is sent again. Absent on older rows.
+   * local mark never reached the server. (The send decision is the in-memory
+   * ReadStateStore's, from its own server-acknowledged value.) Absent on
+   * older rows.
    */
   serverLastRead?: string | null;
 };

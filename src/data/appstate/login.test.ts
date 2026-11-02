@@ -151,8 +151,12 @@ vi.mock('data/databases/user', () => ({ default: stubDb() }));
 vi.mock('data/databases/community', () => ({ default: stubDb('community') }));
 vi.mock('data/databases/chats', () => ({ default: stubDb('chats') }));
 vi.mock('data/databases/notification', () => ({ default: { ...stubDb(), unreadCount: 0 } }));
-vi.mock('data/databases/messages', () => ({ default: {} }));
 vi.mock('data/databases/channel', () => ({ default: { userId: undefined, clear: async () => undefined } }));
+const chatHooks = vi.hoisted(() => ({ calls: [] as string[] }));
+vi.mock('data/chat/runtime', () => ({
+  clearChat: () => { chatHooks.calls.push('clear'); },
+  setupChatAfterLogin: (count: number | string) => { chatHooks.calls.push(`setup:${count}`); },
+}));
 vi.mock('data/databases/unique', () => ({
   default: { uniques: { get: async (key: string) => (key === 'OwnData' ? { key, data: { id: 'u1' } } : undefined) } },
 }));
@@ -487,10 +491,14 @@ describe('logout and login in other tabs', () => {
     const legacyMessages: unknown[] = [];
     legacy.onmessage = (event) => legacyMessages.push(event.data);
 
+    expect(chatHooks.calls).toContain('setup:3');
+    chatHooks.calls.length = 0;
     await a.loginManager.logout();
     await settle();
 
     expect(fake.server.logoutCalls).toBe(1);
+    // the other tab drops its in-memory chat data
+    expect(chatHooks.calls).toContain('clear');
     expect(b.loginManager.state).toBe('anonymous');
     expect(b.loginManager.currentUser).toBeNull();
     expect(b.socket.sentOf('logout')).toHaveLength(1);
@@ -523,10 +531,13 @@ describe('logout and login in other tabs', () => {
     fake.server.sessionUserId = 'u1';
     storeUser('u1', 'dev-1');
     const channel = new BroadcastChannel(AUTH_BROADCAST_CHANNEL);
+    chatHooks.calls.length = 0;
     channel.postMessage({ v: 1, type: 'logged-in', tabId: 'other-tab', userId: 'u1' } satisfies AuthBroadcastMessage);
     await settle();
 
     expect(fake.server.loginCalls).toBe(0);
+    // the adopted login takes the server's notification count
+    expect(chatHooks.calls).toEqual(['setup:2']);
     expect(tab.loginManager.state).toBe('loggedin');
     expect(tab.loginManager.currentUser?.userId).toBe('u1');
     expect(socketLoggedInAs(tab.socket)).toBe('dev-1');

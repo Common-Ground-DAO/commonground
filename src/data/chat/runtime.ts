@@ -437,6 +437,40 @@ function getLoginUser() {
   return loginUser;
 }
 
+/**
+ * Image metadata comes back from the server on stored messages; the message
+ * validators accept only the ids, so an edit sends attachments without it
+ * (the overlay keeps it for display).
+ */
+export function attachmentsForRequest(attachments: Models.Message.Attachment[]): Models.Message.Attachment[] {
+  return attachments.map(a => {
+    if (a.type === 'image') {
+      const { imageData, largeImageData, ...rest } = a;
+      return rest;
+    }
+    if (a.type === 'linkPreview') {
+      const { imageData, ...rest } = a;
+      return rest;
+    }
+    return a;
+  });
+}
+
+/** messageApi as ChatApi (methods bound; edit requests without image metadata) */
+const appChatApi: ChatApi = {
+  loadMessages: d => messageApi.loadMessages(d),
+  messagesById: d => messageApi.messagesById(d),
+  getChanges: d => messageApi.getChanges(d),
+  getSyncState: d => messageApi.getSyncState(d),
+  createMessage: d => messageApi.createMessage(d),
+  createModerationMessage: d => messageApi.createModerationMessage(d),
+  editMessage: d => messageApi.editMessage(d.attachments ? { ...d, attachments: attachmentsForRequest(d.attachments) } : d),
+  deleteMessage: d => messageApi.deleteMessage(d),
+  setReaction: d => messageApi.setReaction(d),
+  unsetReaction: d => messageApi.unsetReaction(d),
+  setChannelLastRead: d => messageApi.setChannelLastRead(d),
+};
+
 function createAppRuntime(): ChatRuntimeImpl {
   const user = getLoginUser();
   const events = createChatEventSource({
@@ -459,7 +493,7 @@ function createAppRuntime(): ChatRuntimeImpl {
     user,
   });
   return createChatRuntime({
-    chatApi: messageApi,
+    chatApi: appChatApi,
     notificationApi: notificationsApi,
     events,
     // loaded on use: the entity databases import the façade, which imports this module
@@ -491,6 +525,14 @@ export const chat: ChatRuntime = Object.freeze({
     return runtime().events;
   },
 });
+
+/**
+ * Creates the runtime now (data.channelManager does on load, before the
+ * socket starts): the stores must see the first `onLive` for their catch-up.
+ */
+export function startChatRuntime(): void {
+  runtime();
+}
 
 /** login.ts (via the façade's `userId`): the account of this tab, `undefined` after logout */
 export function setChatAccountUser(userId: string | undefined): void {

@@ -25,7 +25,8 @@ jest.mock('../util/postgres', () => ({
 jest.mock('../repositories/event', () => ({ __esModule: true, default: { emit: jest.fn() } }));
 
 import '../api/syncState';
-import syncStateHelper, { buildSyncStateQuery, UNREAD_CAP } from '../repositories/syncState';
+import syncStateHelper, { buildSyncStateQuery } from '../repositories/syncState';
+import { UNREAD_CAP } from '../repositories/messages';
 
 const ME = '00000000-0000-4000-8000-000000000001';
 const COMMUNITY = '00000000-0000-4000-8000-0000000000c1';

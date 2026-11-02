@@ -3,20 +3,25 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 /**
- * `Message/getSyncState` against a real, throwaway PostgreSQL (skipped
- * unless CG_TEST_PG_HOST is set). The test owns the schema
- * `sync_state_test` (dropped and recreated; nothing outside it is touched)
- * and creates the tables the query reads there, including
- * `channel_sync_state` and `messages."syncSeq"` as the chat-sync migration
- * defines them:
+ * `Message/getSyncState` and the notification read-state writes against a
+ * real, throwaway PostgreSQL (skipped unless CG_TEST_PG_HOST is set). The
+ * test creates and drops its own database `cg_sync_state_test` and the
+ * cluster-wide roles `writer`/`reader` if missing — never point it at a
+ * server with data:
  *
- *   docker run -d --name pg-test -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=cryptogram cryptogram/db:18
+ *   docker run -d --name pg-test -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=pw postgres:18
  *   CG_TEST_PG_HOST=127.0.0.1 CG_TEST_PG_PORT=55432 CG_TEST_PG_PASSWORD=pw yarn jest tests/syncStateDb.spec.ts
  *
- * The sync-state repository runs on a pool whose sessions are read-only
- * (`default_transaction_read_only`), so any write it attempted would fail.
- * The notification read-state writes (`markAsRead`, `markAllAsRead`) run on
- * a writable pool in their own block.
+ * Schema: the tables the statements touch as before the chat-sync
+ * migrations, then the real migrations `1793635200000-chatSyncSeq`
+ * (`channel_sync_state`, `messages."syncSeq"`, the trigger, the live unread
+ * index) and `1793660400000-syncStateIndexes` (up / down / up). Sequences
+ * therefore come from the trigger.
+ *
+ * The repositories run as the api's role `writer`: getSyncState on a pool
+ * whose sessions are read-only (`default_transaction_read_only`), so any
+ * write it attempted would fail; `markAsRead` / `markAllAsRead` on a
+ * writable pool in their own block.
  */
 
 import { Pool } from 'pg';
@@ -24,7 +29,8 @@ import { Pool } from 'pg';
 const HOST = process.env.CG_TEST_PG_HOST;
 const PORT = Number(process.env.CG_TEST_PG_PORT) || 5432;
 const PASSWORD = process.env.CG_TEST_PG_PASSWORD || 'pw';
-const SCHEMA = 'sync_state_test';
+const WRITER_PASSWORD = 'writer-test';
+const DATABASE = 'cg_sync_state_test';
 const describeDb = HOST ? describe : describe.skip;
 
 let mockReadOnlyPool: Pool | undefined;
@@ -35,7 +41,12 @@ jest.mock('../util/postgres', () => ({
   default: { query: (...args: any[]) => (mockPoolTarget as any).query(...args) },
 }));
 
-import syncStateHelper, { UNREAD_CAP } from '../repositories/syncState';
+jest.mock('../repositories/files', () => ({ __esModule: true, default: {} }));
+
+import { ChatSyncSeq1793635200000 as ChatSyncSeqMigration } from '../migrations/1793635200000-chatSyncSeq';
+import { SyncStateIndexes1793660400000 as IndexMigration } from '../migrations/1793660400000-syncStateIndexes';
+import syncStateHelper from '../repositories/syncState';
+import { UNREAD_CAP } from '../repositories/messages';
 import notificationHelper from '../repositories/notifications';
 
 const id = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
@@ -96,25 +107,37 @@ describeDb('getSyncState and notification read state on PostgreSQL', () => {
     for (const minute of minutes) {
       messageNo += 1;
       await q(
-        `INSERT INTO messages ("id", "creatorId", "channelId", "createdAt", "deletedAt")
-         VALUES ($1, $2, $3, $4::timestamptz + make_interval(mins => $5), $6)`,
+        `INSERT INTO messages ("id", "creatorId", "channelId", "body", "createdAt", "deletedAt")
+         VALUES ($1, $2, $3, '{"version":"1","content":[]}', $4::timestamptz + make_interval(mins => $5), $6)`,
         [id(0x10000 + messageNo), creatorId, channelId, T0, minute, deleted ? T0 : null],
       );
     }
   }
 
+  let server: Pool;
+  const runner = { query: (sql: string, params?: unknown[]) => q(sql, params) } as any;
+  const writerPool = (readOnly: boolean) => new Pool({
+    host: HOST, port: PORT, user: 'writer', password: WRITER_PASSWORD, database: DATABASE,
+    ...(readOnly ? { options: '-c default_transaction_read_only=on' } : {}),
+  });
+  const indexes = async () => (await q(
+    `SELECT indexname, indexdef FROM pg_indexes WHERE indexname IN ('idx_notifications_userId_unread', 'idx_chats_userIds_gin') ORDER BY indexname`,
+  )).rows;
+
+  let warn: jest.SpyInstance;
   beforeAll(async () => {
-    admin = new Pool({
-      host: HOST, port: PORT, user: 'postgres', password: PASSWORD, database: 'cryptogram',
-      options: `-c search_path=${SCHEMA}`,
-    });
-    mockReadOnlyPool = new Pool({
-      host: HOST, port: PORT, user: 'postgres', password: PASSWORD, database: 'cryptogram',
-      options: `-c search_path=${SCHEMA} -c default_transaction_read_only=on`,
-    });
-    mockPoolTarget = mockReadOnlyPool;
-    await q(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
-    await q(`CREATE SCHEMA ${SCHEMA}`);
+    warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    server = new Pool({ host: HOST, port: PORT, user: 'postgres', password: PASSWORD, database: 'postgres', max: 2 });
+    await server.query(`DROP DATABASE IF EXISTS ${DATABASE} WITH (FORCE)`);
+    await server.query(`CREATE DATABASE ${DATABASE}`);
+    for (const role of ['writer', 'reader']) {
+      await server.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN CREATE ROLE ${role}; END IF; END $$`);
+    }
+    await server.query(`ALTER ROLE writer LOGIN PASSWORD '${WRITER_PASSWORD}'`);
+    admin = new Pool({ host: HOST, port: PORT, user: 'postgres', password: PASSWORD, database: DATABASE });
+
+    // the parts of the schema the statements touch, as before the chat-sync
+    // migrations (owned by the migrating superuser; writer has table rights)
     await q(`CREATE TYPE ccrp_permissions_enum AS ENUM ('CHANNEL_EXISTS', 'CHANNEL_READ', 'CHANNEL_WRITE', 'CHANNEL_MODERATE')`);
     await q(`CREATE TABLE communities ("id" uuid PRIMARY KEY, "deletedAt" timestamptz)`);
     await q(`CREATE TABLE roles ("id" uuid PRIMARY KEY, "communityId" uuid NOT NULL, "title" varchar(64) NOT NULL, "deletedAt" timestamptz)`);
@@ -122,11 +145,33 @@ describeDb('getSyncState and notification read state on PostgreSQL', () => {
     await q(`CREATE TABLE communities_channels ("channelId" uuid NOT NULL, "communityId" uuid NOT NULL, "deletedAt" timestamptz, PRIMARY KEY ("channelId", "communityId"))`);
     await q(`CREATE TABLE communities_channels_roles_permissions ("communityId" uuid NOT NULL, "channelId" uuid NOT NULL, "roleId" uuid NOT NULL, "permissions" ccrp_permissions_enum[] NOT NULL, PRIMARY KEY ("communityId", "channelId", "roleId"))`);
     await q(`CREATE TABLE chats ("id" uuid PRIMARY KEY, "channelId" uuid NOT NULL UNIQUE, "userIds" uuid[] NOT NULL, "deletedAt" timestamptz)`);
+    await q(`CREATE INDEX ON chats ("userIds")`);
     await q(`CREATE TABLE channelreadstate ("userId" uuid NOT NULL, "channelId" uuid NOT NULL, "lastRead" timestamptz(3) NOT NULL, PRIMARY KEY ("userId", "channelId"))`);
-    await q(`CREATE TABLE messages ("id" uuid PRIMARY KEY, "creatorId" uuid NOT NULL, "channelId" uuid NOT NULL, "createdAt" timestamptz(3) NOT NULL, "deletedAt" timestamptz(3), "syncSeq" bigint, UNIQUE ("channelId", "createdAt"))`);
-    await q(`CREATE INDEX ON messages ("channelId", "syncSeq")`);
-    await q(`CREATE TABLE channel_sync_state ("channelId" uuid PRIMARY KEY, "seq" bigint NOT NULL)`);
-    await q(`CREATE TABLE notifications ("id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "userId" uuid NOT NULL, "read" boolean NOT NULL DEFAULT false, "updatedAt" timestamptz(3) NOT NULL DEFAULT '2026-01-01T00:00:00Z')`);
+    await q(`CREATE TABLE messages (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "creatorId" uuid NOT NULL, "channelId" uuid NOT NULL,
+      "body" jsonb NOT NULL, "createdAt" timestamptz(3) NOT NULL DEFAULT now(), "updatedAt" timestamptz(3) NOT NULL DEFAULT now(),
+      "deletedAt" timestamptz(3),
+      CONSTRAINT "UQ_6df0905b0802e8402e6570c6505" UNIQUE ("channelId", "createdAt"))`);
+    await q(`CREATE INDEX ON messages ("channelId")`);
+    await q(`CREATE TABLE notifications (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "userId" uuid NOT NULL, "read" boolean NOT NULL DEFAULT false,
+      "updatedAt" timestamptz(3) NOT NULL DEFAULT '2026-01-01T00:00:00Z')`);
+    await q(`CREATE INDEX ON notifications ("userId")`);
+    await q(`GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO writer`);
+    await q(`GRANT SELECT ON ALL TABLES IN SCHEMA public TO reader`);
+
+    await new ChatSyncSeqMigration().up(runner);
+    const indexMigration = new IndexMigration();
+    await indexMigration.up(runner);
+    await indexMigration.down(runner);
+    expect(await indexes()).toEqual([]);
+    await indexMigration.up(runner);
+
+    mockReadOnlyPool = writerPool(true);
+    mockPoolTarget = mockReadOnlyPool;
+    for (const pool of [server, admin, mockReadOnlyPool]) {
+      pool.on('error', () => undefined);
+    }
 
     await q(`INSERT INTO communities VALUES ($1, NULL), ($2, now()), ($3, NULL), ($4, NULL), ($5, NULL)`,
       [C_MEMBER, C_DELETED, C_FOREIGN, C_UNCLAIMED, C_DELROLE]);
@@ -190,8 +235,8 @@ describeDb('getSyncState and notification read state on PostgreSQL', () => {
     await addMessages(CH_NO_LASTREAD, OTHER, [1, 2, 3]);
     // CH_MANY: more than the cap
     await q(
-      `INSERT INTO messages ("id", "creatorId", "channelId", "createdAt")
-       SELECT gen_random_uuid(), $1, $2, $3::timestamptz + make_interval(secs => g)
+      `INSERT INTO messages ("creatorId", "channelId", "body", "createdAt")
+       SELECT $1, $2, '{"version":"1","content":[]}', $3::timestamptz + make_interval(secs => g)
        FROM generate_series(1, ${UNREAD_CAP + 50}) g`,
       [OTHER, CH_MANY, lastRead],
     );
@@ -206,14 +251,24 @@ describeDb('getSyncState and notification read state on PostgreSQL', () => {
     await addMessages(CH_EXISTS_ONLY, OTHER, [30]);
     await addMessages(CH_FOREIGN, OTHER, [30]);
 
-    await q(`INSERT INTO channel_sync_state VALUES ($1, 42), ($2, 9007199254740991)`, [CH_READ, CHAT_CH]);
+    // a sequence beyond 2^31 (the trigger gave CHAT_CH 3) reaches the client exactly
+    await q(`UPDATE channel_sync_state SET seq = 9007199254740991 WHERE "channelId" = $1`, [CHAT_CH]);
     await q(`INSERT INTO notifications ("userId", "read") VALUES ($1, false), ($1, false), ($1, true), ($2, false)`, [ME, OTHER]);
-  });
+  }, 60000);
 
   afterAll(async () => {
-    await q(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
-    await admin.end();
+    warn?.mockRestore();
     await mockReadOnlyPool?.end();
+    await admin?.end();
+    await server?.query(`DROP DATABASE IF EXISTS ${DATABASE} WITH (FORCE)`);
+    await server?.end();
+  });
+
+  it('the index migration: both indexes, as declared', async () => {
+    expect(await indexes()).toEqual([
+      { indexname: 'idx_chats_userIds_gin', indexdef: expect.stringContaining('USING gin ("userIds")') },
+      { indexname: 'idx_notifications_userId_unread', indexdef: expect.stringContaining('USING btree ("userId") WHERE (read = false)') },
+    ]);
   });
 
   const byChannel = (channels: API.Messages.getSyncState.ChannelState[]) =>
@@ -233,12 +288,13 @@ describeDb('getSyncState and notification read state on PostgreSQL', () => {
     expect(state[CH_READ]).toEqual({
       channelId: CH_READ,
       communityId: C_MEMBER,
-      syncSeq: 42,
+      // five inserts, numbered by the trigger
+      syncSeq: 5,
       lastRead: '2026-11-01T10:10:00.000Z',
       lastMessageDate: '2026-11-01T10:13:00.000Z',
       unread: 2,
     });
-    expect(state[CH_PUBLIC]).toMatchObject({ communityId: C_MEMBER, syncSeq: 0, unread: 0 });
+    expect(state[CH_PUBLIC]).toMatchObject({ communityId: C_MEMBER, syncSeq: 1, unread: 0 });
     expect(state[CH_PUBLIC].chatId).toBeUndefined();
     // community channel without lastRead: 0
     expect(state[CH_NO_LASTREAD]).toMatchObject({ lastRead: null, unread: 0, lastMessageDate: '2026-11-01T10:03:00.000Z' });
@@ -261,6 +317,17 @@ describeDb('getSyncState and notification read state on PostgreSQL', () => {
 
     expect(response.notificationUnreadCount).toBe(2);
     expect(Number.isNaN(Date.parse(response.serverTime))).toBe(false);
+  });
+
+  it('follows a new message: sequence and unread from one snapshot', async () => {
+    const before = byChannel((await syncStateHelper.getSyncState(ME, { channelIds: [CH_READ] })).channels)[CH_READ];
+    await addMessages(CH_READ, OTHER, [40]);
+    const after = byChannel((await syncStateHelper.getSyncState(ME, { channelIds: [CH_READ] })).channels)[CH_READ];
+    const stored = (await q(`SELECT seq FROM channel_sync_state WHERE "channelId" = $1`, [CH_READ])).rows[0].seq;
+    expect(after.syncSeq).toBe(before.syncSeq + 1);
+    expect(after.syncSeq).toBe(Number(stored));
+    expect(after.unread).toBe(before.unread + 1);
+    expect(after.lastMessageDate).toBe('2026-11-01T10:40:00.000Z');
   });
 
   it('restricts the answer to the requested channels, still by visibility', async () => {
@@ -304,10 +371,8 @@ describeDb('getSyncState and notification read state on PostgreSQL', () => {
     let writable: Pool;
 
     beforeAll(async () => {
-      writable = new Pool({
-        host: HOST, port: PORT, user: 'postgres', password: PASSWORD, database: 'cryptogram',
-        options: `-c search_path=${SCHEMA}`,
-      });
+      writable = writerPool(false);
+      writable.on('error', () => undefined);
       mockPoolTarget = writable;
       await q(`INSERT INTO notifications ("id", "userId", "read") VALUES
         ($1, $4, false), ($2, $4, true), ($3, $5, false)`, [N_UNREAD, N_READ, N_FOREIGN, READER, STRANGER]);

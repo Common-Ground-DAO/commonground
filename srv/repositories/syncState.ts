@@ -6,9 +6,9 @@ import format from "pg-format";
 import pool from "../util/postgres";
 import { ChannelPermission, PredefinedRole } from "../common/enums";
 import notificationHelper from "./notifications";
-
-/** Ceiling of every `unread` count (`API.Messages.UnreadCap`). */
-export const UNREAD_CAP: API.Messages.UnreadCap = 999;
+// the one ceiling of every `unread` count (`API.Messages.UnreadCap`), shared
+// with the `setChannelLastRead` answer
+import { UNREAD_CAP } from "./messages";
 
 type SyncStateRow = {
   channelId: string;

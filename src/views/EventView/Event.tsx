@@ -15,7 +15,7 @@ import dayjs from 'dayjs';
 import { useUserData } from 'context/UserDataProvider';
 import AppleIcon from '../../components/atoms/icons/20/AppleIcon.svg?react';
 import GoogleIcon from '../../components/atoms/icons/20/GoogleIcon.svg?react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import communityApi from 'data/api/community';
 import { useCall, useSafeCommunityContext } from 'context/CommunityProvider';
 import MemberPreview2 from 'components/atoms/MemberPreview/MemberPreview2';

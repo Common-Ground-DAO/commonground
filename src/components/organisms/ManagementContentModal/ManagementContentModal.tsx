@@ -4,7 +4,7 @@
 
 import { useEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router";
 import { useManagementContentModalContext, withManagementContentModalProvider } from "./ManagementContentModalContext";
 
 import "./ManagementContentModal.css";

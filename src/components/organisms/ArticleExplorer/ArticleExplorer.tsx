@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useMemo, useState, useEffect, useReducer, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import Button from "../../atoms/Button/Button";
 import ContentSlider from '../../molecules/ContentSlider/ContentSlider';

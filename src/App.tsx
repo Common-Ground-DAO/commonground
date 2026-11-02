@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useMemo } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router';
 import ConnectionStatusIndicator from './components/molecules/ConnectionStatusIndicator/ConnectionStatusIndicator';
 import { CommunityProvider } from './context/CommunityProvider';
 import { ProfileProvider } from './context/ProfileProvider';

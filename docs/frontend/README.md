@@ -19,7 +19,12 @@
 > `/verify-email` (§10) against commit 9fc05a9, 2026-11-01; limit messages, "send
 > again" countdowns, the form checks and the 8-digit codes (§10 "Limits and input
 > checks") against commit 2fad7d3, 2026-11-01; "Sign out other devices", the signed-out
-> notice and the password snackbar (§10 "Other devices") against commit 23a4c1e, 2026-11-01
+> notice and the password snackbar (§10 "Other devices") against commit 23a4c1e, 2026-11-01;
+> Vite 8 / Rolldown (§9 "Toolchain", "Dependency pins and constraints", wave M3)
+> against commit 3e8b08e, 2026-11-01; react-router 7 (§5 SuspenseRouter, top-level
+> routes, "Routing on react-router 7", the dependency table and pins, wave M3)
+> against commit 3e8b08e, 2026-11-01; "Service worker and module scripts" (§9) against commit
+> 3e8b08e, 2026-11-01
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -658,8 +663,8 @@ The app bootstraps in `window.onload`:
 
 ### SuspenseRouter (`src/components/SuspenseRouter/SuspenseRouter.tsx`)
 
-A custom `BrowserRouter` replacement that wraps navigation state updates in `startTransition()` for concurrent rendering. It:
-- Creates a `BrowserHistory` instance.
+A custom `BrowserRouter` replacement that wraps navigation state updates in `startTransition()` for concurrent rendering. It renders react-router's low-level `<Router>` (declarative mode: no data router, no loaders/actions/fetchers, no framework mode or file-based routing) with a `history` v5 `BrowserHistory` as its `navigator`. It:
+- Creates a `BrowserHistory` instance (`history` package — react-router has not depended on it since 6.x; it is a direct dependency for this file only).
 - Listens to history changes and updates state inside `startTransition`.
 - Shows a "You have unsaved changes" confirmation when `isDirty` is true.
 - Tracks page views in Matomo analytics.
@@ -684,9 +689,9 @@ Key route structure (paths are derived from `getUrl(...)` / `config.URL_*`):
 /notifications/               -> NotificationsBrowser
 /notifications/:notificationShortUuid/ -> NotificationsBrowser
 /learn-more                   -> LearnMore
-/settings/profile/            -> ProfileManagementView
-/settings/account-and-wallets/ -> WalletManagementView
-/settings/calls/              -> AudioDevicesManagementView
+/profile/settings/            -> ProfileManagementView
+/profile/settings/account-and-wallets/ -> WalletManagementView
+/profile/settings/calls/      -> AudioDevicesManagementView
 /create-user-post             -> CreateUserPostView
 /enable-cross-origin-security -> IsolationModeToggle (enable)
 /disable-cross-origin-security -> IsolationModeToggle (disable)
@@ -735,6 +740,44 @@ article/:articleUri/edit  -> EditBlogView
 article/:articleUri       -> BlogView
 * (default)               -> ProfileView
 ```
+
+### Routing on react-router 7
+
+The app runs **react-router 7** (7.18.4, wave M3, 2026-11-01; before that
+`react-router-dom` 6.30) in **declarative mode**: `<Routes>`/`<Route>` elements,
+nested `<Routes>` below splat routes (`/c/:communityUrl/*`, `/u/:idOrUrl/*`,
+`settings/*`, `channel/:channelIdOrUrl/*`), `useNavigate`/`useLocation`/
+`useParams`/`useSearchParams`, `<Navigate>` and one `<NavLink>`. There is no data
+router (`createBrowserRouter`/`RouterProvider`), no loaders, actions, fetchers or
+`<Form>`, no framework mode and no `@react-router/dev`. All imports name
+`react-router`; `react-router-dom` is not installed.
+
+The v6 future flags, none of which the app ever set, and what v7 changed:
+
+| Flag | Effect here |
+|---|---|
+| `v7_relativeSplatPath` | Relative paths inside splat routes now resolve against the full URL including the splat. **No effect**: every navigation target is absolute (`getUrl(...)`, `isLocalUrl()`, `safeNextPath()`, `/…` literals) or search-only (`navigate({ search })`, `setSearchParams`, the `?modal=` routes), which resolve against the current location in both versions; the only other forms are `navigate(-1)`. Checked by grep over `navigate(`, `<Navigate to>`, `<NavLink to>` (no `<Link>`, `useHref`, `useResolvedPath` or `.`/`..` paths exist). |
+| `v7_startTransition` | `BrowserRouter`/`HashRouter`/`MemoryRouter` now wrap their state updates in `React.startTransition`. The main app does not use them: `SuspenseRouter` has always done that itself, around a plain `<Router>`, so nothing changes there. The CG ID mini-app's `HashRouter` (`src/index_cgid.tsx`) now navigates in a transition; its three routes have no lazy parts. |
+| `v7_fetcherPersist`, `v7_normalizeFormMethod`, `v7_partialHydration`, `v7_skipActionErrorRevalidation` | Data-router/SSR only — not applicable. |
+
+Also not applicable: the removed `json`/`defer` helpers, `RouterProvider`'s
+`fallbackElement`, and the `react-router-dom` → `react-router/dom` split
+(`RouterProvider`/`HydratedRouter` only). `useNavigate()` now returns
+`void | Promise<void>`; no caller uses the return value. react-router 7 is
+one 39 KiB chunk in the build; the CG ID entry's static closure grew from 901
+to 916 KiB with it (the main shell loads the router lazily with `App`).
+
+Verified on 2026-11-01 with the e2e suite and a dedicated navigation smoke
+(deep links into every top-level and nested route on a fresh page load, signed
+in and anonymous; back/forward through community → channel → article →
+profile → settings; the 404 and `/e/*` routes; the auth routes; links between
+the nested community routes; opening, closing and re-opening a `?modal=`
+route): 63 of 67 checks pass, and the same smoke against a1460cb (react-router
+6.30, Vite 7) fails the same three pre-existing ones (`/store/`, the roles page,
+a non-existent profile article — see `docs/todo/TODO.md`). The fourth was an
+occasional start-up failure on fresh loads, which came from the Vite 8 step
+(not from the router) and is fixed in the service worker (§9 "Service worker
+and module scripts").
 
 ---
 
@@ -963,7 +1006,7 @@ preset was chosen over Atlassian's pragmatic-drag-and-drop.
 | `dexie` + `dexie-react-hooks` | IndexedDB wrapper + React reactive queries (`useLiveQuery`) |
 | `react-markdown` | Markdown rendering for chat messages and articles |
 | `recharts` | Charts (staking reward curve) |
-| `react-router-dom` + `history` | Client-side routing |
+| `react-router` (7) + `history` | Client-side routing (declarative mode; see "Routing on react-router 7") |
 | `dayjs` | Date formatting/manipulation (with plugins: isToday, isYesterday, isTomorrow, advancedFormat, utc, timezone) |
 | `lodash` | Utility functions (debounce, isEqual, etc.) |
 | `react-dropzone` | Drag-and-drop file upload (`noPaste` is set — `EditField` has its own paste-to-attach handler). `getInputProps()` spreads caller props *after* its defaults, so the hidden input's `style` must carry the full hiding style, not just a tweak — see the CAUTION comment in `EditField.tsx` |
@@ -1014,17 +1057,57 @@ The app coordinates behavior across multiple open tabs. A single service worker 
 
 ### Toolchain
 
-The frontend is built with **Vite 7** (`vite.config.ts`). It replaced
-Create React App + craco + webpack; nothing of that stack remains. Vite **7,
-not 8**, on purpose: Vite 8 swaps Rollup for Rolldown and esbuild for Oxc —
-a bundler swap, not a version bump — and the chunking setup below was measured
-and tuned under Rollup 4. Vite 8 is its own later workstream with its own
-measurements; the Node floor (≥ 20.19) is the same, so the builder image
-(`node:26-trixie` since 2026-10-31) already covers that jump too.
+The frontend is built with **Vite 8** (`vite.config.ts`; 8.3.5 since wave M3,
+2026-11-01, before that Vite 7). It replaced Create React App + craco +
+webpack; nothing of that stack remains. Vite 8 is a bundler swap, not just a
+version bump: **Rolldown** (1.2.x) bundles instead of Rollup 4, **Oxc**
+transforms and minifies JS instead of esbuild, **Lightning CSS** minifies CSS
+instead of esbuild, and the dev server pre-bundles dependencies with Rolldown.
+esbuild is no longer in the root lockfile at all. The plugins moved with it:
+`@vitejs/plugin-react` 6 (React Refresh through Oxc, no Babel any more),
+`vite-plugin-svgr` 5 (transforms through Oxc) and `vite-plugin-node-polyfills`
+0.28 (Vite 8 support). Node floor `^20.19 || >= 22.12`; the builder image runs
+Node 26. A production build takes ~4–5 s of bundling instead of ~23 s.
+
+What the swap changed, and what it did not (measured against the Vite 7 build
+of a1460cb):
+
+- **Chunking** is now `build.rolldownOptions.output.codeSplitting` with one
+  group per vendor group and explicit priorities — see the "Chunking" row
+  below. The vendor chunks hold the same packages as before, with three
+  deliberate shifts (`lodash`, `idb-keyval`, `fast-safe-stringify` no longer
+  pulled into `vendor-web3`; `vendor-charts` also holds `d3-brush`/
+  `victory-vendor`) and two new pins in `vendor-shared`: Oxc's lowering
+  helpers (virtual `\0@oxc-project+runtime@…` modules) and the `global` shim.
+  Unpinned, the Oxc helpers landed in `vendor-charts` and made `web-vitals`,
+  `AuthFlow`, `vendor-mediasoup` and others import that chunk.
+- **First-party code is split more finely.** Rolldown's automatic chunking
+  splits `src/` along dynamic-import boundaries where Rollup kept one ~2 MiB
+  `App` chunk: loading the app now takes 48 static chunks instead of 21, at
+  the same total size (~7.9 MiB). Chunk names follow the first module of a
+  chunk, so they changed too (`util`, `MobileLayout`, `AuthFlow`, …).
+- **CSS**: Lightning CSS is stricter than esbuild — it refuses invalid CSS
+  instead of passing it through (the one case was an `@property` whose
+  `initial-value` did not match its `syntax`, which browsers had silently
+  dropped; fixed in `Splash.css`) — and it lowers for `build.cssTarget` (the
+  JS target), so some rules gain fallbacks (+3.5 % CSS). It also minifies the
+  inline `<style>` blocks of both HTML shells; inline **scripts** stay
+  verbatim, so the CSP hash of the dark-mode script did not change.
+- **The service worker** now hands precached scripts over fully read instead
+  of streaming them out of Cache Storage: with the Vite 8 chunk graph Chrome
+  otherwise cancelled module-script requests on ~1.5 % of fresh loads and the
+  app showed its error screen — see "Service worker and module scripts" below.
+- **CommonJS interop** follows Rolldown's consistent `default` rule; no
+  import needed a change (build, dev server and the e2e suite run clean).
+- Vite prints a notice that the config uses features the future
+  `configLoader: 'native'` default will not support (ESM syntax in `.ts`
+  files of a package without `"type": "module"`). Harmless today; see
+  `docs/todo/TODO.md`.
 
 `build.target` is explicit (`BUILD_TARGET` in `vite.config.ts` — `chrome67,
-edge79, firefox68, opera54, safari14`), so Vite 7's new default target
-(`'baseline-widely-available'`, ≈ Safari 16.0) never applies. Keeping the floor
+edge79, firefox68, opera54, safari14`), so Vite 8's default target
+(`'baseline-widely-available'`, ≈ Safari 16.4) never applies. Vite 8 still
+takes the target in esbuild notation and converts it for Oxc and Lightning CSS. Keeping the floor
 at **`safari14`** is deliberate, and a product call rather than a build call:
 it is what keeps plain browsing and login working on iOS 14–15, while web push
 is gated at iOS ≥ 16.4 anyway (`src/context/NotificationProvider.tsx`;
@@ -1036,20 +1119,20 @@ browserslist; `vite.config.ts` duplicates the floors by hand.
 
 | Concern | Where |
 |---|---|
-| Build / dev server | `vite.config.ts`. Multi-page: both HTML shells are rollup inputs and are emitted at the dist root under their own names. Dev server is pinned to host `0.0.0.0`, port **3000** — load-bearing, because `src/data/appstate/serviceWorker.ts` disables SW registration on that origin, which is what keeps dev SW-free. |
+| Build / dev server | `vite.config.ts`. Multi-page: both HTML shells are bundler inputs (`build.rolldownOptions.input`) and are emitted at the dist root under their own names. Dev server is pinned to host `0.0.0.0`, port **3000** — load-bearing, because `src/data/appstate/serviceWorker.ts` disables SW registration on that origin, which is what keeps dev SW-free. |
 | Project-relative bare imports | `vite/baseUrlResolve.ts`. ~1945 import lines use bare specifiers that are really `src/`-relative (`components/…`, `common/util`, but also file-level ones like `'App'` and `'service-worker'`). For the type checker, `tsconfig.json` maps them with `paths: { "*": ["./src/*"] }` (until TypeScript 6 this was `baseUrl: "src"`, which TS 6 deprecates and TS 7 removes); for Vite and Vitest the plugin reimplements webpack's precedence: node_modules wins, `src/` is the fallback. (tsc tries `src/` first and then `node_modules` — with `paths` exactly as it did with `baseUrl`; Vite the other way round, unchanged.) |
-| SVG components | `vite-plugin-svgr`, behind a `?react` query — `import Icon from './icon.svg?react'`, **default** export. `svgo: false` is load-bearing (svgr's default svgo pass strips `viewBox`). Typed by `src/types/svg-react.d.ts`. |
+| SVG components | `vite-plugin-svgr` (5.x), behind a `?react` query — `import Icon from './icon.svg?react'`, **default** export. `svgo: false` is load-bearing (svgr's default svgo pass strips `viewBox`). Typed by `src/types/svg-react.d.ts`. |
 | Service worker | `vite/serviceWorker.ts` — a nested Vite build plus `workbox-build`'s `injectManifest`; deliberately **not** `vite-plugin-pwa`, because the worker and its registration manager are hand-written. Fails the build if the worker bundle is not a single file or if any emitted JS/CSS chunk is missing from the precache. |
 | Entry `<script>` tags | `vite/htmlEntryScripts.ts` — the shells carry no `<script src>`; the config declares which module belongs to which shell. |
 | Social preview meta | `vite/absoluteSocialMeta.ts` — makes `og:image`/`twitter:image`/`og:url` absolute when `PUBLIC_URL` is set (only the legacy Azure pipelines set it). |
-| Node polyfills | `vite-plugin-node-polyfills`, scoped to `buffer`/`stream`/`assert` + global `Buffer`, for transitive web3 dependencies only. `process` and `global` are deliberately **not** polyfilled: `src/common/` is dual-runtime (the backend consumes it through the `srv/common` symlink) and reads env through a `globalThis` indirection that must keep resolving to nothing in the browser. |
+| Node polyfills | `vite-plugin-node-polyfills` (0.28), scoped to `buffer`/`stream`/`assert` + the globals `Buffer` and `global`, for transitive dependencies only. `process` is deliberately **not** polyfilled: `src/common/` is dual-runtime (the backend consumes it through the `srv/common` symlink) and reads env through a `globalThis` indirection that must keep resolving to nothing in the browser. `global` is provided since Vite 8 (shim = `globalThis`, injected only into modules that reference it): Rollup's commonjs plugin had rewritten a bare `global` in CommonJS dependencies, Rolldown does not, and e.g. `randombytes` and `@walletconnect/environment` would throw `ReferenceError: global is not defined`. |
 | Dependency aliases | Two exact-match `resolve.alias` entries in `vite.config.ts`, both load-bearing. `@tensorflow/tfjs` → `src/moderation/tfjs.ts` is described in the NSFW pre-check section above. `altcha-widget-element` → `altcha` loads the widget bundle under a stub module name so its `.d.ts` (which augments `react/jsx-runtime` and would shadow the whole JSX namespace — first observed under @types/react 18) never enters the TS program; the stub is `src/types/altcha-widget-element.d.ts`. altcha 3 moved that augmentation out of the default types entry into `altcha/types/react`, so the hazard is narrower now, but the alias is what keeps it out for good. (An earlier third alias pinning `@metamask/sdk` to its browser UMD file was removed in the 2026-08 wagmi-2 migration: the SDK is no longer a direct dependency — wagmi's `metaMask` connector imports it dynamically — and 0.33's `browser`/`module` fields both point at the browser ESM build, so Vite resolves it correctly unaided; measured, the precache is 60 KB smaller without the alias.) |
-| Chunking | `build.rollupOptions.output.manualChunks` in `vite.config.ts`: nine vendor groups (`vendor-web3`, `vendor-icons`, `vendor-charts`, `vendor-mediasoup`, `vendor-emoji`, `vendor-editor`, `vendor-dnd`, `vendor-react`, `vendor-shared`) split what Vite's default chunking put into one ~5.4 MiB `App` chunk (a Vite 6 measurement; the groups carried over unchanged in the Vite 7 bump — same chunk set, every chunk same-size or marginally smaller). `node_modules` only — `src/` keeps the default behavior, because splitting first-party modules is what turns an import cycle into a TDZ crash. `assertCgidEntryChunks` (same file) fails the build if the CG ID entry ever statically reaches a group other than `vendor-react`/`vendor-shared`. Details and the rules the table follows: [docs/infrastructure](../infrastructure/README.md#frontend-build-steps). Changing it needs a browser pass. |
-| Sourcemaps | `build.sourcemap: true` on every build path (the app is AGPL). **JS only** — Vite/Rollup emit no `.css.map`, unlike CRA. The service worker excludes maps from the precache, so they only cost bandwidth when devtools opens them. |
-| CSS | `postcss.config.js` (`tailwindcss/nesting` → `tailwindcss` → `autoprefixer`), `tailwind.config.js`. |
+| Chunking | `build.rolldownOptions.output.codeSplitting` in `vite.config.ts`: nine vendor groups (`vendor-web3`, `vendor-icons`, `vendor-charts`, `vendor-mediasoup`, `vendor-emoji`, `vendor-editor`, `vendor-dnd`, `vendor-react`, `vendor-shared`) split what Vite's default chunking put into one ~5.4 MiB `App` chunk (a Vite 6 measurement; the groups carried over unchanged in the Vite 7 bump — same chunk set, every chunk same-size or marginally smaller). Since Vite 8 they are one Rolldown group each, with `vendor-react` and `vendor-shared` at a higher `priority` than the feature groups — not the function-form `manualChunks` (deprecated; Rolldown emulates it as a single group whose members claim shared dependencies in alphabetical order, which put `vendor-charts` into the CG ID entry). Same packages per vendor chunk as under Rollup, except that `lodash`, `idb-keyval` and `fast-safe-stringify` are no longer pulled into `vendor-web3` and `vendor-shared` additionally pins Oxc's lowering helpers and the `global` shim (`SHARED_HELPERS`) — bundler-generated or injected modules every feature group shares, which otherwise land in whichever group reaches them first. `node_modules` only — `src/` keeps the default behavior, because splitting first-party modules is what turns an import cycle into a TDZ crash. `assertCgidEntryChunks` (same file) fails the build if the CG ID entry ever statically reaches a group other than `vendor-react`/`vendor-shared`. Details and the rules the table follows: [docs/infrastructure](../infrastructure/README.md#frontend-build-steps). Changing it needs a browser pass. |
+| Sourcemaps | `build.sourcemap: true` on every build path (the app is AGPL). **JS only** — Vite emits no `.css.map` (neither under Rollup nor under Rolldown), unlike CRA; and since Vite 8 the small `modulepreload-polyfill` chunk, which also carries Rolldown's runtime helpers, has no `.map` either. The service worker excludes maps from the precache, so they only cost bandwidth when devtools opens them. |
+| CSS | `postcss.config.js` (`tailwindcss/nesting` → `tailwindcss` → `autoprefixer`), `tailwind.config.js`. Minified by Lightning CSS (Vite 8 default), which rejects invalid CSS that esbuild passed through — a build error from `[lightningcss minify]` means a real CSS bug. |
 | Type-check | `yarn typecheck` — `tsc --noEmit` over `src/**` plus `tsconfig.node.json` over the Vite-side files. TypeScript 6.0 (wave M1, 2026-10-31; before that 5.9 — and 4.5 could not even *parse* viem's TS-5 `.d.ts` files, which silently disabled semantic checking). The tsconfigs use no option TS 6 deprecates (no `ignoreDeprecations`), so they are ready for TS 7: `moduleResolution: "bundler"` (Vite resolves the imports; this also enforces package `exports`, hence `mediasoup-client/types` instead of the unexported `mediasoup-client/lib/types`), the `paths` mapping above instead of `baseUrl`, no `dom.iterable` (part of `dom` since TS 6) and no `esModuleInterop`/`allowSyntheticDefaultImports` (always on since TS 6). `tsconfig.json` targets **es2020**: not es5, because TS 5.5+ grammar-checks regex syntax against the target and rejects the `u` flag + `\p{…}` escapes in `src/common/validators.ts`; and not es2018 any more, because viem 2 and its `ox` dependency ship `.ts` sources with BigInt literals, which tsc rejects below ES2020. Nothing emits from this tsconfig — shipped output is transpiled by Vite against `build.target`, which mirrors the `browserslist` floors. |
 | Lint | `yarn lint` — `eslint.config.mjs` (ESLint 9 flat config: typescript-eslint + react + react-hooks), calibrated to the severities the old `react-app` preset enforced. Errors fail, warnings do not. |
-| Tests | `yarn test` — Vitest (`vitest.config.ts`) over `src/**/*.test.{ts,tsx}`; a small unit suite so far (instance config, the image-filter client modules, the upload connector, an EditField helper). Not part of the build scripts yet. |
+| Tests | `yarn test` — Vitest 4 (`vitest.config.ts`; it already ran on its own Vite 8 copy before wave M3, now it shares the app's) over `src/**/*.test.{ts,tsx}`; a small unit suite so far (instance config, the image-filter client modules, the upload connector, an EditField helper). Not part of the build scripts yet. |
 
 Neither type-check nor lint happens during `vite build`, which is why the docker
 build scripts run them as explicit steps — see
@@ -1063,9 +1146,10 @@ Constraints in the root `package.json` that are not self-explanatory. The
 and the 2026-10-31 refresh (F6) moved every package to its newest in-major
 release that has passed the 7-day age gate (except `mediasoup-client`, which
 moves together with the backend's `mediasoup` and its pinned worker); the
-remaining major jumps (react-router 7, Vite 8, Tailwind 4) are scheduled in
+remaining major jump (Tailwind 4) is scheduled in
 `docs/todo/ROADMAP_cg-box.md`; TypeScript 6 and joi 18 came with wave M1
-(2026-10-31).
+(2026-10-31), Vite 8 (with `@vitejs/plugin-react` 6, `vite-plugin-svgr` 5 and
+`vite-plugin-node-polyfills` 0.28) and react-router 7 with wave M3 (2026-11-01).
 
 - **`resolutions`**: `@types/react` → `"19"` keeps every `@types/react@*`
   consumer on one copy; a second copy makes components from other packages fail
@@ -1081,15 +1165,17 @@ remaining major jumps (react-router 7, Vite 8, Tailwind 4) are scheduled in
   `src/common/walletConnectQr.test.ts` guards it (it resolves cuer/qr from
   RainbowKit's location and decodes the matrix back to the URI). Drop the
   entry once RainbowKit depends on cuer ≥ 0.0.4 itself.
-- **`react-router-dom: "^6.30.6"`** — the floor is security-motivated: 6.30.2–6.30.5
-  are affected by GHSA-jjmj-jmhj-qwj2 (open redirect → XSS), which is why the
-  tree was held on 6.30.1 by a resolution until 6.30.6 shipped the fix (the
-  hold was dropped in the 2026-10-31 refresh). Two advisories remain that only
-  react-router 7.18 fixes (see "Open advisories" in
-  `docs/infrastructure/UPDATE-POLICY.md`).
+- **`react-router: "^7.18.4"`** (wave M3, 2026-11-01) replaced
+  `react-router-dom` 6.30.6. In v7 `react-router-dom` is only a re-export of
+  `react-router`, so every import names `react-router` and `react-router-dom`
+  is not installed any more. The floor is security-motivated: 7.18.0+ closes
+  the two advisories 6.30.6 still had (GHSA-wrjc-x8rr-h8h6,
+  GHSA-337j-9hxr-rhxg), and 7.18.4 is the release the lockfile resolves. 7.18.5 was 5 days old at the
+  time (age gate); its changes are SSR/RSC-only. react-router 8 exists; it is
+  a separate major for the Renovate dashboard.
 - **`history`** is a direct dependency because `SuspenseRouter` imports
-  `createBrowserHistory` from it; react-router 6.30 no longer depends on it,
-  so without the declaration it would be a phantom dependency.
+  `createBrowserHistory` from it; react-router has not depended on it since
+  6.x, so without the declaration it would be a phantom dependency.
 - **`react-is: "19"`** is direct because recharts 3 demoted it to a peer; the
   nested 16.x copy left in the tree cannot recognise React 19 elements.
 - **`slate-dom`** is direct because slate-react ≥ 0.111 peer-requires it.
@@ -1108,7 +1194,8 @@ remaining major jumps (react-router 7, Vite 8, Tailwind 4) are scheduled in
   (likewise `protoo-client` with `protoo-server`). (`react`, `react-dom` and
   `react-is` are pinned to the major only, `"19"`.) Ranged packages keep their range style; a security-motivated
   bump raises the range floor to the fixed version.
-- `@types/react-router-dom` (v5 types) is vestigial — see `docs/todo/TODO.md`.
+- `@types/react-router-dom` (v5 types) is gone with wave M3; react-router 7
+  ships its own types.
 
 ### Entry points
 
@@ -1117,6 +1204,26 @@ remaining major jumps (react-router 7, Vite 8, Tailwind 4) are scheduled in
 - **Service Worker**: `src/service-worker.ts` -- handles caching, push notifications, and multi-tab active-socket refereeing (§8).
 - **Config**: `src/common/config.ts` -- deployment configuration (dev/staging/prod), feature flags, URLs, chain set.
 - **Docker**: `docker/.env` -- environment variables of the dev compose stack (gitignored, generated from the tracked `docker/.env.example` on first `./run.sh`; see [docs/infrastructure §4](../infrastructure/README.md#4-environment-variables)).
+
+### Service worker and module scripts
+
+The worker precaches every emitted chunk and answers their requests from
+Cache Storage (Workbox `PrecacheController`). It hands **scripts** over with
+the body read into memory first (`bufferCachedScripts` in
+`src/service-worker.ts`) instead of streaming it out of Cache Storage. Found in
+wave M3 (2026-11-01): with the Vite 8 build, whose app import pulls ~45 chunks
+at once (the Vite 7 build ~20), Chrome cancelled (`net::ERR_ABORTED`) some of
+those module-script requests now and then although the worker had answered
+them with a 200; the module graph failed ("Failed to fetch dynamically
+imported module"), the browser keeps that failure for the URL — a second
+`import()` failed in 5 of 5 measured cases — and the app showed its error
+screen. Measured with repeated fresh loads in the e2e image's Chrome: streamed
+from Cache Storage ~1.5 % of loads (7 of 480), the same from the network via
+the worker 0 of 480, from the cache with the body read first 0 of 480, without
+the worker 0 of 80, the Vite 7 build 0 of 208; with `bufferCachedScripts` 0 of
+600. Removing the JS `modulepreload` links did not help (3 of 480), so preloads
+were not the cause. The Chromium-side mechanism is not identified; re-measure
+before removing the plugin. Fonts, audio and images still stream.
 
 ### Runtime Instance Configuration (`src/common/instance.ts`)
 

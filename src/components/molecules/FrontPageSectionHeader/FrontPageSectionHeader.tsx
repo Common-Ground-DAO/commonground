@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import './FrontPageSectionHeader.css';
 type Props = {

@@ -4,7 +4,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import "./CommunityViewSidebar.css";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import { useCommunitySidebarContext } from "./CommunityViewSidebarContext";
 import { useWindowSizeContext } from "../../../context/WindowSizeProvider";

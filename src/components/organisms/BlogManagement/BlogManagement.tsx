@@ -5,7 +5,7 @@
 
 import "./BlogManagement.css";
 import { useMemo, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useOwnUser } from "context/OwnDataProvider";
 import userApi from "data/api/user";
 import { getUrl } from 'common/util';

@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import './AudioDevicesManagementView.css';
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useWindowSizeContext } from "../../context/WindowSizeProvider";
 import AudioDevicesManagement from "../../components/organisms/AudioDevicesManagement/AudioDevicesManagement";
 import Scrollable from "../../components/molecules/Scrollable/Scrollable";

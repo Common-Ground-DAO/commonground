@@ -8,7 +8,7 @@ import Scrollable from 'components/molecules/Scrollable/Scrollable';
 import './EventsView.css';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import ManagementHeader from 'components/molecules/ManagementHeader/ManagementHeader';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import Button from 'components/atoms/Button/Button';
 import EventsList from 'components/organisms/EventsList/EventsList';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';

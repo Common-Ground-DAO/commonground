@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useWindowSizeContext } from "../../context/WindowSizeProvider";
 
 import UserProfileManagement from "../../components/organisms/UserProfileManagement/UserProfileManagement";

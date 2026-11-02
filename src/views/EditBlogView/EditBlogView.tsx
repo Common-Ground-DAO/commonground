@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import "./EditBlogView.css";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router";
 import { useWindowSizeContext } from "../../context/WindowSizeProvider";
 import BlogManagement from "../../components/organisms/BlogManagement/BlogManagement";
 import Scrollable from "../../components/molecules/Scrollable/Scrollable";

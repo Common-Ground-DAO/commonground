@@ -9,7 +9,7 @@ import dayjs from "dayjs";
 import ArticleClayIcon from '../../../components/atoms/icons/40/articleClay.png';
 import { getCommunityDisplayName, getDisplayName, } from "../../../util";
 import { getUrl } from "common/util";
-import { createSearchParams, useNavigate } from "react-router-dom";
+import { createSearchParams, useNavigate } from "react-router";
 import useLocalStorage, { ReadArticlesState, ReadLatestArticleCommentsState } from "hooks/useLocalStorage";
 import { useWindowSizeContext } from "context/WindowSizeProvider";
 import CommunityPhoto from "components/atoms/CommunityPhoto/CommunityPhoto";

@@ -13,7 +13,7 @@ import WalletsEditor from '../WalletsEditor/WalletsEditor';
 
 import './WalletsManagement.css';
 import ManagementHeader from 'components/molecules/ManagementHeader/ManagementHeader';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import EmailEditor from '../EmailEditor/EmailEditor';
 import { getUrl } from 'common/util';
 import { useOwnUser } from 'context/OwnDataProvider';

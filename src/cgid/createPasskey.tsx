@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { useEffect, useMemo, useCallback, useState, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { startRegistration } from '@simplewebauthn/browser';
 import { UAParser } from 'ua-parser-js';
 

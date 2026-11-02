@@ -4,7 +4,7 @@
 
 
 import React, { Dispatch, ReactNode, SetStateAction, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { type KeyPhraseInputType } from "../components/organisms/UserOnboarding/LoginWithKeyPhrase/LoginWithKeyPhrase";
 import { getUrl } from "common/util";
 

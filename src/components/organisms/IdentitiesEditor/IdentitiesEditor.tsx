@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import signatureHelper, { MetamaskData } from '../../../util/signatureHelper';
 import { useWindowSizeContext } from '../../../context/WindowSizeProvider';

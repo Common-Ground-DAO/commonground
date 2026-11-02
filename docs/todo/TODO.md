@@ -167,6 +167,11 @@ that stack — confirm and delete:
 - [ ] **`signatureHelper.metamaskSignData` and `recoverSigner` have no callers**
   (2026-08-04, dependency-update wave-3 review) — with them, the
   `@metamask/eth-sig-util` dependency is unreachable too. Verify and delete.
+  Note (2026-11-01, wave M3): the built eth-sig-util chunk does not even
+  evaluate in the browser — `readable-stream` 2 in its tree reads
+  `process.browser` at load time and `process` is deliberately not polyfilled
+  (`ReferenceError: process is not defined`; the same code is in the Vite 7
+  build, so this predates Vite 8). Also `validators.ts:311` imports it.
 - [ ] **`TokenRuleEditor` silently rounds over-precise token amounts**
   (2026-08-04, dependency-update wave-3 review) — its guard regex allows
   unbounded decimals, and viem's `parseUnits` rounds half-up where ethers 5 threw
@@ -181,10 +186,15 @@ that stack — confirm and delete:
 - [ ] **`srv/tsconfig.json`'s `include` does not cover `tests/`** (2026-08-04,
   dependency-update wave-2 review) — so `npx tsc --noEmit`, the backend's typecheck
   gate, never checks the spec files; only ts-jest does, at test time. Add `tests/*.ts`.
-- [ ] **Drop the `@types/react-router-dom` devDep** (2026-08-04, dependency-update
-  wave 0a) — it is the v5 types package, while the app runs react-router-dom v6, which
-  ships its own types. Typecheck passes with it installed today, but it is vestigial
-  and one `@types/history` drift away from conflicting. One-line cleanup.
+- [ ] **Move `SuspenseRouter` off the `history` package** (2026-11-01, left over from
+  wave M3) — react-router 7 runs fine with `history` 5's `BrowserHistory` as the
+  `<Router navigator>` (verified with the e2e suite and a navigation smoke), but
+  `history`'s last release is 5.3.0 from 2022-02 and only this file uses it. The catch is the
+  `isDirty` "unsaved changes" confirm and the Matomo page-view hook, which listen to
+  the history object: react-router's own `BrowserRouter` (it wraps updates in
+  `startTransition` since v7) exposes no listener, and `useBlocker` needs a data
+  router. Options: a small in-repo history, or moving to `createBrowserRouter`. Needs
+  a browser pass of the "unsaved changes" prompt.
 - [ ] **Delete `public/images/tokensale_header.png`** (891 KB, 2026-08-03, Vite workstream)
   — nothing references it; `src/views/TokenSale/TokenSale.tsx:106` uses the `.webp`. It
   ships in every build. (`public/images/tokensale_social_preview.png` **is** used, by
@@ -194,6 +204,35 @@ that stack — confirm and delete:
   build's shell (pointing at hashed assets that no longer exist) on every deep-link/share
   route until `update_backend` runs. Pre-existing, not caused by the Vite cutover; either
   copy `build/index.html` there like `build.sh` does, or document the pairing.
+- [ ] **e2e `images` flow: Enter sometimes does not send the message with the
+  attachment** (2026-11-01, wave M3) — in 3 of 4 full-suite runs on Vite 8 builds
+  (also with the service-worker fix in place, docs/frontend §9 "Service worker and
+  module scripts"), never in 30 standalone runs of the flow
+  nor in 20 image sends in one long session. The composer keeps "a picture" and the
+  preview; once the message went out without the picture. Not yet seen on a Vite 7 full
+  run (1 clean run). Next step: log the composer's send state when Enter is pressed.
+- [ ] **e2e: allowlist or block the WalletConnect `pulse.walletconnect.org` CORS error**
+  (2026-11-01) — since the evening of 2026-11-01 every flow records "Access to fetch at
+  'https://pulse.walletconnect.org/e?…' … blocked by CORS policy" (also on the a1460cb
+  build): third-party telemetry, not ours; it makes every flow fail its guards.
+- [ ] **The first "Publish" of a session in the article editor sometimes does nothing**
+  (2026-11-01, wave M3 scratch scripts) — a second click publishes. Seen on the Vite 8
+  builds with and without the service-worker fix; no request is aborted and no
+  import fails when it happens, so it is not the start-up bug. The e2e article flow
+  (which waits longer before publishing) always passes. Not yet checked on a Vite 7
+  build; look at what the first click does (toolbar re-render, the newsletter check's
+  `NOT_ALLOWED`).
+- [ ] **Vite's `configLoader: 'native'` notice on every build** (2026-11-01, wave M3) —
+  Vite 8 warns that `vite.config.ts` and `vite/*.ts` use ESM syntax in a package without
+  `"type": "module"`, which the native config loader (planned as a future default) will
+  not support. Harmless with today's bundling loader. Fix: `.mts` files (or `"type":
+  "module"`, which would also need `postcss.config.js`/`tailwind.config.js` as `.cjs`
+  and `import.meta.dirname` instead of `__dirname`), then drop the notice from the docs.
+- [ ] **`start_https` blocks `app.cg.local` / `bs-local.com`** (2026-11-01, found in
+  wave M3, not caused by it) — `Caddyfile.vite` serves both names, but Vite's host
+  check rejects them ("Blocked request") because the dev server behind Caddy is plain
+  HTTP; only `localhost` and IP literals pass. Add them to `server.allowedHosts` or
+  drop them from `Caddyfile.vite` (docs/infrastructure §6).
 - [ ] **Narrow the blanket ESLint exclusion of `srv/**`** (2026-08-03, Node 24 /
   mediasoup workstream) — `eslint.config.mjs:51` excludes the entire backend;
   `srv/mediasoup/**` was cleaned up in the mediasoup 3.23 package and could be covered
@@ -262,7 +301,13 @@ that stack — confirm and delete:
   - the "edited" marker never shows for the other user;
   - `/files/` serves images as `application/octet-stream`;
   - `createCommunity` logs "Creating initial article failed … articleId null" when the template
-    article does not exist.
+    article does not exist;
+  - found by the M3 navigation smoke (2026-11-01, same on a1460cb): a deep link to `/store/`
+    throws unhandled `NOT_FOUND` (`getCommunityDetailView`) and `VALIDATION`
+    (`getArticleList`); a deep link to `/c/<community>/roles/` throws the
+    `checkCommunityRoleClaimability` `SERVICE_UNAVAILABLE` above; a deep link to a
+    non-existent profile article (`/u/<id>/article/<bad>/`) logs "Article uri invalid" and
+    never leaves the loading screen.
 
 ## Optional / nice-to-have
 
@@ -357,19 +402,18 @@ wave has to *change*.
   resolution and would load it through `require(ESM)`, as it does puppeteer 25);
   re-check whether its `types` field (2.0.2: `./dist/index.d.ts`, `exports` has
   no `types` condition) resolves. joi 18 itself still depends on `^1.1.1`.
-- **react-router 7 (M3)** — closes GHSA-wrjc-x8rr-h8h6 (fixed only in 7.18.0;
-  the old `6.30.1` security-hold resolution is gone since F6 — 6.30.6 fixed
-  GHSA-jjmj-jmhj-qwj2), rewrite `SuspenseRouter` off the `history`
-  package and drop that direct dependency, and drop `@types/react-router-dom` (v5
-  types, see above).
-- **Vite 8 (M3)** — swaps Rollup for Rolldown and esbuild for Oxc: take a fresh
-  baseline of the `manualChunks` vendor groups, the `assertCgidEntryChunks` guard
-  and the pinned shared modules (`tslib`, `ua-parser-js`, Vite helpers), and
-  re-check the two chunking items above (CG ID entry closure, `tslib` copies).
-  `@vitejs/plugin-react` 5.2.0 is the last release for Vite 7; 6.x is Vite-8-only
-  (the root is still on `^4`). Both `resolve.alias` entries
-  (`altcha-widget-element`, `@tensorflow/tfjs`) and the service-worker nested
-  build/precache assertion must survive.
+- **react-router 7 (M3, step B)** — done 2026-11-01 (react-router 7.18.4, imports
+  switched from `react-router-dom`, which is gone, as is `@types/react-router-dom`;
+  closes GHSA-wrjc-x8rr-h8h6 and GHSA-337j-9hxr-rhxg; docs/frontend "Routing on
+  react-router 7"). Left over: `SuspenseRouter` still uses the `history` package
+  (cleanup entry above). Delete this bullet once the wave is merged.
+- **Vite 8 (M3, step A)** — done 2026-11-01 (Vite 8.3.5, `@vitejs/plugin-react`
+  6, `vite-plugin-svgr` 5, `vite-plugin-node-polyfills` 0.28; docs/frontend §9 and
+  docs/infrastructure "Frontend build steps" have the measurements). The two
+  chunking items above are unchanged by it: the CG ID entry closure is 9 chunks /
+  ~900 KiB on both Vite 7 and Vite 8 (the barrel chunk is now named `util`), and
+  `vendor-shared` is 58 KiB (56 KiB on Vite 7; it now also holds Oxc's lowering
+  helpers and the `global` shim). Delete this bullet once the wave is merged.
 - **Tailwind 4 (M4)** — `postcss.config.js` runs the v3 chain
   (`tailwindcss/nesting` → `tailwindcss` → `autoprefixer`); v4 ships its own PostCSS
   plugin and handles nesting/prefixing itself (TODO(verify) at pickup).

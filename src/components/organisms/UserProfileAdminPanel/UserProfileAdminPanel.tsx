@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { useCallback, useMemo, useState } from 'react';
-import { createSearchParams, useLocation, useNavigate } from "react-router-dom";
+import { createSearchParams, useLocation, useNavigate } from "react-router";
 import Button from "../../../components/atoms/Button/Button";
 import { Tooltip } from "../../../components/atoms/Tooltip/Tooltip";
 import { useWindowSizeContext } from "../../../context/WindowSizeProvider";

@@ -11,7 +11,7 @@ import ManagementHeader2 from 'components/molecules/ManagementHeader2/Management
 import Scrollable from 'components/molecules/Scrollable/Scrollable';
 import ToggleInputField from 'components/molecules/inputs/ToggleInputField/ToggleInputField';
 import { useWindowSizeContext } from 'context/WindowSizeProvider'
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';
 import Tag from 'components/atoms/Tag/Tag';
 import SimpleLink from 'components/atoms/SimpleLink/SimpleLink';

@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useState } from 'react';
-import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import AuthFlow from 'components/organisms/AuthFlow/AuthFlow';
 import loginManager from 'data/appstate/login';
 import { useUserOnboardingContext } from 'context/UserOnboarding';

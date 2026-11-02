@@ -6,7 +6,7 @@ import './CallPage.css';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCallContext } from 'context/CallProvider';
 import data from 'data';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';

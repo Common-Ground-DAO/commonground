@@ -14,7 +14,7 @@ import { HouseSimple } from "@phosphor-icons/react";
 import { useLoadedCommunityContext } from "context/CommunityProvider";
 import { CommunityPremiumFeatureName } from "common/enums";
 import Button from "components/atoms/Button/Button";
-import { createSearchParams, useNavigate } from "react-router-dom";
+import { createSearchParams, useNavigate } from "react-router";
 import { getUrl } from "common/util";
 import { useCommunityPremiumTier } from "hooks/usePremiumTier";
 

@@ -12,7 +12,7 @@ import { ChevronDownIcon } from '@heroicons/react/20/solid';
 import TextInputField from 'components/molecules/inputs/TextInputField/TextInputField';
 import communityApi from 'data/api/community';
 import { useManagementContentModalContext } from 'components/organisms/ManagementContentModal/ManagementContentModalContext';
-import { createSearchParams, useNavigate } from 'react-router-dom';
+import { createSearchParams, useNavigate } from 'react-router';
 import Button from 'components/atoms/Button/Button';
 import SettingsListItem from 'components/atoms/SettingsListItem/SettingsListItem';
 import { getTruncatedId } from '../../../../util';

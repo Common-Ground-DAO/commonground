@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { useCallback, useMemo, useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink } from "react-router";
 import { DndContext, DragCancelEvent, DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";

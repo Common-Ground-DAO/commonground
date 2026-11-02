@@ -4,7 +4,7 @@
 
 import React from 'react';
 import './OwnCommunitiesBrowser.css';
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import EmptyState from "../../components/molecules/EmptyState/EmptyState";
 import OwnCommunityCard from "./OwnCommunityCard";
 import CreateCommunityCircleButton from "../../components/molecules/CreateCommunityButton/CreateCommunityCircleButton";

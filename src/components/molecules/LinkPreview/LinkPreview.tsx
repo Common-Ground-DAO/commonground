@@ -13,7 +13,7 @@ import data from 'data';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { calculateArticleAgeString, isArticleGated } from '../ArticleCardV2/ArticleCardV2.helper';
 import dayjs from 'dayjs';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useExternalModalContext } from 'context/ExternalModalProvider';
 import GatedDialogModal, { calculatePermissions } from 'components/organisms/GatedDialogModal/GatedDialogModal';
 import { getUrl } from 'common/util';

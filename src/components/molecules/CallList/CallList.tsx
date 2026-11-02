@@ -4,7 +4,7 @@
 
 import './CallList.css';
 import React, { useCallback } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 import { useCalls, useLoadedCommunityContext } from 'context/CommunityProvider';
 import CallItem from './CallItem';

@@ -36,7 +36,7 @@ import fileApi from 'data/api/file';
 import { checkImageBeforeUpload } from 'moderation/checkImageBeforeUpload';
 import { imageUploadErrorText, notifyIfImageRejected } from 'moderation/imageUploadError';
 import { useAsyncMemo } from 'hooks/useAsyncMemo';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 import { useSafeCommunityContext } from 'context/CommunityProvider';
 import communityApi from 'data/api/community';

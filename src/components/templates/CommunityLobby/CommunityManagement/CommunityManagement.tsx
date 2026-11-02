@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import CommunityLinks from "../../../molecules/CommunityLinksInput/CommunityLinks";
 import LeaveCommunityModal from "../../../../components/organisms/LeaveCommunityModal/LeaveCommunityModal";

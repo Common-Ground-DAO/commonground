@@ -4,7 +4,7 @@
 
 import React from 'react'
 import './Article.css';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { articleViewReducer, initialState } from './Article.reducer';
 import { getUrl } from 'common/util';
 import communityArticleManager from 'data/managers/communityArticleManager';

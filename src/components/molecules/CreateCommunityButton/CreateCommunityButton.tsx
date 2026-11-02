@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useCreateCommunityModalContext } from '../../../context/CreateCommunityModalProvider';
 
 import Button, { ButtonProps } from '../../../components/atoms/Button/Button';

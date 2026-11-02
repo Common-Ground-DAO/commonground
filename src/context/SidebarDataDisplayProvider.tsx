@@ -5,7 +5,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Props } from "components/organisms/UserProfileModal/UserProfileModal";
 import BottomSliderModal from "components/atoms/BottomSliderModal/BottomSliderModal";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 import { useWindowSizeContext } from "./WindowSizeProvider";
 import SidebarContainer from "components/atoms/SidebarContainer/SidebarContainer";
 import UserProfileInner from "components/organisms/UserProfile/UserProfileInner/UserProfileInner";

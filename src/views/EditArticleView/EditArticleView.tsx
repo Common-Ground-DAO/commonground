@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 
 import { useLoadedCommunityContext } from "../../context/CommunityProvider";
 import { useWindowSizeContext } from "../../context/WindowSizeProvider";

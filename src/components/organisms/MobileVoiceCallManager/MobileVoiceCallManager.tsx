@@ -8,7 +8,7 @@ import { useCallContext } from "context/CallProvider";
 
 import "./MobileVoiceCallManager.css";
 import { useCallback } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 import { createTranslator } from 'short-uuid';
 import { useCommunityListView } from 'context/CommunityListViewProvider';

@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useMemo } from "react";
-import { createSearchParams, useLocation, useNavigate } from "react-router-dom";
+import { createSearchParams, useLocation, useNavigate } from "react-router";
 import { useSignedUrl } from '../../../hooks/useSignedUrl';
 
 import CommunitySettings from "../CommunitySettings/CommunitySettings";

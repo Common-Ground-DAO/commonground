@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';
 import ManagementHeader2 from 'components/molecules/ManagementHeader2/ManagementHeader2';

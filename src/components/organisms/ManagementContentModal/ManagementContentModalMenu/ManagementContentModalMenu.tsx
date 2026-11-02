@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React from 'react';
-import { createSearchParams, useNavigate } from "react-router-dom";
+import { createSearchParams, useNavigate } from "react-router";
 import { useManagementContentModalContext } from "../ManagementContentModalContext";
 import "./ManagementContentModalMenu.css";
 import SettingsButton from "components/molecules/SettingsButton/SettingsButton";

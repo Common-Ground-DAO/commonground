@@ -6,7 +6,7 @@ import React from 'react'
 import PaddedIcon from 'components/atoms/PaddedIcon/PaddedIcon';
 import { ChatBubbleOvalLeftEllipsisIcon } from '@heroicons/react/20/solid';
 import { isLocalUrl } from 'components/atoms/SimpleLink/SimpleLink';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 
 type Props = {

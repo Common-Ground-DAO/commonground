@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import './Home.css';
-import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Route, Routes, useLocation, useNavigate } from 'react-router';
 import Scrollable from "../../components/molecules/Scrollable/Scrollable";
 import LiveCallExplorer from '../../components/organisms/LiveCallExplorer/LiveCallExplorer';
 import { useWindowSizeContext } from '../../context/WindowSizeProvider';

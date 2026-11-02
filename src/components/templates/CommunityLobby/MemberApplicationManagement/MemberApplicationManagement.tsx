@@ -4,7 +4,7 @@
 
 import "./MemberApplicationManagement.css";
 import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import { useLoadedCommunityContext } from "../../../../context/CommunityProvider";
 import { useCommunitySidebarContext } from "../../../organisms/CommunityViewSidebar/CommunityViewSidebarContext";

@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useEffect, useMemo, useReducer, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import Button from '../../../components/atoms/Button/Button';
 import FrontPageSectionHeader from '../../../components/molecules/FrontPageSectionHeader/FrontPageSectionHeader';

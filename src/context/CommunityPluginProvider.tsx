@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useMemo } from "react";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import { useLoadedCommunityContext } from "./CommunityProvider";
 
 export const CommunityPluginContext = React.createContext<{ plugin?: Models.Plugin.Plugin }>({});

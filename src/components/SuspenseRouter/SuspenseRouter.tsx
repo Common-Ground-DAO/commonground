@@ -7,7 +7,7 @@
 
 import React, { useCallback } from 'react';
 import { useLayoutEffect, useRef, useState, useTransition } from 'react';
-import { Router } from 'react-router-dom';
+import { Router } from 'react-router';
 import { BrowserHistory, createBrowserHistory, Update } from 'history';
 import { useConnectionContext } from 'context/ConnectionProvider';
 

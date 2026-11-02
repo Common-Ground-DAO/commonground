@@ -10,7 +10,7 @@ import {
 } from '@simplewebauthn/browser';
 
 import errors from 'common/errors';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { randomString } from '../util';
 import urlConfig from '../data/util/urls';
 import { postEventToOpenerWindow } from './helpers';

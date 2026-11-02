@@ -4,7 +4,7 @@
 
 import React, { useMemo } from 'react';
 import './CommunityView.css';
-import { Route, Routes, useParams } from 'react-router-dom';
+import { Route, Routes, useParams } from 'react-router';
 
 import CommunityLobby from '../../components/templates/CommunityLobby/CommunityLobby';
 import MemberList from '../../components/organisms/MemberList/MemberList';

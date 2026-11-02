@@ -462,7 +462,7 @@ class LoginManager {
       securityStepState.setUser(null);
       webSocketManager.logout();
       channelDatabaseManager.userId = undefined;
-      notificationDatabase.unreadCount = 0;
+      notificationDatabase.clear();
       this.state = "anonymous";
     })().finally(() => {
       delete this.logoutPromise;
@@ -523,7 +523,7 @@ class LoginManager {
         notificationsApi.getUnreadCount(undefined),
       ]);
       if (!!ownData) {
-        await notificationDatabase.setupAfterLogin(Number(unreadCount), ownData.data);
+        notificationDatabase.setupAfterLogin(Number(unreadCount));
       }
     } catch (e) {
       console.error("Error setting up notifications after a login in another tab", e);
@@ -998,6 +998,8 @@ class LoginManager {
       // an account in the security step gets no realtime connection and no
       // push subscription until it finished the step (the page reloads then)
       const restricted = data.securityStepRequired === true;
+      // synchronous: the count only; the list loads when the notifications page opens it
+      notificationDatabase.setupAfterLogin(data.unreadNotificationCount);
       const promise = Promise.allSettled([
         userDatabase.setupAfterLogin(data.ownData).catch(async (e) => {
           await userDatabase.clear();
@@ -1015,10 +1017,6 @@ class LoginManager {
         // transport reports `live` itself)
         restricted ? Promise.resolve() : (webSocketManager.login(data.deviceId).catch(e => debugLog("socket login", e)), Promise.resolve()),
         restricted ? Promise.resolve() : serviceWorkerManager.setupAfterLogin(data.webPushSubscription),
-        notificationDatabase.setupAfterLogin(data.unreadNotificationCount, data.ownData).catch(async (e) => {
-          await notificationDatabase.clear();
-          return notificationDatabase.setupAfterLogin(data.unreadNotificationCount, data.ownData);
-        }),
       ]);
       this._waitBeforeWindowReload = promise;
       try {

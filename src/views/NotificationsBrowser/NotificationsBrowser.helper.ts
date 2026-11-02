@@ -43,3 +43,23 @@ export function filterNotifications(notifications: Models.Notification.Notificat
     return false;
   });
 };
+
+/**
+ * One markAsRead per interaction. A click marks the clicked notification; the
+ * route selection marks the selected one; both go through `mark`, so the
+ * selection effect that follows a click (desktop: the click navigates to the
+ * notification URL) and its re-runs on every list change do not mark again.
+ * The last marked id stays remembered on purpose: if the call fails, the
+ * store reverts `read`, and the re-run of the selection effect must not turn
+ * that into a request loop.
+ */
+export function createNotificationReadMarking(markAsRead: (notificationId: string) => unknown) {
+  let lastMarked: string | undefined;
+  return {
+    mark(notification: Pick<Models.Notification.Notification, 'id' | 'read'>): void {
+      if (notification.read || lastMarked === notification.id) return;
+      lastMarked = notification.id;
+      markAsRead(notification.id);
+    },
+  };
+}

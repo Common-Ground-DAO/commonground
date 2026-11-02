@@ -30,10 +30,17 @@ beforeEach(() => {
 
 describe('messageHelper.deleteMessage', () => {
   it('filters by creator, channel and message id', async () => {
-    poolQuery.mockResolvedValue({ rows: [{ deleteData: { deletedIds: [MESSAGE], updatedParentIdToNull: [], dbNow: '' } }] });
-    await messageHelper.deleteMessage({ messageId: MESSAGE, channelId: CHANNEL, creatorId: USER });
+    poolQuery.mockResolvedValue({ rows: [{ deleteData: { deleted: [{ id: MESSAGE, syncSeq: 7 }], updatedParents: [], dbNow: '' } }] });
+    await expect(messageHelper.deleteMessage({ messageId: MESSAGE, channelId: CHANNEL, creatorId: USER })).resolves.toEqual({
+      deletedIds: [MESSAGE],
+      deletedSyncSeqs: [7],
+      updatedParentIdToNull: [],
+      updatedParents: [],
+      dbNow: '',
+    });
     const [sql, params] = poolQuery.mock.calls[0];
     expect(normalize(sql)).toContain('WHERE m."creatorId" = $1 AND m."channelId" = $2 AND m."deletedAt" IS NULL AND m."id" = $3');
+    expect(normalize(sql)).toContain('RETURNING m.id, m."syncSeq"');
     expect(params).toEqual([USER, CHANNEL, MESSAGE]);
   });
 
@@ -46,7 +53,7 @@ describe('messageHelper.deleteMessage', () => {
 
 describe('messageHelper.deleteAllUserMessages', () => {
   it('filters by creator and channel', async () => {
-    poolQuery.mockResolvedValue({ rows: [{ deleteData: { deletedIds: [], updatedParentIdToNull: [], dbNow: '' } }] });
+    poolQuery.mockResolvedValue({ rows: [{ deleteData: { deleted: [], updatedParents: [], dbNow: '' } }] });
     await messageHelper.deleteAllUserMessages({
       access: { communityId: SCOPE, channelId: CHANNEL },
       creatorId: USER,
@@ -144,13 +151,30 @@ describe('messageHelper.isChannelInAccessScope', () => {
 describe('messageHelper.setChannelLastRead', () => {
   it('never moves the stored read marker backwards and returns the stored value', async () => {
     const stored = new Date('2026-11-02T12:00:00.000Z');
-    poolQuery.mockResolvedValue({ rows: [{ lastRead: stored }] });
+    poolQuery.mockResolvedValue({ rows: [{ lastRead: stored, unread: 3, syncSeq: '41' }] });
     await expect(messageHelper.setChannelLastRead(USER, {
       access: { communityId: SCOPE, channelId: CHANNEL },
       lastRead: '2026-11-02T11:00:00.000Z',
-    })).resolves.toBe(stored.toISOString());
+    })).resolves.toEqual({ lastRead: stored.toISOString(), unread: 3, syncSeq: 41 });
     const [sql, params] = poolQuery.mock.calls[0];
-    expect(normalize(sql)).toContain('VALUES ($1, $2, LEAST($3::timestamptz, now())) ON CONFLICT ("userId", "channelId") DO UPDATE SET "lastRead" = GREATEST(channelreadstate."lastRead", EXCLUDED."lastRead") RETURNING "lastRead"');
-    expect(params).toEqual([USER, CHANNEL, '2026-11-02T11:00:00.000Z']);
+    const normalized = normalize(sql);
+    // clamped to now(); a message id in the channel takes precedence over the posted time
+    expect(normalized).toContain('VALUES ($1, $2, LEAST( COALESCE( (SELECT m."createdAt" FROM messages m WHERE m."id" = $4::uuid AND m."channelId" = $2::uuid), $3::timestamptz ), now() ))');
+    expect(normalized).toContain('ON CONFLICT ("userId", "channelId") DO UPDATE SET "lastRead" = GREATEST(channelreadstate."lastRead", EXCLUDED."lastRead") RETURNING "lastRead"');
+    // unread: other users' messages after the stored value, capped
+    expect(normalized).toContain('AND m."createdAt" > u."lastRead" AND m."creatorId" <> $1::uuid LIMIT 999');
+    expect(normalized).toContain('COALESCE((SELECT s."seq" FROM channel_sync_state s WHERE s."channelId" = $2::uuid), 0) AS "syncSeq"');
+    expect(params).toEqual([USER, CHANNEL, '2026-11-02T11:00:00.000Z', null]);
+  });
+
+  it('passes the message id the client has seen', async () => {
+    const MESSAGE_SEEN = '00000000-0000-4000-8000-0000000000d2';
+    poolQuery.mockResolvedValue({ rows: [{ lastRead: new Date('2026-11-02T12:00:00.000Z'), unread: 0, syncSeq: '0' }] });
+    await expect(messageHelper.setChannelLastRead(USER, {
+      access: { chatId: SCOPE, channelId: CHANNEL },
+      lastRead: '2026-11-02T11:00:00.000Z',
+      messageId: MESSAGE_SEEN,
+    })).resolves.toEqual({ lastRead: '2026-11-02T12:00:00.000Z', unread: 0, syncSeq: 0 });
+    expect(poolQuery.mock.calls[0][1]).toEqual([USER, CHANNEL, '2026-11-02T11:00:00.000Z', MESSAGE_SEEN]);
   });
 });

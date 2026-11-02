@@ -33,7 +33,7 @@
 > and the test list against commit 591e6cf, 2026-11-02; `onlineStatusCheck.ts` against commit
 > fc15832, 2026-11-02; `Message/getSyncState` (`srv/api/syncState.ts`,
 > `srv/repositories/syncState.ts`), the notification read/count routes, the
-> `chats`/`notifications` indexes and the test list against commit 3f204f4, 2026-11-02.
+> `chats`/`notifications` indexes and the test list against commit 312b5e7, 2026-11-02.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -508,6 +508,8 @@ Mounted at `/Message` after the message router (`srv/api.ts`, same `securityStep
   - `unread`: non-deleted messages of others after `lastRead`, capped at 999 (`API.Messages.UnreadCap`). Without a `channelreadstate` row: `0` for community channels, every non-deleted message of others for chats.
 
   `notificationUnreadCount` and `serverTime` are the unread notification count and the database `now()` it was read at. The route writes nothing (unlike `getOwnCommunities` and `getChats`, which create missing `channelreadstate` rows). `channelIds: []` answers with no channels.
+
+  `channelIds` only narrows the same set: a requested channel is answered only if it is in the set above, so an explicitly requested Public channel of a community the user is not a member of is left out as well. A missing entry therefore means "no snapshot for this channel", not "no access" -- read access is decided by the message routes (`loadMessages`, `getChanges`), and clients must not treat a missing entry as a permission answer.
 
 ### `srv/api/chats.ts` -- DM / Chat Routes
 
@@ -1650,7 +1652,8 @@ with wave M2 (see below).
   `typingCache`, `userArticleVisibility`, `userArticleRoute`, `passkeyCore`,
   `passkeyRoutes`, `passkeyConfig`, `signupEmail`, `asyncHandler`,
   `registerPostRoute`, `uploadImageRoute`, `gatedFileRoute`, `callEnding`,
-  `notificationRoutes`, `syncState` and `syncStateDb` (real PostgreSQL, opt-in via
+  `notificationRoutes`, `syncState` and `syncStateDb` (getSyncState and the notification
+  read-state writes on real PostgreSQL, opt-in via
   `CG_TEST_PG_HOST`/`CG_TEST_PG_PORT`, own schema) (the passkey tests drive
   a software authenticator, `tests/helpers/softAuthenticator.ts`). `npx tsc --noEmit`
   does not cover `tests/` (see `docs/todo/TODO.md`). ts-jest compiles the specs

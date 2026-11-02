@@ -102,6 +102,23 @@ describe('FakeSocket', () => {
     ]);
   });
 
+  it('treats the accept after a refused first connect as a reconnect, and closes the Manager on disconnect()', () => {
+    const socket = connecting();
+    const events: string[] = [];
+    for (const type of ['open', 'close', 'error', 'reconnect_attempt', 'reconnect_error', 'reconnect']) {
+      socket.io.on(type, (arg?: unknown) => events.push(`${type}${arg instanceof Error ? ` ${arg.message}` : arg !== undefined ? ` ${String(arg)}` : ''}`));
+    }
+    socket.on('disconnect', (reason: string) => events.push(`disconnect ${reason}`));
+    socket.refuse(new Error('down'));
+    socket.accept();
+    socket.disconnect();
+    expect(events).toEqual([
+      'error down',
+      'reconnect_attempt 1', 'open', 'reconnect 1',
+      'close forced close', 'disconnect io client disconnect',
+    ]);
+  });
+
   it('delivers server events to on() and onAny() listeners only while connected', () => {
     const socket = connecting();
     const seen: unknown[] = [];

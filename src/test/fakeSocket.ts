@@ -25,8 +25,10 @@
  *   An inactive socket stays dead until the code calls `connect()` again.
  * - Every connection gets a new `id`. Server acks arrive asynchronously
  *   (microtask); `deliver` is synchronous.
- * - `socket.io` is a minimal Manager emitter: `open`, `close`, `error`,
- *   `reconnect_attempt`, `reconnect_error`, `reconnect`.
+ * - `socket.io` is a minimal Manager emitter: `open`, `close` (`forced
+ *   close` on client `disconnect()`), `error`, `reconnect_attempt`,
+ *   `reconnect_error`, `reconnect`. A refused first connect starts the
+ *   reconnect loop, so the next `accept()` is a reconnect.
  * The fake never reconnects on its own after `drop()`: the test decides when
  * (or whether) the reconnect succeeds via `accept()` / `refuse()`.
  */
@@ -266,8 +268,13 @@ export class FakeSocket extends Emitter {
   }
 
   disconnect(): this {
+    const wasActive = this.active;
     this.active = false;
     this.#reconnecting = false;
+    this.#reconnectAttempts = 0;
+    // destroy() runs before onclose(): the Manager closes ('forced close')
+    // when its last active socket goes, before the socket's `disconnect`
+    if (wasActive) this.io.emitReserved('close', 'forced close');
     if (this.connected) this.#close('io client disconnect');
     return this;
   }
@@ -322,6 +329,8 @@ export class FakeSocket extends Emitter {
     this.io.emitReserved('error', error);
     this.#fireEvent('connect_error', error);
     if (this.#reconnecting) this.io.emitReserved('reconnect_error', error);
+    // a failed first open starts the reconnect loop (Manager.maybeReconnectOnOpen)
+    else this.#reconnecting = true;
     return this;
   }
 

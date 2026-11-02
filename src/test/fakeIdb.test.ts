@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Dexie, liveQuery, type DexieOptions, type EntityTable } from 'dexie';
 import { installFakeIdb } from './fakeIdb';
 import { flushMicrotasks } from './deferred';
-import { useDataLayerFakeTimers } from './timers';
+import { flushLiveQueries, useDataLayerFakeTimers } from './timers';
 
 type Channel = { id: string; lastRead: number };
 
@@ -85,6 +85,23 @@ describe('fake timers', () => {
     await markRead(tab, 'c1', 1);
     expect(await tab.channels.get('c1')).toEqual({ id: 'c1', lastRead: 1 });
     expect(vi.isFakeTimers()).toBe(true);
+  });
+
+  it('liveQuery emits under useDataLayerFakeTimers() once flushLiveQueries() moves time', async () => {
+    useDataLayerFakeTimers();
+    const idb = installFakeIdb();
+    const tab = idb.tab(openChannels);
+    await markRead(tab, 'c1', 1);
+    const seen: (number | undefined)[] = [];
+    const subscription = liveQuery(() => tab.channels.get('c1').then(c => c?.lastRead)).subscribe(v => seen.push(v));
+    for (let i = 0; i < 10; i++) await new Promise<void>(resolve => queueMicrotask(resolve));
+    expect(seen).toEqual([]); // the first query waits for setTimeout(…, 0)
+    await flushLiveQueries();
+    expect(seen).toEqual([1]);
+    await markRead(tab, 'c1', 2);
+    await flushLiveQueries();
+    expect(seen).toEqual([1, 2]);
+    subscription.unsubscribe();
   });
 
   it('a faked setImmediate fails fast instead of hanging', async () => {

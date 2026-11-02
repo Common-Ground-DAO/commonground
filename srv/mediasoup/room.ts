@@ -201,11 +201,19 @@ export default class Room extends EventEmitter {
 
         this._broadCasters = new Map();
 
-        // Close the protoo Room.
-        this._protooRoom.close();
-
-        // Close the mediasoup Router.
-        this._mediasoupRouter.close();
+        // Close the protoo Room and the mediasoup Router. A failure here must
+        // not keep the 'close'/'forceClose' event below from being emitted:
+        // its listener ends the call.
+        try {
+            this._protooRoom.close();
+        } catch (error) {
+            logger.error('protooRoom.close() failed [roomId:%s]:%o', this._roomId, error);
+        }
+        try {
+            this._mediasoupRouter.close();
+        } catch (error) {
+            logger.error('mediasoupRouter.close() failed [roomId:%s]:%o', this._roomId, error);
+        }
 
         // Emit 'close' event.
         if (options?.force) {
@@ -293,11 +301,26 @@ export default class Room extends EventEmitter {
                 return;
 
             logger.debug('protoo Peer "close" event [peerId:%s]', peer.id);
-            if (!!peer.data.membershipId) {
-                await callHelper.callMemberLeave(peer.data.membershipId);
+
+            // Each step below is guarded on its own: a database error or a
+            // notification to a peer whose connection closes at the same
+            // moment (everyone leaving at the end of a broadcast) must not
+            // skip the remaining steps, least of all the checks at the end
+            // that close the room. Closing the room is what ends the call
+            // (`softEndCall` in mediasoup.ts).
+            try {
+                if (!!peer.data.membershipId) {
+                    await callHelper.callMemberLeave(peer.data.membershipId);
+                }
+            } catch (error) {
+                logger.error('callMemberLeave() failed [peerId:%s]:%o', peer.id, error);
             }
-            //remove peer from db table callmembers
-            await callHelper.updateCallPreviewIds(this._roomId, this._getJoinedPeers().map(peer => peer.id));
+            try {
+                //remove peer from db table callmembers
+                await callHelper.updateCallPreviewIds(this._roomId, this._getJoinedPeers().map(peer => peer.id));
+            } catch (error) {
+                logger.error('updateCallPreviewIds() failed [roomId:%s]:%o', this._roomId, error);
+            }
 
             // If the Peer was joined, notify all Peers.
             if (peer.data.joined) {
@@ -306,13 +329,15 @@ export default class Room extends EventEmitter {
                     if (this._broadCasters.get(peer.id)) {
                         this._broadCasters.delete(peer.id);
                         for (const otherPeer of this._getJoinedPeers(peer)) {
-                            await otherPeer.notify('demotedBroadcaster', { peerId: peer.id });
+                            otherPeer.notify('demotedBroadcaster', { peerId: peer.id })
+                                .catch(() => { });
                         }
                     }
                     if (this._handsRaised.get(peer.id)) {
                         this._handsRaised.delete(peer.id);
                         for (const otherPeer of this._getJoinedPeers(peer)) {
-                            await otherPeer.notify('loweredHand', { peerId: peer.id });
+                            otherPeer.notify('loweredHand', { peerId: peer.id })
+                                .catch(() => { });
                         }
                     }
                 }
@@ -325,7 +350,11 @@ export default class Room extends EventEmitter {
             // Iterate and close all mediasoup Transport associated to this Peer, so all
             // its Producers and Consumers will also be closed.
             for (const transport of peer.data.transports.values()) {
-                transport.close();
+                try {
+                    transport.close();
+                } catch (error) {
+                    logger.error('transport.close() failed [peerId:%s]:%o', peer.id, error);
+                }
             }
 
             // If this is the latest Peer in the room, close the room.

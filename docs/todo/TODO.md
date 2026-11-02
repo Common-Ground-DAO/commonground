@@ -309,6 +309,28 @@ that stack — confirm and delete:
     `checkCommunityRoleClaimability` `SERVICE_UNAVAILABLE` above; a deep link to a
     non-existent profile article (`/u/<id>/article/<bad>/`) logs "Article uri invalid" and
     never leaves the loading screen.
+- [ ] **A sole broadcaster's dropped or replaced connection ends the broadcast** (2026-11-02,
+  G13 review) — the peer `close` handler in `srv/mediasoup/room.ts` closes the room as soon
+  as no broadcaster is left, and `handleProtooConnection` closes a peer's previous
+  connection when it reconnects. A broadcast with one broadcaster therefore ends for every
+  viewer (`softEndCall`) when that broadcaster's connection drops or is replaced, even if
+  the broadcaster is back a second later. The "last peer left" check has the same race on
+  a reconnect. Needs a grace period before the room closes.
+- [ ] **Starting a running event call again moves it to another call server** (2026-11-02,
+  G13 review) — `callHelper.startScheduledCall` assigns the least-loaded live call server
+  every time and does not check whether the call is already running. A second start while
+  the first room is live points the call (and new joiners) at another server while the old
+  room keeps its peers. Only start a call that is ended or has no live room, or keep the
+  assigned server while it is live.
+- [ ] **`callUpdateEmitter` keeps stale per-server state** (2026-11-02, G13 review) — the
+  jobs process tracks calls per call server in memory (`srv/jobs/callUpdateEmitter.ts`).
+  At startup it only loads servers whose heartbeat is younger than 10 s; a server that
+  drops out (10 s timeout) or was not live at startup leaves its calls untracked or its
+  entries in `callServerIdsByCallIds`, and its open calls are not reloaded when it comes
+  back. Member joins/leaves of those calls then emit no `cliCallEvent update` (member
+  counts stay stale until the community is refreshed); ended calls are not affected
+  (their `delete` does not depend on this state). Reload a server's open calls from the
+  database when it (re)appears and drop its entries when it goes.
 
 ## Optional / nice-to-have
 

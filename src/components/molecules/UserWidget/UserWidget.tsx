@@ -17,6 +17,7 @@ import { getDisplayName } from '../../../util';
 import { useUserSettingsContext } from 'context/UserSettingsProvider';
 import SparkIcon from 'components/atoms/icons/misc/spark.svg?react';
 import { useSnackbarContext } from 'context/SnackbarContext';
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
   collapsed: boolean;
@@ -230,7 +231,7 @@ export const UserWidgetContent = React.memo((props: {
   ].join(' ').trim();
 
   return <div className={className} onClick={props.onClick}>
-    {!props.callMode && <div className="user-widget-content-bg" style={{ backgroundImage: `url(${imageUrl})` }} />}
+    {!props.callMode && <div className="user-widget-content-bg" style={{ backgroundImage: cssBackgroundImage(imageUrl) }} />}
     <div className={`user-widget-content${props.standalone ? ' standalone-widget' : ''}`}>
       <Jdenticon userId={ownUser?.id || ''} predefinedSize='40' onlineStatus={ownUser?.onlineStatus} hideStatus />
       {!props.collapsed && <div className='flex-1 cg-text-lg-500 flex flex-wrap justify-between items-center overflow-hidden'>

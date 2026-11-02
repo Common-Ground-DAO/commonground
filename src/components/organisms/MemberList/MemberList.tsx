@@ -17,6 +17,7 @@ import SearchField from "../../../components/atoms/SearchField/SearchField";
 import { useCommunityChannelIdContext } from "context/CommunityChannelProvider";
 import { useMultipleUserData } from "context/UserDataProvider";
 import communityApi from "data/api/community";
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
 }
@@ -460,7 +461,7 @@ function MemberListItem(props: {
           height: `${height}px`,
           minHeight: `${height}px`,
           padding: "8px 12px 8px 4px",
-          backgroundImage: `url("${svg}")`,
+          backgroundImage: cssBackgroundImage(svg),
           backgroundRepeat: "repeat-y",
           backgroundSize: "204px 56px",
           backgroundPosition: "0 0",

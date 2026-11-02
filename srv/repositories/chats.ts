@@ -202,6 +202,7 @@ class ChatHelper {
         await pool.query(`
           INSERT INTO channelreadstate ("channelId", "userId", "lastRead")
           VALUES ${format("(%L::UUID, %L::UUID, %L::TIMESTAMPTZ)", item.channelId, userId, item.createdAt)}
+          ON CONFLICT ("channelId", "userId") DO UPDATE SET "lastRead" = GREATEST(channelreadstate."lastRead", EXCLUDED."lastRead")
         `);
       }
       return {
@@ -232,7 +233,7 @@ class ChatHelper {
       await pool.query(`
         INSERT INTO channelreadstate ("channelId", "userId", "lastRead")
         VALUES ${inserts.join(',')}
-        ON CONFLICT ("channelId", "userId") DO UPDATE SET "lastRead" = EXCLUDED."lastRead"
+        ON CONFLICT ("channelId", "userId") DO UPDATE SET "lastRead" = GREATEST(channelreadstate."lastRead", EXCLUDED."lastRead")
       `);
     }
     return result as (typeof result[0] & {

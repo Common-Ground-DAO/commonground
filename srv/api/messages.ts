@@ -1015,12 +1015,13 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    await messageHelper.setChannelLastRead(user.id, data);
+    // the stored value: newer than the posted one if another tab got further
+    const lastRead = await messageHelper.setChannelLastRead(user.id, data);
 
     const event: Events.Channel.LastRead = {
       type: 'cliChannelLastRead',
       channelId: data.access.channelId,
-      lastRead: data.lastRead,
+      lastRead,
     };
     eventHelper.emit(event, {
       userIds: [user.id],

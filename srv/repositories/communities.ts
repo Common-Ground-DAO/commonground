@@ -1438,7 +1438,7 @@ class CommunityHelper {
           VALUES ${channelTdsWithoutLastRead.map(channelId =>
           format("(%L::UUID, %L::UUID, %L::TIMESTAMPTZ)", channelId, userId, newLastRead)
         ).join(',')}
-          ON CONFLICT ("channelId", "userId") DO UPDATE SET "lastRead" = EXCLUDED."lastRead"
+          ON CONFLICT ("channelId", "userId") DO UPDATE SET "lastRead" = GREATEST(channelreadstate."lastRead", EXCLUDED."lastRead")
         `);
       }
       return result[0] as typeof result[0] & {
@@ -1836,7 +1836,7 @@ class CommunityHelper {
         VALUES ${channelIdsWithoutLastRead.map(channelId =>
         format("(%L::UUID, %L::UUID, %L::TIMESTAMPTZ)", channelId, userId, newLastRead)
       ).join(',')}
-        ON CONFLICT ("channelId", "userId") DO UPDATE SET "lastRead" = EXCLUDED."lastRead"
+        ON CONFLICT ("channelId", "userId") DO UPDATE SET "lastRead" = GREATEST(channelreadstate."lastRead", EXCLUDED."lastRead")
       `);
     }
     return result as (typeof result[0] & {

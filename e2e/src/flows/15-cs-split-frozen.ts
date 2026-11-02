@@ -8,7 +8,7 @@ import { coldServiceWorkerReload, setLifecycle, socketDropFailures } from '../li
 import { liveTab, ownerAndMember } from '../lib/chatsync.ts';
 import { assertConnected, CONNECT_TIMEOUT_MS, pageNow, waitMessagesShown } from '../lib/live.ts';
 import { expectVisibility, openTab, showTab } from '../lib/tabs.ts';
-import { sleep } from '../lib/ui.ts';
+import { assert, sleep } from '../lib/ui.ts';
 
 /**
  * E8 (docs/todo/ROADMAP_chat-sync.md, Acceptance), three parts:
@@ -30,78 +30,96 @@ export const csSplitFrozen: Flow = {
   async run(t) {
     const { owner, member, channels } = await ownerAndMember(t, { owner: 'sender', member: 'splitview', channels: ['split'] });
     const channel = channels.split;
-    let window2!: Session;
-
-    await t.step('member opens the channel in two windows side by side', async () => {
-      await openChannel(t, owner.page, channel);
-      await openChannel(t, member.page, channel);
-      window2 = await liveTab(t, member, 'window2', { window: true });
-      await openTab(t, window2, channel);
-      await expectVisibility(member, 'visible');
-      await expectVisibility(window2, 'visible');
-      await assertConnected(member.page, 'window 1');
-      await assertConnected(window2.page, 'window 2');
-    });
-
-    const all: string[] = [];
-    await t.step('owner posts twice: both visible windows show it live', async () => {
-      for (let i = 1; i <= 2; i++) {
-        all.push(`split view ${i} ${t.unique('m')}`);
-        await sendMessage(owner.page, all[all.length - 1]);
-      }
-      await waitMessagesShown(member.page, all, { timeout: 10_000, inOrder: true, who: 'window 1' });
-      await waitMessagesShown(window2.page, all, { timeout: 10_000, inOrder: true, who: 'window 2' });
-      await assertConnected(member.page, 'window 1', { sinceMs: 0 });
-      await assertConnected(window2.page, 'window 2', { sinceMs: 0 });
-    });
-
-    let other!: Session;
-    await t.step('close the second window; another tab hides the channel tab', async () => {
-      await window2.page.close();
-      other = await liveTab(t, member, 'other');
-      await openTab(t, other, '/');
-      await expectVisibility(member, 'hidden');
-    });
-
-    const suffix = ' (edited while frozen)';
-    const frozenPosts = [`while frozen 1 ${t.unique('m')}`, `while frozen 2 ${t.unique('m')}`];
-    let resumedAt = 0;
-    // one step: nothing may evaluate in the frozen page (the step's own checks would hang)
-    await t.expectFailures(socketDropFailures(member.name), async () => {
-      await t.step('freeze the hidden channel tab; owner posts and edits; resume it and bring it to the front', async () => {
-        await setLifecycle(member.cdp, 'frozen');
-        try {
-          await sleep(1_000);
-          for (const text of frozenPosts) {
-            await sendMessage(owner.page, text);
-          }
-          await editMessage(owner.page, all[0], suffix);
-          await sleep(2_000);
-        }
-        finally {
-          await setLifecycle(member.cdp, 'active');
-        }
-        await showTab(member);
-        resumedAt = await pageNow(member.page);
-        t.metric('reconnectAfterResumeMs', await assertConnected(member.page, 'resumed tab', { sinceMs: resumedAt }));
+    let window2: Session | undefined;
+    // the three parts are independent: each gets its verdict, the flow fails at the end if any failed
+    const failed: string[] = [];
+    const part = async (name: string, fn: () => Promise<void>) => {
+      await fn().catch((e: unknown) => {
+        failed.push(`${name}: ${(e as Error).message.split('\n')[0]}`);
       });
-    }, 3_000);
-    all[0] = `${all[0]}${suffix}`;
-    all.push(...frozenPosts);
+    };
+    const all: string[] = [];
 
-    await t.step('the resumed tab catches up: new messages and the edit, in order', async () => {
-      await waitMessagesShown(member.page, all, { timeout: 15_000, inOrder: true, who: 'resumed tab' });
+    await part('split view', async () => {
+      await t.step('split view: member opens the channel in two windows side by side', async () => {
+        await openChannel(t, owner.page, channel);
+        await openChannel(t, member.page, channel);
+        window2 = await liveTab(t, member, 'window2', { window: true });
+        await openTab(t, window2, channel);
+        await expectVisibility(member, 'visible');
+        await expectVisibility(window2, 'visible');
+        await assertConnected(member.page, 'window 1');
+        await assertConnected(window2.page, 'window 2');
+      });
+      await t.step('split view: owner posts twice, both visible windows show it live', async () => {
+        for (let i = 1; i <= 2; i++) {
+          all.push(`split view ${i} ${t.unique('m')}`);
+          await sendMessage(owner.page, all[all.length - 1]);
+        }
+        await waitMessagesShown(member.page, all, { timeout: 10_000, inOrder: true, who: 'window 1' });
+        await waitMessagesShown(window2!.page, all, { timeout: 10_000, inOrder: true, who: 'window 2' });
+        await assertConnected(member.page, 'window 1', { sinceMs: 0 });
+        await assertConnected(window2!.page, 'window 2', { sinceMs: 0 });
+      });
     });
 
-    await t.step('hard reload with a stopped service worker: connected within 12 s', async () => {
-      const started = Date.now();
-      const workers = await coldServiceWorkerReload(member.page, member.cdp);
-      t.metric('stoppedServiceWorkers', workers);
-      await waitAppReady(member.page, { settleLogin: false });
-      const left = Math.max(1_000, CONNECT_TIMEOUT_MS - (Date.now() - started));
-      await assertConnected(member.page, 'tab after the cold reload', { timeout: left, sinceMs: 0 });
-      t.metric('coldReloadConnectedMs', Date.now() - started);
-      await waitMessagesShown(member.page, all, { timeout: 15_000, inOrder: true, who: 'tab after the cold reload' });
+    await part('frozen tab', async () => {
+      await t.step('frozen tab: close the second window; another tab hides the channel tab', async () => {
+        await window2?.page.close();
+        if (!all.length) {
+          all.push(`before freezing ${t.unique('m')}`);
+          await sendMessage(owner.page, all[0]);
+        }
+        const other = await liveTab(t, member, 'other');
+        await openTab(t, other, '/');
+        await expectVisibility(member, 'hidden');
+      });
+      const suffix = ' (edited while frozen)';
+      const frozenPosts = [`while frozen 1 ${t.unique('m')}`, `while frozen 2 ${t.unique('m')}`];
+      // one step: nothing may evaluate in the frozen page (the step's own checks would hang)
+      await t.expectFailures(socketDropFailures(member.name), async () => {
+        await t.step('frozen tab: freeze it; owner posts and edits; resume it and bring it to the front', async () => {
+          await setLifecycle(member.cdp, 'frozen');
+          try {
+            await sleep(1_000);
+            for (const text of frozenPosts) {
+              await sendMessage(owner.page, text);
+            }
+            await editMessage(owner.page, all[0], suffix);
+            all[0] = `${all[0]}${suffix}`;
+            all.push(...frozenPosts);
+            await sleep(2_000);
+          }
+          finally {
+            await setLifecycle(member.cdp, 'active');
+          }
+          await showTab(member);
+          const resumedAt = await pageNow(member.page);
+          t.metric('reconnectAfterResumeMs', await assertConnected(member.page, 'resumed tab', { sinceMs: resumedAt }));
+        });
+      }, 3_000);
+      await t.step('frozen tab: it catches up — new messages and the edit, in order', async () => {
+        await waitMessagesShown(member.page, all, { timeout: 15_000, inOrder: true, who: 'resumed tab' });
+      });
+    });
+
+    await part('cold service worker', async () => {
+      await t.step('cold service worker: hard reload with the worker stopped, connected within 12 s', async () => {
+        await showTab(member);
+        const started = Date.now();
+        const workers = await coldServiceWorkerReload(member.page, member.cdp);
+        t.metric('stoppedServiceWorkers', workers);
+        await waitAppReady(member.page, { settleLogin: false });
+        const left = Math.max(1_000, CONNECT_TIMEOUT_MS - (Date.now() - started));
+        await assertConnected(member.page, 'tab after the cold reload', { timeout: left, sinceMs: 0 });
+        t.metric('coldReloadConnectedMs', Date.now() - started);
+        await waitMessagesShown(member.page, all, { timeout: 15_000, inOrder: true, who: 'tab after the cold reload' });
+      });
+    });
+
+    t.metric('failedParts', failed);
+    await t.step('every part passed', async () => {
+      assert(failed.length === 0, `${failed.length} of 3 part(s) failed — ${failed.join(' | ')}`);
     });
   },
 };

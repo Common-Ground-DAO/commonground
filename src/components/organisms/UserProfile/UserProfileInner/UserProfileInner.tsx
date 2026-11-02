@@ -28,6 +28,7 @@ import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
 import { isUploadTemporarilyRefused, notifyIfImageRejected } from "moderation/imageUploadError";
 import { useSignedUrl } from "hooks/useSignedUrl";
 import UserPosts from "./UserPosts";
+import { cssBackgroundImage } from 'util/cssBackground';
 
 export default function UserProfileInner(props: Props & {
   trayMode?: boolean;
@@ -121,7 +122,7 @@ export default function UserProfileInner(props: Props & {
       />
     </div>}
     <div className={`user-profile-inner cg-text-main ${isMobile ? 'mobile' : 'desktop-tray'}${trayMode ? ' tray-mode' : ''}`}>
-      <div className={`user-profile-banner flex flex-col items-center justify-center${!trayMode ? ' cg-border-l' : ''} ${isSelf ? ' cursor-pointer' : ''}${!!bannerImageUrl ? ' has-image' : ' no-image'}`} style={{ backgroundImage: `url(${bannerImageUrl})` }} onClick={onBannerClick}>
+      <div className={`user-profile-banner flex flex-col items-center justify-center${!trayMode ? ' cg-border-l' : ''} ${isSelf ? ' cursor-pointer' : ''}${!!bannerImageUrl ? ' has-image' : ' no-image'}`} style={{ backgroundImage: cssBackgroundImage(bannerImageUrl) }} onClick={onBannerClick}>
         {isSelf && !trayMode && <div className={`flex flex-col items-center justify-center gap-4 user-profile-banner-actions cg-border-l p-4${!!bannerImageUrl ? ' cg-content-stack' : ''}`}>
           <input type="file" ref={inputRef} onChange={handleImageChange} style={{ display: "none" }} accept={config.ACCEPTED_IMAGE_FORMATS} />
           <Button

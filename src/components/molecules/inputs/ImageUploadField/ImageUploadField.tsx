@@ -11,6 +11,7 @@ import Button from "../../../atoms/Button/Button";
 import config from "../../../../common/config";
 import { ArrowUpTrayIcon } from "@heroicons/react/20/solid";
 import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
+import { cssBackgroundImage } from 'util/cssBackground';
 
 
 type Props = {
@@ -73,7 +74,7 @@ export default function ImageUploadField(props: Props) {
     <span className="cg-text-lg-500 cg-text-main">{label}</span>
     {subLabels?.map(sublabel => <span key={sublabel} className="cg-text-md-400 cg-text-secondary">{sublabel}</span>)}
     </div>
-    <div className="image-upload-field-image" onClick={handleClick} style={{...imagePreviewStyle, backgroundImage: `url(${imageURL})`}}>
+    <div className="image-upload-field-image" onClick={handleClick} style={{...imagePreviewStyle, backgroundImage: cssBackgroundImage(imageURL)}}>
       <input type="file" ref={inputRef} onChange={handleImageChange} style={{ display: "none" }} accept={config.ACCEPTED_IMAGE_FORMATS} />
       {!imageURL && <ArrowUpTrayIcon className="w-5 h-5" />}
       {!!imageURL && onRemove && (

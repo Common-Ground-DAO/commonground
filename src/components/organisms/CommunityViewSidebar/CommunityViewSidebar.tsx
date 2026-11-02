@@ -41,6 +41,7 @@ import reportApi from "data/api/report";
 import { ReportType } from "common/enums";
 import SimpleLink from "components/atoms/SimpleLink/SimpleLink";
 import { reasonCodeToText } from "context/ReportModalProvider";
+import { cssBackgroundImage } from 'util/cssBackground';
 
 export type MainSidebarContentName = 'lobby' | 'settings' | 'areas';
 
@@ -505,7 +506,7 @@ const PluginSidebarButton = React.memo((props: PluginSidebarButtonProps) => {
       </div>}
       {!!props.plugin?.imageId && <div
         className={`${isLoaded ? 'w-16 h-16' : 'w-5 h-5'} cg-border-l overflow-hidden bg-no-repeat bg-cover bg-center flex items-center justify-center ${!pluginImg && !!pluginData?.imageId ? 'animate-pulse' : ''}`}
-        style={{ backgroundImage: `url(${pluginImg})` }}
+        style={{ backgroundImage: cssBackgroundImage(pluginImg) }}
       />}
 
       <div className="flex flex-col gap-2">

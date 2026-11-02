@@ -160,8 +160,14 @@ setInterval(async () => {
         fakeHealthcheck();
         await updateServerStatus();
 
-        // clear database state
-        await callHelper.resetCallServer(domain, false);
+        // clear database state (calls left over from this server's previous
+        // run). A failure is logged and must not keep the call update
+        // listener below from being registered.
+        try {
+            await callHelper.resetCallServer(domain, false);
+        } catch (e) {
+            console.error("Error resetting call server at startup", e);
+        }
         await registerCallUpdateListener((event: Events.PgNotify.CallServerCallUpdate) => {
             // Todo: handle call update
             // It should not happen that events for stale calls are received, but still make sure that
@@ -441,6 +447,30 @@ function getMediasoupWorker() {
     return worker;
 }
 
+// delays before the retries of a failed call end (ms)
+const END_CALL_RETRY_DELAYS = [1000, 5000, 15000];
+
+/**
+ * Runs the database update that ends a call when its room closed, retrying a
+ * few times: a transient database error would otherwise leave the call open
+ * on a live call server. Never throws.
+ */
+async function endCallWithRetry(name: string, roomId: string, endCall: () => Promise<unknown>) {
+    for (let attempt = 0; ; attempt++) {
+        try {
+            await endCall();
+            return;
+        } catch (error) {
+            if (attempt >= END_CALL_RETRY_DELAYS.length) {
+                console.error(`${name} failed, giving up [roomId:${roomId}]`, error);
+                return;
+            }
+            console.error(`${name} failed, retrying [roomId:${roomId}]`, error);
+            await new Promise(resolve => setTimeout(resolve, END_CALL_RETRY_DELAYS[attempt]));
+        }
+    }
+}
+
 /**
  * Get a Room instance (or create one if it does not exist) for a call that
  * exists and has not ended. The room's parameters come from the stored call.
@@ -487,21 +517,13 @@ async function getOrCreateRoom({
 
         rooms.set(roomId, newRoom);
         newRoom.on('close', async () => {
-            try {
-                await callHelper.softEndCall(roomId);
-            } catch (error) {
-                console.error('softEndCall failed', error);
-            }
+            await endCallWithRetry('softEndCall', roomId, () => callHelper.softEndCall(roomId));
             if (rooms.get(roomId) === newRoom) {
                 rooms.delete(roomId);
             }
         });
         newRoom.on('forceClose', async () => {
-            try {
-                await callHelper.endCallForEveryone(roomId);
-            } catch (error) {
-                console.error('endCallForEveryone failed', error);
-            }
+            await endCallWithRetry('endCallForEveryone', roomId, () => callHelper.endCallForEveryone(roomId));
             if (rooms.get(roomId) === newRoom) {
                 rooms.delete(roomId);
             }

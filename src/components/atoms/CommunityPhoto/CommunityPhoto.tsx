@@ -13,6 +13,7 @@ import OfficialIcon from "../../../components/atoms/icons/20/OfficialIcon.svg?re
 import { useMemo } from 'react';
 import dayjs from 'dayjs';
 import { getTierElementIcon } from 'util/index';
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
     community: Pick<Models.Community.ListView, 'logoSmallId' | 'logoLargeId' | 'official' | 'premium' | 'url'>;
@@ -52,7 +53,7 @@ export default function CommunityPhoto(props: Props) {
             }
         }
 
-        return <div className={className} style={!!signedUrl ? { backgroundImage: `url(${signedUrl.url})` } : undefined}>
+        return <div className={className} style={!!signedUrl ? { backgroundImage: cssBackgroundImage(signedUrl.url) } : undefined}>
             {extraIcon}
         </div>;
     }, [className, signedUrl?.url, showExtraIcon, community.official]);

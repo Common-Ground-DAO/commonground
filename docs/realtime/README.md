@@ -10,7 +10,9 @@
 > `cliSignedOut` + disconnect against commit 23a4c1e, 2026-11-01; room close hardening and
 > the call-ending safety net (Room Lifecycle, Call Flow) against commit 591e6cf, 2026-11-02;
 > human online status (grace period, batched cluster-wide offline check with one retry, touch
-> sets, change-only events, the stale job's events) against commit fc15832, 2026-11-02
+> sets, change-only events, the stale job's events) against commit fc15832, 2026-11-02;
+> the chat-sync fields of `cliMessageEvent` and `cliChannelLastRead` against commit 0ec82f6,
+> 2026-11-02
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -137,6 +139,24 @@ For browser clients with a session cookie, the socket immediately joins its `exp
 |---|---|---|
 | `buildId` | `(backendBuildId: string, timestamp: number)` | Sent immediately on connection. Client compares build IDs to detect app updates |
 | `cli*` (any event starting with "cli") | varies | All application events (messages, notifications, call updates, etc.) are prefixed with `cli` and dispatched through the `onAny` handler on the client |
+
+#### Message and read-state events (chat-sync fields)
+
+Types in `src/common/types/events/{message,channel}.d.ts`; emitted from `srv/api/messages.ts`.
+All fields below are additive; clients that do not know them ignore them.
+
+| Event | Sync fields |
+|---|---|
+| `cliMessageEvent` `new` | the full `ApiMessage` incl. `syncSeq` (the channel change sequence of the row, see [docs/database](../database/README.md#message-sync-sequence)) |
+| `cliMessageEvent` `update` | `syncSeq` of the write; an edit also carries `editedAt`; reactions carry it in both the room copy and the reacting user's `ownReaction` copy; replies of a deleted parent (`parentMessageId: null`) carry their own |
+| `cliMessageEvent` `delete` | `syncSeq` = highest seq of the deleted rows, `syncSeqs` = the seq of every deleted row (a multi-row delete bumps the sequence once per row). Sent only when a row was deleted |
+| `cliChannelLastRead` | `lastRead` (stored, max-merged), `unread` (other users' messages after it, capped at 999), `syncSeq` (the channel seq that count is valid at), and `communityId` (community channels) or `chatId` (DMs); to the user's own room |
+
+A client that misses events (disconnect, reload, frozen tab) catches up per channel with
+`POST /Message/getChanges` from its last contiguous `syncSeq` (see
+[docs/backend](../backend/README.md#srvapimessagests----messaging-routes)). Seq bumps
+without an event exist (an `ON CONFLICT DO NOTHING` insert, a retried create), so a gap in
+the received seqs is a hint to call `getChanges`, not proof of a lost event.
 
 ### Event Emission (Server-Side)
 

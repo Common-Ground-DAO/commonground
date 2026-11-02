@@ -8,6 +8,7 @@ import './../PeerCard.css';
 import Jdenticon from 'components/atoms/Jdenticon/Jdenticon';
 import UserTag from 'components/atoms/UserTag/UserTag';
 import { useSignedUrl } from 'hooks/useSignedUrl';
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
   membersInCall: Models.User.Data[];
@@ -25,7 +26,7 @@ const PreviewCard: React.FC<{member: Models.User.Data}> = (props) => {
   const { member } = props;
   const imageUrl = useSignedUrl(member.accounts.find(acc => acc.type === member.displayAccount)?.imageId);
 
-  return <div className='call-peer-card cg-border-xl overflow-hidden' key={member.id} style={{ backgroundImage: `url(${imageUrl})` }}>
+  return <div className='call-peer-card cg-border-xl overflow-hidden' key={member.id} style={{ backgroundImage: cssBackgroundImage(imageUrl) }}>
   <div className={"blur"} />
   <div className='call-card-avatar flex w-24 h-24'>
     <Jdenticon key={member.id} userId={member.id} hideStatus />

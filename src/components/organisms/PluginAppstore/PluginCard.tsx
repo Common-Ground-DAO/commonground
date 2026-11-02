@@ -16,6 +16,7 @@ import { useSnackbarContext } from 'context/SnackbarContext';
 import { tagStringToPredefinedTag } from 'components/molecules/inputs/TagInputField/TagInputField';
 import Tag, { TagIcon } from 'components/atoms/Tag/Tag';
 import ExternalIcon, { ExternalIconType } from 'components/atoms/ExternalIcon/ExternalIcon';
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = API.Plugins.getAppstorePlugins.Response['plugins'][number];
 
@@ -68,7 +69,7 @@ export const PluginCardInner: React.FC<Models.Plugin.PluginListView> = (props) =
 
   return <div className='flex gap-4'>
     <div>
-      {imageId && <div className='w-28 h-28 bg-cg-bg-subtle cg-border-l bg-no-repeat bg-cover bg-center' style={{ backgroundImage: `url(${imageUrl})` }} />}
+      {imageId && <div className='w-28 h-28 bg-cg-bg-subtle cg-border-l bg-no-repeat bg-cover bg-center' style={{ backgroundImage: cssBackgroundImage(imageUrl) }} />}
       {!imageId && <div className='w-28 h-28 bg-cg-bg-subtle cg-border-l flex items-center justify-center'>
         <Plug weight='duotone' className='w-20 h-20' />
       </div>}

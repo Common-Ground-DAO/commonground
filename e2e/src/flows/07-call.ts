@@ -135,6 +135,22 @@ export const call: Flow = {
       assert(new URL(member.page.url()).pathname === callPath, `member is on ${member.page.url()}, expected ${callPath}`);
     });
 
+    await t.step('peer cards without camera or profile picture load no image', async () => {
+      // Both users are fresh (no profile picture) and join with the camera
+      // off, so every peer card shows the "no video" background. It must not
+      // reference an image: `url(undefined)` made the browser request
+      // `…/call/<id>/undefined` (the global `undefined-url` guard fails the
+      // flow on such a request).
+      for (const [page, who] of [[owner.page, 'owner'], [member.page, 'member']] as const) {
+        const backgrounds = await until(`${who}: two peer cards`, async () => {
+          const found = await page.$$eval('.call-peer-card', els => els.map(el => (el as HTMLElement).style.backgroundImage));
+          return found.length >= 2 ? found : null;
+        }, 15_000);
+        t.metric(`peerCardBackgrounds.${who}`, backgrounds);
+        assert(backgrounds.every(b => b === 'none' || b === ''), `${who}: peer card backgrounds ${JSON.stringify(backgrounds)}`);
+      }
+    });
+
     await t.step('audio flows both ways', async () => {
       await ensureMicOn(owner.page);
       await ensureMicOn(member.page);

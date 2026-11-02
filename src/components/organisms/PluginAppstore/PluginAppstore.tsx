@@ -17,6 +17,7 @@ import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import { useSentinelLoadMore } from 'hooks/useSentinelLoadMore';
 import { useParams } from 'react-router';
 import { usePluginDetailsModalContext } from 'context/PluginDetailsModalProvider';
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
 
@@ -141,7 +142,7 @@ const HeroElementArticleCard = ({ articleUrl, large }: {
 
   return <div
     className={`flex flex-col justify-end bg-gray-100 rounded-lg bg-center bg-no-repeat bg-cover relative overflow-hidden cursor-pointer p-4 ${large ? 'aspect-3/1' : 'h-40'}`}
-    style={{ backgroundImage: `url(${imageUrl})` }}
+    style={{ backgroundImage: cssBackgroundImage(imageUrl) }}
     onClick={() => {
       if (article) {
         showTooltip({

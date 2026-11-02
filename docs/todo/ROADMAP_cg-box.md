@@ -385,7 +385,7 @@ and a browser pass on the test VM:
   the UI shows the wait and another way in; countdowns on "send again"; input
   checks in the forms; 8-digit email codes and hourly code-login failure
   budgets per the maintainer's review of the screenshot walkthrough.)
-- [ ] **G13 Runtime fixes.** Long-standing defects found in a 2026-11-02
+- [x] **G13 Runtime fixes.** Long-standing defects found in a 2026-11-02
   analysis: inline backgrounds without an image URL request `…/undefined`;
   calls whose call server goes away are never ended (no periodic sweep), so
   they linger on the home page; the server-side last-read time of a channel
@@ -394,6 +394,11 @@ and a browser pass on the test VM:
   The client message cache and the tab/socket hand-off are replaced in a
   separate package (`docs/todo/ROADMAP_chat-sync.md` on branch
   `feature/chat-sync`); G6 waits for it, since both touch the service worker.
+  (done 2026-11-02: calls on a gone call server are ended by a periodic
+  sweep, event calls included, and every end reaches clients; an ended event
+  call can be started again; the last-read time only moves forward and never
+  into the future; inline backgrounds without a URL paint `none`; accepted on
+  the test VM)
 
 ### P4 — Security gate (before the rehearsal is signed off)
 

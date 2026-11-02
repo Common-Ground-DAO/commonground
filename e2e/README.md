@@ -4,7 +4,8 @@ Drives real Chrome against a running Common Ground instance, the way a
 person uses it: sign-up, login, communities, real-time chat, images,
 settings, calls, articles, plugins — with global guards that fail a flow on
 any uncaught page error, error-boundary screen, console error, CSP
-violation or unexpected API error, also when the flow's own steps succeed.
+violation, unexpected API error or request to a URL with an `undefined` /
+`null` path segment, also when the flow's own steps succeed.
 
 - **No local Chrome, no new dependencies.** The suite runs inside the
   backend image (`cryptogram/backend`, or the `cg-e2e/backend` the disposable
@@ -134,6 +135,22 @@ guards report that wherever it happens.
 
 Runtime on the dev VM: about 8–10 minutes for everything (the reload flow
 with 20 iterations is the biggest part); a single flow takes 20–90 s.
+
+## Checks
+
+Scripted checks of server-side behaviour that a browser flow cannot provoke,
+run against the disposable instance (never the dev stack — they refuse
+`E2E_PROJECT=docker` / `cg-selfhost`). They insert their own rows into the
+instance's database, so run them after the suite.
+
+| script | what it checks |
+|---|---|
+| `checks/call-sweep.sh` | the jobs process's call-ending sweeps (docs/backend §6, `callUpdateEmitter.ts`): calls of a call server whose heartbeat stopped, event and scheduled calls, calls everyone left, and that each ended call is published as `cliCallEvent delete` (Valkey `PSUBSCRIBE`); calls ended at job-runner startup (restarts the job-runner); restarting an ended event call; `updateCallPermissions` without role permissions; the monotonic, clamped `setChannelLastRead`. Output: `results/call-sweep-<timestamp>/` (or `CHECK_OUT`) |
+
+```bash
+./run.sh e2e_instance up && ./run.sh e2e --instance   # suite first: its data provides a community and a user
+e2e/checks/call-sweep.sh                              # E2E_PROJECT as for instance.sh
+```
 
 ## Adding a flow
 

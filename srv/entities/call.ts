@@ -28,6 +28,8 @@ export class Call {
   id!: string;
 
   @Index()
+  // partial index (open calls, "endedAt" IS NULL), created by the migration
+  @Index('idx_calls_communityId_open', { synchronize: false })
   @Column({ type: 'uuid' })
   communityId!: string;
 

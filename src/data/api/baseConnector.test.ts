@@ -24,10 +24,13 @@ import BaseApiConnector from './baseConnector';
 import stepUpManager from 'data/auth/stepUp';
 import securityStepState from 'data/auth/securityStep';
 import { ApiRequestError } from './apiError';
+import { SOCKET_ID_HEADER, SOCKET_ID_PATTERN } from 'data/appstate/transport';
+import { setRequestSocketIdProvider } from 'data/appstate/requestSocketId';
 
 type Reply = { status: 'OK'; data?: unknown } | { status: 'ERROR'; error: string; retryAfterSeconds?: number; limit?: string };
 
 const sent: { url: string; body: string | undefined }[] = [];
+const headers: Record<string, string>[] = [];
 let replies: Reply[] = [];
 
 class FakeXMLHttpRequest {
@@ -39,12 +42,16 @@ class FakeXMLHttpRequest {
   public onreadystatechange: (() => void) | null = null;
   public onerror: ((e: unknown) => void) | null = null;
   private url = '';
+  private headers: Record<string, string> = {};
   open(_method: string, url: string) {
     this.url = url;
   }
-  setRequestHeader() { }
+  setRequestHeader(name: string, value: string) {
+    this.headers[name] = value;
+  }
   send(body?: string) {
     sent.push({ url: this.url, body });
+    headers.push(this.headers);
     const reply = replies.shift() ?? { status: 'ERROR', error: 'NO_REPLY' };
     queueMicrotask(() => {
       this.readyState = 4;
@@ -71,6 +78,7 @@ const connector = new TestConnector();
 
 beforeEach(() => {
   sent.length = 0;
+  headers.length = 0;
   replies = [];
   (globalThis as Record<string, unknown>).XMLHttpRequest = FakeXMLHttpRequest;
 });
@@ -218,5 +226,32 @@ describe('limit errors', () => {
     expect(error.message).toBe('RATE_LIMIT_EXCEEDED');
     expect(error.retryAfterSeconds).toBe(42);
     expect(error.limit).toBe('accounts');
+  });
+});
+
+describe('socket id header', () => {
+  afterEach(() => {
+    setRequestSocketIdProvider(undefined);
+  });
+
+  it('is sent on every request, read per request, never empty', async () => {
+    replies = [{ status: 'OK' }, { status: 'OK' }, { status: 'OK' }];
+    await connector.get('x');
+    expect(headers[0][SOCKET_ID_HEADER]).toMatch(SOCKET_ID_PATTERN);
+
+    let id = 'AAAAAAAAAAAAAAAAAAAA';
+    setRequestSocketIdProvider(() => id);
+    await connector.get('x');
+    id = 'BBBBBBBBBBBBBBBBBBBB';
+    await connector.get('x');
+    expect(headers[1][SOCKET_ID_HEADER]).toBe('AAAAAAAAAAAAAAAAAAAA');
+    expect(headers[2][SOCKET_ID_HEADER]).toBe('BBBBBBBBBBBBBBBBBBBB');
+  });
+
+  it('is sent on the retry after a re-login as well', async () => {
+    replies = [{ status: 'ERROR', error: 'LOGIN_REQUIRED' }, { status: 'OK' }];
+    await connector.get('x');
+    expect(headers).toHaveLength(2);
+    expect(headers[1][SOCKET_ID_HEADER]).toMatch(SOCKET_ID_PATTERN);
   });
 });

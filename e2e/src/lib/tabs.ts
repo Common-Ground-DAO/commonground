@@ -6,6 +6,7 @@ import type { Page } from 'puppeteer';
 import type { FlowContext, Session } from './harness.ts';
 import { waitAppReady } from './app.ts';
 import { assert, until } from './ui.ts';
+import { EVAL_TIMEOUT_MS, within } from './within.ts';
 
 /**
  * Several tabs of one user (t.tab) and which of them is visible.
@@ -21,7 +22,7 @@ import { assert, until } from './ui.ts';
  */
 
 export async function visibility(page: Page): Promise<DocumentVisibilityState> {
-  return page.evaluate(() => document.visibilityState);
+  return within(page.evaluate(() => document.visibilityState), EVAL_TIMEOUT_MS, 'document.visibilityState');
 }
 
 /** brings the tab to the front of its window and waits until it is visible */

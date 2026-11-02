@@ -6,6 +6,7 @@ import type { ElementHandle, Page } from 'puppeteer';
 import { waitLoginSettled, type FlowContext } from './harness.ts';
 import { writeTestPng } from './images.ts';
 import { clickText, describe, fill, findByText, hasText, sleep, until, waitText } from './ui.ts';
+import { EVAL_TIMEOUT_MS, within } from './within.ts';
 
 /**
  * App-level helpers shared by the flows: readiness, the connection
@@ -37,11 +38,11 @@ export async function waitAppReady(page: Page, options: { timeout?: number; sett
  * hidden, so the class is the signal, not the text.
  */
 export async function connectionState(page: Page): Promise<string> {
-  return page.evaluate(() => {
+  return within(page.evaluate(() => {
     const el = document.getElementById('cg-connection-indicator');
     const cls = Array.from(el?.classList ?? []).find(c => c.startsWith('cg-connection-indicator-'));
     return cls ? cls.slice('cg-connection-indicator-'.length) : 'missing';
-  });
+  }), EVAL_TIMEOUT_MS, 'the connection indicator');
 }
 
 /**

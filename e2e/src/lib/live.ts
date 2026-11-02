@@ -6,6 +6,7 @@ import type { Page } from 'puppeteer';
 import { connectionState, EDITOR } from './app.ts';
 import { trackWebSockets } from './cdp.ts';
 import { assert, describe, sleep, until } from './ui.ts';
+import { EVAL_TIMEOUT_MS, within } from './within.ts';
 
 /**
  * What a person sees of the app's live state, read from the DOM and the
@@ -60,13 +61,14 @@ export type IndicatorEntry = { ms: number; state: string; shown: boolean };
 
 /** the indicator states of the current document (prepareLivePage), from `sinceMs` (performance.now of the page) on */
 export async function indicatorLog(page: Page, sinceMs = 0): Promise<IndicatorEntry[]> {
-  const log = await page.evaluate(() => (window as unknown as { __e2eIndicatorLog?: IndicatorEntry[] }).__e2eIndicatorLog ?? []).catch(() => [] as IndicatorEntry[]);
+  const log = await within(page.evaluate(() => (window as unknown as { __e2eIndicatorLog?: IndicatorEntry[] }).__e2eIndicatorLog ?? []), EVAL_TIMEOUT_MS, 'indicator log')
+    .catch(() => [] as IndicatorEntry[]);
   return log.filter(entry => entry.ms >= sinceMs);
 }
 
 /** the page's performance.now(), to mark a point in indicatorLog() */
 export async function pageNow(page: Page): Promise<number> {
-  return page.evaluate(() => Math.round(performance.now()));
+  return within(page.evaluate(() => Math.round(performance.now())), EVAL_TIMEOUT_MS, 'performance.now');
 }
 
 /**
@@ -91,37 +93,65 @@ export async function assertConnected(page: Page, who: string, options: { timeou
   return Date.now() - started;
 }
 
-export type ShownMessage = { text: string; confirmed: boolean; top: number; edited: boolean };
+export type ShownMessage = {
+  text: string;
+  confirmed: boolean;
+  top: number;
+  edited: boolean;
+  /** some of it lies inside the list's scroll container and the window — what the user sees without scrolling */
+  inView: boolean;
+};
 
 /**
  * The messages a list shows, in visual order (top to bottom): every
  * `.message-item` under `scope` (default: the page), with its text, whether
- * the server confirmed it (it has a timestamp) and the "edited" marker.
+ * the server confirmed it (it has a timestamp), the "edited" marker and
+ * whether it is in view (inside its nearest scrolling ancestor's box and the
+ * window).
  */
 export async function shownMessages(page: Page, scope = 'body'): Promise<ShownMessage[]> {
-  return page.evaluate((sel: string) => {
+  return within(page.evaluate((sel: string) => {
     const root = document.querySelector(sel);
     if (!root) {
       return [];
     }
+    const scroller = (el: HTMLElement) => {
+      for (let p = el.parentElement; p; p = p.parentElement) {
+        const overflow = getComputedStyle(p).overflowY;
+        if ((overflow === 'auto' || overflow === 'scroll' || overflow === 'overlay') && p.scrollHeight > p.clientHeight) {
+          return p;
+        }
+      }
+      return null;
+    };
     return Array.from(root.querySelectorAll<HTMLElement>('.message-item'))
-      .map(item => ({
-        text: (item.querySelector<HTMLElement>('.message-item-message')?.innerText ?? '').trim(),
-        confirmed: !!item.querySelector('.message-item-content[data-timestamp]'),
-        top: Math.round(item.getBoundingClientRect().top),
-        edited: !!item.querySelector('.message-item-date-container.edited'),
-      }))
+      .map(item => {
+        const rect = item.getBoundingClientRect();
+        const box = scroller(item)?.getBoundingClientRect() ?? { top: 0, bottom: window.innerHeight };
+        const top = Math.max(box.top, 0);
+        const bottom = Math.min(box.bottom, window.innerHeight);
+        return {
+          text: (item.querySelector<HTMLElement>('.message-item-message')?.innerText ?? '').trim(),
+          confirmed: !!item.querySelector('.message-item-content[data-timestamp]'),
+          top: Math.round(rect.top),
+          edited: !!item.querySelector('.message-item-date-container.edited'),
+          inView: rect.height > 0 && rect.bottom > top + 1 && rect.top < bottom - 1,
+        };
+      })
       .sort((a, b) => a.top - b.top);
-  }, scope);
+  }, scope), EVAL_TIMEOUT_MS, 'the message list');
 }
 
 /**
  * Waits until the list shows every one of `texts` (substring match,
  * confirmed messages only), and — with `inOrder` — in this order from top
- * to bottom. No scrolling, no reload: what the list shows by itself.
+ * to bottom. No scrolling, no reload: what the list shows by itself; unless
+ * `inView` is false, the lowest of them must also be in view (inside the
+ * list's scroll container), so a list that does not follow new messages to
+ * the bottom fails.
  */
-export async function waitMessagesShown(page: Page, texts: string[], options: { scope?: string; timeout?: number; inOrder?: boolean; who?: string } = {}) {
-  const { scope = 'body', timeout = 15_000, inOrder = false, who = 'page' } = options;
+export async function waitMessagesShown(page: Page, texts: string[], options: { scope?: string; timeout?: number; inOrder?: boolean; inView?: boolean; who?: string } = {}) {
+  const { scope = 'body', timeout = 15_000, inOrder = false, inView = true, who = 'page' } = options;
   let last: ShownMessage[] = [];
   try {
     return await until(`${who}: ${texts.length} message(s) shown`, async () => {
@@ -133,14 +163,22 @@ export async function waitMessagesShown(page: Page, texts: string[], options: { 
       if (inOrder && positions.some((p, i) => i > 0 && p < positions[i - 1])) {
         return null;
       }
+      if (inView && !last[Math.max(...positions)].inView) {
+        return null;
+      }
       return last;
     }, timeout, 200);
   }
   catch {
-    const missing = texts.filter(text => !last.some(m => m.confirmed && m.text.includes(text)));
-    throw new Error(`${who}: after ${timeout / 1000} s ` + (missing.length
+    const positions = texts.map(text => last.findIndex(m => m.confirmed && m.text.includes(text)));
+    const missing = texts.filter((_, i) => positions[i] < 0);
+    const lowest = missing.length ? undefined : last[Math.max(...positions)];
+    const reason = missing.length
       ? `${missing.length} of ${texts.length} message(s) not shown: ${missing.map(m => JSON.stringify(m.slice(0, 60))).join(', ')}`
-      : `the messages are shown out of order`) +
+      : inOrder && positions.some((p, i) => i > 0 && p < positions[i - 1])
+        ? 'the messages are shown out of order'
+        : `the newest one is in the list but not in view (the list did not scroll to it): ${JSON.stringify(lowest?.text.slice(0, 60))}`;
+    throw new Error(`${who}: after ${timeout / 1000} s ${reason}` +
       ` — the list shows ${last.length} message(s): ${last.slice(-8).map(m => JSON.stringify(m.text.slice(0, 40))).join(', ')}`);
   }
 }
@@ -161,10 +199,10 @@ export async function assertMessageStays(page: Page, text: string, ms: number, o
 
 /** the channel's unread dot in the community's channel list: true/false, null when the channel is not listed */
 export async function channelUnread(page: Page, channelTitle: string): Promise<boolean | null> {
-  return page.evaluate((title: string) => {
+  return within(page.evaluate((title: string) => {
     const item = Array.from(document.querySelectorAll<HTMLElement>('.text-channel-item-info')).find(el => el.getAttribute('title') === title);
     return item ? item.classList.contains('item-unread') : null;
-  }, channelTitle);
+  }, channelTitle), EVAL_TIMEOUT_MS, 'the channel list');
 }
 
 export async function waitChannelUnread(page: Page, channelTitle: string, unread: boolean, timeout = 10_000, who = 'page') {
@@ -181,7 +219,7 @@ export async function waitChannelUnread(page: Page, channelTitle: string, unread
  * notifications entry (logged out, or not rendered).
  */
 export async function notificationBadge(page: Page): Promise<number | null> {
-  return page.evaluate(() => {
+  return within(page.evaluate(() => {
     const buttons = Array.from(document.querySelectorAll<HTMLElement>('.menu-expanded .expanded-menu-button'));
     // expanded: labelled; collapsed (inside a community): Explore, Stake, Chats, Notifications
     const button = buttons.find(b => b.innerText.trim().startsWith('Notifications')) ??
@@ -194,7 +232,7 @@ export async function notificationBadge(page: Page): Promise<number | null> {
       return 0;
     }
     return count === '9+' ? 10 : Number(count);
-  });
+  }), EVAL_TIMEOUT_MS, 'the notifications badge');
 }
 
 /**
@@ -202,8 +240,16 @@ export async function notificationBadge(page: Page): Promise<number | null> {
  * session cookie, JSON) and returns `data` of an OK response. The response
  * is not seen by the app; use it for the server's view of the state.
  */
+export class ApiCallError extends Error {
+  http: number;
+  constructor(message: string, http: number) {
+    super(message);
+    this.http = http;
+  }
+}
+
 export async function apiCall<T>(page: Page, route: string, body?: unknown): Promise<T> {
-  const result = await page.evaluate(async (path: string, json: string | null) => {
+  const result = await within(page.evaluate(async (path: string, json: string | null) => {
     const response = await fetch(`/api/v2/${path}`, {
       method: 'POST',
       credentials: 'include',
@@ -211,28 +257,65 @@ export async function apiCall<T>(page: Page, route: string, body?: unknown): Pro
       body: json ?? undefined,
     });
     return { http: response.status, body: await response.text() };
-  }, route, body === undefined ? null : JSON.stringify(body));
+  }, route, body === undefined ? null : JSON.stringify(body)), 20_000, route);
   let parsed: { status?: string; data?: T; error?: string };
   try {
     parsed = JSON.parse(result.body);
   }
   catch {
-    throw new Error(`${route}: HTTP ${result.http}, not JSON`);
+    throw new ApiCallError(`${route}: HTTP ${result.http}, not JSON`, result.http);
   }
-  assert(parsed.status === 'OK', `${route}: ${parsed.status} ${parsed.error ?? ''} (HTTP ${result.http})`);
+  if (parsed.status !== 'OK') {
+    throw new ApiCallError(`${route}: ${parsed.status} ${parsed.error ?? ''} (HTTP ${result.http})`, result.http);
+  }
   return parsed.data as T;
 }
 
-export type ServerChannelState = { channelId: string; lastRead: string | null; unread: number; lastMessageDate: string | null };
+export type ServerChannelState = {
+  channelId: string;
+  lastRead: string | null;
+  unread: number;
+  lastMessageDate: string | null;
+  /** the route that answered */
+  source: 'Message/getSyncState' | 'Community/getCommunityDetailView';
+};
 
-/** the server's read state of a channel for the logged-in user (Community/getCommunityDetailView, as the app loads it) */
-export async function serverChannelState(page: Page, communityPath: string, channelTitle: string): Promise<ServerChannelState> {
-  const url = /^\/c\/([^/]+)\//.exec(communityPath)?.[1];
-  assert(url, `not a community path: ${communityPath}`);
-  const community = await apiCall<{ channels?: { channelId: string; title: string; lastRead: string | null; unread: number | string; lastMessageDate: string | null }[] }>(page, 'Community/getCommunityDetailView', { url });
-  const channel = community.channels?.find(c => c.title === channelTitle);
-  assert(channel, `the server lists no channel "${channelTitle}" in ${communityPath}`);
-  return { channelId: channel.channelId, lastRead: channel.lastRead, unread: Number(channel.unread), lastMessageDate: channel.lastMessageDate };
+/** servers without Message/getSyncState (404) — remembered per page */
+const noSyncState = new WeakSet<Page>();
+
+/**
+ * The server's read state of a channel for the logged-in user, as the app
+ * loads it: Message/getSyncState (read-only; the chat-sync client's source)
+ * when the server has it, else Community/getCommunityDetailView (which is
+ * also where the channel id comes from).
+ */
+export async function serverChannelState(page: Page, communityPath: string, channelTitle: string, knownChannelId?: string): Promise<ServerChannelState> {
+  let channelId = knownChannelId;
+  let detail: ServerChannelState | undefined;
+  if (!channelId || noSyncState.has(page)) {
+    const url = /^\/c\/([^/]+)\//.exec(communityPath)?.[1];
+    assert(url, `not a community path: ${communityPath}`);
+    const community = await apiCall<{ channels?: { channelId: string; title: string; lastRead: string | null; unread: number | string; lastMessageDate: string | null }[] }>(page, 'Community/getCommunityDetailView', { url });
+    const channel = community.channels?.find(c => c.title === channelTitle);
+    assert(channel, `the server lists no channel "${channelTitle}" in ${communityPath}`);
+    channelId = channel.channelId;
+    detail = { channelId, lastRead: channel.lastRead, unread: Number(channel.unread), lastMessageDate: channel.lastMessageDate, source: 'Community/getCommunityDetailView' };
+  }
+  if (!noSyncState.has(page)) {
+    try {
+      const state = await apiCall<{ channels: { channelId: string; lastRead: string | null; unread: number; lastMessageDate: string | null }[] }>(page, 'Message/getSyncState', { channelIds: [channelId] });
+      const channel = state.channels.find(c => c.channelId === channelId);
+      assert(channel, `Message/getSyncState has no channel ${channelId} ("${channelTitle}")`);
+      return { channelId, lastRead: channel.lastRead, unread: Number(channel.unread), lastMessageDate: channel.lastMessageDate, source: 'Message/getSyncState' };
+    }
+    catch (e) {
+      if (!(e instanceof ApiCallError && e.http === 404)) {
+        throw e;
+      }
+      noSyncState.add(page);
+    }
+  }
+  return detail ?? serverChannelState(page, communityPath, channelTitle);
 }
 
 /** the server's unread notification count (Notification/getUnreadCount, as the app loads it) */

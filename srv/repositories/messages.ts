@@ -301,9 +301,15 @@ async function _updateMessage(
 /**
  * Soft-deletes messages of one creator in one channel: either all of them, or
  * the single message `messageId`. The channel is always part of the filter.
+ *
+ * The statement writes several rows, and every row write also takes the
+ * channel's sync-sequence row (trigger). A single-row writer locks its
+ * message row first and the sequence row second, so the delete locks all
+ * the rows it will write (in id order) before its first write; otherwise a
+ * concurrent edit or reaction on one of the replies could deadlock with it.
  */
 async function _deleteMessages(
-  db: Pool | PoolClient,
+  db: Pool,
   where: {
     creatorId: string;
     channelId: string;
@@ -313,6 +319,20 @@ async function _deleteMessages(
   if (!where.creatorId || !where.channelId) {
     throw new Error(errors.server.INVALID_REQUEST);
   }
+  const targets = `
+    SELECT m.id FROM messages m
+    WHERE m."creatorId" = $1
+      AND m."channelId" = $2
+      AND m."deletedAt" IS NULL
+      ${where.messageId !== undefined ? 'AND m."id" = $3' : ''}
+  `;
+  const lockQuery = `
+    SELECT id FROM messages
+    WHERE id IN (${targets})
+      OR "parentMessageId" IN (${targets})
+    ORDER BY id
+    FOR UPDATE
+  `;
   const query = `
     WITH removed_messages AS (
       UPDATE messages m
@@ -346,7 +366,21 @@ async function _deleteMessages(
   if (where.messageId !== undefined) {
     params.push(where.messageId);
   }
-  const result = await db.query(query, params);
+  const client = await db.connect();
+  let result;
+  try {
+    await client.query('BEGIN');
+    await client.query(lockQuery, params);
+    result = await client.query(query, params);
+    await client.query('COMMIT');
+  }
+  catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  }
+  finally {
+    client.release();
+  }
   if (result.rows.length !== 1) {
     throw new Error("Query did not return 1 row");
   }

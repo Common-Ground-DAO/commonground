@@ -278,6 +278,38 @@ describeDb('message sync sequence on PostgreSQL', () => {
     }
   });
 
+  it('a delete with replies does not deadlock with a concurrent write on a reply', async () => {
+    const channel = await newChannel();
+    const parent = await insertAs(writer, channel);
+    const reply = (await writer.query(
+      `INSERT INTO messages ("creatorId", "channelId", body, "createdAt", "parentMessageId") VALUES ($1, $2, '{}', $3, $4) RETURNING id`,
+      [other, channel, nextCreatedAt(), parent.id],
+    )).rows[0].id as string;
+    // a single-row writer that holds the reply's row lock but not yet the
+    // channel's sequence row (like an UPDATE between finding and changing it)
+    const replyWriter = await writer.connect();
+    try {
+      await replyWriter.query('BEGIN');
+      await replyWriter.query(`SELECT 1 FROM messages WHERE id = $1 FOR UPDATE`, [reply]);
+      const deleting = messageHelper.deleteMessage({ messageId: parent.id, channelId: channel, creatorId: me });
+      for (let i = 0; i < 100; i++) {
+        const waiting = (await q(`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'`, [DATABASE])).rows[0].n;
+        if (waiting === 1) break;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      // the delete waits on the reply's row without holding the sequence row
+      await replyWriter.query(`UPDATE messages SET reactions = '{"a":1}' WHERE id = $1`, [reply]);
+      await replyWriter.query('COMMIT');
+      const result = await deleting;
+      expect(result.deletedIds).toEqual([parent.id]);
+      expect(result.updatedParents.map(p => p.id)).toEqual([reply]);
+      expect(await channelSeq(channel)).toBe(5);
+    }
+    finally {
+      replyWriter.release();
+    }
+  });
+
   it('a rolled-back write leaves no gap', async () => {
     const channel = await newChannel();
     const client = await writer.connect();

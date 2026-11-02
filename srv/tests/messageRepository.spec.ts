@@ -8,10 +8,15 @@
  */
 
 const poolQuery = jest.fn();
+const clientRelease = jest.fn();
 
+// pool.query and the queries of a checked-out client both go to poolQuery
 jest.mock('../util/postgres', () => ({
   __esModule: true,
-  default: { query: (...args: any[]) => poolQuery(...args) },
+  default: {
+    query: (...args: any[]) => poolQuery(...args),
+    connect: async () => ({ query: (...args: any[]) => poolQuery(...args), release: clientRelease }),
+  },
 }));
 jest.mock('../repositories/files', () => ({ __esModule: true, default: {} }));
 
@@ -23,9 +28,12 @@ const MESSAGE = '00000000-0000-4000-8000-0000000000d1';
 const SCOPE = '00000000-0000-4000-8000-0000000000e1';
 
 const normalize = (sql: string) => sql.replace(/\s+/g, ' ');
+/** the soft-delete statement among the calls (it runs in a transaction) */
+const deleteCall = () => poolQuery.mock.calls.find(([sql]) => sql.includes('WITH removed_messages'))!;
 
 beforeEach(() => {
   poolQuery.mockReset();
+  clientRelease.mockReset();
 });
 
 describe('messageHelper.deleteMessage', () => {
@@ -38,10 +46,34 @@ describe('messageHelper.deleteMessage', () => {
       updatedParents: [],
       dbNow: '',
     });
-    const [sql, params] = poolQuery.mock.calls[0];
+    const [sql, params] = deleteCall();
     expect(normalize(sql)).toContain('WHERE m."creatorId" = $1 AND m."channelId" = $2 AND m."deletedAt" IS NULL AND m."id" = $3');
     expect(normalize(sql)).toContain('RETURNING m.id, m."syncSeq"');
     expect(params).toEqual([USER, CHANNEL, MESSAGE]);
+  });
+
+  it('locks every row it writes, in id order, before the delete, in one transaction', async () => {
+    poolQuery.mockResolvedValue({ rows: [{ deleteData: { deleted: [], updatedParents: [], dbNow: '' } }] });
+    await messageHelper.deleteMessage({ messageId: MESSAGE, channelId: CHANNEL, creatorId: USER });
+    const statements = poolQuery.mock.calls.map(([sql]) => normalize(sql).trim());
+    expect(statements[0]).toBe('BEGIN');
+    expect(statements[1]).toMatch(/^SELECT id FROM messages WHERE id IN \(.*\) OR "parentMessageId" IN \(.*\) ORDER BY id FOR UPDATE$/);
+    expect(statements[1]).toContain('AND m."id" = $3');
+    expect(poolQuery.mock.calls[1][1]).toEqual([USER, CHANNEL, MESSAGE]);
+    expect(statements[2]).toContain('WITH removed_messages');
+    expect(statements[3]).toBe('COMMIT');
+    expect(clientRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls back and releases the connection on an error', async () => {
+    poolQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockRejectedValueOnce(new Error('lock failed'))
+      .mockResolvedValue({ rows: [] });
+    await expect(messageHelper.deleteMessage({ messageId: MESSAGE, channelId: CHANNEL, creatorId: USER }))
+      .rejects.toThrow('lock failed');
+    expect(normalize(poolQuery.mock.calls[2][0]).trim()).toBe('ROLLBACK');
+    expect(clientRelease).toHaveBeenCalledTimes(1);
   });
 
   it('refuses to run without a channel', async () => {
@@ -58,7 +90,7 @@ describe('messageHelper.deleteAllUserMessages', () => {
       access: { communityId: SCOPE, channelId: CHANNEL },
       creatorId: USER,
     });
-    const [sql, params] = poolQuery.mock.calls[0];
+    const [sql, params] = deleteCall();
     expect(normalize(sql)).toContain('WHERE m."creatorId" = $1 AND m."channelId" = $2 AND m."deletedAt" IS NULL RETURNING');
     expect(params).toEqual([USER, CHANNEL]);
   });

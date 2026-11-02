@@ -572,6 +572,26 @@ describeDb('message sync sequence on PostgreSQL', () => {
       }
     }, 30000);
 
+    it('a newest message in the future (clock corrected back) does not drag new creates along', async () => {
+      const channel = await newChannel();
+      const future = new Date(Date.now() + 60 * 60 * 1000);
+      await writer.query(`INSERT INTO messages ("creatorId", "channelId", body, "createdAt") VALUES ($1, $2, '{}', $3)`, [other, channel, future]);
+      const before = Date.now();
+      const created = await messageHelper.createMessage(me, { id: randomUUID(), access: accessFor(channel), body, parentMessageId: null, attachments: [] });
+      const at = new Date(created.message.createdAt).getTime();
+      expect(Math.abs(at - before)).toBeLessThan(5000);
+      // and it can be marked read (setChannelLastRead clamps to now())
+      const read = await messageHelper.setChannelLastRead(other, { access: accessFor(channel), lastRead: new Date().toISOString() });
+      expect(read.unread).toBe(0);
+
+      // a chain slightly ahead (within 5 s) is still followed
+      const nearChannel = await newChannel();
+      const near = new Date(Date.now() + 2000);
+      await writer.query(`INSERT INTO messages ("creatorId", "channelId", body, "createdAt") VALUES ($1, $2, '{}', $3)`, [other, nearChannel, near]);
+      const chained = await messageHelper.createMessage(me, { id: randomUUID(), access: accessFor(nearChannel), body, parentMessageId: null, attachments: [] });
+      expect(new Date(chained.message.createdAt).getTime()).toBe(near.getTime() + 1);
+    });
+
     it('the create\'s channel lock blocks a second create of the channel until commit', async () => {
       const channel = await newChannel();
       const lock = `INSERT INTO channel_sync_state AS s ("channelId", "seq") VALUES ($1::uuid, 0) ON CONFLICT ("channelId") DO UPDATE SET "seq" = s."seq" WHERE false`;

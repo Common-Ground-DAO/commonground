@@ -283,7 +283,9 @@ describe('messageHelper.createMessage', () => {
     expect(sql[2]).toBe('INSERT INTO channel_sync_state AS s ("channelId", "seq") VALUES ($1::uuid, 0) ON CONFLICT ("channelId") DO UPDATE SET "seq" = s."seq" WHERE false');
     expect(poolQuery.mock.calls[2][1]).toEqual([CHANNEL]);
     expect(sql[3]).toBe('SELECT 1 FROM messages WHERE "id" = $1::uuid');
-    expect(sql[4]).toContain('GREATEST( clock_timestamp(), (SELECT max(m."createdAt") FROM messages m WHERE m."channelId" = $3::uuid) + interval \'1 millisecond\' )');
+    // the +1 ms chain only while it stays within 5 s of the clock
+    expect(sql[4]).toContain('SELECT CASE WHEN n."next" <= c."clock" + interval \'5 seconds\' THEN GREATEST(c."clock", n."next") ELSE c."clock" END AS "at"');
+    expect(sql[4]).toContain('FROM (SELECT clock_timestamp() AS "clock") c, (SELECT max(m."createdAt") + interval \'1 millisecond\' AS "next" FROM messages m WHERE m."channelId" = $3::uuid) n');
     expect(sql[4]).toContain('ON CONFLICT ("id") DO NOTHING RETURNING "createdAt", "updatedAt", "id", "syncSeq"');
     // the creator's read marker is the message's own createdAt
     expect(sql[4]).toContain('SELECT $2::uuid, $3::uuid, i."createdAt" FROM inserted i ON CONFLICT ("userId", "channelId")');

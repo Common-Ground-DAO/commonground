@@ -153,8 +153,17 @@ async function _getOwnStoredMessage(
  * the lock first (an API process from before this change, during a deploy);
  * the insert is tried up to CREATE_ATTEMPTS times. ON CONFLICT (id)
  * stays for a same-id create in another channel racing this one.
+ *
+ * The "+ 1 ms" chain is used only while it stays within
+ * CREATE_CHAIN_MAX_AHEAD_SECONDS of the clock. After the server clock was
+ * ahead and then corrected, the channel's newest message lies in the future;
+ * following the chain would date every new message in the future as well
+ * (and `setChannelLastRead`, clamped to now(), could not mark them read), so
+ * a new message then takes the clock time. The retry covers the
+ * exact-millisecond collision that leaves possible.
  */
 const CREATE_ATTEMPTS = 3;
+const CREATE_CHAIN_MAX_AHEAD_SECONDS = 5;
 
 async function _createMessage(
   db: Pool,
@@ -189,10 +198,13 @@ async function _createMessage(
       FROM users u
       WHERE id = $2::uuid
     ), created_at AS (
-      SELECT GREATEST(
-        clock_timestamp(),
-        (SELECT max(m."createdAt") FROM messages m WHERE m."channelId" = $3::uuid) + interval '1 millisecond'
-      ) AS "at"
+      SELECT CASE
+        WHEN n."next" <= c."clock" + interval '${CREATE_CHAIN_MAX_AHEAD_SECONDS} seconds'
+        THEN GREATEST(c."clock", n."next")
+        ELSE c."clock"
+      END AS "at"
+      FROM (SELECT clock_timestamp() AS "clock") c,
+        (SELECT max(m."createdAt") + interval '1 millisecond' AS "next" FROM messages m WHERE m."channelId" = $3::uuid) n
     ), inserted AS (
       INSERT INTO messages (
         "id",

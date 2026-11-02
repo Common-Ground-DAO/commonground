@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import BaseApiConnector from "./baseConnector";
+import { channelMemberListOrEmpty } from "common/channelMemberList";
 
 class CommunityApiConnector extends BaseApiConnector {
   constructor() {
@@ -89,12 +90,14 @@ class CommunityApiConnector extends BaseApiConnector {
   public async getChannelMemberList(
     data: API.Community.getChannelMemberList.Request
   ): Promise<API.Community.getChannelMemberList.Response> {
-    const result = await this.ajax<API.Community.getChannelMemberList.Response>(
+    const result = await this.ajax<API.Community.getChannelMemberList.Response | null | undefined>(
       "POST",
       '/getChannelMemberList',
       data
     );
-    return result;
+    // a reply without a list (e.g. for a channel created a moment ago) counts
+    // as an empty one; failed requests reject and the callers handle them
+    return channelMemberListOrEmpty(result);
   }
 
   public async getMemberNewsletterCount(

@@ -10,6 +10,8 @@ import { ChannelPermission, PredefinedRole, RoleType } from './common/enums';
 import { convertUuidToBinary, convertBinaryToUuid } from './util/memberListHelpers';
 import { asyncRequestHandler } from './util/asyncHandler';
 import { describeErrorForLog } from './util/errorLog';
+import { decideChannelEvent, MAX_CHANNEL_EVENT_DEFERRALS } from './util/memberListChannelEvents';
+import { emptyChannelMemberList } from './common/channelMemberList';
 
 type PgNotifyEvent = Events.PgNotify.UserDataChange | Events.PgNotify.UserRoleChange | Events.PgNotify.CommunityRoleChange | Events.PgNotify.ChannelRolePermissionChange;
 
@@ -66,6 +68,9 @@ type ChannelMemberListArr = {
 
 let client: PoolClient;
 const changeEvents: PgNotifyEvent[] = [];
+// channel events that arrived before their community's roles; retried first
+// in the next batch (memberListChannelEvents.ts)
+const deferredChannelEvents: { event: Events.PgNotify.ChannelRolePermissionChange; deferrals: number }[] = [];
 
 const userDataByUserId = new Map<string, UserData>();
 const userIdsByRoleId = new Map<string, Set<string>>();
@@ -591,7 +596,10 @@ function updateUserChannelGroup(options: {
 }
 
 function handleEvents() {
-  const events = changeEvents.splice(0);
+  const retried = deferredChannelEvents.splice(0);
+  const deferralsByEvent = new Map<PgNotifyEvent, number>(retried.map(d => [d.event, d.deferrals]));
+  const deferredCommunityIds = new Set<string>();
+  const events: PgNotifyEvent[] = [...retried.map(d => d.event), ...changeEvents.splice(0)];
   const updatedCommunityMemberLists = new Set<string>();
   const updatedMemberLists = new Map<string, Set<string>>();
   for (const event of events) {
@@ -854,25 +862,29 @@ function handleEvents() {
         console.log("Created new community channel role permission map for community", convertBinaryToUuid(event.communityId));
       }
       let rolePermissions = rolePermissionsByChannelId.get(event.channelId);
-      if (!rolePermissions) {
-        const roles = roleDataByCommunityId.get(event.communityId);
-        if (!roles) {
-          console.trace("ERROR (SKIP): Community roles not found for communityId:", convertBinaryToUuid(event.communityId), event);
-          continue;
-        }
-        let adminRole: string | undefined;
-        for (const [roleId, roleData] of roles) {
-          if (roleData.roleType === RoleType.PREDEFINED && roleData.title === PredefinedRole.Admin) {
-            adminRole = roleId;
-            break;
-          }
-        }
-        if (!adminRole) {
-          console.trace("ERROR (SKIP): Admin role not found for communityId:", convertBinaryToUuid(event.communityId), event);
-          continue;
-        }
+      const deferrals = deferralsByEvent.get(event) ?? 0;
+      const decision = decideChannelEvent({
+        channelKnown: !!rolePermissions,
+        communityRoles: roleDataByCommunityId.get(event.communityId),
+        communityHasDeferredEvent: deferredCommunityIds.has(event.communityId),
+        deferrals,
+      });
+      if (decision.action === 'defer') {
+        deferredCommunityIds.add(event.communityId);
+        deferredChannelEvents.push({ event, deferrals: deferrals + 1 });
+        continue;
+      }
+      if (decision.action === 'drop') {
+        console.trace(`ERROR (SKIP): Community roles or Admin role not found after ${MAX_CHANNEL_EVENT_DEFERRALS} batches for communityId:`, convertBinaryToUuid(event.communityId), event);
+        continue;
+      }
+      // a channel that is new to this service always gets a member list
+      // (with its admins, as initFromDb does), even if no user changes below
+      let newChannel = false;
+      if (decision.action === 'create') {
+        newChannel = true;
         rolePermissions = {
-          admin: adminRole,
+          admin: decision.adminRoleId,
           moderator: new Set(),
           writer: new Set(),
           reader: new Set(),
@@ -900,6 +912,9 @@ function handleEvents() {
           console.log("Created new channel memberId map for community:", convertBinaryToUuid(event.communityId), "channelId:", convertBinaryToUuid(event.channelId));
         }
       }
+      if (!rolePermissions) {
+        continue; // unreachable: 'apply' means the channel is known
+      }
 
       if (event.roleId !== rolePermissions.admin) {
         if (event.permissions.includes(ChannelPermission.CHANNEL_MODERATE)) {
@@ -924,7 +939,12 @@ function handleEvents() {
         }
       }
 
-      const userIds = userIdsByRoleId.get(event.roleId) || [];
+      const userIds = new Set(userIdsByRoleId.get(event.roleId));
+      if (newChannel) {
+        for (const adminUserId of userIdsByRoleId.get(rolePermissions.admin) || []) {
+          userIds.add(adminUserId);
+        }
+      }
       let changed = false;
       for (const userId of userIds) {
         const userData = userDataByUserId.get(userId);
@@ -940,7 +960,7 @@ function handleEvents() {
           rolePermissions,
         }) || changed;
       }
-      if (changed) {
+      if (changed || newChannel) {
         let updatedMemberListsByCommunity = updatedMemberLists.get(event.communityId);
         if (!updatedMemberListsByCommunity) {
           updatedMemberListsByCommunity = new Set();
@@ -1126,23 +1146,25 @@ function getChannelMemberListWindow(options: {
   limit: number;
   search?: string;
   startsWithSearch?: boolean;
-}): Models.Community.ChannelMemberList | undefined {
+}): Models.Community.ChannelMemberList {
   const { communityId, channelId, offset, limit, search: _search, startsWithSearch } = options;
   const search = _search?.toLocaleLowerCase();
+  // a channel this service does not know (yet — a new one appears with the
+  // next event batch) answers an empty list, never an empty body
   const memberList = memberListByCommunityIdByChannelId.get(communityId)?.get(channelId);
   if (!memberList) {
     console.trace("ERROR (SKIP): Member list not found for communityId:", convertBinaryToUuid(communityId), "channelId:", convertBinaryToUuid(channelId));
-    return undefined;
+    return emptyChannelMemberList();
   }
   const memberSet = memberIdsByCommunityIdByChannelId.get(communityId)?.get(channelId);
   if (!memberSet) {
     console.trace("ERROR (SKIP): Member set not found for communityId:", convertBinaryToUuid(communityId), "channelId:", convertBinaryToUuid(channelId));
-    return undefined;
+    return emptyChannelMemberList();
   }
   const communityRoles = roleDataByCommunityId.get(communityId);
   if (!communityRoles) {
     console.trace("ERROR (SKIP): Community roles not found for communityId:", convertBinaryToUuid(communityId));
-    return undefined;
+    return emptyChannelMemberList();
   }
   const communityRoleIdArray = Array.from(communityRoles.keys());
   const memberListWindow: Models.Community.ChannelMemberList = {

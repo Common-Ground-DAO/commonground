@@ -9,6 +9,7 @@ import format from "pg-format";
 import * as bcrypt from "bcrypt";
 import { randomUUID, webcrypto } from "node:crypto";
 import eventHelper from "./event";
+import { userWithNotifyIdsQuery as __userWithNotifyIdsQuery, emitOfflineUpdates, type UserWithNotifyIds } from "./userPresence";
 import pool from "../util/postgres";
 import { type Pool, type PoolClient } from "pg";
 import { UserAccount } from "../entities/user-accounts";
@@ -792,33 +793,6 @@ async function _createUser(
   throw new Error(errors.server.INVALID_REQUEST);
 }
 
-function __userWithNotifyIdsQuery(cteName: string) {
-  return `
-    SELECT
-      u.id AS "userId",
-      now() AS "updatedAt",
-      COALESCE(
-        (
-          SELECT json_agg(r."communityId")
-          FROM roles_users_users ruu
-          INNER JOIN roles r
-            ON ruu."roleId" = r."id"
-            AND r."type" = ${format("%L", RoleType.PREDEFINED)}
-            AND r."title" = ${format("%L", PredefinedRole.Member)}
-          WHERE ruu."userId" = u."id"
-        ),
-        '[]'::json
-      ) AS "communityIds"
-    FROM users u
-    WHERE u.id = ANY((SELECT id FROM ${cteName}))
-  `;
-}
-
-type UserWithNotifyIds = {
-  userId: string;
-  updatedAt: string;
-  communityIds: string[];
-};
 
 async function _updateUser(
   db: Pool | PoolClient,
@@ -2626,7 +2600,10 @@ class UserHelper {
       ${__userWithNotifyIdsQuery('update_status')}
     `, [userId, status]);
 
-    if (status !== "offline") {
+    // Only a real change is emitted: the UPDATE returns no row when the
+    // status was already set (no own-data event on every socket login).
+    const updates = result.rows as UserWithNotifyIds[];
+    if (status !== "offline" && updates.length > 0) {
       eventHelper.emit({
         type: 'cliUserOwnData',
         data: {
@@ -2636,7 +2613,6 @@ class UserHelper {
         userIds: [userId],
       });
     }
-    const updates = result.rows as UserWithNotifyIds[];
     for (const update of updates) {
       eventHelper.emit({
         type: 'cliUserData',
@@ -2652,40 +2628,54 @@ class UserHelper {
     }
   }
 
-  public async setUsersToOffline(userIds: string[]): Promise<void> {
+  /**
+   * Sets these users offline in one statement (presence decisions of a wsapi
+   * process). Emits `cliUserData` only for users whose status changed.
+   */
+  public async setUsersOffline(userIds: string[]): Promise<void> {
+    if (userIds.length === 0) {
+      return;
+    }
     const result = await pool.query(`
-      WITH set_to_offline AS (
+      WITH set_offline AS (
         UPDATE users
         SET
           "onlineStatus" = 'offline',
           "updatedAt" = now(),
           "onlineStatusUpdatedAt" = now()
-        WHERE id = ANY(ARRAY[${format("%L", userIds)}]::uuid[])
+        WHERE id = ANY($1::uuid[])
           AND "onlineStatus" <> 'offline'
         RETURNING id
       )
-      ${__userWithNotifyIdsQuery('set_to_offline')}
-    `);
-
-    const updates = result.rows as UserWithNotifyIds[];
-    const promises: Promise<any>[] = [];
-    for (const update of updates) {
-      promises.push(eventHelper.emit({
-        type: 'cliUserData',
-        data: {
-          id: update.userId,
-          onlineStatus: 'offline',
-          updatedAt: update.updatedAt,
-        },
-      }, {
-        communityIds: update.communityIds,
-        userIds: [update.userId]
-      }));
-    }
-    await Promise.allSettled(promises);
+      ${__userWithNotifyIdsQuery('set_offline')}
+    `, [userIds]);
+    await emitOfflineUpdates(result.rows as UserWithNotifyIds[]);
   }
 
-  public async touchUserOnlineStatus(userIds: string[]) {
+  /**
+   * Refreshes only `onlineStatusUpdatedAt` (users in their offline grace
+   * period): never changes a status, emits nothing.
+   */
+  public async refreshOnlineStatusTimestamps(userIds: string[]): Promise<void> {
+    if (userIds.length === 0) {
+      return;
+    }
+    await pool.query(`
+      UPDATE users
+      SET "onlineStatusUpdatedAt" = now()
+      WHERE id = ANY($1::uuid[])
+        AND "onlineStatus" <> 'offline'
+    `, [userIds]);
+  }
+
+  /**
+   * Refreshes `onlineStatusUpdatedAt` of connected users and flips only
+   * `offline` ones to `online` (a status other than online/offline is left
+   * alone). Events go out for users whose status actually changed;
+   * `emitOwnData` also sends them `cliUserOwnData` (human users; bots do not
+   * use own data).
+   */
+  public async touchUserOnlineStatus(userIds: string[], options?: { emitOwnData?: boolean }) {
     if (userIds.length === 0) {
       return;
     }
@@ -2714,6 +2704,16 @@ class UserHelper {
 
     const updates = result.rows as UserWithNotifyIds[];
     for (const update of updates) {
+      if (options?.emitOwnData) {
+        eventHelper.emit({
+          type: 'cliUserOwnData',
+          data: {
+            onlineStatus: 'online',
+          },
+        }, {
+          userIds: [update.userId],
+        });
+      }
       eventHelper.emit({
         type: 'cliUserData',
         data: {

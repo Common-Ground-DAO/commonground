@@ -31,6 +31,7 @@ import buildId from './common/random_build_id';
 import botTokenHelper from './repositories/botTokens';
 import botHelper from './repositories/bots';
 import * as typingCache from './repositories/typingCache';
+import { PresenceTracker, type ClusterProbe } from './util/presence';
 
 import cookieParser from 'cookie-parser';
 // The manual-unsign alternative below needs `cookie-signature`, which was
@@ -63,7 +64,6 @@ function decodeSessionId(cookieHeader: string): string | undefined {
   } */
 }
 
-const localOnlineUsers = new Set<string>();
 const localOnlineBotUsers = new Set<string>();
 let shuttingDown = false;
 
@@ -143,6 +143,39 @@ const io = new Server<
   pingInterval: 15000,
   pingTimeout: 15000,
   perMessageDeflate: false,
+});
+
+const hasLocalUserSocket = (userId: string) => !!io.sockets.adapter.rooms.get(userRoomKey(userId))?.size;
+
+/**
+ * Which of these users have a logged-in socket on another wsapi process. One
+ * `presenceProbe` server-side emit through the Redis adapter: every other
+ * process answers with the subset it holds, so only user ids travel (unlike
+ * fetchSockets, which ships handshake and socket data). A process that does
+ * not answer within the adapter's requestsTimeout (5 s) makes the result
+ * incomplete; the answers received so far still count.
+ */
+async function probeClusterPresence(userIds: string[]): Promise<ClusterProbe> {
+  const collect = (responses: unknown) => (Array.isArray(responses) ? responses : [])
+    .flatMap(response => Array.isArray(response) ? response : [])
+    .filter((userId): userId is string => typeof userId === 'string');
+  try {
+    const responses = await io.serverSideEmitWithAck("presenceProbe", userIds);
+    return { present: collect(responses), complete: true };
+  }
+  catch (error) {
+    return { present: collect((error as { responses?: unknown })?.responses), complete: false, error };
+  }
+}
+
+// Human presence (srv/util/presence.ts): online on login, offline only after
+// the grace period without a logged-in socket anywhere in the cluster.
+const presence = new PresenceTracker({
+  hasLocalSocket: hasLocalUserSocket,
+  probeCluster: probeClusterPresence,
+  markOnline: (userId) => userHelper.touchUserOnlineStatus([userId], { emitOwnData: true }),
+  markOffline: (userIds) => userHelper.setUsersOffline(userIds),
+  isShuttingDown: () => shuttingDown,
 });
 
 type AppSocket = Socket<
@@ -379,6 +412,19 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
     { key: 'v2:' }
   ));
 
+  // presence probe from another wsapi process: answer with the users that
+  // have a logged-in socket here
+  io.on("presenceProbe", (userIds, callback) => {
+    try {
+      const ids = Array.isArray(userIds) ? userIds.filter(userId => typeof userId === 'string') : [];
+      callback(ids.filter(hasLocalUserSocket));
+    }
+    catch (error) {
+      console.error("Error answering presenceProbe", error);
+      callback([]);
+    }
+  });
+
   // Event-driven busting for the typing-presence caches (falls back to TTL).
   typingCache.initTypingCacheInvalidation().catch((error) => {
     console.error("Failed to start typing cache invalidation", error);
@@ -554,7 +600,7 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
           return;
         }
         const ids = await userHelper.getUserRoleAndCommunityIds(userId);
-        localOnlineUsers.add(userId);
+        presence.socketAuthenticated(userId);
         await joinAuthenticatedRooms(socket, {
           userId,
           deviceId: data.deviceId,
@@ -570,7 +616,20 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
           socket.disconnect(false);
           return;
         }
-        await userHelper.setUserOnlineStatus(userId, 'online');
+        // the socket went away while the login was in flight; its disconnect
+        // handler may have run before the user id was set, so release the
+        // presence here (the rooms are already left: a disconnected socket
+        // cannot join)
+        if (!socket.connected) {
+          for (const roomId of Array.from(socket.rooms)) {
+            if (roomId !== socket.id) {
+              socket.leave(roomId);
+            }
+          }
+          presence.socketGone(userId);
+          return;
+        }
+        await presence.userLoggedIn(userId);
         // Only acknowledge success once identity, room membership, and presence
         // are fully established.
         callback("OK");
@@ -656,12 +715,7 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
       }
       Promise.all(leavePromises).then(() => {
         if (!!userId) {
-          const ownRoomSize = io.sockets.adapter.rooms.get(userRoomKey(userId))?.size;
-          if (!ownRoomSize) {
-            console.log(`User ${userId} has logged out the last socket and is offline`);
-            userHelper.setUserOnlineStatus(userId, 'offline');
-            localOnlineUsers.delete(userId);
-          }
+          presence.socketGone(userId);
         }
       });
     });
@@ -670,13 +724,7 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
       const { userId } = socket.data;
       flushTypingStops(socket);
       if (!!userId && !socket.data.botTokenId) {
-        const ownRoomSize = io.sockets.adapter.rooms.get(userRoomKey(userId))?.size;
-        if (!ownRoomSize) {
-          if (!shuttingDown) {
-            userHelper.setUserOnlineStatus(userId, 'offline');
-          }
-          localOnlineUsers.delete(userId);
-        }
+        presence.socketGone(userId);
       }
     });
   });
@@ -687,10 +735,15 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
 setInterval(async () => {
   if (!shuttingDown) {
     try {
-      const userIds = Array.from(localOnlineUsers);
+      // users in their offline grace period only get the timestamp: a flip
+      // back to online would undo another process's offline decision
+      const { connected, grace } = presence.touchSets();
       const botUserIds = Array.from(localOnlineBotUsers);
-      if (userIds.length > 0) {
-        await userHelper.touchUserOnlineStatus(userIds);
+      if (connected.length > 0) {
+        await userHelper.touchUserOnlineStatus(connected, { emitOwnData: true });
+      }
+      if (grace.length > 0) {
+        await userHelper.refreshOnlineStatusTimestamps(grace);
       }
       await Promise.all(botUserIds.map(userId => syncBotConnectionPresence(userId)));
     }
@@ -703,25 +756,19 @@ setInterval(async () => {
 const shutdown = async (code = 0) => {
   shuttingDown = true;
   try {
+    // Human users are not set offline here: their clients reconnect (to
+    // another process, or to this one after a restart), and the login there
+    // refreshes their status. Users who do not come back are set offline by
+    // the onlineStatusCheck job once their status is 90 s stale.
+    presence.dispose();
     const sockets = await io.local.fetchSockets();
     const botUserIds = new Set<string>();
-    const offlineUserIds = sockets.reduce<string[]>((agg, socket) => {
+    for (const socket of sockets) {
       const { userId } = socket.data;
       if (!!userId && socket.data.botTokenId) {
         botUserIds.add(userId);
       }
-      else if (!!userId) {
-        const ownRoomSize = io.sockets.adapter.rooms.get(userRoomKey(userId))?.size;
-        if (ownRoomSize === 1) {
-          console.log(`User ${userId} will disconnect the last socket and then be offline`);
-          agg.push(userId);
-        }
-      }
       socket.disconnect(true);
-      return agg;
-    }, []);
-    if (offlineUserIds.length > 0) {
-      await userHelper.setUsersToOffline(offlineUserIds);
     }
     await Promise.all(Array.from(botUserIds).map(userId => setBotConnectionPresence(userId, 0)));
     io.close();

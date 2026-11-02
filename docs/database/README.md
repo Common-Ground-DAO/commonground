@@ -12,7 +12,8 @@
 > TypeORM 1.x (the data source, the CLI, the entity metadata of the GIN index and the
 > `roles_contracts_contracts` foreign key, the schema comparison) against commit 8dcbb42,
 > 2026-11-01; `channelreadstate` write rule and the `calls` open-calls index against commit
-> 591e6cf, 2026-11-02
+> 591e6cf, 2026-11-02; the `notifications` unread index and the `chats` GIN index against
+> commit 3f204f4, 2026-11-02
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -518,7 +519,7 @@ Direct message conversations. Currently supports 1:1 chats with provision for gr
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | `uuid` PK | Auto-generated |
-| `userIds` | `uuid[]` | Participants, indexed |
+| `userIds` | `uuid[]` | Participants, indexed (btree). Also GIN index `idx_chats_userIds_gin` (added by `1793660400000-syncStateIndexes`, declared on the entity with `synchronize: false`) for the membership test `"userIds" @> ARRAY[user]` of `getChats` and `Message/getSyncState`, which the btree cannot serve |
 | `adminIds` | `uuid[]` | Admins of the chat |
 | `channelId` | `uuid` | FK -> `channels.id`, unique. OneToOne |
 | `createdAt/updatedAt/deletedAt` | `timestamptz(3)` | Standard timestamps |
@@ -888,7 +889,7 @@ User notifications.
 |--------|------|-------|
 | `id` | `uuid` PK | Auto-generated |
 | `type` | `enum(NotificationType)` | MENTION, REPLY, DM, APPROVAL, etc. |
-| `userId` | `uuid` | FK -> `users.id` (CASCADE), indexed. Recipient |
+| `userId` | `uuid` | FK -> `users.id` (CASCADE), indexed. Recipient. Also partial index `idx_notifications_userId_unread` over the unread notifications (`"read" = FALSE`, added by `1793660400000-syncStateIndexes`, declared on the entity with `synchronize: false`) for the unread count |
 | `subjectUserId` | `uuid` | Nullable, indexed. Who triggered it |
 | `subjectCommunityId` | `uuid` | Nullable, indexed |
 | `subjectArticleId` | `uuid` | Nullable, FK -> `articles.id`, indexed |

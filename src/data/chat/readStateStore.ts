@@ -40,7 +40,14 @@ type MarkState = {
   /** consecutive failures of the call */
   failures: number;
   retryTimer: Timer;
+  /** a permanent error refused marks up to this (ms): not sent again until a newer mark */
+  refusedMs: number;
 };
+
+/** errors a retry cannot fix (no access, unknown channel, request rejected even without messageId) */
+function isPermanentMarkError(e: unknown): boolean {
+  return e instanceof Error && (e.message === 'NOT_ALLOWED' || e.message === 'NOT_FOUND' || e.message === 'VALIDATION');
+}
 
 class MarkerImpl implements ReadMarker {
   input: ReadMarkingInput | null = null;
@@ -242,7 +249,22 @@ class ReadStateStoreImpl implements ReadStateStore {
     const set = this.markers.get(marker.channelId);
     if (!set) return;
     set.delete(marker);
-    if (set.size === 0) this.markers.delete(marker.channelId);
+    if (set.size === 0) {
+      this.markers.delete(marker.channelId);
+      const m = this.marks.get(marker.channelId);
+      // no backoff for a channel nobody shows; a pending mark still goes out on the next live signal
+      m?.retryTimer.clear();
+      this.dropIdleMark(marker.channelId);
+    }
+  }
+
+  /** forget the mark state of a channel without markers and without anything to send */
+  private dropIdleMark(channelId: string): void {
+    const m = this.marks.get(channelId);
+    if (!m || m.inFlight || m.want || this.markers.has(channelId)) return;
+    m.timer.clear();
+    m.retryTimer.clear();
+    this.marks.delete(channelId);
   }
 
   private mark(channelId: string): MarkState {
@@ -256,6 +278,7 @@ class ReadStateStoreImpl implements ReadStateStore {
         timer: new Timer(this.deps.clock),
         failures: 0,
         retryTimer: new Timer(this.deps.clock),
+        refusedMs: -Infinity,
       };
       this.marks.set(channelId, m);
     }
@@ -296,6 +319,7 @@ class ReadStateStoreImpl implements ReadStateStore {
     if (!m || this.disposed || m.inFlight || !m.want) return;
     if (!this.deps.events.userId) return;
     const wantMs = m.want.createdAt.getTime();
+    if (wantMs <= m.refusedMs) return;
     if (wantMs <= Math.max(this.serverLastRead.get(channelId) ?? -Infinity, m.sentMs)) {
       m.want = null;
       return;
@@ -326,14 +350,25 @@ class ReadStateStoreImpl implements ReadStateStore {
         if (resp && typeof resp.syncSeq === 'number' && input.kind === 'lastRead') input.syncSeq = resp.syncSeq;
         this.applyInput(input, resp ? 'ack' : 'own-mark');
         this.trySend(channelId);
+        this.dropIdleMark(channelId);
       },
-      () => {
+      (e: unknown) => {
         if (generation !== this.generation || this.disposed) return;
-        // stays pending: retried with backoff, and on the next login, live signal or trigger
         m.inFlight = false;
+        if (isPermanentMarkError(e)) {
+          // give up on this value; a newer mark tries again
+          m.refusedMs = Math.max(m.refusedMs, value.createdAt.getTime());
+          this.resetBackoff(m);
+          return;
+        }
+        // stays pending: retried with backoff while the channel is shown, and on the
+        // next login, live signal or trigger
+        if (!this.markers.has(channelId)) return;
         const delay = MARK_READ_RETRY_MS[Math.min(m.failures, MARK_READ_RETRY_MS.length - 1)];
         m.failures++;
-        m.retryTimer.start(delay, () => this.trySend(channelId));
+        m.retryTimer.start(delay, () => {
+          if (this.markers.has(channelId)) this.trySend(channelId);
+        });
       },
     );
   }

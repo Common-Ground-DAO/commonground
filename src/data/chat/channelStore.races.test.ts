@@ -14,7 +14,7 @@ import { flushMicrotasks } from 'test/deferred';
 import { createChannelStore, RESYNC_DEBOUNCE_MS } from './channelStore';
 import { FakeChatServer, ME, textBody, textOf } from './testing/fakeServer';
 import { systemClock } from './util';
-import { GAP_RESYNC_DEBOUNCE_MS, type ChannelWindow } from './types';
+import { GAP_RESYNC_DEBOUNCE_MS, SEND_TIMEOUT_MS, type ChannelWindow } from './types';
 
 type Message = Models.Message.Message;
 
@@ -149,6 +149,27 @@ describe('ChannelStore races', () => {
     expect(store.getCursor(C)).toBe('1:4');
     await vi.advanceTimersByTimeAsync(GAP_RESYNC_DEBOUNCE_MS * 2);
     expect(texts(w)).toHaveLength(4);
+  });
+
+  it('V4: an own send queued behind a first sync that never answers still times out to error-send', async () => {
+    const { server, store, own } = setup(3);
+    const w = store.openWindow(C);
+    server.hold('getChanges');
+    const init = w.init({ type: 'recent' });
+    await settle();
+    await store.createMessage({ channelId: C, body: textBody('mine'), attachments: [], parentMessageId: null });
+    await settle();
+    await vi.advanceTimersByTimeAsync(SEND_TIMEOUT_MS);
+    // no window is ready yet, so look at the pending item itself
+    const internals = store as unknown as { channels: Map<string, { pending: Map<string, { message: Message }> }> };
+    expect(internals.channels.get(C)!.pending.get('local-001')!.message.sendStatus).toBe('error-send');
+    // a late answer still resolves it, in order and once
+    server.release('getChanges');
+    await settle();
+    await init;
+    expect(texts(w)).toEqual(['seed 0', 'seed 1', 'seed 2', 'mine']);
+    expect(w.state.items.some(m => m.sendStatus)).toBe(false);
+    expect(own).toHaveLength(1);
   });
 
   it('R14b: an own send confirmed during the first sync that the snapshot already has appears once', async () => {

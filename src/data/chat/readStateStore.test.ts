@@ -339,4 +339,47 @@ describe('ReadStateStore: level-triggered marking', () => {
     await settle();
     expect(server.callsOf('setChannelLastRead')).toHaveLength(1);
   });
+
+  it('V7: no retries for a channel without a marker, and none after a permanent error until a newer mark', async () => {
+    const { server, store } = setup();
+    const [a, b] = server.seed(C, 2);
+    server.fail('setChannelLastRead', new Error('NOT_ALLOWED'));
+    const marker = store.createMarker(C);
+    marker.update({ atLatest: true, atBottom: true, newest: newestOf(a) });
+    await settle();
+    const calls = () => server.callsOf('setChannelLastRead').length;
+    expect(calls()).toBe(1);
+    // permanent: no backoff, and re-reporting the same value sends nothing
+    await vi.advanceTimersByTimeAsync(MARK_READ_RETRY_MS[3] * 3);
+    marker.update({ atLatest: true, atBottom: true, newest: newestOf(a) });
+    await live(server);
+    expect(calls()).toBe(1);
+    // a newer mark tries again
+    server.unfail('setChannelLastRead');
+    await vi.advanceTimersByTimeAsync(MARK_READ_THROTTLE_MS);
+    marker.update({ atLatest: true, atBottom: true, newest: newestOf(b) });
+    await settle();
+    expect(calls()).toBe(2);
+    marker.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('V7b: a transient failure after the marker is disposed is not retried on a timer', async () => {
+    const { server, store } = setup();
+    const [m] = server.seed(C, 1);
+    server.fail('setChannelLastRead', new Error('Network down'));
+    const marker = store.createMarker(C);
+    marker.update({ atLatest: true, atBottom: true, newest: newestOf(m) });
+    marker.dispose();
+    await settle();
+    expect(server.callsOf('setChannelLastRead')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(server.callsOf('setChannelLastRead')).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+    // still pending: the next live signal sends it once
+    server.unfail('setChannelLastRead');
+    await live(server);
+    expect(server.callsOf('setChannelLastRead')).toHaveLength(2);
+    expect(server.channels.get(C)!.lastRead.get(ME)).toBe(m.createdAt);
+  });
 });

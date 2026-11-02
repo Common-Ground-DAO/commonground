@@ -1496,8 +1496,9 @@ class ChannelStoreImpl implements ChannelStore {
   private confirmOwn(ch: ChannelData, m: Message): void {
     if (!ch.alive || this.disposed) return;
     if (ch.buffer) {
-      // first sync in flight: the snapshot may predate this message; insert it after the reset
-      ch.pending.get(m.id)?.timer.clear();
+      // first sync in flight: the snapshot may predate this message; insert it after the
+      // reset. The send timeout keeps running, so a sync that never answers ends in
+      // error-send (the replay still resolves it later).
       ch.buffer.push({ own: m });
       return;
     }

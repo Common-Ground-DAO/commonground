@@ -11,6 +11,7 @@ import { checkImageBeforeUpload } from 'moderation/checkImageBeforeUpload';
 
 import './ProfilePhotoField.css';
 import { XCircleIcon } from '@heroicons/react/24/solid';
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
   currentFile: File |undefined;
@@ -56,7 +57,7 @@ const ProfilePhotoField: React.FC<Props> = (props) => {
   return (
     <div className='flex flex-col gap-1'>
       <div className='flex gap-4'>
-        <div className='profile-photo-preview' onClick={openLoadImagePopup} style={{ backgroundImage: `url(${fileUrl})` }} >
+        <div className='profile-photo-preview' onClick={openLoadImagePopup} style={{ backgroundImage: cssBackgroundImage(fileUrl) }} >
           {!currentFile && !originalFileUrl && <ArrowUpTrayIcon className='w-5 h-5' />}
           {currentFile && <XCircleIcon className='absolute w-6 h-6 top-0 right-0 cg-text-warning' onClick={(e) => {
             e.preventDefault();

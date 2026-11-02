@@ -22,13 +22,16 @@ import { allowlist } from '../allowlist.ts';
  *                   declare as expected (t.expectApiErrors)
  *   http-5xx        a same-origin response with status >= 500
  *   request-failed  a same-origin request that failed below HTTP (not aborts)
+ *   undefined-url   a same-origin request with an `undefined` or `null` path
+ *                   segment — a URL built from a missing value (e.g. CSS
+ *                   `url(undefined)`, resolved against the current path)
  *   error-screen    the React error boundary's "Error :'(" screen, checked
  *                   after every step
  * Anything not covered by src/allowlist.ts fails the flow; allowlisted
  * entries still go into the report.
  */
 
-export type IssueKind = 'pageerror' | 'console-error' | 'csp' | 'api-error' | 'http-5xx' | 'request-failed' | 'error-screen' | 'worker-error';
+export type IssueKind = 'pageerror' | 'console-error' | 'csp' | 'api-error' | 'http-5xx' | 'request-failed' | 'undefined-url' | 'error-screen' | 'worker-error';
 
 export type Issue = {
   kind: IssueKind;
@@ -338,6 +341,12 @@ export class FlowContext {
         else {
           this.record('api-error', `${code} from ${response.request().method()} ${new URL(url).pathname}`, sessionName, url);
         }
+      }
+    });
+    page.on('request', request => {
+      const url = request.url();
+      if (url.startsWith(this.origin) && new URL(url).pathname.split('/').some(segment => segment === 'undefined' || segment === 'null')) {
+        this.record('undefined-url', `${request.resourceType()} request ${request.method()} ${url}`, sessionName, url);
       }
     });
     page.on('requestfailed', request => {

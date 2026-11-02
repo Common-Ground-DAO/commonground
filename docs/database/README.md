@@ -11,7 +11,8 @@
 > `transfer_tokens.generation`, `session_generation_of`) against commit 23a4c1e, 2026-11-01;
 > TypeORM 1.x (the data source, the CLI, the entity metadata of the GIN index and the
 > `roles_contracts_contracts` foreign key, the schema comparison) against commit 8dcbb42,
-> 2026-11-01
+> 2026-11-01; `channelreadstate` write rule and the `calls` open-calls index against commit
+> 591e6cf, 2026-11-02
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -533,7 +534,7 @@ User reactions on items (messages, articles, etc.). Composite PK: `(userId, item
 | `createdAt/updatedAt/deletedAt` | `timestamptz(3)` | All indexed |
 
 #### `channelreadstate`
-Tracks the last-read timestamp per user per channel. Composite PK: `(channelId, userId)`.
+Tracks the last-read timestamp per user per channel. Composite PK: `(channelId, userId)`. Every upsert keeps the later of the stored and the new value (`ON CONFLICT … DO UPDATE SET "lastRead" = GREATEST(channelreadstate."lastRead", EXCLUDED."lastRead")`), so `lastRead` never moves backwards; `/setChannelLastRead` also clamps a posted time to the server's `now()`.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -829,7 +830,7 @@ Active or past voice/video calls.
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | `uuid` PK | Auto-generated |
-| `communityId` | `uuid` | FK -> `communities.id` (CASCADE), indexed |
+| `communityId` | `uuid` | FK -> `communities.id` (CASCADE), indexed; also partial index `idx_calls_communityId_open` over the open calls (`"endedAt" IS NULL`, added by `1793600000000-openCallsIndex`, declared on the entity with `synchronize: false`) for the call-ending sweeps of the jobs process and the call lists |
 | `callCreator` | `uuid` | FK -> `users.id` (CASCADE), indexed |
 | `channelId` | `uuid` | FK -> `channels.id` (CASCADE), indexed |
 | `callServerId` | `uuid` | Nullable, FK -> `callservers.id` (CASCADE), indexed |
@@ -1221,7 +1222,7 @@ deletedAt!: Date | null;
 - The `deletedAt` column is often indexed for query performance.
 
 **Entities WITHOUT soft deletes** (hard delete or append-only):
-- `channelreadstate` - Overwritten, not deleted
+- `channelreadstate` - Overwritten (only forwards), not deleted
 - `chaindata` - Configuration data
 - `wallet_balances` - Cascade-deleted with wallet
 - `communities_tokens` - No deletedAt

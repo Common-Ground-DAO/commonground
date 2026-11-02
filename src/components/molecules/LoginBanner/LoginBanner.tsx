@@ -10,6 +10,7 @@ import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import bannerBg from './bannerbg.webp';
 
 import { ArrowRightIcon } from '@heroicons/react/20/solid';
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
   stickyMode?: boolean;
@@ -89,7 +90,7 @@ const LoginBanner: React.FC<Props> = ({ stickyMode }) => {
   return (<div className='login-banner-container' ref={ref}>
     <div className={className} style={floatingStyle}>
       {getContent()}
-      <div className='absolute inset-0 bg-center bg-cover bg-no-repeat opacity-50' style={{ backgroundImage: `url(${bannerBg})` }} />
+      <div className='absolute inset-0 bg-center bg-cover bg-no-repeat opacity-50' style={{ backgroundImage: cssBackgroundImage(bannerBg) }} />
       <div className='flex gap-2 w-full items-center justify-center z-10'>
         <Button className={!isSticky ? 'w-60' : ''} role='primary' text={getButtonText()} iconRight={<ArrowRightIcon className='w-5 h-5 cg-text-secondary' />} onClick={onLogin} />
       </div>

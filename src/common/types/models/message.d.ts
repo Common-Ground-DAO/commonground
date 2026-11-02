@@ -63,6 +63,14 @@ declare namespace Models {
       ownReaction: string | null;
       parentMessageId: string | null;
       sendStatus?: Models.ItemList.Item["sendStatus"];
+      /**
+       * chat-sync: per-channel, commit-ordered change sequence of this row
+       * (set by the database on every insert and update, deletes included).
+       * A higher value is a newer version of the message. Absent on older
+       * servers, on rows not written since the migration (until their next
+       * write) and on pending (unsent) items.
+       */
+      syncSeq?: number;
     };
 
     type ApiMessage = Omit<Message, "createdAt" | "updatedAt" | "sendStatus"> & {

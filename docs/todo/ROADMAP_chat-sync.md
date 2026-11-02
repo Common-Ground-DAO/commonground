@@ -430,6 +430,7 @@ flows (outside `07-call.ts`) can start before.
 - [x] srv-presence — presence grace period (30 s), cluster-wide batched offline
   check, change-only events, stale job emits offline — merge `6c9b07a`
 - [x] develop G13 merged — `c6f0d5b`
+- [x] contracts — `src/data/chat/types.ts`, `src/data/appstate/transport.ts`, additive API/event types — merge `b961fbd`
 - [x] test-infra — vitest data-layer helpers (browser env, fake socket, two-tab fake-indexeddb, fake timers), `fake-indexeddb` dev dep — merge `747ae65`
 
 ## Acceptance

@@ -28,7 +28,8 @@
 > build-target paragraph, "Dependency pins and constraints", wave M4) against commit
 > 440c779, 2026-11-02; inline background images (§9) against commit 591e6cf, 2026-11-02;
 > the service worker's part in multi-tab coordination (§4 WebSocketManager and
-> ServiceWorkerManager, §8, §9 entry points) against commit 79187d2, 2026-11-02
+> ServiceWorkerManager, §8, §9 entry points) against commit 79187d2, 2026-11-02;
+> "Writers of the shared entity databases" (§ Dexie) against commit 212bbce, 2026-11-02
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -538,6 +539,16 @@ const data = {
 #### dbTracker (`src/data/databases/dbTracker.ts`)
 
 Tracks all registered IndexedDB databases, their creation time, and app version. Provides `deleteOldIndexedDbs()` for cleanup of stale databases (runs 10s after the tab becomes active).
+
+#### Writers of the shared entity databases
+
+The `communities`, `chat` and `users` databases are shared by all tabs of an origin, and any tab may apply the same socket event, possibly late (a throttled or frozen tab catches up). Their writers are therefore idempotent and order-safe:
+
+- **Entity events** (`cliCommunityEvent update`, area/role/channel/call events, `cliUserData`, `cliUserOwnData`) are skipped when the stored row has a newer `updatedAt` (`guardedPut` / `guardedUpdate` in `abstractDatabase.ts`, one rw transaction each); payloads without `updatedAt` apply as before. `cliPluginEvent new` upserts by plugin id.
+- **Server snapshots** (login data, detail-view fetches, `startChat`): areas, roles, channels and calls with an older `updatedAt` than the stored row do not replace it (their stamps come from the database). Communities and list views are not guarded this way and stay authoritative, because some community events are stamped with the API process clock rather than the row's `updatedAt`. Snapshots do not delete rows (chats, channels, areas, roles, calls) that an event wrote after the snapshot's request started: event writers stamp rows with a client-clock `localWrittenAt`, and callers may pass `requestStartedAt` (default: 60 s before the merge).
+- **Accepted narrow window**: a partial event skipped as older loses the fields only it carries (there are no per-field stamps), and an API-clock stamp ahead of the database clock can make a newer database-stamped event look older. Both last until the next snapshot of that community (detail-view refresh or login).
+- **Community URL change**: on every event that carries a `url`, each tab compares the URL in its own path with the URLs it has seen for that community (not with the shared row, which another tab may already have updated) and navigates to the URL the row holds now, unless another stored community holds the URL in its path now (a URL a renamed community gave up can be taken over). This also holds for a tab that replays an older URL change late.
+- **Read state** (`unread`, `lastRead`, `lastMessageDate` of community channels and DMs) is only written through `mergeReadState` (`src/data/chat/mergeReadState.ts`) inside the writer's transaction (`readStateRows.ts`): `lastRead` and `lastMessageDate` only move forward, a snapshot's `unread` is taken only if it knows at least the local `lastRead`, and a live message is counted once per `syncSeq` (older servers: only if newer than every message seen). The rows carry extra non-indexed fields: `readSeq`, `readCounted` and `serverLastRead`; DM rows also `lastMessageDate`. `serverLastRead` is the highest `lastRead` the server is known to hold (from snapshots, server answers with a count, and own messages); `channel.ts`'s send guard is seeded from it rather than from the local `lastRead`, so a local mark whose API call never happened is sent again after a reload. The schema versions are unchanged (no `versionchange` for open tabs of an older build). `readStatePersistence.ts` exposes this as the `ReadStatePersistence` of the chat-sync contract.
 
 #### Reactivity
 

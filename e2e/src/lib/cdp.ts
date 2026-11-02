@@ -3,8 +3,8 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import type { CDPSession, Page } from 'puppeteer';
-import type { ExpectedFailure } from './harness.ts';
-import { sleep, until } from './ui.ts';
+import type { ExpectedFailure, FlowContext, Session } from './harness.ts';
+import { assert, sleep, until } from './ui.ts';
 
 /**
  * Browser conditions a flow provokes through the Chrome DevTools Protocol
@@ -17,12 +17,18 @@ import { sleep, until } from './ui.ts';
  *   frozen/active        Page.setWebLifecycleState (what Chrome does to hidden tabs)
  *   stopped worker       ServiceWorker.stopAllWorkers (the browser stopped an idle worker)
  *
+ * What the helpers change is the page's own world only: the clock offset is
+ * a `Date` replacement in the page (not in its workers, not in the browser),
+ * the WebSocket list wraps the page's `WebSocket`.
+ *
  * Findings of Chrome's own probes in the runner image (Chrome for Testing,
  * headless): emulated offline fires `offline`/`online` and fails every new
  * request and WebSocket, but leaves an open WebSocket open — a real network
  * loss does not (the OS reports the dead link, or the ping times out), so
- * setOffline() closes the page's open sockets as well. Freezing a page closes
- * its WebSockets (code 1006) and stops its timers, as on Android.
+ * setOffline() closes the page's open sockets as well — with a clean
+ * `close()` from the page (code 1005 on the page's side), not the abnormal
+ * 1006 a dead link gives. Freezing a page closes its WebSockets (code 1006)
+ * and stops its timers, as on Android.
  */
 
 /**
@@ -101,10 +107,10 @@ export type HeldResponses = {
  * Delays the responses of matching requests by `delayMs` (CDP Fetch at the
  * response stage, on a CDP session of its own): the server has processed the
  * request — its answer is a snapshot of that moment — but the page receives
- * it late, as on a slow or busy network. `urlPattern` is a Fetch pattern
+ * it late, as on a slow or busy network. `urlPatterns` are Fetch patterns
  * (`*` wildcards), e.g. `*\/api/v2/Message/loadMessages*`.
  */
-export async function holdResponses(page: Page, urlPattern: string, delayMs: number): Promise<HeldResponses> {
+export async function holdResponses(page: Page, urlPatterns: string | string[], delayMs: number): Promise<HeldResponses> {
   const cdp = await page.createCDPSession();
   const held: HeldResponses = {
     count: 0,
@@ -128,7 +134,8 @@ export async function holdResponses(page: Page, urlPattern: string, delayMs: num
       await cdp.send('Fetch.continueRequest', { requestId }).catch(() => undefined);
     }
   });
-  await cdp.send('Fetch.enable', { patterns: [{ urlPattern, requestStage: 'Response' }] });
+  const patterns = (Array.isArray(urlPatterns) ? urlPatterns : [urlPatterns]).map(urlPattern => ({ urlPattern, requestStage: 'Response' as const }));
+  await cdp.send('Fetch.enable', { patterns });
   return held;
 }
 
@@ -177,13 +184,22 @@ export async function setLifecycle(cdp: CDPSession, state: 'frozen' | 'active') 
   await cdp.send('Page.setWebLifecycleState', { state });
 }
 
+export type StoppedWorkers = { versions: number; running: string[]; detachedGuards: number };
+
 /**
- * Stops every running service worker of the browser (as the browser does with
- * an idle worker): the next page load or event has to start it cold. Resolves
- * once every worker version the page knows of reports `stopped` (at most
- * 5 s); returns the versions seen and their final running status.
+ * Stops the browser's running service workers (as the browser does with an
+ * idle worker): the next page load or event has to start it cold.
+ *
+ * The guards' debugger sessions on the session's workers are detached first
+ * (t.detachWorkers): a worker that restarts while one is still attached
+ * waits for the debugger and never runs — the page would see a dead worker,
+ * an artifact of the test. Resolves once every worker version the page knows
+ * of reports `stopped`; fails when no version was seen or one did not stop
+ * within 5 s.
  */
-export async function stopServiceWorkers(cdp: CDPSession): Promise<{ versions: number; running: string[] }> {
+export async function stopServiceWorkers(t: FlowContext, session: Session): Promise<StoppedWorkers> {
+  const detachedGuards = await t.detachWorkers(session.context);
+  const cdp = session.cdp;
   const status = new Map<string, string>();
   const onUpdate = ({ versions }: { versions: { versionId: string; runningStatus: string }[] }) => {
     for (const v of versions) {
@@ -194,11 +210,14 @@ export async function stopServiceWorkers(cdp: CDPSession): Promise<{ versions: n
   try {
     await cdp.send('ServiceWorker.enable');
     // the enable call reports the current versions
-    await sleep(200);
+    await until('the service worker versions to be reported', async () => status.size > 0, 3_000, 100).catch(() => undefined);
     await cdp.send('ServiceWorker.stopAllWorkers');
-    await until('every service worker to stop', async () => [...status.values()].every(s => s === 'stopped'), 5_000, 100)
+    await until('every service worker to stop', async () => status.size > 0 && [...status.values()].every(s => s === 'stopped'), 5_000, 100)
       .catch(() => undefined);
-    return { versions: status.size, running: [...status.values()] };
+    const running = [...status.values()];
+    assert(running.length > 0, 'no service worker version to stop (the page has no service worker)');
+    assert(running.every(s => s === 'stopped'), `not every service worker stopped within 5 s: ${running.join(', ')}`);
+    return { versions: running.length, running, detachedGuards };
   }
   finally {
     cdp.off('ServiceWorker.workerVersionUpdated', onUpdate);
@@ -207,16 +226,33 @@ export async function stopServiceWorkers(cdp: CDPSession): Promise<{ versions: n
 }
 
 /**
- * A hard reload with a cold service worker: stops the workers, then reloads
- * bypassing the HTTP cache (Page.reload ignoreCache — the worker still
- * controls the load and has to start up for it). Resolves when the new
- * document's DOM is loaded.
+ * A page load with a cold service worker: stops the workers, then reloads.
+ *   plain        page.reload(): the worker controls the load and has to start
+ *                up for it — the common real case (the browser stopped the
+ *                idle worker of a tab that is reloaded later)
+ *   ignore-cache Page.reload { ignoreCache }: a hard reload (Ctrl+Shift+R),
+ *                which bypasses the service worker as well — the page loads
+ *                uncontrolled (navigator.serviceWorker.controller === null)
+ *                while the worker is cold
+ * Resolves when the new document's DOM is loaded; `reloadAt` is when the
+ * reload was sent (Date.now()), the start of any "connected within" budget.
  */
-export async function coldServiceWorkerReload(page: Page, cdp: CDPSession) {
-  const stopped = await stopServiceWorkers(cdp);
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
-    cdp.send('Page.reload', { ignoreCache: true }),
-  ]);
-  return stopped;
+export async function coldServiceWorkerReload(t: FlowContext, session: Session, how: 'plain' | 'ignore-cache'): Promise<StoppedWorkers & { reloadAt: number }> {
+  const stopped = await stopServiceWorkers(t, session);
+  const reloadAt = Date.now();
+  if (how === 'plain') {
+    await session.page.reload({ waitUntil: 'domcontentloaded' });
+  }
+  else {
+    await Promise.all([
+      session.page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+      session.cdp.send('Page.reload', { ignoreCache: true }),
+    ]);
+  }
+  return { ...stopped, reloadAt };
+}
+
+/** whether a service worker controls the page (false right after a hard reload) */
+export async function swControlled(page: Page): Promise<boolean> {
+  return page.evaluate(() => !!navigator.serviceWorker?.controller);
 }

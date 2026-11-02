@@ -9,7 +9,7 @@ import { signUp } from '../lib/account.ts';
 import { closeUserMenu, connectionState, createChannel, createCommunity, EDITOR, navigate, openChannel, openUserMenu, waitAppReady, waitMessageConfirmed } from '../lib/app.ts';
 import { assert, sleep, until } from '../lib/ui.ts';
 import { sessionIdFromCookie, valkeyCommands } from '../lib/valkey.ts';
-import { coldServiceWorkerReload } from '../lib/cdp.ts';
+import { coldServiceWorkerReload, swControlled } from '../lib/cdp.ts';
 
 /**
  * Reload robustness. Every page load of a logged-in app runs a device-key
@@ -44,11 +44,15 @@ import { coldServiceWorkerReload } from '../lib/cdp.ts';
  *              knows
  *   force-reload-cold-sw  the service worker is stopped (CDP
  *              ServiceWorker.stopAllWorkers, as the browser does with an
- *              idle worker) and the page hard-reloaded (Page.reload
- *              ignoreCache, through the worker, which has to start cold);
- *              the indicator must show "connected" within 12 s of the
- *              reload — "hidden" (never connected since the load) counts
- *              as a failure in this mode. Only when --reload-modes names it.
+ *              idle worker; the guards' worker sessions are detached
+ *              first), then the page is reloaded, alternating: a plain
+ *              reload (the worker controls the load and starts cold — the
+ *              common real case) and a hard reload (Page.reload
+ *              ignoreCache, which bypasses the worker: an uncontrolled page
+ *              with a cold worker). The indicator must show "connected"
+ *              within 12 s of the load — "hidden" (never connected since
+ *              the load) counts as a failure in this mode. Only when
+ *              --reload-modes names it.
  * --reload-modes picks a subset; the default rotates through all available
  * (session-expired needs E2E_REDIS_URL) except force-reload-cold-sw.
  * The report has per-iteration results, the failure rate per mode, and as
@@ -67,7 +71,7 @@ type Mode = ReloadMode;
 type Iteration = {
   i: number;
   mode: Mode;
-  reload: 'reload' | 'hard-reload-bypass-sw' | 'navigate' | 'cold-sw-reload';
+  reload: 'reload' | 'hard-reload-bypass-sw' | 'navigate' | 'cold-sw-reload' | 'cold-sw-hard-reload';
   deviceLogins: number;
   heldResponses: number;
   loginRequired: string[];
@@ -277,7 +281,9 @@ export const reload: Flow = {
         const it: Iteration = {
           i,
           mode: modes[i % modes.length],
-          reload: modes[i % modes.length] === 'force-reload-cold-sw' ? 'cold-sw-reload' : reloads[Math.floor(i / modes.length) % 3],
+          reload: modes[i % modes.length] === 'force-reload-cold-sw'
+            ? (Math.floor(i / modes.length) % 2 === 0 ? 'cold-sw-reload' : 'cold-sw-hard-reload')
+            : reloads[Math.floor(i / modes.length) % 3],
           deviceLogins: 0,
           heldResponses: 0,
           loginRequired: [],
@@ -317,9 +323,10 @@ export const reload: Flow = {
             loginInFlight = false;
             sentDuringLogin.clear();
           }
-          if (it.reload === 'cold-sw-reload') {
-            const workers = await coldServiceWorkerReload(page, s.cdp);
-            it.actions.push(`stopped ${workers.versions} service worker version(s) (${workers.running.join(',') || '-'})`);
+          if (it.reload === 'cold-sw-reload' || it.reload === 'cold-sw-hard-reload') {
+            const workers = await coldServiceWorkerReload(t, s, it.reload === 'cold-sw-reload' ? 'plain' : 'ignore-cache');
+            it.actions.push(`stopped ${workers.versions} service worker version(s), detached ${workers.detachedGuards} guard session(s)`);
+            it.actions.push(`controlled by the worker: ${await swControlled(page).catch(() => '?')}`);
           }
           else if (it.reload === 'reload') {
             await page.reload({ waitUntil: 'domcontentloaded' });

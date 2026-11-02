@@ -4,14 +4,14 @@
 
 import type { Flow, Session } from '../lib/harness.ts';
 import { editMessage, openChannel, sendMessage, waitAppReady } from '../lib/app.ts';
-import { coldServiceWorkerReload, setLifecycle, socketDropFailures } from '../lib/cdp.ts';
+import { coldServiceWorkerReload, setLifecycle, socketDropFailures, swControlled } from '../lib/cdp.ts';
 import { liveTab, ownerAndMember } from '../lib/chatsync.ts';
 import { assertConnected, CONNECT_TIMEOUT_MS, pageNow, waitMessagesShown } from '../lib/live.ts';
 import { expectVisibility, openTab, showTab } from '../lib/tabs.ts';
 import { assert, sleep } from '../lib/ui.ts';
 
 /**
- * E8 (docs/todo/ROADMAP_chat-sync.md, Acceptance), three parts:
+ * E8 (docs/todo/ROADMAP_chat-sync.md, Acceptance), independent parts:
  *  - split view: B has the channel open in two windows side by side (both
  *    visible); A posts; both show it live, without any interaction;
  *  - frozen tab: B's tab is hidden behind another tab and frozen (CDP
@@ -19,19 +19,23 @@ import { assert, sleep } from '../lib/ui.ts';
  *    no script runs, the socket is closed); A posts two messages and edits
  *    one; the tab is resumed and brought to the front: it reconnects and
  *    catches up — the edit included;
- *  - cold service worker: the service worker is stopped and the tab hard-
- *    reloaded (Page.reload ignoreCache): it must be connected within 12 s
- *    (a tab that never connects shows nothing for 10 s, then
- *    "Disconnected": both fail).
+ *  - cold service worker: the service worker is stopped (the guards'
+ *    worker sessions detached first) and the tab reloaded, twice: a plain
+ *    reload (the worker controls the load and starts cold) and a hard
+ *    reload (Page.reload ignoreCache: an uncontrolled page with a cold
+ *    worker). Each must be connected within 12 s of the reload (a tab that
+ *    never connects shows nothing for 10 s, then "Disconnected": both fail).
  */
 export const csSplitFrozen: Flow = {
   id: 'cs-split-frozen',
-  title: 'E8 split view (two visible tabs live), frozen tab resumed catches up, hard reload with a stopped service worker connects',
+  title: 'E8 split view (two visible tabs live), frozen tab resumed catches up, reloads with a stopped service worker connect',
+  // setup ~40 s, the parts ~20–60 s each, more when they fail on their timeouts
+  timeoutMs: config => Math.max(config.flowTimeoutMs, 420_000),
   async run(t) {
     const { owner, member, channels } = await ownerAndMember(t, { owner: 'sender', member: 'splitview', channels: ['split'] });
     const channel = channels.split;
     let window2: Session | undefined;
-    // the three parts are independent: each gets its verdict, the flow fails at the end if any failed
+    // the parts are independent: each gets its verdict, the flow fails at the end if any failed
     const failed: string[] = [];
     const part = async (name: string, fn: () => Promise<void>) => {
       await fn().catch((e: unknown) => {
@@ -103,23 +107,26 @@ export const csSplitFrozen: Flow = {
       });
     });
 
-    await part('cold service worker', async () => {
-      await t.step('cold service worker: hard reload with the worker stopped, connected within 12 s', async () => {
-        await showTab(member);
-        const started = Date.now();
-        const workers = await coldServiceWorkerReload(member.page, member.cdp);
-        t.metric('stoppedServiceWorkers', workers);
-        await waitAppReady(member.page, { settleLogin: false });
-        const left = Math.max(1_000, CONNECT_TIMEOUT_MS - (Date.now() - started));
-        await assertConnected(member.page, 'tab after the cold reload', { timeout: left, sinceMs: 0 });
-        t.metric('coldReloadConnectedMs', Date.now() - started);
-        await waitMessagesShown(member.page, all, { timeout: 15_000, inOrder: true, who: 'tab after the cold reload' });
+    for (const how of ['plain', 'ignore-cache'] as const) {
+      const what = how === 'plain' ? 'plain reload' : 'hard reload (uncontrolled page)';
+      await part(`cold service worker, ${what}`, async () => {
+        await t.step(`cold service worker: ${what} with the worker stopped, connected within 12 s`, async () => {
+          await showTab(member);
+          const cold = await coldServiceWorkerReload(t, member, how);
+          t.metric(`coldReload.${how}.workers`, cold);
+          t.metric(`coldReload.${how}.controlled`, await swControlled(member.page).catch(() => null));
+          await waitAppReady(member.page, { settleLogin: false });
+          const left = Math.max(1_000, CONNECT_TIMEOUT_MS - (Date.now() - cold.reloadAt));
+          await assertConnected(member.page, `tab after the cold ${what}`, { timeout: left, sinceMs: 0 });
+          t.metric(`coldReload.${how}.connectedMs`, Date.now() - cold.reloadAt);
+          await waitMessagesShown(member.page, all, { timeout: 15_000, inOrder: true, who: `tab after the cold ${what}` });
+        });
       });
-    });
+    }
 
     t.metric('failedParts', failed);
     await t.step('every part passed', async () => {
-      assert(failed.length === 0, `${failed.length} of 3 part(s) failed — ${failed.join(' | ')}`);
+      assert(failed.length === 0, `${failed.length} of 4 part(s) failed — ${failed.join(' | ')}`);
     });
   },
 };

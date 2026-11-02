@@ -4,7 +4,7 @@
 
 import { mkdirSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import type { Browser, BrowserContext, CDPSession, Page, Target } from 'puppeteer';
+import type { Browser, BrowserContext, CDPSession, Page, Target, WebWorker } from 'puppeteer';
 import type { Config } from './config.ts';
 import { allowlist } from '../allowlist.ts';
 
@@ -210,6 +210,8 @@ export class FlowContext {
   /** contexts in which t.tab() is opening a page (it guards that page itself, not as a popup) */
   private openingTabs = new Map<BrowserContext, number>();
   private sessionOptions = new WeakMap<Session, SessionOptions>();
+  /** the guards' debugger sessions on the context's service/shared workers (detachWorkers) */
+  private workerSessions = new Map<BrowserContext, WebWorker[]>();
   private expectedFailures: ExpectedFailure[] = [];
   private issueIndex = new Map<string, Issue>();
   private expected: string[][] = [];
@@ -344,6 +346,24 @@ export class FlowContext {
     return tab;
   }
 
+  /**
+   * Detaches the guards from the context's workers. Needed before the
+   * workers are stopped (lib/cdp.ts stopServiceWorkers): a worker that
+   * restarts while a debugger session is still attached to its old target
+   * waits for that debugger and never runs. The restarted worker is a new
+   * target, which the guards attach to again. Returns how many sessions were
+   * detached.
+   */
+  async detachWorkers(context: BrowserContext): Promise<number> {
+    const list = this.workerSessions.get(context) ?? [];
+    this.workerSessions.set(context, []);
+    let detached = 0;
+    for (const worker of list) {
+      await worker.client.detach().then(() => detached++, () => undefined);
+    }
+    return detached;
+  }
+
   private async onTarget(target: Target, session: Session) {
     try {
       if (target.type() === 'page') {
@@ -359,6 +379,9 @@ export class FlowContext {
       else if (target.type() === 'service_worker' || target.type() === 'shared_worker') {
         const worker = await target.worker();
         if (worker) {
+          const list = this.workerSessions.get(session.context) ?? [];
+          list.push(worker);
+          this.workerSessions.set(session.context, list);
           worker.on('console', msg => {
             if (msg.type() === 'error') {
               this.record('worker-error', msg.text(), session.name, target.url());

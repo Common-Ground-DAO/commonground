@@ -23,11 +23,18 @@ import { baseUrlResolve } from './vite/baseUrlResolve';
  * `environment: 'node'` on purpose: nothing here needs a DOM, and jsdom would
  * add seconds of startup to every run. Adding a jsdom project later is a
  * two-line change.
+ *
+ * Browser-ish behaviour for the data-layer tests (page visibility/lifecycle,
+ * storage, Web Locks, a fake socket, fake-indexeddb for Dexie) comes from
+ * opt-in helpers in `src/test/` (see its README), not from a heavier
+ * environment. The setup file only runs the teardowns those helpers register,
+ * so tests that use none of them pay nothing extra.
  */
 export default defineConfig({
   plugins: [baseUrlResolve('src')],
   test: {
     environment: 'node',
     include: ['src/**/*.test.{ts,tsx}'],
+    setupFiles: ['src/test/setup.ts'],
   },
 });

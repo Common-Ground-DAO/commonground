@@ -10,7 +10,10 @@
 > `cliSignedOut` + disconnect against commit 23a4c1e, 2026-11-01; room close hardening and
 > the call-ending safety net (Room Lifecycle, Call Flow) against commit 591e6cf, 2026-11-02;
 > human online status (grace period, batched cluster-wide offline check with one retry, touch
-> sets, change-only events, the stale job's events) against commit fc15832, 2026-11-02
+> sets, change-only events, the stale job's events) against commit fc15832, 2026-11-02;
+> the chat-sync fields of `cliMessageEvent` and `cliChannelLastRead` against commit 30ce83e,
+> 2026-11-02; the service worker's part in tab coordination (no referee, one-release compat
+> answer) against commit 79187d2, 2026-11-02
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -138,6 +141,24 @@ For browser clients with a session cookie, the socket immediately joins its `exp
 | `buildId` | `(backendBuildId: string, timestamp: number)` | Sent immediately on connection. Client compares build IDs to detect app updates |
 | `cli*` (any event starting with "cli") | varies | All application events (messages, notifications, call updates, etc.) are prefixed with `cli` and dispatched through the `onAny` handler on the client |
 
+#### Message and read-state events (chat-sync fields)
+
+Types in `src/common/types/events/{message,channel}.d.ts`; emitted from `srv/api/messages.ts`.
+All fields below are additive; clients that do not know them ignore them.
+
+| Event | Sync fields |
+|---|---|
+| `cliMessageEvent` `new` | the full `ApiMessage` incl. `syncSeq` (the channel change sequence of the row, see [docs/database](../database/README.md#message-sync-sequence)) |
+| `cliMessageEvent` `update` | `syncSeq` of the write; an edit also carries `editedAt`; reactions carry it in both the room copy and the reacting user's `ownReaction` copy; replies of a deleted parent (`parentMessageId: null`) carry their own |
+| `cliMessageEvent` `delete` | `syncSeq` = highest seq of the deleted rows, `syncSeqs` = the seq of every deleted row (a multi-row delete bumps the sequence once per row). Sent only when a row was deleted |
+| `cliChannelLastRead` | `lastRead` (stored, max-merged), `unread` (other users' messages after it, capped at 999), `syncSeq` (the channel seq that count is valid at), and `communityId` (community channels) or `chatId` (DMs); to the user's own room |
+
+A client that misses events (disconnect, reload, frozen tab) catches up per channel with
+`POST /Message/getChanges` from its last contiguous `syncSeq` (see
+[docs/backend](../backend/README.md#srvapimessagests----messaging-routes)). Seq bumps
+without an event exist (a same-id create in another channel losing a race: its `ON CONFLICT DO NOTHING` insert), so a gap in
+the received seqs is a hint to call `getChanges`, not proof of a lost event.
+
 ### Event Emission (Server-Side)
 
 The `EventHelper` class (`srv/repositories/event.ts`) is the primary mechanism for emitting events from the API server to connected clients. It uses `@socket.io/redis-emitter` to emit events without needing a direct Socket.IO server reference -- allowing any backend process (API, job workers) to send events:
@@ -170,7 +191,7 @@ Human presence is one column per user (`users.onlineStatus` + `onlineStatusUpdat
 
 ### Tab Coordination
 
-Multiple browser tabs share one Socket.IO connection. Coordination happens over a `BroadcastChannel('CG_WEBSOCKET_STATE')` shared between every tab (`src/data/appstate/webSocket.ts`) and the **service worker** (`src/service-worker.ts`), which acts as a referee. Only one tab (the "active" tab) holds the socket at any time; passive tabs mirror its connection state and do not process live events. See [Frontend Real-time → Tab Coordination](#tab-coordination-1) for the full protocol, including the visibility-based handoff and the service-worker referee.
+Multiple browser tabs share one Socket.IO connection. The tabs coordinate among themselves over a `BroadcastChannel('CG_WEBSOCKET_STATE')` (`src/data/appstate/webSocket.ts`); the service worker no longer acts as a referee and only answers a tab's role request with "active" (a compat answer for one release). Only one tab (the "active" tab) holds the socket at any time; passive tabs mirror its connection state and do not process live events. See [Frontend Real-time → Tab Coordination](#tab-coordination-1) for the full protocol, including the visibility-based handoff.
 
 ---
 
@@ -430,29 +451,29 @@ The `WebSocketManager` singleton manages the Socket.IO connection:
 
 ### Tab Coordination
 
-Exactly one tab (the "active" tab) holds the Socket.IO connection; every other tab is "passive" and mirrors the active tab's connection state without processing live events. Coordination uses a `BroadcastChannel('CG_WEBSOCKET_STATE')` shared by all tabs **and** the service worker (`src/service-worker.ts`), which acts as a referee.
+Exactly one tab (the "active" tab) holds the Socket.IO connection; every other tab is "passive" and mirrors the active tab's connection state without processing live events. Coordination uses a `BroadcastChannel('CG_WEBSOCKET_STATE')` shared by all tabs. The service worker (`src/service-worker.ts`) no longer assigns roles (chat-sync, `docs/todo/ROADMAP_chat-sync.md` [8]); it only answers role requests, see below.
 
 **Participants and messages:**
 
 - Each tab has a random `tabId` and a `tabState`. It broadcasts `TabToWorker` messages (`tabId`, `tabState`, optional `visible`, `socketState`, `lastEventTime`, `lastDisconnect`).
-- The service worker broadcasts `WorkerToTab` messages assigning a `tabState` to a specific `tabId`, and relays `socketState` / `lastEventTime` / `lastDisconnect` so passive tabs and freshly opened tabs converge on the last known state.
+- A tab with `tabState: 'unknown'` asks for a role by sending `TabToWorker` every 500 ms until a `WorkerToTab` for its `tabId` arrives; afterwards it heartbeats every 2 s. Passive tabs pick up `socketState` / `lastEventTime` / `lastDisconnect` from the active tab's own broadcasts.
 - Tab states: `active`, `active-throttled`, `passive`, `passive-throttled`, `unknown`. `tabClosed` is a message value (sent on `beforeunload`), not a resting state. The `*-throttled` variants mark tabs whose heartbeat has slowed (backgrounded / timer-throttled).
 - `lastEventTime` is persisted to `localStorage('CG_LAST_KNOWN_WS_CONNCETION')` (and mirrored via the `storage` event) for cross-tab awareness of the last event received.
 
-**Service-worker referee (`src/service-worker.ts`):**
+**Service worker (`src/service-worker.ts`, compat answer in `src/serviceWorkerLegacyTabs.ts`):**
 
-- Maintains a registry of known tabs (`tabId`, `tabState`, `visible`) plus an `alive` heartbeat map. Tabs that go silent for >4s are marked `*-throttled`; >70s are dropped.
-- `selectNewActiveTabIfAppropriate()` promotes a passive tab to active whenever no active tab exists, preferring a `visible` passive tab. It is deliberately inert for the first 2.5s after the worker (re)starts, since the browser terminates idle workers and the registry must repopulate from heartbeats before any reassignment — otherwise a half-informed referee would fight the tabs' own collision handling.
-- If the active tab's `socketState` has been stuck in `connecting` for >45s (a throttled background tab can stall there), the referee demotes it and hands the active role to a fresh passive tab.
-- On worker `activate` (a new build), all currently-known tabIds are added to a `bannedTabIds` set, the registry is cleared, and every client is told to reload. Banned tabIds are ignored until they re-register with a new tabId.
-- The referee only acts while `handleTabStates` is true (there are controlled window clients and tab handling has not been disabled via a `STOP_TAB_HANDLING` message).
+- Every `TabToWorker` with `tabState: 'unknown'` gets exactly `{ type: 'WorkerToTab', tabId, tabState: 'active' }` back: no socket state is relayed, so the tab does not mirror stale values. Every other message on the channel (heartbeats, `tabClosed`) is ignored; there is no tab registry, no promotion and no ban list.
+- Only the activated worker answers (its own `self.serviceWorker.state`; where that is missing, once its `activate` handler ran or when it started up already active after a browser restart); a new worker that is installed but still waiting stays silent next to the worker of the previous build.
+- Purpose: pages of the previous build that are still open after an update without having reloaded on the `reload` message `activate` posts to every client connect instead of waiting for a role forever. The answer is removed one release after chat-sync (`TODO(chat-sync compat)`); the chat-sync transport gives every tab its own socket and stops using the channel.
+- Several tabs answered "active" settle on one active tab through the tab-side collision tie-break below. When the active tab closes, a passive tab takes over once it becomes visible (visibility handoff); nobody promotes a hidden passive tab.
+- Accepted regression: for old pages that never reload, nothing promotes a passive tab any more, so when the active old tab closes, the passive one shows "Disconnected" until its visibility changes. Its reach is tiny, because old pages reload at most 1.5 s after `activate`.
+- `STOP_TAB_HANDLING` messages of old pages are ignored.
 
 **Tab-side handoff and collision handling (`webSocket.ts`):**
 
 - **Visibility handoff:** when a `passive`/`passive-throttled` tab becomes `visible`, it immediately claims `active` and connects — the live connection follows the tab the user is looking at. An active tab that becomes visible after a long stall (last pong >110s old) forces a reconnect.
 - **Born-visible tabs:** a tab that is foreground at first assignment never fires `visibilitychange`, so when it is initially assigned `passive` while visible it claims `active` on the spot.
 - **Collision tie-break:** if two tabs both believe they are active, they resolve deterministically — the visible tab wins; with equal visibility the higher `tabId` wins. Exactly one side yields, demotes itself to passive, and disconnects its socket.
-- **Ghost re-registration:** `reRegister()` abandons a banned tabId and negotiates a fresh one; used when the worker banned the tab at activation but the page keeps running (e.g. the worker's first install).
 - In dev (`serviceWorkerManager.state === 'none'`, port 3000) there is no worker, so the single tab is forced `active` and only one tab is supported.
 
 ### WebRTC Client
@@ -822,7 +843,7 @@ Key prefixes:
 | `srv/api/notifications.ts` | Notification REST API routes |
 | `srv/common/enums.ts` | CallType, CallPermission enums |
 | `src/data/appstate/webSocket.ts` | Frontend Socket.IO client (WebSocketManager), tab-side handoff & collision handling |
-| `src/service-worker.ts` | Service worker: tab-coordination referee, web push display, precaching |
+| `src/service-worker.ts` | Service worker: precaching, web push display and notification clicks, update/reload; one-release compat answer to old pages' tab-role requests (`src/serviceWorkerLegacyTabs.ts`) |
 | `src/util/RoomClient.tsx` | Frontend protoo + mediasoup-client |
 | `src/util/urlFactory.ts` | Builds protoo WebSocket URL |
 | `src/context/CallProvider.tsx` | React context for call state management |

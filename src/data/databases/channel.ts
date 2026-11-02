@@ -338,7 +338,7 @@ class ChannelDatabaseManager {
               access,
               lastRead: newLastRead.toISOString(),
             })
-            .then(resolve)
+            .then(() => resolve())
             .catch(reject);
           }, 1000);
         })

@@ -596,7 +596,8 @@ export interface ReadStateStore {
  * makes the stored time unknown (any timed count wins next).
  *
  * List (`openList`): first page on `init('recent')` (one fetch even if init
- * is called twice), the newest page again on resync while open. Live events
+ * is called twice), the newest page again on resync while open (a resync
+ * while no window is open makes the next `init` reload it). Live events
  * are applied idempotently: `new` upserts by id (append-live when
  * withEndOfList), `update` merges if `updatedAt` >= stored, `delete` removes,
  * `allread` marks all loaded items read.

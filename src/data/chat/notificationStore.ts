@@ -148,6 +148,11 @@ class NotificationStoreImpl implements NotificationStore {
   /** loaded notifications, ascending */
   private items: Notification[] = [];
   private loaded = false;
+  /**
+   * a resync happened while no window was open: the loaded list may lack what
+   * was missed meanwhile, so the next `init` reloads the newest page
+   */
+  private stale = false;
   private startsAtBeginning = false;
   private loading: Promise<void> | null = null;
   private olderLoading: Promise<void> | null = null;
@@ -289,7 +294,9 @@ class NotificationStoreImpl implements NotificationStore {
     if (this.disposed) return;
     this.resyncTimer.start(NOTIFICATION_RESYNC_DEBOUNCE_MS, () => {
       this.fetchCount().catch(noop);
-      if (this.loaded && this.windows.size > 0) this.refreshNewest().catch(noop);
+      if (!this.loaded) return;
+      if (this.windows.size > 0) this.refreshNewest().catch(noop);
+      else this.stale = true;
     });
   }
 
@@ -331,16 +338,27 @@ class NotificationStoreImpl implements NotificationStore {
   }
 
   private ensureLoaded(): Promise<void> {
-    if (this.loaded) return Promise.resolve();
+    if (this.loaded && !this.stale) return Promise.resolve();
     if (!this.loading) {
       const generation = this.generation;
+      const reload = this.loaded;
+      // items present at the start of a reload are replaced by the page;
+      // the ones live events add or change meanwhile are kept
+      const before = new Set(this.items);
       this.loading = this.deps.api.loadNotifications({ order: 'DESC' }).then(
         page => {
           this.loading = null;
           if (generation !== this.generation) return;
+          const during = reload ? this.items.filter(n => !before.has(n)) : [];
+          if (reload) {
+            this.items = [];
+            this.stale = false;
+          }
           for (const n of page.map(fromApi)) this.upsert(n);
+          for (const n of during) this.upsert(n);
           this.startsAtBeginning = page.length < PAGE_SIZE;
           this.loaded = true;
+          if (reload) this.notify();
         },
         e => {
           this.loading = null;
@@ -569,6 +587,7 @@ class NotificationStoreImpl implements NotificationStore {
     this.generation++;
     this.items = [];
     this.loaded = false;
+    this.stale = false;
     this.loading = null;
     this.olderLoading = null;
     this.startsAtBeginning = false;

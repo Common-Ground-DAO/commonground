@@ -275,3 +275,80 @@ describe('NotificationStore: list', () => {
     expect(store.unreadCount).toBe(10);
   });
 });
+
+describe('NotificationStore: list reopened after a resync without an open window', () => {
+  async function reopen(store: ReturnType<typeof setup>['store']) {
+    const w = store.openList();
+    const p = w.init({ type: 'recent' });
+    await settle();
+    await p;
+    return w;
+  }
+
+  it('a reopened list contains a notification missed during the gap', async () => {
+    const { server, store } = setup();
+    server.addNotification({ text: 'a' }, { deliver: false });
+    let w = await reopen(store);
+    w.destroy(); // the user leaves /notifications
+    server.goOffline();
+    server.addNotification({ text: 'missed' }, { deliver: false });
+    server.goLive();
+    await vi.advanceTimersByTimeAsync(NOTIFICATION_RESYNC_DEBOUNCE_MS);
+    await settle();
+    expect(store.unreadCount).toBe(2);
+    expect(server.callsOf('loadNotifications')).toHaveLength(1); // no fetch while closed
+    w = await reopen(store);
+    expect(w.state.items.map(n => n.text)).toEqual(['a', 'missed']);
+    expect(server.callsOf('loadNotifications')).toHaveLength(2);
+    w.destroy();
+  });
+
+  it('read flags changed elsewhere during the gap are fresh after reopening; a deleted one is gone', async () => {
+    const { server, store } = setup();
+    const a = server.addNotification({ text: 'a' }, { deliver: false }) as { data: { id: string } };
+    const b = server.addNotification({ text: 'b' }, { deliver: false }) as { data: { id: string } };
+    let w = await reopen(store);
+    w.destroy();
+    server.goOffline();
+    server.readNotificationElsewhere(a.data.id, { deliver: false });
+    server.deleteNotifications([b.data.id], { deliver: false });
+    server.resume('visible');
+    await vi.advanceTimersByTimeAsync(NOTIFICATION_RESYNC_DEBOUNCE_MS);
+    await settle();
+    w = await reopen(store);
+    expect(w.state.items.map(n => [n.text, n.read])).toEqual([['a', true]]);
+    w.destroy();
+  });
+
+  it('without a resync the reopened list is served from memory (no refetch)', async () => {
+    const { server, store } = setup();
+    server.addNotification({ text: 'a' }, { deliver: false });
+    let w = await reopen(store);
+    w.destroy();
+    server.addNotification({ text: 'live' }); // delivered: applied while closed
+    w = await reopen(store);
+    expect(w.state.items.map(n => n.text)).toEqual(['a', 'live']);
+    expect(server.callsOf('loadNotifications')).toHaveLength(1);
+    w.destroy();
+  });
+
+  it('a live notification arriving during the reload is kept', async () => {
+    const { server, store } = setup();
+    server.addNotification({ text: 'a' }, { deliver: false });
+    let w = await reopen(store);
+    w.destroy();
+    server.goLive();
+    await vi.advanceTimersByTimeAsync(NOTIFICATION_RESYNC_DEBOUNCE_MS);
+    await settle();
+    server.hold('loadNotifications');
+    w = store.openList();
+    const p = w.init({ type: 'recent' });
+    await settle();
+    server.addNotification({ text: 'during' }); // the held page was computed without it
+    server.release('loadNotifications');
+    await settle();
+    await p;
+    expect(w.state.items.map(n => n.text)).toEqual(['a', 'during']);
+    w.destroy();
+  });
+});

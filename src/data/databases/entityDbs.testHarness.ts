@@ -15,6 +15,8 @@ export type TabMocks = {
   handlers: Map<string, Set<EventHandler>>;
   /** registerAccessForChannel: channelId -> last `data.lastRead` passed (the guard seed) */
   registeredLastRead: Map<string, string | undefined>;
+  /** applyStoredReadState: channelId -> last merged read state handed to the in-memory store */
+  storedReadState: Map<string, { channelId: string }>;
   navigate: (path: string) => void;
   navigations: string[];
 };
@@ -24,6 +26,7 @@ export function createTabMocks(): TabMocks {
   return {
     handlers: new Map(),
     registeredLastRead: new Map(),
+    storedReadState: new Map(),
     navigations,
     navigate: (path: string) => { navigations.push(path); },
   };

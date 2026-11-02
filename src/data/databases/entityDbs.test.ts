@@ -69,6 +69,9 @@ async function openTab(): Promise<Tab> {
       },
       deleteChannelDatabase: async () => {},
       getAccessForChannel: () => undefined,
+      applyStoredReadState(states: { channelId: string }[]) {
+        for (const state of states) mocks.storedReadState.set(state.channelId, state);
+      },
     },
   }));
   vi.doMock('data/appstate/serviceWorker', () => ({ default: { navigate: mocks.navigate } }));
@@ -275,6 +278,8 @@ describe('community channel read state across tabs', () => {
 
     await b.community.setupAfterLogin([stale]);
     expect(await channelRow(a)).toMatchObject({ unread: 0, lastRead: T(5) });
+    // the merged row (not the stale snapshot) is mirrored into the in-memory store
+    expect(b.storedReadState.get('ch1')).toMatchObject({ unread: 0, lastRead: T(5) });
     // the send guard holds what the server knows (T3), so the T5 mark is re-sent
     expect(b.registeredLastRead.get('ch1')).toBe(T(3));
 
@@ -328,6 +333,7 @@ describe('chat read state across tabs', () => {
     expect(row).toMatchObject({ unread: 0, lastRead: T(5) });
     expect(row.lastMessage.id).toBe('m1');
     expect(b.registeredLastRead.get('dm1')).toBe(T(3));
+    expect(b.storedReadState.get('dm1')).toMatchObject({ unread: 0, lastRead: T(5) });
 
     // a count restored by an older build: the same mark clears it, every time
     await db(a, 'chats').chats.update('chat1', { unread: 3 });

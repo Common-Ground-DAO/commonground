@@ -465,6 +465,14 @@ describe('chat (app runtime)', () => {
     return { mod, server: app.server };
   }
 
+  it('startChatRuntime creates it once', async () => {
+    const { mod } = await appSetup();
+    mod.startChatRuntime();
+    mod.startChatRuntime();
+    expect([...app.handlers.values()].every(s => s.size === 1)).toBe(true);
+    expect(app.onLive.listeners.size).toBeGreaterThan(0);
+  });
+
   it('is created lazily and registers the three socket handlers once', async () => {
     const { mod } = await appSetup();
     expect(app.handlers.size).toBe(0);
@@ -544,6 +552,25 @@ describe('chat (app runtime)', () => {
     await settle();
     expect(app.dmWrites).toHaveLength(1);
     expect(app.persisted.filter(i => i.kind === 'message')).toHaveLength(0);
+  });
+
+  it('an edit is sent without image metadata, the overlay keeps it', async () => {
+    const { mod, server } = await appSetup();
+    const access = server.addChannel(C);
+    mod.chat.channels.registerAccessForChannel(access);
+    server.seed(C, 1);
+    const w = mod.chat.channels.openWindow(C);
+    await w.init({ type: 'recent' });
+    const image: Models.Message.Attachment = {
+      type: 'image', imageId: 'i1', largeImageId: 'i2',
+      imageData: { size: { width: 1, height: 1 } } as unknown as Common.ImageMetadata,
+      largeImageData: { size: { width: 2, height: 2 } } as unknown as Common.ImageMetadata,
+    };
+    await mod.chat.channels.editMessage(w.state.items[0], { body: w.state.items[0].body, attachments: [image], parentMessageId: null });
+    expect(w.state.items[0].attachments[0]).toEqual(image);
+    const sent = server.callsOf('editMessage')[0] as API.Messages.editMessage.Request;
+    expect(sent.attachments).toEqual([{ type: 'image', imageId: 'i1', largeImageId: 'i2' }]);
+    w.destroy();
   });
 
   it('setupChatAfterLogin / clearChat drive the notification count and the logout', async () => {

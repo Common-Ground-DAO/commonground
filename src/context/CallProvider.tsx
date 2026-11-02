@@ -22,6 +22,7 @@ import { CallPermission, CallType } from "common/enums";
 import { getDisplayNameString } from "../util";
 import { useSnackbarContext } from "./SnackbarContext";
 import communityApi from "data/api/community";
+import webSocketManager from "data/appstate/webSocket";
 
 type CallProviderState = CallState & {
   roomClient: RoomClient | null;
@@ -385,6 +386,17 @@ export function CallProvider(props: React.PropsWithChildren<{}>) {
       payload: { peerId, originator: "local" },
     });
   }, []);
+
+  // a tab in a call keeps its socket while hidden (call chat, call events);
+  // see HIDDEN_DISCONNECT_AFTER_MS in data/appstate/transport.ts
+  const inCall = !!callState.call;
+  useEffect(() => {
+    if (!inCall) {
+      return;
+    }
+    const hold = webSocketManager.holdSocket('call');
+    return () => hold.release();
+  }, [inCall]);
 
   const peersArray = Array.from(callState.peers.values());
 

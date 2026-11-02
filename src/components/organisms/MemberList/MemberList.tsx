@@ -18,6 +18,8 @@ import { useCommunityChannelIdContext } from "context/CommunityChannelProvider";
 import { useMultipleUserData } from "context/UserDataProvider";
 import communityApi from "data/api/community";
 import { cssBackgroundImage } from 'util/cssBackground';
+import { pollChannelMemberList } from 'util/channelMemberListPolling';
+import { calculateChannelPermissions } from "../ChannelList/ChannelList";
 
 type Props = {
 }
@@ -60,24 +62,9 @@ export default function MemberList(props: Props) {
     }
   }, [community.id, channelId]);
 
-  const updateMemberList = useCallback(() => {
-    if (!channelId || !community) return;
-    communityApi.getChannelMemberList({
-      channelId: channelId,
-      communityId: community.id,
-      offset,
-      limit: WINDOW_SIZE,
-      search,
-    }).then(res => {
-      setMemberListData({
-        memberList: res,
-        offset,
-      });
-    }).catch(err => {
-      setMemberListData(undefined);
-      console.log(err);
-    });
-  }, [community.id, channelId, offset, search]);
+  // gated preview channels (visible, not readable) have no member list
+  const channel = channelId ? channelsById.get(channelId) : undefined;
+  const canRead = useMemo(() => !!channel && calculateChannelPermissions(community, channel) === null, [community, channel]);
 
   const updateOffsetByScrollState = useCallback((scrollState: PositionData) => {
     if (scrollState.scrollTop === 0 && offset === 0) {
@@ -117,14 +104,28 @@ export default function MemberList(props: Props) {
     }
   }, [offset, memberListData?.memberList.count]);
 
+  const communityId = community.id;
   useEffect(() => {
-    let interval: any;
-    if (memberListIsOpen) {
-      updateMemberList();
-      interval = setInterval(updateMemberList, 5000);
-    }
-    return () => clearInterval(interval);
-  }, [updateMemberList, memberListIsOpen]);
+    if (!memberListIsOpen || !channelId) return;
+    return pollChannelMemberList({
+      canRead,
+      load: () => communityApi.getChannelMemberList({
+        channelId,
+        communityId,
+        offset,
+        limit: WINDOW_SIZE,
+        search,
+      }),
+      onResult: res => setMemberListData({
+        memberList: res,
+        offset,
+      }),
+      onError: err => {
+        setMemberListData(undefined);
+        console.log(err);
+      },
+    });
+  }, [communityId, channelId, offset, search, canRead, memberListIsOpen]);
 
   useEffect(() => {
     const handleMemberListPosition = () => {

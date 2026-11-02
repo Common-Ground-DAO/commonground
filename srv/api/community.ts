@@ -23,6 +23,7 @@ import newsletterHelper from "../repositories/newsletter";
 import dayjs from "dayjs";
 import emailUtils from "./emails";
 import userHelper from "../repositories/users";
+import messageHelper from "../repositories/messages";
 
 const communityRouter = express.Router();
 const t = createTranslator();
@@ -224,6 +225,27 @@ API.Community.getChannelMemberList.Response
   '/getChannelMemberList',
   validators.API.Community.getChannelMemberList,
   async (request, response, data) => {
+    // the member list of a channel is visible to whoever may read the channel
+    // (the same rule as loading its messages; the Public role covers visitors),
+    // and only while the channel and its community exist (the community check
+    // is deliberately stricter than message loading, which looks at the
+    // channel only)
+    const { user } = request.session;
+    if (!(await messageHelper.isChannelInActiveCommunity(data.communityId, data.channelId))) {
+      throw new Error(errors.server.NOT_ALLOWED);
+    }
+    const canRead = await permissionHelper.hasPermissions({
+      userId: user?.id,
+      communityId: data.communityId,
+      channelId: data.channelId,
+      permissions: [
+        ChannelPermission.CHANNEL_EXISTS,
+        ChannelPermission.CHANNEL_READ,
+      ],
+    });
+    if (!canRead) {
+      throw new Error(!user ? errors.server.LOGIN_REQUIRED : errors.server.NOT_ALLOWED);
+    }
     const memberList = await axios.post<API.Community.getChannelMemberList.Response>(
       'http://memberlist:4000/getChannelMemberListWindow',
       JSON.stringify({

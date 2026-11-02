@@ -11,7 +11,7 @@
 import express from "express";
 import errors from "../common/errors";
 import { registerPostRoute } from "./util";
-import syncStateValidators from "../validators/api/syncState";
+import validators from "../validators";
 import syncStateHelper from "../repositories/syncState";
 
 const syncStateRouter = express.Router();
@@ -22,7 +22,7 @@ registerPostRoute<
 >(
   syncStateRouter,
   '/getSyncState',
-  syncStateValidators.getSyncState,
+  validators.API.Message.getSyncState,
   async (request, response, data) => {
     if (request.botPrincipal) {
       throw new Error(errors.server.NOT_ALLOWED);

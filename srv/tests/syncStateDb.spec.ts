@@ -13,8 +13,10 @@
  *   docker run -d --name pg-test -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=cryptogram cryptogram/db:18
  *   CG_TEST_PG_HOST=127.0.0.1 CG_TEST_PG_PORT=55432 CG_TEST_PG_PASSWORD=pw yarn jest tests/syncStateDb.spec.ts
  *
- * The repository runs on a pool whose sessions are read-only
+ * The sync-state repository runs on a pool whose sessions are read-only
  * (`default_transaction_read_only`), so any write it attempted would fail.
+ * The notification read-state writes (`markAsRead`, `markAllAsRead`) run on
+ * a writable pool in their own block.
  */
 
 import { Pool } from 'pg';
@@ -26,12 +28,15 @@ const SCHEMA = 'sync_state_test';
 const describeDb = HOST ? describe : describe.skip;
 
 let mockReadOnlyPool: Pool | undefined;
+/** the pool the repositories run on: read-only, except for the notification writes */
+let mockPoolTarget: Pool | undefined;
 jest.mock('../util/postgres', () => ({
   __esModule: true,
-  default: { query: (...args: any[]) => (mockReadOnlyPool as any).query(...args) },
+  default: { query: (...args: any[]) => (mockPoolTarget as any).query(...args) },
 }));
 
 import syncStateHelper, { UNREAD_CAP } from '../repositories/syncState';
+import notificationHelper from '../repositories/notifications';
 
 const id = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
 
@@ -80,7 +85,7 @@ const CHAT_FOREIGN_CH = id(0x405);
 const CHAT_DELETED = id(0x406);
 const CHAT_DELETED_CH = id(0x407);
 
-describeDb('getSyncState on PostgreSQL', () => {
+describeDb('getSyncState and notification read state on PostgreSQL', () => {
   let admin: Pool;
   const q = (sql: string, params?: unknown[]) => admin.query(sql, params);
   const T0 = '2026-11-01T10:00:00.000Z';
@@ -107,6 +112,7 @@ describeDb('getSyncState on PostgreSQL', () => {
       host: HOST, port: PORT, user: 'postgres', password: PASSWORD, database: 'cryptogram',
       options: `-c search_path=${SCHEMA} -c default_transaction_read_only=on`,
     });
+    mockPoolTarget = mockReadOnlyPool;
     await q(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
     await q(`CREATE SCHEMA ${SCHEMA}`);
     await q(`CREATE TYPE ccrp_permissions_enum AS ENUM ('CHANNEL_EXISTS', 'CHANNEL_READ', 'CHANNEL_WRITE', 'CHANNEL_MODERATE')`);
@@ -120,7 +126,7 @@ describeDb('getSyncState on PostgreSQL', () => {
     await q(`CREATE TABLE messages ("id" uuid PRIMARY KEY, "creatorId" uuid NOT NULL, "channelId" uuid NOT NULL, "createdAt" timestamptz(3) NOT NULL, "deletedAt" timestamptz(3), "syncSeq" bigint, UNIQUE ("channelId", "createdAt"))`);
     await q(`CREATE INDEX ON messages ("channelId", "syncSeq")`);
     await q(`CREATE TABLE channel_sync_state ("channelId" uuid PRIMARY KEY, "seq" bigint NOT NULL)`);
-    await q(`CREATE TABLE notifications ("id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "userId" uuid NOT NULL, "read" boolean NOT NULL DEFAULT false)`);
+    await q(`CREATE TABLE notifications ("id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "userId" uuid NOT NULL, "read" boolean NOT NULL DEFAULT false, "updatedAt" timestamptz(3) NOT NULL DEFAULT '2026-01-01T00:00:00Z')`);
 
     await q(`INSERT INTO communities VALUES ($1, NULL), ($2, now()), ($3, NULL), ($4, NULL), ($5, NULL)`,
       [C_MEMBER, C_DELETED, C_FOREIGN, C_UNCLAIMED, C_DELROLE]);
@@ -286,5 +292,87 @@ describeDb('getSyncState on PostgreSQL', () => {
     // OTHER has no lastRead on CHAT_CH: all of ME's messages count
     expect(state[CHAT_CH]).toMatchObject({ lastRead: null, unread: 1 });
     expect(state[CHAT_NO_LASTREAD_CH].unread).toBe(1);
+  });
+  describe('notification read state', () => {
+    const READER = id(5);
+    const STRANGER = id(6);
+    const N_UNREAD = id(0x500);
+    const N_READ = id(0x501);
+    const N_FOREIGN = id(0x502);
+    const N_UNREAD_2 = id(0x503);
+    const N_UNREAD_3 = id(0x504);
+    let writable: Pool;
+
+    beforeAll(async () => {
+      writable = new Pool({
+        host: HOST, port: PORT, user: 'postgres', password: PASSWORD, database: 'cryptogram',
+        options: `-c search_path=${SCHEMA}`,
+      });
+      mockPoolTarget = writable;
+      await q(`INSERT INTO notifications ("id", "userId", "read") VALUES
+        ($1, $4, false), ($2, $4, true), ($3, $5, false)`, [N_UNREAD, N_READ, N_FOREIGN, READER, STRANGER]);
+    });
+
+    afterAll(async () => {
+      mockPoolTarget = mockReadOnlyPool;
+      await writable.end();
+    });
+
+    const row = async (notificationId: string) =>
+      (await q(`SELECT "read", "updatedAt" FROM notifications WHERE "id" = $1`, [notificationId])).rows[0];
+    const dbNow = async () => (await q(`SELECT now() AS now`)).rows[0].now as Date;
+
+    it('markAsRead changes an unread notification once', async () => {
+      const before = await dbNow();
+      const first = await notificationHelper.markAsRead(READER, { notificationId: N_UNREAD });
+      expect(first.changed).toBe(true);
+      const stored = await row(N_UNREAD);
+      expect(stored.read).toBe(true);
+      expect(first.updatedAt).toBe(stored.updatedAt.toISOString());
+      expect(stored.updatedAt.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1);
+
+      // second call: found, nothing written
+      const second = await notificationHelper.markAsRead(READER, { notificationId: N_UNREAD });
+      expect(second).toEqual({ changed: false, updatedAt: null });
+      expect((await row(N_UNREAD)).updatedAt.toISOString()).toBe(first.updatedAt);
+    });
+
+    it('markAsRead leaves an already read notification alone', async () => {
+      await expect(notificationHelper.markAsRead(READER, { notificationId: N_READ }))
+        .resolves.toEqual({ changed: false, updatedAt: null });
+      expect((await row(N_READ)).updatedAt.toISOString()).toBe('2026-01-01T00:00:00.000Z');
+    });
+
+    it('markAsRead answers NOT_FOUND for unknown and foreign notifications', async () => {
+      await expect(notificationHelper.markAsRead(READER, { notificationId: id(0x5ff) })).rejects.toThrow('NOT_FOUND');
+      await expect(notificationHelper.markAsRead(READER, { notificationId: N_FOREIGN })).rejects.toThrow('NOT_FOUND');
+      expect((await row(N_FOREIGN)).read).toBe(false);
+    });
+
+    it('markAllAsRead writes nothing when nothing is unread', async () => {
+      await expect(notificationHelper.markAllAsRead(READER)).resolves.toEqual({ changed: 0, updatedAt: null });
+      expect((await row(N_READ)).updatedAt.toISOString()).toBe('2026-01-01T00:00:00.000Z');
+    });
+
+    it('markAllAsRead changes exactly the unread notifications of the user', async () => {
+      await q(`INSERT INTO notifications ("id", "userId", "read") VALUES ($1, $3, false), ($2, $3, false)`,
+        [N_UNREAD_2, N_UNREAD_3, READER]);
+      const before = await dbNow();
+      const result = await notificationHelper.markAllAsRead(READER);
+      expect(result.changed).toBe(2);
+      expect(result.updatedAt).not.toBeNull();
+      expect(Date.parse(result.updatedAt!)).toBeGreaterThanOrEqual(before.getTime() - 1);
+      expect(Date.parse(result.updatedAt!)).toBeLessThanOrEqual((await dbNow()).getTime());
+      for (const notificationId of [N_UNREAD_2, N_UNREAD_3]) {
+        const stored = await row(notificationId);
+        expect(stored.read).toBe(true);
+        expect(stored.updatedAt.toISOString()).toBe(result.updatedAt);
+      }
+      // read rows and other users' rows untouched
+      expect((await row(N_READ)).updatedAt.toISOString()).toBe('2026-01-01T00:00:00.000Z');
+      expect((await row(N_FOREIGN)).read).toBe(false);
+      await expect(notificationHelper.getUnreadCountWithTime(READER)).resolves.toMatchObject({ unreadCount: 0 });
+      await expect(notificationHelper.getUnreadCountWithTime(STRANGER)).resolves.toMatchObject({ unreadCount: 1 });
+    });
   });
 });

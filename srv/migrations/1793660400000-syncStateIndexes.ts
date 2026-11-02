@@ -22,6 +22,11 @@ import { MigrationInterface, QueryRunner } from "typeorm";
 //   Measured with 100,000 chats, a user in 10 communities and 10 chats:
 //   `getSyncState` 8.1 ms -> 1.2 ms (the chats scan was 6.5 ms of it).
 //
+// Both are built with a plain CREATE INDEX, which blocks writes to
+// notifications and chats while it runs: CREATE INDEX CONCURRENTLY cannot run
+// inside a transaction, and the migration runner uses transaction mode "all".
+// The build time on the production data is measured in the dress rehearsal.
+//
 // Indexes need no GRANT (the roles' table privileges cover them).
 export class SyncStateIndexes1793660400000 implements MigrationInterface {
     name = 'SyncStateIndexes1793660400000'

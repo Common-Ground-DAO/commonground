@@ -54,7 +54,7 @@ const initiallyLoggedIn = loginManager.currentUser !== null;
 
 export function UserOnboardingProvider(props: { children: ReactNode }) {
     const { pwaStatus } = useNotificationContext();
-    const { webSocketState, finishInstallation, finishInstallationTriggered, serviceWorkerState } = useConnectionContext();
+    const { updateAvailable, finishInstallation, finishInstallationTriggered, serviceWorkerState } = useConnectionContext();
     const [isModalVisible, setIsModalVisible] = useState<boolean>(!initiallyLoggedIn && pwaStatus === 'InMobilePWA');
     const [step, setStep] = useState<OnboardingStep>('start');
     const ownUser = useOwnUser();
@@ -62,10 +62,10 @@ export function UserOnboardingProvider(props: { children: ReactNode }) {
     const [, setEmailConfirmationOpened] = useLocalStorage('', 'emailConfirmation');
 
     useEffect(() => {
-        if (webSocketState === 'version-update' && isModalVisible && !finishInstallationTriggered && serviceWorkerState === 'updated') {
+        if (updateAvailable && isModalVisible && !finishInstallationTriggered && serviceWorkerState === 'updated') {
             finishInstallation();
         }
-    }, [webSocketState, isModalVisible, finishInstallationTriggered, finishInstallation, serviceWorkerState]);
+    }, [updateAvailable, isModalVisible, finishInstallationTriggered, finishInstallation, serviceWorkerState]);
 
     const setUserOnboardingVisibility = useCallback((visible: boolean) => {
         if (visible && !isModalVisible) {

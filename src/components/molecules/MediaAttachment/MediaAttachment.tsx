@@ -13,6 +13,7 @@ import config from '../../../common/config';
 import fileApi from 'data/api/file';
 import { imageUploadErrorText, notifyIfImageRejected } from 'moderation/imageUploadError';
 import { Spinner } from '@phosphor-icons/react';
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = InMemoryAttachment & {
   updateAttachment: (imageId: string, largeImageId: string) => void;
@@ -132,7 +133,7 @@ const AttachmentButton: React.FC<Props> = (props) => {
     if (imageId) setIsLoadedState(imageId, isLoaded);
   }, [imageId, isLoaded, setIsLoadedState]);
 
-  let attachmentImage = <div className='inputMediaAttachmentImage' style={{ backgroundImage: `url(${currentImageUrl})` }} onClick={() => setShowPreview(true)} />;
+  let attachmentImage = <div className='inputMediaAttachmentImage' style={{ backgroundImage: cssBackgroundImage(currentImageUrl) }} onClick={() => setShowPreview(true)} />;
   if (error) {
     attachmentImage = <Popover
       triggerContent={attachmentImage}

@@ -23,6 +23,7 @@ import { getDisplayName } from "../../../../util";
 import communityApi from "data/api/community";
 import ManagementHeader2 from "components/molecules/ManagementHeader2/ManagementHeader2";
 import BotBadge from "components/atoms/BotBadge/BotBadge";
+import { cssBackgroundImage } from 'util/cssBackground';
 
 const WINDOW_SIZE = 80;
 const MEMBER_ITEM_HEIGHT = 81;
@@ -324,7 +325,7 @@ const MemberItem: React.FC<MemberItemProps> = ({ data, index }) => {
           height: `${height}px`,
           minHeight: `${height}px`,
           padding: "8px 12px 8px 4px",
-          backgroundImage: `url("${svg}")`,
+          backgroundImage: cssBackgroundImage(svg),
           backgroundRepeat: "repeat-y",
           backgroundSize: "5000px 81px",
           backgroundPosition: "0 0",

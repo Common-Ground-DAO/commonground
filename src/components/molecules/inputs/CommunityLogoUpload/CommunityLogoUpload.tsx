@@ -11,6 +11,7 @@ import { useWindowSizeContext } from "../../../../context/WindowSizeProvider";
 import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
 
 import "./CommunityLogoUpload.css";
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
     imageURL: string | undefined;
@@ -49,7 +50,7 @@ export default function CommunityLogoUpload(props: Props) {
       }
     }
 
-    const style = imageURL ? { backgroundImage: `url(${imageURL})` } : {};
+    const style = imageURL ? { backgroundImage: cssBackgroundImage(imageURL) } : {};
 
     return (
       <>

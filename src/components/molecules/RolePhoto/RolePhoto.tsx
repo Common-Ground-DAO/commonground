@@ -11,6 +11,7 @@ import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
 import { notifyIfImageRejected } from "moderation/imageUploadError";
 import { useSignedUrl } from "hooks/useSignedUrl";
 import { UserCircle } from "@phosphor-icons/react";
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
   communityId: string;
@@ -75,7 +76,7 @@ const RolePhoto: React.FC<Props> = (props: Props) => {
 
   return (
     <>
-      <div className={className} style={{ backgroundImage: `url(${imgUrl})`}} onClick={openLoadImagePopup}>
+      <div className={className} style={{ backgroundImage: cssBackgroundImage(imgUrl) }} onClick={openLoadImagePopup}>
         {editMode && <input type="file" ref={imageUploadRef} onChange={handleImageChange} style={{ display: "none" }} accept={config.ACCEPTED_IMAGE_FORMATS} />}
         {!imgUrl && <UserCircle weight="duotone" className="w-6 h-6" />}
       </div>

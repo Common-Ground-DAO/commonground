@@ -225,6 +225,13 @@ const config = {
   CALLSERVER_UPDATE_DATA_INTERVAL: 2000 as const,
   CALLSERVER_UPDATE_TRAFFIC_INTERVAL: 10000 as const,
   CALLSERVER_STALE_AFTER_MILLISECONDS: 10000 as const, // period in which a callserver must have updated it's entry to not be stale
+  // a callserver whose heartbeat (callservers."updatedAt") is older than this
+  // is treated as gone: the jobs process ends its remaining calls
+  CALLSERVER_GONE_AFTER_MILLISECONDS: 60000 as const,
+  // a non-scheduled call whose members have all left this long ago has no
+  // room any more (the room normally ends the call when its last peer leaves)
+  END_CALL_AFTER_ALL_LEFT_PERIOD: 60000 as const,
+  ORPHANED_CALLS_SWEEP_INTERVAL: 15000 as const,
 
   // url settings
   URL_USER: 'u' as const,

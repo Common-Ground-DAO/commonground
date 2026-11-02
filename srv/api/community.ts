@@ -28,6 +28,32 @@ import messageHelper from "../repositories/messages";
 const communityRouter = express.Router();
 const t = createTranslator();
 
+/** the most members a caller outside the community sees in the preview */
+const MEMBER_LIST_PREVIEW_LIMIT = 6;
+
+function isMemberListPreviewRequest(data: API.Community.getMemberList.Request): boolean {
+  return data.offset === 0
+    && data.limit <= MEMBER_LIST_PREVIEW_LIMIT
+    && data.search === undefined
+    && data.roleId === undefined;
+}
+
+/**
+ * The preview of a member list: the counts and the first `limit` member ids,
+ * without their roles, the presence split or the per-role counts.
+ */
+function toMemberListPreview(memberList: Models.Community.MemberList, limit: number): Models.Community.MemberList {
+  return {
+    totalCount: memberList.totalCount,
+    resultCount: memberList.resultCount,
+    online: [],
+    offline: memberList.online.concat(memberList.offline)
+      .slice(0, Math.min(limit, MEMBER_LIST_PREVIEW_LIMIT))
+      .map(([userId]) => [userId, []]),
+    roles: [],
+  };
+}
+
 registerPostRoute<
   API.Community.getCommunityList.Request,
   API.Community.getCommunityList.Response
@@ -198,6 +224,14 @@ API.Community.getMemberList.Response
   '/getMemberList',
   validators.API.Community.getMemberList,
   async (request, response, data) => {
+    // members of the community get the full list (windows, search, role
+    // filter, presence, roles); everyone else only a short preview of the
+    // first members, without roles or presence
+    const { user } = request.session;
+    const isMember = !!user && await permissionHelper.isMemberOfActiveCommunity(user.id, data.communityId);
+    if (!isMember && !isMemberListPreviewRequest(data)) {
+      throw new Error(!user ? errors.server.LOGIN_REQUIRED : errors.server.NOT_ALLOWED);
+    }
     const memberList = await axios.post<API.Community.getMemberList.Response>(
       'http://memberlist:4000/getMemberListWindow',
       JSON.stringify({
@@ -213,7 +247,8 @@ API.Community.getMemberList.Response
     );
 
     // memberlist answered an empty body for a community it does not know yet
-    return convertBinaryMemberListToUuid(memberListOrEmpty(memberList.data));
+    const result = convertBinaryMemberListToUuid(memberListOrEmpty(memberList.data));
+    return isMember ? result : toMemberListPreview(result, data.limit);
   }
 );
 

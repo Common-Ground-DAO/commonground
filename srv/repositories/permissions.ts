@@ -281,6 +281,28 @@ class PermissionHelper {
     }
   }
 
+  /**
+   * Whether `userId` is a member of the community `communityId`: holds at
+   * least one claimed, live role of it, and the community is not deleted.
+   */
+  public async isMemberOfActiveCommunity(userId: string, communityId: string): Promise<boolean> {
+    const result = await pool.query(`
+      SELECT 1
+      FROM roles_users_users ruu
+      INNER JOIN roles r
+        ON r."id" = ruu."roleId"
+      INNER JOIN communities c
+        ON c."id" = r."communityId"
+      WHERE ruu."userId" = $1
+        AND r."communityId" = $2
+        AND ruu.claimed = TRUE
+        AND r."deletedAt" IS NULL
+        AND c."deletedAt" IS NULL
+      LIMIT 1
+    `, [userId, communityId]);
+    return result.rows.length > 0;
+  }
+
   public async hasTrustOrThrow(options: { userId: string, trust: string }): Promise<void> {
     const query = `
       SELECT id

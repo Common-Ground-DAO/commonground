@@ -131,13 +131,26 @@ describe('NotificationsBrowser read marking: one markAsRead per interaction', ()
     const marking = createNotificationReadMarking(id => facade.markAsRead(id));
     // the click and the effect both see the render's snapshot (read: false)
     const snapshot = w.state.items[0];
-    marking.mark(snapshot); // click
-    marking.mark(snapshot); // selection effect after the navigation
-    marking.mark(snapshot); // effect re-run on the next list change
+    marking.onClick(snapshot);
+    marking.onSelected(snapshot); // selection effect after the navigation
+    marking.onSelected(snapshot); // effect re-run on the next list change
     await settle();
     expect(server.callsOf('markAsRead')).toEqual([{ notificationId: snapshot.id }]);
     expect(w.state.items[0].read).toBe(true);
     expect(facade.unreadCount).toBe(0);
+    w.destroy();
+  });
+
+  it('a deep link (selection without click) marks once', async () => {
+    const { server } = setup();
+    server.addNotification();
+    const w = await openList();
+    const marking = createNotificationReadMarking(id => facade.markAsRead(id));
+    const snapshot = w.state.items[0];
+    marking.onSelected(snapshot);
+    marking.onSelected(snapshot);
+    await settle();
+    expect(server.callsOf('markAsRead')).toHaveLength(1);
     w.destroy();
   });
 
@@ -153,27 +166,48 @@ describe('NotificationsBrowser read marking: one markAsRead per interaction', ()
     w.destroy();
   });
 
-  it('a failed call is not retried by the effect re-run (no request loop)', async () => {
+  it('after a failure the effect re-run does not retry (no request loop), a click does', async () => {
     const { server } = setup();
     server.addNotification();
     const w = await openList();
     const marking = createNotificationReadMarking(id => facade.markAsRead(id));
     server.fail('markAsRead', new Error('Network down'), 1);
-    marking.mark(w.state.items[0]);
+    marking.onSelected(w.state.items[0]);
     await settle();
     expect(w.state.items[0].read).toBe(false);
-    marking.mark(w.state.items[0]);
+    marking.onSelected(w.state.items[0]);
     await settle();
     expect(server.callsOf('markAsRead')).toHaveLength(1);
+    marking.onClick(w.state.items[0]);
+    await settle();
+    expect(server.callsOf('markAsRead')).toHaveLength(2);
+    expect(w.state.items[0].read).toBe(true);
+    w.destroy();
+  });
+
+  it('a click after a failed click retries', async () => {
+    const { server } = setup();
+    server.addNotification();
+    const w = await openList();
+    const marking = createNotificationReadMarking(id => facade.markAsRead(id));
+    server.fail('markAsRead', new Error('Network down'), 1);
+    marking.onClick(w.state.items[0]);
+    await settle();
+    expect(w.state.items[0].read).toBe(false);
+    marking.onClick(w.state.items[0]);
+    await settle();
+    expect(server.callsOf('markAsRead')).toHaveLength(2);
+    expect(w.state.items[0].read).toBe(true);
     w.destroy();
   });
 
   it('already read notifications send nothing', () => {
     const calls: string[] = [];
     const marking = createNotificationReadMarking(id => calls.push(id));
-    marking.mark({ id: 'n1', read: true });
-    marking.mark({ id: 'n2', read: false });
-    marking.mark({ id: 'n3', read: false });
+    marking.onClick({ id: 'n1', read: true });
+    marking.onSelected({ id: 'n1', read: true });
+    marking.onClick({ id: 'n2', read: false });
+    marking.onSelected({ id: 'n3', read: false });
     expect(calls).toEqual(['n2', 'n3']);
   });
 });

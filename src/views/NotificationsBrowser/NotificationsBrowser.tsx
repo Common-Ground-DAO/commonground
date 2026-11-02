@@ -74,7 +74,7 @@ export default function NotificationsBrowser() {
   }, []);
 
   const items = listState?.items ?? EMPTY_ITEMS;
-  const { webSocketState } = useConnectionContext();
+  const { webSocketState, loginState } = useConnectionContext();
   const { unreadCount } = useNotificationContext();
   const { openModal } = useCommunityJoinedContext();
   const { currentData, showTooltip } = useSidebarDataDisplayContext();
@@ -85,19 +85,19 @@ export default function NotificationsBrowser() {
   const [navigateWhenNotificationExists, setNavigateWhenNotificationExists] = useState<boolean>(false);
   const loadPreviousTriggered = useRef<boolean>(false);
   const ownUser = useOwnUser();
-  const ownUserId = ownUser?.id;
   const readMarking = useMemo(() => createNotificationReadMarking(id => data.notification.markAsRead(id)), []);
 
   // first page once logged in; again after a logout/login (clear() leaves the
   // window not ready) or, after a failed init, when the connection state changes
   const ready = !!listState?.ready;
+  const loggedIn = loginState === "loggedin";
   useEffect(() => {
-    if (!list || !ownUserId || ready) return;
+    if (!list || !loggedIn || ready) return;
     list.init({ type: 'recent' }).catch(e => {
       if (e instanceof Error && e.message === WINDOW_ERROR.SUPERSEDED) return;
       console.error("Could not load notifications", e);
     });
-  }, [list, ownUserId, ready, webSocketState]);
+  }, [list, loggedIn, ready, webSocketState]);
 
   const communityIds = useMemo(() => {
     return Array.from(new Set(items.map(item => item.subjectCommunityId).filter(id => id !== null) as string[]))
@@ -174,7 +174,7 @@ export default function NotificationsBrowser() {
     else {
       const notification = events.find(n => n.id === selectedId);
       if (!!notification) {
-        readMarking.mark(notification);
+        readMarking.onSelected(notification);
         if (navigateWhenNotificationExists === false) {
           switch (notification.type) {
             case 'Mention':
@@ -365,7 +365,7 @@ export default function NotificationsBrowser() {
           }
         }
       }
-      readMarking.mark(notification);
+      readMarking.onClick(notification);
     }
   }, [communities, isMobile, navigate, openModal, readMarking, showTooltip]);
 
@@ -449,9 +449,9 @@ export default function NotificationsBrowser() {
             <ToggleInputField toggled={hideRead} />
             <span>Hide read</span>
           </div>
-          {unreadCount > 0 && <div className='notifications-mark-all-read' role='button' onClick={markAllAsRead}>
-            <span>Mark all read</span>
-          </div>}
+          {unreadCount > 0 && <button type='button' className='notifications-mark-all-read' onClick={markAllAsRead}>
+            Mark all read
+          </button>}
         </div>
         <SearchField value={search} onChange={setSearch} />
       </div>
@@ -468,7 +468,7 @@ export default function NotificationsBrowser() {
             notification={notification}
             onClick={onMessageClick(notification)}
           />)}
-          {events.length === 0 && emptyMessage}
+          {events.length === 0 && (ready || !loggedIn ? emptyMessage : loadingItem)}
           {showLoadingItem && loadingItem}
         </div>
       </Scrollable>

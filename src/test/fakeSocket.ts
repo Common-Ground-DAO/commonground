@@ -7,20 +7,33 @@
  * server: it accepts or refuses connections, answers acks (by handler or by
  * hand), delivers server events and drops the connection.
  *
- * Behaviour copied from socket.io-client 4 because code tends to rely on it:
- * - `connect` fires before the send buffer is flushed; emits while
- *   disconnected are buffered and sent on the next connect (not `volatile`).
+ * Behaviour copied from socket.io-client 4.8 (`build/esm/socket.js`,
+ * `manager.js`) because code tends to rely on it:
+ * - On connect the send buffer is flushed *before* the `connect` listeners
+ *   run (`onconnect`: `connected = true; emitBuffered(); emitReserved("connect")`).
+ *   Emits while disconnected are buffered, `volatile` emits are dropped.
+ * - Acks are registered per packet, not per connection. On `disconnect` every
+ *   ack whose packet was already sent is cleared: error-first acks
+ *   (`emitWithAck`, `timeout(ms)`, `ackTimeout`) get
+ *   `Error("socket has been disconnected")`, plain acks are dropped silently.
+ *   Buffered packets keep their ack. An answer the server sends after its
+ *   connection is gone is never delivered. `timeout(ms)` errors with
+ *   `Error("operation has timed out")` (and drops a still-buffered packet).
  * - Client `disconnect()` fires `disconnect` synchronously with
- *   `io client disconnect`; the socket does not reconnect by itself.
- * - Every connection gets a new `id`. An ack the server answers after the
- *   connection that carried the request is gone is never delivered.
- * - Server acks arrive asynchronously (microtask); `deliver` is synchronous.
+ *   `io client disconnect` and deactivates the socket; so do
+ *   `drop('io server disconnect')` and a middleware `refuse(err, { middleware: true })`.
+ *   An inactive socket stays dead until the code calls `connect()` again.
+ * - Every connection gets a new `id`. Server acks arrive asynchronously
+ *   (microtask); `deliver` is synchronous.
+ * - `socket.io` is a minimal Manager emitter: `open`, `close`, `error`,
+ *   `reconnect_attempt`, `reconnect_error`, `reconnect`.
  * The fake never reconnects on its own after `drop()`: the test decides when
  * (or whether) the reconnect succeeds via `accept()` / `refuse()`.
  */
 
 type Listener = (...args: any[]) => void;
 type AnyListener = (event: string, ...args: any[]) => void;
+type Ack = ((...args: any[]) => void) & { withError?: boolean };
 
 /** Return from a server handler to leave the ack unanswered. */
 export const NO_ACK: unique symbol = Symbol('NO_ACK');
@@ -35,6 +48,13 @@ export interface SentPacket {
   /** Connection id that carried the packet. */
   socketId: string;
   hasAck: boolean;
+}
+
+export interface BufferedPacket {
+  event: string;
+  args: unknown[];
+  /** Ack id when the emit carried an ack. */
+  ackId?: number;
 }
 
 export interface PendingAck {
@@ -53,60 +73,17 @@ export interface FakeSocketOptions {
   autoAccept?: boolean;
   /** Install the default handlers for `cgPing`, `getSignableSecret`, `login`, `logout` (default `true`). */
   defaultHandlers?: boolean;
-  /** Prefix of the generated connection ids (default `sock`). */
+  /** Prefix of the generated connection ids (default `sock<n>`). */
   idPrefix?: string;
+  /** Default ack timeout in ms for every emit with an ack, like the client's `ackTimeout` option. */
+  ackTimeout?: number;
 }
 
-const RESERVED = new Set(['connect', 'connect_error', 'disconnect']);
+const RESERVED = new Set(['connect', 'connect_error', 'disconnect', 'disconnecting', 'newListener', 'removeListener']);
 
-let socketCounter = 0;
-
-export class FakeSocket {
-  id: string | undefined = undefined;
-  connected = false;
-  /** True while the socket wants to be connected (between `connect()` and `disconnect()`). */
-  active = false;
-
-  /** Everything the client sent to the server, in order (after buffering). */
-  readonly sent: SentPacket[] = [];
-  /** Emits made while disconnected, flushed on the next connect. */
-  readonly sendBuffer: { event: string; args: unknown[] }[] = [];
-  /** Acks no handler answered yet, oldest first. */
-  readonly pendingAcks: PendingAck[] = [];
-
-  // simulated server state
-  /** Login result the default `login` handler answers with. */
-  loginResult: LoginResult = 'OK';
-  /** Server-side: socket logged in on the current connection. */
-  loggedIn = false;
-  /** Number of `login` requests the server received. */
-  loginCount = 0;
-  /** Last secret the default `getSignableSecret` handler handed out. */
-  lastSecret: string | undefined;
-
-  readonly options: Required<FakeSocketOptions>;
-
+/** Minimal event emitter, shared by the socket and its Manager. */
+class Emitter {
   #listeners = new Map<string, Listener[]>();
-  #anyListeners: AnyListener[] = [];
-  #handlers = new Map<string, ServerHandler>();
-  #connectionCount = 0;
-  #acceptScheduled = false;
-  #inFlight = new Set<Promise<unknown>>();
-
-  constructor(options: FakeSocketOptions = {}) {
-    this.options = {
-      autoAccept: options.autoAccept ?? true,
-      defaultHandlers: options.defaultHandlers ?? true,
-      idPrefix: options.idPrefix ?? `sock${++socketCounter}`,
-    };
-    if (this.options.defaultHandlers) this.#installDefaultHandlers();
-  }
-
-  get disconnected(): boolean {
-    return !this.connected;
-  }
-
-  // ---------------------------------------------------------------- client API
 
   on(event: string, listener: Listener): this {
     const list = this.#listeners.get(event) ?? [];
@@ -151,6 +128,76 @@ export class FakeSocket {
     return (this.#listeners.get(event)?.length ?? 0) > 0;
   }
 
+  protected fire(event: string, ...args: unknown[]): void {
+    for (const listener of this.listeners(event)) listener(...args);
+  }
+}
+
+/** The `socket.io` Manager: only its reserved events. */
+export class FakeManager extends Emitter {
+  /** Fires a Manager event (used by FakeSocket). */
+  emitReserved(event: string, ...args: unknown[]): void {
+    this.fire(event, ...args);
+  }
+}
+
+let socketCounter = 0;
+
+export class FakeSocket extends Emitter {
+  id: string | undefined = undefined;
+  connected = false;
+  /** True while the socket wants to be connected (between `connect()` and `disconnect()`). */
+  active = false;
+  /** The Manager (`socket.io`). */
+  readonly io = new FakeManager();
+
+  /** Everything the client sent to the server, in order (after buffering). */
+  readonly sent: SentPacket[] = [];
+  /** Emits made while disconnected, flushed on the next connect. */
+  readonly sendBuffer: BufferedPacket[] = [];
+  /** Acks no handler answered yet, oldest first (server side). */
+  readonly pendingAcks: PendingAck[] = [];
+
+  // simulated server state
+  /** Login result the default `login` handler answers with. */
+  loginResult: LoginResult = 'OK';
+  /** Server-side: socket logged in on the current connection. */
+  loggedIn = false;
+  /** Number of `login` requests the server received. */
+  loginCount = 0;
+  /** Last secret the default `getSignableSecret` handler handed out. */
+  lastSecret: string | undefined;
+
+  readonly options: Required<Omit<FakeSocketOptions, 'ackTimeout'>> & Pick<FakeSocketOptions, 'ackTimeout'>;
+
+  #anyListeners: AnyListener[] = [];
+  #handlers = new Map<string, ServerHandler>();
+  #acks = new Map<number, Ack>();
+  #nextAckId = 0;
+  #flags: { timeout?: number; volatile?: boolean } = {};
+  #connectionCount = 0;
+  #acceptScheduled = false;
+  #reconnecting = false;
+  #reconnectAttempts = 0;
+  #inFlight = new Set<Promise<unknown>>();
+
+  constructor(options: FakeSocketOptions = {}) {
+    super();
+    this.options = {
+      autoAccept: options.autoAccept ?? true,
+      defaultHandlers: options.defaultHandlers ?? true,
+      idPrefix: options.idPrefix ?? `sock${++socketCounter}`,
+      ackTimeout: options.ackTimeout,
+    };
+    if (this.options.defaultHandlers) this.#installDefaultHandlers();
+  }
+
+  get disconnected(): boolean {
+    return !this.connected;
+  }
+
+  // ---------------------------------------------------------------- client API
+
   onAny(listener: AnyListener): this {
     this.#anyListeners.push(listener);
     return this;
@@ -164,23 +211,41 @@ export class FakeSocket {
   /** Client → server. A trailing function argument is the ack callback. */
   emit(event: string, ...args: unknown[]): this {
     if (RESERVED.has(event)) throw new Error(`"${event}" is a reserved event name`);
-    if (!this.connected) {
-      this.sendBuffer.push({ event, args });
-      return this;
+    const flags = this.#flags;
+    this.#flags = {};
+    const last = args[args.length - 1];
+    let ackId: number | undefined;
+    if (typeof last === 'function') {
+      args = args.slice(0, -1);
+      ackId = this.#nextAckId++;
+      this.#registerAck(ackId, last as Ack, flags.timeout ?? this.options.ackTimeout);
     }
-    this.#send(event, args);
+    const packet: BufferedPacket = { event, args, ackId };
+    if (flags.volatile && !this.connected) return this;
+    if (this.connected) this.#transmit(packet);
+    else this.sendBuffer.push(packet);
     return this;
   }
 
+  /** Resolves with the ack value; rejects on timeout or disconnect, like the real client. */
   emitWithAck(event: string, ...args: unknown[]): Promise<unknown> {
-    return new Promise(resolve => this.emit(event, ...args, resolve));
+    return new Promise((resolve, reject) => {
+      const ack: Ack = (error: unknown, value: unknown) => (error ? reject(error) : resolve(value));
+      ack.withError = true;
+      this.emit(event, ...args, ack);
+    });
+  }
+
+  /** `socket.timeout(ms).emit(ev, ..., (err, value) => …)`: the ack becomes error-first. */
+  timeout(ms: number): this {
+    this.#flags.timeout = ms;
+    return this;
   }
 
   /** `socket.volatile.emit(...)`: dropped instead of buffered while disconnected. */
-  get volatile(): { emit: (event: string, ...args: unknown[]) => FakeSocket } {
-    return {
-      emit: (event, ...args) => (this.connected ? this.emit(event, ...args) : this),
-    };
+  get volatile(): this {
+    this.#flags.volatile = true;
+    return this;
   }
 
   connect(): this {
@@ -202,6 +267,7 @@ export class FakeSocket {
 
   disconnect(): this {
     this.active = false;
+    this.#reconnecting = false;
     if (this.connected) this.#close('io client disconnect');
     return this;
   }
@@ -212,26 +278,50 @@ export class FakeSocket {
 
   // ---------------------------------------------------------------- server API
 
-  /** Completes a pending (re)connect: new `id`, `connect` event, buffer flush. */
+  /**
+   * Completes a pending (re)connect: new `id`, buffer flush, then `connect`.
+   * Throws if the socket is inactive (never connected, or disconnected by the
+   * client, the server or middleware): socket.io would not try.
+   */
   accept(): this {
     if (this.connected) throw new Error('FakeSocket.accept: already connected');
-    this.active = true;
+    if (!this.active) throw new Error('FakeSocket.accept: socket is inactive; the code must call connect() first');
+    if (this.#reconnecting) this.io.emitReserved('reconnect_attempt', ++this.#reconnectAttempts);
+    this.io.emitReserved('open');
+    if (this.#reconnecting) {
+      this.io.emitReserved('reconnect', this.#reconnectAttempts);
+      this.#reconnecting = false;
+      this.#reconnectAttempts = 0;
+    }
     this.#connectionCount += 1;
     this.id = `${this.options.idPrefix}-${this.#connectionCount}`;
     this.connected = true;
     this.loggedIn = false;
-    this.#fire('connect');
-    // the `connect` listeners may have disconnected again
-    if (!this.connected) return this;
     const buffered = this.sendBuffer.splice(0);
-    for (const packet of buffered) this.#send(packet.event, packet.args);
+    for (const packet of buffered) this.#transmit(packet);
+    this.#fireEvent('connect');
     return this;
   }
 
-  /** Fails the current connect attempt (`connect_error`); the socket stays active. */
-  refuse(error: Error = new Error('xhr poll error')): this {
+  /**
+   * Fails the current connect attempt with `connect_error`. A transport-level
+   * failure leaves the socket active (socket.io keeps retrying); with
+   * `{ middleware: true }` (the server's `io.use()` refused) it becomes
+   * inactive, as in socket.io. Throws if the socket is inactive.
+   */
+  refuse(error: Error = new Error('xhr poll error'), options: { middleware?: boolean } = {}): this {
     if (this.connected) throw new Error('FakeSocket.refuse: already connected');
-    this.#fire('connect_error', error);
+    if (!this.active) throw new Error('FakeSocket.refuse: socket is inactive; the code must call connect() first');
+    if (options.middleware) {
+      this.active = false;
+      this.#reconnecting = false;
+      this.#fireEvent('connect_error', error);
+      return this;
+    }
+    if (this.#reconnecting) this.io.emitReserved('reconnect_attempt', ++this.#reconnectAttempts);
+    this.io.emitReserved('error', error);
+    this.#fireEvent('connect_error', error);
+    if (this.#reconnecting) this.io.emitReserved('reconnect_error', error);
     return this;
   }
 
@@ -240,18 +330,46 @@ export class FakeSocket {
    * would retry; here it stays `active` until the test calls `accept()`. With
    * `io server disconnect` it becomes inactive, as in socket.io.
    */
-  drop(reason = 'transport close'): this {
+  drop(reason = 'transport close', description?: unknown): this {
     if (!this.connected) return this;
-    if (reason === 'io server disconnect') this.active = false;
-    this.#close(reason);
+    if (reason === 'io server disconnect') {
+      this.active = false;
+    } else {
+      this.#reconnecting = true;
+      this.io.emitReserved('close', reason, description);
+    }
+    this.#close(reason, description);
     return this;
   }
 
   /** Server → client event. Returns false (and drops it) when not connected. */
   deliver(event: string, ...args: unknown[]): boolean {
     if (!this.connected) return false;
-    this.#fire(event, ...args);
+    this.#fireEvent(event, ...args);
     return true;
+  }
+
+  /**
+   * Server → client event with an ack the client answers. Resolves with the
+   * client's ack arguments; rejects when not connected, or when the
+   * connection goes away first.
+   */
+  deliverWithAck(event: string, ...args: unknown[]): Promise<unknown[]> {
+    if (!this.connected) return Promise.reject(new Error('FakeSocket.deliverWithAck: not connected'));
+    const socketId = this.id;
+    return new Promise((resolve, reject) => {
+      let answered = false;
+      const onDisconnect = () => {
+        if (!answered) reject(new Error('socket has been disconnected'));
+      };
+      this.once('disconnect', onDisconnect);
+      this.#fireEvent(event, ...args, (...values: unknown[]) => {
+        if (answered || this.id !== socketId) return;
+        answered = true;
+        this.off('disconnect', onDisconnect);
+        resolve(values);
+      });
+    });
   }
 
   /**
@@ -287,40 +405,68 @@ export class FakeSocket {
 
   // ---------------------------------------------------------------- internals
 
-  #fire(event: string, ...args: unknown[]): void {
+  #fireEvent(event: string, ...args: unknown[]): void {
     if (!RESERVED.has(event)) {
       for (const listener of [...this.#anyListeners]) listener(event, ...args);
     }
-    for (const listener of this.listeners(event)) listener(...args);
+    this.fire(event, ...args);
   }
 
-  #close(reason: string): void {
+  #registerAck(id: number, ack: Ack, timeout: number | undefined): void {
+    if (timeout === undefined) {
+      this.#acks.set(id, ack);
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.#acks.delete(id);
+      const index = this.sendBuffer.findIndex(p => p.ackId === id);
+      if (index >= 0) this.sendBuffer.splice(index, 1);
+      ack.call(this, new Error('operation has timed out'));
+    }, timeout);
+    const wrapped: Ack = (...args) => {
+      clearTimeout(timer);
+      ack.apply(this, args);
+    };
+    wrapped.withError = true;
+    this.#acks.set(id, wrapped);
+  }
+
+  #close(reason: string, description?: unknown): void {
     this.connected = false;
     this.loggedIn = false;
     this.id = undefined;
-    // pending acks of the old connection can never be answered
+    // the server side of the old connection is gone with its unanswered acks
     this.pendingAcks.length = 0;
-    this.#fire('disconnect', reason);
+    this.#fireEvent('disconnect', reason, description);
+    // _clearAcks(): acks of packets that were already sent can never be answered
+    for (const [id, ack] of [...this.#acks]) {
+      if (this.sendBuffer.some(p => p.ackId === id)) continue;
+      this.#acks.delete(id);
+      if (ack.withError) ack.call(this, new Error('socket has been disconnected'));
+    }
   }
 
-  #send(event: string, args: unknown[]): void {
+  #transmit(packet: BufferedPacket): void {
     const socketId = this.id!;
-    const last = args[args.length - 1];
-    const ack = typeof last === 'function' ? (last as Listener) : undefined;
-    const payload = ack ? args.slice(0, -1) : args;
-    this.sent.push({ event, args: payload, socketId, hasAck: !!ack });
+    const { event, args, ackId } = packet;
+    this.sent.push({ event, args, socketId, hasAck: ackId !== undefined });
 
     const answer = (...values: unknown[]) => {
-      // late answer for a connection that is gone: socket.io never calls it
-      if (!ack || this.id !== socketId || !this.connected) return;
+      if (ackId === undefined) return;
       queueMicrotask(() => {
-        if (this.id === socketId && this.connected) ack(...values);
+        // late answer for a connection that is gone: socket.io never delivers it
+        if (this.id !== socketId || !this.connected) return;
+        const ack = this.#acks.get(ackId);
+        if (!ack) return;
+        this.#acks.delete(ackId);
+        if (ack.withError) ack.call(this, null, ...values);
+        else ack.apply(this, values);
       });
     };
 
     const handler = this.#handlers.get(event);
     if (handler) {
-      const run = Promise.resolve().then(() => handler(payload, this));
+      const run = Promise.resolve().then(() => handler(args, this));
       const tracked = run.then(
         value => {
           if (value !== NO_ACK) answer(value);
@@ -334,10 +480,10 @@ export class FakeSocket {
       void tracked.finally(() => this.#inFlight.delete(tracked));
       return;
     }
-    if (ack) {
+    if (ackId !== undefined) {
       const pending: PendingAck = {
         event,
-        args: payload,
+        args,
         socketId,
         respond: (...values) => {
           const index = this.pendingAcks.indexOf(pending);
@@ -382,7 +528,8 @@ export interface FakeIo {
 
 /**
  * An `io()` factory for `vi.mock('socket.io-client', …)`. Like the real one it
- * connects right away unless `opts.autoConnect === false`.
+ * connects right away unless `opts.autoConnect === false`; `opts.ackTimeout`
+ * is honoured.
  *
  *   const fake = vi.hoisted(() => ({ current: undefined as FakeIo | undefined }));
  *   vi.mock('socket.io-client', () => ({ io: (...a) => fake.current!.io(...a) }));
@@ -393,7 +540,8 @@ export function createFakeIo(options: FakeSocketOptions = {}): FakeIo {
   return {
     io(url, opts) {
       calls.push({ url, opts });
-      const socket = new FakeSocket(options);
+      const ackTimeout = typeof opts?.ackTimeout === 'number' ? opts.ackTimeout : options.ackTimeout;
+      const socket = new FakeSocket({ ...options, ackTimeout });
       sockets.push(socket);
       if (opts?.autoConnect !== false) socket.connect();
       return socket;

@@ -27,6 +27,8 @@ export class Notification {
     type!: NotificationType;
 
     @Index()
+    // partial index (unread notifications, "read" = FALSE), created by the migration
+    @Index('idx_notifications_userId_unread', { synchronize: false })
     @Column({ type: 'uuid', nullable: false })
     userId!: string;
 

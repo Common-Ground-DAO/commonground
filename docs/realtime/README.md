@@ -15,7 +15,12 @@
 > 2026-11-02; the page side of the tab/socket model (Socket.IO Client, Tab Coordination: one
 > socket per tab, live signal, hidden-tab policy, login lock and post-reconnect snapshot)
 > against commit 964f6b3, 2026-11-02; the service worker's part in tab coordination (no
-> referee, one-release compat answer) against commit 79187d2, 2026-11-02
+> referee, one-release compat answer) against commit 79187d2, 2026-11-02; the notification
+> routes and the `cliNotificationEvent` count fields against commit 3f204f4, 2026-11-02;
+> socket-scoped targeting (`deviceSocket:` room, echo exclusion, article rooms, logout),
+> call chat / `cliCallEvent new` delivery against commit ce09d8a, 2026-11-02; the logout
+> without a header, per-socket article limit, second socket login, the never-rejecting message
+> emit and the deploy-mix notes against commits 1b09f87 and f97ef1b, 2026-11-02
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -120,8 +125,9 @@ Sockets are organized into rooms based on identity and membership. Room key func
 | `cgIdRequestRoomKey(frontendRequestId)` | `cgIdRequest:{frontendRequestId}` | Legacy CG ID: the socket that watches a CG ID popup request (`watchCgIdRequest`) |
 | `articleRoomKey(articleId)` | `article:{articleId}` | Target viewers of a specific article |
 | `botTokenRoomKey(tokenId)` | `botToken:{tokenId}` | Target all sockets authenticated with a specific bot token |
+| `deviceSocketRoomKey(deviceId, socketId)` (`srv/util/requestSocket.ts`) | `deviceSocket:{deviceId}:{socketId}` | One logged-in socket of a device: what [socket-scoped targeting](#socket-scoped-targeting) addresses |
 
-For browser clients with a session cookie, the socket immediately joins its `expressSession:{sessionId}` room on connection. On `login`, it joins `user:`, `device:`, all `role:`, and all `community:` rooms for that user (via `joinAuthenticatedRooms`). For bot clients the same room set (minus `expressSession:`, plus `botToken:`) is joined inside the handshake middleware, before the `connection` event.
+For browser clients with a session cookie, the socket immediately joins its `expressSession:{sessionId}` room on connection. On `login`, it joins `user:`, `device:`, `deviceSocket:{deviceId}:{socket.id}`, all `role:`, and all `community:` rooms for that user (via `joinAuthenticatedRooms`). For bot clients the same room set (minus `expressSession:`, plus `botToken:`) is joined inside the handshake middleware, before the `connection` event.
 
 ### Client-to-Server Events
 
@@ -129,7 +135,7 @@ For browser clients with a session cookie, the socket immediately joins its `exp
 |---|---|---|---|
 | `getSignableSecret` | none | `(secret: string)` | Server generates a cryptographically random hex string, stores it on `socket.data.signableSecret`, returns it to the client for device authentication |
 | `cgPing` | none | `(timestamp: number)` | Returns `Date.now()` for client-side latency/clock-drift detection |
-| `login` | `{ deviceId, secret, base64Signature }` | `("OK" \| "ERROR")` | Authenticates the socket. Verifies the device signature against the signable secret. On success, joins user/device/role/community rooms and sets user online status |
+| `login` | `{ deviceId, secret, base64Signature }` | `("OK" \| "ERROR")` | Authenticates the socket. Verifies the device signature against the signable secret. A socket already logged in as another device or user first leaves every room of that login (as on `logout`). On success, joins user/device/`deviceSocket:`/role/community rooms and sets user online status |
 | `logout` | none | none | Leaves all rooms except the temporary community visitor room. Sets user offline if this was the last socket |
 | `joinCommunityVisitorRoom` | `{ communityId }` | none | Joins the community room temporarily so a non-member viewing a public community receives its live events. Validated with Joi. Leaves the previous visitor room first (unless the user is a member of it) |
 | `watchCgIdRequest` | `{ frontendRequestId }` | none | Legacy CG ID: joins `cgIdRequest:{frontendRequestId}` so the popup's result (`cliCgIdSignResponse`) reaches this socket; one request per socket (the previous one is left). Validated with Joi. The client re-sends it after a reconnect |
@@ -176,7 +182,43 @@ class EventHelper {
 }
 ```
 
-The `emit` method takes an event and a target specifying which rooms to broadcast to (by userIds, roleIds, communityIds, deviceIds, sessionIds, articleIds), with optional exclusions. The event's `type` field becomes the Socket.IO event name; the rest is the payload.
+The `emit` method takes an event and a target specifying which rooms to broadcast to (by userIds, roleIds, communityIds, deviceIds, sessionIds, articleIds), with optional exclusions (the same lists plus `deviceSockets`, see below). The event's `type` field becomes the Socket.IO event name; the rest is the payload. One emit to several rooms reaches every socket once, however many of the rooms it is in.
+
+### Socket-scoped targeting
+
+New clients send the id of the tab's socket.io socket in every HTTP request, header
+`x-cg-socket-id` (`SOCKET_ID_HEADER` in `src/data/appstate/transport.ts`; a tab without a socket
+sends a random id of the same format). The server reads it with `getRequestSocketId()`
+(`srv/util/requestSocket.ts`): only a single value matching `^[A-Za-z0-9_-]{20}$` counts, and bot
+requests never use it (the Bot API keeps the per-device behaviour). The header name is fixed (the
+cg.box gateway allows it by name).
+
+The header never selects a socket on its own. Every socket-scoped operation addresses the room
+`deviceSocket:{deviceId}:{socketId}`, built from the **session's** device and the header; wsapi
+joins that room at socket login with the device the socket proved, and the socket leaves it with
+its other authenticated rooms on socket `logout` or disconnect (and before a second socket `login`
+as another device or user, which first leaves every room of the previous login). An id of another
+device's socket, an unknown id or the id of a socket that is not logged in therefore names an empty
+room: nothing is excluded, nothing joins or leaves. No lookup per request; cluster-wide because
+rooms live in the adapter.
+
+During a deploy, sockets logged in on a wsapi process older than this change are not in their
+`deviceSocket:` room until they reconnect and log in again. For those tabs: they get their own
+events back (the chat-sync client store merges by message id and `syncSeq`); an article join
+joins nothing and a leave leaves nothing (no live article comments until the reconnect; the
+catch-up covers them); and a logout cannot tell the requesting socket from the others, so all
+of the device's sockets get `cliSignedOut` and are disconnected — the requesting tab ignores
+the event because its own logout is in flight (`LoginManager.signedOutElsewhere`). The same
+holds for a tab whose header carries its fallback id (no socket, or a stale one).
+
+| Site | With a valid header | Without one (old clients) |
+|---|---|---|
+| Echo of the request's own event: `createMessage`, `createModerationMessage`, `editMessage` (`srv/api/messages.ts`), `startChat`, `closeChat` (`srv/api/chats.ts`), `joinCommunity`, `createCommunity`, `setChannelPinState` (`srv/api/community.ts`) | `except: { deviceSockets: [{deviceId, socketId}] }` — only the sending socket misses it; the sender's other tabs get it live | `except: { deviceIds: [deviceId] }` — the whole device |
+| `/Message/joinArticleEventRoom`, `/leaveArticleEventRoom` | `eventHelper.requestSocketsJoinRooms/LeaveRooms` on the requesting socket only, so closing an article in one tab keeps the other tab in the room. Tracked in the session as `socketArticleRooms` (`{articleId, socketId}`): at most 5 per socket (a sixth join leaves that socket's oldest room; other tabs keep theirs) and at most 50 per session (the oldest entries, mostly of closed tabs, are left first). Both are soft bounds: concurrent requests of one session save the session last-write-wins, so an entry can get lost while its socket stays in the room until it disconnects | the device's sockets, tracked in `temporaryArticleIds` (at most 5) |
+| `/User/logout` (logout disconnects the device's sockets: `eventHelper.logoutDeviceSockets`) | `cliSignedOut` to the device's other sockets, then `disconnectSockets(false)` on them; the requesting socket is left out (its tab sends the socket `logout` itself) | `disconnectSockets(false)` on all of the device's sockets, no `cliSignedOut` (an old client would show it as a sign-out from elsewhere) |
+
+Reactions keep excluding the whole user and re-sending the `ownReaction` copy to the user room,
+unchanged.
 
 ### Online Status & Heartbeat
 
@@ -236,7 +278,7 @@ Bot presence is tracked separately from human online status, because a bot may h
 
 `eventHelper.disconnectBotTokenSockets(tokenId)` (`srv/repositories/event.ts`) calls `io.in(botToken:{tokenId}).disconnectSockets(true)` across all instances via the Redis adapter. It is invoked when a token is revoked (`botTokenHelper`), and when a bot is uninstalled or banned (`botHelper`), so live sockets for an invalidated token are torn down immediately rather than lingering until their next request.
 
-Browser sockets of devices that were signed out from elsewhere (another device's "Sign out other devices", or a replaced password, email or removed sign-in method, [auth-identity §2](../auth-identity/README.md#signing-out-other-devices)) are handled the same way: `eventHelper.signOutDeviceSockets(deviceIds)` emits `cliSignedOut` to their `device:{deviceId}` rooms and then calls `disconnectSockets(false)` on them, through the same publisher in this order. The client signs out locally on the event; a socket that reconnects cannot log in again, its device key is gone. The socket `login` verifies the key with the same lookup as the HTTP device login, which rejects a key below the account's session generation, and after joining its rooms checks once more that its key is still valid (one DB read) and disconnects if it is not — a key that became invalid between the check and the joining.
+Browser sockets of devices that were signed out from elsewhere (another device's "Sign out other devices", or a replaced password, email or removed sign-in method, [auth-identity §2](../auth-identity/README.md#signing-out-other-devices)) are handled the same way: `eventHelper.signOutDeviceSockets(deviceIds)` emits `cliSignedOut` to their `device:{deviceId}` rooms and then calls `disconnectSockets(false)` on them, through the same publisher in this order. A logout in one tab does the same for the device's other sockets (`logoutDeviceSockets`, see [Socket-scoped targeting](#socket-scoped-targeting)). The client signs out locally on the event; a socket that reconnects cannot log in again, its device key is gone. The socket `login` verifies the key with the same lookup as the HTTP device login, which rejects a key below the account's session generation, and after joining its rooms checks once more that its key is still valid (one DB read) and disconnects if it is not — a key that became invalid between the check and the joining.
 
 ---
 
@@ -659,6 +701,21 @@ enum CallType {
 7. **Server cleanup:** On SIGTERM, and on start, `callHelper.resetCallServer` ends the calls of this call server (matched by its URL), event calls included. A failure at start is logged and does not keep the call server from registering its call update listener. An ended event call can be started again (`startScheduledCall` resets `endedAt`).
 8. **Safety net (jobs process):** `callUpdateEmitter` ends non-scheduled calls whose members have all left more than 60 s ago (checked every second), and every open call (event calls included) of call servers that are gone — row deleted or missing, or heartbeat (`callservers.updatedAt`, written every 2 s) older than 60 s (checked every 15 s). Every call that gets an `endedAt`, by whichever path, is sent to the community room as `cliCallEvent` `delete`.
 
+**Live delivery of call chat and new calls.** Nobody joins a Public role room, so role rooms alone
+miss everyone who sees a call only through the Public role. Call-chat `cliMessageEvent`s
+(`emitMessageEvents`, `srv/api/messages.ts`) therefore go, in one emit, to the role rooms with
+`CALL_EXISTS` + `CHANNEL_READ`, to the user rooms of the call's present members
+(`callmembers.leftAt IS NULL`) who hold those permissions through a claimed role or Public
+(`callHelper.getActiveMemberUserIds`, evaluated like `permissionHelper.hasPermissions`), and to
+the community room (members and visitors) when Public is among those roles. `cliCallEvent` `new`
+(`startCall`, `startScheduledCall`, `emitCallNew` in `srv/api/community.ts`) goes to its role rooms
+plus the present members with `CALL_EXISTS` and the community room when Public has `CALL_EXISTS`
+(`callHelper.getCallEventExtraTargets`, one statement; if it fails, the role rooms still get the
+event). For call chat the role query and the member query each fall back to "none" on their own
+(the other targets still get the event); `emitMessageEvents`, which no caller waits for, never
+rejects — a failed target query of any channel kind is logged. Members who join after a message
+catch up through `getChanges`.
+
 ### Broadcast Mode
 
 In broadcast mode (`CallType.BROADCAST`):
@@ -713,9 +770,9 @@ All routes are POST under the notification router (`srv/api/notifications.ts`):
 |---|---|
 | `/loadNotifications` | Load notifications with pagination (before/after cursor, unread filter) |
 | `/loadUpdates` | Load notifications updated since a timestamp (for incremental sync) |
-| `/getUnreadCount` | Get count of unread notifications |
-| `/markAsRead` | Mark a single notification as read (emits `cliNotificationEvent` via Socket.IO) |
-| `/markAllAsRead` | Mark all notifications as read (emits `cliNotificationEvent`) |
+| `/getUnreadCount` | Count of unread notifications as a number; `{ withTime: true }` answers `{ unreadCount, unreadCountAt }`. A call without a body (older clients) gets the plain number |
+| `/markAsRead` | Mark a single unread notification as read; emits `cliNotificationEvent` `update` only when it was unread (already read: no write, no event) |
+| `/markAllAsRead` | Mark the unread notifications as read; emits `cliNotificationEvent` `allread` only when at least one changed |
 | `/getPublicVapidKey` | Return the VAPID public key for push subscription |
 | `/registerWebPushSubscription` | Store the push subscription on the device record |
 | `/unregisterWebPushSubscription` | Remove the push subscription from the device record |
@@ -731,6 +788,15 @@ The `sendWsOrWebPushNotificationEvent` method (`srv/repositories/notifications.t
 4. **Error handling:** On 410/404 (subscription expired), removes the subscription from the device. Other errors are logged.
 5. **Notification preferences:** Community-scoped notifications are gated by the recipient's per-community preference flags (e.g. `notifyMentions`, `notifyReplies`, `notifyCalls`); DMs are gated by `dmNotifications`.
 6. **Socket.IO fallback:** For notification types that are stored in the DB (not DMs, ChannelMessages, or Calls), also emits the event via `eventHelper.emit` for real-time Socket.IO delivery.
+
+### Unread count in notification events
+
+`cliNotificationEvent` `new` (stored types only, see 6. above), `update` and `allread` carry two additional fields next to `action`/`data`:
+
+- `unreadCount` -- the user's unread notification count after the change, a number;
+- `unreadCountAt` -- the database `now()` (ISO) of the statement that read the count.
+
+The count is read in its own statement after the write (`notificationHelper.withUnreadCount`), so a count with a later `unreadCountAt` includes every change committed before it; clients keep the count with the newest time. If the count cannot be read, the event goes out without both fields (as from older servers) and clients refresh with `getUnreadCount`. The web-push payload of a `new` notification is unchanged (no count). No server path emits `delete` today; the type keeps it. The same count, as a number, is the login response's `unreadNotificationCount` and `notificationUnreadCount` of `Message/getSyncState` ([docs/backend](../backend/README.md)).
 
 ---
 
@@ -837,7 +903,8 @@ Key prefixes:
 | `srv/redis/index.ts` | RedisManager: two Valkey instances (state, cache), up to five lazily created clients |
 | `srv/redis/client.ts` | The one `createClient` call: `RESP: 2`, `error` listener, reconnect logging |
 | `srv/redis/userdata.ts` | UserDataManager for online status tracking |
-| `srv/repositories/event.ts` | EventHelper: emit Socket.IO events from any process; `disconnectBotTokenSockets` |
+| `srv/repositories/event.ts` | EventHelper: emit Socket.IO events from any process; `disconnectBotTokenSockets`; socket-scoped `requestSocketsJoinRooms`/`LeaveRooms`, `logoutDeviceSockets` |
+| `srv/util/requestSocket.ts` | `x-cg-socket-id` header (`getRequestSocketId`), `deviceSocketRoomKey`, `senderExcept` |
 | `srv/repositories/notifications.ts` | NotificationHelper: CRUD + web push delivery |
 | `srv/entities/call.ts` | Call, CallMembership, CallPermissions entities |
 | `srv/entities/callserver.ts` | CallServer entity |

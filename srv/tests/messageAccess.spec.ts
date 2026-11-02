@@ -49,6 +49,7 @@ jest.mock('../repositories/notifications', () => ({ __esModule: true, default: {
 jest.mock('../repositories/files', () => ({ __esModule: true, default: {} }));
 jest.mock('../repositories/articles', () => ({ __esModule: true, default: {} }));
 jest.mock('../repositories/bots', () => ({ __esModule: true, default: {} }));
+jest.mock('../repositories/calls', () => ({ __esModule: true, default: { getActiveMemberUserIds: jest.fn().mockResolvedValue([]) } }));
 jest.mock('../util/botPrincipal', () => ({ allowBotRoute: jest.fn() }));
 jest.mock('../util/botRateLimit', () => ({ enforceBotRateLimit: jest.fn() }));
 jest.mock('../util/rateLimit', () => ({ __esModule: true, default: () => jest.fn() }));

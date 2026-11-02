@@ -51,6 +51,8 @@ const fake = vi.hoisted(() => {
     keyPair: undefined as CryptoKeyPair | undefined,
     /** options of every community/chat snapshot merge (setupAfterLogin) */
     snapshots: [] as { db: string; options?: { requestStartedAt?: number } }[],
+    /** client event handlers (connectionManager) of the tab opened last */
+    clientEventHandlers: new Map<string, (...args: unknown[]) => void>(),
   };
 });
 
@@ -164,7 +166,14 @@ vi.mock('data/api/notifications', () => ({ default: { getUnreadCount: async () =
 vi.mock('data/api/community', () => ({ default: { getCommunityDetailView: async () => ({}) } }));
 vi.mock('data/api/chat', () => ({ default: { getChats: async () => [] } }));
 vi.mock('util/siwe', () => ({ default: () => '' }));
-vi.mock('data/appstate/connection', () => ({ default: { registerClientEventHandler: () => undefined } }));
+vi.mock('data/appstate/connection', () => ({
+  default: {
+    // the last tab's handlers win: tests deliver server events through them
+    registerClientEventHandler: (event: string, handler: (...args: unknown[]) => void) => {
+      fake.clientEventHandlers.set(event, handler);
+    },
+  },
+}));
 vi.mock('data/appstate/serviceWorker', () => ({ default: { setupAfterLogin: async () => undefined } }));
 
 beforeAll(async () => {
@@ -573,6 +582,24 @@ describe('logout and login in other tabs', () => {
     await settle();
     expect(messages).toEqual([expect.objectContaining({ v: 1, type: 'logged-in', userId: 'u1' })]);
     channel.close();
+  });
+
+  it('a cliSignedOut while the tab logs out itself shows no "signed out elsewhere" notice', async () => {
+    setup();
+    const tab = await loggedInTab();
+    const { default: signedOutNotice } = await import('data/auth/signedOut');
+    signedOutNotice.dismiss();
+    const onSignedOut = fake.clientEventHandlers.get('cliSignedOut');
+    expect(onSignedOut).toBeDefined();
+    // the server could not match the request's socket id (a deploy mix, a
+    // stale fallback id) and signed this tab's socket out with the others
+    const logout = tab.loginManager.logout();
+    onSignedOut!();
+    await logout;
+    await settle();
+    expect(signedOutNotice.shown).toBe(false);
+    expect(tab.loginManager.state).toBe('anonymous');
+    expect(fake.server.logoutCalls).toBe(1);
   });
 });
 

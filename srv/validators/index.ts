@@ -6,6 +6,7 @@ import Common from "./common";
 import BaseArticleApi from "./api/basearticle";
 import UserApi from "./api/user";
 import MessageApi from "./api/message";
+import SyncStateApi from "./api/syncState";
 import CommunityApi from "./api/community";
 import ChatApi from "./api/chat";
 import FileApi from "./api/file";
@@ -31,7 +32,9 @@ const validators = {
     User: UserApi,
     Community: CommunityApi,
     Chat: ChatApi,
-    Message: MessageApi,
+    // `Message/getSyncState` lives in its own router and validator file
+    // (srv/api/syncState.ts) but is a Message route
+    Message: { ...MessageApi, ...SyncStateApi },
     Files: FileApi,
     Contract: ContractApi,
     Notification: NotificationApi,

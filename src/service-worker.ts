@@ -17,6 +17,7 @@ import buildId from 'common/random_build_id';
 import { getUrl } from 'common/util';
 import type { MessageFromServiceWorker } from 'data/appstate/serviceWorker';
 import { UAParser } from 'ua-parser-js';
+import { installLegacyTabCompat } from './serviceWorkerLegacyTabs';
 
 const userAgent = UAParser(navigator.userAgent);
 
@@ -28,28 +29,35 @@ export type ServiceWorkerMessage = {
   type: "REGISTER_PROGRESS_PORT";
   port: MessagePort;
 } | {
-  type: 'STOP_TAB_HANDLING';
-} | {
   type: 'CHANNEL_VISITED';
   channelId: string;
 };
 
-const webSocketStateBroadcast = new BroadcastChannel('CG_WEBSOCKET_STATE');
-let socketState: Common.WebSocketState = 'disconnected';
-let socketStateSince = Date.now();
-let lastEventTime: number | undefined;
-let lastDisconnect: number | undefined;
-const alive = new Map<string, number>();
-const tabs: {
+/**
+ * @deprecated The worker no longer assigns tab roles. Type-only leftovers of
+ * the former referee's wire format, kept because `data/appstate/webSocket.ts`
+ * still imports them until the chat-sync transport slice drops its tab roles.
+ * TODO(chat-sync): delete once nothing imports them (the wire format of old
+ * pages lives on as `Legacy*` in data/appstate/transport.ts).
+ */
+export type TabToWorkerMessage = {
+  type: 'TabToWorker';
   tabId: string;
-  tabState: 'active' | 'active-throttled' | 'passive' | 'passive-throttled';
+  tabState: Common.TabState | 'tabClosed';
   visible?: boolean;
-}[] = [];
-// The browser terminates idle service workers; on restart all of the state
-// above is empty until tab heartbeats repopulate it. Autonomous role
-// reassignment must wait for that, or a half-informed referee promotes the
-// wrong tab and fights the tabs' own collision handling.
-const workerStartedAt = Date.now();
+  socketState?: Common.WebSocketState;
+  lastEventTime?: number;
+  lastDisconnect?: number;
+};
+/** @deprecated see TabToWorkerMessage */
+export type WorkerToTabMessage = {
+  type: 'WorkerToTab';
+  tabId: string;
+  tabState: Common.TabState;
+  socketState?: Common.WebSocketState;
+  lastEventTime?: number;
+  lastDisconnect?: number;
+};
 
 const svgIconDataUrl = "data:image/svg+xml," + encodeURIComponent(`<?xml version="1.0" encoding="UTF-8"?>
   <svg width="40" height="40" fill="none" version="1.1" viewBox="0 0 40 30" xmlns="http://www.w3.org/2000/svg">
@@ -135,37 +143,6 @@ precacheController.addToCacheList(preloadData);
 const precacheRoute = new PrecacheRoute(precacheController);
 registerRoute(precacheRoute);
 
-let activeWorkerExistedOnStartup = self.registration.active !== null;
-
-let handleTabStates = self.clients.matchAll({
-  includeUncontrolled: false,
-  type: 'window',
-}).then(clients => {
-  return !neverHandleTabsAgain && (
-    clients.length > 0 ||
-    !activeWorkerExistedOnStartup
-  );
-});
-let neverHandleTabsAgain = false;
-
-setInterval(async () => {
-  const clients = await self.clients.matchAll({
-    includeUncontrolled: false,
-    type: 'window',
-  });
-  handleTabStates = Promise.resolve(!neverHandleTabsAgain && (
-    clients.length > 0 ||
-    !activeWorkerExistedOnStartup
-  ));
-  selectNewActiveTabIfAppropriate();
-}, 2000);
-
-function debugLog(...args: any[]) {
-  // console.log(...args);
-}
-
-const bannedTabIds = new Set<string>();
-
 self.addEventListener('install', (event) => {
   precacheController.install(event);
 });
@@ -175,13 +152,6 @@ self.addEventListener('activate', (event) => {
     self.clients.claim().then(() => {
       return self.clients.matchAll();
     }).then(clients => {
-      handleTabStates = Promise.resolve(!neverHandleTabsAgain);
-      bannedTabIds.clear();
-      for (const tab of tabs) {
-        bannedTabIds.add(tab.tabId);
-      }
-      tabs.splice(0);
-      socketState = 'disconnected';
       clients.forEach(client => {
         const message: MessageFromServiceWorker = { action: 'reload' };
         client.postMessage(message);
@@ -259,320 +229,36 @@ registerRoute(
   "GET"
 );
 
-// fallback mechanic for desktop devices which do not allow
-// managing / accessing older notifications (experienced on linux)
-const channelsWithActiveNotification = new Set<string>();
-
 // This allows the web app to trigger skipWaiting via
 // registration.waiting.postMessage({type: 'SKIP_WAITING'})
+// Pages from before chat-sync may also post { type: 'STOP_TAB_HANDLING' }
+// (it switched off the former tab-role referee); it is ignored.
 self.addEventListener('message', (event: Omit<ExtendableMessageEvent, 'data'> & {data: ServiceWorkerMessage}) => {
   if (event.data) {
     if (event.data.type === 'SKIP_WAITING') {
       self.skipWaiting();
     }
-    else if (event.data.type === 'STOP_TAB_HANDLING') {
-      neverHandleTabsAgain = true;
-      handleTabStates = Promise.resolve(false);
-    }
     else if (event.data.type === 'CHANNEL_VISITED') {
+      // The page visited a channel or DM: close its push notifications
+      // (tagged with the channel id, see the push handler).
       const { channelId } = event.data;
-      (async () => {
-        const notifications = await self.registration.getNotifications({ tag: channelId });
-        if (notifications.length > 0 || channelsWithActiveNotification.has(channelId)) {
-          channelsWithActiveNotification.delete(channelId);
+      event.waitUntil(
+        self.registration.getNotifications({ tag: channelId }).then(notifications => {
           notifications.forEach(n => n.close());
-          const clients = await self.clients.matchAll({
-            type: 'window'
-          });
-          clients.forEach(client => {
-            const message: MessageFromServiceWorker = {
-              action: 'channel_notification_closed',
-              channelId,
-            };
-            client.postMessage(message);
-          });
-        }
-      })();
+        })
+      );
     }
   }
 });
 
-
-// Tab WebSocket connection management
-
-export type TabToWorkerMessage = {
-  type: 'TabToWorker';
-  tabId: string;
-  tabState: Common.TabState | 'tabClosed';
-  // Whether the sending tab's document was visible; used by other tabs to
-  // break active-role collisions deterministically (visible tab wins).
-  visible?: boolean;
-  socketState?: Common.WebSocketState;
-  lastEventTime?: number;
-  lastDisconnect?: number;
-};
-
-export type WorkerToTabMessage = {
-  type: 'WorkerToTab';
-  tabId: string;
-  tabState: Common.TabState;
-  socketState?: Common.WebSocketState;
-  lastEventTime?: number;
-  lastDisconnect?: number;
-};
-
-async function sendTabMessage(message: WorkerToTabMessage) {
-  const handleState = await handleTabStates;
-  if (handleState) {
-    webSocketStateBroadcast.postMessage(message);
-  }
-}
-
-setInterval(async () => {
-  const handleState = await handleTabStates;
-  if (!handleState) {
-    return;
-  }
-
-  for (const tabId of Array.from(alive.keys())) {
-    const time = alive.get(tabId) as number;
-    const index = tabs.findIndex(t => t.tabId === tabId);
-
-    if (index > -1) {
-      if (time < Date.now() - 70000) {
-        // tab is dead
-        sendTabMessage({
-          type: 'WorkerToTab',
-          tabId,
-          tabState: 'unknown',
-        });
-        tabs.splice(index, 1);
-      }
-      else if (time < Date.now() - 4000) {
-        // tab is throttled or paused
-        let newTabState: 'active-throttled' | 'passive-throttled' | undefined;
-        if (tabs[index].tabState === 'active') {
-          newTabState = 'active-throttled';
-        }
-        else if (tabs[index].tabState === 'passive') {
-          newTabState = 'passive-throttled';
-        }
-        if (!!newTabState) {
-          tabs[index].tabState = newTabState;
-          sendTabMessage({
-            type: 'WorkerToTab',
-            tabId,
-            tabState: newTabState,
-          });
-        }
-      }
-    }
-    else {
-      alive.delete(tabId);
-    }
-  }
-
-  // If the active tab's connection has been stuck in 'connecting' well beyond
-  // socket.io's retry backoff (a throttled background tab can stall there
-  // indefinitely), hand the active role to a fresh, non-throttled passive tab.
-  if (socketState === 'connecting' && socketStateSince < Date.now() - 45000) {
-    const activeIndex = tabs.findIndex(t => t.tabState === 'active' || t.tabState === 'active-throttled');
-    const freshPassive = tabs.find(t =>
-      t.tabState === 'passive' &&
-      (alive.get(t.tabId) ?? 0) > Date.now() - 8000
-    );
-    if (activeIndex > -1 && !!freshPassive) {
-      const demoted = tabs[activeIndex];
-      demoted.tabState = 'passive-throttled';
-      sendTabMessage({
-        type: 'WorkerToTab',
-        tabId: demoted.tabId,
-        tabState: 'passive-throttled',
-      });
-      socketState = 'disconnected';
-      socketStateSince = Date.now();
-      selectNewActiveTabIfAppropriate();
-    }
-  }
-
-  selectNewActiveTabIfAppropriate();
-}, 4000);
-
-function selectNewActiveTabIfAppropriate() {
-  if (Date.now() - workerStartedAt < 2500) {
-    // Freshly (re)started worker: the tab registry is still repopulating
-    // from heartbeats — do not reassign roles based on a partial picture.
-    return;
-  }
-  if (tabs.length > 0) {
-    const activeTabs = tabs.filter(t => t.tabState === 'active' || t.tabState === 'active-throttled');
-    if (activeTabs.length === 0) {
-      // Prefer a visible tab: it is never timer-throttled, and the tabs'
-      // own collision handling awards the active role to visible tabs.
-      let theChosenTab = tabs.find(t => t.tabState === 'passive' && t.visible === true);
-      if (!theChosenTab) {
-        theChosenTab = tabs.find(t => t.tabState === 'passive');
-      }
-      if (!theChosenTab) {
-        theChosenTab = tabs[0];
-      }
-      if (!!theChosenTab) {
-        let newTabState: 'active' | 'active-throttled';
-        if (theChosenTab.tabState === 'passive') {
-          newTabState = 'active';
-        }
-        else {
-          newTabState = 'active-throttled';
-        }
-        theChosenTab.tabState = newTabState;
-        sendTabMessage({
-          type: 'WorkerToTab',
-          tabId: theChosenTab.tabId,
-          tabState: newTabState,
-        });
-      }
-      else {
-        console.error("Could not select new active tab", tabs);
-      }
-    }
-  }
-}
-
-webSocketStateBroadcast.onmessage = async (event: MessageEvent<TabToWorkerMessage>) => {
-  const { data } = event;
-  if (bannedTabIds.has(data.tabId)) {
-    return;
-  }
-
-  const handleEvent = await handleTabStates;
-  if (!!handleEvent) {
-    debugLog('(SW) TabMessage received', self, event.data);
-  }
-
-  alive.set(data.tabId, Date.now());
-
-  if (data.socketState !== undefined) {
-    if (data.socketState !== socketState) {
-      socketStateSince = Date.now();
-    }
-    socketState = data.socketState;
-  }
-
-  if (data.lastEventTime !== undefined) {
-    lastEventTime = data.lastEventTime;
-  }
-
-  if (data.lastDisconnect !== undefined) {
-    lastDisconnect = data.lastDisconnect;
-  }
-
-  let tabIndex = tabs.findIndex(t => t.tabId === event.data.tabId);
-
-  if (!handleEvent) {
-    // only update state, but do not
-    // handle event any further
-    if (data.tabState === 'tabClosed') {
-      bannedTabIds.add(data.tabId);
-      if (tabIndex > -1) {
-        tabs.splice(tabIndex, 1);
-      }
-    }
-    else {
-      const newTabState = data.tabState === 'unknown' ? 'passive' : data.tabState;
-      if (tabIndex > -1) {
-        tabs[tabIndex].tabState = newTabState;
-        tabs[tabIndex].visible = data.visible;
-      }
-      else {
-        tabs.push({
-          tabId: data.tabId,
-          tabState: newTabState,
-          visible: data.visible,
-        });
-      }
-    }
-    debugLog('Skipped event handling');
-    return;
-  }
-
-  if (data.tabState === 'tabClosed') {
-    bannedTabIds.add(data.tabId);
-    if (tabIndex > -1) {
-      tabs.splice(tabIndex, 1);
-    }
-    selectNewActiveTabIfAppropriate();
-    return;
-  }
-
-  const activeTabs = tabs.filter(t => t.tabState === 'active' || t.tabState === 'active-throttled');
-  if (activeTabs.length > 1) {
-    console.warn('More than 1 active webSocket connection tabs, this has to be a problem with the selection handling', JSON.parse(JSON.stringify(tabs)));
-  }
-
-  if (data.tabState === 'unknown') {
-    let newTabState: 'active' | 'passive' = 'passive';
-    if (activeTabs.length === 0) {
-      // no active tab exists
-      newTabState = 'active';
-    }
-    if (tabIndex > -1) {
-      const existing = tabs[tabIndex];
-      existing.tabState = newTabState;
-      existing.visible = data.visible;
-      if (newTabState === 'active') {
-        activeTabs.push(existing);
-      }
-    }
-    else {
-      const tab = {
-        tabId: data.tabId,
-        tabState: newTabState,
-        visible: data.visible,
-      };
-      tabs.push(tab);
-      tabIndex = tabs.length - 1;
-      if (newTabState === 'active') {
-        activeTabs.push(tab);
-      }
-    }
-    sendTabMessage({
-      type: 'WorkerToTab',
-      tabId: data.tabId,
-      tabState: newTabState,
-      lastDisconnect,
-      lastEventTime,
-      socketState,
-    });
-  }
-  else {
-    if (tabIndex > -1) {
-      const existing = tabs[tabIndex];
-      existing.tabState = data.tabState;
-      existing.visible = data.visible;
-    }
-    else {
-      tabs.push({
-        tabId: data.tabId,
-        tabState: data.tabState,
-        visible: data.visible,
-      });
-    }
-  }
-
-  if (tabs.length === 0) {
-    lastDisconnect = undefined;
-    lastEventTime = undefined;
-    socketState = 'disconnected';
-  }
-  else if (tabs.filter(t => t.tabState === 'active' || t.tabState === 'active-throttled').length === 0) {
-    // Recompute after applying this message: the activeTabs snapshot above
-    // predates the update, and deciding on stale data here caused the
-    // referee to fight the tabs' own collision handling.
-    selectNewActiveTabIfAppropriate();
-  }
-
-  debugLog("Tabs changed", JSON.parse(JSON.stringify(tabs)));
-};
+// TODO(chat-sync compat): remove one release after chat-sync ships, together
+// with src/serviceWorkerLegacyTabs.ts. Answers role requests of still-open
+// pages from before chat-sync with "active"; tab roles are gone otherwise.
+// Only the active worker answers: a new worker that is installed but waiting
+// must not answer next to the old build's worker, which still assigns roles.
+installLegacyTabCompat({
+  shouldAnswer: () => self.serviceWorker === undefined || self.serviceWorker.state === 'activated',
+});
 
 // Web Push
 
@@ -634,10 +320,6 @@ self.addEventListener("push", async (pushEvent) => {
         if (!!event.data.extraData.iconUrlRelative) iconUrl = `${selfOrigin}${event.data.extraData.iconUrlRelative}`;
       }
       
-      if (channelId) {
-        channelsWithActiveNotification.add(channelId);
-      }
-
       if (userAgent.os.name === 'iOS') {
         return self.registration.showNotification(title, {
           body: data.map(d => d.text).join('\n'),
@@ -769,27 +451,6 @@ self.addEventListener('notificationclick', function(event) {
     url = data.extraData.navUrl;
   }
   
-  const channelNotificationClosed = (channelId?: string) => {
-    if (channelId) {
-      channelsWithActiveNotification.delete(channelId);
-      const message: MessageFromServiceWorker = {
-        action: 'channel_notification_closed',
-        channelId,
-      };
-      this.setTimeout(() => {
-        self.clients.matchAll({
-          type: 'window',
-          includeUncontrolled: true,
-        }).then(clients => {
-          clients.forEach(client => {
-            client.postMessage(message);
-          });
-        });
-      
-      }, 500);
-    }
-  };
-
   // Use event.notification.data or other metadata to decide what URL to open
   event.waitUntil(
     self.clients.matchAll({

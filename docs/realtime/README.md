@@ -15,7 +15,8 @@
 > 2026-11-02; the page side of the tab/socket model (Socket.IO Client, Tab Coordination: one
 > socket per tab, live signal, hidden-tab policy, login lock and post-reconnect snapshot)
 > against commit 964f6b3, 2026-11-02; the service worker's part in tab coordination (no
-> referee, one-release compat answer) against commit 79187d2, 2026-11-02
+> referee, one-release compat answer) against commit 79187d2, 2026-11-02; the notification
+> routes and the `cliNotificationEvent` count fields against commit 3f204f4, 2026-11-02
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -713,9 +714,9 @@ All routes are POST under the notification router (`srv/api/notifications.ts`):
 |---|---|
 | `/loadNotifications` | Load notifications with pagination (before/after cursor, unread filter) |
 | `/loadUpdates` | Load notifications updated since a timestamp (for incremental sync) |
-| `/getUnreadCount` | Get count of unread notifications |
-| `/markAsRead` | Mark a single notification as read (emits `cliNotificationEvent` via Socket.IO) |
-| `/markAllAsRead` | Mark all notifications as read (emits `cliNotificationEvent`) |
+| `/getUnreadCount` | Count of unread notifications as a number; `{ withTime: true }` answers `{ unreadCount, unreadCountAt }`. A call without a body (older clients) gets the plain number |
+| `/markAsRead` | Mark a single unread notification as read; emits `cliNotificationEvent` `update` only when it was unread (already read: no write, no event) |
+| `/markAllAsRead` | Mark the unread notifications as read; emits `cliNotificationEvent` `allread` only when at least one changed |
 | `/getPublicVapidKey` | Return the VAPID public key for push subscription |
 | `/registerWebPushSubscription` | Store the push subscription on the device record |
 | `/unregisterWebPushSubscription` | Remove the push subscription from the device record |
@@ -731,6 +732,15 @@ The `sendWsOrWebPushNotificationEvent` method (`srv/repositories/notifications.t
 4. **Error handling:** On 410/404 (subscription expired), removes the subscription from the device. Other errors are logged.
 5. **Notification preferences:** Community-scoped notifications are gated by the recipient's per-community preference flags (e.g. `notifyMentions`, `notifyReplies`, `notifyCalls`); DMs are gated by `dmNotifications`.
 6. **Socket.IO fallback:** For notification types that are stored in the DB (not DMs, ChannelMessages, or Calls), also emits the event via `eventHelper.emit` for real-time Socket.IO delivery.
+
+### Unread count in notification events
+
+`cliNotificationEvent` `new` (stored types only, see 6. above), `update` and `allread` carry two additional fields next to `action`/`data`:
+
+- `unreadCount` -- the user's unread notification count after the change, a number;
+- `unreadCountAt` -- the database `now()` (ISO) of the statement that read the count.
+
+The count is read in its own statement after the write (`notificationHelper.withUnreadCount`), so a count with a later `unreadCountAt` includes every change committed before it; clients keep the count with the newest time. If the count cannot be read, the event goes out without both fields (as from older servers) and clients refresh with `getUnreadCount`. The web-push payload of a `new` notification is unchanged (no count). No server path emits `delete` today; the type keeps it. The same count, as a number, is the login response's `unreadNotificationCount` and `notificationUnreadCount` of `Message/getSyncState` ([docs/backend](../backend/README.md)).
 
 ---
 

@@ -34,7 +34,11 @@
 > fc15832, 2026-11-02; the chat-sync message routes (`/getChanges`, idempotent
 > `/createMessage`, `/setChannelLastRead` answer, `syncSeq`), the `ChannelSyncState` entity
 > and the test list against commit 30ce83e, 2026-11-02; the `/createMessage` channel lock and
-> `createdAt` rule against commits 959064f and 1963d4f, 2026-11-02.
+> `createdAt` rule against commits 959064f and 1963d4f, 2026-11-02;
+> `Message/getSyncState` (`srv/api/syncState.ts`, `srv/repositories/syncState.ts`), the
+> notification read/count routes, the `chats`/`notifications` indexes and the test list
+> against commit 312b5e7, 2026-11-02; the real-PostgreSQL spec notes (`tests/helpers/testPg.ts`)
+> against commit c652a23, 2026-11-02.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -501,6 +505,20 @@ Every route that takes an access object (`communityId`, `chatId`, `callId`, or `
 
 A subset of message routes is also reachable over the Bot API v1 surface (see below). At module load, `messages.ts` allowlists `POST /BotV1/messages/{loadMessages, messagesById, loadUpdates, createMessage, setReaction, unsetReaction}` for bot bearer principals. When a request carries a `botPrincipal`, the handler resolves the acting user from the bot instead of the session, requires an exact `{communityId, channelId}` access target, enforces the per-token bot rate limits, and verifies the bot's active membership/policy for that community before proceeding.
 
+### `srv/api/syncState.ts` -- Read-State Snapshot
+
+Mounted at `/Message` after the message router (`srv/api.ts`, same `securityStep` middleware), so the route is `/Message/getSyncState`.
+
+- `/getSyncState` -- `{ channelIds? }` (at most 500 unique UUIDs; Joi validator in `srv/validators/api/syncState.ts`) → `{ serverTime, notificationUnreadCount, channels }`. Session users only: not on the bot allowlist, and a bot principal is refused in the handler. One statement (`syncStateHelper.getChannelStates`, `srv/repositories/syncState.ts`) returns one entry per community channel the user can read and per chat the user is a member of, each with `channelId`, `communityId` or `chatId`, `syncSeq`, `lastMessageDate`, `lastRead` and `unread`:
+  - community channels: in the communities where the user holds a claimed, not deleted role (the communities `getOwnCommunities` lists; deleted communities and channels excluded), the channels for which the user's claimed roles plus the community's `Public` role together grant `CHANNEL_EXISTS` and `CHANNEL_READ` -- the same rule as the message read check. Public channels of communities the user is not a member of are not listed;
+  - chats: not deleted, `userIds` contains the user;
+  - `syncSeq`: the channel's `channel_sync_state.seq`, `0` without a row;
+  - `unread`: non-deleted messages of others after `lastRead`, capped at 999 (`API.Messages.UnreadCap`). Without a `channelreadstate` row: `0` for community channels, every non-deleted message of others for chats.
+
+  `notificationUnreadCount` and `serverTime` are the unread notification count and the database `now()` it was read at. The route writes nothing (unlike `getOwnCommunities` and `getChats`, which create missing `channelreadstate` rows). `channelIds: []` answers with no channels.
+
+  `channelIds` only narrows the same set: a requested channel is answered only if it is in the set above, so an explicitly requested Public channel of a community the user is not a member of is left out as well. A missing entry therefore means "no snapshot for this channel", not "no access" -- read access is decided by the message routes (`loadMessages`, `getChanges`), and clients must not treat a missing entry as a permission answer.
+
 ### `srv/api/chats.ts` -- DM / Chat Routes
 
 - `/startChat` -- Start a direct message chat
@@ -511,8 +529,10 @@ A subset of message routes is also reachable over the Bot API v1 surface (see be
 
 - `/loadNotifications` -- Load notification list
 - `/loadUpdates` -- Load notification updates
-- `/getUnreadCount` -- Get unread count
-- `/markAsRead`, `/markAllAsRead` -- Mark notifications read
+- `/getUnreadCount` -- Unread count as a number; with `{ withTime: true }` the object `{ unreadCount, unreadCountAt }` (`unreadCountAt` = database `now()` of the count). A call without a body (older clients) gets the plain number.
+- `/markAsRead` -- Marks one notification read. Only an unread notification is written, and the `cliNotificationEvent` `update` goes out only for that change (already read: no write, no event); an unknown id answers `NOT_FOUND`.
+- `/markAllAsRead` -- Marks the user's unread notifications read; `allread` is emitted only when at least one changed.
+- The `new`, `update` and `allread` events carry `unreadCount` and `unreadCountAt` (`notificationHelper.withUnreadCount`; left out if the count cannot be read). The login response's `unreadNotificationCount` is a number too.
 - `/getPublicVapidKey` -- Get VAPID key for web push
 - `/registerWebPushSubscription`, `/unregisterWebPushSubscription` -- Web push management
 - `/channelPushNotificationClosed` -- Handle push notification dismissal
@@ -809,6 +829,7 @@ All entities use TypeORM decorators and live in `srv/entities/`. The database is
 - `userIds` (UUID array) -- participants
 - `adminIds` (UUID array)
 - `channelId` (UUID, unique) -- associated channel for messages
+- GIN index `idx_chats_userIds_gin` on `userIds` for the membership test (`"userIds" @> ARRAY[user]`), added by `1793660400000-syncStateIndexes`
 
 ### Notification Domain
 
@@ -823,6 +844,7 @@ All entities use TypeORM decorators and live in `srv/entities/`. The database is
 - `message` (varchar 256)
 - `isRead` (boolean, default false)
 - `data` (jsonb, nullable) -- extra notification data
+- Partial index `idx_notifications_userId_unread` on `userId` where `read = FALSE` for the unread count, added by `1793660400000-syncStateIndexes`
 
 ### Content Domain
 
@@ -1117,8 +1139,12 @@ The `db: Pool | PoolClient` parameter pattern enables functions to work both sta
 - Chat retrieval with unread counts and last message
 - Chat closing (soft delete)
 
+**`srv/repositories/syncState.ts`** -- `syncStateHelper`
+- Read-only read-state snapshot of all readable community channels and chats (`Message/getSyncState`, see above)
+
 **`srv/repositories/notifications.ts`** -- `notificationHelper`
 - Notification creation and delivery
+- Unread count (`getUnreadCount`, `getUnreadCountWithTime`, `withUnreadCount` for events)
 - Web push notification sending (via `web-push` library)
 - Batch operations (mark as read, load with pagination)
 
@@ -1639,13 +1665,27 @@ with wave M2 (see below).
   `typingCache`, `userArticleVisibility`, `userArticleRoute`, `passkeyCore`,
   `passkeyRoutes`, `passkeyConfig`, `signupEmail`, `asyncHandler`,
   `registerPostRoute`, `uploadImageRoute`, `gatedFileRoute`, `callEnding`,
-  `messageSyncRepository` and `messageSyncRoutes` (the passkey tests drive
-  a software authenticator, `tests/helpers/softAuthenticator.ts`). Against a
+  `messageSyncRepository`, `messageSyncRoutes`, `notificationRoutes` and `syncState`
+  (the passkey tests drive a software authenticator,
+  `tests/helpers/softAuthenticator.ts`). Against a
   throwaway PostgreSQL, opt-in via `CG_TEST_PG_HOST` (skipped otherwise):
-  `securityStepDb` and `chatSyncSeqDb` (the message sync sequence: migration,
-  trigger under the `writer` role, commit order of concurrent writers, and
-  the message repository on the real schema; it creates and drops its own
-  database `cg_chat_sync_test`). `npx tsc --noEmit`
+  `securityStepDb` (resets the database `cryptogram`), `chatSyncSeqDb` (the
+  message sync sequence: migration, trigger under the `writer` role, commit
+  order of concurrent writers, and the message repository on the real
+  schema; it creates and drops its own database `cg_chat_sync_test`) and
+  `syncStateDb` (getSyncState and the notification read-state writes; own
+  database `cg_sync_state_test`). They connect only to
+  `CG_TEST_PG_HOST`:`CG_TEST_PG_PORT` (`tests/helpers/testPg.ts`), also for
+  the `util/postgres` pools `securityStepDb` loads (it sets `DB_HOST`/`DB_PORT`
+  from them and checks the loaded pool's target). `CG_TEST_PG_PORT` has no
+  default: with the host set and the port missing the specs fail instead of
+  falling back to `DB_PORT`, `PGPORT` or 5432, so they never reach another
+  PostgreSQL on the machine (such as a dev stack). Run them against a
+  throwaway server on a port of its own, e.g.
+  `docker run -d --name pg-test -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=cryptogram cryptogram/db:18`,
+  then `CG_TEST_PG_HOST=127.0.0.1 CG_TEST_PG_PORT=55432 CG_TEST_PG_PASSWORD=pw yarn jest --runInBand tests/securityStepDb.spec.ts tests/chatSyncSeqDb.spec.ts tests/syncStateDb.spec.ts`
+  (`CG_TEST_PG_PASSWORD` defaults to `pw`), and remove the container with
+  `docker rm -fv pg-test`. `npx tsc --noEmit`
   does not cover `tests/` (see `docs/todo/TODO.md`). ts-jest compiles the specs
   with `srv/tsconfig.json`, which therefore lists `"types": ["node", "jest"]`:
   `@tsconfig/node24` ≥ 24.0.5 sets `types: ["node"]`, which would otherwise hide

@@ -3,7 +3,8 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { describe, expect, it, vi } from 'vitest';
-import { useDataLayerFakeTimers } from 'test/timers';
+// aliased: called from a plain setup helper, not a React hook
+import { useDataLayerFakeTimers as installFakeTimers } from 'test/timers';
 import { flushMicrotasks } from 'test/deferred';
 import { createChannelStore, RESYNC_DEBOUNCE_MS } from './channelStore';
 import { FakeChatServer, ME, textBody, textOf } from './testing/fakeServer';
@@ -28,7 +29,7 @@ async function settle() {
 }
 
 function setup(options: { oldServer?: boolean; seed?: number } = {}) {
-  useDataLayerFakeTimers({ now: new Date('2026-11-02T12:00:00Z') });
+  installFakeTimers({ now: new Date('2026-11-02T12:00:00Z') });
   const server = new FakeChatServer();
   server.oldServer = !!options.oldServer;
   const access = server.addChannel(C);
@@ -113,7 +114,7 @@ describe('ChannelStore: init and snapshots', () => {
   });
 
   it('init without a registered access waits for it', async () => {
-    useDataLayerFakeTimers();
+    installFakeTimers();
     const server = new FakeChatServer();
     const access = server.addChannel(C);
     server.seed(C, 3);
@@ -443,7 +444,7 @@ describe('ChannelStore: sending', () => {
 
 describe('ChannelStore: editing', () => {
   it('B8: a successful edit shows the overlay, then clears sendStatus', async () => {
-    const { server, store } = setup({ seed: 2 });
+    const { store } = setup({ seed: 2 });
     const { w } = await openRecent(store);
     const msg = w.state.items[1];
     await store.editMessage(msg, { body: textBody('new text'), attachments: [], parentMessageId: null });

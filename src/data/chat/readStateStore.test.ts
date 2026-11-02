@@ -3,7 +3,8 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { describe, expect, it, vi } from 'vitest';
-import { useDataLayerFakeTimers } from 'test/timers';
+// aliased: called from a plain setup helper, not a React hook
+import { useDataLayerFakeTimers as installFakeTimers } from 'test/timers';
 import { flushMicrotasks } from 'test/deferred';
 import { createReadStateStore, SYNC_STATE_DEBOUNCE_MS } from './readStateStore';
 import { FakeChatServer, ME } from './testing/fakeServer';
@@ -18,7 +19,7 @@ async function settle() {
 }
 
 function setup(options: { oldServer?: boolean; userId?: string | undefined } = {}) {
-  useDataLayerFakeTimers({ now: new Date('2026-11-02T12:00:00Z') });
+  installFakeTimers({ now: new Date('2026-11-02T12:00:00Z') });
   const server = new FakeChatServer();
   server.oldServer = !!options.oldServer;
   if ('userId' in options) server.userId = options.userId;

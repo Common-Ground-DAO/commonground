@@ -1388,7 +1388,7 @@ class ChannelStoreImpl implements ChannelStore {
       try {
         const resp = p.moderation ? await this.deps.api.createModerationMessage(req) : await this.deps.api.createMessage(req);
         this.confirmOwn(ch, fromApiMessage(resp));
-      } catch (e) {
+      } catch {
         if (attempt > 1) {
           // older servers reject a repeated id; it may have been stored by the first attempt
           try {

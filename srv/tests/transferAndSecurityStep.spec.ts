@@ -224,7 +224,7 @@ const mocks: Record<string, object> = {
   device: devices,
   transferTokens,
   wallets: { getOwnWalletLoginEnabled: jest.fn(async () => false), updateWallet: jest.fn(), deleteWallet: jest.fn(), createWallet: jest.fn(async () => ({})) },
-  event: { emit: jest.fn() },
+  event: { emit: jest.fn(), signOutOtherDeviceSockets: jest.fn(async () => undefined) },
   communities: { getOwnCommunities: jest.fn(async () => []) },
   chats: { getChats: jest.fn(async () => []) },
   notifications: { getUnreadCount: jest.fn(async () => 0) },
@@ -867,5 +867,35 @@ describe('logout', () => {
     expect(sessionStore.has(oldSid)).toBe(false);
     expect(request.session).toBeUndefined();
     expect(devices.deleteDevice).toHaveBeenCalledWith('device-1');
+  });
+
+  // socket-scoped targeting (srv/util/requestSocket.ts)
+  const signOutOtherDeviceSockets = () => (mocks.event as any).signOutOtherDeviceSockets as jest.Mock;
+
+  it("signs out the device's other sockets when the request names its socket", async () => {
+    signOutOtherDeviceSockets().mockClear();
+    const request = fresh(USER);
+    request.headers['x-cg-socket-id'] = 'AbCdEfGhIj0123456_-x';
+    await call('User/logout', request, undefined);
+    expect(signOutOtherDeviceSockets()).toHaveBeenCalledWith({ deviceId: 'device-1', socketId: 'AbCdEfGhIj0123456_-x' });
+    expect(devices.deleteDevice).toHaveBeenCalledWith('device-1');
+  });
+
+  it('leaves the sockets alone without a (valid) socket id, as for old clients', async () => {
+    signOutOtherDeviceSockets().mockClear();
+    await call('User/logout', fresh(USER), undefined);
+    const invalid = fresh(USER);
+    invalid.headers['x-cg-socket-id'] = 'too-short';
+    await call('User/logout', invalid, undefined);
+    expect(signOutOtherDeviceSockets()).not.toHaveBeenCalled();
+  });
+
+  it('still logs out when signing out the other sockets fails', async () => {
+    signOutOtherDeviceSockets().mockClear().mockRejectedValueOnce(new Error('redis down'));
+    const request = fresh(USER);
+    request.headers['x-cg-socket-id'] = 'AbCdEfGhIj0123456_-x';
+    const oldSid = request.sessionID;
+    await call('User/logout', request, undefined);
+    expect(sessionStore.has(oldSid)).toBe(false);
   });
 });

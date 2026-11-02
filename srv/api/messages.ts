@@ -25,6 +25,8 @@ import articleHelper from "../repositories/articles";
 import botHelper from "../repositories/bots";
 import { allowBotRoute } from "../util/botPrincipal";
 import { enforceBotRateLimit } from "../util/botRateLimit";
+import { requestSockets, senderExcept, type RequestSockets } from "../util/requestSocket";
+import callHelper from "../repositories/calls";
 
 const t = createTranslator();
 
@@ -240,6 +242,7 @@ export async function _checkAccessOrThrow(access: API.Messages.MessageAccess, us
 async function emitMessageEvents(events: Events.Message.Message[], access: API.Messages.MessageAccess, excludeObject?: {
   userIds?: string[];
   deviceIds?: string[];
+  deviceSockets?: { deviceId: string; socketId: string }[];
 }) {
   if ('communityId' in access) {
     const channelRolePermissions = await communityHelper.getCommunityChannelRolePermissions(access.communityId, access.channelId);
@@ -265,15 +268,25 @@ async function emitMessageEvents(events: Events.Message.Message[], access: API.M
     }
   }
   else if ('callId' in access) {
-    // Todo: only send to call participants
-    const callRolePermissions = await communityHelper.getCallRolePermissions(access.callId, access.channelId);
+    // the reader roles, the call's present members who may read its chat
+    // (also when that comes from Public) and, when Public may read, the
+    // community room (members and visitors): nobody joins a Public role
+    // room. One emit, so a socket in several of these rooms gets each event
+    // once.
+    const [callRolePermissions, activeMemberUserIds] = await Promise.all([
+      communityHelper.getCallRolePermissions(access.callId, access.channelId),
+      callHelper.getActiveMemberUserIds(access.callId, [CallPermission.CALL_EXISTS, CallPermission.CHANNEL_READ]),
+    ]);
     const notifyRoles = callRolePermissions.filter(d => (
       d.permissions.includes("CALL_EXISTS") &&
       d.permissions.includes("CHANNEL_READ")
     ));
+    const publicRole = notifyRoles.find(d => d.roleTitle === PredefinedRole.Public);
     for (const event of events) {
       eventHelper.emit(event, {
         roleIds: notifyRoles.map(d => d.roleId),
+        userIds: activeMemberUserIds,
+        communityIds: publicRole ? [publicRole.communityId] : [],
       }, excludeObject);
     }
   }
@@ -340,6 +353,7 @@ export function deleteResultEvents(
 
 async function createMessage(
   user: User,
+  sender: RequestSockets,
   data: API.Messages.createMessage.Request,
   isModerationMessage: boolean,
   creatorIsBot = false,
@@ -453,7 +467,7 @@ async function createMessage(
     data: { ...message, creatorIsBot },
   };
 
-  emitMessageEvents([event], access, { deviceIds: [user.deviceId] });
+  emitMessageEvents([event], access, senderExcept(sender));
 
   let notifications: (Omit<Models.Notification.ApiNotification, "id" | "createdAt" | "updatedAt" | "read"> & { userId: string })[] = [];
   const previewText = message.body.content.reduce<string[]>((agg, val) => {
@@ -686,7 +700,7 @@ registerPostRoute<
     }
     await permissionHelper.hasTrustOrThrow({ userId: user.id, trust: '1.0' });
 
-    return createMessage(user, data, false, !!request.botPrincipal);
+    return createMessage(user, requestSockets(request, user.deviceId), data, false, !!request.botPrincipal);
   }
 );
 
@@ -704,7 +718,7 @@ registerPostRoute<
     }
     await permissionHelper.hasTrustOrThrow({ userId: user.id, trust: '1.0' });
 
-    return createMessage(user, data, true);
+    return createMessage(user, requestSockets(request, user.deviceId), data, true);
   }
 );
 
@@ -759,7 +773,7 @@ registerPostRoute<
       },
     };
 
-    emitMessageEvents([event], data.access, { deviceIds: [user.deviceId] });
+    emitMessageEvents([event], data.access, senderExcept(requestSockets(request, user.deviceId)));
 
     const returnVal: API.Messages.editMessage.Response = {
       editedAt: result.editedAt,
@@ -1190,12 +1204,34 @@ registerPostRoute<
       await _checkAccessOrThrow(data.access, [
         ArticlePermission.ARTICLE_READ,
       ], user.id);
+      const { articleId } = data.access;
+      const sockets = requestSockets(request, user.deviceId);
+
+      if (sockets.socketId !== null) {
+        // only the requesting socket: another tab of the device keeps (or
+        // never gets) its own article rooms
+        const { socketId } = sockets;
+        const rooms = (request.session.socketArticleRooms || [])
+          .filter(r => r.articleId !== articleId || r.socketId !== socketId);
+        while (rooms.length >= ARTICLE_ROOM_LIMIT) {
+          const old = rooms.shift()!;
+          eventHelper.requestSocketsLeaveRooms({ deviceId: user.deviceId, socketId: old.socketId }, {
+            articleIds: [old.articleId],
+          });
+        }
+        rooms.push({ articleId, socketId });
+        request.session.socketArticleRooms = rooms;
+        eventHelper.requestSocketsJoinRooms(sockets, {
+          articleIds: [articleId],
+        });
+        return;
+      }
 
       if (request.session.temporaryArticleIds && request.session.temporaryArticleIds.length >= ARTICLE_ROOM_LIMIT) {
         const oldArticleId = request.session.temporaryArticleIds.shift();
         if (oldArticleId) {
           // TODO: Emit leave event for the old article room
-          eventHelper.deviceLeaveRooms(user.deviceId, {
+          eventHelper.requestSocketsLeaveRooms(sockets, {
             articleIds: [oldArticleId],
           });
         }
@@ -1204,9 +1240,9 @@ registerPostRoute<
       if (!request.session.temporaryArticleIds) {
         request.session.temporaryArticleIds = [];
       }
-      request.session.temporaryArticleIds.push(data.access.articleId);
-      eventHelper.deviceJoinRooms(user.deviceId, {
-        articleIds: [data.access.articleId],
+      request.session.temporaryArticleIds.push(articleId);
+      eventHelper.requestSocketsJoinRooms(sockets, {
+        articleIds: [articleId],
       });
     }
   }
@@ -1228,9 +1264,17 @@ registerPostRoute<
         ArticlePermission.ARTICLE_READ,
       ], user.id);
       const articleId = data.access.articleId;
-      request.session.temporaryArticleIds = request.session.temporaryArticleIds?.filter(id => id !== articleId);
-      eventHelper.deviceLeaveRooms(user.deviceId, {
-        articleIds: [data.access.articleId],
+      const sockets = requestSockets(request, user.deviceId);
+      if (sockets.socketId !== null) {
+        const { socketId } = sockets;
+        request.session.socketArticleRooms = request.session.socketArticleRooms
+          ?.filter(r => r.articleId !== articleId || r.socketId !== socketId);
+      }
+      else {
+        request.session.temporaryArticleIds = request.session.temporaryArticleIds?.filter(id => id !== articleId);
+      }
+      eventHelper.requestSocketsLeaveRooms(sockets, {
+        articleIds: [articleId],
       });
     }
   }

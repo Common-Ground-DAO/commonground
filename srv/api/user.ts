@@ -21,6 +21,7 @@ import { registerPostRoute } from "./util";
 import validators from "../validators";
 import articleHelper from "../repositories/articles";
 import eventHelper from "../repositories/event";
+import { requestSockets } from "../util/requestSocket";
 import notificationHelper from "../repositories/notifications";
 import { fetchRemoteImage } from "../util/safeFetch";
 import onchainHelper from "../repositories/onchain";
@@ -800,6 +801,14 @@ registerPostRoute<
     const { user } = request.session;
     if (!!user) {
       await deviceHelper.deleteDevice(user.deviceId);
+      // the device's other sockets (other tabs) are signed out and
+      // disconnected; the requesting tab's socket logs out itself. Only for
+      // requests that name their socket (old clients: unchanged).
+      const sockets = requestSockets(request, user.deviceId);
+      if (sockets.socketId !== null) {
+        await eventHelper.signOutOtherDeviceSockets(sockets)
+          .catch(e => console.error("Error signing out the device's other sockets", e));
+      }
     }
     // the session is destroyed and its id revoked: nothing of it (user,
     // step-up state, ceremonies, provider data) survives, and no new one

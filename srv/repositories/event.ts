@@ -15,6 +15,32 @@ import {
 } from "../util";
 import redisManager from "../redis";
 import notificationHelper from "./notifications";
+import { deviceSocketRoomKey, type RequestSockets } from "../util/requestSocket";
+
+type JoinTarget = {
+  roleIds?: string[];
+  communityIds?: string[];
+  articleIds?: string[];
+};
+
+function joinTargetRooms(target: JoinTarget) {
+  return [
+    ...(target.roleIds || []).map(roleRoomKey),
+    ...(target.communityIds || []).map(communityRoomKey),
+    ...(target.articleIds || []).map(articleRoomKey),
+  ];
+}
+
+/**
+ * The room that holds the sockets a request speaks for: one socket of the
+ * session's device when the request names it, otherwise the whole device
+ * (srv/util/requestSocket.ts).
+ */
+function requestSocketsRoom(sockets: RequestSockets) {
+  return sockets.socketId !== null
+    ? deviceSocketRoomKey(sockets.deviceId, sockets.socketId)
+    : deviceRoomKey(sockets.deviceId);
+}
 
 class EventHelper {
   // created on first emit, so importing this module opens no connection.
@@ -45,6 +71,9 @@ class EventHelper {
       deviceIds?: string[];
       sessionIds?: string[];
       articleIds?: string[];
+      // one socket of a device (srv/util/requestSocket.ts): excludes nothing
+      // unless that socket is logged in with that device
+      deviceSockets?: { deviceId: string; socketId: string }[];
     },
   ) {
     const io = await this.#io;
@@ -89,6 +118,9 @@ class EventHelper {
       }
       for (const articleId of except.articleIds || []) {
         exceptRooms.push(articleRoomKey(articleId));
+      }
+      for (const { deviceId, socketId } of except.deviceSockets || []) {
+        exceptRooms.push(deviceSocketRoomKey(deviceId, socketId));
       }
     }
     const { type, ..._event } = event;
@@ -153,48 +185,38 @@ class EventHelper {
     await notificationHelper.sendWsOrWebPushNotificationEvent(data);
   }
 
-  public async deviceJoinRooms(
-    deviceId: string,
-    target: {
-      roleIds?: string[];
-      communityIds?: string[];
-      articleIds?: string[];
-    }
-  ) {
-    const rooms: string[] = [];
-    for (const roleId of target.roleIds || []) {
-      rooms.push(roleRoomKey(roleId));
-    }
-    for (const communityId of target.communityIds || []) {
-      rooms.push(communityRoomKey(communityId));
-    }
-    for (const articleId of target.articleIds || []) {
-      rooms.push(articleRoomKey(articleId));
-    }
+  /**
+   * Joins the sockets a request speaks for to the given rooms: only the
+   * requesting socket when the request names one (nothing joins unless it is
+   * a logged-in socket of the session's device), otherwise the whole device
+   * as before.
+   */
+  public async requestSocketsJoinRooms(sockets: RequestSockets, target: JoinTarget) {
     const io = await this.#io;
-    io.in(deviceRoomKey(deviceId)).socketsJoin(rooms);
+    io.in(requestSocketsRoom(sockets)).socketsJoin(joinTargetRooms(target));
   }
 
-  public async deviceLeaveRooms(
-    deviceId: string,
-    target: {
-      roleIds?: string[];
-      communityIds?: string[];
-      articleIds?: string[];
-    }
-  ) {
-    const rooms: string[] = [];
-    for (const roleId of target.roleIds || []) {
-      rooms.push(roleRoomKey(roleId));
-    }
-    for (const communityId of target.communityIds || []) {
-      rooms.push(communityRoomKey(communityId));
-    }
-    for (const articleId of target.articleIds || []) {
-      rooms.push(articleRoomKey(articleId));
-    }
+  /** Counterpart of `requestSocketsJoinRooms`. */
+  public async requestSocketsLeaveRooms(sockets: RequestSockets, target: JoinTarget) {
     const io = await this.#io;
-    io.in(deviceRoomKey(deviceId)).socketsLeave(rooms);
+    io.in(requestSocketsRoom(sockets)).socketsLeave(joinTargetRooms(target));
+  }
+
+  /**
+   * Logout of a device in one tab: the device's other sockets get
+   * `cliSignedOut` and are disconnected, so none of them keeps the logged-out
+   * account's rooms. The requesting socket is left out (its tab finishes the
+   * logout itself and leaves its rooms with the socket `logout`). A request
+   * that names no socket changes nothing (old clients).
+   */
+  public async signOutOtherDeviceSockets(sockets: RequestSockets) {
+    if (sockets.socketId === null) {
+      return;
+    }
+    const { deviceId, socketId } = sockets;
+    await this.emit({ type: 'cliSignedOut' }, { deviceIds: [deviceId] }, { deviceSockets: [{ deviceId, socketId }] });
+    const io = await this.#io;
+    io.in(deviceRoomKey(deviceId)).except(deviceSocketRoomKey(deviceId, socketId)).disconnectSockets(false);
   }
 
   /**

@@ -32,6 +32,7 @@ import botTokenHelper from './repositories/botTokens';
 import botHelper from './repositories/bots';
 import * as typingCache from './repositories/typingCache';
 import { PresenceTracker, type ClusterProbe } from './util/presence';
+import { deviceSocketRoomKey } from './util/requestSocket';
 
 import cookieParser from 'cookie-parser';
 // The manual-unsign alternative below needs `cookie-signature`, which was
@@ -240,6 +241,9 @@ async function joinAuthenticatedRooms(
   socket.data.deviceId = identity.deviceId;
   const rooms = [
     deviceRoomKey(identity.deviceId),
+    // the socket's own room under the device it proved: what socket-scoped
+    // targeting addresses (srv/util/requestSocket.ts)
+    deviceSocketRoomKey(identity.deviceId, socket.id),
     userRoomKey(identity.userId),
     ...identity.roleIds.map(roleRoomKey),
     ...identity.communityIds.map(communityRoomKey),

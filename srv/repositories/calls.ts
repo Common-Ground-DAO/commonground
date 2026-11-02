@@ -30,6 +30,36 @@ type CallCommunityExtraData = {
   communityTitle: string;
 }
 
+/**
+ * The users with an open membership in the call `callId` whose claimed roles
+ * plus the Public role (title `publicTitle`) hold every permission of
+ * `permissions` on it (the union over the roles, as
+ * `permissionHelper.hasPermissions` evaluates call permissions). Arguments
+ * are SQL expressions (placeholders or columns).
+ */
+function activeMembersWithPermissionsSql(callId: string, publicTitle: string, permissions: string) {
+  return `
+    SELECT DISTINCT cm."userId"
+    FROM callmembers cm
+    WHERE cm."callId" = ${callId}
+      AND cm."leftAt" IS NULL
+      AND (
+        SELECT COALESCE(array_agg(DISTINCT perm), '{}')
+        FROM callpermissions cp
+        INNER JOIN roles r
+          ON  r."id" = cp."roleId"
+          AND r."deletedAt" IS NULL
+        LEFT JOIN roles_users_users ruu
+          ON  ruu."roleId" = r."id"
+          AND ruu."claimed" = TRUE
+          AND ruu."userId" = cm."userId"
+        CROSS JOIN LATERAL unnest(cp."permissions") AS perm
+        WHERE cp."callId" = cm."callId"
+          AND (ruu."userId" IS NOT NULL OR r."title" = ${publicTitle})
+      ) @> ${permissions}::"public"."callpermissions_permissions_enum"[]
+  `;
+}
+
 class CallHelper {
   private async getCallServerForScheduling() {
     const result = await pool.query(`
@@ -861,6 +891,52 @@ class CallHelper {
       WHERE "callId" = ANY((SELECT id FROM ended_calls))
     `;
     await pool.query(query, [url]);
+  }
+
+  /**
+   * The users who are in the call right now (an open membership) and hold
+   * `permissions` on it through their claimed roles or the Public role,
+   * evaluated like `permissionHelper.hasPermissions` for calls.
+   */
+  public async getActiveMemberUserIds(callId: string, permissions: CallPermission[]): Promise<string[]> {
+    const result = await pool.query(
+      activeMembersWithPermissionsSql('$1', '$2', '$3'),
+      [callId, PredefinedRole.Public, permissions],
+    );
+    return (result.rows as { userId: string }[]).map(r => r.userId);
+  }
+
+  /**
+   * Who gets a call's live events beyond its role rooms: the users in the
+   * call right now who may see it, and the community (its room holds members
+   * and visitors) when the Public role may see the call — nobody joins a
+   * Public role room.
+   */
+  public async getCallEventExtraTargets(callId: string): Promise<{
+    activeMemberUserIds: string[];
+    publicCommunityId: string | null;
+  }> {
+    const result = await pool.query(`
+      SELECT
+        ARRAY(${activeMembersWithPermissionsSql('c."id"', '$2', 'ARRAY[$3]')}) AS "activeMemberUserIds",
+        CASE WHEN EXISTS (
+          SELECT 1
+          FROM callpermissions cp
+          INNER JOIN roles r
+            ON  r."id" = cp."roleId"
+            AND r."deletedAt" IS NULL
+          WHERE cp."callId" = c."id"
+            AND r."title" = $2
+            AND cp."permissions" @> ARRAY[$3]::"public"."callpermissions_permissions_enum"[]
+        ) THEN c."communityId" ELSE NULL END AS "publicCommunityId"
+      FROM calls c
+      WHERE c."id" = $1
+    `, [callId, PredefinedRole.Public, CallPermission.CALL_EXISTS]);
+    const row = result.rows[0] as { activeMemberUserIds: string[]; publicCommunityId: string | null } | undefined;
+    return {
+      activeMemberUserIds: row?.activeMemberUserIds ?? [],
+      publicCommunityId: row?.publicCommunityId ?? null,
+    };
   }
 
   public async getUserIdsToNotify({ communityId, callId }: { communityId: string, callId: string }) {

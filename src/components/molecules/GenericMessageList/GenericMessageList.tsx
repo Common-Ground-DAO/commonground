@@ -15,24 +15,23 @@ import { useNavigate, useSearchParams } from 'react-router';
 import { ArrowLeftIcon } from '@heroicons/react/20/solid';
 import { ArrowDownCircleIcon } from '@heroicons/react/24/solid';
 import useLocalStorage from 'hooks/useLocalStorage';
-import data from 'data';
 import { getUrl } from 'common/util';
 import { useConnectionContext } from 'context/ConnectionProvider';
 import { useSafeCommunityContext } from 'context/CommunityProvider';
 import JoinCommunityButton from 'components/atoms/JoinCommunityButton/JoinCommunityButton';
-import channelDatabaseManager from 'data/databases/channel';
-import config from 'common/config';
 import { useTypingBroadcaster } from 'hooks/useTypingBroadcaster';
 import TypingIndicator from 'components/molecules/TypingIndicator/TypingIndicator';
-import loginManager from 'data/appstate/login';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import { ScrollableHandle } from '../../molecules/Scrollable/Scrollable';
+import { chat } from 'data/chat/runtime';
+import { WINDOW_ERROR, type ChannelWindow } from 'data/chat/types';
+import { useChannelReadMarking } from 'hooks/useChannelReadMarking';
+import { consumesIntent, scrollActionForChange, type ResetIntent, type ScrollAction } from './scrollAnchoring';
 
 type Props = {
   channelName?: string;
   channelId: string;
   Renderer: React.FC<RendererProps & {
-    visibilityObserver: IntersectionObserver;
     channelId: string;
   }>;
   // createItem returns true or false, stating whether to clear the input field
@@ -53,6 +52,12 @@ type Props = {
   hideInput?: boolean;
   onMobileFocus?: (focused: boolean) => void;
   callMode?: true;
+};
+
+/** a window together with its latest state (always from the same window) */
+type WindowView = {
+  window: ChannelWindow;
+  state: Models.ItemList.ItemListState<Models.Message.Message>;
 };
 
 export const JOINCOMMUNITY_MUTED_MESSAGE = 'Join the community to chat here';
@@ -96,7 +101,7 @@ export default function GenericMessageList(props: Props) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const communityContext = useSafeCommunityContext();
-  const { webSocketState, onlineState } = useConnectionContext();
+  const { webSocketState } = useConnectionContext();
   const { showSnackbar } = useSnackbarContext();
   const fromNotifications = !!searchParams.get('fromNotifications');
 
@@ -110,17 +115,34 @@ export default function GenericMessageList(props: Props) {
   const scrollableInnerRef = useRef<HTMLDivElement>(null);
   const loadingNextRef = useRef<Promise<void> | null>(null);
   const loadingPreviousRef = useRef<Promise<void> | null>(null);
-  const initializingItemListRef = useRef<Promise<void> | null>(null);
-  const messageObserverRootRef = useRef<HTMLDivElement>(null);
-  const [itemList, setItemList] = useState<Models.ItemList.ItemList<Models.Message.Message> | null>(null);
+  /** the list's own inits / jumps in flight (paging waits) */
+  const initializingRef = useRef<number>(0);
+
+  const [view, setView] = useState<WindowView | null>(null);
+  /** the newest view, updated synchronously in the window listener */
+  const viewRef = useRef<WindowView | null>(null);
+  /** what the list's pending init / jump / jumpToLatest should scroll to */
+  const resetIntentRef = useRef<ResetIntent | null>(null);
+  /** an init that failed (offline, server error): retried once live again */
+  const retryInitRef = useRef<(() => void) | null>(null);
+  const atBottomRef = useRef<boolean>(true);
+  const [atBottom, setAtBottom] = useState<boolean>(true);
+  const webSocketConnectedRef = useRef(webSocketState === 'connected');
+  webSocketConnectedRef.current = webSocketState === 'connected';
+  const showSnackbarRef = useRef(showSnackbar);
+  showSnackbarRef.current = showSnackbar;
 
   const [targetFocusId, _setTargetFocusId] = useState<string | undefined>(props.messageIdFocus);
+  const targetFocusIdRef = useRef(targetFocusId);
+  targetFocusIdRef.current = targetFocusId;
+  const messageIdFocusRef = useRef(props.messageIdFocus);
+  messageIdFocusRef.current = props.messageIdFocus;
   const lastFocusedIdRef = useRef<string | undefined>(undefined);
   const lastScrollToMessageRef = useRef<string | undefined>(undefined);
 
   const setTargetFocusId = useCallback((id: string | undefined) => {
     lastFocusedIdRef.current = undefined;
-    if (id !== targetFocusId) {
+    if (id !== targetFocusIdRef.current) {
       _setTargetFocusId(id);
     }
     else {
@@ -131,7 +153,7 @@ export default function GenericMessageList(props: Props) {
         });
       });
     }
-  }, [targetFocusId]);
+  }, []);
 
   useEffect(() => {
     if (props.messageIdFocus !== targetFocusId) {
@@ -141,44 +163,6 @@ export default function GenericMessageList(props: Props) {
   // do not include targetFocusId here, this should only trigger
   // if the one from props changes
   }, [props.messageIdFocus]);
-
-  useEffect(() => {
-    let mounted = true;
-    // create database
-    const { database, onUnmount: onDatabaseUnmount } =  data.channelManager.getMountedChannelDatabase(channelId);
-    // create itemList
-    let timeout: any = null;
-    const itemRangeUpdateJobs: Models.ItemList.ItemRangeUpdateJob[] = [];
-    if (!!itemList) {
-      // destroy old itemList
-      itemList.destroy(false);
-    }
-    const newItemList = database.createItemList(updateJob => {
-      if (!mounted) return;
-      if (!itemRangeUpdateJobs.some(job => job.rangeStart.getTime() === updateJob.rangeStart.getTime() && job.rangeEnd.getTime() === updateJob.rangeEnd.getTime())) {
-        itemRangeUpdateJobs.push(updateJob);
-      }
-      if (timeout === null) {
-        timeout = setTimeout(() => {
-          const updateJobs = itemRangeUpdateJobs.splice(0);
-          channelDatabaseManager.loadUpdates({ channelId, itemRangeUpdateJobs: updateJobs });
-          timeout = null;
-        }, 0);
-      }
-    });
-    setItemList(newItemList);
-    setMessages(newItemList.items);
-    return() => {
-      mounted = false;
-      onDatabaseUnmount();
-    };
-  }, [channelId]); // do not include itemList! it is set here and must not re-execute the effect
-
-  const [messages, setMessages] = useState<Models.Message.Message[]>([]);
-  const messagesRef = useRef(messages);
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
 
   const mentionableUsersSource = useMemo(() => {
     if (communityContext.state === 'loaded') {
@@ -190,147 +174,200 @@ export default function GenericMessageList(props: Props) {
     }
   }, [communityContext.state, channelId, 'community' in communityContext ? communityContext.community.id : undefined]);
 
-  const scrollToMessage = useCallback((messageId: string) => {
-    if (!itemList) {
-      throw new Error("itemList is not set");
-    }
-    if (messagesRef.current.some(message => message.id === messageId)) {
-      scrollableRef.current?.scrollToElementId(messageId);
-      setTargetFocusId(messageId);
-    }
-    else if (!initializingItemListRef.current) {
-      initializingItemListRef.current = new Promise<void>(async (resolve, reject) => {
-        let rejected: any;
-        if (!!loadingNextRef.current || !!loadingPreviousRef.current) {
-          await Promise.allSettled([loadingNextRef.current, loadingPreviousRef.current]);
-        }
-        itemList
-          .init({ type: 'atItemId', itemId: messageId })
-          .catch(e => {
-            return channelDatabaseManager.loadItemWithNeighbours({ channelId, itemId: messageId })
-            .then(() => {
-              return itemList.init({ type: 'atItemId', itemId: messageId });
-            });
-          })
-          .then((itemCount) => {
-            if (itemCount > 0) {
-              scrollableRef.current?.lockScrollForNextUpdate({ type: 'scrollToElementId', elementId: messageId });
-              setTargetFocusId(messageId);
-            }
-          })
-          .catch(e => {
-            showSnackbar({ text: "Could not load target message", type: 'warning' });
-            console.error("Error loading itemList at itemId", e);
-            rejected = e;
-          })
-          .finally(() => {
-            setTimeout(() => {
-              if (!!rejected) {
-                reject(rejected);
-              }
-              else {
-                resolve();
-              }
-              initializingItemListRef.current = null;
-            }, 0);
-          });
-      });
-    }
-  }, [itemList, channelId]);
-
-  useEffect(() => {
-    if (!!itemList && !!targetFocusId && lastScrollToMessageRef.current !== targetFocusId) {
-      lastScrollToMessageRef.current = targetFocusId;
-      scrollToMessage(targetFocusId);
-    }
-  }, [itemList, targetFocusId, messages, scrollToMessage]);
-
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false;
+  const applyScrollAction = useCallback((action: ScrollAction) => {
+    const scrollable = scrollableRef.current;
+    switch (action.type) {
+      case 'lock':
+        scrollable?.lockScrollForNextUpdate(action.lock);
+        break;
+      case 'scrollToBottom':
+        scrollable?.scrollToBottom();
+        break;
+      case 'scrollToElement':
+        scrollable?.scrollToElementId(action.elementId);
+        break;
     }
   }, []);
 
-  const initializeItemListRecent = useCallback(() => {
-    if (!itemList) {
-      throw new Error("itemList is not set");
-    }
-    if (!initializingItemListRef.current) {
-      initializingItemListRef.current = new Promise<void>(async (resolve, reject) => {
-        let rejected: any;
-        if (!!loadingNextRef.current || !!loadingPreviousRef.current) {
-          await Promise.allSettled([loadingNextRef.current, loadingPreviousRef.current]);
-        }
-        if (!mountedRef.current) return;
-        itemList
-          .init({ type: 'recent' })
-          .then((itemCount) => {
-            if (itemCount > 0) {
-              scrollableRef.current?.lockScrollForNextUpdate({ type: 'scrollToBottom' });
-            }
-            const { withEndOfList, withStartOfList, rangeStart } = itemList.state;
-            if (!withEndOfList || (itemCount < config.ITEMLIST_BATCH_SIZE && !withStartOfList)) {
-              // Todo: Fix this, should wait for connection, but first fix reconnect speed
-              if (webSocketState === "connected" || onlineState === "online") {
-                if (!mountedRef.current) return;
-                return channelDatabaseManager.loadItems({
-                  channelId,
-                  createdBefore: withEndOfList ? rangeStart || undefined : undefined,
-                  order: "DESC",
-                })
-                .then(() => {
-                  if (!mountedRef.current) return;
-                  return itemList.init({ type: 'recent' })
-                  .then((itemCount) => {
-                    if (itemCount > 0) {
-                      scrollableRef.current?.lockScrollForNextUpdate({ type: 'scrollToBottom' });
-                    }
-                  });
-                });
-              }
-              else {
-                rejected = new Error("Disconnected");
-              }
-            }
-          })
-          .catch(e => {
-            showSnackbar({ text: "Could not load channel", type: 'warning' });
-            console.error("Error loading itemList recent", e);
-            rejected = e;
-          })
-          .finally(() => {
-            setTimeout(() => {
-              if (!!rejected) {
-                reject(rejected);
-              }
-              else {
-                resolve();
-              }
-              initializingItemListRef.current = null;
-            }, 0);
-          });
-      });
-    }
-  }, [itemList, webSocketState === "connected", channelId]);
-
-  useEffect(() => {
-    let mounted = true;
-    if (itemList) {
-      itemList.ready.then(() => {
-        if (!mounted) return;
-        if (targetFocusId) {
-          scrollToMessage(targetFocusId);
+  /**
+   * init / jump of the current window. Resolves with the item count, or
+   * null when it did not apply (superseded, unmounted, failed).
+   */
+  const runInit = useCallback((
+    options: Models.ItemList.ItemListInitOptions,
+    intent: ResetIntent,
+  ): Promise<number | null> => {
+    const current = viewRef.current;
+    if (!current) return Promise.resolve(null);
+    const w = current.window;
+    retryInitRef.current = null;
+    resetIntentRef.current = intent;
+    initializingRef.current++;
+    const isJump = options.type === 'atItemId';
+    return w.init(options)
+      .then(count => count as number | null, (e: unknown) => {
+        const message = e instanceof Error ? e.message : '';
+        if (message === WINDOW_ERROR.SUPERSEDED || viewRef.current?.window !== w) return null;
+        if (resetIntentRef.current === intent) resetIntentRef.current = null;
+        if (message === WINDOW_ERROR.NOT_FOUND) {
+          showSnackbarRef.current({ text: "This message could not be found", type: 'warning' });
         }
         else {
-          initializeItemListRecent();
+          if (webSocketConnectedRef.current) {
+            showSnackbarRef.current({ text: isJump ? "Could not load target message" : "Could not load channel", type: 'warning' });
+          }
+          console.error("Error initializing message window", e);
+        }
+        if (!w.state.ready) {
+          // nothing shown yet: fall back to the latest messages, or retry once live
+          if (isJump && message === WINDOW_ERROR.NOT_FOUND) {
+            queueMicrotask(() => initRecentRef.current());
+          }
+          else {
+            retryInitRef.current = () => {
+              if (viewRef.current?.window === w) runInitRef.current(options, intent);
+            };
+          }
+        }
+        return null;
+      })
+      .finally(() => {
+        initializingRef.current--;
+      });
+  }, []);
+  const runInitRef = useRef(runInit);
+  runInitRef.current = runInit;
+
+  const initRecent = useCallback(() => {
+    void runInit({ type: 'recent' }, { type: 'bottom' });
+  }, [runInit]);
+  const initRecentRef = useRef(initRecent);
+  initRecentRef.current = initRecent;
+
+  const jumpToLatest = useCallback(() => {
+    const current = viewRef.current;
+    if (!current) return;
+    if (!current.state.ready) {
+      initRecent();
+      return;
+    }
+    resetIntentRef.current = { type: 'bottom' };
+    current.window.jumpToLatest().catch((e: unknown) => {
+      if (e instanceof Error && e.message === WINDOW_ERROR.SUPERSEDED) return;
+      console.error("Error jumping to the latest messages", e);
+    });
+  }, [initRecent]);
+
+  const scrollToMessage = useCallback((messageId: string) => {
+    const current = viewRef.current;
+    if (!current) return;
+    if (current.state.items.some(message => message.id === messageId)) {
+      scrollableRef.current?.scrollToElementId(messageId);
+      setTargetFocusId(messageId);
+      return;
+    }
+    const w = current.window;
+    // until the list reports its position again: not reading at the bottom
+    atBottomRef.current = false;
+    setAtBottom(false);
+    void runInit({ type: 'atItemId', itemId: messageId }, { type: 'element', elementId: messageId })
+      .then(count => {
+        if (!!count && viewRef.current?.window === w) {
+          setTargetFocusId(messageId);
         }
       });
-    }
+  }, [runInit, setTargetFocusId]);
+
+  // one window per mounted channel; its listener sets the scroll lock before rendering
+  useEffect(() => {
+    const w = chat.channels.openWindow(channelId);
+    const initial: WindowView = { window: w, state: w.state };
+    viewRef.current = initial;
+    resetIntentRef.current = null;
+    retryInitRef.current = null;
+    setView(initial);
+
+    const unsubscribe = w.subscribe((state, change) => {
+      const prev = viewRef.current;
+      if (!prev || prev.window !== w) return;
+      const action = scrollActionForChange({
+        change,
+        prevItems: prev.state.items,
+        nextItems: state.items,
+        intent: resetIntentRef.current,
+        atBottom: atBottomRef.current,
+        wasAtLatest: prev.state.withEndOfList,
+      });
+      if (consumesIntent(change)) resetIntentRef.current = null;
+      applyScrollAction(action);
+      const next: WindowView = { window: w, state };
+      viewRef.current = next;
+      // logout: the store empties the window and the runtime re-inits it
+      // (`chat` runtime `clear()`); that reset arrives here as cause `latest`
+      setView(next);
+    });
+
     return () => {
-      mounted = false;
+      unsubscribe();
+      w.destroy();
+      if (viewRef.current?.window === w) viewRef.current = null;
+    };
+  }, [channelId, applyScrollAction]);
+
+  // the window rendered into this list (never the previous channel's one)
+  const shownView = view && view.window.channelId === channelId && !view.window.state.isDestroyed ? view : null;
+  const shownWindow = shownView?.window;
+
+  // Initial load, once the (empty) list of this window is mounted, so the
+  // Scrollable sees the first items as a mutation and applies the lock:
+  // at the focus target if one is given, else the latest messages.
+  const initStartedForRef = useRef<ChannelWindow | null>(null);
+  useEffect(() => {
+    const w = shownWindow;
+    if (!w || initStartedForRef.current === w || viewRef.current?.window !== w) return;
+    initStartedForRef.current = w;
+    const focusId = messageIdFocusRef.current;
+    lastScrollToMessageRef.current = focusId;
+    if (focusId) {
+      atBottomRef.current = false;
+      setAtBottom(false);
+      void runInitRef.current({ type: 'atItemId', itemId: focusId }, { type: 'element', elementId: focusId })
+        .then(count => {
+          if (!!count && viewRef.current?.window === w) setTargetFocusId(focusId);
+        });
     }
-  }, [itemList]);
+    else {
+      initRecentRef.current();
+    }
+  }, [shownWindow, setTargetFocusId]);
+
+  // later focus targets (notification, pin, `?messageId=`) on the same channel
+  useEffect(() => {
+    const current = viewRef.current;
+    if (!current || initStartedForRef.current !== current.window) return;
+    if (!!targetFocusId && lastScrollToMessageRef.current !== targetFocusId) {
+      lastScrollToMessageRef.current = targetFocusId;
+      scrollToMessage(targetFocusId);
+    }
+  }, [targetFocusId, scrollToMessage]);
+
+  // a failed init is retried once the socket is live again
+  useEffect(() => {
+    if (webSocketState === 'connected' && retryInitRef.current) {
+      const retry = retryInitRef.current;
+      retryInitRef.current = null;
+      retry();
+    }
+  }, [webSocketState]);
+
+  const onAtBottomChange = useCallback((value: boolean) => {
+    if (atBottomRef.current === value) return;
+    atBottomRef.current = value;
+    setAtBottom(value);
+  }, []);
+
+  // level-triggered read marking (no marking for call chats)
+  useChannelReadMarking(shownView?.window.channelId, shownView?.state ?? null, atBottom, !callMode);
 
   const typingBroadcaster = useTypingBroadcaster(channelId);
 
@@ -366,38 +403,29 @@ export default function GenericMessageList(props: Props) {
   }
 
   const handleSend = useCallback(async (body: Models.Message.Body, attachments: Models.Message.Attachment[]): Promise<boolean> => {
-    if (!itemList) {
-      throw new Error("itemList is not set");
-    }
     typingBroadcaster.stop();
     if (!!messageToEdit) {
       return await editMessage(messageToEdit, body, attachments);
     }
     else {
-      return createMessage(body, attachments)
-      .then((result) => {
-        if (itemList.state.withEndOfList) {
-          scrollableRef.current?.lockScrollForNextUpdate({ type: 'scrollToBottom' });
-        }
-        else {
-          initializeItemListRecent();
-        }
-        return result;
-      });
+      // at the latest end the pending item arrives as `append-live` (own) and
+      // the listener scrolls to it; a detached window shows the latest first
+      const result = await createMessage(body, attachments);
+      if (result && !viewRef.current?.state.withEndOfList) {
+        jumpToLatest();
+      }
+      return result;
     }
-  }, [createMessage, editMessage, messageToEdit, itemList, initializeItemListRecent, typingBroadcaster]);
+  }, [createMessage, editMessage, messageToEdit, jumpToLatest, typingBroadcaster]);
 
   const scrollDownHandler = useCallback(() => {
-    if (!itemList) {
-      throw new Error("itemList is not set");
-    }
-    if (itemList.state.withEndOfList) {
+    if (viewRef.current?.state.withEndOfList) {
       scrollableRef.current?.scrollToBottom();
     }
     else {
-      initializeItemListRecent();
+      jumpToLatest();
     }
-  }, [itemList, initializeItemListRecent]);
+  }, [jumpToLatest]);
 
   const scrollHelperRef = useRef<HTMLDivElement>(null);
   const scrollHelper = useMemo(() => {
@@ -468,47 +496,16 @@ export default function GenericMessageList(props: Props) {
     }
   }, [messageToEdit]);
 
-  const [messageObserver, setMessageObserver] = useState<IntersectionObserver | null>(null);
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (results) => {
-        let latest: string | null = null;
-        for (const element of results) {
-          const currLatest: string | undefined = (element.target as any).dataset?.timestamp;
-          if (!!currLatest && element.isIntersecting && (!latest || currLatest > latest)) {
-            latest = currLatest;
-          }
-        }
-        if (latest && loginManager.state === "loggedin") {
-          data.channelManager.setChannelLastRead(channelId, new Date(latest));
-        }
-      },
-      {
-        root: messageObserverRootRef.current,
-      }
-    );
-    setMessageObserver(observer);
-    return () => {
-      observer.disconnect();
-    }
-  }, [channelId]);
-
   const RendererExtended = useMemo(() => {
-    if (messageObserver) {
-      return (messageProps: RendererProps) => {
-        return (
-          <Renderer {...messageProps}
-            visibilityObserver={messageObserver}
-            channelId={channelId}
-            scrollToMessage={scrollToMessage}
-          />
-        );
-      };
-    }
-    else {
-      return null;
-    }
-  }, [Renderer, scrollToMessage, messageObserver, channelId]);
+    return (messageProps: RendererProps) => {
+      return (
+        <Renderer {...messageProps}
+          channelId={channelId}
+          scrollToMessage={scrollToMessage}
+        />
+      );
+    };
+  }, [Renderer, scrollToMessage, channelId]);
 
   const placeholderText = props.replyingTo ? 'Add a reply' : props.channelName ? `Message #${props.channelName}` : 'Type something';
 
@@ -565,13 +562,15 @@ export default function GenericMessageList(props: Props) {
   }, [joinCommunityButton, cancelReply, changeHandler, channelId, disableAttachments, handleSend, isInputFocused, mentionableUsersSource, messageStateLocalStorage, messageToEdit, placeholderText, replyingTo, scrollHelper, setInputFocused, writingForbiddenMessage, callMode]);
 
   return (
-    <div className="generic-message-list" ref={messageObserverRootRef}>
+    <div className="generic-message-list">
       {isMobile && fromNotifications && <div className={`fromNotificationsBanner${hideNotificationBanner ? ' hidden' : ''}`}>
         <Button role='primary' text='Back to Notifications' iconLeft={<ArrowLeftIcon className='w-5 h-5' />} onClick={() => navigate(getUrl({ type: 'notifications' }))} />
       </div>}
-      {(!RendererExtended || !itemList) && <div style={{height: "100%"}} />}
-      {(!!RendererExtended && !!itemList) && <ScrollingMessageList
-        itemList={itemList}
+      {!shownView && <div style={{height: "100%"}} />}
+      {!!shownView && <ScrollingMessageList
+        key={`scrollingmessagelist-${channelId}`}
+        channelWindow={shownView.window}
+        state={shownView.state}
         Renderer={RendererExtended}
         replyClick={(id, sender, body) => {
           replyClick(id, sender, body);
@@ -580,17 +579,14 @@ export default function GenericMessageList(props: Props) {
         editClick={editClickHandler}
         messageToEdit={messageToEdit}
         targetFocusId={targetFocusId}
-        lastFocusedIdRef={lastFocusedIdRef}
         identifierKey={`scrollingmessagelist-${channelId}`}
         onScroll={onListScroll}
-        channelId={channelId}
+        onAtBottomChange={onAtBottomChange}
         scrollableRef={scrollableRef}
         scrollableInnerRef={scrollableInnerRef}
         loadingNextRef={loadingNextRef}
         loadingPreviousRef={loadingPreviousRef}
-        initializingItemListRef={initializingItemListRef}
-        messages={messages}
-        setMessages={setMessages}
+        initializingRef={initializingRef}
         canReply={!writingForbiddenMessage}
         scrollHelper={scrollHelper}
         scrollHelperRef={scrollHelperRef}

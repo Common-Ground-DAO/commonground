@@ -44,7 +44,10 @@ type Props = {
   unsetReaction: () => void;
   replyClick: (id: string, creatorId: string, body: Models.Message.Body) => void;
   editClick: (message: Models.Message.Message) => void;
-  visibilityObserver: IntersectionObserver;
+  /** retry a failed own send or edit (`sendStatus` error-send / error-update) */
+  retrySend?: () => void;
+  /** discard a failed own send or revert a failed edit */
+  discardPending?: () => void;
   selected?: boolean;
   editing?: boolean;
   isolatedNewMsg?: boolean;
@@ -73,7 +76,8 @@ export default function Message(props: Props) {
     channelId,
     attachments,
     editClick,
-    visibilityObserver,
+    retrySend,
+    discardPending,
     selected,
     editing,
     isolatedNewMsg,
@@ -96,15 +100,6 @@ export default function Message(props: Props) {
 
   const canModerateUser = communityState.state === "loaded" && communityState.communityPermissions.has('COMMUNITY_MODERATE');
   const ownMessage = !!ownUser && ownUser?.id === message.creatorId;
-
-  useEffect(() => {
-    const element = messageRef.current;
-    if (element) {
-      visibilityObserver.observe(element);
-
-      return () => visibilityObserver.unobserve(element);
-    }
-  }, [visibilityObserver]);
 
   // `setCurrentId` moved into `useDelayGroup` in `@floating-ui/react` 0.27, and
   // the `currentId`/`delayedCloseTimeoutRef` branch it used to guard was dead:
@@ -277,7 +272,7 @@ export default function Message(props: Props) {
         replyDiv.style.transform = `translate(-${touchShiftRef.current}px, 0px) ${touchTriggeredRef.current ? 'scale(1)' : 'scale(0.8)'}`;
       }
     }
-  }, [context.refs.reference.current, showReplyIndicator, replyClick, message.id, message.updatedAt.getTime(), canReply, ownUser?.id]);
+  }, [context.refs.reference.current, showReplyIndicator, replyClick, message, canReply, ownUser?.id]);
 
   const tooltipSetReaction = React.useCallback((reaction: string) => {
     setReaction(reaction);
@@ -334,6 +329,7 @@ export default function Message(props: Props) {
     selected ? 'selected' : '',
     editing ? 'editing' : '',
     isSpecial ? 'special' : '',
+    message.sendStatus === 'sending' ? 'sending' : '',
   ].join(' ').replace(/  +/, ' ').trim();
 
   const replyContent = useMemo(() => {
@@ -356,15 +352,21 @@ export default function Message(props: Props) {
     </>;
   }, [repliedTo, message.parentMessageId, scrollToMessage, showReplyIndicator]);
 
+  // `message` keeps its object identity while unchanged (chat-sync windows),
+  // so depending on it re-renders exactly on edits, reactions and sendStatus.
+  // `data-timestamp` is on every item, pending sends included: the list
+  // anchors its scroll position by it.
   const messageContent = useMemo(() => {
-    const extraMessageProps = message.sendStatus === undefined
-      ? { "data-timestamp": message.createdAt.toISOString() }
-      : {};
-
     return (
-      <div className="message-item-content" ref={messageRef} {...extraMessageProps}>
+      <div className="message-item-content" ref={messageRef} data-timestamp={message.createdAt.toISOString()}>
         <div className="message-item-message">
-          <MessageBodyRenderer message={message} key={`body-${message.id}`} hideTimestamp={attachments && attachments.length > 0} />
+          <MessageBodyRenderer
+            message={message}
+            key={`body-${message.id}`}
+            hideTimestamp={attachments && attachments.length > 0}
+            onRetry={retrySend}
+            onDiscard={discardPending}
+          />
           {attachments && attachments.length > 0 && <>
             <MessageAttachments key={`attachments-${message.id}`} attachments={attachments} setImageModalOpen={setIsImageModalOpen} />
             <MessageTimestamp
@@ -388,7 +390,7 @@ export default function Message(props: Props) {
         />}
       </div>
     );
-  }, [message.id, message.updatedAt.getTime(), setReaction, unsetReaction, canModerateUser, channelId]);
+  }, [message, attachments, setReaction, unsetReaction, canModerateUser, channelId, retrySend, discardPending]);
 
   const messageHoveredContent = useMemo(() => {
     if (messageIsHovered) {
@@ -426,7 +428,7 @@ export default function Message(props: Props) {
     else {
       return null;
     }
-  }, [messageIsHovered, message.body, message.id, message.updatedAt.getTime(), channelId, editClick, refs.setFloating, floatingStyle, replyClick, tooltipSetReaction, update])
+  }, [messageIsHovered, message, channelId, editClick, refs.setFloating, floatingStyle, replyClick, tooltipSetReaction, update])
 
   const returnValue = useMemo(() => {
     const content = (

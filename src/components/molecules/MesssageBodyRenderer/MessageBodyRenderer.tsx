@@ -435,12 +435,37 @@ export function AllContentRenderer(props: {
   return <>{resultContent}</>;
 }
 
+/**
+ * Outcome of a failed own send or edit (chat-sync `sendStatus`), with the
+ * actions the store offers: retry (same id), discard the send / revert the edit.
+ */
+const SendStatusNotice = (props: {
+  sendStatus: 'error-send' | 'error-update';
+  onRetry?: () => void;
+  onDiscard?: () => void;
+}) => {
+  const { sendStatus, onRetry, onDiscard } = props;
+  return (
+    <div className="message-send-status" role="alert">
+      <span>{sendStatus === 'error-send' ? 'Message not sent' : 'Edit not saved'}</span>
+      {!!onRetry && <button type="button" className="message-send-status-action" onClick={onRetry}>Retry</button>}
+      {!!onDiscard && <button type="button" className="message-send-status-action" onClick={onDiscard}>
+        {sendStatus === 'error-send' ? 'Discard' : 'Undo edit'}
+      </button>}
+    </div>
+  );
+};
+
 const MessageBodyRenderer = (props: {
   message: Models.Message.Message,
   truncate?: boolean,
   hideTimestamp?: boolean,
+  /** retry a failed send or edit (shown with `sendStatus` error-send / error-update) */
+  onRetry?: () => void;
+  /** discard a failed send or revert a failed edit */
+  onDiscard?: () => void;
 }) => {
-  const { message, truncate, hideTimestamp } = props;
+  const { message, truncate, hideTimestamp, onRetry, onDiscard } = props;
 
   const className = [
     truncate ? "message-body-truncated" : "",
@@ -456,8 +481,11 @@ const MessageBodyRenderer = (props: {
         isEdited={message.editedAt !== null}
         hideTimestamp={hideTimestamp}
       />
-      {message.sendStatus === "error-send" && <span className="text-xs text-red-500">error sending</span>}
-      {message.sendStatus === "error-update" && <span className="text-xs text-red-500">error updating</span>}
+      {(message.sendStatus === "error-send" || message.sendStatus === "error-update") && <SendStatusNotice
+        sendStatus={message.sendStatus}
+        onRetry={onRetry}
+        onDiscard={onDiscard}
+      />}
     </div>
   )
 }

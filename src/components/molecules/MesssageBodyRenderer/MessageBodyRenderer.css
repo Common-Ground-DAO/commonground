@@ -101,3 +101,15 @@
 .mediaEmbedVideoContainer.small {
   width: 50%;
 }
+.message-send-status {
+  @apply flex flex-wrap items-center gap-2 pt-1 cg-text-md-400;
+  color: var(--colours-warning-500);
+}
+
+.message-send-status-action {
+  @apply cg-text-md-500 underline cursor-pointer;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+}

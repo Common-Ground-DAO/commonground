@@ -5,7 +5,7 @@
 import './CallPage.css';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCallContext } from 'context/CallProvider';
-import data from 'data';
+import { chat } from 'data/chat/runtime';
 import { useNavigate, useParams } from 'react-router';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
@@ -53,7 +53,8 @@ const CallPage: React.FC = () => {
   const currentCall = useMemo(() => {
     const call = calls.find(c => c.id === urlCallId);
     if (!!call) {
-      data.channelManager.registerAccessForChannel({
+      // registered during render, before the call chat's window opens
+      chat.channels.registerAccessForChannel({
         callId: call.id,
         channelId: call.channelId,
       });
@@ -104,14 +105,15 @@ const CallPage: React.FC = () => {
     }
 
     return <div className='call-chat'>
-      <MessageViewInner
-        channelId={currentCall?.channelId || ''}
+      {/* no window without a call: its channel and access are unknown */}
+      {!!currentCall && <MessageViewInner
+        channelId={currentCall.channelId}
         hideInput={urlCallId !== callId}
         onMobileFocus={setMobileFocused}
         callMode
-      />
+      />}
     </div>;
-  }, [isMobile, currentCall?.callType, currentCall?.channelId, showChat, urlCallId, callId]);
+  }, [isMobile, currentCall, showChat, urlCallId, callId]);
 
   const onJoinCall = useCallback((currentCall: Models.Calls.Call) => {
     if(currentCall.callMembers >= currentCall.slots){

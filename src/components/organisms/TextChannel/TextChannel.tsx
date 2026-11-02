@@ -20,6 +20,7 @@ import { BellAlertIcon as BellAlertIconOutline } from '@heroicons/react/24/outli
 import { BellAlertIcon as BellAlertIconSolid } from '@heroicons/react/24/solid';
 import PinnedChatOptionsModal from 'components/molecules/PinnedChatOptionsModal/PinnedChatOptionsModal';
 import data from 'data';
+import { chat } from 'data/chat/runtime';
 import { PopoverHandle } from 'components/atoms/Tooltip/Tooltip';
 import { getUrl } from 'common/util';
 import { useLoadedCommunityContext, useSafeCommunityContext } from 'context/CommunityProvider';
@@ -372,17 +373,11 @@ const PinnedMessage: React.FC<{
   const { isMobile } = useWindowSizeContext();
   const creator = useUserData(message?.creatorId);
 
+  // watched in the store: works before the channel's message list is mounted
+  // (the header renders first) and follows edits and deletion
   useEffect(() => {
-    const resultPromise = data.channelManager.getMessageById(channelId, messageId, (updatedMessage) => {
-      setMessage(updatedMessage);
-    }).then(result => {
-      setMessage(result.item);
-      return result;
-    });
-
-    return () => {
-      resultPromise.then(result => result.unsubscribe());
-    };
+    setMessage(null);
+    return chat.channels.watchMessage(channelId, messageId, setMessage);
   }, [channelId, messageId]);
 
   const onUnpin = async (ev: React.MouseEvent) => {

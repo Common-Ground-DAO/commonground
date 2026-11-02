@@ -1,6 +1,9 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit 4a9754f8f, 2026-08-04; NSFW pre-check
+> Status: verified against commit 4a9754f8f, 2026-08-04; ConnectionManager,
+> WebSocketManager, LoginManager cross-tab behaviour, `ConnectionStatusIndicator`, the
+> `x-cg-socket-id` header and §8 items 1–2 (independent tabs) against commit 65b09b8,
+> 2026-11-02; NSFW pre-check
 > section against the fix/image-filter-review-53 branch, 2026-08-15; wallet,
 > motion, drag & drop and toolchain notes plus "Dependency pins and
 > constraints" against commit 935232158, 2026-10-31; dev env file pointer
@@ -114,7 +117,7 @@ Composed of atoms; represent small, functional UI units.
 | `UserProfilePhoto` | User avatar with optional status indicator |
 | `UserProfileV2` | Compact user profile card |
 | `UsernameWithVerifiedIcon` | Username with optional verification badge |
-| `ConnectionStatusIndicator` | Shows websocket/network connection status banner. Right after a (re)load the socket starts out disconnected until the tab connected; "Disconnected" is held back for the first 10 s (unless a connection had already been made), so a slow first connect is no outage banner |
+| `ConnectionStatusIndicator` | Shows websocket/network connection status banner. "Connected" means live (socket logged in, rooms joined). Right after a (re)load the socket starts out disconnected until the tab is live; "Disconnected" is held back for the first 10 s (unless the tab had been live already), so a slow first connect is no outage banner. "Connecting"/"Disconnected" appear only after 3 s and only while the page is visible (a hidden tab closes its socket on purpose); an account in the security step shows no connection problem. The state logic is the pure `indicatorState.ts` (tested) |
 | `CommunityCard` | Community discovery card |
 | `CommunitySkeletonCard` | Loading skeleton for community card |
 | `CommunityContentSkeletonCard` | Loading skeleton for community content |
@@ -556,6 +559,7 @@ All API communication goes through connector classes that extend `BaseApiConnect
 - All requests use `withCredentials: true` (cookie-based auth).
 - Sends/receives JSON by default; supports `ArrayBuffer` for binary uploads.
 - Response format: `{ status: "OK", data: T }` or `{ status: "ERROR", error: string }`.
+- Sends `x-cg-socket-id` (`SOCKET_ID_HEADER`) on every request: the tab's connected socket id, else a random per-tab id in the same format (`src/data/appstate/requestSocketId.ts`), read per request.
 - On `LOGIN_REQUIRED` error, automatically triggers `loginManager.loginRequiredErrorHandler()` and retries the request once.
 - On `REAUTH_REQUIRED` (a sensitive action, docs/auth-identity §8), asks `stepUpManager` (`src/data/auth/stepUp.ts`) to open the "Confirm it's you" dialog and retries the request once after a confirmation; when cancelled (or no dialog is mounted) the call rejects with `REAUTH_REQUIRED`. Concurrent requests share one dialog. Pinned by `baseConnector.test.ts`.
 
@@ -588,29 +592,32 @@ These are singleton classes that manage non-UI application state. They are NOT R
 #### ConnectionManager (`connection.ts`)
 
 The central state coordinator. Manages:
-- **WebSocket state**: `disconnected` | `connecting` | `connected` | `version-update`
+- **WebSocket state**: `disconnected` | `connecting` | `connected` (`connected` only while the tab is live: socket logged in, rooms joined; the type still lists `version-update`, which is never set)
+- **Update available**: `updateAvailable` (+ `updateAvailableChange` listener) — a newer build is deployed
 - **Login state**: `pending` | `anonymous` | `loggingin` | `loggedin` | `loggingout`
 - **Service worker state**: `pending` | `none` | `installing` | `installed` | `update-available` | etc.
 - **Visibility state**: mirrors `document.visibilityState`
 - **Online state**: `online` | `offline`
-- **Tab state**: `active` | `active-throttled` | `passive` | `passive-throttled` | `unknown`
+- **Tab state**: compatibility value only, always `active` (`tabStateChange` never fires)
 
 Provides a typed listener system (`addListener` / `removeListener`) and a client event handler system (`registerClientEventHandler` / `unregisterClientEventHandler`) for real-time server events.
 
 Key behaviors:
-- On WebSocket connect: triggers auto-login or login status check.
-- On `version-update`: triggers service worker update.
-- On disconnect: emits `cliConnectionLost` event.
-- Runs IndexedDB cleanup 10s after tab becomes active.
+- Starts the `WebSocketManager` once the login manager is loaded; on the first socket connect of the page it runs `loginManager.autoLogin()` (the HTTP device login, once per page load).
+- Emits `cliConnectionEstablished` / `cliConnectionRestored` when the tab becomes live (`onLive` `established` / `restored`), not on the raw socket connect. After `restored` it calls `loginManager.refreshAfterReconnect()` (debounced 1 s): chats and the own communities are re-fetched without a login.
+- On `updateAvailable`: triggers the service worker update.
+- On `disconnected`: emits `cliConnectionLost`.
+- On becoming visible or online: `loginManager.checkLoginStatus()`.
+- Runs IndexedDB cleanup 10 s after the page load (in every tab; deleting old databases is idempotent).
 
 #### WebSocketManager (`webSocket.ts`)
 
-Manages the Socket.IO connection:
+Manages this tab's Socket.IO connection and implements `Transport` (`src/data/appstate/transport.ts`, the contract for the data layer):
 - Uses `socket.io-client` with polling + websocket transports (websocket only in dev).
-- **Multi-tab coordination**: tabs report their state (including document visibility) over `BroadcastChannel('CG_WEBSOCKET_STATE')` and the service worker acts as referee, assigning exactly one tab the active-socket role (see §8). Only the active tab maintains the live connection; passive tabs receive state via broadcasts.
-- Tab states: `active`, `active-throttled`, `passive`, `passive-throttled`, `unknown`, `tabClosed`.
-- Handles `buildId` events for version detection and forced updates.
-- Socket authentication: emits `getSignableSecret`, signs with device keypair, emits `login`.
+- **One socket per tab**, no tab roles (see §8). `live`, `onLive(kind)`, `onLiveChange`, `onResume(reason)`, `updateAvailable`/`onUpdateAvailable`, `holdSocket('call')`, `getRequestSocketId()`. Details: [docs/realtime](../realtime/README.md#socketio-client).
+- Hidden-tab policy: closes the socket after 5 min hidden (not while a hold is active), at once on `freeze`/`pagehide`; reconnects on visible, `pageshow` (persisted), `resume`, `online`.
+- Socket authentication: emits `getSignableSecret`, signs with device keypair, emits `login`; `login(deviceId)` resolves on the `"OK"` ack (10 s ack timeout). A reconnect logs the socket in again; no HTTP login.
+- Handles `buildId` events: a different build sets `updateAvailable`; the socket keeps working.
 - Ping/pong for disconnect detection.
 - All server events prefixed with `cli` are forwarded to `ConnectionManager.eventHandler`.
 
@@ -623,8 +630,9 @@ Manages authentication:
 - An interactive login and `createUser` mark the session as freshly authenticated for `stepUpManager`; a device-key re-login, `logout()` and a logout in another tab clear it.
 - `autoLogin()`: attempts login with the stored device keypair; the deprecated mnemonic re-login (`CRYPTOGRAM_USER_MNEMONIC`) only runs on a legacy CG ID instance — elsewhere the stored phrase is removed.
 - `setupAfterLogin()`: initializes all Dexie databases with login response data.
-- `logout()`: clears all databases, removes device keypair, resets state.
-- Cross-tab login coordination via `BroadcastChannel('CG_LOGIN_STATE')`.
+- `logout()`: clears all databases, removes device keypair, resets state, then broadcasts the logout.
+- Every tab has its own login state. HTTP logins (device, interactive, `createUser`, transfer link) run under the Web Lock `cg:login` (bounded wait). Logins and logouts are broadcast on `BroadcastChannel('cg:auth')` (`authBroadcast.ts`), with the `storage` event on `CG_CURRENT_USER` (and a re-check when the tab becomes visible) as fallback: another tab's logout drops this tab's login without a second `User/logout`; another tab's login is taken over after `User/checkLoginStatus` (no HTTP login); another user's login counts as a logout first. A logout also posts `'anonymous'` on the legacy `CG_LOGIN_STATE` channel for one release (older pages still open); nothing listens there.
+- `loginRequiredErrorHandler()` (any tab): under the login lock re-checks the session with `User/checkLoginStatus`; only if it is not this tab's user any more it runs `autoLogin()`.
 
 #### ServiceWorkerManager (`serviceWorker.ts`)
 
@@ -1038,20 +1046,15 @@ Layout components wrap the route content and provide the navigation menu. On com
 
 ## 8. Multi-Tab Architecture
 
-The app coordinates behavior across multiple open tabs. A single service worker (`src/service-worker.ts`) acts as the **referee** for which tab owns the live WebSocket connection, which makes the handoff robust across tab open/close, visibility changes, and service-worker restarts.
+Every tab is independent (chat-sync design [1]): it owns its WebSocket connection, its login state and its in-memory data. There are no tab roles and no referee; the page never opens `BroadcastChannel('CG_WEBSOCKET_STATE')`.
 
-1. **WebSocket (active-tab election).** Each tab reports its state and document visibility over `BroadcastChannel('CG_WEBSOCKET_STATE')`. The service worker tracks the set of tabs and their states (`active` / `active-throttled` / `passive` / `passive-throttled`, plus a `visible` flag) and elects exactly one active tab:
-   - It waits for a full picture (heartbeats from known tabs) before reassigning roles, so a half-informed referee does not promote a second active tab.
-   - When no active tab exists, it prefers a **visible** passive tab (visible tabs are never timer-throttled).
-   - Collisions between two tabs both claiming the active role are broken deterministically in favor of the visible tab.
-   - If the active tab's connection is stuck in `connecting` far beyond normal, the role is handed to a fresh, non-throttled passive tab.
-   - Ghost tabs (e.g. banned during an initial service-worker install) are re-registered rather than left stranded.
+1. **WebSocket (one per tab).** Every tab connects its own socket (`WebSocketManager`, §4). Visible tabs — also several side by side — are always connected; a hidden tab closes its socket after 5 minutes unless it is in a call, and on `freeze`/`pagehide` at once; it reconnects when it comes back. The cost is one socket per open, non-idle tab.
 
-2. **Login.** The `LoginManager` uses `BroadcastChannel('CG_LOGIN_STATE')` to synchronize login/logout across tabs. Passive tabs can delegate `LOGIN_REQUIRED` errors to the active tab.
+2. **Login.** Each tab tracks its own login state. HTTP logins are serialised across tabs with the Web Lock `cg:login`; logins and logouts are broadcast on `BroadcastChannel('cg:auth')` with the `CG_CURRENT_USER` storage event as fallback, and every tab follows them itself (§4, LoginManager). A `LOGIN_REQUIRED` is handled in the tab that got it.
 
 3. **Channel data.** The `ChannelDatabaseManager` uses `BroadcastChannel('channelDatabaseManager_events')` (and per-database `chunkedDatabase-<name>` channels) to coordinate channel subscriptions and chunk updates across tabs.
 
-4. **localStorage.** Used for cross-tab state sync (`StorageEvent` listener) for current user, last WebSocket connection time, and various preferences.
+4. **localStorage.** Used for cross-tab state sync (`StorageEvent` listener) for the current user and various preferences.
 
 ---
 
@@ -1474,7 +1477,7 @@ After a **password** login, if the account has no passkey on this instance: once
 
 **Settings → Accounts → Sign out other devices** asks first ("Sign out other devices? Every other browser and app signed in to your account is signed out and has to sign in again. This device stays signed in."), then confirms it's you (`ensureRecentAuth`, like removing a passkey) and calls `User/signOutOtherDevices`. What it did shows below the button and as a snackbar: "Signed out 3 other devices." / "Signed out 1 other device." / "No other device was signed in." (`signedOutDevicesText`), or "Other devices will be signed out within a minute." when the server answers `delayed`. A replaced password (`EmailPage`, `EmailEditor`) adds the same sentence from `setPassword`'s `signedOutDevices` to "Password updated"; removing a passkey or an X/LUKSO/Farcaster account says "Your other devices were signed out." (docs/auth-identity §2).
 
-The device that was signed out learns it from the socket event `cliSignedOut`, or — when it was offline or closed — from the `NOT_FOUND` of its device key at the next automatic login. `LoginManager.signedOutElsewhere()` raises `signedOutNotice` and signs out locally (`logout()`); `SignedOutNotice` then shows "You were signed out — Your account was signed out on this device from another device, or its password, email address or sign-in methods were changed there. Sign in again to continue." with **Sign in** (opens the login modal) and **Not now**. A logout in another tab of the same browser (which deletes this device's key as well) shows no notice: the tab knows it from the `CG_LOGIN_STATE` broadcast or the stored current user.
+The device that was signed out learns it from the socket event `cliSignedOut`, or — when it was offline or closed — from the `NOT_FOUND` of its device key at the next automatic login. `LoginManager.signedOutElsewhere()` raises `signedOutNotice` and signs out locally (`logout()`); `SignedOutNotice` then shows "You were signed out — Your account was signed out on this device from another device, or its password, email address or sign-in methods were changed there. Sign in again to continue." with **Sign in** (opens the login modal) and **Not now**. A logout in another tab of the same browser (which deletes this device's key as well) shows no notice: the tab knows it from the `cg:auth` broadcast or the stored current user, and follows that tab's logout without a second `User/logout`.
 
 The X popup page (`/twitter-login`, `TwitterCallbackView`) shows "Too many attempts to connect X from this network. You can try again in …" when `Twitter/startLogin` was refused by its limit (`?error=rate-limited&retryAfter=`).
 

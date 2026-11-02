@@ -10,7 +10,9 @@
 > `cliSignedOut` + disconnect against commit 23a4c1e, 2026-11-01; room close hardening and
 > the call-ending safety net (Room Lifecycle, Call Flow) against commit 591e6cf, 2026-11-02;
 > human online status (grace period, batched cluster-wide offline check with one retry, touch
-> sets, change-only events, the stale job's events) against commit fc15832, 2026-11-02
+> sets, change-only events, the stale job's events) against commit fc15832, 2026-11-02; the
+> page side of the tab/socket model (Socket.IO Client, Tab Coordination: one socket per tab,
+> live signal, hidden-tab policy) against commit 65b09b8, 2026-11-02
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -170,7 +172,7 @@ Human presence is one column per user (`users.onlineStatus` + `onlineStatusUpdat
 
 ### Tab Coordination
 
-Multiple browser tabs share one Socket.IO connection. Coordination happens over a `BroadcastChannel('CG_WEBSOCKET_STATE')` shared between every tab (`src/data/appstate/webSocket.ts`) and the **service worker** (`src/service-worker.ts`), which acts as a referee. Only one tab (the "active" tab) holds the socket at any time; passive tabs mirror its connection state and do not process live events. See [Frontend Real-time → Tab Coordination](#tab-coordination-1) for the full protocol, including the visibility-based handoff and the service-worker referee.
+Every browser tab owns its own Socket.IO connection and login state (`src/data/appstate/webSocket.ts`); there are no tab roles and the page does not talk to the service worker about sockets. A visible tab is always connected, a hidden tab closes its socket after 5 minutes unless it is in a call. Each tab's socket logs in with the device key, so one user has one socket per open, non-idle tab. See [Frontend Real-time → Tab Coordination](#tab-coordination-1).
 
 ---
 
@@ -413,31 +415,39 @@ The schemas are `.strict(true)` (no type coercion — `"1"` is not accepted wher
 The `WebSocketManager` singleton manages the Socket.IO connection:
 
 - **Connection:** `io(WS_URL, { transports: ['polling', 'websocket'], path: '/api/ws/', reconnection: true, reconnectionDelayMax: 10000 })`. In dev mode, polling is skipped (websocket-only).
-- **Authentication flow:**
-  1. On `connect`, emit `cgPing` for clock sync.
-  2. Emit `getSignableSecret` to get a challenge.
-  3. Sign the secret with the device key.
-  4. Emit `login` with `{ deviceId, secret, base64Signature }`.
-  5. Track login state via `socket.cg_loggedin` (0 = not logged in, 1 = in progress, 2 = logged in).
-- **Event routing:** Uses `socket.onAny()` to catch all events. Events are only dispatched when this tab is `active`/`active-throttled`; passive tabs ignore them. Events starting with `cli` are forwarded to the registered `clientEventHandler`. The `buildId` event has its own handler.
-- **Reconnection logic:** Handles `disconnect` with reason-specific behavior:
-  - `io server disconnect` -- Immediately reconnect.
-  - `io client disconnect` -- Stay disconnected (intentional).
-  - `transport close/error` -- Reconnect (state `connecting`) if online, disconnect if offline.
-- **Connect-error handling:** socket.io keeps retrying (`reconnection: true`), but after 5 consecutive `connect_error`s while still in `connecting`, the displayed state is surfaced as `disconnected` so the UI does not claim "connecting" forever.
-- **Disconnect detection:** A 59-second `cgPing` interval detects stale connections. If the last pong is >110 seconds old, forces reconnect. The same 110s staleness check runs when a stalled active tab becomes visible again.
-- **Version detection:** When `buildId` from server differs from the client build, triggers `version-update` state.
+- **Contract:** it implements `Transport` (`src/data/appstate/transport.ts`); `connectionManager.start`s it once the login manager is loaded, so a stored device is known before the first socket login.
+- **Authentication flow (socket login):**
+  1. On `connect`, emit `cgPing` for clock sync and re-send the socket-scoped joins (`watchCgIdRequest`).
+  2. If the tab has a device: emit `getSignableSecret` to get a challenge, sign it with the device key, emit `login` with `{ deviceId, secret, base64Signature }`. Each ack has a 10 s timeout; a timeout restarts the connection.
+  3. On `"OK"` (the server has joined all rooms) the tab is **live**. An anonymous tab is live right after step 1. `"SECURITY_STEP_REQUIRED"` and `"ERROR"` are not live; `"ERROR"` is retried with a backoff (5 s, 15 s, 60 s) while the tab is visible.
+  4. A login, user switch or logout on a connected socket runs the same steps (a `logout` first if the socket was logged in) and is not live in between. Socket logins never overlap: the server runs socket handlers concurrently.
+- **Live signal:** `live` is true only while connected and logged in (or anonymous and set up); `Common.WebSocketState` is `connected` only while live. `onLive(kind)` fires on every transition to live: `established` (first in this page load), `restored` (after the connection was lost or closed by policy), `user` (same connection, its user changed). `onResume(reason)` (`visible` after ≥ 30 s hidden, `pageshow` from bfcache, `resume`, `online`) fires only when the socket stayed live; otherwise the tab reconnects and only the later `onLive` fires.
+- **Event routing:** Uses `socket.onAny()` to catch all events and forwards those starting with `cli` to the registered `clientEventHandler` (every tab handles its own events). The `buildId` event has its own handler.
+- **Reconnection logic:** A reconnect performs the socket login only (no HTTP device login). Handles `disconnect` with reason-specific behavior:
+  - `io server disconnect` -- Immediately reconnect (unless closed by policy).
+  - `io client disconnect` -- Stay disconnected (policy close, or a deliberate restart).
+  - other reasons (`transport close`, `ping timeout`, …) -- socket.io reconnects with its backoff; a visible tab that comes back (`visible`, `pageshow`, `resume`, `online`) reconnects at once instead of waiting for the backoff.
+- **Connect-error handling:** socket.io keeps retrying (`reconnection: true`), but after 5 consecutive `connect_error`s the displayed state is `disconnected` so the UI does not claim "connecting" forever.
+- **Disconnect detection:** A 59-second `cgPing` interval detects stale connections. If the last pong is >110 seconds old, forces reconnect. The same check runs when a live tab comes back.
+- **Version detection:** When `buildId` from server differs from the client build, `updateAvailable` is set (once per page load) and the service-worker update starts. The socket, pings, socket re-login and reconnects keep working.
+- **Request socket id:** `getRequestSocketId()` is the connected socket's id, else a random per-tab id in the same format; `BaseApiConnector` sends it as `x-cg-socket-id` on every API request.
 
 ### Tab Coordination
 
-Exactly one tab (the "active" tab) holds the Socket.IO connection; every other tab is "passive" and mirrors the active tab's connection state without processing live events. Coordination uses a `BroadcastChannel('CG_WEBSOCKET_STATE')` shared by all tabs **and** the service worker (`src/service-worker.ts`), which acts as a referee.
+Every tab owns its Socket.IO connection, its login state and its in-memory data (chat-sync design [1], `docs/todo/ROADMAP_chat-sync.md`). The page never opens `BroadcastChannel('CG_WEBSOCKET_STATE')`; `webSocketManager.tabState` / `connectionManager.tabState` are kept only as a compatibility value and are always `active`.
 
-**Participants and messages:**
+**Hidden-tab policy (`webSocket.ts`):**
 
-- Each tab has a random `tabId` and a `tabState`. It broadcasts `TabToWorker` messages (`tabId`, `tabState`, optional `visible`, `socketState`, `lastEventTime`, `lastDisconnect`).
-- The service worker broadcasts `WorkerToTab` messages assigning a `tabState` to a specific `tabId`, and relays `socketState` / `lastEventTime` / `lastDisconnect` so passive tabs and freshly opened tabs converge on the last known state.
-- Tab states: `active`, `active-throttled`, `passive`, `passive-throttled`, `unknown`. `tabClosed` is a message value (sent on `beforeunload`), not a resting state. The `*-throttled` variants mark tabs whose heartbeat has slowed (backgrounded / timer-throttled).
-- `lastEventTime` is persisted to `localStorage('CG_LAST_KNOWN_WS_CONNCETION')` (and mirrored via the `storage` event) for cross-tab awareness of the last event received.
+- Visible tabs (also several in split view) are always connected.
+- A hidden tab closes its socket (`socket.disconnect()`, no auto-reconnect) after `HIDDEN_DISCONNECT_AFTER_MS` (5 min) unless a `SocketHold` is active. `CallProvider` holds the socket while the tab is in a call; after the last release of a hidden tab the 5 minutes start from the release. Inside the 5 minutes socket.io's own reconnection stays on.
+- `freeze` and `pagehide` close the socket at once, holds or not (`pagehide` replaces `beforeunload`; nothing is written to localStorage per event or on unload).
+- After such a policy close the tab reconnects only on `visibilitychange` to visible, `pageshow` (persisted), `resume` or `online` while visible — never on a timer while hidden.
+- `connectionManager.lastDisconnect` (read only by the old chunked message cache) starts at the page load and moves to "last event, at most 30 s before the disconnect" on every disconnect.
+
+**Login across tabs (`login.ts`, `authBroadcast.ts`):**
+
+- The HTTP device login runs once per page load in every tab (on the first socket connect); HTTP logins of all tabs are serialised with the Web Lock `cg:login` (a wait longer than 15 s logs in without it, since a frozen tab keeps its locks). After a restored live, `connectionManager` refreshes the community and chat data (debounced) without an HTTP login.
+- A logout or login is broadcast on `BroadcastChannel('cg:auth')`; the `storage` event on `CG_CURRENT_USER` is the fallback. On a logout every other tab emits socket `logout` and drops its login state (no second `User/logout`); on a login an anonymous tab takes over the session after `User/checkLoginStatus`; a login of another user is handled as a logout first. For one release a logout also posts `'anonymous'` on `CG_LOGIN_STATE` for still-open older pages.
 
 **Service-worker referee (`src/service-worker.ts`):**
 
@@ -446,14 +456,6 @@ Exactly one tab (the "active" tab) holds the Socket.IO connection; every other t
 - If the active tab's `socketState` has been stuck in `connecting` for >45s (a throttled background tab can stall there), the referee demotes it and hands the active role to a fresh passive tab.
 - On worker `activate` (a new build), all currently-known tabIds are added to a `bannedTabIds` set, the registry is cleared, and every client is told to reload. Banned tabIds are ignored until they re-register with a new tabId.
 - The referee only acts while `handleTabStates` is true (there are controlled window clients and tab handling has not been disabled via a `STOP_TAB_HANDLING` message).
-
-**Tab-side handoff and collision handling (`webSocket.ts`):**
-
-- **Visibility handoff:** when a `passive`/`passive-throttled` tab becomes `visible`, it immediately claims `active` and connects — the live connection follows the tab the user is looking at. An active tab that becomes visible after a long stall (last pong >110s old) forces a reconnect.
-- **Born-visible tabs:** a tab that is foreground at first assignment never fires `visibilitychange`, so when it is initially assigned `passive` while visible it claims `active` on the spot.
-- **Collision tie-break:** if two tabs both believe they are active, they resolve deterministically — the visible tab wins; with equal visibility the higher `tabId` wins. Exactly one side yields, demotes itself to passive, and disconnects its socket.
-- **Ghost re-registration:** `reRegister()` abandons a banned tabId and negotiates a fresh one; used when the worker banned the tab at activation but the page keeps running (e.g. the worker's first install).
-- In dev (`serviceWorkerManager.state === 'none'`, port 3000) there is no worker, so the single tab is forced `active` and only one tab is supported.
 
 ### WebRTC Client
 
@@ -821,7 +823,7 @@ Key prefixes:
 | `srv/entities/notifications.ts` | Notification entity |
 | `srv/api/notifications.ts` | Notification REST API routes |
 | `srv/common/enums.ts` | CallType, CallPermission enums |
-| `src/data/appstate/webSocket.ts` | Frontend Socket.IO client (WebSocketManager), tab-side handoff & collision handling |
+| `src/data/appstate/webSocket.ts` | Frontend Socket.IO client (WebSocketManager, implements `Transport` from `transport.ts`): one socket per tab, live signal, hidden-tab policy |
 | `src/service-worker.ts` | Service worker: tab-coordination referee, web push display, precaching |
 | `src/util/RoomClient.tsx` | Frontend protoo + mediasoup-client |
 | `src/util/urlFactory.ts` | Builds protoo WebSocket URL |

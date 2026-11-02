@@ -13,6 +13,8 @@ export class Chat {
     // @ToDo: When one-to-one chats are expanded to group chats with potentially
     // a lot of users, this needs to be replaced by a proper db table
     @Index()
+    // GIN index for membership lookups ("userIds" @> ARRAY[...]), created by the migration
+    @Index('idx_chats_userIds_gin', { synchronize: false })
     @Column({ type: 'uuid', array: true, nullable: false })
     userIds!: string[];
 

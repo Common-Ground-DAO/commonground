@@ -6,7 +6,7 @@ import errors from "../common/errors";
 import config from "../common/config";
 import format from "pg-format";
 import pool from "../util/postgres";
-import { type Pool, type PoolClient } from "pg";
+import { type Pool, type PoolClient, type QueryResult } from "pg";
 import { ChannelNotificationTypeEnum, ChannelPinTypeEnum } from "../common/enums";
 import fileHelper from "./files";
 
@@ -136,17 +136,28 @@ async function _getOwnStoredMessage(
  * with that id exists already, nothing is written (not even the creator's
  * read state) and the stored message is returned with `created: false` if
  * it is the same creator's, not deleted, in the same channel; otherwise
- * NOT_ALLOWED. `createdAt` is unique per channel (database clock, ms), so two
- * inserts into one channel in the same millisecond collide; the insert is
- * then retried once with a new timestamp.
+ * NOT_ALLOWED.
  *
  * A known id is answered from a plain lookup without an INSERT: the sync
  * sequence trigger fires before ON CONFLICT is resolved, so an INSERT that
  * inserts nothing would still take a channel seq (a gap without a change).
- * ON CONFLICT stays for two creates with the same id racing each other.
+ *
+ * The insert runs in a transaction that first locks the channel's sync
+ * sequence row (the lock the trigger would take anyway, taken before the
+ * row's values are computed). Under that lock it checks the id again (a
+ * same-id create in this channel has committed by then) and takes
+ * `createdAt` = max(clock_timestamp(), the channel's newest createdAt + 1 ms),
+ * so creates in one channel get distinct, increasing timestamps however
+ * close together they arrive — `UNIQUE(channelId, createdAt)` at ms
+ * precision. A collision is still possible with a writer that does not take
+ * the lock first (an API process from before this change, during a deploy);
+ * the insert is tried up to CREATE_ATTEMPTS times. ON CONFLICT (id)
+ * stays for a same-id create in another channel racing this one.
  */
+const CREATE_ATTEMPTS = 3;
+
 async function _createMessage(
-  db: Pool | PoolClient,
+  db: Pool,
   userId: string,
   data: API.Messages.createMessage.Request
 ): Promise<{
@@ -177,6 +188,11 @@ async function _createMessage(
       ) from user_accounts ua WHERE ua."userId" = u."id"), '[]'::json) AS "accounts"
       FROM users u
       WHERE id = $2::uuid
+    ), created_at AS (
+      SELECT GREATEST(
+        clock_timestamp(),
+        (SELECT max(m."createdAt") FROM messages m WHERE m."channelId" = $3::uuid) + interval '1 millisecond'
+      ) AS "at"
     ), inserted AS (
       INSERT INTO messages (
         "id",
@@ -184,25 +200,31 @@ async function _createMessage(
         "channelId",
         "body",
         "attachments",
-        "parentMessageId"
+        "parentMessageId",
+        "createdAt",
+        "updatedAt"
       ) VALUES (
         $1::uuid,
         $2::uuid,
         $3::uuid,
         $4::json,
         $5::json,
-        $6::uuid
+        $6::uuid,
+        (SELECT "at" FROM created_at),
+        (SELECT "at" FROM created_at)
       )
       ON CONFLICT ("id") DO NOTHING
       RETURNING "createdAt", "updatedAt", "id", "syncSeq"
     ), update_readstate AS (
+      -- the message's own createdAt (not the transaction start), so the
+      -- creator's own message never counts as unread
       INSERT INTO channelreadstate (
         "userId",
         "channelId",
         "lastRead"
       )
-      SELECT $2::uuid, $3::uuid, now()
-      FROM inserted
+      SELECT $2::uuid, $3::uuid, i."createdAt"
+      FROM inserted i
       ON CONFLICT ("userId", "channelId")
       DO UPDATE SET "lastRead" = GREATEST(channelreadstate."lastRead", EXCLUDED."lastRead")
     )
@@ -223,18 +245,34 @@ async function _createMessage(
     JSON.stringify(data.attachments),
     data.parentMessageId,
   ];
-  let result;
-  try {
-    result = await db.query(query, params);
-  }
-  catch (error) {
-    if (!isMessageUniqueViolation(error)) {
-      throw error;
+  const lockChannelQuery = `
+    INSERT INTO channel_sync_state AS s ("channelId", "seq")
+    VALUES ($1::uuid, 0)
+    ON CONFLICT ("channelId") DO UPDATE SET "seq" = s."seq" WHERE false
+  `;
+  let result: QueryResult | undefined;
+  for (let attempt = 0; ; attempt++) {
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      // locks the row even though the WHERE false updates nothing
+      await client.query(lockChannelQuery, [data.access.channelId]);
+      const raced = await client.query(`SELECT 1 FROM messages WHERE "id" = $1::uuid`, [data.id]);
+      result = raced.rows.length > 0 ? undefined : await client.query(query, params);
+      await client.query('COMMIT');
+      break;
     }
-    // same channel, same millisecond: a new statement takes a new now()
-    result = await db.query(query, params);
+    catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      if (!isMessageUniqueViolation(error) || attempt + 1 >= CREATE_ATTEMPTS) {
+        throw error;
+      }
+    }
+    finally {
+      client.release();
+    }
   }
-  if (result.rows.length === 1) {
+  if (result && result.rows.length === 1) {
     const row = result.rows[0] as {
       createdAt: string;
       updatedAt: string;

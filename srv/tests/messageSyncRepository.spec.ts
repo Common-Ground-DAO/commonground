@@ -13,7 +13,11 @@ const poolQuery = jest.fn();
 
 jest.mock('../util/postgres', () => ({
   __esModule: true,
-  default: { query: (...args: any[]) => poolQuery(...args) },
+  // pool.query and the queries of a checked-out client both go to poolQuery
+  default: {
+    query: (...args: any[]) => poolQuery(...args),
+    connect: async () => ({ query: (...args: any[]) => poolQuery(...args), release: () => undefined }),
+  },
 }));
 jest.mock('../repositories/files', () => ({ __esModule: true, default: { getFileData: jest.fn().mockResolvedValue([]) } }));
 
@@ -240,30 +244,55 @@ describe('messageHelper.createMessage', () => {
     userAccounts: [{ type: 'cg', displayName: 'Me', imageId: null }], userDisplayAccount: 'cg',
   };
 
-  const unknownId = { rows: [] };
-  const knownId = { rows: [{ '?column?': 1 }] };
+  const statements = () => poolQuery.mock.calls.map(([sql]) => normalize(sql).trim());
   const insertCalls = () => poolQuery.mock.calls.filter(([sql]) => sql.includes('INSERT INTO messages'));
+  const collision = () => Object.assign(new Error('duplicate key'), { code: '23505', table: 'messages', constraint: 'UQ_6df0905b0802e8402e6570c6505' });
 
-  it('inserts with ON CONFLICT (id) DO NOTHING and writes the read state only for a new row', async () => {
-    poolQuery.mockResolvedValueOnce(unknownId).mockResolvedValueOnce({ rows: [inserted] });
+  /**
+   * Answers the create's statements. `idChecks` are the answers of the id
+   * lookups in order (before the lock, under the lock), `inserts` those of
+   * the INSERTs (an Error is thrown), `stored` the stored-message lookup.
+   */
+  function mockCreate(options: { idChecks: boolean[], inserts?: (object | Error)[], stored?: object[] }) {
+    const idChecks = [...options.idChecks];
+    const inserts = [...(options.inserts ?? [])];
+    poolQuery.mockImplementation(async (sql: string) => {
+      const text = normalize(sql).trim();
+      if (text === 'SELECT 1 FROM messages WHERE "id" = $1::uuid') return { rows: idChecks.shift() ? [{ '?column?': 1 }] : [] };
+      if (text.includes('INSERT INTO messages')) {
+        const next = inserts.shift();
+        if (next instanceof Error) throw next;
+        return next;
+      }
+      if (text.includes('FROM messages m')) return { rows: options.stored ?? [] };
+      return { rows: [] };
+    });
+  }
+
+  it('inserts under the channel lock with ON CONFLICT (id) DO NOTHING, createdAt after the lock', async () => {
+    mockCreate({ idChecks: [false, false], inserts: [{ rows: [inserted] }] });
     const result = await messageHelper.createMessage(USER, request);
     expect(result).toEqual({
       message: expect.objectContaining({ id: MESSAGE, creatorId: USER, channelId: CHANNEL, syncSeq: 17 }),
       userAlias: 'Me',
       created: true,
     });
-    expect(normalize(poolQuery.mock.calls[0][0]).trim()).toBe('SELECT 1 FROM messages WHERE "id" = $1::uuid');
-    expect(poolQuery.mock.calls[0][1]).toEqual([MESSAGE]);
-    const normalized = normalize(poolQuery.mock.calls[1][0]);
-    expect(normalized).toContain('ON CONFLICT ("id") DO NOTHING RETURNING "createdAt", "updatedAt", "id", "syncSeq"');
-    expect(normalized).toContain('SELECT $2::uuid, $3::uuid, now() FROM inserted ON CONFLICT ("userId", "channelId")');
+    const sql = statements();
+    expect(sql[0]).toBe('SELECT 1 FROM messages WHERE "id" = $1::uuid');
+    expect(sql[1]).toBe('BEGIN');
+    expect(sql[2]).toBe('INSERT INTO channel_sync_state AS s ("channelId", "seq") VALUES ($1::uuid, 0) ON CONFLICT ("channelId") DO UPDATE SET "seq" = s."seq" WHERE false');
+    expect(poolQuery.mock.calls[2][1]).toEqual([CHANNEL]);
+    expect(sql[3]).toBe('SELECT 1 FROM messages WHERE "id" = $1::uuid');
+    expect(sql[4]).toContain('GREATEST( clock_timestamp(), (SELECT max(m."createdAt") FROM messages m WHERE m."channelId" = $3::uuid) + interval \'1 millisecond\' )');
+    expect(sql[4]).toContain('ON CONFLICT ("id") DO NOTHING RETURNING "createdAt", "updatedAt", "id", "syncSeq"');
+    // the creator's read marker is the message's own createdAt
+    expect(sql[4]).toContain('SELECT $2::uuid, $3::uuid, i."createdAt" FROM inserted i ON CONFLICT ("userId", "channelId")');
+    expect(sql[5]).toBe('COMMIT');
   });
 
-  it('answers a known id from the stored message without an INSERT (no sequence taken)', async () => {
+  it('answers a known id from the stored message without the lock or an INSERT', async () => {
     const stored = row('17', { id: MESSAGE, creatorId: USER });
-    poolQuery
-      .mockResolvedValueOnce(knownId)
-      .mockResolvedValueOnce({ rows: [stored] });
+    mockCreate({ idChecks: [true], stored: [stored] });
     const result = await messageHelper.createMessage(USER, request);
     expect(result).toEqual({
       message: expect.objectContaining({ id: MESSAGE, creatorId: USER, syncSeq: 17 }),
@@ -271,50 +300,50 @@ describe('messageHelper.createMessage', () => {
       created: false,
     });
     expect(insertCalls()).toHaveLength(0);
+    expect(statements()).not.toContain('BEGIN');
     const lookup = normalize(poolQuery.mock.calls[1][0]);
     expect(lookup).toContain(`m."channelId" = '${CHANNEL}'::UUID AND m."deletedAt" IS NULL`);
     expect(lookup).toContain(`m."id" = '${MESSAGE}'::UUID AND m."creatorId" = '${USER}'::UUID`);
   });
 
   it('refuses an id taken by another user, another channel or a deleted message, without an INSERT', async () => {
-    poolQuery
-      .mockResolvedValueOnce(knownId)
-      .mockResolvedValueOnce({ rows: [] });
+    mockCreate({ idChecks: [true], stored: [] });
     await expect(messageHelper.createMessage(USER, request)).rejects.toThrow('NOT_ALLOWED');
     expect(insertCalls()).toHaveLength(0);
   });
 
-  it('a concurrent create with the same id that wins the race: the stored message', async () => {
-    const stored = row('17', { id: MESSAGE, creatorId: USER });
-    poolQuery
-      .mockResolvedValueOnce(unknownId)
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [stored] });
+  it('a same-id create that committed while waiting for the lock: no INSERT, the stored message', async () => {
+    mockCreate({ idChecks: [false, true], stored: [row('17', { id: MESSAGE, creatorId: USER })] });
     await expect(messageHelper.createMessage(USER, request)).resolves.toEqual(expect.objectContaining({ created: false }));
+    expect(insertCalls()).toHaveLength(0);
+    expect(statements()).toContain('COMMIT');
+  });
+
+  it('a same-id create in another channel that wins the race: ON CONFLICT, then the lookup', async () => {
+    mockCreate({ idChecks: [false, false], inserts: [{ rows: [] }], stored: [] });
+    await expect(messageHelper.createMessage(USER, request)).rejects.toThrow('NOT_ALLOWED');
     expect(insertCalls()).toHaveLength(1);
   });
 
-  it('retries once when the channel already has a message at the same millisecond', async () => {
-    const collision = Object.assign(new Error('duplicate key'), { code: '23505', table: 'messages', constraint: 'UQ_6df0905b0802e8402e6570c6505' });
-    poolQuery
-      .mockResolvedValueOnce(unknownId)
-      .mockRejectedValueOnce(collision)
-      .mockResolvedValueOnce({ rows: [inserted] });
+  it('retries a (channelId, createdAt) collision in a new transaction', async () => {
+    mockCreate({ idChecks: [false, false, false], inserts: [collision(), { rows: [inserted] }] });
     await expect(messageHelper.createMessage(USER, request)).resolves.toEqual(expect.objectContaining({ created: true }));
     expect(insertCalls()).toHaveLength(2);
     expect(insertCalls()[1][0]).toBe(insertCalls()[0][0]);
+    expect(statements().filter(sql => sql === 'ROLLBACK')).toHaveLength(1);
+    expect(statements().filter(sql => sql === 'BEGIN')).toHaveLength(2);
   });
 
-  it('retries only once', async () => {
-    const collision = Object.assign(new Error('duplicate key'), { code: '23505', table: 'messages' });
-    poolQuery.mockResolvedValueOnce(unknownId).mockRejectedValueOnce(collision).mockRejectedValueOnce(collision);
+  it('gives up after three attempts', async () => {
+    mockCreate({ idChecks: [false, false, false, false], inserts: [collision(), collision(), collision()] });
     await expect(messageHelper.createMessage(USER, request)).rejects.toThrow('duplicate key');
-    expect(insertCalls()).toHaveLength(2);
+    expect(insertCalls()).toHaveLength(3);
   });
 
   it('does not retry other errors', async () => {
-    poolQuery.mockResolvedValueOnce(unknownId).mockRejectedValueOnce(Object.assign(new Error('fk'), { code: '23503', table: 'messages' }));
+    mockCreate({ idChecks: [false, false], inserts: [Object.assign(new Error('fk'), { code: '23503', table: 'messages' })] });
     await expect(messageHelper.createMessage(USER, request)).rejects.toThrow('fk');
     expect(insertCalls()).toHaveLength(1);
+    expect(statements()).toContain('ROLLBACK');
   });
 });

@@ -15,7 +15,8 @@
 > 591e6cf, 2026-11-02; the message sync sequence (`channel_sync_state`, `messages.syncSeq`,
 > the `messages_sync_seq_*` triggers, the delete lock order, the migration's write stall),
 > `idx_messages_channelId_createdAt_live` and the idempotent message insert against commit
-> 30ce83e, 2026-11-02
+> 30ce83e, 2026-11-02; the `createMessage` channel lock and `createdAt` rule against the commit
+> after d2b9377, 2026-11-02
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -499,12 +500,18 @@ Per-user, per-channel settings. Composite PK: `(userId, channelId, communityId)`
 
 #### `messages`
 All messages across all channel types. Unique constraint on `(channelId, createdAt)`
-(`UQ_6df0905b0802e8402e6570c6505`; `createdAt` comes from the database clock at ms
-precision, so two inserts into one channel in the same millisecond collide and
-`messageHelper.createMessage` retries the insert once). The insert is idempotent on the
+(`UQ_6df0905b0802e8402e6570c6505`; ms precision, database clock).
+`messageHelper.createMessage` inserts in a transaction that first locks the channel's
+`channel_sync_state` row (`INSERT … ON CONFLICT DO UPDATE … WHERE false`, which locks
+without writing) and then sets `createdAt` = `updatedAt` = `GREATEST(clock_timestamp(),
+newest createdAt of the channel + 1 ms)`, so creates in one channel get distinct,
+increasing timestamps in sequence order even in bursts; a collision with a writer that
+does not take the lock first (an API process from before this change, during a deploy) is
+retried, up to 3 attempts. The insert is idempotent on the
 client-chosen `id`: a known id is answered from a lookup without an INSERT (an INSERT
-that inserts nothing would still take a sync seq), and `ON CONFLICT ("id") DO NOTHING`
-covers two creates racing with the same id; the creator's `channelreadstate` is only
+that inserts nothing would still take a sync seq), checked again under the channel lock,
+and `ON CONFLICT ("id") DO NOTHING` covers a same-id create in another channel racing it;
+the creator's `channelreadstate` (`lastRead` = the message's `createdAt`) is only
 written for a new row. Partial indexes from migration `1793635200000-chatSyncSeq`:
 `idx_messages_channelId_syncSeq` on `("channelId", "syncSeq") WHERE "syncSeq" IS NOT
 NULL` (see [Message sync sequence](#message-sync-sequence)) and
@@ -553,10 +560,10 @@ Per-channel, commit-ordered change sequence for messages (chat-sync catch-up,
   last write had a seq `<= S` and none above. A rolled-back write releases its seq (no
   gap); an `INSERT … ON CONFLICT DO NOTHING` that inserts nothing still takes one (BEFORE
   triggers fire before the conflict check), which is why `createMessage` looks a known id
-  up first; only a lost race of two same-id creates leaves such a gap. Writes to different
+  up first (and again under the channel lock); only a create that loses a same-id race against a create in another channel leaves such a gap. Writes to different
   channels do not wait for each other.
 - Lock order of the writers: `set/unsetReaction` lock the reaction row, then the message
-  row, then the sequence row; an edit locks the message row, then the sequence row; a new
+  row, then the sequence row; an edit locks the message row, then the sequence row; `createMessage` locks the sequence row first (then inserts); a new
   reply (or a changed `parentMessageId`) takes the sequence row first and then `FOR KEY
   SHARE` on the parent (foreign-key check). The soft delete
   (`messageHelper.deleteMessage`/`deleteAllUserMessages`) writes several rows and runs in

@@ -544,6 +544,58 @@ describeDb('message sync sequence on PostgreSQL', () => {
       expect(next.message.syncSeq).toBe(2);
     });
 
+    it('a burst of concurrent creates (and replies) in one channel: none fails, distinct increasing createdAt', async () => {
+      const channel = await newChannel();
+      const parent = await messageHelper.createMessage(me, { id: randomUUID(), access: accessFor(channel), body, parentMessageId: null, attachments: [] });
+      const BURST = 200;
+      const results = await Promise.allSettled(Array.from({ length: BURST }, (_, i) => messageHelper.createMessage(i % 2 ? other : me, {
+        id: randomUUID(),
+        access: accessFor(channel),
+        body,
+        parentMessageId: i % 3 === 0 ? parent.message.id : null,
+        attachments: [],
+      })));
+      const failed = results.filter(r => r.status === 'rejected') as PromiseRejectedResult[];
+      expect(failed.map(f => String(f.reason))).toEqual([]);
+      const rows = (await q(`SELECT "createdAt", "syncSeq" FROM messages WHERE "channelId" = $1 ORDER BY "syncSeq"`, [channel])).rows;
+      expect(rows).toHaveLength(BURST + 1);
+      // seq order = createdAt order, no gaps
+      expect(rows.map(r => Number(r.syncSeq))).toEqual(Array.from({ length: BURST + 1 }, (_, i) => i + 1));
+      for (let i = 1; i < rows.length; i++) {
+        expect(rows[i].createdAt.getTime()).toBeGreaterThan(rows[i - 1].createdAt.getTime());
+      }
+      // each creator's read marker is its newest own message (not the transaction start)
+      for (const user of [me, other]) {
+        const lastRead = (await q(`SELECT "lastRead" FROM channelreadstate WHERE "channelId" = $1 AND "userId" = $2`, [channel, user])).rows[0].lastRead;
+        const newestOwn = (await q(`SELECT max("createdAt") AS t FROM messages WHERE "channelId" = $1 AND "creatorId" = $2`, [channel, user])).rows[0].t;
+        expect(lastRead.getTime()).toBe(newestOwn.getTime());
+      }
+    }, 30000);
+
+    it('the create\'s channel lock blocks a second create of the channel until commit', async () => {
+      const channel = await newChannel();
+      const lock = `INSERT INTO channel_sync_state AS s ("channelId", "seq") VALUES ($1::uuid, 0) ON CONFLICT ("channelId") DO UPDATE SET "seq" = s."seq" WHERE false`;
+      await writer.query(lock, [channel]);
+      const holder = await writer.connect();
+      try {
+        await holder.query('BEGIN');
+        await holder.query(lock, [channel]);
+        let created = false;
+        const creating = messageHelper.createMessage(other, { id: randomUUID(), access: accessFor(channel), body, parentMessageId: null, attachments: [] })
+          .then(result => { created = true; return result; });
+        await waitForLockWaiters(1);
+        expect(created).toBe(false);
+        await holder.query('COMMIT');
+        expect((await creating).message.syncSeq).toBe(1);
+        // the lock writes nothing
+        expect(await channelSeq(channel)).toBe(1);
+      }
+      finally {
+        await holder.query('ROLLBACK').catch(() => undefined);
+        holder.release();
+      }
+    });
+
     it('a same-millisecond insert into the channel raises what the create retry looks for', async () => {
       const channel = await newChannel();
       const client = await writer.connect();

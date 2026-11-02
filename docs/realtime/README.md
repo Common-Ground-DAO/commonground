@@ -156,7 +156,7 @@ All fields below are additive; clients that do not know them ignore them.
 A client that misses events (disconnect, reload, frozen tab) catches up per channel with
 `POST /Message/getChanges` from its last contiguous `syncSeq` (see
 [docs/backend](../backend/README.md#srvapimessagests----messaging-routes)). Seq bumps
-without an event exist (two creates with the same id racing: the loser's `ON CONFLICT DO NOTHING` insert), so a gap in
+without an event exist (a same-id create in another channel losing a race: its `ON CONFLICT DO NOTHING` insert), so a gap in
 the received seqs is a hint to call `getChanges`, not proof of a lost event.
 
 ### Event Emission (Server-Side)

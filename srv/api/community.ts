@@ -222,6 +222,21 @@ API.Community.getChannelMemberList.Response
   '/getChannelMemberList',
   validators.API.Community.getChannelMemberList,
   async (request, response, data) => {
+    // the member list of a channel is visible to whoever may read the channel
+    // (the same rule as loading its messages; the Public role covers visitors)
+    const { user } = request.session;
+    const canRead = await permissionHelper.hasPermissions({
+      userId: user?.id,
+      communityId: data.communityId,
+      channelId: data.channelId,
+      permissions: [
+        ChannelPermission.CHANNEL_EXISTS,
+        ChannelPermission.CHANNEL_READ,
+      ],
+    });
+    if (!canRead) {
+      throw new Error(!user ? errors.server.LOGIN_REQUIRED : errors.server.NOT_ALLOWED);
+    }
     const memberList = await axios.post<API.Community.getChannelMemberList.Response>(
       'http://memberlist:4000/getChannelMemberListWindow',
       JSON.stringify({

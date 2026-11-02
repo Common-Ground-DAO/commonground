@@ -26,7 +26,9 @@
 > against commit 3e8b08e, 2026-11-01; "Service worker and module scripts" (§9) against commit
 > 3e8b08e, 2026-11-01; Tailwind CSS 4 (§9 "Styling: Tailwind CSS 4", the CSS row, the
 > build-target paragraph, "Dependency pins and constraints", wave M4) against commit
-> 440c779, 2026-11-02; inline background images (§9) against commit 591e6cf, 2026-11-02
+> 440c779, 2026-11-02; inline background images (§9) against commit 591e6cf, 2026-11-02;
+> the service worker's part in multi-tab coordination (§4 WebSocketManager and
+> ServiceWorkerManager, §8, §9 entry points) against branch chat-sync/sw (base b3af8c8), 2026-11-02
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -607,7 +609,7 @@ Key behaviors:
 
 Manages the Socket.IO connection:
 - Uses `socket.io-client` with polling + websocket transports (websocket only in dev).
-- **Multi-tab coordination**: tabs report their state (including document visibility) over `BroadcastChannel('CG_WEBSOCKET_STATE')` and the service worker acts as referee, assigning exactly one tab the active-socket role (see §8). Only the active tab maintains the live connection; passive tabs receive state via broadcasts.
+- **Multi-tab coordination**: tabs report their state (including document visibility) over `BroadcastChannel('CG_WEBSOCKET_STATE')` and settle the active-socket role among themselves (see §8); the service worker no longer referees. Only the active tab maintains the live connection; passive tabs receive state via broadcasts.
 - Tab states: `active`, `active-throttled`, `passive`, `passive-throttled`, `unknown`, `tabClosed`.
 - Handles `buildId` events for version detection and forced updates.
 - Socket authentication: emits `getSignableSecret`, signs with device keypair, emits `login`.
@@ -628,7 +630,7 @@ Manages authentication:
 
 #### ServiceWorkerManager (`serviceWorker.ts`)
 
-Manages service worker lifecycle: registration, updates, installation, and communication. Handles push notification setup and participates in the multi-tab active-socket handoff (see §8).
+Manages service worker lifecycle: registration, updates, installation, and communication (`reload` after a new worker activates, `navigate` from a notification click, `channelVisited` to close a channel's push notifications). Handles push notification setup. It takes no part in tab roles.
 
 ### Data Managers (`src/data/managers/`)
 
@@ -1038,14 +1040,12 @@ Layout components wrap the route content and provide the navigation menu. On com
 
 ## 8. Multi-Tab Architecture
 
-The app coordinates behavior across multiple open tabs. A single service worker (`src/service-worker.ts`) acts as the **referee** for which tab owns the live WebSocket connection, which makes the handoff robust across tab open/close, visibility changes, and service-worker restarts.
+The app coordinates behavior across multiple open tabs.
 
-1. **WebSocket (active-tab election).** Each tab reports its state and document visibility over `BroadcastChannel('CG_WEBSOCKET_STATE')`. The service worker tracks the set of tabs and their states (`active` / `active-throttled` / `passive` / `passive-throttled`, plus a `visible` flag) and elects exactly one active tab:
-   - It waits for a full picture (heartbeats from known tabs) before reassigning roles, so a half-informed referee does not promote a second active tab.
-   - When no active tab exists, it prefers a **visible** passive tab (visible tabs are never timer-throttled).
-   - Collisions between two tabs both claiming the active role are broken deterministically in favor of the visible tab.
-   - If the active tab's connection is stuck in `connecting` far beyond normal, the role is handed to a fresh, non-throttled passive tab.
-   - Ghost tabs (e.g. banned during an initial service-worker install) are re-registered rather than left stranded.
+1. **WebSocket (active-tab election).** Each tab reports its state and document visibility over `BroadcastChannel('CG_WEBSOCKET_STATE')`; exactly one tab holds the live socket:
+   - A new tab asks for a role and is answered "active". Collisions between two tabs both claiming the active role are broken deterministically in favor of the visible tab (then the higher `tabId`); the loser becomes passive.
+   - A passive tab that becomes visible claims the active role (the live connection follows the tab the user is looking at).
+   - The service worker (`src/service-worker.ts`) no longer referees (no tab registry, promotion, bans or stuck-connection handover). For one release it only answers a role request with `active`, so pages of the previous build still open after an update connect (`src/serviceWorkerLegacyTabs.ts`, `TODO(chat-sync compat)`); details in [docs/realtime → Tab Coordination](../realtime/README.md#tab-coordination-1). The chat-sync transport replaces the election with one socket per tab (`docs/todo/ROADMAP_chat-sync.md`).
 
 2. **Login.** The `LoginManager` uses `BroadcastChannel('CG_LOGIN_STATE')` to synchronize login/logout across tabs. Passive tabs can delegate `LOGIN_REQUIRED` errors to the active tab.
 
@@ -1396,7 +1396,7 @@ with wave M3 (2026-11-01), Tailwind CSS 4 with wave M4 (2026-11-02).
 
 - **Main entry**: `src/index.tsx` -- the primary web app entry point.
 - **CG ID entry**: `src/index_cgid.tsx` -- alternative entry point for the CG Identity service.
-- **Service Worker**: `src/service-worker.ts` -- handles caching, push notifications, and multi-tab active-socket refereeing (§8).
+- **Service Worker**: `src/service-worker.ts` -- handles caching, push notifications and notification clicks, the update/reload flow, and a one-release compat answer to old pages' tab-role requests (§8).
 - **Config**: `src/common/config.ts` -- deployment configuration (dev/staging/prod), feature flags, URLs, chain set.
 - **Docker**: `docker/.env` -- environment variables of the dev compose stack (gitignored, generated from the tracked `docker/.env.example` on first `./run.sh`; see [docs/infrastructure §4](../infrastructure/README.md#4-environment-variables)).
 

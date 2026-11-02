@@ -37,7 +37,8 @@
 > `createdAt` rule against commits 959064f and 1963d4f, 2026-11-02;
 > `Message/getSyncState` (`srv/api/syncState.ts`, `srv/repositories/syncState.ts`), the
 > notification read/count routes, the `chats`/`notifications` indexes and the test list
-> against commit 312b5e7, 2026-11-02.
+> against commit 312b5e7, 2026-11-02; the real-PostgreSQL spec notes (`tests/helpers/testPg.ts`)
+> against commit c652a23, 2026-11-02.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -1668,11 +1669,23 @@ with wave M2 (see below).
   (the passkey tests drive a software authenticator,
   `tests/helpers/softAuthenticator.ts`). Against a
   throwaway PostgreSQL, opt-in via `CG_TEST_PG_HOST` (skipped otherwise):
-  `securityStepDb`, `chatSyncSeqDb` (the message sync sequence: migration,
-  trigger under the `writer` role, commit order of concurrent writers, and
-  the message repository on the real schema; it creates and drops its own
-  database `cg_chat_sync_test`) and `syncStateDb` (getSyncState and the
-  notification read-state writes). `npx tsc --noEmit`
+  `securityStepDb` (resets the database `cryptogram`), `chatSyncSeqDb` (the
+  message sync sequence: migration, trigger under the `writer` role, commit
+  order of concurrent writers, and the message repository on the real
+  schema; it creates and drops its own database `cg_chat_sync_test`) and
+  `syncStateDb` (getSyncState and the notification read-state writes; own
+  database `cg_sync_state_test`). They connect only to
+  `CG_TEST_PG_HOST`:`CG_TEST_PG_PORT` (`tests/helpers/testPg.ts`), also for
+  the `util/postgres` pools `securityStepDb` loads (it sets `DB_HOST`/`DB_PORT`
+  from them and checks the loaded pool's target). `CG_TEST_PG_PORT` has no
+  default: with the host set and the port missing the specs fail instead of
+  falling back to `DB_PORT`, `PGPORT` or 5432, so they never reach another
+  PostgreSQL on the machine (such as a dev stack). Run them against a
+  throwaway server on a port of its own, e.g.
+  `docker run -d --name pg-test -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=cryptogram cryptogram/db:18`,
+  then `CG_TEST_PG_HOST=127.0.0.1 CG_TEST_PG_PORT=55432 CG_TEST_PG_PASSWORD=pw yarn jest --runInBand tests/securityStepDb.spec.ts tests/chatSyncSeqDb.spec.ts tests/syncStateDb.spec.ts`
+  (`CG_TEST_PG_PASSWORD` defaults to `pw`), and remove the container with
+  `docker rm -fv pg-test`. `npx tsc --noEmit`
   does not cover `tests/` (see `docs/todo/TODO.md`). ts-jest compiles the specs
   with `srv/tsconfig.json`, which therefore lists `"types": ["node", "jest"]`:
   `@tsconfig/node24` ≥ 24.0.5 sets `types: ["node"]`, which would otherwise hide

@@ -583,7 +583,8 @@ Per-channel, commit-ordered change sequence for messages (chat-sync catch-up,
   catalog-only; while every row is NULL the `syncSeq` index build is one sequential scan of
   `messages`; the `createdAt_live` index build took 2.3 s on 6.5M messages (measured during
   review). Covered by `srv/tests/chatSyncSeqDb.spec.ts` (real PostgreSQL, opt-in
-  `CG_TEST_PG_HOST`; it also checks that the unread count is an index-only scan).
+  `CG_TEST_PG_HOST` + `CG_TEST_PG_PORT`, see docs/backend §8 "Tests"; it also checks that the
+  unread count is an index-only scan).
 - **Write stall on a live deploy:** the `ALTER TABLE … ADD "syncSeq"` takes an `ACCESS
   EXCLUSIVE` lock on `messages` and both indexes are built without `CONCURRENTLY`.
   `migrateDb.ts` runs `runMigrations()` with TypeORM's default transaction mode `all` (all

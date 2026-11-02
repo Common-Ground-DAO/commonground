@@ -7,7 +7,7 @@ import puppeteer from 'puppeteer';
 import { parseArgs } from './lib/config.ts';
 import { spkiPinsFor } from './lib/tls.ts';
 import { FlowContext, SkipFlow, type FlowResult } from './lib/harness.ts';
-import { flows } from './flows/index.ts';
+import { flowGroups, flows } from './flows/index.ts';
 
 /**
  * Entry point of the end-to-end suite (normally started by e2e/run.sh inside
@@ -23,13 +23,18 @@ async function main() {
     for (const flow of flows) {
       console.log(`${flow.id.padEnd(16)} ${flow.title}`);
     }
+    for (const [group, ids] of Object.entries(flowGroups)) {
+      console.log(`${group.padEnd(16)} (group) ${ids.join(', ')}`);
+    }
     return 0;
   }
-  const unknown = config.flows.filter(id => !flows.some(flow => flow.id === id));
+  // a group name stands for its flows
+  const wanted = config.flows.flatMap(id => flowGroups[id] ?? [id]);
+  const unknown = wanted.filter(id => !flows.some(flow => flow.id === id));
   if (unknown.length) {
     throw new Error(`unknown flow(s): ${unknown.join(', ')} — see --list`);
   }
-  const selected = config.flows.length ? flows.filter(flow => config.flows.includes(flow.id)) : flows;
+  const selected = wanted.length ? flows.filter(flow => wanted.includes(flow.id)) : flows;
   mkdirSync(config.outDir, { recursive: true });
 
   const { pins, details } = await spkiPinsFor(config.baseUrl, config.caFile, [4443]);

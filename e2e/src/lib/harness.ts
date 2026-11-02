@@ -79,11 +79,33 @@ export type Flow = {
 
 export class SkipFlow extends Error {}
 
+/** a guard finding a flow provokes on purpose (t.expectFailures) */
+export type ExpectedFailure = {
+  /** the session's name; its tabs (`<name>/<tab>`) are included */
+  session: string;
+  kinds: IssueKind[];
+  text: RegExp;
+  /** why it is expected, e.g. "member offline" */
+  reason: string;
+};
+
 export type SessionOptions = {
   colorScheme?: 'light' | 'dark';
   /** attach a CDP virtual WebAuthn authenticator to the page */
   authenticator?: boolean;
   viewport?: { width: number; height: number };
+};
+
+export type TabOptions = {
+  /**
+   * open the tab in a window of its own instead of next to the session's
+   * other tabs: every window shows its front tab, so two windows are two
+   * visible tabs side by side (split view). Tabs of one window take turns:
+   * only the front tab is visible (`document.visibilityState`), the others
+   * are hidden for real — also with the background-throttling flags of
+   * src/main.ts, which only keep their timers running at full speed.
+   */
+  window?: boolean;
 };
 
 export class Session {
@@ -92,6 +114,10 @@ export class Session {
   page: Page;
   cdp: CDPSession;
   authenticatorId?: string;
+  /** further tabs of the same browser context (same user, cookies, storage, service worker): t.tab() */
+  tabs: Session[] = [];
+  /** the session a tab belongs to (undefined for a session's first page) */
+  parent?: Session;
   constructor(name: string, context: BrowserContext, page: Page, cdp: CDPSession) {
     this.name = name;
     this.context = context;
@@ -141,7 +167,7 @@ function trackDeviceLogins(page: Page) {
  * yet, it waits for it to start first; then until none is in flight and none
  * finished within `quietMs`. An anonymous app has no device login to wait for.
  */
-export async function waitLoginSettled(page: Page, quietMs = 1000, timeout = 20_000) {
+export async function waitLoginSettled(page: Page, quietMs = 1000, timeout = 20_000, options: { optionalLogin?: boolean } = {}) {
   const tracker = loginTrackers.get(page);
   if (!tracker) {
     return;
@@ -152,6 +178,11 @@ export async function waitLoginSettled(page: Page, quietMs = 1000, timeout = 20_
     return !!raw && raw !== 'null';
   }).catch(() => false);
   while (tracker.loginsSinceLoad === 0 && await hasStoredUser()) {
+    if (options.optionalLogin && Date.now() - started > 5_000) {
+      // a further tab of a logged-in browser may take its login state from
+      // another tab instead of logging in itself (t.tab)
+      return;
+    }
     if (Date.now() - started > timeout) {
       throw new Error(`no device login started within ${timeout} ms of the page load although the app has a stored user`);
     }
@@ -176,6 +207,10 @@ export class FlowContext {
   readonly result: FlowResult;
   readonly sessions: Session[] = [];
   currentStep = '(setup)';
+  /** contexts in which t.tab() is opening a page (it guards that page itself, not as a popup) */
+  private openingTabs = new Map<BrowserContext, number>();
+  private sessionOptions = new WeakMap<Session, SessionOptions>();
+  private expectedFailures: ExpectedFailure[] = [];
   private issueIndex = new Map<string, Issue>();
   private expected: string[][] = [];
   private closed = false;
@@ -242,18 +277,14 @@ export class FlowContext {
     const page = await context.newPage();
     const session = new Session(name, context, page, await page.createCDPSession());
     this.sessions.push(session);
-    await page.setViewport(options.viewport ?? { width: 1366, height: 900 });
-    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: options.colorScheme ?? 'light' }]);
-    page.setDefaultTimeout(20_000);
-    page.setDefaultNavigationTimeout(45_000);
+    this.sessionOptions.set(session, options);
+    await this.setupPage(session, options);
     // the disposable instance's edge maps this cookie to the client address
     // the backend's per-address limits see (e2e/Caddyfile.e2e); a real
     // instance ignores it
     const clientIp = `10.${randomBytes(1)[0]}.${randomBytes(1)[0]}.${1 + (randomBytes(1)[0] % 254)}`;
     await page.setCookie({ name: 'cg_e2e_client', value: clientIp, url: this.origin, secure: true, sameSite: 'Strict' });
-    await this.guardPage(page, session.cdp, name);
-    trackDeviceLogins(page);
-    context.on('targetcreated', (target: Target) => this.onTarget(target, name, page));
+    context.on('targetcreated', (target: Target) => this.onTarget(target, session));
     if (options.authenticator) {
       await session.cdp.send('WebAuthn.enable', { enableUI: false });
       const { authenticatorId } = await session.cdp.send('WebAuthn.addVirtualAuthenticator', {
@@ -271,12 +302,58 @@ export class FlowContext {
     return session;
   }
 
-  private async onTarget(target: Target, sessionName: string, mainPage: Page) {
+  /** viewport, colour scheme, timeouts, guards and device-login tracking of a session's page or tab */
+  private async setupPage(session: Session, options: SessionOptions) {
+    const page = session.page;
+    await page.setViewport(options.viewport ?? { width: 1366, height: 900 });
+    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: options.colorScheme ?? 'light' }]);
+    page.setDefaultTimeout(20_000);
+    page.setDefaultNavigationTimeout(45_000);
+    await this.guardPage(page, session.cdp, session.name);
+    trackDeviceLogins(page);
+  }
+
+  /**
+   * Another tab of `session`: a second page in the same browser context, so
+   * the same user with the same cookies, storage and service worker — what a
+   * person gets with "open in new tab". Guarded and login-tracked like the
+   * session's first page (issues are attributed to `<session>/<name>`), with
+   * the same viewport and colour scheme; screenshots cover it (they take
+   * every page of the context). It starts on about:blank: load the app with
+   * openTab() (lib/tabs.ts).
+   * A tab opens in front of the session's other tabs of that window (they
+   * become hidden); `window: true` opens it in a window of its own instead
+   * (both visible). showTab() (lib/tabs.ts) switches tabs.
+   */
+  async tab(session: Session, name: string, options: TabOptions = {}): Promise<Session> {
+    this.assertOpen();
+    const root = session.parent ?? session;
+    const context = root.context;
+    this.openingTabs.set(context, (this.openingTabs.get(context) ?? 0) + 1);
+    let page: Page;
+    try {
+      page = await context.newPage(options.window ? { type: 'window' } : undefined);
+    }
+    finally {
+      this.openingTabs.set(context, (this.openingTabs.get(context) ?? 1) - 1);
+    }
+    const tab = new Session(`${root.name}/${name}`, context, page, await page.createCDPSession());
+    tab.parent = root;
+    root.tabs.push(tab);
+    await this.setupPage(tab, this.sessionOptions.get(root) ?? {});
+    return tab;
+  }
+
+  private async onTarget(target: Target, session: Session) {
     try {
       if (target.type() === 'page') {
+        if ((this.openingTabs.get(session.context) ?? 0) > 0) {
+          return; // a tab t.tab() is opening: it sets up its own guards
+        }
         const page = await target.page();
-        if (page && page !== mainPage) {
-          await this.guardPage(page, await page.createCDPSession(), `${sessionName}/popup`);
+        const known = page === session.page || session.tabs.some(tab => tab.page === page);
+        if (page && !known) {
+          await this.guardPage(page, await page.createCDPSession(), `${session.name}/popup`);
         }
       }
       else if (target.type() === 'service_worker' || target.type() === 'shared_worker') {
@@ -284,10 +361,10 @@ export class FlowContext {
         if (worker) {
           worker.on('console', msg => {
             if (msg.type() === 'error') {
-              this.record('worker-error', msg.text(), sessionName, target.url());
+              this.record('worker-error', msg.text(), session.name, target.url());
             }
           });
-          worker.on('error', (err: Error) => this.record('worker-error', err.message, sessionName, target.url()));
+          worker.on('error', (err: Error) => this.record('worker-error', err.message, session.name, target.url()));
         }
       }
     }
@@ -392,13 +469,21 @@ export class FlowContext {
     if (this.closed) {
       return;
     }
-    const key = `${session}\u0000${kind}\u0000${text}`;
+    const expected = this.expectedFailures.find(entry =>
+      (session === entry.session || session.startsWith(`${entry.session}/`)) && entry.kinds.includes(kind) && entry.text.test(text));
+    const key = `${session}\u0000${kind}\u0000${text}${expected ? '\u0000expected' : ''}`;
     const existing = this.issueIndex.get(key);
     if (existing) {
       existing.count++;
       return;
     }
     const issue: Issue = { kind, text: text.slice(0, 4000), url, session, step: this.currentStep, at: new Date().toISOString(), count: 1 };
+    if (expected) {
+      this.issueIndex.set(key, issue);
+      issue.allowed = `expected while ${expected.reason}`;
+      this.result.allowed.push(issue);
+      return;
+    }
     const allow = allowlist.find(entry => {
       const kinds = Array.isArray(entry.kind) ? entry.kind : [entry.kind];
       if (!kinds.includes(kind) || (entry.text && !entry.text.test(text))) {
@@ -417,6 +502,27 @@ export class FlowContext {
     else {
       this.result.issues.push(issue);
       console.log(`      ! ${kind} [${session}] ${text.split('\n')[0].slice(0, 300)}`);
+    }
+  }
+
+  /**
+   * Failures a flow provokes on purpose (a page taken offline, a frozen tab
+   * whose socket the browser closes): while `fn` runs, and `graceMs` after
+   * it, guard findings of these kinds whose text matches, on that session
+   * (or its tabs), go into `allowed` with the reason instead of failing the
+   * flow. Keep the patterns as narrow as the provoked failure (lib/cdp.ts
+   * has the ones for "offline" and "frozen").
+   */
+  async expectFailures<T>(entries: ExpectedFailure[], fn: () => Promise<T>, graceMs = 2_000): Promise<T> {
+    this.expectedFailures.push(...entries);
+    try {
+      return await fn();
+    }
+    finally {
+      await new Promise(resolve => setTimeout(resolve, graceMs));
+      for (const entry of entries) {
+        this.expectedFailures.splice(this.expectedFailures.indexOf(entry), 1);
+      }
     }
   }
 

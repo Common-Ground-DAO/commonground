@@ -139,6 +139,11 @@ async function _getOwnStoredMessage(
  * NOT_ALLOWED. `createdAt` is unique per channel (database clock, ms), so two
  * inserts into one channel in the same millisecond collide; the insert is
  * then retried once with a new timestamp.
+ *
+ * A known id is answered from a plain lookup without an INSERT: the sync
+ * sequence trigger fires before ON CONFLICT is resolved, so an INSERT that
+ * inserts nothing would still take a channel seq (a gap without a change).
+ * ON CONFLICT stays for two creates with the same id racing each other.
  */
 async function _createMessage(
   db: Pool | PoolClient,
@@ -149,6 +154,18 @@ async function _createMessage(
   userAlias: string;
   created: boolean;
 }> {
+  const existingAnswer = async () => {
+    const stored = await _getOwnStoredMessage(db, userId, data.access.channelId, data.id);
+    if (stored) {
+      return { message: stored, userAlias: '', created: false };
+    }
+    throw new Error(errors.server.NOT_ALLOWED);
+  };
+  const known = await db.query(`SELECT 1 FROM messages WHERE "id" = $1::uuid`, [data.id]);
+  if (known.rows.length > 0) {
+    return existingAnswer();
+  }
+
   const query = `
     WITH creator_data AS (
       SELECT "displayAccount", coalesce((SELECT json_agg(
@@ -251,12 +268,8 @@ async function _createMessage(
       created: true,
     };
   }
-  // the id exists already: a retry of this creator's create, or a clash
-  const stored = await _getOwnStoredMessage(db, userId, data.access.channelId, data.id);
-  if (stored) {
-    return { message: stored, userAlias: '', created: false };
-  }
-  throw new Error(errors.server.NOT_ALLOWED);
+  // a concurrent create with the same id won the race
+  return existingAnswer();
 }
 
 async function _updateMessage(
@@ -302,11 +315,22 @@ async function _updateMessage(
  * Soft-deletes messages of one creator in one channel: either all of them, or
  * the single message `messageId`. The channel is always part of the filter.
  *
- * The statement writes several rows, and every row write also takes the
- * channel's sync-sequence row (trigger). A single-row writer locks its
- * message row first and the sequence row second, so the delete locks all
- * the rows it will write (in id order) before its first write; otherwise a
- * concurrent edit or reaction on one of the replies could deadlock with it.
+ * The soft delete writes several rows (the messages, their reaction rows and
+ * the replies whose parent goes away), and every message write also takes
+ * the channel's sync-sequence row (trigger). The other writers lock in this
+ * order: reactions (set/unsetReaction) -> message row -> sequence row, and a
+ * new reply or a changed parentMessageId takes the sequence row first and
+ * then FOR KEY SHARE on the parent (foreign key check). So the delete, in one
+ * transaction:
+ * 1. selects its targets (no lock);
+ * 2. locks the targets' reaction rows (FOR UPDATE, key order);
+ * 3. locks the targets and their replies FOR NO KEY UPDATE (id order) —
+ *    the strength an UPDATE of non-key columns takes, which does not block
+ *    the KEY SHARE of a concurrent reply insert;
+ * 4. writes exactly the rows locked in 3, so it never waits for a row lock
+ *    while holding the sequence row. A reply committed after step 3 keeps
+ *    its parentMessageId (the same outcome as a reply committed after the
+ *    delete).
  */
 async function _deleteMessages(
   db: Pool,
@@ -319,19 +343,31 @@ async function _deleteMessages(
   if (!where.creatorId || !where.channelId) {
     throw new Error(errors.server.INVALID_REQUEST);
   }
-  const targets = `
+  const targetParams: any[] = [where.creatorId, where.channelId];
+  if (where.messageId !== undefined) {
+    targetParams.push(where.messageId);
+  }
+  const targetQuery = `
     SELECT m.id FROM messages m
     WHERE m."creatorId" = $1
       AND m."channelId" = $2
       AND m."deletedAt" IS NULL
       ${where.messageId !== undefined ? 'AND m."id" = $3' : ''}
+    ORDER BY m.id
   `;
-  const lockQuery = `
-    SELECT id FROM messages
-    WHERE id IN (${targets})
-      OR "parentMessageId" IN (${targets})
-    ORDER BY id
+  const reactionLockQuery = `
+    SELECT 1 FROM reactions
+    WHERE "itemId" = ANY($1::uuid[])
+    ORDER BY "userId", "itemId"
     FOR UPDATE
+  `;
+  const messageLockQuery = `
+    SELECT id, "parentMessageId", "deletedAt"
+    FROM messages
+    WHERE id = ANY($1::uuid[])
+      OR "parentMessageId" = ANY($1::uuid[])
+    ORDER BY id
+    FOR NO KEY UPDATE
   `;
   const query = `
     WITH removed_messages AS (
@@ -342,7 +378,7 @@ async function _deleteMessages(
       WHERE m."creatorId" = $1
         AND m."channelId" = $2
         AND m."deletedAt" IS NULL
-        ${where.messageId !== undefined ? 'AND m."id" = $3' : ''}
+        AND m."id" = ANY($3::uuid[])
       RETURNING m.id, m."syncSeq"
     ), removed_message_reactions AS (
       UPDATE reactions r
@@ -352,8 +388,8 @@ async function _deleteMessages(
     ), cleaned_parent_messages AS (
       UPDATE messages
       SET "parentMessageId" = NULL, "updatedAt" = NOW()
-      WHERE "parentMessageId" = ANY(SELECT id FROM removed_messages)
-      AND NOT "id" = ANY(SELECT id FROM removed_messages)
+      WHERE "id" = ANY($4::uuid[])
+      AND "parentMessageId" = ANY(SELECT id FROM removed_messages)
       RETURNING "id", "syncSeq"
     )
     SELECT json_build_object(
@@ -362,16 +398,25 @@ async function _deleteMessages(
       'dbNow', NOW()
     ) AS "deleteData"
   `;
-  const params: any[] = [where.creatorId, where.channelId];
-  if (where.messageId !== undefined) {
-    params.push(where.messageId);
-  }
   const client = await db.connect();
   let result;
   try {
     await client.query('BEGIN');
-    await client.query(lockQuery, params);
-    result = await client.query(query, params);
+    const targetIds = (await client.query<{ id: string }>(targetQuery, targetParams)).rows.map(row => row.id);
+    if (targetIds.length > 0) {
+      await client.query(reactionLockQuery, [targetIds]);
+      const locked = (await client.query<{ id: string, parentMessageId: string | null, deletedAt: Date | null }>(messageLockQuery, [targetIds])).rows;
+      const targets = new Set(targetIds);
+      // rows as they are now that they are locked (a concurrent delete may have won)
+      const removedIds = locked.filter(row => targets.has(row.id) && row.deletedAt === null).map(row => row.id);
+      const removed = new Set(removedIds);
+      const replyIds = locked
+        .filter(row => !removed.has(row.id) && row.parentMessageId !== null && removed.has(row.parentMessageId))
+        .map(row => row.id);
+      if (removedIds.length > 0) {
+        result = await client.query(query, [where.creatorId, where.channelId, removedIds, replyIds]);
+      }
+    }
     await client.query('COMMIT');
   }
   catch (error) {
@@ -380,6 +425,15 @@ async function _deleteMessages(
   }
   finally {
     client.release();
+  }
+  if (!result) {
+    return {
+      deletedIds: [] as string[],
+      deletedSyncSeqs: [] as number[],
+      updatedParentIdToNull: [] as string[],
+      updatedParents: [] as { id: string, syncSeq: number | undefined }[],
+      dbNow: new Date().toISOString(),
+    };
   }
   if (result.rows.length !== 1) {
     throw new Error("Query did not return 1 row");

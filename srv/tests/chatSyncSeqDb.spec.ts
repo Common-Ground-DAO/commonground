@@ -23,6 +23,7 @@
  */
 
 import { Pool, type PoolClient } from 'pg';
+import { randomUUID } from 'node:crypto';
 import { ChatSyncSeq1793635200000 as Migration } from '../migrations/1793635200000-chatSyncSeq';
 
 const HOST = process.env.CG_TEST_PG_HOST;
@@ -150,6 +151,8 @@ describeDb('message sync sequence on PostgreSQL', () => {
     expect(column).toEqual({ data_type: 'bigint', is_nullable: 'YES', column_default: null });
     const index = (await q(`SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_messages_channelId_syncSeq'`)).rows[0].indexdef;
     expect(index).toContain('("channelId", "syncSeq") WHERE ("syncSeq" IS NOT NULL)');
+    const live = (await q(`SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_messages_channelId_createdAt_live'`)).rows[0].indexdef;
+    expect(live).toContain('("channelId", "createdAt") INCLUDE ("creatorId") WHERE ("deletedAt" IS NULL)');
     const triggers = (await q(`SELECT tgname FROM pg_trigger WHERE tgrelid = 'messages'::regclass AND NOT tgisinternal ORDER BY tgname`)).rows.map(r => r.tgname);
     expect(triggers).toEqual(['messages_sync_seq_insert', 'messages_sync_seq_update']);
     const privileges = (await q(`SELECT
@@ -172,10 +175,11 @@ describeDb('message sync sequence on PostgreSQL', () => {
       const left = (await q(`SELECT
         to_regclass('public.channel_sync_state') AS "table",
         to_regclass('public."idx_messages_channelId_syncSeq"') AS "index",
+        to_regclass('public."idx_messages_channelId_createdAt_live"') AS "liveIndex",
         (SELECT count(*)::int FROM pg_proc WHERE proname = 'messages_set_sync_seq') AS "function",
         (SELECT count(*)::int FROM pg_trigger WHERE tgrelid = 'messages'::regclass AND NOT tgisinternal) AS "triggers",
         (SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'messages' AND column_name = 'syncSeq') AS "column"`)).rows[0];
-      expect(left).toEqual({ table: null, index: null, function: 0, triggers: 0, column: 0 });
+      expect(left).toEqual({ table: null, index: null, liveIndex: null, function: 0, triggers: 0, column: 0 });
     }
     finally {
       await migration.up(runner);
@@ -310,6 +314,134 @@ describeDb('message sync sequence on PostgreSQL', () => {
     }
   });
 
+  /** resolves with the promise's value, rejects if it takes longer than `ms` (a blocked writer) */
+  const within = <T,>(promise: Promise<T>, ms: number, label: string) => Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${label} still blocked after ${ms} ms`)), ms)),
+  ]);
+  async function waitForLockWaiters(n: number) {
+    for (let i = 0; i < 150; i++) {
+      const waiting = (await q(`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'`, [DATABASE])).rows[0].n;
+      if (waiting >= n) return;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    throw new Error(`fewer than ${n} lock waiters`);
+  }
+
+  /**
+   * A parent and an existing reply with a larger id; a third transaction
+   * holds the reply's row, so the delete stops after locking the parent
+   * (its locks run in id order) — the moment a reference to the parent
+   * meets the delete's lock.
+   */
+  async function deleteHeldAfterParentLock(reference: (channel: string, parent: string) => Promise<unknown>) {
+    const channel = await newChannel();
+    // uuid order is the order of the lowercase hex strings
+    const [parent, reply] = [randomUUID(), randomUUID()].sort();
+    await writer.query(`INSERT INTO messages (id, "creatorId", "channelId", body, "createdAt") VALUES ($1, $2, $3, '{}', $4)`, [parent, me, channel, nextCreatedAt()]);
+    await writer.query(`INSERT INTO messages (id, "creatorId", "channelId", body, "createdAt", "parentMessageId") VALUES ($1, $2, $3, '{}', $4, $5)`, [reply, other, channel, nextCreatedAt(), parent]);
+    const holder = await writer.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(`SELECT 1 FROM messages WHERE id = $1 FOR UPDATE`, [reply]);
+      const deleting = messageHelper.deleteMessage({ messageId: parent, channelId: channel, creatorId: me });
+      await waitForLockWaiters(1);
+      // takes the channel's sequence row first, then KEY SHARE on the parent
+      const referenced = await within(reference(channel, parent), 3000, 'the reference to the parent');
+      await holder.query('COMMIT');
+      const result = await within(deleting, 3000, 'the delete');
+      return { channel, parent, reply, result, referenced };
+    }
+    finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+    }
+  }
+
+  it('a reply inserted while its parent is being deleted does not deadlock', async () => {
+    let newReply = '';
+    const { parent, reply, result } = await deleteHeldAfterParentLock(async (channel, parentId) => {
+      newReply = (await writer.query(
+        `INSERT INTO messages ("creatorId", "channelId", body, "createdAt", "parentMessageId") VALUES ($1, $2, '{}', $3, $4) RETURNING id`,
+        [other, channel, nextCreatedAt(), parentId],
+      )).rows[0].id;
+    });
+    expect(result.deletedIds).toEqual([parent]);
+    // only the reply locked before the write is cleaned; the late one keeps
+    // its parent, as if it had been committed after the delete
+    expect(result.updatedParents.map(p => p.id)).toEqual([reply]);
+    expect((await q(`SELECT "parentMessageId" FROM messages WHERE id = $1`, [newReply])).rows[0].parentMessageId).toBe(parent);
+  });
+
+  it('a message re-parented to a message being deleted does not deadlock', async () => {
+    let moved = '';
+    const { parent, result } = await deleteHeldAfterParentLock(async (channel, parentId) => {
+      moved = (await insertAs(writer, channel, other)).id;
+      await writer.query(`UPDATE messages SET "parentMessageId" = $2 WHERE id = $1`, [moved, parentId]);
+    });
+    expect(result.deletedIds).toEqual([parent]);
+    expect((await q(`SELECT "parentMessageId" FROM messages WHERE id = $1`, [moved])).rows[0].parentMessageId).toBe(parent);
+  });
+
+  it('a delete does not deadlock with a reaction change on the deleted message', async () => {
+    const channel = await newChannel();
+    const target = await insertAs(writer, channel);
+    await writer.query(`INSERT INTO reactions ("userId", "itemId", reaction) VALUES ($1, $2, 'a')`, [other, target.id]);
+    await writer.query(`UPDATE messages SET reactions = '{"a":1}' WHERE id = $1`, [target.id]);
+    // what set/unsetReaction do: the reaction row first, then the message row
+    const reactor = await writer.connect();
+    try {
+      await reactor.query('BEGIN');
+      await reactor.query(`UPDATE reactions SET reaction = 'b', "updatedAt" = now() WHERE "userId" = $1 AND "itemId" = $2`, [other, target.id]);
+      const deleting = messageHelper.deleteMessage({ messageId: target.id, channelId: channel, creatorId: me });
+      await waitForLockWaiters(1);
+      await within(reactor.query(`UPDATE messages SET reactions = '{"b":1}', "updatedAt" = now() WHERE id = $1`, [target.id]), 3000, 'the reaction');
+      await reactor.query('COMMIT');
+      const result = await within(deleting, 3000, 'the delete');
+      expect(result.deletedIds).toEqual([target.id]);
+      expect((await q(`SELECT "deletedAt" IS NOT NULL AS gone FROM reactions WHERE "itemId" = $1`, [target.id])).rows[0].gone).toBe(true);
+    }
+    finally {
+      await reactor.query('ROLLBACK').catch(() => undefined);
+      reactor.release();
+    }
+  });
+
+  it('the unread count of setChannelLastRead is an index-only scan', async () => {
+    const channel = await newChannel();
+    await q(`
+      INSERT INTO messages ("creatorId", "channelId", body, "createdAt", "deletedAt")
+      SELECT CASE WHEN i % 3 = 0 THEN $1::uuid ELSE $2::uuid END, $3, '{}',
+        '2025-01-01'::timestamptz + i * interval '1 second',
+        CASE WHEN i % 10 = 0 THEN now() ELSE NULL END
+      FROM generate_series(1, 20000) i
+    `, [me, other, channel]);
+    await q(`VACUUM ANALYZE messages`);
+    const spy = jest.spyOn(writer, 'query');
+    await messageHelper.setChannelLastRead(me, { access: { communityId: me, channelId: channel }, lastRead: '2025-01-01T01:00:00.000Z' });
+    const [sql, params] = spy.mock.calls[0] as unknown as [string, unknown[]];
+    spy.mockRestore();
+    const client = await admin.connect();
+    try {
+      await client.query('BEGIN');
+      const plan = (await client.query(`EXPLAIN (FORMAT JSON) ${sql}`, params)).rows[0]['QUERY PLAN'][0].Plan;
+      await client.query('ROLLBACK');
+      const nodes: { 'Node Type': string, 'Index Name'?: string, 'Relation Name'?: string }[] = [];
+      const walk = (node: any) => { nodes.push(node); (node.Plans ?? []).forEach(walk); };
+      walk(plan);
+      const messageScans = nodes.filter(node => node['Relation Name'] === 'messages');
+      // the count; the other scan is the messageId lookup (primary key)
+      expect(messageScans).toContainEqual(expect.objectContaining({
+        'Node Type': 'Index Only Scan',
+        'Index Name': 'idx_messages_channelId_createdAt_live',
+      }));
+      expect(messageScans.every(node => node['Node Type'] !== 'Seq Scan')).toBe(true);
+    }
+    finally {
+      client.release();
+    }
+  }, 30000);
+
   it('a rolled-back write leaves no gap', async () => {
     const channel = await newChannel();
     const client = await writer.connect();
@@ -404,6 +536,12 @@ describeDb('message sync sequence on PostgreSQL', () => {
       await expect(messageHelper.createMessage(me, { ...request, access: accessFor(elsewhere) })).rejects.toThrow('NOT_ALLOWED');
       // the refused attempts bumped no seq of the original row
       expect(await seqOf(id)).toBe(1);
+      // and neither the retry nor the refused clashes took a channel seq (no false gap)
+      expect(await channelSeq(channel)).toBe(1);
+      expect(await channelSeq(elsewhere)).toBe(0);
+      // the next real message continues without a gap
+      const next = await messageHelper.createMessage(me, { ...request, id: '00000000-0000-4000-8000-00000000c0df' });
+      expect(next.message.syncSeq).toBe(2);
     });
 
     it('a same-millisecond insert into the channel raises what the create retry looks for', async () => {

@@ -14,7 +14,7 @@ import RolePermissionToggle, { PermissionType } from "components/molecules/RoleP
 
 import { useLoadedCommunityContext } from "context/CommunityProvider";
 import { PredefinedRole } from "common/enums";
-import { rolePermissionPresets } from "common/presets";
+import { permissionTypeToChannelPermissions } from "./EditChannelForm.helpers";
 import { useNavigationContext } from "components/SuspenseRouter/SuspenseRouter";
 import { useSnackbarContext } from "context/SnackbarContext";
 import FloatingSaveOptions from "../FloatingSaveOptions/FloatingSaveOptions";
@@ -46,56 +46,6 @@ export function channelPermissionsToPermissionType(channelPermissions: Models.Co
       [permission.roleId]: toPermissionType(permission.permissions)
     }
   }, {});
-}
-
-function permissionTypeToChannelPermissions(
-  roles: readonly Models.Community.Role[],
-  permissions: Record<string, PermissionType>,
-  defaultPermissions: Models.Community.CommunityChannelPermission[]
-): Models.Community.CommunityChannelPermission[] {
-  const channelPermissions = Object.keys(permissions).map(roleId => {
-    if (permissions[roleId] === 'none') return null;
-
-    const newPermissions: Common.ChannelPermission[] = ['CHANNEL_EXISTS'];
-    if (permissions[roleId] === 'read') newPermissions.push('CHANNEL_READ');
-    else if (permissions[roleId] === 'full') newPermissions.push('CHANNEL_READ', 'CHANNEL_WRITE');
-    else if (permissions[roleId] === 'moderate') newPermissions.push('CHANNEL_READ', 'CHANNEL_WRITE', 'CHANNEL_MODERATE');
-
-    const role = roles.find(role => role.id === roleId);
-
-    return {
-      roleId: roleId,
-      roleTitle: role?.title || '',
-      permissions: newPermissions
-    }
-  });
-
-  const filteredPermissions = channelPermissions.filter(p => !!p) as Models.Community.CommunityChannelPermission[];
-
-  if (!channelHasCustomPermissions(filteredPermissions)) {
-    return defaultPermissions;
-  } else {
-    return filteredPermissions;
-  }
-}
-
-function channelHasCustomPermissions(channelPermissions: Models.Community.CommunityChannelPermission[]) {
-  for (const key of Object.keys(rolePermissionPresets.Channel) as (keyof typeof rolePermissionPresets["Channel"])[]) {
-    const preset = new Set(rolePermissionPresets.Channel[key]) as Set<Common.ChannelPermission>;
-    const p = channelPermissions.find(cp => cp.roleTitle === key);
-    if (!!p) {
-      if (preset.size !== p.permissions.length || p.permissions.some(perm => !preset.has(perm))) {
-        return true;
-      }
-    }
-    else if (key === "Admin") {
-      console.error("Channel does not have permissions for Admin, this is a bug", channelPermissions);
-    }
-    else if (key === "Member" || key === "Public") {
-      return true;
-    }
-  }
-  return false;
 }
 
 const emptyChannel: Models.Community.Channel = Object.freeze({

@@ -2654,39 +2654,6 @@ class UserHelper {
     }
   }
 
-  public async setUsersToOffline(userIds: string[]): Promise<void> {
-    const result = await pool.query(`
-      WITH set_to_offline AS (
-        UPDATE users
-        SET
-          "onlineStatus" = 'offline',
-          "updatedAt" = now(),
-          "onlineStatusUpdatedAt" = now()
-        WHERE id = ANY(ARRAY[${format("%L", userIds)}]::uuid[])
-          AND "onlineStatus" <> 'offline'
-        RETURNING id
-      )
-      ${__userWithNotifyIdsQuery('set_to_offline')}
-    `);
-
-    const updates = result.rows as UserWithNotifyIds[];
-    const promises: Promise<any>[] = [];
-    for (const update of updates) {
-      promises.push(eventHelper.emit({
-        type: 'cliUserData',
-        data: {
-          id: update.userId,
-          onlineStatus: 'offline',
-          updatedAt: update.updatedAt,
-        },
-      }, {
-        communityIds: update.communityIds,
-        userIds: [update.userId]
-      }));
-    }
-    await Promise.allSettled(promises);
-  }
-
   /**
    * Refreshes `onlineStatusUpdatedAt` of connected users and flips only
    * `offline` ones to `online` (a status other than online/offline is left

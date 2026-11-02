@@ -12,7 +12,9 @@
 > human online status (grace period, batched cluster-wide offline check with one retry, touch
 > sets, change-only events, the stale job's events) against commit fc15832, 2026-11-02; the
 > page side of the tab/socket model (Socket.IO Client, Tab Coordination: one socket per tab,
-> live signal, hidden-tab policy) against commit 65b09b8, 2026-11-02
+> live signal, hidden-tab policy) against commit 65b09b8, 2026-11-02; the service worker's
+> part in tab coordination (no referee, one-release compat answer) against commit 79187d2,
+> 2026-11-02
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -449,13 +451,14 @@ Every tab owns its Socket.IO connection, its login state and its in-memory data 
 - The HTTP device login runs once per page load in every tab (on the first socket connect); HTTP logins of all tabs are serialised with the Web Lock `cg:login` (a wait longer than 15 s logs in without it, since a frozen tab keeps its locks). After a restored live, `connectionManager` refreshes the community and chat data (debounced) without an HTTP login.
 - A logout or login is broadcast on `BroadcastChannel('cg:auth')`; the `storage` event on `CG_CURRENT_USER` is the fallback. On a logout every other tab emits socket `logout` and drops its login state (no second `User/logout`); on a login an anonymous tab takes over the session after `User/checkLoginStatus`; a login of another user is handled as a logout first. For one release a logout also posts `'anonymous'` on `CG_LOGIN_STATE` for still-open older pages.
 
-**Service-worker referee (`src/service-worker.ts`):**
+**Service worker (`src/service-worker.ts`, compat answer in `src/serviceWorkerLegacyTabs.ts`):**
 
-- Maintains a registry of known tabs (`tabId`, `tabState`, `visible`) plus an `alive` heartbeat map. Tabs that go silent for >4s are marked `*-throttled`; >70s are dropped.
-- `selectNewActiveTabIfAppropriate()` promotes a passive tab to active whenever no active tab exists, preferring a `visible` passive tab. It is deliberately inert for the first 2.5s after the worker (re)starts, since the browser terminates idle workers and the registry must repopulate from heartbeats before any reassignment — otherwise a half-informed referee would fight the tabs' own collision handling.
-- If the active tab's `socketState` has been stuck in `connecting` for >45s (a throttled background tab can stall there), the referee demotes it and hands the active role to a fresh passive tab.
-- On worker `activate` (a new build), all currently-known tabIds are added to a `bannedTabIds` set, the registry is cleared, and every client is told to reload. Banned tabIds are ignored until they re-register with a new tabId.
-- The referee only acts while `handleTabStates` is true (there are controlled window clients and tab handling has not been disabled via a `STOP_TAB_HANDLING` message).
+- Every `TabToWorker` with `tabState: 'unknown'` gets exactly `{ type: 'WorkerToTab', tabId, tabState: 'active' }` back: no socket state is relayed, so the tab does not mirror stale values. Every other message on the channel (heartbeats, `tabClosed`) is ignored; there is no tab registry, no promotion and no ban list.
+- Only the activated worker answers (its own `self.serviceWorker.state`; where that is missing, once its `activate` handler ran or when it started up already active after a browser restart); a new worker that is installed but still waiting stays silent next to the worker of the previous build.
+- New pages never open this channel (see above). Purpose: pages of the previous build that are still open after an update without having reloaded on the `reload` message `activate` posts to every client connect instead of waiting for a role forever. The answer is removed one release after chat-sync (`TODO(chat-sync compat)`); the chat-sync transport gives every tab its own socket and stops using the channel.
+- Several old pages answered "active" settle on one active tab through their own collision tie-break (visible tab wins, else the higher `tabId`). When the active tab closes, a passive tab takes over once it becomes visible (visibility handoff); nobody promotes a hidden passive tab.
+- Accepted regression: for old pages that never reload, nothing promotes a passive tab any more, so when the active old tab closes, the passive one shows "Disconnected" until its visibility changes. Its reach is tiny, because old pages reload at most 1.5 s after `activate`.
+- `STOP_TAB_HANDLING` messages of old pages are ignored.
 
 ### WebRTC Client
 
@@ -824,7 +827,7 @@ Key prefixes:
 | `srv/api/notifications.ts` | Notification REST API routes |
 | `srv/common/enums.ts` | CallType, CallPermission enums |
 | `src/data/appstate/webSocket.ts` | Frontend Socket.IO client (WebSocketManager, implements `Transport` from `transport.ts`): one socket per tab, live signal, hidden-tab policy |
-| `src/service-worker.ts` | Service worker: tab-coordination referee, web push display, precaching |
+| `src/service-worker.ts` | Service worker: precaching, web push display and notification clicks, update/reload; one-release compat answer to old pages' tab-role requests (`src/serviceWorkerLegacyTabs.ts`) |
 | `src/util/RoomClient.tsx` | Frontend protoo + mediasoup-client |
 | `src/util/urlFactory.ts` | Builds protoo WebSocket URL |
 | `src/context/CallProvider.tsx` | React context for call state management |

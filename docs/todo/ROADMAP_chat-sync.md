@@ -347,7 +347,7 @@ exclusive within a wave.
 | 1 | **srv-presence** | `srv/wsapi.ts`, new `srv/util/presence.ts`, presence parts of `srv/repositories/users.ts` | grace period, change-only own-data events |
 | 1 | **store-core** | new `src/data/chat/**` | `ChannelStore`, `ChannelWindow`, `ReadStateStore`, `NotificationStore` cores + unit tests |
 | 1 | **transport** | `webSocket.ts`, `connection.ts`, `login.ts`, `baseConnector.ts`, connection UI, call hold in `CallProvider` | model [1], live signal, login lock, logout broadcast |
-| 1 | **sw** | `src/service-worker.ts`, `src/data/appstate/serviceWorker.ts` | remove the referee, compat answer, dead `CHANNEL_VISITED` path |
+| 1 | **sw** | `src/service-worker.ts`, `src/data/appstate/serviceWorker.ts` | remove the referee, compat answer, dead parts of the `CHANNEL_VISITED` path |
 | 1 | **entity-dbs** | `community.ts`, `chats.ts`, `user.ts`, `abstractDatabase.ts`, `typing.ts` | idempotent/guarded writers, read-state merge, seq-guarded unread |
 | 1 | **e2e** | new flows in `e2e/src/flows/`, reload mode | E1–E8, red first |
 | 2 | **srv-targeting** | `srv/repositories/event.ts`, exclusion sites in `srv/api/{messages,chats,community}.ts`, `srv/repositories/calls.ts` | socket-scoped echo, article rooms, call-chat delivery |
@@ -429,6 +429,8 @@ flows (outside `07-call.ts`) can start before.
 
 - [x] srv-presence — presence grace period (30 s), cluster-wide batched offline
   check, change-only events, stale job emits offline — merge `6c9b07a`
+- [x] entity-dbs — idempotent/order-safe community, chats, user writers; seq-guarded unread; `serverLastRead` send guard; snapshot deletions guarded — merge `04b5c57`
+- [x] sw — service-worker tab-role referee removed, one-release compat answer for old pages — merge `7d4442e`
 - [x] develop G13 merged — `c6f0d5b`
 - [x] contracts — `src/data/chat/types.ts`, `src/data/appstate/transport.ts`, additive API/event types — merge `b961fbd`
 - [x] test-infra — vitest data-layer helpers (browser env, fake socket, two-tab fake-indexeddb, fake timers), `fake-indexeddb` dev dep — merge `747ae65`

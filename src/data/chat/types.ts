@@ -447,7 +447,7 @@ export type ChannelReadState = {
  * Every source of read-state information. All merges go through one pure
  * function (exported by the store-core slice as
  * `mergeReadState(stored: ChannelReadState | undefined, input: ReadStateInput): ChannelReadState`,
- * in src/data/chat/readState.ts) that both the in-memory ReadStateStore and
+ * in src/data/chat/mergeReadState.ts) that both the in-memory ReadStateStore and
  * the Dexie writers (community/chat DBs, inside their transaction) use, so
  * several tabs applying the same inputs converge.
  *

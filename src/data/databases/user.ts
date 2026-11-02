@@ -4,7 +4,7 @@
 
 import userApi from "../api/user";
 import { Dexie } from "dexie";
-import AbstractDatabase, { IdbSetupInfo } from "./abstractDatabase";
+import AbstractDatabase, { IdbSetupInfo, guardedUpdate, isOlderThanStored } from "./abstractDatabase";
 import loginManager from "../appstate/login";
 import connectionManager from "../appstate/connection";
 import uniqueDb from "./unique";
@@ -38,7 +38,7 @@ class UserDatabase extends AbstractDatabase<{
       // clear tables if db was created before newAppVersion
       this.ready = this.db.transaction(
         'rw',
-        ['userListViews', 'userDetailViews', 'status'],
+        ['userData', 'status'],
         async tx => {
           let updateState = await tx.status.get("UpdatedInAppVersion");
           if (!updateState || updateState.updatedInAppVersion !== config.APP_VERSION) {
@@ -80,14 +80,19 @@ class UserDatabase extends AbstractDatabase<{
           agg[`data.${key}`] = (event.data as any)[key];
           return agg;
         }, {});
-        const selfData = await uniqueDb.uniques.get("OwnData");
-        const updates = [
-          // this.db.users.update(userId, userData),
-          uniqueDb.uniques.update("OwnData", updateData),
-        ];
+        // one transaction: every tab applies the same event, and an older
+        // event (by updatedAt) must not overwrite newer own data
+        const selfId = await uniqueDb.transaction('rw', uniqueDb.uniques, async () => {
+          const selfData = await uniqueDb.uniques.get("OwnData");
+          if (selfData?.key !== 'OwnData' || isOlderThanStored(selfData.data, event.data)) {
+            return undefined;
+          }
+          await uniqueDb.uniques.update("OwnData", updateData);
+          return selfData.data.id as string | undefined;
+        });
 
         // Updates own userdata with own data, too
-        if (selfData?.key === 'OwnData' && selfData.data.id) {
+        if (selfId) {
           const update: Partial<Models.User.Data> = {};
           const { onlineStatus, updatedAt, displayAccount, premiumFeatures, accounts } = event.data;
           if (onlineStatus !== undefined)
@@ -104,10 +109,8 @@ class UserDatabase extends AbstractDatabase<{
               return result;
             });
           if (Object.keys(update).length > 0)
-            updates.push(this.db.userData.update(selfData.data.id, update));
+            await guardedUpdate(this.db, this.db.userData, selfId, update);
         }
-
-        await Dexie.Promise.all(updates);
       }
     );
     connectionManager.registerClientEventHandler(
@@ -115,7 +118,7 @@ class UserDatabase extends AbstractDatabase<{
       async (event) => {
         !this.isReady && await this.ready;
         const { id, updatedAt, ...updateData } = event.data;
-        await this.db.userData.update(id, {
+        await guardedUpdate(this.db, this.db.userData, id, {
           ...updateData,
           updatedAt,
         });
@@ -269,7 +272,13 @@ class UserDatabase extends AbstractDatabase<{
             !_.isEqual(current.extraData, data.extraData)
           );
 
-          if (changed) {
+          // a snapshot older than own data another tab already got from an
+          // event (same user) must not overwrite it
+          const olderThanStored = !!current && current.id === data.id && isOlderThanStored(current, data);
+
+          if (changed && olderThanStored) {
+            console.log("OwnData from login is older than the stored data, keeping the stored data");
+          } else if (changed) {
             if (!!current) {
               console.log("OwnData has changed, updating db entry. Old, New:", current, data);
             }
@@ -462,7 +471,11 @@ class UserDatabase extends AbstractDatabase<{
       for (const user of users) {
         this.userDataLastUpdateMap.set(user.id, lastUpdate);
       }
-      await this.db.userData.bulkPut(users);
+      // keep rows another tab (or an event) updated after this fetch
+      await this.db.transaction('rw', this.db.userData, async () => {
+        const stored = await this.db.userData.bulkGet(users.map(u => u.id));
+        await this.db.userData.bulkPut(users.filter((user, i) => !isOlderThanStored(stored[i], user)));
+      });
     }
   }
 

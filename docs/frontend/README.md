@@ -34,7 +34,7 @@
 > ServiceWorkerManager, §8, §9 entry points) against commit 79187d2, 2026-11-02;
 > "Writers of the shared entity databases" (§ Dexie) against commit 212bbce, 2026-11-02;
 > `data.notification`, `NotificationProvider` and `NotificationsBrowser` (unread count,
-> list, marking read) against the chat-sync/notifications-ui branch, 2026-11-02
+> list, marking read) against commit f9f6327, 2026-11-02
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -361,7 +361,7 @@ Views are full pages composed of templates/organisms. They live in `src/views/` 
 
 | View | Route | Purpose |
 |---|---|---|
-| `NotificationsBrowser` | `/notifications/`, `/notifications/:notificationShortUuid/` | Notification list (optionally focused on one notification): one `data.notification.openList()` window, older pages via `loadOlder`, one `markAsRead` per click or selection, "Mark all read" (`markAllAsRead`) while the count is > 0 |
+| `NotificationsBrowser` | `/notifications/`, `/notifications/:notificationShortUuid/` | Notification list (optionally focused on one notification): one `data.notification.openList()` window, first page once `loginState` is `loggedin`, older pages via `loadOlder`; one `markAsRead` per click or selection (the selection marks an id once; a click on an unread item always marks, so it retries after a failure); a "Mark all read" button (`markAllAsRead`) while the count is > 0; spinner until the first page is there, then the empty state |
 
 ### Auth and Verification
 
@@ -537,7 +537,7 @@ const data = {
 | `ChannelDatabaseManager` | `channel.ts` | (dynamic per channel) | Manages per-channel `ChunkedItemDatabase` instances. Handles real-time message events, last-read tracking, and cross-tab synchronization via `BroadcastChannel('channelDatabaseManager_events')`. |
 | `ChunkedItemDatabase` | `channel/chunkedDatabase.ts` | `items`, `chunks`, `status` | Generic chunked list database used for channel messages. Items are stored in chunks (size 10-40, target 30) with start/end timestamps. Supports efficient range queries, chunk merging, and gap detection. Coordinates via `BroadcastChannel('chunkedDatabase-<dbName>')`. |
 | `ChatsDatabase` | `chats.ts` | Chat conversations and last messages. |
-| `data.notification` | `notification.ts` | none (no Dexie) | Thin façade over the tab's `NotificationStore` (`chat.notifications`, `src/data/chat/notificationStore.ts`): memory + server only. The unread count is always a number and comes from the server only (login value, `unreadCount` of `cliNotificationEvent`, `getUnreadCount` after a resync or a mark-read), `subscribeUnreadCount` is multi-subscriber; `openList()` gives an item window (`init`, `loadOlder`, `destroy`); `markAsRead` is a no-op for read or in-flight items; `setupAfterLogin(count)` is synchronous; `clear()` on logout. |
+| `data.notification` | `notification.ts` | none (no Dexie) | Thin façade over the tab's `NotificationStore` (`chat.notifications`, `src/data/chat/notificationStore.ts`): memory + server only. The unread count is always a number and comes from the server only (login value, `unreadCount` of `cliNotificationEvent`, `getUnreadCount` after a resync or a mark-read), `subscribeUnreadCount` is multi-subscriber; `openList()` gives an item window (`init`, `loadOlder`, `destroy`) on one list kept in memory while no window is open (live events still apply; after a resync without an open window the next `init` reloads the newest page); `markAsRead` is a no-op for read or in-flight items; `setupAfterLogin(count)` is synchronous; `clear()` on logout. |
 | `SignedUrlsDatabase` | `signedUrls.ts` | Cache for signed asset URLs. |
 | `UniqueDatabase` | `unique.ts` | Key-value store for singleton data (`OwnData`, `CommunityDetailViewUpdateTimestamps`, etc.). |
 

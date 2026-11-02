@@ -10,7 +10,12 @@ import {
   type LegacyCompatAnswer,
   type LegacyTabToWorkerMessage,
 } from 'data/appstate/transport';
-import { installLegacyTabCompat, legacyTabCompatAnswer } from './serviceWorkerLegacyTabs';
+import {
+  createActiveWorkerCheck,
+  installLegacyTabCompat,
+  legacyTabCompatAnswer,
+  type WorkerScopeLike,
+} from './serviceWorkerLegacyTabs';
 
 const roleRequest = (tabId: string): LegacyTabToWorkerMessage => ({
   type: 'TabToWorker',
@@ -157,5 +162,49 @@ describe('installLegacyTabCompat', () => {
     page.post(roleRequest('tab-a'));
     await new Promise(resolve => setTimeout(resolve, 20));
     expect(page.received).toStrictEqual([]);
+  });
+});
+
+describe('createActiveWorkerCheck', () => {
+  const worker = {};
+  const other = {};
+  const registration = (r: Partial<WorkerScopeLike['registration']>): WorkerScopeLike['registration'] => ({
+    active: null, waiting: null, installing: null, ...r,
+  });
+
+  it('follows self.serviceWorker.state when available', () => {
+    const own = { state: 'installed' };
+    const check = createActiveWorkerCheck({ serviceWorker: own, registration: registration({ active: other, waiting: worker }) });
+    expect(check.isActive()).toBe(false);
+    own.state = 'activating';
+    expect(check.isActive()).toBe(false);
+    own.state = 'activated';
+    expect(check.isActive()).toBe(true);
+  });
+
+  describe('without self.serviceWorker', () => {
+    it('a new worker (first start: itself installing) answers only after activate', () => {
+      const check = createActiveWorkerCheck({ registration: registration({ installing: worker }) });
+      expect(check.isActive()).toBe(false);
+      check.markActivated();
+      expect(check.isActive()).toBe(true);
+    });
+
+    it('an update next to the old active worker stays silent until its activate', () => {
+      const check = createActiveWorkerCheck({ registration: registration({ active: other, installing: worker }) });
+      expect(check.isActive()).toBe(false);
+      check.markActivated();
+      expect(check.isActive()).toBe(true);
+    });
+
+    it('a waiting worker restarted by the browser stays silent', () => {
+      const check = createActiveWorkerCheck({ registration: registration({ active: other, waiting: worker }) });
+      expect(check.isActive()).toBe(false);
+    });
+
+    it('an active worker restarted by the browser answers right away', () => {
+      const check = createActiveWorkerCheck({ registration: registration({ active: worker }) });
+      expect(check.isActive()).toBe(true);
+    });
   });
 });

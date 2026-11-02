@@ -17,7 +17,7 @@ import buildId from 'common/random_build_id';
 import { getUrl } from 'common/util';
 import type { MessageFromServiceWorker } from 'data/appstate/serviceWorker';
 import { UAParser } from 'ua-parser-js';
-import { installLegacyTabCompat } from './serviceWorkerLegacyTabs';
+import { createActiveWorkerCheck, installLegacyTabCompat } from './serviceWorkerLegacyTabs';
 
 const userAgent = UAParser(navigator.userAgent);
 
@@ -143,6 +143,10 @@ precacheController.addToCacheList(preloadData);
 const precacheRoute = new PrecacheRoute(precacheController);
 registerRoute(precacheRoute);
 
+// TODO(chat-sync compat): remove with installLegacyTabCompat below.
+// Created at startup on purpose (see createActiveWorkerCheck).
+const activeWorkerCheck = createActiveWorkerCheck(self);
+
 self.addEventListener('install', (event) => {
   precacheController.install(event);
 });
@@ -156,6 +160,7 @@ self.addEventListener('activate', (event) => {
         const message: MessageFromServiceWorker = { action: 'reload' };
         client.postMessage(message);
       });
+      activeWorkerCheck.markActivated();
     })
   )
 });
@@ -256,9 +261,7 @@ self.addEventListener('message', (event: Omit<ExtendableMessageEvent, 'data'> & 
 // pages from before chat-sync with "active"; tab roles are gone otherwise.
 // Only the active worker answers: a new worker that is installed but waiting
 // must not answer next to the old build's worker, which still assigns roles.
-installLegacyTabCompat({
-  shouldAnswer: () => self.serviceWorker === undefined || self.serviceWorker.state === 'activated',
-});
+installLegacyTabCompat({ shouldAnswer: activeWorkerCheck.isActive });
 
 // Web Push
 

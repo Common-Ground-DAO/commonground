@@ -28,7 +28,7 @@
 > build-target paragraph, "Dependency pins and constraints", wave M4) against commit
 > 440c779, 2026-11-02; inline background images (§9) against commit 591e6cf, 2026-11-02;
 > the service worker's part in multi-tab coordination (§4 WebSocketManager and
-> ServiceWorkerManager, §8, §9 entry points) against branch chat-sync/sw (base b3af8c8), 2026-11-02
+> ServiceWorkerManager, §8, §9 entry points) against commit 79187d2, 2026-11-02
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 

@@ -12,7 +12,7 @@
 > human online status (grace period, batched cluster-wide offline check with one retry, touch
 > sets, change-only events, the stale job's events) against commit fc15832, 2026-11-02;
 > the service worker's part in tab coordination (no referee, one-release compat answer)
-> against branch chat-sync/sw (base b3af8c8), 2026-11-02
+> against commit 79187d2, 2026-11-02
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -444,9 +444,10 @@ Exactly one tab (the "active" tab) holds the Socket.IO connection; every other t
 **Service worker (`src/service-worker.ts`, compat answer in `src/serviceWorkerLegacyTabs.ts`):**
 
 - Every `TabToWorker` with `tabState: 'unknown'` gets exactly `{ type: 'WorkerToTab', tabId, tabState: 'active' }` back: no socket state is relayed, so the tab does not mirror stale values. Every other message on the channel (heartbeats, `tabClosed`) is ignored; there is no tab registry, no promotion and no ban list.
-- Only the activated worker answers; a new worker that is installed but still waiting stays silent next to the worker of the previous build.
+- Only the activated worker answers (its own `self.serviceWorker.state`; where that is missing, once its `activate` handler ran or when it started up already active after a browser restart); a new worker that is installed but still waiting stays silent next to the worker of the previous build.
 - Purpose: pages of the previous build that are still open after an update without having reloaded on the `reload` message `activate` posts to every client connect instead of waiting for a role forever. The answer is removed one release after chat-sync (`TODO(chat-sync compat)`); the chat-sync transport gives every tab its own socket and stops using the channel.
 - Several tabs answered "active" settle on one active tab through the tab-side collision tie-break below. When the active tab closes, a passive tab takes over once it becomes visible (visibility handoff); nobody promotes a hidden passive tab.
+- Accepted regression: for old pages that never reload, nothing promotes a passive tab any more, so when the active old tab closes, the passive one shows "Disconnected" until its visibility changes. Its reach is tiny, because old pages reload at most 1.5 s after `activate`.
 - `STOP_TAB_HANDLING` messages of old pages are ignored.
 
 **Tab-side handoff and collision handling (`webSocket.ts`):**

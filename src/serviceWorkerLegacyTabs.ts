@@ -70,3 +70,46 @@ export function installLegacyTabCompat(options: {
     channel.close();
   };
 }
+
+/** The parts of ServiceWorkerGlobalScope that createActiveWorkerCheck reads. */
+export type WorkerScopeLike = {
+  serviceWorker?: { readonly state: string };
+  registration: {
+    readonly active: object | null;
+    readonly waiting: object | null;
+    readonly installing: object | null;
+  };
+};
+
+/**
+ * "Is this worker the active one?" for `shouldAnswer`. Create it at the
+ * worker's startup (top-level script evaluation) and call `markActivated()`
+ * at the end of the `activate` handler.
+ *
+ * With `self.serviceWorker` (the worker's own ServiceWorker object) the
+ * state decides. Without it, the worker answers once its `activate` handler
+ * ran, or if it started up already active: a worker the browser restarted
+ * after terminating it for idleness sees an active registration with nothing
+ * installing or waiting, while a new worker's first start always has itself
+ * in `installing`. (An active worker restarted while a newer one waits stays
+ * silent until it would be replaced anyway.)
+ */
+export function createActiveWorkerCheck(scope: WorkerScopeLike): {
+  isActive: () => boolean;
+  markActivated: () => void;
+} {
+  const { registration } = scope;
+  const startedActive =
+    registration.active !== null &&
+    registration.waiting === null &&
+    registration.installing === null;
+  let activated = false;
+  return {
+    isActive: () => scope.serviceWorker !== undefined
+      ? scope.serviceWorker.state === 'activated'
+      : activated || startedActive,
+    markActivated: () => {
+      activated = true;
+    },
+  };
+}

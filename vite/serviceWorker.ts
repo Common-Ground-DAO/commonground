@@ -28,7 +28,7 @@ import type { InlineConfig, Plugin, ResolvedConfig } from 'vite';
  * product regressions rather than tooling breakage:
  *
  *   - the nested worker build must emit exactly the worker (+ its sourcemap);
- *     a stray import that makes rollup split the worker would produce chunks
+ *     a stray import that makes the bundler split the worker would produce chunks
  *     that are never served and never precached (`assertWorkerBundleIsSingleFile`);
  *   - every emitted JS/CSS entry and chunk must end up in the precache manifest
  *     (`assertPrecacheCoversAllCode`). Falling out of the precache is what
@@ -78,16 +78,24 @@ export function serviceWorker(options: ServiceWorkerPluginOptions): Plugin {
       config = resolved;
     },
 
-    // Rollup runs `closeBundle` even when the build already failed. This
+    // The bundler runs `closeBundle` even when the build already failed. This
     // plugin's failure path calls `process.exit(1)`, which then kills the
     // process before Vite prints the error that actually broke the build — a
     // syntax error in `src/` used to surface as a workbox stack trace. Stand
-    // down instead. (Rollup's `renderError` would cover output-phase failures
-    // too, but Vite 6 never forwarded it and the `buildEnd` route works
-    // identically on Vite 7, so it stays; assertions that run in
-    // `generateBundle` print their own message for that reason.)
+    // down instead: `buildEnd` sees failures of the build phase (resolve,
+    // load, transform), `renderError` those of chunk rendering (a Lightning CSS
+    // minify error, say — before `renderError` was wired up, Vite 8 ran the
+    // worker build against a half-written `build/` with 0 precache entries).
+    // An error thrown in another plugin's `generateBundle` reaches neither
+    // hook under Rolldown (measured with Vite 8.3.5): the worker step still
+    // runs and the build still fails afterwards, which is why assertions that
+    // run in `generateBundle` print their own message.
     buildEnd(error) {
       if (error) bundleFailed = true;
+    },
+
+    renderError() {
+      bundleFailed = true;
     },
 
     async closeBundle() {
@@ -138,7 +146,8 @@ async function buildWorker(
     base: config.base,
     mode: config.mode,
     configFile: false,
-    envFile: false,
+    // no `.env` files (Vite 8 deprecates the older `envFile: false`)
+    envDir: false,
     logLevel: 'warn',
     publicDir: false,
     plugins: options.plugins,
@@ -158,14 +167,14 @@ async function buildWorker(
       minify: config.build.minify,
       copyPublicDir: false,
       reportCompressedSize: false,
-      rollupOptions: {
+      rolldownOptions: {
         input: path.resolve(config.root, options.swSrc),
         output: {
           format: 'iife',
           entryFileNames: SW_FILENAME,
           // A service worker is a single file; anything the bundler wants to
-          // split has to be inlined.
-          inlineDynamicImports: true,
+          // split has to be inlined (Rollup's `inlineDynamicImports: true`).
+          codeSplitting: false,
         },
       },
     },
@@ -177,8 +186,8 @@ async function buildWorker(
 
 /**
  * A service worker is registered as one file and nothing else from that build
- * is ever served. If rollup decides to split it — a static import of something
- * it deems shared, a dynamic import `inlineDynamicImports` cannot swallow, an
+ * is ever served. If the bundler decides to split it — a static import of something
+ * it deems shared, a dynamic import `codeSplitting: false` cannot swallow, an
  * asset emitted from CSS or an `new URL(…, import.meta.url)` — the extra chunks
  * land in the temp dir, get thrown away, and the worker breaks at runtime with
  * a 404 on first fetch. Assert the bundle is exactly the worker + its
@@ -198,7 +207,7 @@ function assertWorkerBundleIsSingleFile(config: ResolvedConfig, tmpDir: string):
         `  expected: ${[...expected].join(', ')}\n` +
         `  emitted:  ${emitted.join(', ') || '(nothing)'}\n` +
         (unexpected.length > 0
-          ? '  A stray import made rollup split the worker; the extra chunks are ' +
+          ? '  A stray import made the bundler split the worker; the extra chunks are ' +
             'never served. Inline it or move it out of the worker.\n'
           : ''),
     );
@@ -252,7 +261,7 @@ function assertPrecacheCoversAllCode(outDir: string, base: string, manifestURLs:
       `${missing.length} emitted JS/CSS file(s) are not in the precache manifest:\n${detail}\n` +
         `  Precaching every entry and chunk is what makes an offline cold start work.\n` +
         `  If a chunk is over the ${(MAX_PRECACHE_FILE_SIZE / 1024 / 1024).toFixed(0)} MiB cap, either split it ` +
-        `(build.rollupOptions.output.manualChunks) or raise MAX_PRECACHE_FILE_SIZE.`,
+        `(VENDOR_GROUPS in vite.config.ts) or raise MAX_PRECACHE_FILE_SIZE.`,
     );
   }
 }

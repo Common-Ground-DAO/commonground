@@ -25,7 +25,9 @@
 @property --splashButtonsHeight {
     syntax: "<length>";
     inherits: false;
-    initial-value: 0%;
+    /* not 0%: a percentage is no <length>, so browsers dropped the whole
+       registration (and Lightning CSS refuses to minify it) */
+    initial-value: 0px;
 }
 
 .uob-splash {

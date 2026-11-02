@@ -19,7 +19,9 @@
 > `/verify-email` (§10) against commit 9fc05a9, 2026-11-01; limit messages, "send
 > again" countdowns, the form checks and the 8-digit codes (§10 "Limits and input
 > checks") against commit 2fad7d3, 2026-11-01; "Sign out other devices", the signed-out
-> notice and the password snackbar (§10 "Other devices") against commit 23a4c1e, 2026-11-01
+> notice and the password snackbar (§10 "Other devices") against commit 23a4c1e, 2026-11-01;
+> Vite 8 / Rolldown (§9 "Toolchain", "Dependency pins and constraints", wave M3)
+> against commit a1460cb, 2026-11-01
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -1014,17 +1016,53 @@ The app coordinates behavior across multiple open tabs. A single service worker 
 
 ### Toolchain
 
-The frontend is built with **Vite 7** (`vite.config.ts`). It replaced
-Create React App + craco + webpack; nothing of that stack remains. Vite **7,
-not 8**, on purpose: Vite 8 swaps Rollup for Rolldown and esbuild for Oxc —
-a bundler swap, not a version bump — and the chunking setup below was measured
-and tuned under Rollup 4. Vite 8 is its own later workstream with its own
-measurements; the Node floor (≥ 20.19) is the same, so the builder image
-(`node:26-trixie` since 2026-10-31) already covers that jump too.
+The frontend is built with **Vite 8** (`vite.config.ts`; 8.3.5 since wave M3,
+2026-11-01, before that Vite 7). It replaced Create React App + craco +
+webpack; nothing of that stack remains. Vite 8 is a bundler swap, not just a
+version bump: **Rolldown** (1.2.x) bundles instead of Rollup 4, **Oxc**
+transforms and minifies JS instead of esbuild, **Lightning CSS** minifies CSS
+instead of esbuild, and the dev server pre-bundles dependencies with Rolldown.
+esbuild is no longer in the root lockfile at all. The plugins moved with it:
+`@vitejs/plugin-react` 6 (React Refresh through Oxc, no Babel any more),
+`vite-plugin-svgr` 5 (transforms through Oxc) and `vite-plugin-node-polyfills`
+0.28 (Vite 8 support). Node floor `^20.19 || >= 22.12`; the builder image runs
+Node 26. A production build takes ~4–5 s of bundling instead of ~23 s.
+
+What the swap changed, and what it did not (measured against the Vite 7 build
+of a1460cb):
+
+- **Chunking** is now `build.rolldownOptions.output.codeSplitting` with one
+  group per vendor group and explicit priorities — see the "Chunking" row
+  below. The vendor chunks hold the same packages as before, with three
+  deliberate shifts (`lodash`, `idb-keyval`, `fast-safe-stringify` no longer
+  pulled into `vendor-web3`; `vendor-charts` also holds `d3-brush`/
+  `victory-vendor`) and two new pins in `vendor-shared`: Oxc's lowering
+  helpers (virtual `\0@oxc-project+runtime@…` modules) and the `global` shim.
+  Unpinned, the Oxc helpers landed in `vendor-charts` and made `web-vitals`,
+  `AuthFlow`, `vendor-mediasoup` and others import that chunk.
+- **First-party code is split more finely.** Rolldown's automatic chunking
+  splits `src/` along dynamic-import boundaries where Rollup kept one ~2 MiB
+  `App` chunk: loading the app now takes 48 static chunks instead of 21, at
+  the same total size (~7.9 MiB). Chunk names follow the first module of a
+  chunk, so they changed too (`util`, `MobileLayout`, `AuthFlow`, …).
+- **CSS**: Lightning CSS is stricter than esbuild — it refuses invalid CSS
+  instead of passing it through (the one case was an `@property` whose
+  `initial-value` did not match its `syntax`, which browsers had silently
+  dropped; fixed in `Splash.css`) — and it lowers for `build.cssTarget` (the
+  JS target), so some rules gain fallbacks (+3.5 % CSS). It also minifies the
+  inline `<style>` blocks of both HTML shells; inline **scripts** stay
+  verbatim, so the CSP hash of the dark-mode script did not change.
+- **CommonJS interop** follows Rolldown's consistent `default` rule; no
+  import needed a change (build, dev server and the e2e suite run clean).
+- Vite prints a notice that the config uses features the future
+  `configLoader: 'native'` default will not support (ESM syntax in `.ts`
+  files of a package without `"type": "module"`). Harmless today; see
+  `docs/todo/TODO.md`.
 
 `build.target` is explicit (`BUILD_TARGET` in `vite.config.ts` — `chrome67,
-edge79, firefox68, opera54, safari14`), so Vite 7's new default target
-(`'baseline-widely-available'`, ≈ Safari 16.0) never applies. Keeping the floor
+edge79, firefox68, opera54, safari14`), so Vite 8's default target
+(`'baseline-widely-available'`, ≈ Safari 16.4) never applies. Vite 8 still
+takes the target in esbuild notation and converts it for Oxc and Lightning CSS. Keeping the floor
 at **`safari14`** is deliberate, and a product call rather than a build call:
 it is what keeps plain browsing and login working on iOS 14–15, while web push
 is gated at iOS ≥ 16.4 anyway (`src/context/NotificationProvider.tsx`;
@@ -1036,20 +1074,20 @@ browserslist; `vite.config.ts` duplicates the floors by hand.
 
 | Concern | Where |
 |---|---|
-| Build / dev server | `vite.config.ts`. Multi-page: both HTML shells are rollup inputs and are emitted at the dist root under their own names. Dev server is pinned to host `0.0.0.0`, port **3000** — load-bearing, because `src/data/appstate/serviceWorker.ts` disables SW registration on that origin, which is what keeps dev SW-free. |
+| Build / dev server | `vite.config.ts`. Multi-page: both HTML shells are bundler inputs (`build.rolldownOptions.input`) and are emitted at the dist root under their own names. Dev server is pinned to host `0.0.0.0`, port **3000** — load-bearing, because `src/data/appstate/serviceWorker.ts` disables SW registration on that origin, which is what keeps dev SW-free. |
 | Project-relative bare imports | `vite/baseUrlResolve.ts`. ~1945 import lines use bare specifiers that are really `src/`-relative (`components/…`, `common/util`, but also file-level ones like `'App'` and `'service-worker'`). For the type checker, `tsconfig.json` maps them with `paths: { "*": ["./src/*"] }` (until TypeScript 6 this was `baseUrl: "src"`, which TS 6 deprecates and TS 7 removes); for Vite and Vitest the plugin reimplements webpack's precedence: node_modules wins, `src/` is the fallback. (tsc tries `src/` first and then `node_modules` — with `paths` exactly as it did with `baseUrl`; Vite the other way round, unchanged.) |
-| SVG components | `vite-plugin-svgr`, behind a `?react` query — `import Icon from './icon.svg?react'`, **default** export. `svgo: false` is load-bearing (svgr's default svgo pass strips `viewBox`). Typed by `src/types/svg-react.d.ts`. |
+| SVG components | `vite-plugin-svgr` (5.x), behind a `?react` query — `import Icon from './icon.svg?react'`, **default** export. `svgo: false` is load-bearing (svgr's default svgo pass strips `viewBox`). Typed by `src/types/svg-react.d.ts`. |
 | Service worker | `vite/serviceWorker.ts` — a nested Vite build plus `workbox-build`'s `injectManifest`; deliberately **not** `vite-plugin-pwa`, because the worker and its registration manager are hand-written. Fails the build if the worker bundle is not a single file or if any emitted JS/CSS chunk is missing from the precache. |
 | Entry `<script>` tags | `vite/htmlEntryScripts.ts` — the shells carry no `<script src>`; the config declares which module belongs to which shell. |
 | Social preview meta | `vite/absoluteSocialMeta.ts` — makes `og:image`/`twitter:image`/`og:url` absolute when `PUBLIC_URL` is set (only the legacy Azure pipelines set it). |
-| Node polyfills | `vite-plugin-node-polyfills`, scoped to `buffer`/`stream`/`assert` + global `Buffer`, for transitive web3 dependencies only. `process` and `global` are deliberately **not** polyfilled: `src/common/` is dual-runtime (the backend consumes it through the `srv/common` symlink) and reads env through a `globalThis` indirection that must keep resolving to nothing in the browser. |
+| Node polyfills | `vite-plugin-node-polyfills` (0.28), scoped to `buffer`/`stream`/`assert` + the globals `Buffer` and `global`, for transitive dependencies only. `process` is deliberately **not** polyfilled: `src/common/` is dual-runtime (the backend consumes it through the `srv/common` symlink) and reads env through a `globalThis` indirection that must keep resolving to nothing in the browser. `global` is provided since Vite 8 (shim = `globalThis`, injected only into modules that reference it): Rollup's commonjs plugin had rewritten a bare `global` in CommonJS dependencies, Rolldown does not, and e.g. `randombytes` and `@walletconnect/environment` would throw `ReferenceError: global is not defined`. |
 | Dependency aliases | Two exact-match `resolve.alias` entries in `vite.config.ts`, both load-bearing. `@tensorflow/tfjs` → `src/moderation/tfjs.ts` is described in the NSFW pre-check section above. `altcha-widget-element` → `altcha` loads the widget bundle under a stub module name so its `.d.ts` (which augments `react/jsx-runtime` and would shadow the whole JSX namespace — first observed under @types/react 18) never enters the TS program; the stub is `src/types/altcha-widget-element.d.ts`. altcha 3 moved that augmentation out of the default types entry into `altcha/types/react`, so the hazard is narrower now, but the alias is what keeps it out for good. (An earlier third alias pinning `@metamask/sdk` to its browser UMD file was removed in the 2026-08 wagmi-2 migration: the SDK is no longer a direct dependency — wagmi's `metaMask` connector imports it dynamically — and 0.33's `browser`/`module` fields both point at the browser ESM build, so Vite resolves it correctly unaided; measured, the precache is 60 KB smaller without the alias.) |
-| Chunking | `build.rollupOptions.output.manualChunks` in `vite.config.ts`: nine vendor groups (`vendor-web3`, `vendor-icons`, `vendor-charts`, `vendor-mediasoup`, `vendor-emoji`, `vendor-editor`, `vendor-dnd`, `vendor-react`, `vendor-shared`) split what Vite's default chunking put into one ~5.4 MiB `App` chunk (a Vite 6 measurement; the groups carried over unchanged in the Vite 7 bump — same chunk set, every chunk same-size or marginally smaller). `node_modules` only — `src/` keeps the default behavior, because splitting first-party modules is what turns an import cycle into a TDZ crash. `assertCgidEntryChunks` (same file) fails the build if the CG ID entry ever statically reaches a group other than `vendor-react`/`vendor-shared`. Details and the rules the table follows: [docs/infrastructure](../infrastructure/README.md#frontend-build-steps). Changing it needs a browser pass. |
-| Sourcemaps | `build.sourcemap: true` on every build path (the app is AGPL). **JS only** — Vite/Rollup emit no `.css.map`, unlike CRA. The service worker excludes maps from the precache, so they only cost bandwidth when devtools opens them. |
-| CSS | `postcss.config.js` (`tailwindcss/nesting` → `tailwindcss` → `autoprefixer`), `tailwind.config.js`. |
+| Chunking | `build.rolldownOptions.output.codeSplitting` in `vite.config.ts`: nine vendor groups (`vendor-web3`, `vendor-icons`, `vendor-charts`, `vendor-mediasoup`, `vendor-emoji`, `vendor-editor`, `vendor-dnd`, `vendor-react`, `vendor-shared`) split what Vite's default chunking put into one ~5.4 MiB `App` chunk (a Vite 6 measurement; the groups carried over unchanged in the Vite 7 bump — same chunk set, every chunk same-size or marginally smaller). Since Vite 8 they are one Rolldown group each, with `vendor-react` and `vendor-shared` at a higher `priority` than the feature groups — not the function-form `manualChunks` (deprecated; Rolldown emulates it as a single group whose members claim shared dependencies in alphabetical order, which put `vendor-charts` into the CG ID entry). Same packages per vendor chunk as under Rollup, except that `lodash`, `idb-keyval` and `fast-safe-stringify` are no longer pulled into `vendor-web3` and `vendor-shared` additionally pins Oxc's lowering helpers and the `global` shim (`SHARED_HELPERS`) — bundler-generated or injected modules every feature group shares, which otherwise land in whichever group reaches them first. `node_modules` only — `src/` keeps the default behavior, because splitting first-party modules is what turns an import cycle into a TDZ crash. `assertCgidEntryChunks` (same file) fails the build if the CG ID entry ever statically reaches a group other than `vendor-react`/`vendor-shared`. Details and the rules the table follows: [docs/infrastructure](../infrastructure/README.md#frontend-build-steps). Changing it needs a browser pass. |
+| Sourcemaps | `build.sourcemap: true` on every build path (the app is AGPL). **JS only** — Vite emits no `.css.map` (neither under Rollup nor under Rolldown), unlike CRA; and since Vite 8 the small `modulepreload-polyfill` chunk, which also carries Rolldown's runtime helpers, has no `.map` either. The service worker excludes maps from the precache, so they only cost bandwidth when devtools opens them. |
+| CSS | `postcss.config.js` (`tailwindcss/nesting` → `tailwindcss` → `autoprefixer`), `tailwind.config.js`. Minified by Lightning CSS (Vite 8 default), which rejects invalid CSS that esbuild passed through — a build error from `[lightningcss minify]` means a real CSS bug. |
 | Type-check | `yarn typecheck` — `tsc --noEmit` over `src/**` plus `tsconfig.node.json` over the Vite-side files. TypeScript 6.0 (wave M1, 2026-10-31; before that 5.9 — and 4.5 could not even *parse* viem's TS-5 `.d.ts` files, which silently disabled semantic checking). The tsconfigs use no option TS 6 deprecates (no `ignoreDeprecations`), so they are ready for TS 7: `moduleResolution: "bundler"` (Vite resolves the imports; this also enforces package `exports`, hence `mediasoup-client/types` instead of the unexported `mediasoup-client/lib/types`), the `paths` mapping above instead of `baseUrl`, no `dom.iterable` (part of `dom` since TS 6) and no `esModuleInterop`/`allowSyntheticDefaultImports` (always on since TS 6). `tsconfig.json` targets **es2020**: not es5, because TS 5.5+ grammar-checks regex syntax against the target and rejects the `u` flag + `\p{…}` escapes in `src/common/validators.ts`; and not es2018 any more, because viem 2 and its `ox` dependency ship `.ts` sources with BigInt literals, which tsc rejects below ES2020. Nothing emits from this tsconfig — shipped output is transpiled by Vite against `build.target`, which mirrors the `browserslist` floors. |
 | Lint | `yarn lint` — `eslint.config.mjs` (ESLint 9 flat config: typescript-eslint + react + react-hooks), calibrated to the severities the old `react-app` preset enforced. Errors fail, warnings do not. |
-| Tests | `yarn test` — Vitest (`vitest.config.ts`) over `src/**/*.test.{ts,tsx}`; a small unit suite so far (instance config, the image-filter client modules, the upload connector, an EditField helper). Not part of the build scripts yet. |
+| Tests | `yarn test` — Vitest 4 (`vitest.config.ts`; it already ran on its own Vite 8 copy before wave M3, now it shares the app's) over `src/**/*.test.{ts,tsx}`; a small unit suite so far (instance config, the image-filter client modules, the upload connector, an EditField helper). Not part of the build scripts yet. |
 
 Neither type-check nor lint happens during `vite build`, which is why the docker
 build scripts run them as explicit steps — see
@@ -1063,9 +1101,10 @@ Constraints in the root `package.json` that are not self-explanatory. The
 and the 2026-10-31 refresh (F6) moved every package to its newest in-major
 release that has passed the 7-day age gate (except `mediasoup-client`, which
 moves together with the backend's `mediasoup` and its pinned worker); the
-remaining major jumps (react-router 7, Vite 8, Tailwind 4) are scheduled in
+remaining major jumps (react-router 7, Tailwind 4) are scheduled in
 `docs/todo/ROADMAP_cg-box.md`; TypeScript 6 and joi 18 came with wave M1
-(2026-10-31).
+(2026-10-31), Vite 8 (with `@vitejs/plugin-react` 6, `vite-plugin-svgr` 5 and
+`vite-plugin-node-polyfills` 0.28) with wave M3 (2026-11-01).
 
 - **`resolutions`**: `@types/react` → `"19"` keeps every `@types/react@*`
   consumer on one copy; a second copy makes components from other packages fail

@@ -167,6 +167,11 @@ that stack — confirm and delete:
 - [ ] **`signatureHelper.metamaskSignData` and `recoverSigner` have no callers**
   (2026-08-04, dependency-update wave-3 review) — with them, the
   `@metamask/eth-sig-util` dependency is unreachable too. Verify and delete.
+  Note (2026-11-01, wave M3): the built eth-sig-util chunk does not even
+  evaluate in the browser — `readable-stream` 2 in its tree reads
+  `process.browser` at load time and `process` is deliberately not polyfilled
+  (`ReferenceError: process is not defined`; the same code is in the Vite 7
+  build, so this predates Vite 8). Also `validators.ts:311` imports it.
 - [ ] **`TokenRuleEditor` silently rounds over-precise token amounts**
   (2026-08-04, dependency-update wave-3 review) — its guard regex allows
   unbounded decimals, and viem's `parseUnits` rounds half-up where ethers 5 threw
@@ -194,6 +199,17 @@ that stack — confirm and delete:
   build's shell (pointing at hashed assets that no longer exist) on every deep-link/share
   route until `update_backend` runs. Pre-existing, not caused by the Vite cutover; either
   copy `build/index.html` there like `build.sh` does, or document the pairing.
+- [ ] **Vite's `configLoader: 'native'` notice on every build** (2026-11-01, wave M3) —
+  Vite 8 warns that `vite.config.ts` and `vite/*.ts` use ESM syntax in a package without
+  `"type": "module"`, which the native config loader (planned as a future default) will
+  not support. Harmless with today's bundling loader. Fix: `.mts` files (or `"type":
+  "module"`, which would also need `postcss.config.js`/`tailwind.config.js` as `.cjs`
+  and `import.meta.dirname` instead of `__dirname`), then drop the notice from the docs.
+- [ ] **`start_https` blocks `app.cg.local` / `bs-local.com`** (2026-11-01, found in
+  wave M3, not caused by it) — `Caddyfile.vite` serves both names, but Vite's host
+  check rejects them ("Blocked request") because the dev server behind Caddy is plain
+  HTTP; only `localhost` and IP literals pass. Add them to `server.allowedHosts` or
+  drop them from `Caddyfile.vite` (docs/infrastructure §6).
 - [ ] **Narrow the blanket ESLint exclusion of `srv/**`** (2026-08-03, Node 24 /
   mediasoup workstream) — `eslint.config.mjs:51` excludes the entire backend;
   `srv/mediasoup/**` was cleaned up in the mediasoup 3.23 package and could be covered
@@ -362,14 +378,13 @@ wave has to *change*.
   GHSA-jjmj-jmhj-qwj2), rewrite `SuspenseRouter` off the `history`
   package and drop that direct dependency, and drop `@types/react-router-dom` (v5
   types, see above).
-- **Vite 8 (M3)** — swaps Rollup for Rolldown and esbuild for Oxc: take a fresh
-  baseline of the `manualChunks` vendor groups, the `assertCgidEntryChunks` guard
-  and the pinned shared modules (`tslib`, `ua-parser-js`, Vite helpers), and
-  re-check the two chunking items above (CG ID entry closure, `tslib` copies).
-  `@vitejs/plugin-react` 5.2.0 is the last release for Vite 7; 6.x is Vite-8-only
-  (the root is still on `^4`). Both `resolve.alias` entries
-  (`altcha-widget-element`, `@tensorflow/tfjs`) and the service-worker nested
-  build/precache assertion must survive.
+- **Vite 8 (M3, step A)** — done 2026-11-01 (Vite 8.3.5, `@vitejs/plugin-react`
+  6, `vite-plugin-svgr` 5, `vite-plugin-node-polyfills` 0.28; docs/frontend §9 and
+  docs/infrastructure "Frontend build steps" have the measurements). The two
+  chunking items above are unchanged by it: the CG ID entry closure is 9 chunks /
+  ~900 KiB on both Vite 7 and Vite 8 (the barrel chunk is now named `util`), and
+  `vendor-shared` is 58 KiB (56 KiB on Vite 7; it now also holds Oxc's lowering
+  helpers and the `global` shim). Delete this bullet once the wave is merged.
 - **Tailwind 4 (M4)** — `postcss.config.js` runs the v3 chain
   (`tailwindcss/nesting` → `tailwindcss` → `autoprefixer`); v4 ships its own PostCSS
   plugin and handles nesting/prefixing itself (TODO(verify) at pickup).

@@ -18,7 +18,8 @@
 > the instance-config note in §4) against commit fe3937f,
 > 2026-10-31; backup and restore (§3.1 backup settings, §3.2 commands, §3.7)
 > against commit 818d4c6, 2026-11-01; drill isolation (§3.7 drill mode, the
-> `up` row in §3.2) against commit f5f0639, 2026-11-01
+> `up` row in §3.2) against commit f5f0639, 2026-11-01; the frontend build's
+> memory figures under Vite 8 (wave M3) against commit a1460cb, 2026-11-01
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -236,14 +237,13 @@ the CRA removal:
   to run both checks inline; a Vite build does neither, so `selfhost.sh build`
   runs them as explicit steps before `vite build`.
 
-`NODE_OPTIONS=--max-old-space-size=4096` is required, not a tuning knob: a plain
-`vite build` OOMs at 2048 MB and peaks at ~4 GB container RSS (≈3.9 GiB by
-`docker stats`, ≈4.1 GiB cgroup peak), and node derives its default heap from
-machine RAM — a small VPS would fail without the flag. The value was re-measured
-under Node 24 + Vite 7 inside the then `node:24.18` builder image; the builder
-is `node:26-trixie` since 2026-10-31 and the build passes with the same
-cap there (peak not re-measured yet). The flag caps only the V8 heap, and the
-headroom is thin
+`NODE_OPTIONS=--max-old-space-size=4096` stays set on every build path: node
+derives its default heap from machine RAM, and under Vite 7 a plain
+`vite build` OOMed at 2048 MB and peaked at ~4 GB container RSS (≈3.9 GiB by
+`docker stats`, ≈4.1 GiB cgroup peak, Node 24). Since Vite 8 (wave M3) the
+build peaks at ~2.65 GiB cgroup `memory.peak` on Node 26 and passes with a
+2048 MB heap too (measured 2026-11-01), so a host needs ~3 GB of free memory
+for it rather than ~4 GB
 (see [docs/infrastructure](../infrastructure/README.md#frontend-build-steps)).
 
 ### 3.3 Services (`docker-compose.selfhost.yml`)

@@ -34,7 +34,7 @@ export function htmlEntryScripts(entries: Record<string, string>): Plugin {
         const file = path.basename(ctx.filename);
         const entry = entries[file];
         if (!entry) {
-          // At build time this hook only ever sees the configured rollup
+          // At build time this hook only ever sees the configured bundler
           // inputs, so a miss is a config bug. The dev server runs it for every
           // served `.html` — `public/` also holds the Google site-verification
           // file — where the right answer is "leave it alone".

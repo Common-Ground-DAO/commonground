@@ -14,7 +14,9 @@ import { htmlEntryScripts } from './vite/htmlEntryScripts';
 import { serviceWorker } from './vite/serviceWorker';
 
 // The `browserslist.production` floors from package.json, in esbuild's
-// notation. Keep the two lists in sync.
+// notation — Vite 8 still takes that for `build.target` and converts it for
+// Oxc (JS lowering) and Lightning CSS (`build.cssTarget` defaults to it).
+// Keep the two lists in sync.
 const BUILD_TARGET = ['chrome67', 'edge79', 'firefox68', 'opera54', 'safari14'];
 
 // react-scripts' @svgr/webpack options, verbatim
@@ -27,7 +29,7 @@ const SVGR_OPTIONS = {
 };
 
 /**
- * Vendor groups pulled out of the app chunk (`build.rollupOptions.output.manualChunks`).
+ * Vendor groups pulled out of the app chunk (`build.rolldownOptions.output.codeSplitting`).
  *
  * Vite's default chunking put every statically reachable dependency of the app
  * into one ~5.6 MB `App` chunk; CRA's `splitChunks: { chunks: 'all' }` spread
@@ -166,8 +168,41 @@ const VENDOR_GROUPS: Readonly<Record<string, readonly string[]>> = {
   'vendor-dnd': ['@dnd-kit/'],
 };
 
-/** Virtual helper modules rollup and Vite generate; see `manualChunks`. */
-const SHARED_HELPERS = ['vite/preload-helper', 'commonjsHelpers.js', '__vite-browser-external'];
+/**
+ * Virtual helper modules the bundler generates; see `vendorGroupOf`.
+ *
+ * - `vite/preload-helper` (`\0vite/preload-helper.js`) and
+ *   `__vite-browser-external`: Vite's own.
+ * - `@oxc-project+runtime@`: Oxc's transform helpers, which syntax lowering
+ *   for `BUILD_TARGET` injects into any module that needs them (class fields
+ *   for `chrome67`: `defineProperty`, `toPropertyKey`, `toPrimitive`,
+ *   `typeof`; private members: `classPrivateField*`, …). Ids look like
+ *   `\0@oxc-project+runtime@0.155.0/helpers/esm/defineProperty.js` — no
+ *   `node_modules/`, so without this entry they were unassigned and
+ *   Rolldown pulled them into `vendor-charts` as a dependency of recharts,
+ *   which made `web-vitals`, `AuthFlow`, `vendor-mediasoup` and others import
+ *   that 340 KB chunk for four tiny helpers. Matched without the version, so
+ *   an Oxc update does not silently undo the pin.
+ *
+ * - `vite-plugin-node-polyfills/shims/global`: the `global` shim (a one-line
+ *   `globalThis` re-export, see `nodePolyfills` below) that the build injects
+ *   into every dependency referencing `global` — lodash-style helpers in
+ *   `vendor-editor`/`vendor-charts`, tfjs, giphy, WalletConnect, … Left
+ *   unassigned it landed in `vendor-web3`, and all of those chunks then
+ *   imported the 3.4 MiB web3 chunk for it. (Only this shim: the `Buffer`
+ *   shim pulls in the whole `buffer` polyfill, which the CG ID entry must not
+ *   load.)
+ *
+ * (The Rollup build also had `commonjsHelpers.js` here; Rolldown handles
+ * CommonJS natively and keeps its interop helpers in its runtime, see
+ * `CODE_SPLITTING_GROUPS`.)
+ */
+const SHARED_HELPERS = [
+  'vite/preload-helper',
+  '__vite-browser-external',
+  '@oxc-project+runtime@',
+  'vite-plugin-node-polyfills/shims/global/',
+];
 
 /**
  * `…/node_modules/@scope/name/dist/x.js` → `@scope/name`.
@@ -188,20 +223,22 @@ function packageNameOf(id: string): string | undefined {
 }
 
 /**
- * `manualChunks`: vendor groups from `VENDOR_GROUPS`, default behavior for
- * everything else (all of `src/`, and every dependency not listed).
+ * The vendor group a module belongs to, from `VENDOR_GROUPS`; `undefined` for
+ * everything else (all of `src/`, and every dependency not listed), which
+ * Rolldown's automatic chunking handles.
  *
  * Entries ending in `/` or `-` match by prefix (`@wagmi/`, `d3-`), everything
  * else is an exact package name.
  */
-function manualChunks(id: string): string | undefined {
+function vendorGroupOf(id: string): string | undefined {
   // Bundler-generated helpers: Vite's `__vitePreload` (emitted next to every
-  // dynamic import — `src/data/api/baseConnector.ts` uses one), the commonjs
-  // interop helpers, and the stub for externalized node builtins. They live
-  // outside node_modules, so they would stay unassigned and get absorbed (see
-  // `vendor-shared`) — and because *everything* imports them, whichever group
-  // absorbs one drags that group into both entries. Pinning them is what keeps
-  // the 2.2 MB `vendor-web3` chunk out of the CG ID mini-app.
+  // dynamic import — `src/data/api/baseConnector.ts` uses one), the stub for
+  // externalized node builtins and Oxc's lowering helpers (`SHARED_HELPERS`).
+  // They live outside node_modules, so they
+  // would stay unassigned and get absorbed (see `vendor-shared`) — and because
+  // *everything* imports them, whichever group absorbs one drags that group
+  // into both entries. Pinning them is what keeps the `vendor-web3` chunk out
+  // of the CG ID mini-app.
   if (SHARED_HELPERS.some((helper) => id.includes(helper))) return 'vendor-shared';
 
   const pkg = packageNameOf(id);
@@ -218,6 +255,41 @@ function manualChunks(id: string): string | undefined {
 }
 
 /**
+ * `VENDOR_GROUPS` as Rolldown `codeSplitting` groups
+ * (`build.rolldownOptions.output.codeSplitting`).
+ *
+ * Not the function-form `manualChunks` the Rollup build used: Vite 8
+ * deprecates it, and Rolldown emulates it as *one* group with a dynamic name,
+ * which changes what happens to shared dependencies. Rolldown (like Rollup)
+ * pulls the static dependencies of a group member into the group as well, but
+ * where Rollup let an explicit assignment win, Rolldown gives a module that
+ * several groups claim to whichever group it emits first — for the emulated
+ * single group that is alphabetical order, so `vendor-charts` takes shared
+ * dependencies of recharts before `vendor-react`/`vendor-shared` get them.
+ * Measured with Vite 8.3.5: `manualChunks: vendorGroupOf` drags
+ * `vendor-charts` into the CG ID entry and `assertCgidEntryChunks` fails the
+ * build.
+ *
+ * One group per vendor group with an explicit `priority` (higher is emitted
+ * first) restores "explicit assignment wins" where it matters: `vendor-react`
+ * and `vendor-shared` hold what the other groups depend on, so they are
+ * emitted before every feature group. The feature groups share no listed
+ * package, so their order among each other (array order at equal priority)
+ * decides nothing.
+ *
+ * Rolldown's runtime (its module and CommonJS interop helpers, which the
+ * Rollup build had in `commonjsHelpers.js`) is no module a group can match;
+ * Rolldown puts it into a chunk both entries load anyway — in practice the
+ * `modulepreload-polyfill` chunk (the one emitted JS file without a `.map`
+ * since Vite 8).
+ */
+const CODE_SPLITTING_GROUPS = Object.keys(VENDOR_GROUPS).map((name) => ({
+  name,
+  test: (id: string) => vendorGroupOf(id) === name,
+  priority: name === 'vendor-react' ? 30 : name === 'vendor-shared' ? 20 : 10,
+}));
+
+/**
  * The only vendor groups the CG ID mini-app is allowed to load up front. Both
  * entries need React, and `vendor-shared` holds the bundler's own helper
  * modules, so those two are unavoidable; every other group is main-app code the
@@ -230,12 +302,13 @@ const CGID_ALLOWED_GROUPS: ReadonlySet<string> = new Set(['vendor-react', 'vendo
  * it does not need.
  *
  * This is the one invariant in `VENDOR_GROUPS` that cannot be read off the
- * table, and it breaks *silently*: rollup merges an unassigned module into
- * whichever manual chunk shares its set of dependent entry points, so one new
- * bundler helper (Vite's `__vitePreload` and the commonjs interop helpers are
- * pinned in `SHARED_HELPERS`, a future one would not be) or one new shared leaf
- * dependency is enough to fold the 2.2 MB `vendor-web3` chunk into the
- * mini-app's critical path. Nothing about the build would look wrong: it stays
+ * table, and it breaks *silently*: the bundler puts an unassigned module (or,
+ * under Rolldown, a dependency of a group member) into whichever vendor chunk
+ * reaches it first, so one new bundler helper (Vite's `__vitePreload` is
+ * pinned in `SHARED_HELPERS`, a future one would not be), one new shared leaf
+ * dependency or a change to the group priorities is enough to fold the
+ * ~3.4 MiB `vendor-web3` chunk into the mini-app's critical path. Nothing
+ * about the build would look wrong: it stays
  * green, the precache assertions still pass, and the only symptom is that the
  * login page got megabytes heavier.
  *
@@ -255,7 +328,7 @@ function assertCgidEntryChunks(): Plugin {
         chunks.set(output.fileName, { name: output.name, imports: output.imports });
         if (output.isEntry && output.name === 'index_cgid') entry = output.fileName;
       }
-      // Not "nothing to check": the entry is a configured rollup input, so a
+      // Not "nothing to check": the entry is a configured bundler input, so a
       // miss means the input names changed and this guard stopped guarding.
       if (!entry) this.error('cg:assert-cgid-entry-chunks: no entry chunk named `index_cgid`');
 
@@ -301,13 +374,24 @@ export default defineConfig(() => ({
     baseUrlResolve('src'),
     svgr({ include: '**/*.svg?react', svgrOptions: SVGR_OPTIONS }),
     // Scoped on purpose: first-party code uses none of this, it exists for
-    // transitive web3 dependencies. `process` and `global`
-    // stay unpolyfilled — `src/common/` is dual-runtime (backend via the
-    // `srv/common` symlink) and reads `process.env` through a `globalThis`
-    // indirection that must keep resolving to nothing in the browser.
+    // transitive web3 dependencies. `process` stays unpolyfilled —
+    // `src/common/` is dual-runtime (backend via the `srv/common` symlink) and
+    // reads `process.env` through a `globalThis` indirection that must keep
+    // resolving to nothing in the browser.
+    //
+    // `global` *is* provided (the shim is `globalThis`): Rollup's commonjs
+    // plugin used to rewrite a bare `global` in CommonJS dependencies to its
+    // `commonjsGlobal` helper, Rolldown leaves it alone, so with Vite 8 e.g.
+    // `randombytes/browser.js` (`global.crypto || global.msCrypto`, via
+    // `@metamask/eth-sig-util`) and `@walletconnect/environment`
+    // (`global?.crypto`) would throw `ReferenceError: global is not defined`.
+    // In the build the plugin injects the shim only into modules that
+    // reference `global` (Rolldown `transform.inject`); in dev it sets
+    // `globalThis.global` from the pre-bundled dependencies. Nothing in `src/`
+    // references `global`.
     nodePolyfills({
       include: ['buffer', 'stream', 'assert'],
-      globals: { Buffer: true, global: false, process: false },
+      globals: { Buffer: true, global: true, process: false },
       protocolImports: false,
     }),
     htmlEntryScripts({
@@ -376,19 +460,19 @@ export default defineConfig(() => ({
     // intentional. The precache excludes them (see vite/serviceWorker.ts).
     sourcemap: true,
     reportCompressedSize: false,
-    rollupOptions: {
+    rolldownOptions: {
       input: {
         main: path.resolve(__dirname, 'index.html'),
         index_cgid: path.resolve(__dirname, 'index_cgid.html'),
       },
       output: {
         // Hex hashes keep the service worker's `dontCacheBustURLsMatching`
-        // pattern (`/\.[0-9a-f]{8}\./`) meaningful; rollup's default base64
+        // pattern (`/\.[0-9a-f]{8}\./`) meaningful; Rolldown's default base64
         // alphabet would never match it.
         hashCharacters: 'hex',
-        // Vendor groups (see VENDOR_GROUPS above); named chunks run through
-        // `chunkFileNames` like every other chunk.
-        manualChunks,
+        // Vendor groups (see VENDOR_GROUPS and CODE_SPLITTING_GROUPS above);
+        // named chunks run through `chunkFileNames` like every other chunk.
+        codeSplitting: { groups: CODE_SPLITTING_GROUPS },
         entryFileNames: 'static/js/[name].[hash:8].js',
         chunkFileNames: 'static/js/[name].[hash:8].chunk.js',
         assetFileNames: (asset) =>
@@ -413,9 +497,10 @@ export default defineConfig(() => ({
 
   // The entry scripts are injected into the HTML at transform time (see
   // vite/htmlEntryScripts.ts), which the dependency scanner does not see — name
-  // them explicitly so dev-server cold starts pre-bundle properly. Vite 7 runs
-  // every entry through tinyglobby (a bare path that stops matching fails
-  // silently), so keep this an explicit glob for exactly the two entry files.
+  // them explicitly so dev-server cold starts pre-bundle properly. Vite runs
+  // every entry through tinyglobby (since 7; a bare path that stops matching
+  // fails silently), so keep this an explicit glob for exactly the two entry
+  // files. Since Vite 8 the pre-bundling is done by Rolldown, not esbuild.
   optimizeDeps: {
     entries: ['src/{index,index_cgid}.tsx'],
   },

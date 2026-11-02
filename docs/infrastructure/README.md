@@ -27,7 +27,9 @@
 > 818d4c6, 2026-11-01; the "state instance is full" runbook (sessions only for
 > requests that store something) against commit eab2a27, 2026-11-01; the
 > state instance's session keys (`sess-revoked:`, `sess-user:`, `sess-gen:`, `sess-keep:`) and the
-> one-hour pre-login sessions in that runbook against commit 23a4c1e, 2026-11-01
+> one-hour pre-login sessions in that runbook against commit 23a4c1e, 2026-11-01;
+> Vite 8 / Rolldown (§2 package-manager allowlist, "Frontend build steps",
+> output layout, chunking; §6 dev-server commands) against commit a1460cb, 2026-11-01
 
 # Common Ground Infrastructure Documentation
 
@@ -287,8 +289,10 @@ affected version, but both controls would have made it structurally impossible:
 - **`enableScripts: false`** — no dependency may run install/build scripts.
   Packages that genuinely need to build opt in explicitly via
   `dependenciesMeta.<pkg>.built: true` in `package.json`. Current allowlist —
-  root: `esbuild`; `srv/`: `bcrypt`, `mediasoup`, `puppeteer`,
-  `unrs-resolver`. The four `node-gyp-build` natives (`bufferutil`,
+  root: none (it held `esbuild` until Vite 8, wave M3, removed esbuild from
+  the root tree; Rolldown and Lightning CSS ship their binaries as
+  per-platform npm packages and run no install script); `srv/`: `bcrypt`,
+  `mediasoup`, `puppeteer`, `unrs-resolver`. The four `node-gyp-build` natives (`bufferutil`,
   `utf-8-validate`, `keccak`, `secp256k1`) and `sharp` (≥0.33 installs the
   prebuilt `@img/*` packages) are deliberately NOT allowlisted: they load
   their shipped prebuilds without ever running an install script (verified in
@@ -384,7 +388,9 @@ Rebuilds only the frontend and the caddy image:
 
 ### Frontend build steps
 
-The frontend is built by **Vite** (`vite.config.ts` + the plugins under `vite/`).
+The frontend is built by **Vite 8** (`vite.config.ts` + the plugins under `vite/`;
+Rolldown bundles, Oxc and Lightning CSS minify — see
+[docs/frontend §9](../frontend/README.md#toolchain)).
 Every build path — `build.sh`, `updateFrontend.sh`, `selfhost.sh` and the two
 legacy Azure pipelines — runs the same four steps in this order:
 
@@ -396,17 +402,18 @@ legacy Azure pipelines — runs the same four steps in this order:
 | HTML rewrite check | `yarn check:html-rewrite` | `tools/checkHtmlRewriteCompat.mjs` checks both emitted shells against their two serve-time consumers, which fail *silently* when the markup shape drifts: the real meta-rewrite logic of `srv/api/getRoutes.ts`, and the Caddy edge — each shell loads `/instance-config.js` once as a deferred classic script before the entry module, every inline script of `index.html` has its sha256 in the CSP of `docker/caddy/common.caddy`, and `index_cgid.html` has no inline script. |
 
 **Environment.** `DEPLOYMENT=prod` and `NODE_OPTIONS=--max-old-space-size=4096`
-are the only variables the build reads. `NODE_OPTIONS` is not optional: a plain
-`vite build` OOMs at 2048 MB and peaks at ~4 GB container RSS, and node sizes
-its default heap from machine RAM, so a small selfhost VPS would fail without
-it. The figure was re-measured under Node 24 + Vite 7 by a dedicated measured
-`yarn build` in the builder container (`node:24.18-bookworm`): ~3.9 GiB peak by
-`docker stats`, ~4.1 GiB cgroup `memory.peak` (which also counts page cache).
-On Node 26 (`node:26-trixie`, 2026-10-31) the same build passed with the
-same cap; the peak was not re-measured (TODO(verify): re-measure on Node 26).
-The flag caps only the V8 heap, so the build still fits — but the headroom is
-thin; treat further dependency growth as a trigger to re-measure, with 5120 as
-the fallback if a build ever OOMs.
+are the only variables the build reads. `NODE_OPTIONS` stays set on every
+path: node sizes its default heap from machine RAM, and under Vite 7 a plain
+`vite build` OOMed at 2048 MB and peaked at ~4 GB container RSS (measured under
+Node 24 + Vite 7 in `node:24.18-bookworm`: ~3.9 GiB by `docker stats`, ~4.1 GiB
+cgroup `memory.peak`, which also counts page cache), so a small selfhost VPS
+failed without it. Vite 8 (Rolldown, wave M3) changed the picture: on Node 26
+(`node:26-trixie`) the whole `yarn build` peaks at ~2.65 GiB cgroup
+`memory.peak` and also passes with `--max-old-space-size=2048` (measured
+2026-11-01; most of the bundling now runs in Rolldown's native code, outside
+the V8 heap). The flag stays at 4096 anyway — it costs nothing and keeps the
+margin; re-measure when dependencies grow, with 5120 as the fallback if a build
+ever OOMs.
 The legacy Azure pipelines additionally set `PUBLIC_URL` (see below).
 
 Three CRA-era variables are **gone** and must not be reintroduced:
@@ -454,13 +461,24 @@ prod/staging vhosts the directive did not carry `'self'` before the cutover
   the injected module script and, with `PUBLIC_URL`, three absolutised meta
   tags). That is intended, not a regression: both rewrite consumers match on
   literal markup, and an HTML minifier would put their regexes back at risk to
-  save ~7 KB of comments and whitespace.
+  save ~7 KB of comments and whitespace. One exception since Vite 8: the
+  inline `<style>` blocks of both shells are minified by Lightning CSS. Inline
+  `<script>` blocks are still emitted verbatim, so the sha256 of the dark-mode
+  script in the Caddy CSP is unchanged (`yarn check:html-rewrite` verifies it
+  on every build), and `style-src` allows inline styles anyway.
 - `build/static/js|css|media/` — `assetsDir: 'static'`, hex `[hash:8]` content
   hashes. Caddy's cache rules key on
   `^/(fonts|icons|images|static|audio|downloads)/` and give the hashed files
   under `static/` a year-long `immutable` lifetime, and the service worker's
-  `dontCacheBustURLsMatching: /\.[0-9a-f]{8}\./` needs hex, not rollup's
-  default base64url alphabet.
+  `dontCacheBustURLsMatching: /\.[0-9a-f]{8}\./` needs hex, not the bundler's
+  default base64url alphabet (`hashCharacters: 'hex'`, which Rolldown supports
+  like Rollup did). Chunk *names* come from the first module of a chunk and
+  changed with Rolldown (`util`, `MobileLayout`, `sha.js`, …); every emitted
+  file still matches Caddy's `name.<8 hex>[.chunk].ext` rule. JS output is
+  deterministic, but Rolldown's `.map` files are not quite: `sourcesContent` of
+  an asset import carries a per-build reference id, so two builds of the same
+  code can ship different maps under the same hashed name (harmless — the
+  mappings are the same).
 - `build/service-worker.js` at the root, built by `vite/serviceWorker.ts`
   (`workbox-build` 7 `injectManifest`, not `vite-plugin-pwa`; the 6 → 7 bump
   changed nothing here — `workbox-precaching`/`-routing` are the same sources
@@ -480,7 +498,10 @@ prod/staging vhosts the directive did not carry `'self'` before the cutover
   from 54 to 126 JS chunks). Treat that as a lower bound: the explicit wallet
   list added in the same migration's review came afterwards (~5 lazy chunks /
   ~0.5 MiB of precache), and the later React-19 waves were not re-measured as a
-  whole — the motion 12 swap alone added ~0.5 % raw JS. The Vite 7 baseline
+  whole — the motion 12 swap alone added ~0.5 % raw JS. Measured again for
+  wave M3 (2026-11-01): 169 entries / 12.71 MiB on Vite 7 (a1460cb), 214 /
+  12.63 MiB on Vite 8 — more, smaller chunks (see "Chunking"), the same code.
+  The earlier Vite 7 baseline
   was 90 / ~10.4 MiB and CRA's content baseline 118 / ~10.6 MiB. Excluded from the manifest:
   `index_cgid.html`, sourcemaps, `LICENSE` files, `asset-manifest.json`, the
   worker itself and the verbatim `public/` copy (the fonts, call sounds and
@@ -497,8 +518,8 @@ prod/staging vhosts the directive did not carry `'self'` before the cutover
   — the worker never activates and PWA updates stop silently.
 - no `asset-manifest.json` — it had no consumers.
 
-**Chunking.** `build.rollupOptions.output.manualChunks` in `vite.config.ts`
-pulls nine vendor groups out of the app chunk (`vendor-web3`, `vendor-icons`,
+**Chunking.** `build.rolldownOptions.output.codeSplitting` in `vite.config.ts`
+(`manualChunks` under Rollup, up to Vite 7) pulls nine vendor groups out of the app chunk (`vendor-web3`, `vendor-icons`,
 `vendor-charts`, `vendor-mediasoup`, `vendor-emoji`, `vendor-editor`,
 `vendor-dnd`, `vendor-react`, `vendor-shared`). Vite's default chunking put
 everything statically reachable into one ~5.4 MiB `App` chunk — one large
@@ -515,7 +536,29 @@ with ethers 5 gone, at ~10.3 MiB total JS over 126 chunks. A second viem copy
 remains — WalletConnect core exact-pins its own, loaded only with the lazily
 split WalletConnect connector. The groups were tuned under Vite 6 /
 Rollup 4 and carried over unchanged through the Vite 7 bump (esbuild 0.25 →
-0.28): same chunk set, every chunk same-size or marginally smaller. Three rules
+0.28): same chunk set, every chunk same-size or marginally smaller.
+
+**Under Rolldown (Vite 8, wave M3)** the table is unchanged, but it is fed to
+Rolldown as one `codeSplitting` group per vendor group, `vendor-react` and
+`vendor-shared` at a higher `priority` than the feature groups. Rolldown puts
+the static dependencies of a group's members into that group too, and a module
+two groups reach goes to the group emitted first — by priority, then array
+order. The function-form `manualChunks` still works but is deprecated, and
+Rolldown emulates it as a *single* group whose chunks are emitted in
+alphabetical order: `vendor-charts` then claims recharts' shared dependencies
+before `vendor-react`/`vendor-shared` do, and `assertCgidEntryChunks` fails the
+build (measured). Result on a1460cb + Vite 8.3.5: the same nine vendor chunks
+with the same packages (`vendor-web3` 3.38 MiB instead of 3.53 MiB, because
+`lodash`, `idb-keyval` and `fast-safe-stringify` are no longer pulled into it;
+`vendor-charts` now also holds `d3-brush`/`victory-vendor`), 164 JS files /
+11.65 MiB instead of 135 / 11.75 MiB. The difference is first-party code:
+Rolldown's automatic chunking splits `src/` along its dynamic imports where
+Rollup kept one ~2 MiB `App` chunk, so loading the app now pulls 48 static
+chunks instead of 21, for the same ~7.9 MiB. Both entries' critical paths are
+unchanged in size (main shell 285 KiB, CG ID mini-app 901 KiB), and the CG ID
+entry's whole lazy graph is 7503 KiB (Vite 7: 7619 KiB). Rolldown's own
+runtime helpers (CommonJS interop, lazy module init) land in the
+`modulepreload-polyfill` chunk both entries already load. Three rules
 keep the table safe, all three documented at the definition:
 
 - only `node_modules` packages are assigned; `src/` keeps the default behavior
@@ -530,9 +573,10 @@ keep the table safe, all three documented at the definition:
   `vendor-shared` (the `<link rel="modulepreload">` chain in
   `build/index_cgid.html` is the same set, readable by eye). The same rule is
   why the bundler's own helper modules (`vite/preload-helper`,
-  `commonjsHelpers.js`, `__vite-browser-external`) are pinned: an *unassigned*
-  module gets absorbed into whichever group shares its reachability signature,
-  and everything imports those three — which is exactly the silent regression
+  `__vite-browser-external`, Oxc's lowering helpers `\0@oxc-project+runtime@…`
+  and the injected `global` shim; under Rollup also `commonjsHelpers.js`) are
+  pinned: an *unassigned* module gets absorbed into whichever group reaches it
+  first, and everything imports them — which is exactly the silent regression
   the assertion exists to catch. The same applies to third-party packages that
   the CG ID mini-app *and* a vendor group both import: `ua-parser-js` (direct
   import in the mini-app, and a RainbowKit dependency) is pinned into
@@ -896,7 +940,7 @@ still name the merged `feat/reference-client` branch — see
 
 | Command | Effect |
 |---|---|
-| `./run.sh start` | Vite dev server (HMR) on `http://localhost:3000`, run via `yarn dev` in `cg-builder`. Backend stack must already be up. Port 3000 is load-bearing: the service-worker registration manager disables itself on that origin, which is what keeps the dev server SW-free. Vite checks the `Host` header on **plain-HTTP** dev servers and accepts only `localhost`, `*.localhost` and IP literals — reaching this dev server through a custom hostname (e.g. `app.cg.local`) needs that host in `server.allowedHosts`. CRA had no such check; `start_https` is exempt (the check is skipped for HTTPS servers). |
+| `./run.sh start` | Vite dev server (HMR) on `http://localhost:3000`, run via `yarn dev` in `cg-builder`. Backend stack must already be up. Port 3000 is load-bearing: the service-worker registration manager disables itself on that origin, which is what keeps the dev server SW-free. Vite checks the `Host` header on **plain-HTTP** dev servers and accepts only `localhost`, `*.localhost` and IP literals — reaching this dev server through a custom hostname (e.g. `app.cg.local`) needs that host in `server.allowedHosts`. CRA had no such check. `start_https` is **not** exempt: Vite itself still serves plain HTTP behind the `vite-tls` Caddy, which passes the `Host` header through, so `https://localhost:3000` and the LAN IP work while `https://app.cg.local:3000` and `https://bs-local.com:3000` (both site names in `Caddyfile.vite`) get Vite's "Blocked request" page unless they are added to `server.allowedHosts` (verified with Vite 8.3.5, 2026-11-01). |
 | `./run.sh start_https` | Same, but on `https://localhost:3000` — required for WebRTC calls and LAN multi-device testing. Vite itself stays plain HTTP inside the stack network; the `vite-tls` service (Caddy, `Caddyfile.vite`) terminates TLS on port 3000 with a certificate from the stack's local CA and is removed when the dev server exits (see [section 3](#dev-stack-caddyfiledev)). Works before `build_full` ever ran. |
 | `./run.sh export_ca` | Writes the root certificate of the stack's local CA to `docker/caddy-local-root.crt`, for importing into a browser / OS trust store (needs one earlier start of `caddy` or `vite-tls`). |
 | `./run.sh build_full` | Runs the full `docker/build.sh` pipeline. |

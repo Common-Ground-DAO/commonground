@@ -5,7 +5,9 @@
 > 2026-10-31; the restic image pin (`RESTIC_IMAGE`) and its Renovate regex
 > manager against commit 818d4c6, 2026-11-01; Express 5 out of the Renovate
 > majors list (wave M2) against commit 56e7c34, 2026-11-01; TypeORM 1.x out of the
-> Renovate majors list and the `glob` chain (wave M2) against commit 8dcbb42, 2026-11-01
+> Renovate majors list and the `glob` chain (wave M2) against commit 8dcbb42, 2026-11-01;
+> Vite 8 out of the Renovate majors list, esbuild out of the binaries table (wave M3,
+> step A) against commit a1460cb, 2026-11-01
 
 # Update policy: 7-day minimum release age (3 days for security fixes)
 
@@ -328,7 +330,7 @@ hash pinned in the repository:
 | Corepack (not bundled with Node ≥ 25) | `docker/node/Dockerfile`, `docker/hardhat/Dockerfile`, `docker/backend/Dockerfile*` | npm tarball, sha512 pinned (the registry's `integrity`, hex) |
 | Yarn | via Corepack | `packageManager` `+sha512.` hash |
 | bcrypt native addon | backend images, builder | **no binary download any more**: `npm_config_build_from_source=bcrypt` makes node-pre-gyp compile it from the lockfile-checksummed npm sources instead of fetching an unverified GitHub prebuild, and `npm_config_nodedir=/usr/local` makes node-gyp use the image's own Node headers instead of downloading them |
-| sharp, onnxruntime-node, esbuild, unrs-resolver | — | binaries ship inside npm packages, covered by the lockfile checksums |
+| sharp, onnxruntime-node, rolldown, lightningcss, unrs-resolver | — | binaries ship inside npm packages (per-platform optional dependencies), covered by the lockfile checksums |
 
 `docker/backend/check_pinned_binaries.sh` runs after `yarn install` in the
 backend images and **fails the build** when the installed `mediasoup` or
@@ -379,12 +381,14 @@ repository root:
 - PRs target `develop`, on Monday mornings (Europe/Berlin), grouped per
   workspace for minor/patch updates; at most 8 open / 4 per hour.
 - **Majors** are only opened after approval on the Dependency Dashboard. The
-  deferred majors (react-router 7, Tailwind 4, Vite 8; decision 7) are
+  deferred majors (react-router 7, Tailwind 4; decision 7) are
   disabled outright — they are done by hand in waves M3–M4; drop each from
-  the list once its wave is merged. joi 18 and TypeScript 6 (wave M1) and
+  the list once its wave is merged. joi 18 and TypeScript 6 (wave M1),
   Express 5 and TypeORM 1.x (wave M2: `express`, `@types/express`,
-  `@types/express-serve-static-core`, `typeorm`) left the list with their
-  wave: a joi 19, Express 6 or TypeORM 2 major is proposed normally
+  `@types/express-serve-static-core`, `typeorm`) and Vite 8 (wave M3, step A:
+  `vite`; its plugins `@vitejs/plugin-react`, `vite-plugin-svgr` and
+  `vite-plugin-node-polyfills` were never on the list) left the list with their
+  wave: a joi 19, Express 6, TypeORM 2 or Vite 9 major is proposed normally
   (dashboard approval required).
   TypeScript majors stay disabled through a rule of their own — TypeScript 7
   ships no compiler API yet, so ts-node (Hardhat in `contracts/` and

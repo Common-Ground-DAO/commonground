@@ -40,7 +40,9 @@
 > against commit 312b5e7, 2026-11-02; the real-PostgreSQL spec notes (`tests/helpers/testPg.ts`)
 > against commit c652a23, 2026-11-02; socket-scoped targeting (`eventHelper`, `/logout`, the
 > article-room routes, message echo, call-chat delivery) and the test list against commit
-> ce09d8a, 2026-11-02.
+> ce09d8a, 2026-11-02; the review fixes (`logoutDeviceSockets`, per-socket article limit,
+> `emitMessageEvents` never rejects) against commit 1b09f87 and the test list (with
+> `callDeliveryTargetsDb`) against commit 7f39d24, 2026-11-02.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -399,7 +401,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/requestSignupEmailCode`, `/verifySignupEmailCode` -- verify the sign-up address before the account exists (`srv/util/signupEmail.ts`)
 - `/clearLoginSession` -- Clear session
 - `/checkLoginStatus` -- Check if logged in
-- `/logout` -- Log out (the session is destroyed, its id revoked and the cookie expired; no new session). When the request names its socket (`x-cg-socket-id`), the device's other sockets get `cliSignedOut` and are disconnected ([docs/realtime](../realtime/README.md#socket-scoped-targeting))
+- `/logout` -- Log out (the session is destroyed, its id revoked and the cookie expired; no new session). Logout disconnects the device's sockets: when the request names its socket (`x-cg-socket-id`), the other sockets get `cliSignedOut` first and the requesting one is left to log out itself; without the header all of them, no event ([docs/realtime](../realtime/README.md#socket-scoped-targeting))
 - `/signOutOtherDevices` -- step-up; ends every other session of the user (session generation in PostgreSQL + index) and deletes every other device key and unused transfer link, returns `{ devices }` (`srv/util/signOutOtherDevices.ts`, `srv/util/userSessions.ts`)
 - `/getSecurityStatus` -- what the account-security step still needs (`srv/util/securityStep.ts`)
 - `/createTransferLink` -- a one-time link for the session's own user to the instance `TRANSFER_TARGET_URL` names (off without it); limited per user
@@ -1159,7 +1161,7 @@ The `db: Pool | PoolClient` parameter pattern enables functions to work both sta
 - Socket-scoped targeting for requests that carry `x-cg-socket-id` (`srv/util/requestSocket.ts`:
   `getRequestSocketId`, `senderExcept`; rooms `deviceSocket:{deviceId}:{socketId}`):
   `except.deviceSockets`, `requestSocketsJoinRooms`/`requestSocketsLeaveRooms` (article rooms),
-  `signOutOtherDeviceSockets` (logout) — see [docs/realtime](../realtime/README.md#socket-scoped-targeting)
+  `logoutDeviceSockets` (logout) — see [docs/realtime](../realtime/README.md#socket-scoped-targeting)
 
 **`srv/repositories/permissions.ts`** -- `permissionHelper`
 - Role permission queries for channels, calls, events, articles, and communities
@@ -1682,9 +1684,11 @@ with wave M2 (see below).
   `securityStepDb` (resets the database `cryptogram`), `chatSyncSeqDb` (the
   message sync sequence: migration, trigger under the `writer` role, commit
   order of concurrent writers, and the message repository on the real
-  schema; it creates and drops its own database `cg_chat_sync_test`) and
+  schema; it creates and drops its own database `cg_chat_sync_test`),
   `syncStateDb` (getSyncState and the notification read-state writes; own
-  database `cg_sync_state_test`). They connect only to
+  database `cg_sync_state_test`) and `callDeliveryTargetsDb` (the call-chat
+  and new-call member/Public targets; own database `cg_call_delivery_test`).
+  They connect only to
   `CG_TEST_PG_HOST`:`CG_TEST_PG_PORT` (`tests/helpers/testPg.ts`), also for
   the `util/postgres` pools `securityStepDb` loads (it sets `DB_HOST`/`DB_PORT`
   from them and checks the loaded pool's target). `CG_TEST_PG_PORT` has no

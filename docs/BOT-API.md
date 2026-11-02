@@ -269,7 +269,9 @@ socket.on("cliBotScopesEvent", async (event) => {
 socket.on("connect_error", (error) => console.error(error.message));
 ```
 
-Community message event data includes `communityId`. `new` carries a complete
+Community message event data includes `communityId`. Message events without
+`communityId` (the chat of a call in a community the bot is in) may arrive as
+well; they are not part of the v1 contract, ignore them. `new` carries a complete
 API message plus `creatorIsBot`. A selected `@mention`
 is a body element with `{type: "mention", userId, alias}`; compare `userId`
 with the ID from `/whoami`, never with the editable alias. Replies carry

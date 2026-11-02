@@ -225,7 +225,9 @@ API.Community.getChannelMemberList.Response
   async (request, response, data) => {
     // the member list of a channel is visible to whoever may read the channel
     // (the same rule as loading its messages; the Public role covers visitors),
-    // and only while the channel and its community exist
+    // and only while the channel and its community exist (the community check
+    // is deliberately stricter than message loading, which looks at the
+    // channel only)
     const { user } = request.session;
     if (!(await messageHelper.isChannelInActiveCommunity(data.communityId, data.channelId))) {
       throw new Error(errors.server.NOT_ALLOWED);

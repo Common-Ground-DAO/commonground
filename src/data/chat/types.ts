@@ -219,7 +219,9 @@ export type WindowListener<T extends Models.ItemList.Item> =
  *   trimmed off that end; `load*` returns them without a request.
  * - `hasPreviousItemsOnRemote` / `hasNextItemsOnRemote`: more items exist
  *   only on the server (true while unknown).
- * - `ready`: the first `init` settled. `isEmpty`: ready, no server items,
+ * - `ready`: the first `init` settled. `isEmpty`: ready, no server items
+ *   (pending items do not count: check `items.length` before showing an
+ *   empty-channel text),
  *   start and end of list included. `isDestroyed`: after `destroy()`.
  */
 export interface ItemWindow<T extends Models.ItemList.Item> {
@@ -352,7 +354,11 @@ export type NewMessage = Pick<Models.Message.Message, 'channelId' | 'body' | 'at
  * event, or a page containing the id. Failure or SEND_TIMEOUT_MS ->
  * `error-send` (kept until retried or discarded, body and attachments
  * preserved; a late success still resolves it). A retry reuses the id
- * (idempotent create).
+ * (idempotent create). A send confirmed while the channel's first sync (no
+ * latest segment yet) is in flight stays pending and is queued with the
+ * buffered live events: it is inserted after the reset (when the reset page
+ * does not contain it already), so a snapshot older than the send cannot
+ * lose it.
  * EDIT: an overlay on the server item (`sendStatus: 'sending'`, new body,
  * attachments, parentMessageId). Success applies the edit as a partial
  * update with the response's `syncSeq`/`updatedAt` and clears `sendStatus`.

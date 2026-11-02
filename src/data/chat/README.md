@@ -34,6 +34,8 @@ comments in the files below are normative; this is the summary.
    visible slice).
 6. **Sends/edits** resolve once the pending item/overlay is shown and never
    reject; the outcome is `sendStatus`, then `retrySend`/`discardPending`.
+   `isEmpty` counts server items only: it can be true while a pending send
+   is shown, so the UI checks `items.length` for its empty-channel text.
 7. **Read state**: everything through `mergeReadState`; `lastRead`/
    `lastMessageDate` max-merged; seq'd snapshots plus `counted` seqs survive
    live events during the round trip. Marking is a level (latest + bottom +

@@ -110,6 +110,8 @@ type EditOverlay = {
 
 const UNSET = Symbol('unset');
 
+type BufferedItem = { event: Events.Message.Message } | { own: Message };
+
 type Watcher = {
   onChange: (message: Message | undefined) => void;
   last: Message | undefined | typeof UNSET;
@@ -135,8 +137,11 @@ class ChannelData {
   gapTimer: Timer;
   syncing: Promise<void> | null = null;
   syncAgain = false;
-  /** live events held back while the first sync (no latest segment yet) is in flight */
-  buffer: Events.Message.Message[] | null = null;
+  /**
+   * live events and confirmed own sends held back while the first sync (no
+   * latest segment yet) is in flight; replayed after it
+   */
+  buffer: BufferedItem[] | null = null;
   lastUsed = 0;
 
   constructor(readonly id: string, clock: ChannelStoreDeps['clock']) {
@@ -238,6 +243,8 @@ class WindowImpl implements ChannelWindow {
   ready = false;
   destroyed = false;
   gen = 0;
+  /** bumped whenever the slice is re-pointed under the window (reset); in-flight pages are dropped */
+  epoch = 0;
   state: State = emptyState(false, false);
   serverCount = 0;
   pendingCount = 0;
@@ -351,10 +358,12 @@ type NotifyHints = Map<WindowImpl, WindowChange>;
 
 type Placement = { kind: 'segment'; seg: Segment } | { kind: 'live' };
 
+type LatestAnchor = { seg: Segment | null; first: Key | undefined };
+
 class ChannelStoreImpl implements ChannelStore {
   private readonly channels = new Map<string, ChannelData>();
   private readonly access = new Map<string, Access>();
-  private readonly accessWaiters = new Map<string, Set<(a: Access) => void>>();
+  private readonly accessWaiters = new Map<string, Set<{ resolve: (a: Access) => void; reject: (e: Error) => void }>>();
   /** `getChanges` answered 404 in this page load: use loadMessages-based reconcile */
   private fallback = false;
   private useCounter = 0;
@@ -379,7 +388,7 @@ class ChannelStoreImpl implements ChannelStore {
     const waiters = this.accessWaiters.get(access.channelId);
     if (waiters) {
       this.accessWaiters.delete(access.channelId);
-      for (const w of waiters) w(access);
+      for (const w of waiters) w.resolve(access);
     }
   }
 
@@ -390,13 +399,14 @@ class ChannelStoreImpl implements ChannelStore {
   private waitAccess(channelId: string): Promise<Access> {
     const known = this.access.get(channelId);
     if (known) return Promise.resolve(known);
-    return new Promise<Access>(resolve => {
+    if (this.disposed) return Promise.reject(new Error('ChannelStore disposed'));
+    return new Promise<Access>((resolve, reject) => {
       let set = this.accessWaiters.get(channelId);
       if (!set) {
         set = new Set();
         this.accessWaiters.set(channelId, set);
       }
-      set.add(resolve);
+      set.add({ resolve, reject });
     });
   }
 
@@ -494,6 +504,9 @@ class ChannelStoreImpl implements ChannelStore {
     this.unsubs.length = 0;
     this.resyncTimer.clear();
     for (const ch of [...this.channels.values()]) this.dropChannel(ch);
+    const err = new Error('ChannelStore disposed');
+    for (const set of this.accessWaiters.values()) for (const w of set) w.reject(err);
+    this.accessWaiters.clear();
   }
 
   // ----- notify ------------------------------------------------------------
@@ -568,6 +581,7 @@ class ChannelStoreImpl implements ChannelStore {
 
   /** recompute every window and watcher of the channel; listeners run synchronously */
   notify(ch: ChannelData, hints?: NotifyHints): void {
+    if (this.disposed) return;
     for (const w of [...ch.windows]) {
       if (w.destroyed || w.ch !== ch) continue;
       const { state, serverCount, pendingCount } = this.computeState(w);
@@ -722,7 +736,7 @@ class ChannelStoreImpl implements ChannelStore {
     const ch = this.channels.get(event.data.channelId);
     if (!ch) return;
     if (ch.buffer) {
-      ch.buffer.push(event);
+      ch.buffer.push({ event });
       return;
     }
     this.applyMessageEvent(ch, event);
@@ -762,7 +776,12 @@ class ChannelStoreImpl implements ChannelStore {
 
   private resyncAll(): void {
     for (const ch of [...this.channels.values()]) {
-      if (ch.windows.size > 0) this.sync(ch).catch(noop);
+      if (ch.windows.size > 0) {
+        this.sync(ch).catch(noop);
+      } else {
+        // no catch-up runs for this channel: refresh what is watched (pins, reply parents)
+        for (const id of ch.watchers.keys()) if (!ch.tombstones.has(id)) ch.watchFetchDue.add(id);
+      }
       if (ch.watchFetchDue.size > 0) this.fetchWatched(ch);
     }
   }
@@ -802,12 +821,14 @@ class ChannelStoreImpl implements ChannelStore {
         try {
           let more = true;
           while (more && ch.alive) {
-            const cursor: API.Messages.SyncCursor | null = ch.seenSeq === null || ch.latest === null ? null : `1:${ch.seenSeq}`;
+            const cursorSeq = ch.seenSeq === null || ch.latest === null ? null : ch.seenSeq;
+            const cursor: API.Messages.SyncCursor | null = cursorSeq === null ? null : `1:${cursorSeq}`;
             const resp = await this.deps.api.getChanges({ access, cursor, limit: GET_CHANGES_LIMIT });
-            if (!ch.alive) return;
+            if (!ch.alive || this.disposed) return;
             if (resp.reset) this.applyReset(ch, resp.messages.map(fromApiMessage), resp.messages.length < PAGE_SIZE, resp.syncSeq);
             else this.applyChanges(ch, resp);
-            more = resp.hasMore && !resp.reset;
+            // follow hasMore only while the server makes progress
+            more = resp.hasMore && !resp.reset && cursorSeq !== null && resp.syncSeq > cursorSeq;
           }
           return;
         } catch (e) {
@@ -816,13 +837,20 @@ class ChannelStoreImpl implements ChannelStore {
         }
       }
       const page = await this.deps.api.loadMessages({ access, order: 'DESC' });
-      if (!ch.alive) return;
+      if (!ch.alive || this.disposed) return;
       this.applyFallbackPage(ch, page.map(fromApiMessage));
     } finally {
       const buffered = ch.buffer;
       ch.buffer = null;
-      if (buffered && ch.alive) {
-        for (const e of buffered) this.applyMessageEvent(ch, e);
+      if (buffered && ch.alive && !this.disposed) {
+        for (const item of buffered) {
+          if ('event' in item) {
+            this.applyMessageEvent(ch, item.event);
+          } else {
+            const verdict = this.upsertFull(ch, item.own, { kind: 'live' });
+            if (verdict !== 'older') this.record(ch, item.own.syncSeq);
+          }
+        }
         this.enforceLatestMax(ch);
         this.notify(ch);
       }
@@ -893,6 +921,7 @@ class ChannelStoreImpl implements ChannelStore {
           const inside = next.startsAtBeginning || w.from === null || (next.items.length > 0 && compareMessages(w.from, next.items[0]) >= 0);
           if (w.to === null || inside) {
             w.seg = next;
+            w.epoch++;
             if (!inside) w.from = null;
             hints.set(w, { kind: 'reset', cause: 'resync' });
             continue;
@@ -986,7 +1015,12 @@ class ChannelStoreImpl implements ChannelStore {
    * Upsert a page into `target`: segments the page touches are merged first,
    * so segments stay disjoint. A page never removes anything.
    */
-  private applyPage(ch: ChannelData, target: Segment, rawPage: Message[], flags: { reachesStart?: boolean; reachesEnd?: boolean }): Segment {
+  private applyPage(
+    ch: ChannelData,
+    target: Segment,
+    rawPage: Message[],
+    flags: { reachesStart?: boolean; reachesEnd?: boolean; latestAnchor?: LatestAnchor },
+  ): Segment {
     const page = [...rawPage].sort(compareMessages);
     let seg = target;
     if (page.length > 0) {
@@ -1002,10 +1036,35 @@ class ChannelStoreImpl implements ChannelStore {
       for (const m of page) this.upsertFull(ch, m, { kind: 'segment', seg });
     }
     if (flags.reachesStart) seg.startsAtBeginning = true;
-    if (flags.reachesEnd && seg !== ch.latest && ch.latest) {
+    if (flags.reachesEnd && seg !== ch.latest && ch.latest && this.latestUnchanged(ch, flags.latestAnchor)) {
       seg = this.mergeSegments(ch, new Set([seg, ch.latest]));
     }
     return seg;
+  }
+
+  /** the latest segment as it was when a request started */
+  private latestAnchor(ch: ChannelData): LatestAnchor {
+    const latest = ch.latest;
+    return { seg: latest, first: latest && latest.items.length ? keyOf(latest.items[0]) : undefined };
+  }
+
+  /**
+   * A short ASC page means "reached the end of the channel at request time";
+   * it joins the latest segment only if that segment still starts where it
+   * did then (no reset or trim in between could have left a hole). Without an
+   * anchor, or when there was no latest segment yet, it joins.
+   */
+  private latestUnchanged(ch: ChannelData, anchor: LatestAnchor | undefined): boolean {
+    if (!anchor || anchor.seg === null) return true;
+    return anchor.seg === ch.latest && this.edgeUnchanged(ch, anchor.seg, 'start', anchor.first);
+  }
+
+  /** a segment is still part of the channel and still has the same first/last item */
+  private edgeUnchanged(ch: ChannelData, seg: Segment, edge: 'start' | 'end', key: Key | undefined): boolean {
+    if (!ch.alive || !ch.segments().includes(seg)) return false;
+    const item = edge === 'start' ? seg.items[0] : seg.items[seg.items.length - 1];
+    if (!key || !item) return !key && !item;
+    return item.id === key.id && item.createdAt.getTime() === key.createdAt.getTime();
   }
 
   /** keep the latest segment at LATEST_SEGMENT_MAX without touching any visible slice */
@@ -1043,7 +1102,7 @@ class ChannelStoreImpl implements ChannelStore {
       if (!ch.latest) await w.guard(gen, this.sync(ch, { join: true }));
       else this.sync(ch, { join: true }).catch(noop);
       if (!w.ch.latest) throw new Error('Could not load channel');
-      await this.fillOlder(w, gen, w.ch.latest, count);
+      await this.fillOlder(w, gen, count);
       const latest = w.ch.latest!;
       w.seg = latest;
       w.to = null;
@@ -1058,14 +1117,18 @@ class ChannelStoreImpl implements ChannelStore {
     return this.loadAround(w, gen, { date: options.date, count }, cause === 'init' ? 'jump' : cause);
   }
 
-  /** older pages into `seg` until it has `count` items or reaches the start */
-  private async fillOlder(w: WindowImpl, gen: number, seg: Segment, count: number): Promise<void> {
-    const access = this.requireAccess(w.ch.id);
+  /** older pages into the latest segment until it has `count` items or reaches the start */
+  private async fillOlder(w: WindowImpl, gen: number, count: number): Promise<void> {
+    const ch = w.ch;
+    const access = this.requireAccess(ch.id);
     for (let i = 0; i < Math.ceil(count / PAGE_SIZE) + 1; i++) {
-      const current = w.seg && w.seg !== seg ? w.seg : seg;
-      if (current.startsAtBeginning || current.items.length >= count || current.items.length === 0) return;
-      const page = await w.guard(gen, this.fetchPage(access, 'DESC', current.items[0].createdAt));
-      this.applyPage(w.ch, current, page, { reachesStart: page.length < PAGE_SIZE });
+      const seg = ch.latest;
+      if (!seg || seg.startsAtBeginning || seg.items.length >= count || seg.items.length === 0) return;
+      const first = keyOf(seg.items[0]);
+      const page = await w.guard(gen, this.fetchPage(access, 'DESC', first.createdAt));
+      // a reset or trim meanwhile: the page no longer adjoins the segment
+      if (ch.latest !== seg || !this.edgeUnchanged(ch, seg, 'start', first)) return;
+      this.applyPage(ch, seg, page, { reachesStart: page.length < PAGE_SIZE });
     }
   }
 
@@ -1123,6 +1186,7 @@ class ChannelStoreImpl implements ChannelStore {
       } else {
         date = target.date;
       }
+      const anchorOfLatest = this.latestAnchor(ch);
       const [older, newer] = await w.guard(gen, Promise.all([
         this.fetchPage(access, 'DESC', item ? date : new Date(date.getTime() + 1)),
         this.fetchPage(access, 'ASC', item ? date : new Date(date.getTime())),
@@ -1133,7 +1197,7 @@ class ChannelStoreImpl implements ChannelStore {
       const fresh = new Segment();
       w.ch.detached.push(fresh);
       const page = item ? [...older, item, ...newer] : [...older, ...newer];
-      seg = this.applyPage(w.ch, fresh, page, { reachesStart: older.length < PAGE_SIZE, reachesEnd: newer.length < PAGE_SIZE });
+      seg = this.applyPage(w.ch, fresh, page, { reachesStart: older.length < PAGE_SIZE, reachesEnd: newer.length < PAGE_SIZE, latestAnchor: anchorOfLatest });
       if (seg === fresh && seg.items.length === 0) {
         w.ch.detached = w.ch.detached.filter(d => d !== fresh);
         seg = w.ch.latest;
@@ -1169,22 +1233,32 @@ class ChannelStoreImpl implements ChannelStore {
     return w.serverCount;
   }
 
+  /** the window still shows `seg` as it did when a request started */
+  private sameSlice(w: WindowImpl, ch: ChannelData, seg: Segment, gen: number, epoch: number): boolean {
+    return !this.disposed && !w.destroyed && w.gen === gen && w.epoch === epoch && w.ch === ch && w.seg === seg;
+  }
+
   async loadOlder(w: WindowImpl, count: number): Promise<void> {
     const gen = w.gen;
+    const epoch = w.epoch;
+    const ch = w.ch;
     if (!w.seg || !w.ready) return;
     let seg = w.seg;
     let startIdx = w.from ? lowerBound(seg.items, w.from) : 0;
     if (startIdx === 0 && !seg.startsAtBeginning && seg.items.length > 0) {
-      const access = this.requireAccess(w.ch.id);
+      const access = this.requireAccess(ch.id);
+      const first = keyOf(seg.items[0]);
       let page: Message[];
       try {
-        page = await w.guard(gen, this.fetchPage(access, 'DESC', seg.items[0].createdAt));
+        page = await w.guard(gen, this.fetchPage(access, 'DESC', first.createdAt));
       } catch (e) {
         if (gen !== w.gen) return;
         throw e;
       }
-      if (gen !== w.gen || !w.seg) return;
-      seg = this.applyPage(w.ch, w.seg, page, { reachesStart: page.length < PAGE_SIZE });
+      // only splice the page onto the edge it was fetched for: a reset, merge
+      // or trim meanwhile would leave a hole between it and the segment
+      if (!this.sameSlice(w, ch, seg, gen, epoch) || !this.edgeUnchanged(ch, seg, 'start', first)) return;
+      seg = this.applyPage(ch, seg, page, { reachesStart: page.length < PAGE_SIZE });
       w.seg = seg;
       startIdx = w.from ? lowerBound(seg.items, w.from) : 0;
     }
@@ -1202,8 +1276,12 @@ class ChannelStoreImpl implements ChannelStore {
     let endIdx = w.to ? upperBound(seg.items, w.to) : seg.items.length;
     const lastKey = w.to;
     if (endIdx >= seg.items.length && seg !== w.ch.latest) {
-      const access = this.requireAccess(w.ch.id);
+      const ch = w.ch;
+      const epoch = w.epoch;
+      const access = this.requireAccess(ch.id);
       const newest = seg.items[seg.items.length - 1];
+      const last = newest ? keyOf(newest) : undefined;
+      const latestAnchor = this.latestAnchor(ch);
       let page: Message[];
       try {
         page = await w.guard(gen, this.fetchPage(access, 'ASC', newest?.createdAt));
@@ -1211,8 +1289,8 @@ class ChannelStoreImpl implements ChannelStore {
         if (gen !== w.gen) return;
         throw e;
       }
-      if (gen !== w.gen || !w.seg) return;
-      seg = this.applyPage(w.ch, w.seg, page, { reachesEnd: page.length < PAGE_SIZE });
+      if (!this.sameSlice(w, ch, seg, gen, epoch) || !this.edgeUnchanged(ch, seg, 'end', last)) return;
+      seg = this.applyPage(ch, seg, page, { reachesEnd: page.length < PAGE_SIZE, latestAnchor });
       w.seg = seg;
       endIdx = lastKey ? upperBound(seg.items, lastKey) : seg.items.length;
     }
@@ -1299,13 +1377,17 @@ class ChannelStoreImpl implements ChannelStore {
       try {
         const access = await this.waitAccess(ch.id);
         const found = await this.deps.api.messagesById({ access, messageIds: ids });
-        if (!ch.alive) return;
+        if (!ch.alive || this.disposed) return;
         const byId = new Map(found.map(m => [m.id, fromApiMessage(m)]));
         for (const id of ids) {
           ch.watchFetchDue.delete(id);
           const m = byId.get(id);
           if (!m) {
-            // the server says it does not exist
+            // the server says it does not exist (or no longer): drop any copy
+            if (ch.stored(id)) {
+              this.tombstone(ch, [id]);
+              continue;
+            }
             for (const watcher of ch.watchers.get(id) ?? []) {
               if (watcher.last === undefined) continue;
               watcher.last = undefined;
@@ -1412,7 +1494,13 @@ class ChannelStoreImpl implements ChannelStore {
   }
 
   private confirmOwn(ch: ChannelData, m: Message): void {
-    if (!ch.alive) return;
+    if (!ch.alive || this.disposed) return;
+    if (ch.buffer) {
+      // first sync in flight: the snapshot may predate this message; insert it after the reset
+      ch.pending.get(m.id)?.timer.clear();
+      ch.buffer.push({ own: m });
+      return;
+    }
     const verdict = this.upsertFull(ch, m, { kind: 'live' });
     if (verdict !== 'older') this.record(ch, m.syncSeq);
     this.enforceLatestMax(ch);

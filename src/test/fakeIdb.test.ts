@@ -2,10 +2,11 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Dexie, liveQuery, type DexieOptions, type EntityTable } from 'dexie';
 import { installFakeIdb } from './fakeIdb';
 import { flushMicrotasks } from './deferred';
+import { useDataLayerFakeTimers } from './timers';
 
 type Channel = { id: string; lastRead: number };
 
@@ -67,11 +68,58 @@ describe('installFakeIdb', () => {
     expect(seen[seen.length - 1]).toBe(4);
   });
 
-  it('restores everything on uninstall', () => {
+  it('restores everything on uninstall', async () => {
     const before = Dexie.dependencies.indexedDB;
     const idb = installFakeIdb();
-    idb.uninstall();
+    await idb.uninstall();
     expect(Dexie.dependencies.indexedDB).toBe(before);
-    expect(() => installFakeIdb().uninstall()).not.toThrow();
+    await expect(installFakeIdb().uninstall()).resolves.toBeUndefined();
+  });
+});
+
+describe('fake timers', () => {
+  it('Dexie keeps working under useDataLayerFakeTimers()', async () => {
+    useDataLayerFakeTimers();
+    const idb = installFakeIdb();
+    const tab = idb.tab(openChannels);
+    await markRead(tab, 'c1', 1);
+    expect(await tab.channels.get('c1')).toEqual({ id: 'c1', lastRead: 1 });
+    expect(vi.isFakeTimers()).toBe(true);
+  });
+
+  it('a faked setImmediate fails fast instead of hanging', async () => {
+    const idb = installFakeIdb();
+    vi.useFakeTimers();
+    try {
+      await expect(idb.tab(openChannels).channels.count()).rejects.toThrow(/useDataLayerFakeTimers/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('restores real timers after the test', () => {
+    expect(vi.isFakeTimers()).toBe(false);
+  });
+});
+
+describe('isolation between tests', () => {
+  const leaked: (number | undefined)[] = [];
+
+  it('a test leaves a liveQuery subscribed on a database the app opened itself', async () => {
+    installFakeIdb();
+    const tab = openChannels({});
+    liveQuery(() => tab.channels.get('c1').then(c => c?.lastRead)).subscribe({ next: v => leaked.push(v), error: e => leaked.push(-1 * (e ? 1 : 0)) });
+    await markRead(tab, 'c1', 1);
+    for (let i = 0; i < 50 && leaked[leaked.length - 1] !== 1; i++) await new Promise(r => setTimeout(r, 5));
+    expect(leaked[leaked.length - 1]).toBe(1);
+  });
+
+  it('the next test\'s writes to the same database name do not reach it', async () => {
+    const seenBefore = leaked.length;
+    const idb = installFakeIdb();
+    const tab = idb.tab(openChannels);
+    await markRead(tab, 'c1', 9);
+    await new Promise(r => setTimeout(r, 30));
+    expect(leaked.length).toBe(seenBefore);
   });
 });

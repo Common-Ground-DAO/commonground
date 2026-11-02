@@ -8,7 +8,8 @@
 > appendix) against commit fe3937f, 2026-10-31; the login list (§3) against
 > commit 9fc05a9, 2026-11-01; session settings and the socket's session room
 > against commit eab2a27, 2026-11-01; the session store TTLs, `sess-user:`, the session
-> generations and signing out other devices (§3, key prefixes) against commit 23a4c1e, 2026-11-01
+> generations and signing out other devices (§3, key prefixes) against commit 23a4c1e, 2026-11-01;
+> online status management and the wsapi shutdown row against commit fc66601, 2026-11-02
 
 # Common Ground - Architecture Documentation
 
@@ -470,7 +471,7 @@ API Server (handles POST /Message/sendMessage)
 
 **Built-in socket events** include: `buildId` (server→client build id for version checks), `cgPing` (latency), `getSignableSecret`, `login`, `logout`, `joinCommunityVisitorRoom` / `leaveCommunityVisitorRoom` (public-community visitors), and `prepareWalletRequest`. Bot connections additionally drive server-derived presence streams.
 
-**Online status management**: on `login` the user is added to a local online set and marked `online`; on `disconnect`/`logout` a user with no remaining sockets is marked `offline`; a 60 s heartbeat touches all locally connected users; on graceful shutdown all connected users are explicitly set `offline`.
+**Online status management** (`srv/util/presence.ts`): on `login` the user is tracked by the process and marked `online` (only from `offline`); when a user's last socket on the process goes (`disconnect`/`logout`), they are marked `offline` only if no socket of theirs exists anywhere in the cluster after a 30 s grace period (a reconnect within it cancels); events go out only on a real change; a 60 s heartbeat touches all tracked users (grace period included); graceful shutdown leaves human users to their reconnect or to the 90 s stale job. Details: [docs/realtime](../realtime/README.md#online-status--heartbeat).
 
 ### Pattern 3: WebRTC Signaling (protoo)
 
@@ -504,7 +505,7 @@ File serving bypasses the API server. The edge rewrites the signed file path int
 | Service | Shutdown Behavior |
 |---------|------------------|
 | `api` | `process.exit(0)` immediately |
-| `wsapi` | Sets `shuttingDown`, fetches all local sockets, marks single-socket users offline, disconnects sockets, closes the server |
+| `wsapi` | Sets `shuttingDown`, drops pending presence decisions (human users are not set offline; reconnect or the stale job decides), clears bot presence, disconnects sockets, closes the server |
 | `mediasoup` | Resets call-server state in DB, stops protoo, closes rooms/workers and the HTTPS server; 5s hard-exit timeout |
 | `onchain` | `process.exit(0)` immediately |
 | `job-runner` | Sets `processIsExiting`, waits 4s if `activityScore` is running, terminates named workers, waits 1s, exits |

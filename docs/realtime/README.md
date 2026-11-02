@@ -7,7 +7,8 @@
 > note (Caddy in front of 4443 in dev too) against commit fe3937f, 2026-10-31;
 > the browser-socket session room (cookie optional), `watchCgIdRequest` and `sess-revoked:`
 > against commit eab2a27, 2026-11-01; `sess-user:`, the session TTLs and the signed-out devices'
-> `cliSignedOut` + disconnect against commit 23a4c1e, 2026-11-01
+> `cliSignedOut` + disconnect against commit 23a4c1e, 2026-11-01; human online status
+> (grace period, cluster-wide offline check, change-only events) against commit fc66601, 2026-11-02
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -154,10 +155,14 @@ The `emit` method takes an event and a target specifying which rooms to broadcas
 
 ### Online Status & Heartbeat
 
-- On `login`, `userHelper.setUserOnlineStatus(userId, 'online')` is called and the userId is added to the process-local `localOnlineUsers` set.
-- On disconnect/logout, if no other sockets remain for that user (`io.sockets.adapter.rooms.get(userRoomKey(userId))?.size` is falsy), the user is set offline. Bot sockets are excluded from this path and handled via the bot-presence mechanism instead (see below).
-- A 60-second interval calls `userHelper.touchUserOnlineStatus(userIds)` for all locally connected human users and re-syncs bot presence for all locally connected bot users.
-- On graceful shutdown (`SIGTERM`, plus `unhandledRejection` / `uncaughtException`), all human users whose last remaining socket is on this instance are batch-set to offline, all bot users have their presence cleared, and every socket is disconnected before `io.close()` and `process.exit`.
+Human presence is one column per user (`users.onlineStatus` + `onlineStatusUpdatedAt`). The decisions live in `PresenceTracker` (`srv/util/presence.ts`, specs `srv/tests/presence.spec.ts`); wsapi passes it the socket lookups and the repository writes.
+
+- On `login` the user is tracked by the process (`socketAuthenticated`, before the rooms are joined; a pending offline is cancelled) and `userHelper.touchUserOnlineStatus([userId], { emitOwnData: true })` runs: it flips only `offline` to `online` and refreshes `onlineStatusUpdatedAt` otherwise, so a status other than online/offline is never overwritten by a login.
+- On disconnect/socket `logout`, if no other socket of the user remains on this process (`io.sockets.adapter.rooms.get(userRoomKey(userId))?.size` is falsy), a **grace period** of `PRESENCE_OFFLINE_GRACE_MS` (30 s) starts. A login on this process within it cancels the offline. When it expires, the tracker checks cluster-wide with `io.in(userRoomKey(userId)).fetchSockets()` (the Redis adapter asks every wsapi process; rejects after its `requestsTimeout`, 5 s): a socket elsewhere → no write, the other process keeps the user; none, or a failed lookup → `setUserOnlineStatus(userId, 'offline')`. A login that lands during the lookup or the write is detected (login sequence per user) and wins. Short disconnect/reconnect cycles (hidden tabs, network loss, reloads) therefore do not change the status. A login on another process that races the offline write is not detected; that process's next touch restores `online` within 60 s. Bot sockets are excluded from this path and handled via the bot-presence mechanism instead (see below).
+- Events go out only on a real change: the UPDATEs return a row only when the status changed, and only then are `cliUserData` (to all the user's communities and the user) and, for `online`, `cliUserOwnData { onlineStatus }` (to the user) emitted. Each change also fires `pg_notify('userdatachange')` for `memberlist` (users trigger).
+- A 60-second interval calls `userHelper.touchUserOnlineStatus(userIds, { emitOwnData: true })` for all human users the process tracks — including those in their grace period, so the `onlineStatusCheck` job (every 30 s, `offline` when not touched for 90 s) never fires before the grace decision — and re-syncs bot presence for all locally connected bot users. The stale job is the fallback for a crashed process or a decision lost on shutdown.
+- On graceful shutdown (`SIGTERM`, plus `unhandledRejection` / `uncaughtException`), pending grace decisions are dropped and human users are **not** set offline: their clients reconnect (to another process, or to this one after a restart) and the login refreshes them; users who do not come back go offline through the stale job. All bot users have their presence cleared, and every socket is disconnected before `io.close()` and `process.exit`.
+- `/User/setOwnStatus` stores a status in Redis (`ud:{userId}`, see `UserDataManager` below), which nothing reads; the `away`/`dnd`/`invisible` values of `users.onlineStatus` have no writer.
 
 ### Tab Coordination
 

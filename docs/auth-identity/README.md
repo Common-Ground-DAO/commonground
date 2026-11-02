@@ -11,7 +11,8 @@
 > §5.5, §6, §8) against commit 2fad7d3, 2026-11-01; 8-digit email codes and the hourly email-code
 > failure budgets (§4, §5.5, §6, §8) against commit 2fad7d3, 2026-11-01; the store TTL of sessions
 > without a user, the index of each user's sessions, signing out other devices and the pre-login
-> limits (§2, §3, §4, §5.4, §7, §8, §10, §11) against commit 23a4c1e, 2026-11-01
+> limits (§2, §3, §4, §5.4, §7, §8, §10, §11) against commit 23a4c1e, 2026-11-01; the logout's
+> sign-out of the device's other sockets against commit ce09d8a, 2026-11-02
 
 # Authentication & Identity
 
@@ -431,6 +432,10 @@ mode (the response itself refreshes an existing session's store TTL and re-sends
 session's cookie).
 `POST /User/logout` deletes the device, destroys the session (`endLoginSession()`; the old id is
 dead and leaves the user's session index) and expires the cookie; no new session takes its place.
+When the request names its tab's socket (`x-cg-socket-id`), the device's other sockets (its other
+tabs) get `cliSignedOut` and are disconnected; the requesting tab's socket logs out itself
+([docs/realtime](../realtime/README.md#socket-scoped-targeting)). Requests without the header
+(older clients) leave the sockets alone.
 `POST /User/signOutOtherDevices` (step-up) ends every other session and device key of the account
 and answers `{ devices, delayed }`, the number of other devices signed out
 ([§2](#signing-out-other-devices)).

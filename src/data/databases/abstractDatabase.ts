@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import config from "common/config";
-import { Dexie } from "dexie";
+import { Dexie, type IndexableType, type Table } from "dexie";
 import dbTracker from "./dbTracker";
 
 export type IdbSetupInfo = {
@@ -12,6 +12,64 @@ export type IdbSetupInfo = {
   createdInOldAppVersion: boolean;
   createdInAppVersion: string;
 };
+
+/*
+ * Writers of the shared entity databases (community, chat, user) run in every
+ * tab that processes socket events, so the same event can be applied several
+ * times and in a different order than the server sent it (a throttled or
+ * frozen tab catches up late). The helpers below make the event writers
+ * order-safe: an event whose `updatedAt` is older than the stored row's is
+ * skipped. Rows or payloads without a parsable `updatedAt` cannot be ordered
+ * and are applied as before.
+ *
+ * Server snapshots (login data, detail-view fetches) are NOT guarded this
+ * way: some community events are stamped with the API process clock instead
+ * of the row's `updatedAt`, so a later, correct snapshot can carry an older
+ * `updatedAt` than a stored event stamp. Snapshots stay authoritative for
+ * entity fields; read state is merged separately (`readStateRows.ts`).
+ */
+
+function updatedAtMs(row: unknown): number | undefined {
+  if (!row || typeof row !== 'object') return undefined;
+  const value = (row as { updatedAt?: unknown }).updatedAt;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value !== 'string') return undefined;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? undefined : ms;
+}
+
+/** true if both carry a parsable `updatedAt` and the incoming one is older */
+export function isOlderThanStored(stored: unknown, incoming: unknown): boolean {
+  const storedMs = updatedAtMs(stored);
+  const incomingMs = updatedAtMs(incoming);
+  return storedMs !== undefined && incomingMs !== undefined && incomingMs < storedMs;
+}
+
+/**
+ * `put` unless the stored row is newer (one rw transaction). Resolves to
+ * whether it wrote.
+ */
+export function guardedPut<T, K extends IndexableType>(db: Dexie, table: Table<T, K>, key: NoInfer<K>, row: T): Promise<boolean> {
+  return db.transaction('rw', table, async () => {
+    const stored = await table.get(key);
+    if (stored !== undefined && isOlderThanStored(stored, row)) return false;
+    await table.put(row);
+    return true;
+  });
+}
+
+/**
+ * `update` of an existing row unless it is newer than the changes (one rw
+ * transaction). Resolves to whether it wrote.
+ */
+export function guardedUpdate<T, K extends IndexableType>(db: Dexie, table: Table<T, K>, key: NoInfer<K>, changes: Partial<T>): Promise<boolean> {
+  return db.transaction('rw', table, async () => {
+    const stored = await table.get(key);
+    if (stored === undefined || isOlderThanStored(stored, changes)) return false;
+    await table.update(key, changes as any);
+    return true;
+  });
+}
 
 export default class AbstractDatabase<T extends {
   [name: string]: Dexie.Table

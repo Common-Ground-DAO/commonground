@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { Dexie } from "dexie";
-import AbstractDatabase, { IdbSetupInfo } from "./abstractDatabase";
+import AbstractDatabase, { IdbSetupInfo, guardedPut, guardedUpdate, isOlderThanStored } from "./abstractDatabase";
 import communityApi from "../api/community";
 import connectionManager from "../appstate/connection";
 import uniqueDb from "./unique";
@@ -163,54 +163,15 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
       "cliCommunityEvent",
       event => {
         if (event.action === "new-or-full-update") {
-          this.addCommunity(event.data);
+          return this.addCommunity(event.data);
         }
         else if (event.action === "update") {
-          const newUrl = event.data.url;
-          if (newUrl) {
-            this.db.communities.get(event.data.id).then(oldCommunity => {
-              if (!!oldCommunity) {
-                return this.db.communities.update(event.data.id, event.data).then(() => {
-                  const oldPathname = window.location.pathname;
-                  if (
-                    oldCommunity &&
-                    oldCommunity.url !== newUrl &&
-                    oldPathname.startsWith(`/${config.URL_COMMUNITY}/${oldCommunity.url}/`)
-                  ) {
-                    const newPathname = oldPathname.replace(RegExp(`^/${config.URL_COMMUNITY}/${oldCommunity.url}/`), `/${config.URL_COMMUNITY}/${newUrl}/`) + window.location.search + window.location.hash;
-                    // Todo: find a better solution than using the serviceWorkerMananger navigate reference
-                    serviceWorkerManager.navigate?.(newPathname);
-                  }
-                });
-              }
-            });
-          }
-          else {
-            this.db.communities.update(event.data.id, event.data);
-          }
-          
-          const omitListView: (keyof Models.Community.DetailViewFromApi)[] = [
-            "calls",
-            "channels",
-            "areas",
-            "roles",
-            "description",
-            "logoLargeId",
-            "links",
-            "creatorId",
-            "myRoleIds",
-            "blockState"
-          ];
-          const listViewUpdate = { ...event.data };
-          for (const key of omitListView) {
-            delete (listViewUpdate as any)[key];
-          }
-          if (Object.keys(listViewUpdate).length > 0) {
-            this.db.communityListViews.update(event.data.id, listViewUpdate);
-          }
+          return this.applyCommunityUpdate(event.data).catch(e => {
+            console.error("Error handling community update event", e);
+          });
         }
         else if (event.action === "delete") {
-          this.db.communities.delete(event.data.id);
+          return this.db.communities.delete(event.data.id);
         }
       }
     );
@@ -218,16 +179,16 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
       "cliAreaEvent",
       event => {
         if (event.action === "new") {
-          this.db.areas.put(event.data);
+          return guardedPut(this.db, this.db.areas, [event.data.communityId, event.data.id], event.data);
         }
         else if (event.action === "update") {
-          this.db.areas.update([
+          return guardedUpdate(this.db, this.db.areas, [
             event.data.communityId,
             event.data.id
           ], event.data);
         }
         else if (event.action === "delete") {
-          this.db.areas.delete([
+          return this.db.areas.delete([
             event.data.communityId,
             event.data.id
           ]);
@@ -244,7 +205,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
           }, {
             lastRead: event.data.lastRead,
           });
-          this.db.channels.put(event.data).then(() => {
+          return this.db.channels.put(event.data).then(() => {
             return channelDatabaseManager.setInitialChannelLastRead(event.data.channelId, new Date(event.data.lastRead));
           })
           .catch(e => {
@@ -252,14 +213,17 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
           });
         }
         else if (event.action === "update") {
-          this.db.channels.update([
+          // read state (unread, lastRead, lastMessageDate) is per user and
+          // only changes through the read-state merge
+          const { unread, lastRead, lastMessageDate, ...changes } = event.data;
+          return guardedUpdate(this.db, this.db.channels, [
             event.data.communityId,
             event.data.channelId,
-          ], event.data);
+          ], changes);
         }
         else if (event.action === "delete") {
           channelDatabaseManager.deleteChannelDatabase({ channelId: event.data.channelId });
-          this.db.channels.delete([
+          return this.db.channels.delete([
             event.data.communityId,
             event.data.channelId
           ]);
@@ -270,16 +234,16 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
       "cliRoleEvent",
       event => {
         if (event.action === "new") {
-          this.db.roles.put(event.data);
+          return guardedPut(this.db, this.db.roles, [event.data.communityId, event.data.id], event.data);
         }
         else if (event.action === "update") {
-          this.db.roles.update([
+          return guardedUpdate(this.db, this.db.roles, [
             event.data.communityId,
             event.data.id
           ], event.data);
         }
         else if (event.action === "delete") {
-          this.db.roles.delete([
+          return this.db.roles.delete([
             event.data.communityId,
             event.data.id
           ]);
@@ -290,20 +254,27 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
       "cliPluginEvent",
       event => {
         if (event.action === "new") {
-          this.db.transaction(
+          return this.db.transaction(
             'rw',
             ['communities'],
             async tx => {
               const existing = await tx.communities.get(event.data.communityId);
               if (existing) {
-                existing.plugins.push(event.data);
+                // idempotent: every tab applies the same event
+                const index = existing.plugins.findIndex(p => p.id === event.data.id);
+                if (index === -1) {
+                  existing.plugins.push(event.data);
+                }
+                else {
+                  existing.plugins[index] = event.data;
+                }
                 tx.communities.put(existing);
               }
             }
           );
         }
         else if (event.action === "update") {
-          this.db.transaction(
+          return this.db.transaction(
             'rw',
             ['communities'],
             async tx => {
@@ -322,7 +293,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
           );
         }
         else if (event.action === "dataUpdate") {
-          this.db.transaction(
+          return this.db.transaction(
             'rw',
             ['communities'],
             async tx => {
@@ -340,7 +311,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
           );
         }
         else if (event.action === "delete") {
-          this.db.transaction(
+          return this.db.transaction(
             'rw',
             ['communities'],
             async tx => {
@@ -353,7 +324,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
           );
         }
         else if (event.action === "dataDelete") {
-          this.db.transaction(
+          return this.db.transaction(
             'rw',
             ['communities'],
             async tx => {
@@ -373,13 +344,13 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
       "cliCallEvent",
       event => {
         if (event.action === "new") {
-          this.db.calls.put(event.data);
+          return guardedPut(this.db, this.db.calls, event.data.id, event.data);
         }
         else if (event.action === "update") {
-          this.db.calls.update(event.data.id, event.data);
+          return guardedUpdate(this.db, this.db.calls, event.data.id, event.data);
         }
         else if (event.action === "delete") {
-          this.db.calls.delete(event.data.id);
+          return this.db.calls.delete(event.data.id);
         }
       }
     );
@@ -387,10 +358,10 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
       "cliMembershipEvent",
       event => {
         if (event.action === "join") {
-          this.db.communityMembers.put(event.data);
+          return this.db.communityMembers.put(event.data);
         }
         else if (event.action === "roles_added") {
-          this.db.transaction(
+          return this.db.transaction(
             'rw',
             ['communityMembers'],
             async tx => {
@@ -411,7 +382,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
           );
         }
         else if (event.action === "roles_removed") {
-          this.db.transaction(
+          return this.db.transaction(
             'rw',
             ['communityMembers'],
             async tx => {
@@ -433,7 +404,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
           );
         }
         else if (event.action === "leave") {
-          this.db.communityMembers.delete([event.data.communityId, event.data.userId]);
+          return this.db.communityMembers.delete([event.data.communityId, event.data.userId]);
         }
       }
     );
@@ -462,10 +433,95 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
 
   }
 
+  /**
+   * URLs this tab has seen per community (from its own reads and writes). The
+   * URL-change navigation must not depend on the shared row: another tab may
+   * already have written the new URL when this tab processes the event.
+   */
+  private knownUrlsByCommunityId = new Map<string, Set<string>>();
+  private rememberCommunityUrl(communityId: string | undefined, url: string | null | undefined) {
+    if (!communityId || !url) return;
+    let urls = this.knownUrlsByCommunityId.get(communityId);
+    if (!urls) {
+      urls = new Set();
+      this.knownUrlsByCommunityId.set(communityId, urls);
+    }
+    urls.add(url);
+  }
+
+  private async applyCommunityUpdate(data: Extract<Events.Community.Community, { action: 'update' }>['data']) {
+    const omitListView: (keyof Models.Community.DetailViewFromApi)[] = [
+      "calls",
+      "channels",
+      "areas",
+      "roles",
+      "description",
+      "logoLargeId",
+      "links",
+      "creatorId",
+      "myRoleIds",
+      "blockState"
+    ];
+    const listViewUpdate = { ...data };
+    for (const key of omitListView) {
+      delete (listViewUpdate as any)[key];
+    }
+
+    const applied = await this.db.transaction(
+      'rw',
+      ['communities', 'communityListViews'],
+      async tx => {
+        let applied = true;
+        const oldCommunity = await tx.communities.get(data.id);
+        if (oldCommunity) {
+          this.rememberCommunityUrl(oldCommunity.id, oldCommunity.url);
+          if (isOlderThanStored(oldCommunity, data)) {
+            applied = false;
+          }
+          else {
+            await tx.communities.update(data.id, data);
+          }
+        }
+        const oldListView = await tx.communityListViews.get(data.id);
+        if (oldListView) {
+          this.rememberCommunityUrl(oldListView.id, oldListView.url);
+          if (isOlderThanStored(oldListView, data)) {
+            applied = false;
+          }
+          else {
+            await tx.communityListViews.update(data.id, listViewUpdate);
+          }
+        }
+        return applied;
+      },
+    );
+
+    const newUrl = data.url;
+    if (!applied || !newUrl) return;
+    const prefix = `/${config.URL_COMMUNITY}/`;
+    const oldPathname = window.location.pathname;
+    if (!oldPathname.startsWith(prefix)) return;
+    const urlInPath = oldPathname.slice(prefix.length).split('/')[0];
+    const pathHasTrailingSegment = oldPathname.length > prefix.length + urlInPath.length;
+    if (
+      !!urlInPath &&
+      pathHasTrailingSegment &&
+      urlInPath !== newUrl &&
+      !!this.knownUrlsByCommunityId.get(data.id)?.has(urlInPath)
+    ) {
+      const newPathname = prefix + newUrl + oldPathname.slice(prefix.length + urlInPath.length) + window.location.search + window.location.hash;
+      // Todo: find a better solution than using the serviceWorkerMananger navigate reference
+      serviceWorkerManager.navigate?.(newPathname);
+    }
+    this.rememberCommunityUrl(data.id, newUrl);
+  }
+
   public async getOwnCommunities() {
     const myCommunityIds = ((await uniqueDb.uniques.get("OwnCommunityIds")) as Unique.OwnCommunityIds | undefined)?.ids || [];
     return this.db.communities.bulkGet(myCommunityIds).then(result => {
-      return result.filter(c => c !== undefined);
+      const communities = result.filter(c => c !== undefined);
+      communities.forEach(c => this.rememberCommunityUrl(c.id, c.url));
+      return communities;
     }) as Promise<Models.Community.DetailView[]>;
   }
 
@@ -477,6 +533,9 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
     const detailView = await this.db.communities.get(communityId);
     if (!detailView) {
       this.scheduleRetrieval('detailViewsById', [communityId]);
+    }
+    else {
+      this.rememberCommunityUrl(detailView.id, detailView.url);
     }
     return detailView;
   }
@@ -543,6 +602,9 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
     const detailView = await this.db.communities.where('url').equals(url).first();
     if (!detailView) {
       this.scheduleRetrieval('detailViewsByUrl', [url]);
+    }
+    else {
+      this.rememberCommunityUrl(detailView.id, detailView.url);
     }
     return detailView;
   }
@@ -868,6 +930,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
         try {
           const newCommunities = [...communities];
           for (const newCommunity of newCommunities) {
+            this.rememberCommunityUrl(newCommunity.id, newCommunity.url);
             for (const channel of newCommunity.channels) {
               channelDatabaseManager.registerAccessForChannel({
                 channelId: channel.channelId,
@@ -1226,6 +1289,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
     const communityId = detailViewFromApi.id;
     // collect all properties into community except of areas, channels and roles
     const { areas, channels, roles, calls, ...community } = detailViewFromApi;
+    this.rememberCommunityUrl(community.id, community.url);
 
     // register access
     for (const channel of channels) {

@@ -26,7 +26,9 @@
 > against commit 3e8b08e, 2026-11-01; "Service worker and module scripts" (§9) against commit
 > 3e8b08e, 2026-11-01; Tailwind CSS 4 (§9 "Styling: Tailwind CSS 4", the CSS row, the
 > build-target paragraph, "Dependency pins and constraints", wave M4) against commit
-> 440c779, 2026-11-02; inline background images (§9) against commit 591e6cf, 2026-11-02
+> 440c779, 2026-11-02; inline background images (§9) against commit 591e6cf, 2026-11-02;
+> "Writers of the shared entity databases" (§ Dexie) against the chat-sync/entity-dbs
+> branch, 2026-11-02
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -536,6 +538,14 @@ const data = {
 #### dbTracker (`src/data/databases/dbTracker.ts`)
 
 Tracks all registered IndexedDB databases, their creation time, and app version. Provides `deleteOldIndexedDbs()` for cleanup of stale databases (runs 10s after the tab becomes active).
+
+#### Writers of the shared entity databases
+
+The `communities`, `chat` and `users` databases are shared by all tabs of an origin, and any tab may apply the same socket event, possibly late (a throttled or frozen tab catches up). Their writers are therefore idempotent and order-safe:
+
+- **Entity events** (`cliCommunityEvent update`, area/role/channel/call events, `cliUserData`, `cliUserOwnData`) are skipped when the stored row has a newer `updatedAt` (`guardedPut` / `guardedUpdate` in `abstractDatabase.ts`, one rw transaction each); payloads without `updatedAt` apply as before. `cliPluginEvent new` upserts by plugin id. Server snapshots (login data, detail-view fetches) stay authoritative for entity fields, because some community events are stamped with the API process clock rather than the row's `updatedAt`.
+- **Community URL change**: each tab navigates from the community URLs it has seen itself, not from the shared row (which another tab may already have updated).
+- **Read state** (`unread`, `lastRead`, `lastMessageDate` of community channels and DMs) is only written through `mergeReadState` (`src/data/chat/mergeReadState.ts`) inside the writer's transaction (`readStateRows.ts`): `lastRead` and `lastMessageDate` only move forward, a snapshot's `unread` is taken only if it knows at least the local `lastRead`, and a live message is counted once per `syncSeq` (older servers: only if newer than every message seen). The rows carry two extra non-indexed fields, `readSeq` and `readCounted`; DM rows also `lastMessageDate`. The schema versions are unchanged (no `versionchange` for open tabs of an older build). `readStatePersistence.ts` exposes this as the `ReadStatePersistence` of the chat-sync contract.
 
 #### Reactivity
 

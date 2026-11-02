@@ -9,15 +9,20 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
+import { Dexie, type Table } from 'dexie';
 import { installBrowserEnv } from 'test/env';
 import { installFakeIdb } from 'test/fakeIdb';
 import { importAsNewTab } from 'test/modules';
+import { chatFromApi } from './readStateRows';
 import {
   T,
+  apiMessage,
   channelFixture,
+  chatFixture,
   communityFixture,
   createTabMocks,
   emit,
+  message,
   pluginFixture,
   type TabMocks,
 } from './entityDbs.testHarness';
@@ -32,6 +37,7 @@ type Tab = TabMocks & {
   community: typeof import('data/databases/community').default;
   chats: typeof import('data/databases/chats').default;
   user: typeof import('data/databases/user').default;
+  persistence: typeof import('data/databases/readStatePersistence').default;
 };
 
 /**
@@ -55,7 +61,8 @@ async function openTab(): Promise<Tab> {
   vi.doMock('data/databases/channel', () => ({
     default: {
       registerAccessForChannel(access: { channelId: string }, data?: { lastRead: string }) {
-        mocks.registeredLastRead.set(access.channelId, data?.lastRead);
+        // like channel.ts: only a given lastRead replaces the guard value
+        if (data) mocks.registeredLastRead.set(access.channelId, data.lastRead);
       },
       setInitialChannelLastRead() {
         throw new Error('entity dbs must not move the in-memory lastRead backwards');
@@ -65,12 +72,19 @@ async function openTab(): Promise<Tab> {
     },
   }));
   vi.doMock('data/appstate/serviceWorker', () => ({ default: { navigate: mocks.navigate } }));
-  const [community, chats, user] = await importAsNewTab(() => Promise.all([
+  const [community, chats, user, persistence] = await importAsNewTab(() => Promise.all([
     import('data/databases/community'),
     import('data/databases/chats'),
     import('data/databases/user'),
+    import('data/databases/readStatePersistence'),
   ]));
-  return { ...mocks, community: community.default, chats: chats.default, user: user.default };
+  return {
+    ...mocks,
+    community: community.default,
+    chats: chats.default,
+    user: user.default,
+    persistence: persistence.default,
+  };
 }
 
 async function twoTabs(url?: string) {
@@ -178,5 +192,195 @@ describe('user database across tabs', () => {
     expect(((await uniqueDb.uniques.get('OwnData')) as any).data.onlineStatus).toBe('online');
     await emit(a, { type: 'cliUserOwnData', data: { onlineStatus: 'away' } });
     expect(((await uniqueDb.uniques.get('OwnData')) as any).data.onlineStatus).toBe('away');
+  });
+});
+
+/** a community with one channel that was read up to T(0) */
+async function seedCommunityChannel(tab: Tab, channel: Partial<Models.Community.Channel> = {}) {
+  await emit(tab, {
+    type: 'cliCommunityEvent',
+    action: 'new-or-full-update',
+    data: communityFixture({ channels: [channelFixture({ channelId: 'ch1', ...channel })] }),
+  });
+}
+
+const channelRow = (tab: Tab, channelId = 'ch1') => db(tab, 'community').channels.get(['com1', channelId]);
+const chatRow = (tab: Tab, id = 'chat1') => db(tab, 'chats').chats.get(id);
+const msg = (id: string, minute: number, syncSeq?: number, channelId = 'ch1') =>
+  message({ id, channelId, createdAt: T(minute), ...(syncSeq !== undefined ? { syncSeq } : {}) });
+
+describe('community channel read state across tabs', () => {
+  it('counts a new message once when both tabs process the same event', async () => {
+    const [a, b] = await twoTabs();
+    await seedCommunityChannel(a);
+    await a.community.newMessageReceived('ch1', msg('m1', 1, 11), false);
+    await b.community.newMessageReceived('ch1', msg('m1', 1, 11), false);
+    // an older server sends no syncSeq: counted only if newer than every message seen
+    await a.community.newMessageReceived('ch1', msg('m2', 2), false);
+    await b.community.newMessageReceived('ch1', msg('m2', 2), false);
+    expect(await channelRow(a)).toMatchObject({ unread: 2, lastMessageDate: T(2), readCounted: [11] });
+    expect(await a.community.areCommunitiesUnread(['com1'])).toBe(true);
+  });
+
+  it('counts out-of-order seqs once each', async () => {
+    const [a, b] = await twoTabs();
+    await seedCommunityChannel(a);
+    await a.community.newMessageReceived('ch1', msg('m12', 2, 12), false);
+    await b.community.newMessageReceived('ch1', msg('m11', 1, 11), false);
+    await a.community.newMessageReceived('ch1', msg('m11', 1, 11), false);
+    await b.community.newMessageReceived('ch1', msg('m12', 2, 12), false);
+    expect(await channelRow(b)).toMatchObject({ unread: 2, readCounted: [11, 12], lastMessageDate: T(2) });
+  });
+
+  it('keeps messages counted during a sync snapshot round trip', async () => {
+    const [a, b] = await twoTabs();
+    await seedCommunityChannel(a);
+    await a.persistence.apply({ kind: 'snapshot', channelId: 'ch1', lastRead: T(0), unread: 0, syncSeq: 10, lastMessageDate: T(0) });
+    await a.community.newMessageReceived('ch1', msg('m11', 1, 11), false);
+    await b.community.newMessageReceived('ch1', msg('m12', 2, 12), false);
+    // the snapshot was taken at seq 11: it counts m11, not m12
+    await b.persistence.apply({ kind: 'snapshot', channelId: 'ch1', lastRead: T(0), unread: 1, syncSeq: 11, lastMessageDate: T(1) });
+    expect(await channelRow(a)).toMatchObject({ unread: 2, readSeq: 11, readCounted: [12] });
+    // a late, older snapshot does not lower it
+    await a.persistence.apply({ kind: 'snapshot', channelId: 'ch1', lastRead: T(0), unread: 0, syncSeq: 10, lastMessageDate: T(0) });
+    expect(await channelRow(a)).toMatchObject({ unread: 2, readSeq: 11 });
+    expect(await a.persistence.get('ch1')).toMatchObject({ unread: 2, seq: 11, counted: [12], lastMessageDate: T(2) });
+  });
+
+  it('own messages and read marks clear the count, older marks change nothing', async () => {
+    const [a, b] = await twoTabs();
+    await seedCommunityChannel(a);
+    await a.community.newMessageReceived('ch1', msg('m1', 1, 11), false);
+    await b.community.newMessageReceived('ch1', message({ id: 'm2', channelId: 'ch1', createdAt: T(2), syncSeq: 12, creatorId: 'me' }), true);
+    expect(await channelRow(a)).toMatchObject({ unread: 0, lastRead: T(2) });
+    await a.community.newMessageReceived('ch1', msg('m3', 3, 13), false);
+    await b.community.setChannelLastRead('ch1', new Date(T(3)));
+    await a.community.setChannelLastRead('ch1', new Date(T(1)));
+    expect(await channelRow(a)).toMatchObject({ unread: 0, lastRead: T(3) });
+  });
+
+  it('an older detail-view or login snapshot does not undo a newer local read (R2)', async () => {
+    const [a, b] = await twoTabs();
+    await seedCommunityChannel(a);
+    await a.community.newMessageReceived('ch1', msg('m1', 4, 11), false);
+    await a.community.setChannelLastRead('ch1', new Date(T(5)));
+    // tab b got this snapshot before the mark reached the server
+    const stale = communityFixture({
+      channels: [channelFixture({ channelId: 'ch1', title: 'renamed', lastRead: T(3), unread: 2, lastMessageDate: T(4) })],
+    });
+    await emit(b, { type: 'cliCommunityEvent', action: 'new-or-full-update', data: stale });
+    expect(await channelRow(a)).toMatchObject({ title: 'renamed', unread: 0, lastRead: T(5), lastMessageDate: T(4) });
+    expect(b.registeredLastRead.get('ch1')).toBe(T(5));
+
+    await b.community.setupAfterLogin([stale]);
+    expect(await channelRow(a)).toMatchObject({ unread: 0, lastRead: T(5) });
+    expect(b.registeredLastRead.get('ch1')).toBe(T(5));
+
+    // a newer snapshot (read on another device, new messages after it) is taken
+    const fresh = communityFixture({
+      channels: [channelFixture({ channelId: 'ch1', title: 'renamed', lastRead: T(6), unread: 1, lastMessageDate: T(7) })],
+    });
+    await a.community.setupAfterLogin([fresh]);
+    expect(await channelRow(b)).toMatchObject({ unread: 1, lastRead: T(6), lastMessageDate: T(7) });
+  });
+
+  it('a channel event does not reset local read state', async () => {
+    const [a, b] = await twoTabs();
+    await seedCommunityChannel(a);
+    await a.community.newMessageReceived('ch1', msg('m1', 1, 11), false);
+    // permissions changed: the server re-sends the channel as "new"
+    await emit(b, { type: 'cliChannelEvent', action: 'new', data: channelFixture({ channelId: 'ch1', lastRead: T(0), updatedAt: T(1), unread: undefined }) });
+    expect(await channelRow(a)).toMatchObject({ unread: 1, readCounted: [11], updatedAt: T(1) });
+    await emit(b, { type: 'cliChannelEvent', action: 'update', data: { communityId: 'com1', channelId: 'ch1', unread: 0, lastRead: T(0), updatedAt: T(2) } });
+    expect(await channelRow(a)).toMatchObject({ unread: 1, updatedAt: T(2) });
+  });
+});
+
+describe('chat read state across tabs', () => {
+  async function seedChat(tab: Tab, overrides: Partial<Models.Chat.ChatFromApi> = {}) {
+    await emit(tab, { type: 'cliChatEvent', action: 'new', data: chatFixture({ id: 'chat1', channelId: 'dm1', ...overrides }) });
+  }
+
+  it('counts a DM message once and keeps the newest lastMessage', async () => {
+    const [a, b] = await twoTabs();
+    await seedChat(a);
+    await a.chats.newMessageReceived('dm1', msg('m2', 2, 12, 'dm1'), false);
+    await b.chats.newMessageReceived('dm1', msg('m1', 1, 11, 'dm1'), false);
+    await b.chats.newMessageReceived('dm1', msg('m2', 2, 12, 'dm1'), false);
+    const row = await chatRow(a);
+    expect(row).toMatchObject({ unread: 2, lastMessageDate: T(2) });
+    expect(row.lastMessage.id).toBe('m2');
+    expect(await a.persistence.get('dm1')).toMatchObject({ unread: 2, counted: [11, 12] });
+  });
+
+  it('a read mark clears a restored count again; older snapshots do not restore it (R3)', async () => {
+    const [a, b] = await twoTabs();
+    await seedChat(a);
+    await a.chats.newMessageReceived('dm1', msg('m1', 4, 11, 'dm1'), false);
+    await a.chats.setChannelLastRead('dm1', new Date(T(5)));
+    expect(await chatRow(a)).toMatchObject({ unread: 0, lastRead: T(5) });
+
+    const stale = chatFixture({ id: 'chat1', channelId: 'dm1', lastRead: T(3), unread: 2, lastMessage: apiMessage({ id: 'm0', channelId: 'dm1', createdAt: T(3) }) });
+    await b.chats.setupAfterLogin([stale]);
+    const row = await chatRow(a);
+    expect(row).toMatchObject({ unread: 0, lastRead: T(5) });
+    expect(row.lastMessage.id).toBe('m1');
+    expect(b.registeredLastRead.get('dm1')).toBe(T(5));
+
+    // a count restored by an older build: the same mark clears it, every time
+    await db(a, 'chats').chats.update('chat1', { unread: 3 });
+    await a.chats.setChannelLastRead('dm1', new Date(T(5)));
+    expect((await chatRow(a)).unread).toBe(0);
+    await db(a, 'chats').chats.update('chat1', { unread: 3 });
+    await a.chats.setChannelLastRead('dm1', new Date(T(5)));
+    expect((await chatRow(a)).unread).toBe(0);
+  });
+
+  it('setupAfterLogin deletes chats the snapshot no longer has', async () => {
+    const [a] = await twoTabs();
+    await seedChat(a);
+    await a.chats.setupAfterLogin([chatFixture({ id: 'chat2', channelId: 'dm2', lastRead: T(0), unread: 1, lastMessage: apiMessage({ id: 'x', channelId: 'dm2', createdAt: T(1) }) })]);
+    expect(await chatRow(a)).toBeUndefined();
+    expect(await chatRow(a, 'chat2')).toMatchObject({ unread: 1, lastMessageDate: T(1) });
+  });
+});
+
+describe('schema compatibility', () => {
+  it('opens databases written by the current build and keeps their rows', async () => {
+    installBrowserEnv();
+    const idb = installFakeIdb();
+    const { default: config } = await import('common/config');
+    // the stores as the build before this change declared them
+    const oldCommunities = idb.tab(o => {
+      const d = new Dexie(`${config.IDB_PREFIX}_communities`, o) as Dexie & { channels: Table };
+      d.version(3).stores({
+        communities: '&id,url',
+        areas: '&[communityId+id],id,communityId',
+        channels: '&[communityId+channelId],channelId,communityId',
+        roles: '&[communityId+id],[title+type],id,communityId',
+        calls: '&id,communityId',
+        communityListViews: '&id,url',
+        communityMembers: '&[communityId+userId],communityId',
+        status: '&id',
+      });
+      return d;
+    });
+    await oldCommunities.channels.put(channelFixture({ channelId: 'ch1', unread: 4, lastRead: T(0), lastMessageDate: T(3) }));
+    const oldChats = idb.tab(o => {
+      const d = new Dexie(`${config.IDB_PREFIX}_chat`, o) as Dexie & { chats: Table };
+      d.version(2).stores({ chats: '&id,channelId' });
+      return d;
+    });
+    await oldChats.chats.put(chatFromApi(chatFixture({ id: 'chat1', channelId: 'dm1', unread: 2, lastMessage: apiMessage({ id: 'm', channelId: 'dm1', createdAt: T(2) }) })));
+
+    // the old tab stays open next to the new one
+    const tab = await openTab();
+    expect(await channelRow(tab)).toMatchObject({ unread: 4, lastMessageDate: T(3) });
+    expect(await tab.persistence.get('ch1')).toEqual({ channelId: 'ch1', lastRead: T(0), unread: 4, seq: 0, counted: [], lastMessageDate: T(3) });
+    expect(await tab.persistence.get('dm1')).toMatchObject({ unread: 2, seq: 0, lastMessageDate: T(2) });
+    await tab.community.newMessageReceived('ch1', msg('m4', 4, 20), false);
+    expect(await channelRow(tab)).toMatchObject({ unread: 5, readCounted: [20] });
+    expect(oldCommunities.isOpen()).toBe(true);
+    expect(await oldCommunities.channels.count()).toBe(1);
   });
 });

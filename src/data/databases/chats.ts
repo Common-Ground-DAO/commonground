@@ -8,11 +8,21 @@ import AbstractDatabase, { IdbSetupInfo } from "./abstractDatabase";
 import chatApi from "../api/chat";
 import connectionManager from "../appstate/connection";
 import channelDatabaseManager from "./channel";
-
-const NEWMESSAGE_DEBOUNCE_INTERVAL = 500;
+import { isEqual } from "lodash";
+import { mergeReadState, sameReadState } from "data/chat/mergeReadState";
+import type { ChannelReadState, ReadStateInput } from "data/chat/types";
+import {
+  chatFromApi,
+  chatRowReadState,
+  mergeChatSnapshot,
+  messageInput,
+  newerLastMessage,
+  readStateRowFields,
+  type StoredChat,
+} from "./readStateRows";
 
 class ChatDatabase extends AbstractDatabase<{
-  chats: Dexie.Table<Models.Chat.Chat>;
+  chats: Dexie.Table<StoredChat, string>;
 }> {
   constructor() {
     super('chat');
@@ -58,22 +68,7 @@ class ChatDatabase extends AbstractDatabase<{
       "cliChatEvent",
       async event => {
         if (event.action === "new") {
-          channelDatabaseManager.registerAccessForChannel({
-            channelId: event.data.channelId,
-            chatId: event.data.id,
-          }, {
-            lastRead: event.data.lastRead,
-          });
-          await this.db.chats.put({
-            ...event.data,
-            lastMessage: event.data.lastMessage !== null
-              ? {
-                ...event.data.lastMessage,
-                createdAt: new Date(event.data.lastMessage.createdAt),
-                updatedAt: new Date(event.data.lastMessage.updatedAt),
-              }
-              : null,
-          });
+          await this.putChatSnapshots([chatFromApi(event.data)]);
         }
         else if (event.action === "delete") {
           const existing = await this.db.chats.get(event.data.id);
@@ -107,64 +102,47 @@ class ChatDatabase extends AbstractDatabase<{
         }, 7_000);
     
         try {
-          const newChats = [...chats];
+          const newChats = chats.map(chatFromApi);
           for (const chat of newChats) {
+            // the lastRead guard is seeded after the merge below
             channelDatabaseManager.registerAccessForChannel({
               channelId: chat.channelId,
               chatId: chat.id,
-            }, {
-              lastRead: chat.lastRead,
             });
-          }
-      
-          const oldChats = await this.db.chats.toArray();
-          const chatsToUpdate: Models.Chat.Chat[] = [];
-      
-          for (const newChat of newChats) {
-            let oldChat: Models.Chat.Chat | undefined;
-            const index = oldChats.findIndex(c => newChat.id === c.id);
-            if (index > -1) {
-              oldChat = oldChats[index];
-              oldChats.splice(index, 1);
-            }
-            if (
-              !oldChat ||
-              oldChat.updatedAt !== newChat.updatedAt ||
-              oldChat.unread !== newChat.unread ||
-              oldChat.lastMessage?.id !== newChat.lastMessage?.id ||
-              oldChat.lastMessage?.updatedAt.getTime() !== (newChat.lastMessage ? new Date(newChat.lastMessage.updatedAt).getTime() : undefined)
-            ) {
-              chatsToUpdate.push({
-                ...newChat,
-                lastMessage: newChat.lastMessage !== null
-                  ? {
-                    ...newChat.lastMessage,
-                    createdAt: new Date(newChat.lastMessage.createdAt),
-                    updatedAt: new Date(newChat.lastMessage.updatedAt),
-                  }
-                  : null,
-              });
-            }
           }
 
           if (!rejected) {
-            // remaining chats in oldChats don't have a
-            // counterpart in newChats and need to be
-            // deleted
-            const chatIdsToDelete = oldChats.map(c => c.id);
-            const channelIdsToDelete = oldChats.map(c => c.channelId);
-        
-            console.log(`Updating ${chatsToUpdate.length} chats, deleting ${chatIdsToDelete.length} chats`);
-            const [ownDbResult, ...otherResults] = await Dexie.Promise.allSettled([
-              this.db.chats.bulkDelete(chatIdsToDelete).then(() => this.db.chats.bulkPut(chatsToUpdate)),
-              ...channelIdsToDelete.map(channelId => channelDatabaseManager.deleteChannelDatabase({ channelId })).filter(Boolean),
-            ]);
-            if (ownDbResult.status === 'rejected') {
-              clearTimeout(susTimeout);
-              rejected = true;
-              reject(ownDbResult.reason);
-            }
-            for (const result of otherResults) {
+            // one transaction on fresh rows: another tab may write the same
+            // chats meanwhile; read state and lastMessage are merged, never
+            // replaced by an older snapshot
+            const { stored, channelIdsToDelete } = await this.db.transaction('rw', this.db.chats, async () => {
+              const oldChats = await this.db.chats.toArray();
+              const oldChatsById = new Map(oldChats.map(c => [c.id, c]));
+              const toPut: StoredChat[] = [];
+              const stored: StoredChat[] = [];
+              for (const newChat of newChats) {
+                const oldChat = oldChatsById.get(newChat.id);
+                oldChatsById.delete(newChat.id);
+                const merged = mergeChatSnapshot(oldChat, newChat);
+                if (!oldChat || !isEqual(oldChat, merged)) {
+                  toPut.push(merged);
+                }
+                stored.push(merged);
+              }
+              // remaining chats in oldChatsById don't have a counterpart in
+              // newChats and need to be deleted
+              const chatsToDelete = Array.from(oldChatsById.values());
+              console.log(`Updating ${toPut.length} chats, deleting ${chatsToDelete.length} chats`);
+              await this.db.chats.bulkDelete(chatsToDelete.map(c => c.id));
+              await this.db.chats.bulkPut(toPut);
+              return { stored, channelIdsToDelete: chatsToDelete.map(c => c.channelId) };
+            });
+            this.registerChatLastRead(stored);
+
+            const results = await Dexie.Promise.allSettled(
+              channelIdsToDelete.map(channelId => channelDatabaseManager.deleteChannelDatabase({ channelId })).filter(Boolean),
+            );
+            for (const result of results) {
               if (result.status === 'rejected') {
                 console.error("Error deleting chat database", result.reason);
               }
@@ -188,143 +166,76 @@ class ChatDatabase extends AbstractDatabase<{
     return this._setupPromise;
   }
 
-  private nextLastReadByChannelId = new Map<string, Date>();
-  private setNextLastReadPromiseByChannelId = new Map<string, Promise<void>>();
-  public async setChannelLastRead(channelId: string, lastRead: Date) {
-    const nextLastRead = this.nextLastReadByChannelId.get(channelId);
-    let setNextLastReadPromise = this.setNextLastReadPromiseByChannelId.get(channelId);
-    if (!nextLastRead || nextLastRead.getTime() < lastRead.getTime()) {
-      this.nextLastReadByChannelId.set(channelId, lastRead);
-      if (!setNextLastReadPromise) {
-        setNextLastReadPromise = new Promise<void>((resolve, reject) => {
-          setTimeout(() => {
-            this.db.transaction(
-              'rw',
-              ['chats'],
-              async tx => {
-                const chat = await tx.chats.where('channelId').equals(channelId).first();
-                const newLastRead = this.nextLastReadByChannelId.get(channelId)!;
-                if (!!chat) {
-                  const update: {
-                    unread?: number;
-                    lastRead?: string;
-                  } = {};
-                  if (
-                    (!chat.lastMessage || chat.lastMessage.createdAt.getTime() <= newLastRead.getTime()) &&
-                    chat.unread !== 0
-                  ) {
-                    update.unread = 0;
-                  }
-                  if (new Date(chat.lastRead) < newLastRead) {
-                    update.lastRead = newLastRead.toISOString();
-                  }
-                  if (Object.getOwnPropertyNames(update).length > 0) {
-                    await tx.chats.update(chat.id, update);
-                  }
-                }
-              }
-            )
-            .then(() => resolve())
-            .catch(reject)
-            .finally(() => this.setNextLastReadPromiseByChannelId.delete(channelId));
-          }, 500);
-        });
-        this.setNextLastReadPromiseByChannelId.set(channelId, setNextLastReadPromise);
+  /**
+   * Applies one read-state input to the DM row with this channelId: re-reads
+   * the row and merges with mergeReadState in one rw transaction (idempotent,
+   * order-safe across tabs). A received `message` also becomes the row's
+   * `lastMessage` if it is newer. Resolves to the merged state, or undefined
+   * if no such chat row exists.
+   */
+  public async applyReadState(input: ReadStateInput, message?: Models.Message.Message): Promise<ChannelReadState | undefined> {
+    return this.db.transaction('rw', this.db.chats, async () => {
+      const row = await this.db.chats.where('channelId').equals(input.channelId).first();
+      if (!row) return undefined;
+      const before = chatRowReadState(row);
+      const after = mergeReadState(before, input);
+      const lastMessage = message ? newerLastMessage(row.lastMessage, message) : row.lastMessage;
+      if (!sameReadState(before, after) || lastMessage !== row.lastMessage) {
+        await this.db.chats.update(row.id, { ...readStateRowFields(after), lastMessage });
       }
-    }
-    if (setNextLastReadPromise) await setNextLastReadPromise;
+      return after;
+    });
   }
 
-  private lastMessageReceivedExecution = 0;
-  private updateMessageReceivedPromise: Promise<void> | undefined;
-  private receivedMessagesByChannelId: Map<string, { message: Models.Message.Message, isOwnMessage: boolean }[]> = new Map();
-  public newMessageReceived(channelId: string, message: Models.Message.Message, isOwnMessage: boolean) {
-    let receivedMessages = this.receivedMessagesByChannelId.get(channelId);
-    if (!receivedMessages) {
-      receivedMessages = [];
-      this.receivedMessagesByChannelId.set(channelId, receivedMessages);
-    }
-    receivedMessages.push({ message, isOwnMessage });
+  /** the stored read state of a DM, if the row exists */
+  public async getReadState(channelId: string): Promise<ChannelReadState | undefined> {
+    const row = await this.db.chats.where('channelId').equals(channelId).first();
+    return row ? chatRowReadState(row) : undefined;
+  }
 
-    if (!this.updateMessageReceivedPromise) {
-      this.updateMessageReceivedPromise = new Promise<void>(async (resolve, reject) => {
-        try {
-          let finished = false;
-          while (!finished) {
-            // only execute every DEBOUNCE_CHANNEL_NEWMESSAGE ms
-            const lastExecutedTimeDelta = Date.now() - this.lastMessageReceivedExecution;
-            if (lastExecutedTimeDelta < NEWMESSAGE_DEBOUNCE_INTERVAL) {
-              await new Promise(res => setTimeout(res, NEWMESSAGE_DEBOUNCE_INTERVAL - lastExecutedTimeDelta));
-            }
-            this.lastMessageReceivedExecution = Date.now();
+  /**
+   * Local read mark or cliChannelLastRead echo: lastRead only moves forward,
+   * and every call re-evaluates the stored row (no in-memory guard that could
+   * keep a restored count from being cleared again).
+   */
+  public async setChannelLastRead(channelId: string, lastRead: Date) {
+    await this.applyReadState({ kind: 'lastRead', channelId, lastRead: lastRead.toISOString() });
+  }
 
-            await this.db.transaction(
-              'rw',
-              ['chats'],
-              async tx => {
-                const receivedMessagesMap = this.receivedMessagesByChannelId;
-                this.receivedMessagesByChannelId = new Map();
-                const channelIds = Array.from(receivedMessagesMap.keys());
-                const chats = await tx.chats.where('channelId').anyOf(channelIds).toArray();
-                const chatUpdates: {
-                  key: string;
-                  changes: {
-                    unread?: number;
-                    lastMessage?: Models.Message.Message | null;
-                  }
-                }[] = [];
-
-                for (const chat of chats) {
-                  const messageData = receivedMessagesMap.get(chat.channelId);
-                  messageData?.sort((a, b) => a.message.createdAt.getTime() - b.message.createdAt.getTime());
-                  let unread = chat.unread || 0;
-                  let lastMessage = chat.lastMessage;
-                  const channelLastRead = new Date(chat.lastRead);
-                  for (const { message, isOwnMessage } of messageData || []) {
-                    if (message.createdAt > channelLastRead) {
-                      if (isOwnMessage) {
-                        unread = 0;
-                      }
-                      else {
-                        unread++;
-                      }
-                    }
-                    if (!lastMessage || message.createdAt > lastMessage.createdAt) {
-                      lastMessage = message;
-                    }
-                  }
-                  if (
-                    unread !== chat.unread ||
-                    (lastMessage && (
-                      !chat.lastMessage ||
-                      chat.lastMessage.createdAt < lastMessage.createdAt // compare against old lastMessageDate
-                    ))
-                  ) {
-                    chatUpdates.push({
-                      key: chat.id,
-                      changes: {
-                        unread,
-                        lastMessage,
-                      },
-                    });
-                  }
-                }
-                if (chatUpdates.length > 0) {
-                  tx.chats.bulkUpdate(chatUpdates);
-                }
-              },
-            );
-            finished = this.receivedMessagesByChannelId.size === 0;
-          }
-          resolve();
-        }
-        catch (e) {
-          reject(e);
-        }
-        finally {
-          this.updateMessageReceivedPromise = undefined;
-        }
+  /**
+   * A new message in a DM (live event of another user, or an own message).
+   * Counted at most once per message across tabs: by its syncSeq, or (older
+   * servers) only if newer than every message seen.
+   */
+  public newMessageReceived(channelId: string, message: Models.Message.Message, isOwnMessage: boolean): Promise<void> {
+    return this.applyReadState(messageInput(channelId, message, isOwnMessage), message)
+      .then(() => undefined)
+      .catch(e => {
+        console.error("Error applying new message to chat read state", e);
       });
+  }
+
+  /** chat snapshots (event, startChat): merged with the stored rows in one transaction */
+  private async putChatSnapshots(chats: Models.Chat.Chat[]) {
+    for (const chat of chats) {
+      channelDatabaseManager.registerAccessForChannel({ channelId: chat.channelId, chatId: chat.id });
+    }
+    const merged = await this.db.transaction('rw', this.db.chats, async () => {
+      const stored = await this.db.chats.bulkGet(chats.map(c => c.id));
+      const merged = chats.map((chat, i) => mergeChatSnapshot(stored[i], chat));
+      await this.db.chats.bulkPut(merged);
+      return merged;
+    });
+    this.registerChatLastRead(merged);
+  }
+
+  /** seeds channel.ts's in-memory lastRead guard with the merged (stored) value */
+  private registerChatLastRead(chats: StoredChat[]) {
+    for (const chat of chats) {
+      channelDatabaseManager.registerAccessForChannel({
+        channelId: chat.channelId,
+        chatId: chat.id,
+      }, chat.lastRead ? { lastRead: chat.lastRead } : undefined);
     }
   }
 
@@ -334,22 +245,7 @@ class ChatDatabase extends AbstractDatabase<{
 
   public async createChat(otherUserId: string) {
     const newChat = await chatApi.startChat({ otherUserId });
-    channelDatabaseManager.registerAccessForChannel({
-      channelId: newChat.channelId,
-      chatId: newChat.id,
-    }, {
-      lastRead: newChat.lastRead,
-    });
-    await this.db.chats.put({
-      ...newChat,
-      lastMessage: newChat.lastMessage !== null
-        ? {
-          ...newChat.lastMessage,
-          createdAt: new Date(newChat.lastMessage.createdAt),
-          updatedAt: new Date(newChat.lastMessage.updatedAt),
-        }
-        : null,
-    });
+    await this.putChatSnapshots([chatFromApi(newChat)]);
     return newChat;
   }
 

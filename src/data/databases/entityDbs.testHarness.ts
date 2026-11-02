@@ -13,7 +13,7 @@ export type EventHandler = (event: any) => unknown;
 /** what the connection/channel/serviceWorker mocks of one tab expose */
 export type TabMocks = {
   handlers: Map<string, Set<EventHandler>>;
-  /** registerAccessForChannel calls: channelId -> last `data.lastRead` passed */
+  /** registerAccessForChannel: channelId -> last `data.lastRead` passed (the guard seed) */
   registeredLastRead: Map<string, string | undefined>;
   navigate: (path: string) => void;
   navigations: string[];

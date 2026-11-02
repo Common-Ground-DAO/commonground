@@ -19,7 +19,7 @@
 > 2026-10-31; backup and restore (§3.1 backup settings, §3.2 commands, §3.7)
 > against commit 818d4c6, 2026-11-01; drill isolation (§3.7 drill mode, the
 > `up` row in §3.2) against commit f5f0639, 2026-11-01; the frontend build's
-> memory figures under Vite 8 (wave M3) against commit a1460cb, 2026-11-01
+> memory figures under Vite 8 (wave M3) against commit 3e8b08e, 2026-11-01
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is

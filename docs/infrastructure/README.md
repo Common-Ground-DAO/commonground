@@ -30,7 +30,7 @@
 > one-hour pre-login sessions in that runbook against commit 23a4c1e, 2026-11-01;
 > Vite 8 / Rolldown (§2 package-manager allowlist, "Frontend build steps",
 > output layout incl. the worker's buffered scripts, chunking; §6 dev-server commands)
-> against commit a1460cb, 2026-11-01
+> against commit 3e8b08e, 2026-11-01
 
 # Common Ground Infrastructure Documentation
 

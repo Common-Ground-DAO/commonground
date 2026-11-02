@@ -244,7 +244,10 @@ and a browser pass on the test VM:
   merged first, then TypeORM 1.1.2; TypeORM runs only in `migrate-db` and the
   CLI, the schema of a fresh database is identical and nothing re-runs on an
   existing one; e2e and conformance match the baseline)
-- [ ] **M3** react-router 7, Vite 8
+- [x] **M3** react-router 7, Vite 8 (done 2026-11-02: Vite 8.3.5 and react-router
+  7.18.4; the service worker reads cached scripts into memory before handing
+  them over, which fixed intermittent start-up failures with Vite 8's finer
+  chunking; accepted on the test VM)
 - [ ] **M4** Tailwind 4 (visual regressions — screenshot comparison of key views)
 
 ### P3 — Move features (parallel to P2)

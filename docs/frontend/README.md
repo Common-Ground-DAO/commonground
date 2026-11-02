@@ -21,10 +21,10 @@
 > checks") against commit 2fad7d3, 2026-11-01; "Sign out other devices", the signed-out
 > notice and the password snackbar (§10 "Other devices") against commit 23a4c1e, 2026-11-01;
 > Vite 8 / Rolldown (§9 "Toolchain", "Dependency pins and constraints", wave M3)
-> against commit a1460cb, 2026-11-01; react-router 7 (§5 SuspenseRouter, top-level
+> against commit 3e8b08e, 2026-11-01; react-router 7 (§5 SuspenseRouter, top-level
 > routes, "Routing on react-router 7", the dependency table and pins, wave M3)
-> against commit a1460cb, 2026-11-01; "Service worker and module scripts" (§9) against commit
-> a1460cb, 2026-11-01
+> against commit 3e8b08e, 2026-11-01; "Service worker and module scripts" (§9) against commit
+> 3e8b08e, 2026-11-01
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 

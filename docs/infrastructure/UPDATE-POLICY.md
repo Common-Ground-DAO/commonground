@@ -7,8 +7,8 @@
 > majors list (wave M2) against commit 56e7c34, 2026-11-01; TypeORM 1.x out of the
 > Renovate majors list and the `glob` chain (wave M2) against commit 8dcbb42, 2026-11-01;
 > Vite 8 out of the Renovate majors list, esbuild out of the binaries table (wave M3,
-> step A) against commit a1460cb, 2026-11-01; react-router 7 (wave M3, step B: the
-> react-router advisories, the Renovate majors list) against commit a1460cb, 2026-11-01
+> step A) against commit 3e8b08e, 2026-11-01; react-router 7 (wave M3, step B: the
+> react-router advisories, the Renovate majors list) against commit 3e8b08e, 2026-11-01
 
 # Update policy: 7-day minimum release age (3 days for security fixes)
 

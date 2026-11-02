@@ -22,11 +22,20 @@ export type IdbSetupInfo = {
  * skipped. Rows or payloads without a parsable `updatedAt` cannot be ordered
  * and are applied as before.
  *
- * Server snapshots (login data, detail-view fetches) are NOT guarded this
- * way: some community events are stamped with the API process clock instead
- * of the row's `updatedAt`, so a later, correct snapshot can carry an older
- * `updatedAt` than a stored event stamp. Snapshots stay authoritative for
- * entity fields; read state is merged separately (`readStateRows.ts`).
+ * Server snapshots (login data, detail-view fetches) are guarded the same
+ * way only for areas, roles, channels and calls, whose stamps come from the
+ * database (`bulkPutUnlessNewer`). Communities and list views are not: some
+ * community events are stamped with the API process clock instead of the
+ * row's `updatedAt`, so a later, correct snapshot can carry an older
+ * `updatedAt` than a stored event stamp. Snapshots never delete rows an
+ * event wrote after their request started (`LocalWriteStamp`). Read state
+ * is merged separately (`readStateRows.ts`).
+ *
+ * Accepted narrow window: a partial event skipped as older loses the fields
+ * only it carries (no per-field stamps), and an API-clock stamp ahead of the
+ * database clock can make a newer database-stamped event look older. Both
+ * last until the next snapshot of that community (detail-view refresh or
+ * login), which is authoritative for community fields.
  */
 
 function updatedAtMs(row: unknown): number | undefined {
@@ -43,6 +52,63 @@ export function isOlderThanStored(stored: unknown, incoming: unknown): boolean {
   const storedMs = updatedAtMs(stored);
   const incomingMs = updatedAtMs(incoming);
   return storedMs !== undefined && incomingMs !== undefined && incomingMs < storedMs;
+}
+
+/** the stored row if it is strictly newer by updatedAt, else the incoming one */
+export function newerRow<T>(stored: T | undefined, incoming: T): T {
+  return stored !== undefined && isOlderThanStored(stored, incoming) ? stored : incoming;
+}
+
+/**
+ * Client-clock time (ms) at which an event writer (not a snapshot) stored
+ * the row. Snapshot writers do not delete rows written after their request
+ * started: those may be newer than the snapshot. A plain non-indexed field.
+ */
+export type LocalWriteStamp = { localWrittenAt?: number };
+
+/**
+ * Request start assumed for a snapshot whose caller does not pass one:
+ * rows an event wrote in this window before the merge are kept even if the
+ * snapshot lacks them (they are deleted by the next snapshot if still gone).
+ */
+export const SNAPSHOT_REQUEST_MARGIN_MS = 60_000;
+
+export function snapshotRequestStart(requestStartedAt?: number): number {
+  return requestStartedAt ?? Date.now() - SNAPSHOT_REQUEST_MARGIN_MS;
+}
+
+/** may a snapshot taken at `requestStartedAt` delete this row? */
+export function deletableBySnapshot(row: unknown, requestStartedAt: number): boolean {
+  const stamp = (row as LocalWriteStamp | undefined)?.localWrittenAt;
+  return typeof stamp !== 'number' || stamp < requestStartedAt;
+}
+
+export function withLocalWriteStamp<T>(row: T): T & LocalWriteStamp {
+  return { ...row, localWrittenAt: Date.now() };
+}
+
+/**
+ * Snapshot `bulkPut` that keeps stored rows with a newer updatedAt. Call
+ * inside a rw transaction on `table`; only for tables whose updatedAt stamps
+ * come from the database (areas, roles, channels, calls).
+ */
+export async function bulkPutUnlessNewer<T, K extends IndexableType>(table: Table<T, K>, rows: T[], keyOf: (row: T) => NoInfer<K>): Promise<void> {
+  if (rows.length === 0) return;
+  const stored = await table.bulkGet(rows.map(keyOf));
+  await table.bulkPut(rows.map((row, i) => newerRow(stored[i], row)));
+}
+
+/**
+ * Snapshot `bulkDelete` that keeps rows an event wrote after the snapshot's
+ * request started. Call inside a rw transaction on `table`. Resolves to the
+ * keys it deleted.
+ */
+export async function bulkDeleteUnlessNewer<T, K extends IndexableType>(table: Table<T, K>, keys: NoInfer<K>[], requestStartedAt: number): Promise<K[]> {
+  if (keys.length === 0) return [];
+  const stored = await table.bulkGet(keys);
+  const deletable = keys.filter((_, i) => stored[i] !== undefined && deletableBySnapshot(stored[i], requestStartedAt));
+  await table.bulkDelete(deletable);
+  return deletable;
 }
 
 /**

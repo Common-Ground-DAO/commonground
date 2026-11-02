@@ -270,11 +270,13 @@ describe('community channel read state across tabs', () => {
     });
     await emit(b, { type: 'cliCommunityEvent', action: 'new-or-full-update', data: stale });
     expect(await channelRow(a)).toMatchObject({ title: 'renamed', unread: 0, lastRead: T(5), lastMessageDate: T(4) });
-    expect(b.registeredLastRead.get('ch1')).toBe(T(5));
+    // the send guard holds what the server knows (T3), so the T5 mark is re-sent
+    expect(b.registeredLastRead.get('ch1')).toBe(T(3));
 
     await b.community.setupAfterLogin([stale]);
     expect(await channelRow(a)).toMatchObject({ unread: 0, lastRead: T(5) });
-    expect(b.registeredLastRead.get('ch1')).toBe(T(5));
+    // the send guard holds what the server knows (T3), so the T5 mark is re-sent
+    expect(b.registeredLastRead.get('ch1')).toBe(T(3));
 
     // a newer snapshot (read on another device, new messages after it) is taken
     const fresh = communityFixture({
@@ -325,7 +327,7 @@ describe('chat read state across tabs', () => {
     const row = await chatRow(a);
     expect(row).toMatchObject({ unread: 0, lastRead: T(5) });
     expect(row.lastMessage.id).toBe('m1');
-    expect(b.registeredLastRead.get('dm1')).toBe(T(5));
+    expect(b.registeredLastRead.get('dm1')).toBe(T(3));
 
     // a count restored by an older build: the same mark clears it, every time
     await db(a, 'chats').chats.update('chat1', { unread: 3 });
@@ -339,7 +341,8 @@ describe('chat read state across tabs', () => {
   it('setupAfterLogin deletes chats the snapshot no longer has', async () => {
     const [a] = await twoTabs();
     await seedChat(a);
-    await a.chats.setupAfterLogin([chatFixture({ id: 'chat2', channelId: 'dm2', lastRead: T(0), unread: 1, lastMessage: apiMessage({ id: 'x', channelId: 'dm2', createdAt: T(1) }) })]);
+    // the request started after the chat was stored
+    await a.chats.setupAfterLogin([chatFixture({ id: 'chat2', channelId: 'dm2', lastRead: T(0), unread: 1, lastMessage: apiMessage({ id: 'x', channelId: 'dm2', createdAt: T(1) }) })], { requestStartedAt: Date.now() + 1 });
     expect(await chatRow(a)).toBeUndefined();
     expect(await chatRow(a, 'chat2')).toMatchObject({ unread: 1, lastMessageDate: T(1) });
   });
@@ -382,5 +385,103 @@ describe('schema compatibility', () => {
     expect(await channelRow(tab)).toMatchObject({ unread: 5, readCounted: [20] });
     expect(oldCommunities.isOpen()).toBe(true);
     expect(await oldCommunities.channels.count()).toBe(1);
+  });
+});
+
+describe('review fixes', () => {
+  it('a lagging tab replaying an older URL change still leaves the dead URL', async () => {
+    const [a, b] = await twoTabs('http://localhost:3000/c/old-url/channel/general/');
+    await emit(a, { type: 'cliCommunityEvent', action: 'new-or-full-update', data: communityFixture() });
+    expect(await b.community.getCommunityByUrl('old-url')).toBeDefined();
+    const e1 = { type: 'cliCommunityEvent', action: 'update', data: { id: 'com1', url: 'new-url', updatedAt: T(1) } };
+    const e2 = { type: 'cliCommunityEvent', action: 'update', data: { id: 'com1', membersPendingApproval: 3, updatedAt: T(2) } };
+    await emit(a, e1);
+    await emit(a, e2);
+    await emit(b, e1); // older than the row now
+    await emit(b, e2);
+    expect(b.navigations).toEqual(['/c/new-url/channel/general/']);
+    expect(a.navigations).toEqual(['/c/new-url/channel/general/']);
+  });
+
+  it('a lagging tab navigates to the current URL, not the one in the old event', async () => {
+    const [a, b] = await twoTabs('http://localhost:3000/c/old-url/channel/general/');
+    await emit(a, { type: 'cliCommunityEvent', action: 'new-or-full-update', data: communityFixture() });
+    expect(await b.community.getCommunityByUrl('old-url')).toBeDefined();
+    const e1 = { type: 'cliCommunityEvent', action: 'update', data: { id: 'com1', url: 'url-1', updatedAt: T(1) } };
+    const e2 = { type: 'cliCommunityEvent', action: 'update', data: { id: 'com1', url: 'url-2', updatedAt: T(2) } };
+    await emit(a, e1);
+    await emit(a, e2);
+    await emit(b, e1);
+    expect(b.navigations).toEqual(['/c/url-2/channel/general/']);
+  });
+
+  it('seeds the send guard from the server-known lastRead, so a lost mark is sent again', async () => {
+    const [a] = await twoTabs();
+    await seedCommunityChannel(a, { lastRead: T(3), unread: 1, lastMessageDate: T(4) });
+    await emit(a, { type: 'cliChatEvent', action: 'new', data: chatFixture({ id: 'chat1', channelId: 'dm1', lastRead: T(3) }) });
+    // local marks; the API call never happens (tab closed before the debounce)
+    await a.community.setChannelLastRead('ch1', new Date(T(5)));
+    await a.chats.setChannelLastRead('dm1', new Date(T(5)));
+    expect(await channelRow(a)).toMatchObject({ lastRead: T(5), unread: 0, serverLastRead: T(3) });
+
+    // reload: the new tab's guard starts at the server's value
+    const reloaded = await openTab();
+    await vi.waitFor(() => {
+      expect(reloaded.registeredLastRead.get('ch1')).toBe(T(3));
+      expect(reloaded.registeredLastRead.get('dm1')).toBe(T(3));
+    });
+    // the next login snapshot still knows T3 only
+    await reloaded.community.setupAfterLogin([communityFixture({ channels: [channelFixture({ channelId: 'ch1', lastRead: T(3), unread: 1, lastMessageDate: T(4) })] })]);
+    expect(reloaded.registeredLastRead.get('ch1')).toBe(T(3));
+    expect(await channelRow(reloaded)).toMatchObject({ lastRead: T(5), unread: 0 });
+
+    // a server answer (with a count) and own messages move it forward
+    await reloaded.persistence.apply({ kind: 'lastRead', channelId: 'ch1', lastRead: T(5), unread: 0, syncSeq: 3 });
+    await reloaded.chats.newMessageReceived('dm1', message({ id: 'own', channelId: 'dm1', createdAt: T(6), creatorId: 'me' }), true);
+    const third = await openTab();
+    await vi.waitFor(() => {
+      expect(third.registeredLastRead.get('ch1')).toBe(T(5));
+      expect(third.registeredLastRead.get('dm1')).toBe(T(6));
+    });
+  });
+
+  it('a stale chat snapshot does not delete a chat another tab got by event', async () => {
+    const [a, b] = await twoTabs();
+    const requestStartedAt = Date.now();
+    await emit(a, { type: 'cliChatEvent', action: 'new', data: chatFixture({ id: 'chat1', channelId: 'dm1' }) });
+    await emit(a, { type: 'cliChatEvent', action: 'new', data: chatFixture({ id: 'chat2', channelId: 'dm2' }) });
+    // tab b's getChats started before chat2 existed
+    await b.chats.setupAfterLogin([chatFixture({ id: 'chat1', channelId: 'dm1' })], { requestStartedAt });
+    expect(await chatRow(a, 'chat2')).toBeDefined();
+  });
+
+  it('a stale detail view neither deletes rows created meanwhile nor regresses newer ones', async () => {
+    const [a, b] = await twoTabs();
+    const area = { id: 'a1', communityId: 'com1', title: 'Area', order: 0, updatedAt: T(1) };
+    const role = { id: 'r1', communityId: 'com1', title: 'Role', type: 'CUSTOM_ROLE', updatedAt: T(1), permissions: [] };
+    await emit(a, { type: 'cliCommunityEvent', action: 'new-or-full-update', data: communityFixture({ areas: [area], roles: [role] as any }) });
+    // events after tab b's fetch started
+    await emit(a, { type: 'cliAreaEvent', action: 'update', data: { ...area, title: 'Area renamed', updatedAt: T(2) } });
+    await emit(a, { type: 'cliRoleEvent', action: 'update', data: { ...role, title: 'Role renamed', updatedAt: T(2) } });
+    await emit(a, { type: 'cliAreaEvent', action: 'new', data: { ...area, id: 'a2', title: 'New area', updatedAt: T(2) } });
+    await emit(a, { type: 'cliChannelEvent', action: 'new', data: channelFixture({ channelId: 'ch2', updatedAt: T(2) }) });
+    await emit(a, { type: 'cliCallEvent', action: 'new', data: { id: 'call1', communityId: 'com1', channelId: 'cc1', updatedAt: T(2), previewUserIds: [] } });
+
+    // tab b applies its older detail view (the default margin covers the fetch)
+    await emit(b, { type: 'cliCommunityEvent', action: 'new-or-full-update', data: communityFixture({ areas: [area], roles: [role] as any }) });
+    const tables = db(a, 'community');
+    expect((await tables.areas.get(['com1', 'a1'])).title).toBe('Area renamed');
+    expect((await tables.roles.get(['com1', 'r1'])).title).toBe('Role renamed');
+    expect(await tables.areas.get(['com1', 'a2'])).toBeDefined();
+    expect(await tables.channels.get(['com1', 'ch2'])).toBeDefined();
+    expect(await tables.calls.get('call1')).toBeDefined();
+
+    // a login snapshot whose request started after those writes deletes them
+    await b.community.setupAfterLogin([communityFixture({ areas: [{ ...area, updatedAt: T(3) }], roles: [role] as any })], { requestStartedAt: Date.now() + 1 });
+    expect(await tables.areas.get(['com1', 'a2'])).toBeUndefined();
+    expect(await tables.channels.get(['com1', 'ch2'])).toBeUndefined();
+    expect(await tables.calls.get('call1')).toBeUndefined();
+    expect((await tables.areas.get(['com1', 'a1'])).updatedAt).toBe(T(3));
+    expect((await tables.roles.get(['com1', 'r1'])).title).toBe('Role renamed');
   });
 });

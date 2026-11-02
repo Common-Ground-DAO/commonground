@@ -25,6 +25,14 @@ export type StoredReadStateFields = {
   readSeq?: number;
   /** ChannelReadState.counted (absent = []) */
   readCounted?: number[];
+  /**
+   * The highest lastRead the server is known to hold (ISO): from server
+   * snapshots, chat-sync lastRead answers (with a count) and own messages
+   * (the server marks own posts read). `lastRead` can be ahead of it when a
+   * local mark never reached the server; channel.ts's send guard is seeded
+   * from this value, so such a mark is sent again. Absent on older rows.
+   */
+  serverLastRead?: string | null;
 };
 
 export type StoredChannel = Models.Community.Channel & StoredReadStateFields;
@@ -54,6 +62,21 @@ function toIso(value: Date | string | null | undefined): string | null {
 
 function laterIso(a: string | null, b: string | null): string | null {
   return isoTime(b) > isoTime(a) ? b : a;
+}
+
+/** the row's serverLastRead after applying `input` */
+export function serverLastReadAfter(stored: string | null | undefined, input: ReadStateInput): string | null {
+  const current = stored ?? null;
+  switch (input.kind) {
+    case 'snapshot':
+      return laterIso(current, toIso(input.lastRead));
+    case 'lastRead':
+      // with a count it is a server answer (setChannelLastRead response or a
+      // chat-sync cliChannelLastRead); without, it may be a local mark
+      return input.unread !== undefined ? laterIso(current, toIso(input.lastRead)) : current;
+    case 'message':
+      return input.own ? laterIso(current, toIso(input.createdAt)) : current;
+  }
 }
 
 export function channelRowReadState(row: StoredChannel): ChannelReadState {
@@ -126,13 +149,21 @@ export function mergeChannelSnapshot(stored: StoredChannel | undefined, incoming
     stored ? channelRowReadState(stored) : undefined,
     s => snapshotInput(s, incoming, incoming.lastMessageDate ?? null),
   );
-  return { ...incoming, ...readStateRowFields(state) };
+  return {
+    ...incoming,
+    ...readStateRowFields(state),
+    serverLastRead: laterIso(stored?.serverLastRead ?? null, toIso(incoming.lastRead)),
+  };
 }
 
 /** Only merges the snapshot's read state into the stored row (entity fields stay). */
 export function mergeChannelSnapshotReadState(stored: StoredChannel, incoming: Models.Community.Channel): StoredChannel {
   const state = mergeSnapshot(channelRowReadState(stored), s => snapshotInput(s, incoming, incoming.lastMessageDate ?? null));
-  return { ...stored, ...readStateRowFields(state) };
+  return {
+    ...stored,
+    ...readStateRowFields(state),
+    serverLastRead: laterIso(stored.serverLastRead ?? null, toIso(incoming.lastRead)),
+  };
 }
 
 /** the newer of two last messages (a later createdAt; same message: later updatedAt) */
@@ -159,6 +190,7 @@ export function mergeChatSnapshot(stored: StoredChat | undefined, incoming: Mode
     ...incoming,
     lastMessage: newerLastMessage(stored?.lastMessage, incoming.lastMessage),
     ...readStateRowFields(state),
+    serverLastRead: laterIso(stored?.serverLastRead ?? null, toIso(incoming.lastRead)),
   };
 }
 

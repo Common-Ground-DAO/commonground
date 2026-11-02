@@ -4,7 +4,13 @@
 
 import userApi from "../api/user";
 import { Dexie } from "dexie";
-import AbstractDatabase, { IdbSetupInfo } from "./abstractDatabase";
+import AbstractDatabase, {
+  IdbSetupInfo,
+  LocalWriteStamp,
+  deletableBySnapshot,
+  snapshotRequestStart,
+  withLocalWriteStamp,
+} from "./abstractDatabase";
 import chatApi from "../api/chat";
 import connectionManager from "../appstate/connection";
 import channelDatabaseManager from "./channel";
@@ -18,11 +24,12 @@ import {
   messageInput,
   newerLastMessage,
   readStateRowFields,
+  serverLastReadAfter,
   type StoredChat,
 } from "./readStateRows";
 
 class ChatDatabase extends AbstractDatabase<{
-  chats: Dexie.Table<StoredChat, string>;
+  chats: Dexie.Table<StoredChat & LocalWriteStamp, string>;
 }> {
   constructor() {
     super('chat');
@@ -30,15 +37,8 @@ class ChatDatabase extends AbstractDatabase<{
     (async () => {
       // initialize
       try {
-        const chats = await this.db.chats.toArray();
-        for (const chat of chats) {
-          channelDatabaseManager.registerAccessForChannel({
-            channelId: chat.channelId,
-            chatId: chat.id,
-          }, {
-            lastRead: chat.lastRead,
-          });
-        }
+        // the send guard starts at what the server is known to hold
+        this.registerChatLastRead(await this.db.chats.toArray());
       } catch (e) {
         console.error(`Error initializing channel access for chat channels`, e);
       }
@@ -91,7 +91,13 @@ class ChatDatabase extends AbstractDatabase<{
   }
 
   private _setupPromise: Promise<void> | undefined;
-  public async setupAfterLogin(chats: Models.Chat.ChatFromApi[]): Promise<void> {
+  /**
+   * `options.requestStartedAt` (client clock, ms): when the request for this
+   * snapshot started; chats an event or startChat wrote after it are not
+   * deleted. Without it, SNAPSHOT_REQUEST_MARGIN_MS before now is assumed.
+   */
+  public async setupAfterLogin(chats: Models.Chat.ChatFromApi[], options?: { requestStartedAt?: number }): Promise<void> {
+    const requestStartedAt = snapshotRequestStart(options?.requestStartedAt);
     if (!this._setupPromise) {
       this._setupPromise = new Promise<void>(async (resolve, reject) => {
         let rejected = false;
@@ -130,8 +136,9 @@ class ChatDatabase extends AbstractDatabase<{
                 stored.push(merged);
               }
               // remaining chats in oldChatsById don't have a counterpart in
-              // newChats and need to be deleted
-              const chatsToDelete = Array.from(oldChatsById.values());
+              // newChats and need to be deleted, unless an event wrote them
+              // after this snapshot's request started
+              const chatsToDelete = Array.from(oldChatsById.values()).filter(c => deletableBySnapshot(c, requestStartedAt));
               console.log(`Updating ${toPut.length} chats, deleting ${chatsToDelete.length} chats`);
               await this.db.chats.bulkDelete(chatsToDelete.map(c => c.id));
               await this.db.chats.bulkPut(toPut);
@@ -179,9 +186,10 @@ class ChatDatabase extends AbstractDatabase<{
       if (!row) return undefined;
       const before = chatRowReadState(row);
       const after = mergeReadState(before, input);
+      const serverLastRead = serverLastReadAfter(row.serverLastRead, input);
       const lastMessage = message ? newerLastMessage(row.lastMessage, message) : row.lastMessage;
-      if (!sameReadState(before, after) || lastMessage !== row.lastMessage) {
-        await this.db.chats.update(row.id, { ...readStateRowFields(after), lastMessage });
+      if (!sameReadState(before, after) || lastMessage !== row.lastMessage || serverLastRead !== (row.serverLastRead ?? null)) {
+        await this.db.chats.update(row.id, { ...readStateRowFields(after), serverLastRead, lastMessage });
       }
       return after;
     });
@@ -222,20 +230,24 @@ class ChatDatabase extends AbstractDatabase<{
     }
     const merged = await this.db.transaction('rw', this.db.chats, async () => {
       const stored = await this.db.chats.bulkGet(chats.map(c => c.id));
-      const merged = chats.map((chat, i) => mergeChatSnapshot(stored[i], chat));
+      const merged = chats.map((chat, i) => withLocalWriteStamp(mergeChatSnapshot(stored[i], chat)));
       await this.db.chats.bulkPut(merged);
       return merged;
     });
     this.registerChatLastRead(merged);
   }
 
-  /** seeds channel.ts's in-memory lastRead guard with the merged (stored) value */
+  /**
+   * Seeds channel.ts's in-memory send guard with what the server is known to
+   * hold (`serverLastRead`), not the merged local lastRead, so a local mark
+   * that never reached the server is sent again.
+   */
   private registerChatLastRead(chats: StoredChat[]) {
     for (const chat of chats) {
       channelDatabaseManager.registerAccessForChannel({
         channelId: chat.channelId,
         chatId: chat.id,
-      }, chat.lastRead ? { lastRead: chat.lastRead } : undefined);
+      }, chat.serverLastRead ? { lastRead: chat.serverLastRead } : undefined);
     }
   }
 

@@ -3,7 +3,19 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { Dexie } from "dexie";
-import AbstractDatabase, { IdbSetupInfo, guardedPut, guardedUpdate, isOlderThanStored } from "./abstractDatabase";
+import AbstractDatabase, {
+  IdbSetupInfo,
+  LocalWriteStamp,
+  deletableBySnapshot,
+  guardedPut,
+  guardedUpdate,
+  isOlderThanStored,
+  bulkDeleteUnlessNewer,
+  newerRow,
+  bulkPutUnlessNewer,
+  snapshotRequestStart,
+  withLocalWriteStamp,
+} from "./abstractDatabase";
 import communityApi from "../api/community";
 import connectionManager from "../appstate/connection";
 import uniqueDb from "./unique";
@@ -15,7 +27,7 @@ import config from "common/config";
 import { PredefinedRole, RoleType } from "common/enums";
 import serviceWorkerManager from "data/appstate/serviceWorker";
 import { isEqual } from "lodash";
-import { mergeReadState, sameReadState } from "data/chat/mergeReadState";
+import { isoTime, mergeReadState, sameReadState } from "data/chat/mergeReadState";
 import type { ChannelReadState, ReadStateInput } from "data/chat/types";
 import {
   channelRowReadState,
@@ -23,6 +35,7 @@ import {
   mergeChannelSnapshotReadState,
   messageInput,
   readStateRowFields,
+  serverLastReadAfter,
   type StoredChannel,
 } from "./readStateRows";
 
@@ -43,14 +56,25 @@ type RetrievalKey =
 
 type CommunityDatabaseTables = {
   communities: Dexie.Table<Models.Community.DetailView, string>;
-  areas: Dexie.Table<Models.Community.Area, [string, string]>;
-  channels: Dexie.Table<StoredChannel, [string, string]>;
-  roles: Dexie.Table<Models.Community.Role, [string, string]>;
-  calls: Dexie.Table<Models.Calls.Call, string>;
+  areas: Dexie.Table<Models.Community.Area & LocalWriteStamp, [string, string]>;
+  channels: Dexie.Table<StoredChannel & LocalWriteStamp, [string, string]>;
+  roles: Dexie.Table<Models.Community.Role & LocalWriteStamp, [string, string]>;
+  calls: Dexie.Table<Models.Calls.Call & LocalWriteStamp, string>;
   communityListViews: Dexie.Table<Models.Community.ListView, string>;
   communityMembers: Dexie.Table<CommunityMembership, [string, string]>;
   status: Dexie.Table<DbStatusObject, DbStatusObject["id"]>;
 };
+
+/**
+ * A snapshot channel row merged with the stored one: read state always via
+ * mergeReadState; entity fields from the snapshot unless the stored row has
+ * a newer updatedAt (channel stamps are the database's).
+ */
+function mergeChannelRow(stored: StoredChannel | undefined, incoming: Models.Community.Channel): StoredChannel {
+  return stored && isOlderThanStored(stored, incoming)
+    ? mergeChannelSnapshotReadState(stored, incoming)
+    : mergeChannelSnapshot(stored, incoming);
+}
 
 class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, RetrievalKey> {
   private channelsUpToDate: {
@@ -84,14 +108,8 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
           this.db.channels.toArray(),
           this.db.calls.toArray(),
         ]);
-        for (const channel of channels) {
-          channelDatabaseManager.registerAccessForChannel({
-            channelId: channel.channelId,
-            communityId: channel.communityId,
-          }, {
-            lastRead: channel.lastRead,
-          });
-        }
+        // the send guard starts at what the server is known to hold
+        this.registerChannelLastRead(channels);
         for (const call of calls) {
           channelDatabaseManager.registerAccessForChannel({
             callId: call.id,
@@ -188,7 +206,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
       "cliAreaEvent",
       event => {
         if (event.action === "new") {
-          return guardedPut(this.db, this.db.areas, [event.data.communityId, event.data.id], event.data);
+          return guardedPut(this.db, this.db.areas, [event.data.communityId, event.data.id], withLocalWriteStamp(event.data));
         }
         else if (event.action === "update") {
           return guardedUpdate(this.db, this.db.areas, [
@@ -216,9 +234,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
           return this.db.transaction('rw', this.db.channels, async () => {
             const key: [string, string] = [event.data.communityId, event.data.channelId];
             const stored = await this.db.channels.get(key);
-            const merged = stored && isOlderThanStored(stored, event.data)
-              ? mergeChannelSnapshotReadState(stored, event.data)
-              : mergeChannelSnapshot(stored, event.data);
+            const merged = withLocalWriteStamp(mergeChannelRow(stored, event.data));
             await this.db.channels.put(merged);
             return merged;
           })
@@ -249,7 +265,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
       "cliRoleEvent",
       event => {
         if (event.action === "new") {
-          return guardedPut(this.db, this.db.roles, [event.data.communityId, event.data.id], event.data);
+          return guardedPut(this.db, this.db.roles, [event.data.communityId, event.data.id], withLocalWriteStamp(event.data));
         }
         else if (event.action === "update") {
           return guardedUpdate(this.db, this.db.roles, [
@@ -359,7 +375,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
       "cliCallEvent",
       event => {
         if (event.action === "new") {
-          return guardedPut(this.db, this.db.calls, event.data.id, event.data);
+          return guardedPut(this.db, this.db.calls, event.data.id, withLocalWriteStamp(event.data));
         }
         else if (event.action === "update") {
           return guardedUpdate(this.db, this.db.calls, event.data.id, event.data);
@@ -482,7 +498,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
       delete (listViewUpdate as any)[key];
     }
 
-    const applied = await this.db.transaction(
+    const currentUrl = await this.db.transaction(
       'rw',
       ['communities', 'communityListViews'],
       async tx => {
@@ -507,12 +523,19 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
             await tx.communityListViews.update(data.id, listViewUpdate);
           }
         }
-        return applied;
+        // the URL the community has now, after this and every other tab's writes
+        const current = (await tx.communities.get(data.id)) ?? (await tx.communityListViews.get(data.id));
+        return current?.url ?? (applied ? data.url : undefined);
       },
     );
 
-    const newUrl = data.url;
-    if (!applied || !newUrl) return;
+    if (data.url === undefined) return;
+    // even an older event names a URL of this community a tab may still show
+    this.rememberCommunityUrl(data.id, data.url);
+    if (!currentUrl) return;
+    // decided from this tab's own knowledge, not from whether this event was
+    // the newest: a lagging tab replaying an older URL change must still
+    // leave the dead URL
     const prefix = `/${config.URL_COMMUNITY}/`;
     const oldPathname = window.location.pathname;
     if (!oldPathname.startsWith(prefix)) return;
@@ -521,14 +544,14 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
     if (
       !!urlInPath &&
       pathHasTrailingSegment &&
-      urlInPath !== newUrl &&
+      urlInPath !== currentUrl &&
       !!this.knownUrlsByCommunityId.get(data.id)?.has(urlInPath)
     ) {
-      const newPathname = prefix + newUrl + oldPathname.slice(prefix.length + urlInPath.length) + window.location.search + window.location.hash;
+      const newPathname = prefix + currentUrl + oldPathname.slice(prefix.length + urlInPath.length) + window.location.search + window.location.hash;
       // Todo: find a better solution than using the serviceWorkerMananger navigate reference
       serviceWorkerManager.navigate?.(newPathname);
     }
-    this.rememberCommunityUrl(data.id, newUrl);
+    this.rememberCommunityUrl(data.id, currentUrl);
   }
 
   public async getOwnCommunities() {
@@ -556,8 +579,9 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
   }
 
   public async fetchFreshCommunityDetailView(communityId: string) {
+    const requestStartedAt = Date.now();
     const community = await communityManager.getCommunityDetailView({id: communityId});
-    await this.addCommunity(community);
+    await this.addCommunity(community, requestStartedAt);
     return community; 
   }
 
@@ -716,8 +740,9 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
   }
 
   public async createCommunity(data: API.Community.createCommunity.Request): Promise<Models.Community.DetailView> {
+    const requestStartedAt = Date.now();
     const community = await communityApi.createCommunity(data);
-    await this.addCommunity(community);
+    await this.addCommunity(community, requestStartedAt);
     return (await this.db.communities.where('id').equals(community.id).toArray())[0];
   }
 
@@ -780,8 +805,9 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
       if (!row) return undefined;
       const before = channelRowReadState(row);
       const after = mergeReadState(before, input);
-      if (!sameReadState(before, after)) {
-        await this.db.channels.update([row.communityId, row.channelId], readStateRowFields(after));
+      const serverLastRead = serverLastReadAfter(row.serverLastRead, input);
+      if (!sameReadState(before, after) || serverLastRead !== (row.serverLastRead ?? null)) {
+        await this.db.channels.update([row.communityId, row.channelId], { ...readStateRowFields(after), serverLastRead });
       }
       return after;
     });
@@ -812,15 +838,18 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
   }
 
   /**
-   * Seeds channel.ts's in-memory lastRead guard with the merged (stored)
-   * value instead of a snapshot's, which could be older than a local mark.
+   * Seeds channel.ts's in-memory send guard with what the server is known to
+   * hold (`serverLastRead`), not the merged local lastRead: a local mark
+   * that never reached the server (tab closed before the debounced call, or
+   * the call failed) is then sent again when the channel is viewed. Rows
+   * without the field leave the guard unset (the first mark is sent).
    */
   private registerChannelLastRead(rows: StoredChannel[]) {
     for (const row of rows) {
       channelDatabaseManager.registerAccessForChannel({
         channelId: row.channelId,
         communityId: row.communityId,
-      }, row.lastRead ? { lastRead: row.lastRead } : undefined);
+      }, row.serverLastRead ? { lastRead: row.serverLastRead } : undefined);
     }
   }
 
@@ -867,7 +896,13 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
   }
 
   private _setupPromise: Promise<void> | undefined;
-  public setupAfterLogin(communities: Models.Community.DetailViewFromApi[]): Promise<void> {
+  /**
+   * `options.requestStartedAt` (client clock, ms): when the request for this
+   * snapshot started; rows an event wrote after it are not deleted. Without
+   * it, SNAPSHOT_REQUEST_MARGIN_MS before now is assumed.
+   */
+  public setupAfterLogin(communities: Models.Community.DetailViewFromApi[], options?: { requestStartedAt?: number }): Promise<void> {
+    const requestStartedAt = snapshotRequestStart(options?.requestStartedAt);
     if (!this._setupPromise) {
       this._setupPromise = new Promise<void>(async (resolve, reject) => {
         let rejected = false;
@@ -1003,6 +1038,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
                     oldChannel.updatedAt !== channel.updatedAt ||
                     oldChannel.unread !== channel.unread ||
                     oldChannel.lastRead !== channel.lastRead ||
+                    isoTime(channel.lastRead) > isoTime(oldChannel.serverLastRead) ||
                     oldChannel.rolePermissions.length !== channel.rolePermissions.length ||
                     oldChannel.lastMessageDate !== channel.lastMessageDate ||
                     channel.rolePermissions.some((newPermisson, i) => {
@@ -1122,11 +1158,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
             callsToUpsert.push(...calls);
           }
       
-          // delete old channel databases
-          for (const data of channelIdsToDelete) {
-            channelDatabaseManager.deleteChannelDatabase({ channelId: data[1] });
-          }
-      
+          let deletedChannelKeys: [string, string][] = [];
           if (!rejected) {
             await this.db.transaction(
               'rw',
@@ -1141,21 +1173,24 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
                     return tx.communities.bulkDelete(communityIdsToDelete);
                   }),
                   // re-read in this transaction: another tab may have written
-                  // newer read state since the comparison above
+                  // newer data since the comparison above. Rows an event
+                  // wrote after this snapshot's request started are kept.
                   tx.channels.bulkGet(channelsToUpsert.map(c => [c.communityId, c.channelId] as [string, string])).then(stored => {
-                    mergedChannels = channelsToUpsert.map((channel, i) => mergeChannelSnapshot(stored[i], channel));
+                    mergedChannels = channelsToUpsert.map((channel, i) => mergeChannelRow(stored[i], channel));
                     return tx.channels.bulkPut(mergedChannels);
                   }).then(() => {
-                    return tx.channels.bulkDelete(channelIdsToDelete);
+                    return bulkDeleteUnlessNewer(tx.channels, channelIdsToDelete, requestStartedAt);
+                  }).then(deleted => {
+                    deletedChannelKeys = deleted;
                   }),
-                  tx.areas.bulkPut(areasToUpsert).then(() => {
-                    return tx.areas.bulkDelete(areaIdsToDelete);
+                  bulkPutUnlessNewer(tx.areas, areasToUpsert, a => [a.communityId, a.id] as [string, string]).then(() => {
+                    return bulkDeleteUnlessNewer(tx.areas, areaIdsToDelete, requestStartedAt);
                   }),
-                  tx.roles.bulkPut(rolesToUpsert).then(() => {
-                    return tx.roles.bulkDelete(roleIdsToDelete);
+                  bulkPutUnlessNewer(tx.roles, rolesToUpsert, r => [r.communityId, r.id] as [string, string]).then(() => {
+                    return bulkDeleteUnlessNewer(tx.roles, roleIdsToDelete, requestStartedAt);
                   }),
-                  tx.calls.bulkPut(callsToUpsert).then(() => {
-                    return tx.calls.bulkDelete(callIdsToDelete);
+                  bulkPutUnlessNewer(tx.calls, callsToUpsert, c => c.id).then(() => {
+                    return bulkDeleteUnlessNewer(tx.calls, callIdsToDelete, requestStartedAt);
                   }),
                 ]);
 
@@ -1164,6 +1199,10 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
             );
         
             this.registerChannelLastRead([...unchangedChannels, ...mergedChannels]);
+            // delete the message databases of the channels really deleted
+            for (const [, channelId] of deletedChannelKeys) {
+              channelDatabaseManager.deleteChannelDatabase({ channelId });
+            }
             console.log("Updating OwnCommunityIds", newCommunityIds);
             await uniqueDb.transaction("rw", uniqueDb.uniques, async tx => {
               const now = Date.now();
@@ -1229,14 +1268,16 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
   }
 
   public async joinCommunity(request: API.Community.joinCommunity.Request) {
+    const requestStartedAt = Date.now();
     const detailViewFromApi = await communityApi.joinCommunity(request);
-    if (detailViewFromApi) await this.addCommunity(detailViewFromApi);
+    if (detailViewFromApi) await this.addCommunity(detailViewFromApi, requestStartedAt);
     else await this.db.communities.update(request.id, { myApplicationStatus: 'PENDING' });
   }
 
   public async leaveCommunity(communityId: string) {
+    const requestStartedAt = Date.now();
     const detailViewFromApi = await communityApi.leaveCommunity({ id: communityId });
-    await this.addCommunity(detailViewFromApi);
+    await this.addCommunity(detailViewFromApi, requestStartedAt);
   }
 
   public async startCall(data: API.Community.startCall.Request) {
@@ -1245,7 +1286,13 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
     return callData;
   }
 
-  private async addCommunity(detailViewFromApi: Models.Community.DetailViewFromApi): Promise<void> {
+  /**
+   * A detail view from the server (fetch, join, `new-or-full-update`).
+   * Rows an event wrote after `requestStartedAt` (default: the margin before
+   * now) are not deleted; areas, roles, calls and channel fields with an
+   * older updatedAt than the stored row do not replace it.
+   */
+  private async addCommunity(detailViewFromApi: Models.Community.DetailViewFromApi, requestStartedAt = snapshotRequestStart()): Promise<void> {
     const communityId = detailViewFromApi.id;
     // collect all properties into community except of areas, channels and roles
     const { areas, channels, roles, calls, ...community } = detailViewFromApi;
@@ -1282,31 +1329,32 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
           tx.calls.where("communityId").equals(communityId).toArray(),
         ]);
     
+        const deletable = (row: unknown) => deletableBySnapshot(row, requestStartedAt);
         const channelIdsToDelete: string[] = [];
         for (const existingChannel of existingChannels) {
           const index = channels.findIndex(channel => channel.channelId === existingChannel.channelId);
-          if (index === -1) {
+          if (index === -1 && deletable(existingChannel)) {
             channelIdsToDelete.push(existingChannel.channelId);
           }
         }
         const areaIdsToDelete: string[] = [];
         for (const existingArea of existingAreas) {
           const index = areas.findIndex(area => area.id === existingArea.id);
-          if (index === -1) {
+          if (index === -1 && deletable(existingArea)) {
             areaIdsToDelete.push(existingArea.id);
           }
         }
         const roleIdsToDelete: string[] = [];
         for (const existingRole of existingRoles) {
           const index = roles.findIndex(role => role.id === existingRole.id);
-          if (index === -1) {
+          if (index === -1 && deletable(existingRole)) {
             roleIdsToDelete.push(existingRole.id);
           }
         }
         const callIdsToDelete: string[] = [];
         for (const existingCall of existingCalls) {
           const index = calls.findIndex(call => call.id === existingCall.id);
-          if (index === -1) {
+          if (index === -1 && deletable(existingCall)) {
             callIdsToDelete.push(existingCall.id);
           }
         }
@@ -1318,17 +1366,20 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
     
         // read state: a newer local lastRead (and its cleared count) is kept
         const existingChannelsById = new Map(existingChannels.map(c => [c.channelId, c]));
-        const mergedChannels = channels.map(c => mergeChannelSnapshot(
+        const mergedChannels = channels.map(c => mergeChannelRow(
           existingChannelsById.get(c.channelId),
           { ...c, communityId: community.id },
         ));
+        const existingAreasById = new Map(existingAreas.map(a => [a.id, a]));
+        const existingRolesById = new Map(existingRoles.map(r => [r.id, r]));
+        const existingCallsById = new Map(existingCalls.map(c => [c.id, c]));
 
         await Dexie.Promise.all([
           tx.communities.put(community),
           tx.channels.bulkPut(mergedChannels),
-          tx.areas.bulkPut(areas.map(a => ({ ...a, communityId: community.id }))),
-          tx.roles.bulkPut(roles.map(r => ({ ...r, communityId: community.id }))),
-          tx.calls.bulkPut(calls),
+          tx.areas.bulkPut(areas.map(a => newerRow(existingAreasById.get(a.id), { ...a, communityId: community.id }))),
+          tx.roles.bulkPut(roles.map(r => newerRow(existingRolesById.get(r.id), { ...r, communityId: community.id }))),
+          tx.calls.bulkPut(calls.map(c => newerRow(existingCallsById.get(c.id), c))),
           channelIdsToDelete.length > 0 ? tx.channels.bulkDelete(channelIdsToDelete.map(channelId => [community.id, channelId])) : Dexie.Promise.resolve(),
           areaIdsToDelete.length > 0 ? tx.areas.bulkDelete(areaIdsToDelete.map(areaId => [community.id, areaId])) : Dexie.Promise.resolve(),
           roleIdsToDelete.length > 0 ? tx.roles.bulkDelete(roleIdsToDelete.map(roleId => [community.id, roleId])) : Dexie.Promise.resolve(),
@@ -1381,6 +1432,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
       } else {
         ret = values.map(v => ({ url: v }));
       }
+      const requestStartedAt = Date.now();
       const communities = await Promise.all(ret.map(o => communityManager.getCommunityDetailView(o)));
       const missing = new Set(values);
       for (const community of communities) {
@@ -1394,7 +1446,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
         console.warn(`CommunityDetailViews [${Array.from(missing).join(', ')}] could not be retrieved`)
       }
       for (const community of communities) {
-        await this.addCommunity(community);
+        await this.addCommunity(community, requestStartedAt);
       }
       await uniqueDb.transaction("rw", uniqueDb.uniques, async tx => {
         const now = Date.now();

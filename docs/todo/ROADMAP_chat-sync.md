@@ -99,7 +99,7 @@ Candidates:
 Whatever is chosen, a reliable catch-up ("since cursor X") is required — it is
 what makes reconnects correct.
 
-## Design (Phase 0, 2026-11-02 — awaiting maintainer approval)
+## Design (Phase 0, approved by the maintainer 2026-11-02)
 
 Evidence: four research reports (browser behaviour, server, client transport,
 client data layer) kept outside the repo with the coordinator's notes; the
@@ -391,7 +391,7 @@ flows (outside `07-call.ts`) can start before.
 
 ## Phases
 
-- [ ] **Phase 0 — Research and design.** A "Design" section in this file:
+- [x] **Phase 0 — Research and design.** Approved 2026-11-02 (Design section above). A "Design" section in this file:
   requirements above checked against the codebase (`webSocket.ts`,
   `service-worker.ts` role assignment, `channel.ts`, `community.ts`,
   `chats.ts`, `notification.ts`, `GenericMessageList` and friends, `srv/`

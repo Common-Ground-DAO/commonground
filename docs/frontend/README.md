@@ -32,7 +32,9 @@
 > 440c779, 2026-11-02; inline background images (§9) against commit 591e6cf, 2026-11-02;
 > the service worker's part in multi-tab coordination (§4 WebSocketManager and
 > ServiceWorkerManager, §8, §9 entry points) against commit 79187d2, 2026-11-02;
-> "Writers of the shared entity databases" (§ Dexie) against commit 212bbce, 2026-11-02
+> "Writers of the shared entity databases" (§ Dexie) against commit 212bbce, 2026-11-02;
+> `data.notification`, `NotificationProvider` and `NotificationsBrowser` (unread count,
+> list, marking read) against the chat-sync/notifications-ui branch, 2026-11-02
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -359,7 +361,7 @@ Views are full pages composed of templates/organisms. They live in `src/views/` 
 
 | View | Route | Purpose |
 |---|---|---|
-| `NotificationsBrowser` | `/notifications/`, `/notifications/:notificationShortUuid/` | Notification list (optionally focused on one notification) |
+| `NotificationsBrowser` | `/notifications/`, `/notifications/:notificationShortUuid/` | Notification list (optionally focused on one notification): one `data.notification.openList()` window, older pages via `loadOlder`, one `markAsRead` per click or selection, "Mark all read" (`markAllAsRead`) while the count is > 0 |
 
 ### Auth and Verification
 
@@ -444,7 +446,7 @@ The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `Wa
 |---|---|
 | `CallProvider` | Voice/video call state. Manages `RoomClient` (MediaSoup wrapper), call reducer state (peers, consumers, producers), join/leave/mute actions. |
 | `CallDevicesProvider` | Audio/video device selection for calls. |
-| `NotificationProvider` | Notification state and unread counts. |
+| `NotificationProvider` | Push subscription / PWA state and the unread notification count (subscribed via `data.notification.subscribeUnreadCount`, always a number). |
 
 #### UI State Providers
 
@@ -518,7 +520,7 @@ All databases are aggregated in `src/data/index.ts`:
 ```typescript
 const data = {
   community: communityDB,    // CommunityDatabase
-  notification: notificationDB, // NotificationDatabase
+  notification: notificationDB, // façade over chat.notifications (NotificationStore)
   message: messageDB,         // MessageDatabase
   user: userDB,               // UserDatabase
   signedUrls: signedUrlsDB,   // SignedUrlsDatabase
@@ -535,7 +537,7 @@ const data = {
 | `ChannelDatabaseManager` | `channel.ts` | (dynamic per channel) | Manages per-channel `ChunkedItemDatabase` instances. Handles real-time message events, last-read tracking, and cross-tab synchronization via `BroadcastChannel('channelDatabaseManager_events')`. |
 | `ChunkedItemDatabase` | `channel/chunkedDatabase.ts` | `items`, `chunks`, `status` | Generic chunked list database used for channel messages. Items are stored in chunks (size 10-40, target 30) with start/end timestamps. Supports efficient range queries, chunk merging, and gap detection. Coordinates via `BroadcastChannel('chunkedDatabase-<dbName>')`. |
 | `ChatsDatabase` | `chats.ts` | Chat conversations and last messages. |
-| `NotificationDatabase` | `notification.ts` | Notification storage and unread counts. |
+| `data.notification` | `notification.ts` | none (no Dexie) | Thin façade over the tab's `NotificationStore` (`chat.notifications`, `src/data/chat/notificationStore.ts`): memory + server only. The unread count is always a number and comes from the server only (login value, `unreadCount` of `cliNotificationEvent`, `getUnreadCount` after a resync or a mark-read), `subscribeUnreadCount` is multi-subscriber; `openList()` gives an item window (`init`, `loadOlder`, `destroy`); `markAsRead` is a no-op for read or in-flight items; `setupAfterLogin(count)` is synchronous; `clear()` on logout. |
 | `SignedUrlsDatabase` | `signedUrls.ts` | Cache for signed asset URLs. |
 | `UniqueDatabase` | `unique.ts` | Key-value store for singleton data (`OwnData`, `CommunityDetailViewUpdateTimestamps`, etc.). |
 

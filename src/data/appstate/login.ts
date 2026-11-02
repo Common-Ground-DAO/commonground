@@ -72,6 +72,7 @@ class LoginManager {
   private _loginRunning = false;
   private _deviceLoginRetryTimer: ReturnType<typeof setTimeout> | undefined;
   private _deviceLoginRetryCount = 0;
+  private _deviceLoginFailedAt = 0;
   private _currentUser: CurrentUser | null = JSON.parse(localStorage.getItem(CURRENT_USER_KEY) || 'null');
   private _windowReloadTriggered = false;
   private _waitBeforeWindowReload?: Promise<any>;
@@ -223,6 +224,7 @@ class LoginManager {
               }
             }
             if (this.needsDeviceLoginRetry()) {
+              this._deviceLoginFailedAt = Date.now();
               this.scheduleDeviceLoginRetry();
             }
             throw e;
@@ -279,7 +281,11 @@ class LoginManager {
    */
   public async checkLoginStatus() {
     if (this.needsDeviceLoginRetry()) {
-      this.retryDeviceLoginIfNeeded();
+      // at once, but never sooner than the first backoff step after the
+      // last failure (the scheduled retry covers the time until then)
+      if (Date.now() - this._deviceLoginFailedAt >= DEVICE_LOGIN_RETRY_MS[0]) {
+        this.retryDeviceLoginIfNeeded();
+      }
       return;
     }
     if (this.state === "loggedin" && !this._loginRunning && !this.logoutPromise) {
@@ -413,7 +419,8 @@ class LoginManager {
         securityStepState.set(false);
         const userId = this.currentUser?.userId ?? null;
         try {
-          await userApi.logout();
+          // not in the middle of another tab's login or snapshot refresh
+          await withLoginLock(() => userApi.logout());
           webSocketManager.logout()
           await this._clear();
           if (!!this.currentUser) {

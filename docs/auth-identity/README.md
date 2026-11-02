@@ -1134,7 +1134,7 @@ The client login lifecycle is owned by `LoginManager` (`src/data/appstate/login.
   once under the lock with a fresh secret. Inside the lock a tab compares the stored current user
   with the device it is about to log in and follows the stored user if they differ (no login over
   another user's new session). A page device login that fails with anything but `NOT_FOUND` is
-  retried with a backoff (5/15/60 s, ±50 %) and on the next visibility/online check.
+  retried with a backoff (5/15/60 s, ±50 %) and on the next visibility/online check (never sooner than 5 s after the failure); `User/logout` also runs under the lock.
   After its socket was live again following a gap, a visible tab re-runs the device `User/login`
   for its snapshot (debounced, under the lock; no login-state change). On another tab's logout a tab drops its own login (socket `logout`, in-memory state)
   without a second `User/logout`; on another tab's login an anonymous tab checks

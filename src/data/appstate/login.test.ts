@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installBrowserEnv } from 'test/env';
 import { createFakeIo, type FakeIo, type FakeSocket } from 'test/fakeSocket';
 import { importAsNewTab } from 'test/modules';
@@ -168,10 +168,21 @@ beforeAll(async () => {
   fake.keyPair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-384' }, true, ['sign', 'verify']) as CryptoKeyPair;
 });
 
+// The device login signs with WebCrypto, which takes real (thread-pool) time
+// and makes the order of the steps under test depend on machine load. The
+// fake server does not verify signatures: answer at once.
+beforeEach(() => {
+  vi.spyOn(crypto.subtle, 'sign').mockImplementation(async () => new Uint8Array(96).buffer);
+});
+afterEach(() => {
+  vi.mocked(crypto.subtle.sign).mockRestore();
+});
+
 function resetServer() {
   fake.snapshots.length = 0;
   Object.assign(fake.server, {
     secret: undefined,
+    secretCounter: 0,
     invalidSecrets: 0,
     hangLogin: false,
     secretGate: undefined,
@@ -209,21 +220,30 @@ async function settle(rounds = 10) {
   }
 }
 
-/** until some tab holds the login lock (signing takes real time) */
-async function waitHeld() {
-  for (let i = 0; i < 1000 && (await navigator.locks.query()).held!.length === 0; i++) {
+/**
+ * Real-time wait (not fake time: `performance` is not faked) until
+ * `condition` holds; fails the test after `timeoutMs`. Yields real
+ * event-loop turns, so pending I/O-like work (the fake server, Web Locks)
+ * goes on; independent of how many turns that takes under load.
+ */
+async function until(condition: () => boolean | Promise<boolean>, timeoutMs = 4_000) {
+  const start = performance.now();
+  while (!(await condition())) {
+    if (performance.now() - start > timeoutMs) {
+      throw new Error(`until: condition not met within ${timeoutMs} ms`);
+    }
     await new Promise<void>(resolve => setImmediate(resolve));
   }
 }
 
-/** real event-loop turns (crypto and the fake server need them) */
-async function spin(turns = 300) {
-  for (let i = 0; i < turns; i++) await new Promise<void>(resolve => setImmediate(resolve));
+/** until some tab holds the login lock */
+async function waitHeld() {
+  await until(async () => (await navigator.locks.query()).held!.length > 0);
 }
 
-/** real event-loop turns until `condition` holds (at most a few thousand) */
-async function until(condition: () => boolean) {
-  for (let i = 0; i < 5000 && !condition(); i++) await new Promise<void>(resolve => setImmediate(resolve));
+/** until `count` lock requests wait */
+async function waitPending(count = 1) {
+  await until(async () => (await navigator.locks.query()).pending!.length >= count);
 }
 
 function setup() {
@@ -314,9 +334,8 @@ describe('login lock', () => {
     const loginA = a.loginManager.autoLogin().then(() => 'ok', (e: Error) => e.message);
     await waitHeld();
     await until(() => fake.server.concurrentLogins === 1);
-    expect(fake.server.concurrentLogins).toBe(1);
     const loginB = b.loginManager.autoLogin().then(() => 'ok', (e: Error) => e.message);
-    await spin(50);
+    await waitPending();
     const { LOGIN_LOCK_HOLD_MAX_MS } = await import('data/appstate/authBroadcast');
     await vi.advanceTimersByTimeAsync(LOGIN_LOCK_HOLD_MAX_MS);
     // B got the lock after the hold cap (not after its own 15 s wait) and logged in
@@ -357,17 +376,16 @@ describe('login lock', () => {
     const loginA = a.loginManager.autoLogin().then(() => 'ok', (e: Error) => e.message);
     await waitHeld();
     const loginB = b.loginManager.autoLogin().then(() => 'ok', (e: Error) => e.message);
-    await spin(50);
+    await waitPending();
     const { LOGIN_LOCK_HOLD_MAX_MS } = await import('data/appstate/authBroadcast');
     const preLoginB = deferred();
     fake.server.preLoginGate = preLoginB; // B's login is in flight when A's late secret lands
     await vi.advanceTimersByTimeAsync(LOGIN_LOCK_HOLD_MAX_MS + 10);
-    await spin();
-    secretA.resolve(); // replaces B's secret on the server
-    await spin();
+    // B holds the lock now and its User/login waits at the gate (B's secret is set)
+    await until(() => fake.server.preLoginGate === undefined);
+    secretA.resolve(); // A's late secret replaces B's secret on the server
+    await until(() => fake.server.secret === 'http-secret-1');
     preLoginB.resolve();
-    await spin();
-    await vi.advanceTimersByTimeAsync(100);
     expect(await Promise.all([loginA, loginB])).toEqual(['ok', 'ok']);
     await settle();
     expect(fake.server.invalidSecrets).toBe(1);
@@ -393,7 +411,7 @@ describe('login lock', () => {
     expect(socketLoggedInAs(tab.socket)).toBe('dev-2');
   });
 
-  it('a failed device login (not NOT_FOUND) is retried with a backoff and on the next status check', async () => {
+  it('a failed device login (not NOT_FOUND) is retried with a backoff', async () => {
     useDataLayerFakeTimers();
     setup();
     storeUser('u1', 'dev-1');
@@ -405,18 +423,32 @@ describe('login lock', () => {
     const { DEVICE_LOGIN_RETRY_MS } = await import('data/appstate/login');
     await vi.advanceTimersByTimeAsync(DEVICE_LOGIN_RETRY_MS[0] * 1.5);
     await until(() => tab.loginManager.state === 'loggedin');
-    expect(tab.loginManager.state).toBe('loggedin');
+    expect(fake.server.loginCalls).toBe(1);
+  });
 
-    // the visibility/online check retries at once
-    await tab.loginManager.logout();
+  it('a status check retries a failed device login, but not sooner than the first backoff step', async () => {
+    useDataLayerFakeTimers();
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.99); // scheduled retry at ~7.5 s
+    setup();
     storeUser('u1', 'dev-1');
-    const second = await openTab();
+    const tab = await openTab();
     fake.server.failNextLogin = 'SERVICE_UNAVAILABLE';
-    await second.loginManager.autoLogin().catch(() => undefined);
-    expect(second.loginManager.state).toBe('anonymous');
-    await second.loginManager.checkLoginStatus();
-    await until(() => second.loginManager.state === 'loggedin');
-    expect(second.loginManager.state).toBe('loggedin');
+    await tab.loginManager.autoLogin().catch(() => undefined);
+    expect(tab.loginManager.state).toBe('anonymous');
+    const { DEVICE_LOGIN_RETRY_MS } = await import('data/appstate/login');
+
+    // right after the failure: no new attempt
+    await tab.loginManager.checkLoginStatus();
+    await settle();
+    expect(tab.loginManager.state).toBe('anonymous');
+
+    // after the base delay (before the scheduled retry): the check retries
+    await vi.advanceTimersByTimeAsync(DEVICE_LOGIN_RETRY_MS[0]);
+    expect(tab.loginManager.state).toBe('anonymous');
+    await tab.loginManager.checkLoginStatus();
+    await until(() => tab.loginManager.state === 'loggedin');
+    expect(fake.server.loginCalls).toBe(1);
+    random.mockRestore();
   });
 
   it('does not wait forever for a lock held by a frozen tab', async () => {
@@ -429,10 +461,8 @@ describe('login lock', () => {
     await flushMicrotasks();
 
     const login = tab.loginManager.autoLogin();
-    // until the login waits for the lock (signing takes real time)
-    for (let i = 0; i < 1000 && (await navigator.locks.query()).pending!.length === 0; i++) {
-      await new Promise<void>(resolve => setImmediate(resolve));
-    }
+    // until the login waits for the lock
+    await waitPending();
     expect((await navigator.locks.query()).pending).toHaveLength(1);
     expect(fake.server.loginCalls).toBe(0);
     const { LOGIN_LOCK_WAIT_MS } = await import('data/appstate/authBroadcast');

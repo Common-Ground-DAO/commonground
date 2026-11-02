@@ -5,8 +5,9 @@
 /**
  * `/Community/getChannelMemberList` answers with the members of a channel
  * (user ids, presence, roles) from the memberlist service. It follows the
- * rule for reading the channel: CHANNEL_EXISTS + CHANNEL_READ for the
- * caller, where the Public role covers visitors.
+ * rule for reading the channel: the channel and its community exist, and
+ * the caller has CHANNEL_EXISTS + CHANNEL_READ, where the Public role covers
+ * visitors.
  *
  * The route handler is captured from `registerPostRoute` and called
  * directly, with every repository and the memberlist request mocked.
@@ -20,6 +21,7 @@ const permissionHelper = {
   hasTrustOrThrow: jest.fn(),
 };
 const axios = { post: jest.fn() };
+const messageHelper = { isChannelInActiveCommunity: jest.fn() };
 
 jest.mock('../api/util', () => ({
   registerPostRoute: (_router: unknown, path: string, _validator: unknown, handler: any) => {
@@ -32,6 +34,7 @@ jest.mock('../validators', () => ({
   default: { API: { Community: new Proxy({}, { get: () => undefined }) } },
 }));
 jest.mock('../repositories/permissions', () => ({ __esModule: true, default: permissionHelper }));
+jest.mock('../repositories/messages', () => ({ __esModule: true, default: messageHelper }));
 jest.mock('../util/axios', () => ({ __esModule: true, default: axios }));
 jest.mock('../repositories/communities', () => ({ __esModule: true, default: {} }));
 jest.mock('../repositories/articles', () => ({ __esModule: true, default: {} }));
@@ -67,6 +70,7 @@ const memberlistAnswer = () => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  messageHelper.isChannelInActiveCommunity.mockResolvedValue(true);
   axios.post.mockResolvedValue({ data: memberlistAnswer() });
 });
 
@@ -80,6 +84,7 @@ describe('/getChannelMemberList', () => {
       channelId: CHANNEL,
       permissions: [ChannelPermission.CHANNEL_EXISTS, ChannelPermission.CHANNEL_READ],
     });
+    expect(messageHelper.isChannelInActiveCommunity).toHaveBeenCalledWith(COMMUNITY, CHANNEL);
     expect(axios.post).toHaveBeenCalledTimes(1);
     expect(result.writer).toEqual([[MEMBER, [ROLE]]]);
   });
@@ -111,6 +116,17 @@ describe('/getChannelMemberList', () => {
     permissionHelper.hasPermissions.mockImplementation(async ({ permissions }: { permissions: string[] }) =>
       !permissions.includes(ChannelPermission.CHANNEL_READ));
     await expect(getChannelMemberList(asUser(ME))).rejects.toThrow('NOT_ALLOWED');
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a signed-in user', () => asUser(ME)],
+    ['a visitor', anonymous],
+  ])('refuses %s when the channel or its community is deleted or the pair does not match', async (_label, req) => {
+    messageHelper.isChannelInActiveCommunity.mockResolvedValue(false);
+    permissionHelper.hasPermissions.mockResolvedValue(true);
+    await expect(getChannelMemberList(req())).rejects.toThrow('NOT_ALLOWED');
+    expect(messageHelper.isChannelInActiveCommunity).toHaveBeenCalledWith(COMMUNITY, CHANNEL);
     expect(axios.post).not.toHaveBeenCalled();
   });
 });

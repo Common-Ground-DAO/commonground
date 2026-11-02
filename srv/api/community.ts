@@ -22,6 +22,7 @@ import newsletterHelper from "../repositories/newsletter";
 import dayjs from "dayjs";
 import emailUtils from "./emails";
 import userHelper from "../repositories/users";
+import messageHelper from "../repositories/messages";
 
 const communityRouter = express.Router();
 const t = createTranslator();
@@ -223,8 +224,12 @@ API.Community.getChannelMemberList.Response
   validators.API.Community.getChannelMemberList,
   async (request, response, data) => {
     // the member list of a channel is visible to whoever may read the channel
-    // (the same rule as loading its messages; the Public role covers visitors)
+    // (the same rule as loading its messages; the Public role covers visitors),
+    // and only while the channel and its community exist
     const { user } = request.session;
+    if (!(await messageHelper.isChannelInActiveCommunity(data.communityId, data.channelId))) {
+      throw new Error(errors.server.NOT_ALLOWED);
+    }
     const canRead = await permissionHelper.hasPermissions({
       userId: user?.id,
       communityId: data.communityId,

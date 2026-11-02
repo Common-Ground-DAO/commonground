@@ -545,6 +545,23 @@ class MessageHelper {
     return result.rows.length > 0;
   }
 
+  /**
+   * The community branch of `isChannelInAccessScope`, additionally requiring
+   * the community itself not to be deleted: whether `channelId` is a live
+   * channel of the live community `communityId`.
+   */
+  public async isChannelInActiveCommunity(communityId: string, channelId: string): Promise<boolean> {
+    const result = await pool.query(`
+      SELECT 1 FROM communities_channels cc
+      INNER JOIN communities c
+        ON c."id" = cc."communityId"
+      WHERE cc."communityId" = $1 AND cc."channelId" = $2
+        AND cc."deletedAt" IS NULL
+        AND c."deletedAt" IS NULL
+    `, [communityId, channelId]);
+    return result.rows.length > 0;
+  }
+
   public async deleteMessage(data: {
     messageId: string;
     channelId: string;

@@ -239,11 +239,18 @@ class CommunityApiConnector extends BaseApiConnector {
   public async checkCommunityRoleClaimability(
     data: API.Community.checkCommunityRoleClaimability.Request
   ): Promise<API.Community.checkCommunityRoleClaimability.Response> {
-    return await this.ajax<API.Community.checkCommunityRoleClaimability.Response>(
-      "POST",
-      '/checkCommunityRoleClaimability',
-      data
-    );
+    // asked on every join and roles view; a failed check (e.g. an instance
+    // without the onchain service) means nothing is claimable
+    try {
+      return await this.ajax<API.Community.checkCommunityRoleClaimability.Response>(
+        "POST",
+        '/checkCommunityRoleClaimability',
+        data
+      );
+    } catch (e) {
+      console.warn("Role claimability check failed, treating every role as not claimable", e);
+      return [];
+    }
   }
 
   public async claimRole(

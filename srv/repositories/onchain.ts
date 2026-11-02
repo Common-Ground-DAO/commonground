@@ -80,6 +80,11 @@ class OnchainHelper {
     roleId: string;
     claimable: boolean;
   }[]> {
+    // the join and roles views ask on every visit: without the onchain
+    // service, no token-gated role can be claimed, which is a valid answer
+    if (!blockchainEnabled) {
+      return [];
+    }
     const result = await this.#request('/checkCommunityRoleClaimability', data);
     console.log(result);
     return result.data;

@@ -224,7 +224,7 @@ const mocks: Record<string, object> = {
   device: devices,
   transferTokens,
   wallets: { getOwnWalletLoginEnabled: jest.fn(async () => false), updateWallet: jest.fn(), deleteWallet: jest.fn(), createWallet: jest.fn(async () => ({})) },
-  event: { emit: jest.fn(), signOutOtherDeviceSockets: jest.fn(async () => undefined) },
+  event: { emit: jest.fn(), logoutDeviceSockets: jest.fn(async () => undefined) },
   communities: { getOwnCommunities: jest.fn(async () => []) },
   chats: { getChats: jest.fn(async () => []) },
   notifications: { getUnreadCount: jest.fn(async () => 0) },
@@ -870,28 +870,31 @@ describe('logout', () => {
   });
 
   // socket-scoped targeting (srv/util/requestSocket.ts)
-  const signOutOtherDeviceSockets = () => (mocks.event as any).signOutOtherDeviceSockets as jest.Mock;
+  const logoutDeviceSockets = () => (mocks.event as any).logoutDeviceSockets as jest.Mock;
 
-  it("signs out the device's other sockets when the request names its socket", async () => {
-    signOutOtherDeviceSockets().mockClear();
+  it("names the requesting socket when the request carries it", async () => {
+    logoutDeviceSockets().mockClear();
     const request = fresh(USER);
     request.headers['x-cg-socket-id'] = 'AbCdEfGhIj0123456_-x';
     await call('User/logout', request, undefined);
-    expect(signOutOtherDeviceSockets()).toHaveBeenCalledWith({ deviceId: 'device-1', socketId: 'AbCdEfGhIj0123456_-x' });
+    expect(logoutDeviceSockets()).toHaveBeenCalledWith({ deviceId: 'device-1', socketId: 'AbCdEfGhIj0123456_-x' });
     expect(devices.deleteDevice).toHaveBeenCalledWith('device-1');
   });
 
-  it('leaves the sockets alone without a (valid) socket id, as for old clients', async () => {
-    signOutOtherDeviceSockets().mockClear();
+  it('disconnects the whole device without a (valid) socket id, as for old clients', async () => {
+    logoutDeviceSockets().mockClear();
     await call('User/logout', fresh(USER), undefined);
     const invalid = fresh(USER);
     invalid.headers['x-cg-socket-id'] = 'too-short';
     await call('User/logout', invalid, undefined);
-    expect(signOutOtherDeviceSockets()).not.toHaveBeenCalled();
+    expect(logoutDeviceSockets().mock.calls).toEqual([
+      [{ deviceId: 'device-1', socketId: null }],
+      [{ deviceId: 'device-1', socketId: null }],
+    ]);
   });
 
-  it('still logs out when signing out the other sockets fails', async () => {
-    signOutOtherDeviceSockets().mockClear().mockRejectedValueOnce(new Error('redis down'));
+  it('still logs out when disconnecting the sockets fails', async () => {
+    logoutDeviceSockets().mockClear().mockRejectedValueOnce(new Error('redis down'));
     const request = fresh(USER);
     request.headers['x-cg-socket-id'] = 'AbCdEfGhIj0123456_-x';
     const oldSid = request.sessionID;

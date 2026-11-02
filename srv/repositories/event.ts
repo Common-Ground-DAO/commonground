@@ -203,17 +203,21 @@ class EventHelper {
   }
 
   /**
-   * Logout of a device in one tab: the device's other sockets get
-   * `cliSignedOut` and are disconnected, so none of them keeps the logged-out
-   * account's rooms. The requesting socket is left out (its tab finishes the
-   * logout itself and leaves its rooms with the socket `logout`). A request
-   * that names no socket changes nothing (old clients).
+   * Logout of a device: none of its sockets keeps the logged-out account's
+   * rooms. When the request names its socket, the device's other sockets
+   * (other tabs) get `cliSignedOut` and are disconnected, and the requesting
+   * socket is left out (its tab finishes the logout itself and leaves its
+   * rooms with the socket `logout`). A request that names no socket (old
+   * clients) disconnects every socket of the device, without `cliSignedOut`:
+   * the old client would take it for a sign-out from elsewhere.
    */
-  public async signOutOtherDeviceSockets(sockets: RequestSockets) {
-    if (sockets.socketId === null) {
+  public async logoutDeviceSockets(sockets: RequestSockets) {
+    const { deviceId, socketId } = sockets;
+    if (socketId === null) {
+      const io = await this.#io;
+      io.in(deviceRoomKey(deviceId)).disconnectSockets(false);
       return;
     }
-    const { deviceId, socketId } = sockets;
     await this.emit({ type: 'cliSignedOut' }, { deviceIds: [deviceId] }, { deviceSockets: [{ deviceId, socketId }] });
     const io = await this.#io;
     io.in(deviceRoomKey(deviceId)).except(deviceSocketRoomKey(deviceId, socketId)).disconnectSockets(false);

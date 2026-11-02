@@ -801,14 +801,11 @@ registerPostRoute<
     const { user } = request.session;
     if (!!user) {
       await deviceHelper.deleteDevice(user.deviceId);
-      // the device's other sockets (other tabs) are signed out and
-      // disconnected; the requesting tab's socket logs out itself. Only for
-      // requests that name their socket (old clients: unchanged).
-      const sockets = requestSockets(request, user.deviceId);
-      if (sockets.socketId !== null) {
-        await eventHelper.signOutOtherDeviceSockets(sockets)
-          .catch(e => console.error("Error signing out the device's other sockets", e));
-      }
+      // logout disconnects the device's sockets: with the requesting tab's
+      // socket named, the other tabs get cliSignedOut and that socket logs
+      // out itself; without it (old clients) all of them, no event
+      await eventHelper.logoutDeviceSockets(requestSockets(request, user.deviceId))
+        .catch(e => console.error("Error disconnecting the device's sockets", e));
     }
     // the session is destroyed and its id revoked: nothing of it (user,
     // step-up state, ceremonies, provider data) survives, and no new one

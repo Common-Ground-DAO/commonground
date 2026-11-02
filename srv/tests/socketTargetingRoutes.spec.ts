@@ -232,6 +232,52 @@ describe('call chat delivery', () => {
     );
   });
 
+  it('a failed member query still reaches the role rooms and the community', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    communityHelper.getCallRolePermissions.mockResolvedValue([
+      { roleId: 'r-public', roleTitle: 'Public', communityId: COMMUNITY, permissions: ['CALL_EXISTS', 'CHANNEL_READ'] },
+    ]);
+    callHelper.getActiveMemberUserIds.mockRejectedValue(new Error('db down'));
+    await edit(asUser());
+    expect(eventHelper.emit).toHaveBeenCalledWith(
+      expect.anything(),
+      { roleIds: ['r-public'], userIds: [], communityIds: [COMMUNITY] },
+      DEVICE_EXCEPT,
+    );
+    errorSpy.mockRestore();
+  });
+
+  it('a failed role query still reaches the present members', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    communityHelper.getCallRolePermissions.mockRejectedValue(new Error('db down'));
+    callHelper.getActiveMemberUserIds.mockResolvedValue([OTHER]);
+    await edit(asUser());
+    expect(eventHelper.emit).toHaveBeenCalledWith(
+      expect.anything(),
+      { roleIds: [], userIds: [OTHER], communityIds: [] },
+      DEVICE_EXCEPT,
+    );
+    errorSpy.mockRestore();
+  });
+
+  it('a failed target query of any channel kind is logged, never an unhandled rejection', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const unhandled = jest.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      communityHelper.getCommunityChannelRolePermissions.mockRejectedValue(new Error('db down'));
+      messageHelper.editMessage.mockResolvedValue({ updatedAt: 'u', editedAt: 'e', syncSeq: 2 });
+      await call('Message/editMessage', asUser(), { access: { communityId: COMMUNITY, channelId: CHANNEL }, id: MESSAGE, body: { version: '1', content: [] } });
+      await new Promise(resolve => setImmediate(resolve));
+      expect(unhandled).not.toHaveBeenCalled();
+      expect(eventHelper.emit).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith('Error emitting message events', expect.any(Error));
+    } finally {
+      process.off('unhandledRejection', unhandled);
+      errorSpy.mockRestore();
+    }
+  });
+
   it('a new call-chat message goes to the same targets', async () => {
     communityHelper.getCallRolePermissions.mockResolvedValue([
       { roleId: 'r-public', roleTitle: 'Public', communityId: COMMUNITY, permissions: ['CALL_EXISTS', 'CHANNEL_READ'] },
@@ -316,14 +362,36 @@ describe('article rooms', () => {
     expect(request.session.socketArticleRooms).toEqual([{ articleId: ARTICLE_1, socketId: SOCKET_2 }]);
   });
 
-  it('the oldest socket room beyond the limit is left on the socket that joined it', async () => {
-    const request = asUser(SOCKET_2, {
-      socketArticleRooms: [1, 2, 3, 4, 5].map(n => ({ articleId: article(n), socketId: n === 1 ? SOCKET : SOCKET_2 })),
+  it('the limit of 5 is per socket: the sixth room leaves the oldest room of that socket only', async () => {
+    const otherTab = { articleId: article(0), socketId: SOCKET_2 };
+    const request = asUser(SOCKET, {
+      socketArticleRooms: [otherTab, ...[1, 2, 3, 4, 5].map(n => ({ articleId: article(n), socketId: SOCKET }))],
     });
     await join(request, article(6));
     expect(eventHelper.requestSocketsLeaveRooms).toHaveBeenCalledTimes(1);
     expect(eventHelper.requestSocketsLeaveRooms).toHaveBeenCalledWith({ deviceId: DEVICE, socketId: SOCKET }, { articleIds: [article(1)] });
-    expect(request.session.socketArticleRooms.map((r: any) => r.articleId)).toEqual([2, 3, 4, 5, 6].map(article));
+    expect(request.session.socketArticleRooms).toEqual([
+      otherTab,
+      ...[2, 3, 4, 5, 6].map(n => ({ articleId: article(n), socketId: SOCKET })),
+    ]);
+  });
+
+  it("another tab's join does not evict this tab's rooms", async () => {
+    const rooms = [1, 2, 3, 4, 5].map(n => ({ articleId: article(n), socketId: SOCKET }));
+    const request = asUser(SOCKET_2, { socketArticleRooms: [...rooms] });
+    await join(request, article(6));
+    expect(eventHelper.requestSocketsLeaveRooms).not.toHaveBeenCalled();
+    expect(request.session.socketArticleRooms).toEqual([...rooms, { articleId: article(6), socketId: SOCKET_2 }]);
+  });
+
+  it('the session keeps at most 50 entries, oldest (closed tabs) first', async () => {
+    const stale = Array.from({ length: 50 }, (_, n) => ({ articleId: article(n), socketId: `staleTab${n.toString().padStart(12, '0')}` }));
+    const request = asUser(SOCKET, { socketArticleRooms: [...stale] });
+    await join(request, article(99));
+    expect(eventHelper.requestSocketsLeaveRooms).toHaveBeenCalledTimes(1);
+    expect(eventHelper.requestSocketsLeaveRooms).toHaveBeenCalledWith({ deviceId: DEVICE, socketId: stale[0].socketId }, { articleIds: [article(0)] });
+    expect(request.session.socketArticleRooms).toHaveLength(50);
+    expect(request.session.socketArticleRooms[49]).toEqual({ articleId: article(99), socketId: SOCKET });
   });
 
   it('joining the same article twice from one socket keeps one entry', async () => {

@@ -90,6 +90,15 @@ for (const route of [
 }
 
 const ARTICLE_ROOM_LIMIT = 5;
+/**
+ * Socket-scoped article rooms (`session.socketArticleRooms`): at most
+ * ARTICLE_ROOM_LIMIT per socket, and at most this many entries per session
+ * (entries of closed tabs are never left explicitly). Both are soft bounds:
+ * concurrent requests of one session write the session last-write-wins, so
+ * an entry can be lost while its socket stays in the room (until it
+ * disconnects).
+ */
+const SESSION_SOCKET_ARTICLE_ROOM_LIMIT = 50;
 
 function isExactCommunityChannelAccess(
   access: API.Messages.MessageAccess,
@@ -239,11 +248,25 @@ export async function _checkAccessOrThrow(access: API.Messages.MessageAccess, us
   }
 }
 
-async function emitMessageEvents(events: Events.Message.Message[], access: API.Messages.MessageAccess, excludeObject?: {
+type MessageEventExcept = {
   userIds?: string[];
   deviceIds?: string[];
   deviceSockets?: { deviceId: string; socketId: string }[];
-}) {
+};
+
+/**
+ * Emits message events to everyone who may read the channel. Callers do not
+ * wait for it, so it never rejects: a failed target query is logged (the
+ * events of that call are lost to live delivery; clients catch up through
+ * `getChanges`).
+ */
+function emitMessageEvents(events: Events.Message.Message[], access: API.Messages.MessageAccess, excludeObject?: MessageEventExcept): Promise<void> {
+  return emitMessageEventsToReaders(events, access, excludeObject).catch(e => {
+    console.error("Error emitting message events", e);
+  });
+}
+
+async function emitMessageEventsToReaders(events: Events.Message.Message[], access: API.Messages.MessageAccess, excludeObject?: MessageEventExcept) {
   if ('communityId' in access) {
     const channelRolePermissions = await communityHelper.getCommunityChannelRolePermissions(access.communityId, access.channelId);
     const notifyRoles = channelRolePermissions.filter(d => (
@@ -272,10 +295,17 @@ async function emitMessageEvents(events: Events.Message.Message[], access: API.M
     // (also when that comes from Public) and, when Public may read, the
     // community room (members and visitors): nobody joins a Public role
     // room. One emit, so a socket in several of these rooms gets each event
-    // once.
+    // once. Either query may fail on its own: the other targets still get
+    // the event.
     const [callRolePermissions, activeMemberUserIds] = await Promise.all([
-      communityHelper.getCallRolePermissions(access.callId, access.channelId),
-      callHelper.getActiveMemberUserIds(access.callId, [CallPermission.CALL_EXISTS, CallPermission.CHANNEL_READ]),
+      communityHelper.getCallRolePermissions(access.callId, access.channelId).catch(e => {
+        console.error("Error reading the call's reader roles", e);
+        return [] as Awaited<ReturnType<typeof communityHelper.getCallRolePermissions>>;
+      }),
+      callHelper.getActiveMemberUserIds(access.callId, [CallPermission.CALL_EXISTS, CallPermission.CHANNEL_READ]).catch(e => {
+        console.error("Error reading the call's present members", e);
+        return [] as string[];
+      }),
     ]);
     const notifyRoles = callRolePermissions.filter(d => (
       d.permissions.includes("CALL_EXISTS") &&
@@ -1211,13 +1241,23 @@ registerPostRoute<
         // only the requesting socket: another tab of the device keeps (or
         // never gets) its own article rooms
         const { socketId } = sockets;
-        const rooms = (request.session.socketArticleRooms || [])
+        let rooms = (request.session.socketArticleRooms || [])
           .filter(r => r.articleId !== articleId || r.socketId !== socketId);
-        while (rooms.length >= ARTICLE_ROOM_LIMIT) {
-          const old = rooms.shift()!;
+        const evict = (old: { articleId: string; socketId: string }) => {
+          rooms = rooms.filter(r => r !== old);
           eventHelper.requestSocketsLeaveRooms({ deviceId: user.deviceId, socketId: old.socketId }, {
             articleIds: [old.articleId],
           });
+        };
+        // the limit per socket: the oldest room of this socket goes, other
+        // tabs keep theirs
+        const own = rooms.filter(r => r.socketId === socketId);
+        while (own.length >= ARTICLE_ROOM_LIMIT) {
+          evict(own.shift()!);
+        }
+        // the session's bound: the oldest entries (mostly closed tabs) go
+        while (rooms.length >= SESSION_SOCKET_ARTICLE_ROOM_LIMIT) {
+          evict(rooms[0]);
         }
         rooms.push({ articleId, socketId });
         request.session.socketArticleRooms = rooms;

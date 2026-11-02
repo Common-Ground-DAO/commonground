@@ -235,9 +235,9 @@ describe('article rooms', () => {
   });
 });
 
-describe("logout: the device's other sockets", () => {
-  it('are signed out and disconnected; the requesting socket and other devices are not', async () => {
-    await eventHelper.signOutOtherDeviceSockets({ deviceId: MY_DEVICE, socketId: TAB_A });
+describe("logout: the device's sockets", () => {
+  it('the other sockets are signed out and disconnected; the requesting socket and other devices are not', async () => {
+    await eventHelper.logoutDeviceSockets({ deviceId: MY_DEVICE, socketId: TAB_A });
     expect(got(TAB_B, 'cliSignedOut')).toBe(1);
     expect(world.disconnected.has(TAB_B)).toBe(true);
     expect(got(TAB_A, 'cliSignedOut')).toBe(0);
@@ -249,14 +249,14 @@ describe("logout: the device's other sockets", () => {
   });
 
   it('with a socket id that is not one of the device: every socket of the device goes', async () => {
-    await eventHelper.signOutOtherDeviceSockets({ deviceId: MY_DEVICE, socketId: TAB_D });
+    await eventHelper.logoutDeviceSockets({ deviceId: MY_DEVICE, socketId: TAB_D });
     expect([...world.disconnected].sort()).toEqual([TAB_A, TAB_B].sort());
     expect(got(TAB_D, 'cliSignedOut')).toBe(0);
   });
 
-  it('without a socket id nothing changes (old clients)', async () => {
-    await eventHelper.signOutOtherDeviceSockets({ deviceId: MY_DEVICE, socketId: null });
-    expect(world.disconnected.size).toBe(0);
+  it('without a socket id (old clients) every socket of the device is disconnected, without cliSignedOut', async () => {
+    await eventHelper.logoutDeviceSockets({ deviceId: MY_DEVICE, socketId: null });
+    expect([...world.disconnected].sort()).toEqual([TAB_A, TAB_B].sort());
     expect(world.received.size).toBe(0);
   });
 });

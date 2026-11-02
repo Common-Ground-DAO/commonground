@@ -14,6 +14,8 @@ declare namespace Events {
        * API.Messages.UnreadCap). Absent on older servers.
        */
       unread?: number;
+      /** chat-sync: channel syncSeq that `unread` is valid at */
+      syncSeq?: number;
       /** chat-sync: set for community channels */
       communityId?: string;
       /** chat-sync: set for DMs */

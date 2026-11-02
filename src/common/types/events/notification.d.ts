@@ -12,6 +12,11 @@ declare namespace Events {
        * with `Notification/getUnreadCount` instead of counting themselves.
        */
       unreadCount?: number;
+      /**
+       * chat-sync: database `now()` (ISO) at which `unreadCount` was read;
+       * clients keep the count with the newest time
+       */
+      unreadCountAt?: string;
     } & ({
       action: 'new';
       data: Models.Notification.ApiNotification;

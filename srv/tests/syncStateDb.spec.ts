@@ -12,6 +12,9 @@
  *   docker run -d --name pg-test -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=pw postgres:18
  *   CG_TEST_PG_HOST=127.0.0.1 CG_TEST_PG_PORT=55432 CG_TEST_PG_PASSWORD=pw yarn jest tests/syncStateDb.spec.ts
  *
+ * Host and port come only from CG_TEST_PG_HOST / CG_TEST_PG_PORT
+ * (tests/helpers/testPg.ts).
+ *
  * Schema: the tables the statements touch as before the chat-sync
  * migrations, then the real migrations `1793635200000-chatSyncSeq`
  * (`channel_sync_state`, `messages."syncSeq"`, the trigger, the live unread
@@ -25,13 +28,13 @@
  */
 
 import { Pool } from 'pg';
+import { TEST_PG_HOST, TEST_PG_PORT, TEST_PG_PASSWORD, describeDb } from './helpers/testPg';
 
-const HOST = process.env.CG_TEST_PG_HOST;
-const PORT = Number(process.env.CG_TEST_PG_PORT) || 5432;
-const PASSWORD = process.env.CG_TEST_PG_PASSWORD || 'pw';
+const HOST = TEST_PG_HOST;
+const PORT = TEST_PG_PORT;
+const PASSWORD = TEST_PG_PASSWORD;
 const WRITER_PASSWORD = 'writer-test';
 const DATABASE = 'cg_sync_state_test';
-const describeDb = HOST ? describe : describe.skip;
 
 let mockReadOnlyPool: Pool | undefined;
 /** the pool the repositories run on: read-only, except for the notification writes */

@@ -48,10 +48,12 @@ export const SOCKET_ID_PATTERN = /^[A-Za-z0-9_-]{20}$/;
  * The only Web Lock of the design: serialises HTTP logins (device login and
  * interactive logins) across the tabs of one browser profile, because an
  * anonymous -> user login regenerates the session id and two concurrent ones
- * would invalidate each other's cookie. Held only around one login request
- * (+ the immediate re-check of `User/checkLoginStatus` when a tab got the
- * lock after another tab logged in). Nothing else waits on it. Without
- * `navigator.locks` the login runs unserialised.
+ * would invalidate each other's cookie. Held only around one login
+ * exchange — for a device login `User/getSignableSecret`, the signature and
+ * `User/login` together, since the session keeps one signable secret — plus
+ * the re-check of `User/checkLoginStatus` when a tab got the lock after
+ * another tab logged in (and the post-reconnect snapshot login). Nothing
+ * else waits on it. Without `navigator.locks` the login runs unserialised.
  */
 export const LOGIN_LOCK_NAME = 'cg:login';
 

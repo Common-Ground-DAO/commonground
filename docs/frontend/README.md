@@ -3,7 +3,9 @@
 > Status: verified against commit 4a9754f8f, 2026-08-04; ConnectionManager,
 > WebSocketManager, LoginManager cross-tab behaviour, `ConnectionStatusIndicator`, the
 > `x-cg-socket-id` header and §8 items 1–2 (independent tabs) against commit 964f6b3,
-> 2026-11-02; NSFW pre-check
+> 2026-11-02; `data/index.ts`, the database table, "Chat runtime and
+> `data.channelManager`", the read-state paragraph and §8 item 3 against commit
+> 50d27f2 (chat-sync/wiring), 2026-11-02; NSFW pre-check
 > section against the fix/image-filter-review-53 branch, 2026-08-15; wallet,
 > motion, drag & drop and toolchain notes plus "Dependency pins and
 > constraints" against commit 935232158, 2026-10-31; dev env file pointer
@@ -519,11 +521,10 @@ All databases are aggregated in `src/data/index.ts`:
 const data = {
   community: communityDB,    // CommunityDatabase
   notification: notificationDB, // NotificationDatabase
-  message: messageDB,         // MessageDatabase
   user: userDB,               // UserDatabase
   signedUrls: signedUrlsDB,   // SignedUrlsDatabase
   chats: chatsDB,             // ChatsDatabase
-  channelManager: channelDatabaseManager, // ChannelDatabaseManager
+  channelManager,             // façade over the chat stores (channel.ts)
 };
 ```
 
@@ -531,9 +532,9 @@ const data = {
 |---|---|---|---|
 | `CommunityDatabase` | `community.ts` | `communities`, `areas`, `channels`, `roles`, `calls`, `communityListViews`, `communityMembers`, `status` | Stores community detail views, areas, channels, roles, calls, and member data. Handles retrieval by ID and URL. Manages staleness checks (120s TTL). |
 | `UserDatabase` | `user.ts` | `userData`, `status` | Stores user profile data. Batch-retrieves missing user data by ID. |
-| `MessageDatabase` | `messages.ts` | `messages`, `chunks` | Stores messages in chunks for pagination. Supports loading messages before/after a given message. |
-| `ChannelDatabaseManager` | `channel.ts` | (dynamic per channel) | Manages per-channel `ChunkedItemDatabase` instances. Handles real-time message events, last-read tracking, and cross-tab synchronization via `BroadcastChannel('channelDatabaseManager_events')`. |
-| `ChunkedItemDatabase` | `channel/chunkedDatabase.ts` | `items`, `chunks`, `status` | Generic chunked list database used for channel messages. Items are stored in chunks (size 10-40, target 30) with start/end timestamps. Supports efficient range queries, chunk merging, and gap detection. Coordinates via `BroadcastChannel('chunkedDatabase-<dbName>')`. |
+| `MessageDatabase` | `messages.ts` | `messages`, `chunks` | Legacy, unused: nothing imports it any more (not `data/index.ts`, not `login.ts`), so its IndexedDB is not opened. The file is deleted with the chunked cache. |
+| `channelManager` (`data.channelManager`) | `channel.ts` | none (memory) | Façade over the tab's chat stores, see "Chat runtime and `data.channelManager`" below. |
+| `ChunkedItemDatabase` | `channel/chunkedDatabase.ts` | `items`, `chunks`, `status` | Legacy chunked list database. Channel messages no longer use it (they are in memory, `chat.channels`); deleted with the chunked cache. |
 | `ChatsDatabase` | `chats.ts` | Chat conversations and last messages. |
 | `NotificationDatabase` | `notification.ts` | Notification storage and unread counts. |
 | `SignedUrlsDatabase` | `signedUrls.ts` | Cache for signed asset URLs. |
@@ -551,7 +552,16 @@ The `communities`, `chat` and `users` databases are shared by all tabs of an ori
 - **Server snapshots** (login data, detail-view fetches, `startChat`): areas, roles, channels and calls with an older `updatedAt` than the stored row do not replace it (their stamps come from the database). Communities and list views are not guarded this way and stay authoritative, because some community events are stamped with the API process clock rather than the row's `updatedAt`. Snapshots do not delete rows (chats, channels, areas, roles, calls) that an event wrote after the snapshot's request started: event writers stamp rows with a client-clock `localWrittenAt`, and callers may pass `requestStartedAt` (default: 60 s before the merge).
 - **Accepted narrow window**: a partial event skipped as older loses the fields only it carries (there are no per-field stamps), and an API-clock stamp ahead of the database clock can make a newer database-stamped event look older. Both last until the next snapshot of that community (detail-view refresh or login).
 - **Community URL change**: on every event that carries a `url`, each tab compares the URL in its own path with the URLs it has seen for that community (not with the shared row, which another tab may already have updated) and navigates to the URL the row holds now, unless another stored community holds the URL in its path now (a URL a renamed community gave up can be taken over). This also holds for a tab that replays an older URL change late.
-- **Read state** (`unread`, `lastRead`, `lastMessageDate` of community channels and DMs) is only written through `mergeReadState` (`src/data/chat/mergeReadState.ts`) inside the writer's transaction (`readStateRows.ts`): `lastRead` and `lastMessageDate` only move forward, a snapshot's `unread` is taken only if it knows at least the local `lastRead`, and a live message is counted once per `syncSeq` (older servers: only if newer than every message seen). The rows carry extra non-indexed fields: `readSeq`, `readCounted` and `serverLastRead`; DM rows also `lastMessageDate`. `serverLastRead` is the highest `lastRead` the server is known to hold (from snapshots, server answers with a count, and own messages); `channel.ts`'s send guard is seeded from it rather than from the local `lastRead`, so a local mark whose API call never happened is sent again after a reload. The schema versions are unchanged (no `versionchange` for open tabs of an older build). `readStatePersistence.ts` exposes this as the `ReadStatePersistence` of the chat-sync contract.
+- **Read state** (`unread`, `lastRead`, `lastMessageDate` of community channels and DMs) is only written through `mergeReadState` (`src/data/chat/mergeReadState.ts`) inside the writer's transaction (`readStateRows.ts`): `lastRead` and `lastMessageDate` only move forward, a snapshot's `unread` is taken only if it knows at least the local `lastRead`, and a live message is counted once per `syncSeq` (older servers: only if newer than every message seen). The rows carry extra non-indexed fields: `readSeq`, `readCounted` and `serverLastRead`; DM rows also `lastMessageDate`. `serverLastRead` is the highest `lastRead` the server is known to hold (from snapshots, server answers with a count, and own messages); it is kept on the rows and passed to `registerAccessForChannel`, but the send decision is the in-memory `ReadStateStore`'s (the only sender of `setChannelLastRead`), from its own server-acknowledged value. After every merge (page load, login, `getOwnCommunities`/`getChats`, community/chat events, `startChat`) `community.ts`/`chats.ts` hand the merged rows' read state to that store (`data.channelManager.applyStoredReadState`, memory only), so a snapshot is applied to the rows once and mirrored in memory. The schema versions are unchanged (no `versionchange` for open tabs of an older build). `readStatePersistence.ts` exposes this as the `ReadStatePersistence` of the chat-sync contract.
+
+#### Chat runtime and `data.channelManager`
+
+`src/data/chat/runtime.ts` builds the tab's three chat-sync stores once (contract `src/data/chat/types.ts`): `chat.channels` (`ChannelStore`: messages in memory, ref-counted windows, sends/edits with `sendStatus`), `chat.readState` (`ReadStateStore`: read state plus level-triggered marking, persisted through `readStatePersistence.ts`) and `chat.notifications` (`NotificationStore`). Their `chat.events` (`ChatEventSource`) is made of the `cliMessageEvent`/`cliChannelLastRead`/`cliNotificationEvent` handlers (`connectionManager.registerClientEventHandler`), `webSocketManager` `live`/`onLive`/`onResume`, `connectionManager` visibility, and the account `login.ts` sets via `data.channelManager.userId`, which counts only while the login state is `loggedin`. The runtime starts when `channel.ts` loads (before the socket connects), so the stores catch up on the first `onLive`.
+
+- **Login hook-up** (`login.ts`): `setupChatAfterLogin(count)` with the login response's notification count (also for a login adopted from another tab); `clearChat()` on a logout in another tab; the tab's own logout clears through `data.channelManager.clear()`. Clearing empties all three stores and re-inits the channel windows that had been initialised (`init({ type: 'recent' })`); channel access stays registered.
+- **DMs**: a received or own DM message is written to the chat row by `chatDatabase.newMessageReceived` (read state plus `lastMessage`, one transaction); the store's persistence skips message inputs of DMs, so each input reaches the row once. Article comments and call chats have no read state.
+- **Edits** are sent without image metadata (`imageData`/`largeImageData`), as the message validators accept only the ids; the shown overlay keeps it.
+- **`data.channelManager`** passes through to the stores: `registerAccessForChannel`, `getAccessForChannel`, `openWindow`, `watchMessage`, `createMarker`, `createMessage` (resolves once the pending item is shown, never rejects), `retrySend`, `discardPending`, `editMessage`, `deleteMessage`, `setReaction`, `unsetReaction`, `deleteChannelDatabase` (= `forgetChannel`), `clear`. The `@deprecated` members keep the list components of before chat-sync working until they use windows: `getMountedChannelDatabase` (old `ItemList` interface over a window, `channelLegacyList.ts`, any number per channel), `getMessageById` (over `watchMessage`), `setChannelLastRead` (one mark through the read-state store), and no-op `loadItems`/`loadUpdates`/`loadItemWithNeighbours`.
 
 #### Reactivity
 
@@ -1065,7 +1075,7 @@ Every tab is independent (chat-sync design [1]): it owns its WebSocket connectio
 
 2. **Login.** Each tab tracks its own login state. HTTP logins (for a device login: secret, signature and request) run one at a time across tabs under the Web Lock `cg:login`; logins and logouts are broadcast on `BroadcastChannel('cg:auth')` with the `CG_CURRENT_USER` storage event as fallback, and every tab follows them itself (§4, LoginManager). A `LOGIN_REQUIRED` is handled in the tab that got it.
 
-3. **Channel data.** The `ChannelDatabaseManager` uses `BroadcastChannel('channelDatabaseManager_events')` (and per-database `chunkedDatabase-<name>` channels) to coordinate channel subscriptions and chunk updates across tabs.
+3. **Channel data.** Messages are held in memory per tab (`chat.channels`, §3 "Chat runtime"); tabs do not coordinate them, each catches up on `onLive`/`onResume`. Read state is shared through the community/chat rows (`mergeReadState`, idempotent across tabs).
 
 4. **localStorage.** Used for cross-tab state sync (`StorageEvent` listener) for the current user and various preferences.
 

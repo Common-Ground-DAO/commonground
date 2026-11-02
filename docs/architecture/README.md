@@ -9,7 +9,9 @@
 > commit 9fc05a9, 2026-11-01; session settings and the socket's session room
 > against commit eab2a27, 2026-11-01; the session store TTLs, `sess-user:`, the session
 > generations and signing out other devices (§3, key prefixes) against commit 23a4c1e, 2026-11-01;
-> online status management and the wsapi shutdown row against commit fc15832, 2026-11-02
+> online status management and the wsapi shutdown row against commit fc15832, 2026-11-02;
+> the memberlist's empty lists, new-channel seeding and channel-event retry (§4) against
+> commit 2e72119, 2026-11-02
 
 # Common Ground - Architecture Documentation
 
@@ -379,7 +381,7 @@ Key prefixes are pairwise disjoint (`sess:`, `sess-revoked:`, `sess-user:`, `ses
 Several services use PostgreSQL's built-in LISTEN/NOTIFY for event-driven communication without Redis:
 
 - **mediasoup**: Listens for `callservercallupdate_{serverId}` events (hyphens in the server UUID replaced by underscores) to receive call state changes directly from the database. Uses a dedicated long-lived `PoolClient` with a 60s keepalive; on keepalive failure the process exits.
-- **memberlist**: Listens for `userdatachange`, `userrolechange`, `rolechange`, and `channelrolepermissionchange` events (lowercase channel names) to maintain its in-memory member list. Also uses a dedicated long-lived `PoolClient` with a 60s keepalive; events are queued and processed in batches on a 1-second loop.
+- **memberlist**: Listens for `userdatachange`, `userrolechange`, `rolechange`, and `channelrolepermissionchange` events (lowercase channel names) to maintain its in-memory member list. Also uses a dedicated long-lived `PoolClient` with a 60s keepalive; events are queued and processed in batches on a 1-second loop. A community or channel created less than a second ago is therefore not known yet: for it, `/getMemberListWindow` and `/getChannelMemberListWindow` answer an empty member list (and the `Community/getMemberList` / `getChannelMemberList` routes and the client connector map a reply without a list to an empty one), so the lists never fail during that window. A new channel always gets a member list, seeded with the community's admins as at startup, even if none of its events moves a user. A `channelrolepermissionchange` for an unknown channel needs the community's Admin role; in normal operation it is always known by then (the permission rows reference `roles` by foreign key, so the `rolechange` NOTIFY comes first), but as a safety net such an event is retried in the next batches (up to 60, keeping the order within the community, `srv/util/memberListChannelEvents.ts`) instead of being dropped. `srv/memberlist.ts` starts the service only as the entry point, so `srv/tests/memberListEvents.spec.ts` can drive its event processing.
 
 ### API-to-Onchain Communication
 

@@ -258,3 +258,22 @@ describe('messageHelper.setChannelLastRead', () => {
     expect(poolQuery.mock.calls[0][1]).toEqual([USER, CHANNEL, '2026-11-02T11:00:00.000Z', MESSAGE_SEEN]);
   });
 });
+
+describe('messageHelper.isChannelInActiveCommunity', () => {
+  it('requires a live channel of a live community', async () => {
+    poolQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+    await expect(messageHelper.isChannelInActiveCommunity(SCOPE, CHANNEL)).resolves.toBe(true);
+    const [sql, params] = poolQuery.mock.calls[0];
+    const normalized = normalize(sql);
+    expect(normalized).toContain('FROM communities_channels cc INNER JOIN communities c ON c."id" = cc."communityId"');
+    expect(normalized).toContain('WHERE cc."communityId" = $1 AND cc."channelId" = $2');
+    expect(normalized).toContain('cc."deletedAt" IS NULL');
+    expect(normalized).toContain('c."deletedAt" IS NULL');
+    expect(params).toEqual([SCOPE, CHANNEL]);
+  });
+
+  it('is false without a matching row (deleted channel or community, foreign pair)', async () => {
+    poolQuery.mockResolvedValueOnce({ rows: [] });
+    await expect(messageHelper.isChannelInActiveCommunity(SCOPE, CHANNEL)).resolves.toBe(false);
+  });
+});

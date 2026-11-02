@@ -13,7 +13,7 @@
 > without a user, the index of each user's sessions, signing out other devices and the pre-login
 > limits (§2, §3, §4, §5.4, §7, §8, §10, §11) against commit 23a4c1e, 2026-11-01; the per-tab
 > login state, login lock, cross-tab broadcast, `checkLoginStatus`, LOGIN_REQUIRED handling and
-> the signed-out path across tabs (§10) against commit 65b09b8, 2026-11-02
+> the signed-out path across tabs (§10) against commit f897de7, 2026-11-02
 
 # Authentication & Identity
 
@@ -1121,11 +1121,16 @@ The client login lifecycle is owned by `LoginManager` (`src/data/appstate/login.
   server's `REAUTH_REQUIRED` stays authoritative.
 - **Multi-tab coordination**: every tab runs its own `device` login once per page load (on its
   first socket connect; a socket reconnect logs only the socket in). All HTTP logins (`device`,
-  interactive, `createUser`, transfer links) are serialised across the tabs of a browser with the
-  Web Lock `cg:login`, because an anonymous → user login regenerates the session id
+  interactive, `createUser`, transfer links) run one at a time across the tabs of a browser under
+  the Web Lock `cg:login`, because an anonymous → user login regenerates the session id
   ([§2](#when-a-session-exists)) and the tabs share its cookie; a `device` login of the same user
-  keeps the session. A tab waits at most 15 s for the lock (a frozen tab keeps its locks), then logs
-  in without it. On another tab's logout a tab drops its own login (socket `logout`, in-memory state)
+  keeps the session. A device login holds the lock for `User/getSignableSecret`, the signature and
+  `User/login` together: the session keeps one signable secret, which a concurrent login in another
+  tab would replace. A tab that had to wait for the lock and then finds the session logged in as
+  the stored user takes it over instead of logging in again. A tab waits at most 15 s for the lock
+  (a frozen tab keeps its locks) and holds it at most 10 s (a hung request), then goes on without it.
+  After its socket was live again following a gap, a visible tab re-runs the device `User/login`
+  for its snapshot (debounced, under the lock; no login-state change). On another tab's logout a tab drops its own login (socket `logout`, in-memory state)
   without a second `User/logout`; on another tab's login an anonymous tab checks
   `User/checkLoginStatus` and takes the session over without an HTTP login (else it logs in with its
   device key); a login of another user is handled as a logout first. For one release a logout also

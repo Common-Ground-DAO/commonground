@@ -12,7 +12,7 @@
 > human online status (grace period, batched cluster-wide offline check with one retry, touch
 > sets, change-only events, the stale job's events) against commit fc15832, 2026-11-02; the
 > page side of the tab/socket model (Socket.IO Client, Tab Coordination: one socket per tab,
-> live signal, hidden-tab policy) against commit 65b09b8, 2026-11-02; the service worker's
+> live signal, hidden-tab policy, login lock and post-reconnect snapshot) against commit f897de7, 2026-11-02; the service worker's
 > part in tab coordination (no referee, one-release compat answer) against commit 79187d2,
 > 2026-11-02
 
@@ -420,8 +420,8 @@ The `WebSocketManager` singleton manages the Socket.IO connection:
 - **Contract:** it implements `Transport` (`src/data/appstate/transport.ts`); `connectionManager.start`s it once the login manager is loaded, so a stored device is known before the first socket login.
 - **Authentication flow (socket login):**
   1. On `connect`, emit `cgPing` for clock sync and re-send the socket-scoped joins (`watchCgIdRequest`).
-  2. If the tab has a device: emit `getSignableSecret` to get a challenge, sign it with the device key, emit `login` with `{ deviceId, secret, base64Signature }`. Each ack has a 10 s timeout; a timeout restarts the connection.
-  3. On `"OK"` (the server has joined all rooms) the tab is **live**. An anonymous tab is live right after step 1. `"SECURITY_STEP_REQUIRED"` and `"ERROR"` are not live; `"ERROR"` is retried with a backoff (5 s, 15 s, 60 s) while the tab is visible.
+  2. If the tab has a device: emit `getSignableSecret` to get a challenge, sign it with the device key, emit `login` with `{ deviceId, secret, base64Signature }`. Each ack (and the signature) has a 20 s timeout. A timeout retries the login after the backoff below; after two timeouts in a row the retry restarts the connection.
+  3. On `"OK"` (the server has joined all rooms) the tab is **live**. An anonymous tab is live right after step 1. `"SECURITY_STEP_REQUIRED"` and `"ERROR"` are not live; `"ERROR"`, a failed signature and an ack timeout are retried with a backoff (5 s, 15 s, 60 s, each ±50 % random) while the tab is visible; a `"SECURITY_STEP_REQUIRED"` is not asked again on the same connection.
   4. A login, user switch or logout on a connected socket runs the same steps (a `logout` first if the socket was logged in) and is not live in between. Socket logins never overlap: the server runs socket handlers concurrently.
 - **Live signal:** `live` is true only while connected and logged in (or anonymous and set up); `Common.WebSocketState` is `connected` only while live. `onLive(kind)` fires on every transition to live: `established` (first in this page load), `restored` (after the connection was lost or closed by policy), `user` (same connection, its user changed). `onResume(reason)` (`visible` after ≥ 30 s hidden, `pageshow` from bfcache, `resume`, `online`) fires only when the socket stayed live; otherwise the tab reconnects and only the later `onLive` fires.
 - **Event routing:** Uses `socket.onAny()` to catch all events and forwards those starting with `cli` to the registered `clientEventHandler` (every tab handles its own events). The `buildId` event has its own handler.
@@ -448,7 +448,7 @@ Every tab owns its Socket.IO connection, its login state and its in-memory data 
 
 **Login across tabs (`login.ts`, `authBroadcast.ts`):**
 
-- The HTTP device login runs once per page load in every tab (on the first socket connect); HTTP logins of all tabs are serialised with the Web Lock `cg:login` (a wait longer than 15 s logs in without it, since a frozen tab keeps its locks). After a restored live, `connectionManager` refreshes the community and chat data (debounced) without an HTTP login.
+- The HTTP device login runs once per page load in every tab (on the first socket connect). Each HTTP login holds the Web Lock `cg:login` for its whole exchange — for a device login: `User/getSignableSecret`, signature and `User/login`, because the server keeps one signable secret per session and the tabs share the session cookie. A tab that had to wait for the lock re-checks `User/checkLoginStatus` and takes the session over if it belongs to the stored user (another tab has just logged in). A lock is held at most 10 s (`LOGIN_LOCK_HOLD_MAX_MS`), a waiting tab logs in without it after 15 s (a frozen tab keeps its locks). After a `restored` live a visible tab re-runs the device `User/login` for its snapshot (own communities, chats, own data, unread count) under the same lock, debounced by a random 1–3 s; a hidden tab does so when it becomes visible.
 - A logout or login is broadcast on `BroadcastChannel('cg:auth')`; the `storage` event on `CG_CURRENT_USER` is the fallback. On a logout every other tab emits socket `logout` and drops its login state (no second `User/logout`); on a login an anonymous tab takes over the session after `User/checkLoginStatus`; a login of another user is handled as a logout first. For one release a logout also posts `'anonymous'` on `CG_LOGIN_STATE` for still-open older pages.
 
 **Service worker (`src/service-worker.ts`, compat answer in `src/serviceWorkerLegacyTabs.ts`):**

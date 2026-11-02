@@ -2,7 +2,7 @@
 
 > Status: verified against commit 4a9754f8f, 2026-08-04; ConnectionManager,
 > WebSocketManager, LoginManager cross-tab behaviour, `ConnectionStatusIndicator`, the
-> `x-cg-socket-id` header and §8 items 1–2 (independent tabs) against commit 65b09b8,
+> `x-cg-socket-id` header and §8 items 1–2 (independent tabs) against commit f897de7,
 > 2026-11-02; NSFW pre-check
 > section against the fix/image-filter-review-53 branch, 2026-08-15; wallet,
 > motion, drag & drop and toolchain notes plus "Dependency pins and
@@ -617,7 +617,7 @@ Provides a typed listener system (`addListener` / `removeListener`) and a client
 
 Key behaviors:
 - Starts the `WebSocketManager` once the login manager is loaded; on the first socket connect of the page it runs `loginManager.autoLogin()` (the HTTP device login, once per page load).
-- Emits `cliConnectionEstablished` / `cliConnectionRestored` when the tab becomes live (`onLive` `established` / `restored`), not on the raw socket connect. After `restored` it calls `loginManager.refreshAfterReconnect()` (debounced 1 s): chats and the own communities are re-fetched without a login.
+- Emits `cliConnectionEstablished` / `cliConnectionRestored` when the tab becomes live (`onLive` `established` / `restored`), not on the raw socket connect. After `restored` a visible tab calls `loginManager.refreshAfterReconnect()` (random 1–3 s debounce; a hidden tab does it when it becomes visible): it re-runs the device `User/login` for its snapshot (own communities, chats, own data, unread count) under the login lock without a login-state change, and passes `requestStartedAt` to the community/chat snapshot merges.
 - On `updateAvailable`: triggers the service worker update.
 - On `disconnected`: emits `cliConnectionLost`.
 - On becoming visible or online: `loginManager.checkLoginStatus()`.
@@ -629,7 +629,7 @@ Manages this tab's Socket.IO connection and implements `Transport` (`src/data/ap
 - Uses `socket.io-client` with polling + websocket transports (websocket only in dev).
 - **One socket per tab**, no tab roles (see §8). `live`, `onLive(kind)`, `onLiveChange`, `onResume(reason)`, `updateAvailable`/`onUpdateAvailable`, `holdSocket('call')`, `getRequestSocketId()`. Details: [docs/realtime](../realtime/README.md#socketio-client).
 - Hidden-tab policy: closes the socket after 5 min hidden (not while a hold is active), at once on `freeze`/`pagehide`; reconnects on visible, `pageshow` (persisted), `resume`, `online`.
-- Socket authentication: emits `getSignableSecret`, signs with device keypair, emits `login`; `login(deviceId)` resolves on the `"OK"` ack (10 s ack timeout). A reconnect logs the socket in again; no HTTP login.
+- Socket authentication: emits `getSignableSecret`, signs with device keypair, emits `login`; `login(deviceId)` resolves on the `"OK"` ack (20 s ack timeout, retries with a randomised backoff, a new connection only after two timeouts in a row). A reconnect logs the socket in again; no HTTP login.
 - Handles `buildId` events: a different build sets `updateAvailable`; the socket keeps working.
 - Ping/pong for disconnect detection.
 - All server events prefixed with `cli` are forwarded to `ConnectionManager.eventHandler`.
@@ -644,7 +644,7 @@ Manages authentication:
 - `autoLogin()`: attempts login with the stored device keypair; the deprecated mnemonic re-login (`CRYPTOGRAM_USER_MNEMONIC`) only runs on a legacy CG ID instance — elsewhere the stored phrase is removed.
 - `setupAfterLogin()`: initializes all Dexie databases with login response data.
 - `logout()`: clears all databases, removes device keypair, resets state, then broadcasts the logout.
-- Every tab has its own login state. HTTP logins (device, interactive, `createUser`, transfer link) run under the Web Lock `cg:login` (bounded wait). Logins and logouts are broadcast on `BroadcastChannel('cg:auth')` (`authBroadcast.ts`), with the `storage` event on `CG_CURRENT_USER` (and a re-check when the tab becomes visible) as fallback: another tab's logout drops this tab's login without a second `User/logout`; another tab's login is taken over after `User/checkLoginStatus` (no HTTP login); another user's login counts as a logout first. A logout also posts `'anonymous'` on the legacy `CG_LOGIN_STATE` channel for one release (older pages still open); nothing listens there.
+- Every tab has its own login state. HTTP logins (device, interactive, `createUser`, transfer link) run under the Web Lock `cg:login` (wait at most 15 s, hold at most 10 s); a device login holds it for secret, signature and request (one signable secret per session). A tab that had to wait for the lock and then finds the session logged in as the stored user takes it over instead of a second login. Logins and logouts are broadcast on `BroadcastChannel('cg:auth')` (`authBroadcast.ts`), with the `storage` event on `CG_CURRENT_USER` (and a re-check when the tab becomes visible) as fallback: another tab's logout drops this tab's login without a second `User/logout`; another tab's login is taken over after `User/checkLoginStatus` (no HTTP login); another user's login counts as a logout first. A logout also posts `'anonymous'` on the legacy `CG_LOGIN_STATE` channel for one release (older pages still open); nothing listens there.
 - `loginRequiredErrorHandler()` (any tab): under the login lock re-checks the session with `User/checkLoginStatus`; only if it is not this tab's user any more it runs `autoLogin()`.
 
 #### ServiceWorkerManager (`serviceWorker.ts`)
@@ -1063,7 +1063,7 @@ Every tab is independent (chat-sync design [1]): it owns its WebSocket connectio
 
 1. **WebSocket (one per tab).** Every tab connects its own socket (`WebSocketManager`, §4). Visible tabs — also several side by side — are always connected; a hidden tab closes its socket after 5 minutes unless it is in a call, and on `freeze`/`pagehide` at once; it reconnects when it comes back. The cost is one socket per open, non-idle tab. The service worker no longer referees; for one release it only answers role requests of old pages with `active` (`src/serviceWorkerLegacyTabs.ts`, `TODO(chat-sync compat)`), see [docs/realtime → Tab Coordination](../realtime/README.md#tab-coordination-1).
 
-2. **Login.** Each tab tracks its own login state. HTTP logins are serialised across tabs with the Web Lock `cg:login`; logins and logouts are broadcast on `BroadcastChannel('cg:auth')` with the `CG_CURRENT_USER` storage event as fallback, and every tab follows them itself (§4, LoginManager). A `LOGIN_REQUIRED` is handled in the tab that got it.
+2. **Login.** Each tab tracks its own login state. HTTP logins (for a device login: secret, signature and request) run one at a time across tabs under the Web Lock `cg:login`; logins and logouts are broadcast on `BroadcastChannel('cg:auth')` with the `CG_CURRENT_USER` storage event as fallback, and every tab follows them itself (§4, LoginManager). A `LOGIN_REQUIRED` is handled in the tab that got it.
 
 3. **Channel data.** The `ChannelDatabaseManager` uses `BroadcastChannel('channelDatabaseManager_events')` (and per-database `chunkedDatabase-<name>` channels) to coordinate channel subscriptions and chunk updates across tabs.
 

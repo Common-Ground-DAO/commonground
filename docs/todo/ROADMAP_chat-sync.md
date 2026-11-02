@@ -220,10 +220,19 @@ brackets refer to the decisions list at the end of this section.
 - Sync sequence: migration (table `channel_sync_state` with GRANTs, nullable
   `messages.syncSeq`, index `(channelId, syncSeq)`, trigger), `syncSeq` in
   events; `getChanges`; `getSyncState`.
-- `setChannelLastRead`: clamp to server `now()`, `GREATEST` (from develop's
-  G13), `RETURNING` the stored value, echo the stored value plus `unread` in
-  the response and in `cliChannelLastRead`; optional `messageId` field (server
-  uses its `createdAt`).
+  - The trigger runs as the `writer` role the app processes use: check owner
+    and privileges; `SECURITY DEFINER` only if really needed, then with a fixed
+    `search_path` (as `session_generation_of` from cg.box G12).
+  - The migration runs on the real production dump during the cg.box move
+    (G5 import, then the develop migrations), so it must stay cheap on a large
+    `messages` table: nullable column without default and without backfill
+    (existing rows get a seq on their next write; a `null` cursor means
+    `reset`), and the index build time checked. Its runtime is measured in
+    the dress rehearsal.
+- `setChannelLastRead`: clamp to server `now()`, `GREATEST` and echoing the
+  stored value in `cliChannelLastRead` arrive with develop's G13; this package
+  adds `unread` to the response and the event, and an optional `messageId`
+  field (the server uses its `createdAt`).
 - Notifications: mark read only when unread, emit only on a real change,
   `markAllAsRead` only unread rows, `unreadCount` as a number in every
   notification event and in the login response.
@@ -233,7 +242,8 @@ brackets refer to the decisions list at the end of this section.
 - Socket-scoped targeting: new clients send `x-cg-socket-id`; the server then
   excludes only that socket (instead of the device) and joins/leaves article
   rooms per socket. Without the header, today's device behaviour stays for old
-  clients.
+  clients. The header name is fixed: the cg.box G1 gateway adds it to its
+  CORS/origin allowlist, so a rename must be reported to the main line.
 - Call chat and `cliCallEvent new` additionally reach the call's active members.
 - Presence: grace period (30 s) before going offline on the last disconnect,
   checked cluster-wide; `cliUserOwnData` only on a real change.
@@ -348,6 +358,15 @@ exclusive within a wave.
 Order inside wave 1 where files meet: `srv-sync` before `srv-targeting`
 (same `srv/api/messages.ts`); `transport` and `sw` agree on the compat message
 through the contracts slice.
+
+Ordering with develop's G13 (runtime fixes; touches `setChannelLastRead`, the
+`lastRead` upserts in `communities.ts`/`chats.ts`, `srv/repositories/calls.ts`,
+`e2e/src/lib/harness.ts`, `07-call.ts`, ~21 components via a new
+`src/util/cssBackground.ts`, and adds a migration): `develop` is merged into
+`feature/chat-sync` as soon as G13 lands there, and `srv-sync`, `srv-targeting`
+and the harness part of `test-infra` start only after that merge. Contracts,
+store core, transport, sw, entity-dbs, srv-state, srv-presence and the e2e
+flows (outside `07-call.ts`) can start before.
 
 ### Decisions for approval
 

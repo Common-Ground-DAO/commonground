@@ -21,6 +21,11 @@
         @apply flex-1;
       }
 
+      .notifications-mark-all-read {
+        @apply flex p-1 items-center justify-center cursor-pointer whitespace-nowrap;
+        color: var(--cardTextMain);
+      }
+
       .notifications-read-toggle {
         @apply flex gap-2 p-1 items-center justify-center cursor-pointer;
         color: var(--cardTextMain);

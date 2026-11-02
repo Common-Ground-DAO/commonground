@@ -105,19 +105,19 @@ metrics) and screenshots of every failed step under `<out>/<flow>/`.
 |---|---|
 | `anonymous` | home page in light and dark scheme, `window.__CG_INSTANCE__`, service worker registers and controls the page, deep links to a community and a channel in a fresh context |
 | `auth` | sign-up with password (ALTCHA + mailed code), logout, wrong-password message, login by email and by username; a second browser signed in to the same account is signed out ("You were signed out") when the password changes in the first, and signs in again with the new one; sign-up with a passkey (CDP virtual authenticator), logout, passkey login |
-| `reload` | reload robustness: N reloads (plain, hard reload bypassing cache + service worker, navigation), each followed immediately by sending a message, opening the settings and every few iterations creating a community. Modes (`--reload-modes`, default: all available): `natural`, `reordered` (responses of requests sent while the device login is out are delivered after it), `interrupted` (the page is reloaded again while the previous load's device login is in flight), `cookie-cleared` (the browser has lost its session cookie), `session-expired` (the session is deleted server-side in Valkey — needs `E2E_REDIS_URL`, which `--instance` sets) and `force-reload-cold-sw` (the service worker is stopped over CDP, then a hard reload through it; the indicator must show "connected" within 12 s of the load — "hidden", i.e. never connected, fails in this mode; only when named in `--reload-modes`, because on the pre-chat-sync code the page's following loads can hang after it). Fails on `LOGIN_REQUIRED`, a lost message, an offline/disconnected connection indicator or any guard issue; `report.json` has the per-iteration results, the failure rate per mode and "cookie regressions" (a `Set-Cookie` of an outdated session id after the device login) as diagnostics |
+| `reload` | reload robustness: N reloads (plain, hard reload bypassing cache + service worker, navigation), each followed immediately by sending a message, opening the settings and every few iterations creating a community. Modes (`--reload-modes`, default: all available): `natural`, `reordered` (responses of requests sent while the device login is out are delivered after it), `interrupted` (the page is reloaded again while the previous load's device login is in flight), `cookie-cleared` (the browser has lost its session cookie), `session-expired` (the session is deleted server-side in Valkey — needs `E2E_REDIS_URL`, which `--instance` sets) and `force-reload-cold-sw` (the service worker is stopped over CDP — the guards' worker sessions are detached first, see below — then the page is reloaded, alternating a plain reload through the cold worker and a hard reload, `Page.reload {ignoreCache}`, which bypasses the worker: an uncontrolled page with a cold worker; the indicator must show "connected" within 12 s of the load — "hidden", i.e. never connected, fails in this mode; only when named in `--reload-modes`). Fails on `LOGIN_REQUIRED`, a lost message, an offline/disconnected connection indicator or any guard issue; `report.json` has the per-iteration results, the failure rate per mode and "cookie regressions" (a `Set-Cookie` of an outdated session id after the device login) as diagnostics |
 | `community-chat` | community + channel, a second user joins, messages in both directions arrive over the websocket without a reload, a reaction, an edit |
 | `images` | image attachment in a message and a profile picture, served via `/files/` |
 | `settings` | profile edit; passkey add, rename, remove — the removal after a device-only re-login goes through the "Confirm it's you" step-up dialog; Accounts → Add Wallet → the RainbowKit modal: every entry that works without an extension (QR or "Get" view) |
 | `call` | two users, fake camera/microphone: start, join, audio bytes both ways (RTCPeerConnection stats), leave, end; reload afterwards, and with the call camera unplugged |
 | `article-plugin` | article with a YouTube embed, read in a fresh anonymous context; a community plugin iframe created by the community owner (fails if the owner cannot create one) |
-| `cs-call-chat` | E1: A starts a call, B (clock 2 s ahead, `loadMessages` answers held back 2.5 s) opens it while A posts the first message: B shows it without a reload and keeps it after the late first page arrives; a second message arrives live |
+| `cs-call-chat` | E1, two variants with a member and a call each: plain, then skew (B's clock 2 s ahead, B's message reads — `loadMessages` or `getChanges` — answered 2.5 s late). B opens the call while A posts its first message: B shows it without a reload and keeps it after the (late) first page arrives; a second message arrives live |
 | `cs-unread-tabs` | E2: B has two tabs (tab 2 in the background); A posts in another channel, tab 1 shows the unread dot; B reads it in tab 1, reloads tab 1, brings tab 2 to the front, reloads it: the dot stays cleared everywhere and the server's `lastRead` (as `Community/getCommunityDetailView` returns it) never moves backwards |
 | `cs-reconnect` | E3: B offline (emulated offline + open sockets closed); A posts three messages and edits an older one; B back online shows all of it in order without scrolling or a reload, connected within 12 s; a message after the reconnect arrives live |
 | `cs-multi-tab` | E4: two tabs of B in one channel; A posts, B switches tabs and writes from tab 2, both tabs reloaded: every tab in front shows every message in order, is connected, no tab has an empty channel |
 | `cs-notifications` | E5: A mentions B twice: the badge goes up by one each time and holds; B opens one notification: down by one and holds; after a reload the badge equals `Notification/getUnreadCount` |
 | `cs-login-time` | E7: six page loads of a user in a channel with history; per load the time to the device login's OK, to "connected", to the first and to all messages (report: `loginTimeSamples`, `loginTimeSummary`); fails above 10 s to logged-in-and-connected or to the first message |
-| `cs-split-frozen` | E8: B's channel in two windows side by side (both visible): A's posts show in both live; B's tab hidden behind another tab and frozen (`Page.setWebLifecycleState`), A posts and edits, the tab resumed: connected within 12 s and caught up; a hard reload with a stopped service worker: connected within 12 s |
+| `cs-split-frozen` | E8: B's channel in two windows side by side (both visible): A's posts show in both live; B's tab hidden behind another tab and frozen (`Page.setWebLifecycleState`), A posts and edits, the tab resumed: connected within 12 s and caught up; with the service worker stopped, a plain reload and a hard reload (uncontrolled page): each connected within 12 s of the reload |
 
 The other flows wait for the device login of a page load to finish before
 they act (`waitAppReady`) and navigate client-side once the app is loaded
@@ -150,7 +150,22 @@ app's data-layer objects — so they stay valid while that layer is
 replaced. They were written before the rewrite and are red where the code
 they were written against is buggy. Every one of them fails when a tab's
 connection indicator shows "Disconnected" or does not reach "connected"
-within 12 s (`assertConnected`, `lib/live.ts`).
+within 12 s (`assertConnected`, `lib/live.ts`). "Shows a message" means
+in the list and, for the newest one waited for, in view inside the list's
+scroll container — a list that does not follow new messages to the bottom
+fails (`waitMessagesShown`). Every poll's `page.evaluate` has its own 10 s
+limit (`lib/within.ts`), so a page that stops answering fails a poll, not
+the whole step after the 120 s protocol timeout.
+
+What the flows rely on from the app (an unwritten contract — change it
+together with `lib/app.ts`/`lib/live.ts`): the connection indicator
+`#cg-connection-indicator` with the class `cg-connection-indicator-<state>`
+(`hidden`, `connecting`, `connected`, `disconnected`, `offline`, …); the
+stored user under the `localStorage` key `CG_CURRENT_USER` (readiness and
+login tracking); `.message-item` / `.message-item-message` /
+`.message-item-content[data-timestamp]` for messages,
+`.text-channel-item-info[title].item-unread` for the unread dot and
+`.notification-count` in the main menu for the badge.
 
 ```bash
 ./run.sh e2e --instance --flow chat-sync                     # the seven flows (~10 min)
@@ -200,11 +215,18 @@ e2e/checks/call-sweep.sh                              # E2E_PROJECT as for insta
    side by side.
 7. Browser conditions through CDP, `lib/cdp.ts`: `setOffline` (emulated
    offline does not close an open WebSocket in Chrome, so the helper closes
-   the page's sockets too — install `trackWebSockets`/`prepareLivePage`
-   before the load), `holdResponses` (Fetch at the response stage),
-   `setClockOffset`, `setLifecycle` (frozen/active — nothing may evaluate in
-   a frozen page, keep freeze and resume in one step), `stopServiceWorkers`,
-   `coldServiceWorkerReload`. Guard findings such a condition causes on
+   the page's sockets too — with a clean `close()` from the page, code 1005
+   on its side, not the abnormal 1006 of a dead link; install
+   `trackWebSockets`/`prepareLivePage` before the load), `holdResponses`
+   (Fetch at the response stage), `setClockOffset` (a `Date` replacement in
+   the page only — its workers and the browser keep the real clock),
+   `setLifecycle` (frozen/active — nothing may evaluate in a frozen page,
+   keep freeze and resume in one step), `stopServiceWorkers` (detaches the
+   guards' debugger sessions from the workers first: a worker that restarts
+   with one still attached waits for the debugger and never runs),
+   `coldServiceWorkerReload` (`plain`: through the cold worker;
+   `ignore-cache`: `Page.reload {ignoreCache}` bypasses the worker, so the
+   page loads uncontrolled). Guard findings such a condition causes on
    purpose go into `t.expectFailures(offlineFailures(name), …)`.
 8. `t.skip('reason')` when the instance lacks a feature; `t.note()` for
    findings that should not fail the flow (prefix `FINDING:`), `t.metric()`

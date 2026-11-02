@@ -9,6 +9,7 @@ import format from "pg-format";
 import * as bcrypt from "bcrypt";
 import { randomUUID, webcrypto } from "node:crypto";
 import eventHelper from "./event";
+import { userWithNotifyIdsQuery as __userWithNotifyIdsQuery, emitOfflineUpdates, type UserWithNotifyIds } from "./userPresence";
 import pool from "../util/postgres";
 import { type Pool, type PoolClient } from "pg";
 import { UserAccount } from "../entities/user-accounts";
@@ -792,33 +793,6 @@ async function _createUser(
   throw new Error(errors.server.INVALID_REQUEST);
 }
 
-function __userWithNotifyIdsQuery(cteName: string) {
-  return `
-    SELECT
-      u.id AS "userId",
-      now() AS "updatedAt",
-      COALESCE(
-        (
-          SELECT json_agg(r."communityId")
-          FROM roles_users_users ruu
-          INNER JOIN roles r
-            ON ruu."roleId" = r."id"
-            AND r."type" = ${format("%L", RoleType.PREDEFINED)}
-            AND r."title" = ${format("%L", PredefinedRole.Member)}
-          WHERE ruu."userId" = u."id"
-        ),
-        '[]'::json
-      ) AS "communityIds"
-    FROM users u
-    WHERE u.id = ANY((SELECT id FROM ${cteName}))
-  `;
-}
-
-type UserWithNotifyIds = {
-  userId: string;
-  updatedAt: string;
-  communityIds: string[];
-};
 
 async function _updateUser(
   db: Pool | PoolClient,
@@ -2652,6 +2626,46 @@ class UserHelper {
         userIds: [update.userId]
       });
     }
+  }
+
+  /**
+   * Sets these users offline in one statement (presence decisions of a wsapi
+   * process). Emits `cliUserData` only for users whose status changed.
+   */
+  public async setUsersOffline(userIds: string[]): Promise<void> {
+    if (userIds.length === 0) {
+      return;
+    }
+    const result = await pool.query(`
+      WITH set_offline AS (
+        UPDATE users
+        SET
+          "onlineStatus" = 'offline',
+          "updatedAt" = now(),
+          "onlineStatusUpdatedAt" = now()
+        WHERE id = ANY($1::uuid[])
+          AND "onlineStatus" <> 'offline'
+        RETURNING id
+      )
+      ${__userWithNotifyIdsQuery('set_offline')}
+    `, [userIds]);
+    await emitOfflineUpdates(result.rows as UserWithNotifyIds[]);
+  }
+
+  /**
+   * Refreshes only `onlineStatusUpdatedAt` (users in their offline grace
+   * period): never changes a status, emits nothing.
+   */
+  public async refreshOnlineStatusTimestamps(userIds: string[]): Promise<void> {
+    if (userIds.length === 0) {
+      return;
+    }
+    await pool.query(`
+      UPDATE users
+      SET "onlineStatusUpdatedAt" = now()
+      WHERE id = ANY($1::uuid[])
+        AND "onlineStatus" <> 'offline'
+    `, [userIds]);
   }
 
   /**

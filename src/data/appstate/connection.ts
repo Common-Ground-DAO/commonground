@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import webSocketManager from "./webSocket";
+import type { LiveKind } from "./transport";
 
 type WebSocketStateListener = (state: Common.WebSocketState) => void;
 type ServiceWorkerStateListener = (state: Common.ServiceWorkerState) => void;
@@ -10,9 +11,12 @@ type ServiceWorkerProgressListener = (progress: number | null) => void;
 type LoginStateListener = (state: Common.LoginState) => void;
 type VisibilityStateListener = (state: Common.VisibilityState) => void;
 type OnlineStateListener = (state: Common.OnlineState) => void;
-type ClientEventsListener = (events: Events.ClientEvent[]) => void;
 type TabStateListener = (tabState: Common.TabState) => void;
+type UpdateAvailableListener = (updateAvailable: boolean) => void;
 type ErrorListener = (o: {origin: string, error: unknown}) => void;
+
+/** Debounce of the community/chat refresh after the socket is live again. */
+export const REFRESH_AFTER_RESTORE_DEBOUNCE_MS = 1_000;
 
 const loginManagerP = (async () => {
   return (await import('./login')).default;
@@ -23,11 +27,16 @@ const serviceWorkerManagerP = (async () => {
 })();
 
 export class ConnectionManager {
+  /**
+   * @deprecated compatibility shim for the chunked message cache (removed in
+   * wave 3): chunks updated before this time are re-validated. Starts at the
+   * page load (another tab's cache writes are not trusted blindly) and
+   * moves to "last event before the gap" on every socket disconnect.
+   */
   private _lastDisconnect = new Date(webSocketManager.lastEventTime);
 
   private _serviceWorkerState: Common.ServiceWorkerState = "pending";
   private _serviceWorkerProgress: number | null = null;
-  private _tabState: Common.TabState = webSocketManager.tabState;
   private _webSocketState: Common.WebSocketState = webSocketManager.state;
   private _loginState: Common.LoginState = "pending";
   private _visibilityState: Common.VisibilityState = document.visibilityState;
@@ -40,23 +49,47 @@ export class ConnectionManager {
   private _visibilityStateListeners = new Set<VisibilityStateListener>();
   private _onlineStateListeners = new Set<OnlineStateListener>();
   private _tabStateListeners = new Set<TabStateListener>();
+  private _updateAvailableListeners = new Set<UpdateAvailableListener>();
   private _errorListeners = new Set<ErrorListener>();
   private _serviceWorkerNavigateListeners = new Set<(url: string) => void>();
-  private _initialWsConnection = true;
   private _clientEventHandlers: Map<Events.ClientEvent["type"], Set<any>> = new Map();
   private _autoLoginTriggered = false;
   private _cleanUpIndexedDbsPromise: Promise<void> | null = null;
+  private _refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor() {
     webSocketManager.onStateChange = this.setWebSocketState.bind(this);
-    webSocketManager.onTabStateChange = this.setTabState.bind(this);
     webSocketManager.onError = this.onError.bind(this, "WebSocketManager");
     webSocketManager.clientEventHandler = this.eventHandler.bind(this);
+    webSocketManager.onLive(this.onLive.bind(this));
+    webSocketManager.onDisconnected((lastEventTime) => {
+      this._lastDisconnect = new Date(lastEventTime);
+    });
+    webSocketManager.onUpdateAvailable(() => {
+      serviceWorkerManagerP.then(serviceWorkerManager => {
+        serviceWorkerManager.update(true);
+      });
+      for (const listener of Array.from(this._updateAvailableListeners)) {
+        listener(true);
+      }
+    });
+    // The page's HTTP device login runs once, on the first socket connect
+    // (the server is reachable then); reconnects only log the socket in.
+    webSocketManager.onSocketConnected(() => {
+      if (!this._autoLoginTriggered) {
+        this._autoLoginTriggered = true;
+        loginManagerP.then(loginManager => loginManager.autoLogin()).catch(e => {
+          console.error("Error in autoLogin", e);
+        });
+      }
+    });
 
     loginManagerP.then(loginManager => {
       this.setLoginState(loginManager.state);
       loginManager.onStateChange = this.setLoginState.bind(this);
       loginManager.onError = this.onError.bind(this, "LoginManager");
+      // the login manager knows the stored device now: connect
+      webSocketManager.start();
     });
 
     serviceWorkerManagerP.then(serviceWorkerManager => {
@@ -79,6 +112,7 @@ export class ConnectionManager {
 
   /* GETTERS & SETTERS */
 
+  /** @deprecated see `_lastDisconnect` */
   get lastDisconnect(): Date {
     return this._lastDisconnect;
   }
@@ -86,19 +120,18 @@ export class ConnectionManager {
     this._lastDisconnect = value;
   }
 
-  // tab state
+  /**
+   * @deprecated compatibility shim: every tab owns its socket, there are no
+   * tab roles. Always `'active'`; `tabStateChange` listeners never fire.
+   * Remove with the last reader (channel.ts, wave 2).
+   */
   get tabState(): Common.TabState {
-    return this._tabState;
+    return 'active';
   }
-  private setTabState(tabState: Common.TabState): void {
-    const oldState = this._tabState;
-    if (oldState !== tabState) {
-      this._tabState = tabState;
-      for (const listener of Array.from(this._tabStateListeners)) {
-        listener(tabState);
-      }
-    }
-    this.cleanUpIndexedDbs();
+
+  /** A newer build is deployed (see Transport.updateAvailable). */
+  get updateAvailable(): boolean {
+    return webSocketManager.updateAvailable;
   }
 
   // serviceworker state
@@ -129,7 +162,7 @@ export class ConnectionManager {
     }
   }
 
-  // websocket state
+  // websocket state: `connected` only while live (Transport.live)
   get webSocketState(): Common.WebSocketState {
     return this._webSocketState;
   }
@@ -137,68 +170,44 @@ export class ConnectionManager {
     const oldState = this._webSocketState;
     if (oldState !== webSocketState) {
       this._webSocketState = webSocketState;
-      switch (webSocketState) {
-        case "connected": {
-          loginManagerP.then(loginManager => {
-            const loginManagerAction = async () => {
-              if (!this._autoLoginTriggered) {
-                this._autoLoginTriggered = true;
-                await loginManager.autoLogin();
-              }
-              else {
-                await loginManager.checkLoginStatus(!this._initialWsConnection);
-              }
-            };
-            // only do login things in active tab
-            if (webSocketManager.tabState === 'active' || webSocketManager.tabState === 'active-throttled') {
-              loginManagerAction().catch(e => {
-                console.error("Error in loginManagerAction", e);
-              });
-            }
-            // if we're in unknown state, we need to wait for the tab to become active
-            // but it might take up to 3 seconds, so we need to check every 500ms
-            else if (webSocketManager.tabState === 'unknown') {
-              let counter = 0;
-              const interval = setInterval(() => {
-                if (webSocketManager.tabState === 'active' || webSocketManager.tabState === 'active-throttled') {
-                  clearInterval(interval);
-                  loginManagerAction().catch(e => {
-                    console.error("Error in delayed loginManagerAction", e);
-                  });
-                }
-                else {
-                  counter++;
-                  if (counter >= 6) {
-                    clearInterval(interval);
-                  }
-                }
-              }, 500);
-            }
-
-            if (this._initialWsConnection) {
-              this._initialWsConnection = false;
-              this.emit({ type: 'cliConnectionEstablished' });
-            } else {
-              this.emit({ type: 'cliConnectionRestored' });
-            }
-          });
-          break;
-        }
-        case "version-update": {
-          serviceWorkerManagerP.then(serviceWorkerManager => {
-            serviceWorkerManager.update(true);
-          });
-          break;
-        }
-        case "disconnected": {
-          this.emit({ type: 'cliConnectionLost', lastKnownConnectionTime: webSocketManager.lastEventTime });
-          break;
-        }
+      if (webSocketState === "disconnected") {
+        this.emit({ type: 'cliConnectionLost', lastKnownConnectionTime: webSocketManager.lastEventTime });
       }
       for (const listener of Array.from(this._webSocketStateListeners)) {
         listener(webSocketState);
       }
     }
+  }
+
+  /**
+   * The app events of the old cache fire when the tab is live (socket
+   * logged in, rooms joined), not on the raw socket connect. After a gap the
+   * community/chat data is refreshed (debounced) — the catch-up the forced
+   * device login of every reconnect used to do.
+   */
+  private onLive(kind: LiveKind): void {
+    if (kind === 'established') {
+      this.emit({ type: 'cliConnectionEstablished' });
+    }
+    else if (kind === 'restored') {
+      this.emit({ type: 'cliConnectionRestored' });
+      this.scheduleRefreshAfterRestore();
+    }
+  }
+
+  private scheduleRefreshAfterRestore(): void {
+    if (this._refreshTimer !== undefined) {
+      clearTimeout(this._refreshTimer);
+    }
+    this._refreshTimer = setTimeout(() => {
+      this._refreshTimer = undefined;
+      if (!webSocketManager.live) {
+        return;
+      }
+      loginManagerP
+        .then(loginManager => loginManager.refreshAfterReconnect())
+        .catch(e => console.error("Error refreshing data after reconnect", e));
+    }, REFRESH_AFTER_RESTORE_DEBOUNCE_MS);
   }
 
   // loginstate
@@ -232,7 +241,8 @@ export class ConnectionManager {
       for (const listener of Array.from(this._visibilityStateListeners)) {
         listener(this._visibilityState);
       }
-      // we might have been in the background for a while, check if we're still online
+      // we might have been in the background for a while, check if we're
+      // still online and logged in (the socket handles its own reconnect)
       if (this._visibilityState === "visible") {
         this.setOnlineState(navigator.onLine ? "online" : "offline", false);
         if (navigator.onLine) {
@@ -240,7 +250,6 @@ export class ConnectionManager {
             loginManager.checkLoginStatus();
           });
         }
-        webSocketManager.checkConnectionStatus();
       }
     }
   }
@@ -249,26 +258,23 @@ export class ConnectionManager {
   get onlineState(): Common.OnlineState {
     return this._onlineState;
   }
-  private setOnlineState(onlineState: Common.OnlineState, checkLoginAndWs = true): void {
+  private setOnlineState(onlineState: Common.OnlineState, checkLogin = true): void {
     if (onlineState !== this._onlineState) {
       this._onlineState = onlineState;
       for (const listener of Array.from(this._onlineStateListeners)) {
         listener(onlineState);
       }
-      if (checkLoginAndWs) {
-        if (onlineState === "online") {
-          loginManagerP.then(loginManager => {
-            loginManager.checkLoginStatus();
-          });
-        }
-        webSocketManager.checkConnectionStatus();
+      if (checkLogin && onlineState === "online") {
+        loginManagerP.then(loginManager => {
+          loginManager.checkLoginStatus();
+        });
       }
     }
   }
 
-  // indexedDb cleanup
+  // indexedDb cleanup: once per page, in every tab (deleting a database is idempotent)
   private cleanUpIndexedDbs(): void {
-    if (!this._cleanUpIndexedDbsPromise && (this._tabState === 'active' || this._tabState === 'active-throttled')) {
+    if (!this._cleanUpIndexedDbsPromise) {
       this._cleanUpIndexedDbsPromise = new Promise((resolve, reject) => {
         setTimeout(async () => {
           console.log("SPAWNING DB CLEANUP JOB...");
@@ -283,6 +289,7 @@ export class ConnectionManager {
           }
         }, 10_000);
       });
+      this._cleanUpIndexedDbsPromise.catch(() => undefined);
     }
   }
 
@@ -322,7 +329,9 @@ export class ConnectionManager {
   public addListener(type: "loginStateChange", fn: LoginStateListener): void;
   public addListener(type: "visibilityStateChange", fn: VisibilityStateListener): void;
   public addListener(type: "onlineStateChange", fn: OnlineStateListener): void;
+  /** @deprecated never fires (no tab roles) */
   public addListener(type: "tabStateChange", fn: TabStateListener): void;
+  public addListener(type: "updateAvailableChange", fn: UpdateAvailableListener): void;
   public addListener(type: "error", fn: ErrorListener): void;
   public addListener(type: "serviceWorkerNavigate", fn: (url: string) => void): void;
   public addListener(type: string, fn: any): void {
@@ -340,6 +349,8 @@ export class ConnectionManager {
       this._onlineStateListeners.add(fn);
     } else if (type === "tabStateChange") {
       this._tabStateListeners.add(fn);
+    } else if (type === "updateAvailableChange") {
+      this._updateAvailableListeners.add(fn);
     } else if (type === "error") {
       this._errorListeners.add(fn);
     } else if (type === "serviceWorkerNavigate") {
@@ -353,7 +364,9 @@ export class ConnectionManager {
   public removeListener(type: "loginStateChange", fn: LoginStateListener): void;
   public removeListener(type: "visibilityStateChange", fn: VisibilityStateListener): void;
   public removeListener(type: "onlineStateChange", fn: OnlineStateListener): void;
+  /** @deprecated never fires (no tab roles) */
   public removeListener(type: "tabStateChange", fn: TabStateListener): void;
+  public removeListener(type: "updateAvailableChange", fn: UpdateAvailableListener): void;
   public removeListener(type: "error", fn: ErrorListener): void;
   public removeListener(type: "serviceWorkerNavigate", fn: (url: string) => void): void;
   public removeListener(type: string, fn: any): void {
@@ -371,6 +384,8 @@ export class ConnectionManager {
       this._onlineStateListeners.delete(fn);
     } else if (type === "tabStateChange") {
       this._tabStateListeners.delete(fn);
+    } else if (type === "updateAvailableChange") {
+      this._updateAvailableListeners.delete(fn);
     } else if (type === "error") {
       this._errorListeners.delete(fn);
     } else if (type === "serviceWorkerNavigate") {

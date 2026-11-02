@@ -9,8 +9,8 @@
 > commit 9fc05a9, 2026-11-01; session settings and the socket's session room
 > against commit eab2a27, 2026-11-01; the session store TTLs, `sess-user:`, the session
 > generations and signing out other devices (§3, key prefixes) against commit 23a4c1e, 2026-11-01;
-> the memberlist's empty lists, new-channel seeding and channel-event retry (§4) against the
-> chat-sync/develop-guards branch, 2026-11-02
+> the memberlist's empty lists, new-channel seeding and channel-event retry (§4) against
+> commit 2e72119, 2026-11-02
 
 # Common Ground - Architecture Documentation
 

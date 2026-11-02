@@ -9,7 +9,7 @@
 > commit 9fc05a9, 2026-11-01; session settings and the socket's session room
 > against commit eab2a27, 2026-11-01; the session store TTLs, `sess-user:`, the session
 > generations and signing out other devices (§3, key prefixes) against commit 23a4c1e, 2026-11-01;
-> online status management and the wsapi shutdown row against commit fc66601, 2026-11-02
+> online status management and the wsapi shutdown row against commit fc15832, 2026-11-02
 
 # Common Ground - Architecture Documentation
 
@@ -471,7 +471,7 @@ API Server (handles POST /Message/sendMessage)
 
 **Built-in socket events** include: `buildId` (server→client build id for version checks), `cgPing` (latency), `getSignableSecret`, `login`, `logout`, `joinCommunityVisitorRoom` / `leaveCommunityVisitorRoom` (public-community visitors), and `prepareWalletRequest`. Bot connections additionally drive server-derived presence streams.
 
-**Online status management** (`srv/util/presence.ts`): on `login` the user is tracked by the process and marked `online` (only from `offline`); when a user's last socket on the process goes (`disconnect`/`logout`), they are marked `offline` only if no socket of theirs exists anywhere in the cluster after a 30 s grace period (a reconnect within it cancels); events go out only on a real change; a 60 s heartbeat touches all tracked users (grace period included); graceful shutdown leaves human users to their reconnect or to the 90 s stale job. Details: [docs/realtime](../realtime/README.md#online-status--heartbeat).
+**Online status management** (`srv/util/presence.ts`): on `login` the user is tracked by the process and marked `online` (only from `offline`); when a user's last socket on the process goes (`disconnect`/`logout`), they are marked `offline` only if no socket of theirs exists anywhere in the cluster after a 30 s grace period (a reconnect within it cancels; decisions due together share one cluster lookup and one write); events go out only on a real change; a 60 s heartbeat touches all tracked users (users in their grace period: timestamp only, no flip back to online); graceful shutdown leaves human users to their reconnect or to the 90 s stale job, which also emits the offline to clients. Details: [docs/realtime](../realtime/README.md#online-status--heartbeat).
 
 ### Pattern 3: WebRTC Signaling (protoo)
 

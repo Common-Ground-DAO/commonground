@@ -30,7 +30,8 @@
 > raw routes and `asyncHandler`, §8) against commit 56e7c34, 2026-11-01;
 > TypeORM 1.x (wave M2: `srv/util/datasource.ts`, §8) against commit 8dcbb42,
 > 2026-11-01; `callUpdateEmitter.ts` (call-ending sweeps, events), `/setChannelLastRead`
-> and the test list against commit 591e6cf, 2026-11-02.
+> and the test list against commit 591e6cf, 2026-11-02; `onlineStatusCheck.ts` against commit
+> fc15832, 2026-11-02.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -1328,8 +1329,8 @@ Located in `srv/jobs/`. All jobs are designed to run as **worker threads** (they
 - **Logic:** Queries features expiring within 3 minutes that have `autoRenew` set. Checks if the entity has enough point balance. If so, deducts points and extends the active period. Emits real-time events on renewal or expiration.
 
 ### `onlineStatusCheck.ts`
-- **Purpose:** Sets stale users to offline.
-- **Logic:** Updates users whose `onlineStatusUpdatedAt` is older than 90 seconds and status is not already offline. Simple cleanup query.
+- **Purpose:** Sets stale users to offline (fallback for wsapi processes that crashed, stopped, or lost a presence decision).
+- **Logic:** `setStaleUsersOffline` (`srv/repositories/userPresence.ts`, a light module so the job does not load all of `users.ts`) updates users whose `onlineStatusUpdatedAt` is older than 90 seconds and status is not already offline, resets the socket count of stale bots, and emits `cliUserData { onlineStatus: 'offline' }` to each changed user's communities. The job then waits for the Redis publishes (`PING` on the emitter connection) and exits. See [docs/realtime](../realtime/README.md#online-status--heartbeat).
 
 ### `stakingAccrual.ts`
 - **Purpose:** Credits Spark for on-chain staking positions.

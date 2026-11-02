@@ -19,7 +19,8 @@
 > 2026-10-31; backup and restore (§3.1 backup settings, §3.2 commands, §3.7)
 > against commit 818d4c6, 2026-11-01; drill isolation (§3.7 drill mode, the
 > `up` row in §3.2) against commit f5f0639, 2026-11-01; the frontend build's
-> memory figures under Vite 8 (wave M3) against commit 3e8b08e, 2026-11-01
+> memory figures under Vite 8 (wave M3) against commit 3e8b08e, 2026-11-01; the
+> `CG_ENABLE_BLOCKCHAIN` row (§3.8) against commit a3d0b62, 2026-11-02
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -626,7 +627,7 @@ commands, their pre-flight checks and what was and was not verified are in
 | Switch | Default | Effect when `false` |
 |---|---|---|
 | `CG_ENABLE_CALLS` | `true` | no `mediasoup` container; the instance config ships `features.calls: false`, so both call entry points hide: the community sidebar (`CallList` / `StartCallButton`) and the event path (`ScheduleEventModal` offers only `external` events, `AttendEventButton` drops "Start Event" / "Join now"). Ports 4443/tcp and 40000–40099/udp+tcp are not published |
-| `CG_ENABLE_BLOCKCHAIN` | `true` | no `onchain` container; `CG_ENABLE_BLOCKCHAIN=false` also reaches the `api` process, where `OnchainHelper` fails fast with `SERVICE_UNAVAILABLE` instead of waiting out the 10 s HTTP timeout per request |
+| `CG_ENABLE_BLOCKCHAIN` | `true` | no `onchain` container; `CG_ENABLE_BLOCKCHAIN=false` also reaches the `api` process, where `OnchainHelper` fails fast with `SERVICE_UNAVAILABLE` instead of waiting out the 10 s HTTP timeout per request (the community role-claimability check the join and roles views make answers "nothing claimable" instead) |
 
 Both default to on, so an `.env.selfhost` generated before these switches
 existed keeps the full stack.

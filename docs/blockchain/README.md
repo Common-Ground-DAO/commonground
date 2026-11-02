@@ -4,7 +4,8 @@
 > stack (sections on `App.tsx` and `UserOnchainProvider`) re-verified against the
 > 2026-08-04 wagmi-2 migration; the wallet-list sentence and the transports
 > bullet against commit 935232158, 2026-10-31; the "Key Frontend Files for Wallet
-> Operations" table against commit ff0da06, 2026-10-31.
+> Operations" table against commit ff0da06, 2026-10-31; the `CG_ENABLE_BLOCKCHAIN=false`
+> role-claimability answer against commit a3d0b62, 2026-11-02.
 
 This document covers all blockchain-related subsystems in Common Ground: smart contracts, on-chain data reading, token-gated roles, wallet management, token staking, and the API surface connecting them. The token sale itself was removed in the Phase-2 slimming (2026-08-01) — only its contract source and its database tables remain, for auditability.
 
@@ -56,7 +57,7 @@ Reward accrual for staking runs as a scheduled worker job (`srv/jobs/stakingAccr
 
 The entire blockchain layer is optional. Chains for which no working RPC endpoint is configured degrade gracefully: the onchain service's premium-token bootstrap and event-listener setup catch their own failures and log/degrade instead of crashing the process. Staking is off unless explicitly configured (see [Token Staking](#token-staking)).
 
-The service can also be left out of a deployment entirely: in the self-host profile it sits behind the Compose profile `blockchain`, disabled with `CG_ENABLE_BLOCKCHAIN=false` (see [docs/deployment §3.8](../deployment/README.md#38-optional-services-calls-and-blockchain)). The same variable reaches the `api` process, where `OnchainHelper` then rejects immediately with `SERVICE_UNAVAILABLE` instead of waiting out the 10 s HTTP timeout to `http://onchain:4000`. Consequences: token-gated roles are never re-evaluated (existing assignments are left alone), balances are not refreshed, staking positions are not indexed, Spark purchases are not credited and LUKSO Universal Profile login fails. EVM/SIWE wallet login is unaffected — signatures are verified inside the `api` process.
+The service can also be left out of a deployment entirely: in the self-host profile it sits behind the Compose profile `blockchain`, disabled with `CG_ENABLE_BLOCKCHAIN=false` (see [docs/deployment §3.8](../deployment/README.md#38-optional-services-calls-and-blockchain)). The same variable reaches the `api` process, where `OnchainHelper` then rejects immediately with `SERVICE_UNAVAILABLE` instead of waiting out the 10 s HTTP timeout to `http://onchain:4000` — except `checkCommunityRoleClaimability`, which the join modal, the gated-content dialog and the roles list ask on every visit: it answers `[]` (nothing claimable), and the client connector also treats a failed check as nothing claimable. Consequences: token-gated roles are never re-evaluated (existing assignments are left alone), balances are not refreshed, staking positions are not indexed, Spark purchases are not credited and LUKSO Universal Profile login fails. EVM/SIWE wallet login is unaffected — signatures are verified inside the `api` process.
 
 ---
 

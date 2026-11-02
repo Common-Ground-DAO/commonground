@@ -18,6 +18,7 @@ import { createTranslator } from "short-uuid";
 import fileHelper from "../repositories/files";
 import axios from "../util/axios";
 import { convertBinaryMemberListToUuid, convertBinaryToUuid, convertUuidToBinary } from "../util/memberListHelpers";
+import { channelMemberListOrEmpty, memberListOrEmpty } from "../common/memberLists";
 import newsletterHelper from "../repositories/newsletter";
 import dayjs from "dayjs";
 import emailUtils from "./emails";
@@ -210,7 +211,8 @@ API.Community.getMemberList.Response
       },
     );
 
-    return convertBinaryMemberListToUuid(memberList.data);
+    // memberlist answered an empty body for a community it does not know yet
+    return convertBinaryMemberListToUuid(memberListOrEmpty(memberList.data));
   }
 );
 
@@ -236,7 +238,8 @@ API.Community.getChannelMemberList.Response
       },
     );
 
-    return convertBinaryMemberListToUuid(memberList.data);
+    // memberlist answered an empty body for a channel it does not know yet
+    return convertBinaryMemberListToUuid(channelMemberListOrEmpty(memberList.data));
   }
 );
 

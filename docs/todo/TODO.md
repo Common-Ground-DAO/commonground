@@ -290,13 +290,9 @@ that stack — confirm and delete:
 
 - [ ] **App errors the e2e suite reports** (2026-11-01, `e2e/` guards; each fails
   its flow until fixed or allowlisted with a reason):
-  - joining a community with `CG_ENABLE_BLOCKCHAIN=false`: `checkCommunityRoleClaimability`
-    answers `SERVICE_UNAVAILABLE` and the frontend leaves it unhandled;
   - an empty Giphy key still calls Giphy (401, unhandled `@giphy/js-fetch-api: Unauthorized`);
   - article editor: `IndexSizeError: getRangeAt` (uncaught); `getLatestArticleSentAsNewsletterDate`
     answers `NOT_ALLOWED` for the community owner;
-  - channel creation logs "Channel does not have permissions for Admin, this is a bug", and
-    `getChannelMemberList` sometimes answers `UNKNOWN`;
   - the call chat sometimes sends `loadMessages` with `{callId, channelId, communityId}`, which
     fails the access validator (`VALIDATION`);
   - the "edited" marker never shows for the other user;
@@ -305,10 +301,8 @@ that stack — confirm and delete:
     article does not exist;
   - found by the M3 navigation smoke (2026-11-01, same on a1460cb): a deep link to `/store/`
     throws unhandled `NOT_FOUND` (`getCommunityDetailView`) and `VALIDATION`
-    (`getArticleList`); a deep link to `/c/<community>/roles/` throws the
-    `checkCommunityRoleClaimability` `SERVICE_UNAVAILABLE` above; a deep link to a
-    non-existent profile article (`/u/<id>/article/<bad>/`) logs "Article uri invalid" and
-    never leaves the loading screen.
+    (`getArticleList`); a deep link to a non-existent profile article
+    (`/u/<id>/article/<bad>/`) logs "Article uri invalid" and never leaves the loading screen.
 - [ ] **A sole broadcaster's dropped or replaced connection ends the broadcast** (2026-11-02,
   G13 review) — the peer `close` handler in `srv/mediasoup/room.ts` closes the room as soon
   as no broadcaster is left, and `handleProtooConnection` closes a peer's previous

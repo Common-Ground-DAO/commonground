@@ -76,3 +76,31 @@ describe('onchainHelper response envelopes', () => {
     await expect(onchainHelper.getErc20Balance('eth', UP as any, UP as any)).resolves.toBe('42');
   });
 });
+
+describe('onchainHelper without the onchain service (CG_ENABLE_BLOCKCHAIN=false)', () => {
+  let disabledHelper: typeof onchainHelper;
+  const previous = process.env.CG_ENABLE_BLOCKCHAIN;
+
+  beforeAll(() => {
+    process.env.CG_ENABLE_BLOCKCHAIN = 'false';
+    jest.isolateModules(() => {
+      disabledHelper = require('../repositories/onchain').default;
+    });
+  });
+  afterAll(() => {
+    if (previous === undefined) delete process.env.CG_ENABLE_BLOCKCHAIN;
+    else process.env.CG_ENABLE_BLOCKCHAIN = previous;
+  });
+  beforeEach(() => axiosPost.mockReset());
+
+  it('answers "nothing claimable" for the community role check, without a request', async () => {
+    await expect(disabledHelper.checkCommunityRoleClaimability({ userId: 'u', communityId: 'c' })).resolves.toEqual([]);
+    expect(axiosPost).not.toHaveBeenCalled();
+  });
+
+  it('still fails the calls that cannot be answered without the service', async () => {
+    await expect(disabledHelper.luksoIsValidSignature(UP, '0xsig', 'msg')).rejects.toThrow('SERVICE_UNAVAILABLE');
+    await expect(disabledHelper.getErc20Balance('eth', UP as any, UP as any)).rejects.toThrow('SERVICE_UNAVAILABLE');
+    expect(axiosPost).not.toHaveBeenCalled();
+  });
+});

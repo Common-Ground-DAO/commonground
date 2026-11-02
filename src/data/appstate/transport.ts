@@ -73,6 +73,9 @@ export const RESUME_MIN_HIDDEN_MS = 30_000;
  * Kind of a "live" transition.
  * - `established`: first time live in this page load.
  * - `restored`: live again after the socket was lost or closed by policy.
+ * - `user`: live again on the same socket after its user changed (login,
+ *   user switch, logout), which changes its rooms. `live` is false from the
+ *   start of a socket login until its ack.
  *
  * connectionManager emits the app events `cliConnectionEstablished` /
  * `cliConnectionRestored` exactly at these transitions (no longer on the raw
@@ -112,7 +115,9 @@ export interface Transport {
    * anonymous tab: socket connected and the socket-scoped joins re-sent
    * (community visitor rooms, CG ID watch). Events emitted by the server
    * before that moment are lost; a catch-up started on `onLive` covers them.
-   * "SECURITY_STEP_REQUIRED" or "ERROR" acks are not live.
+   * "SECURITY_STEP_REQUIRED" or "ERROR" acks are not live. `live` is false
+   * from the start of every socket login (also a login or user switch on a
+   * connected socket) until its ack.
    */
   readonly live: boolean;
   /** Fires on every transition to live (see LiveKind). */
@@ -150,6 +155,12 @@ export interface Transport {
    * falls back to the per-device exclusion. The id changes on reconnect;
    * requests in flight across a reconnect may echo back, which the data
    * layer handles by id.
+   *
+   * Requests that create per-socket server state (today: article event
+   * rooms via `Message/joinArticleEventRoom`) are sent only while `live`
+   * and re-sent on every `onLive` (any kind): a new socket, or a socket
+   * whose user changed, starts without that state, and a join sent while not
+   * live targets no socket (the fallback id) and has no effect.
    */
   getRequestSocketId(): string;
 }
@@ -184,9 +195,11 @@ export const AUTH_BROADCAST_CHANNEL = 'cg:auth';
  * - `logged-out`: emit socket `logout` (or disconnect), drop all in-memory
  *   data (stores' `clear()`), become anonymous and reconnect as anonymous.
  *   They do NOT call `User/logout` again.
- * - `logged-in`: if this tab is anonymous or has another `userId`, re-check
- *   the session (`User/checkLoginStatus`) and run its own in-memory setup;
- *   no second HTTP login.
+ * - `logged-in`: if this tab is anonymous, re-check the session
+ *   (`User/checkLoginStatus`) and run its own in-memory setup; no second
+ *   HTTP login. If this tab is logged in as another `userId`, handle it as
+ *   `logged-out` first (drop socket login and memory), then as `logged-in`.
+ *   Same `userId`: nothing to do.
  * The `storage` event on the existing `CG_CURRENT_USER` localStorage key
  * (removed/changed) stays the fallback trigger for both (BroadcastChannel can
  * be missing or the message lost); handlers must be idempotent.

@@ -153,6 +153,8 @@ class NotificationStoreImpl implements NotificationStore {
    * was missed meanwhile, so the next `init` reloads the newest page
    */
   private stale = false;
+  /** ids deleted by live events while a stale reload is in flight */
+  private reloadDeleted: Set<string> | null = null;
   private startsAtBeginning = false;
   private loading: Promise<void> | null = null;
   private olderLoading: Promise<void> | null = null;
@@ -259,6 +261,7 @@ class NotificationStoreImpl implements NotificationStore {
         const before = this.items.length;
         this.items = this.items.filter(n => !ids.has(n.id));
         change = this.items.length !== before;
+        if (this.reloadDeleted) for (const id of ids) this.reloadDeleted.add(id);
         break;
       }
       case 'allread': {
@@ -343,18 +346,30 @@ class NotificationStoreImpl implements NotificationStore {
       const generation = this.generation;
       const reload = this.loaded;
       // items present at the start of a reload are replaced by the page;
-      // the ones live events add or change meanwhile are kept
+      // the ones live events add or change meanwhile are kept if they lie
+      // within the page's range (an older one would hide the gap below the
+      // page from loadOlder), and ids deleted meanwhile stay deleted
       const before = new Set(this.items);
+      const deleted = reload ? new Set<string>() : null;
+      this.reloadDeleted = deleted;
+      const done = () => {
+        if (this.reloadDeleted === deleted) this.reloadDeleted = null;
+      };
       this.loading = this.deps.api.loadNotifications({ order: 'DESC' }).then(
-        page => {
+        raw => {
           this.loading = null;
+          done();
           if (generation !== this.generation) return;
-          const during = reload ? this.items.filter(n => !before.has(n)) : [];
+          const page = raw.map(fromApi).sort(compare);
+          let during: Notification[] = [];
           if (reload) {
+            const oldest = page[0];
+            during = this.items.filter(n => !before.has(n)
+              && (page.length < PAGE_SIZE || n.createdAt.getTime() >= oldest.createdAt.getTime()));
             this.items = [];
             this.stale = false;
           }
-          for (const n of page.map(fromApi)) this.upsert(n);
+          for (const n of page) if (!deleted?.has(n.id)) this.upsert(n);
           for (const n of during) this.upsert(n);
           this.startsAtBeginning = page.length < PAGE_SIZE;
           this.loaded = true;
@@ -362,6 +377,7 @@ class NotificationStoreImpl implements NotificationStore {
         },
         e => {
           this.loading = null;
+          done();
           throw e;
         },
       );
@@ -588,6 +604,7 @@ class NotificationStoreImpl implements NotificationStore {
     this.items = [];
     this.loaded = false;
     this.stale = false;
+    this.reloadDeleted = null;
     this.loading = null;
     this.olderLoading = null;
     this.startsAtBeginning = false;

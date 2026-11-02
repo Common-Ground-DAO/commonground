@@ -351,4 +351,82 @@ describe('NotificationStore: list reopened after a resync without an open window
     expect(w.state.items.map(n => n.text)).toEqual(['a', 'during']);
     w.destroy();
   });
+
+  async function staleAfterGap(server: FakeChatServer) {
+    server.goOffline();
+    server.goLive();
+    await vi.advanceTimersByTimeAsync(NOTIFICATION_RESYNC_DEBOUNCE_MS);
+    await settle();
+  }
+
+  it('an update of an item older than the reloaded page leaves no gap for loadOlder', async () => {
+    const { server, store } = setup();
+    const ids: string[] = [];
+    for (let i = 0; i < 45; i++) {
+      const ev = server.addNotification({ text: 'n' + i }, { deliver: false }) as { data: { id: string } };
+      ids.push(ev.data.id);
+      await vi.advanceTimersByTimeAsync(1000);
+    }
+    let w = await reopen(store);
+    const p0 = w.loadOlder(30);
+    await settle();
+    await p0;
+    expect(w.state.items).toHaveLength(45);
+    w.destroy();
+    await staleAfterGap(server);
+    server.hold('loadNotifications');
+    w = store.openList();
+    const p = w.init({ type: 'recent' });
+    await settle();
+    server.readNotificationElsewhere(ids[0]); // delivered while the page is in flight
+    server.release('loadNotifications');
+    await settle();
+    await p;
+    for (let i = 0; i < 5; i++) {
+      const q = w.loadOlder(30);
+      await settle();
+      await q;
+    }
+    expect(w.state.items.map(n => n.text)).toEqual(Array.from({ length: 45 }, (_, i) => 'n' + i));
+    expect(w.state.items[0].read).toBe(true);
+    w.destroy();
+  });
+
+  it('a delete during the reload stays deleted (the page computed earlier does not bring it back)', async () => {
+    const { server, store } = setup();
+    const a = server.addNotification({ text: 'a' }, { deliver: false }) as { data: { id: string } };
+    server.addNotification({ text: 'b' }, { deliver: false });
+    let w = await reopen(store);
+    w.destroy();
+    await staleAfterGap(server);
+    server.hold('loadNotifications');
+    w = store.openList();
+    const p = w.init({ type: 'recent' });
+    await settle();
+    server.deleteNotifications([a.data.id]); // delivered while the page is in flight
+    server.release('loadNotifications');
+    await settle();
+    await p;
+    expect(w.state.items.map(n => n.text)).toEqual(['b']);
+    w.destroy();
+  });
+
+  it('no duplicate when the in-flight page already contains the live item', async () => {
+    const { server, store } = setup();
+    server.addNotification({ text: 'a' }, { deliver: false });
+    let w = await reopen(store);
+    w.destroy();
+    await staleAfterGap(server);
+    const ev = server.addNotification({ text: 'live' }, { deliver: false });
+    server.hold('loadNotifications');
+    w = store.openList();
+    const p = w.init({ type: 'recent' });
+    await settle();
+    server.deliverNotification(ev);
+    server.release('loadNotifications');
+    await settle();
+    await p;
+    expect(w.state.items.map(n => n.text)).toEqual(['a', 'live']);
+    w.destroy();
+  });
 });

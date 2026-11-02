@@ -14,7 +14,7 @@
  * path, which becomes `loadOlder`/`loadNewer`. `shrink*` becomes `trim`.
  */
 
-import type { ChannelWindow } from 'data/chat/types';
+import { WINDOW_ERROR, type ChannelWindow, type ReadMarker } from 'data/chat/types';
 
 type Message = Models.Message.Message;
 type State = Models.ItemList.ItemListState<Message>;
@@ -50,8 +50,13 @@ export class LegacyItemList implements Models.ItemList.ItemList<Message> {
   private readonly unsubscribe: () => void;
   private destroyed = false;
   private cached: { from: State; out: State } | null = null;
+  private marker: ReadMarker | null = null;
 
-  constructor(readonly window: ChannelWindow, private readonly onDestroy: (list: LegacyItemList) => void) {
+  constructor(
+    readonly window: ChannelWindow,
+    private readonly onDestroy: (list: LegacyItemList) => void,
+    private readonly createMarker: () => ReadMarker,
+  ) {
     this.unsubscribe = window.subscribe(() => {
       const state = this.state;
       for (const l of [...this.listeners]) l(state);
@@ -70,7 +75,32 @@ export class LegacyItemList implements Models.ItemList.ItemList<Message> {
   }
 
   init(options: Models.ItemList.ItemListInitOptions): Promise<number> {
-    return this.window.init(options);
+    // replaced by a later init (e.g. the re-init after a logout): not an error for the old callers
+    return this.window.init(options).catch((e: unknown) => {
+      if (e instanceof Error && e.message === WINDOW_ERROR.SUPERSEDED) return 0;
+      throw e;
+    });
+  }
+
+  /**
+   * Legacy read mark (setChannelLastRead): this list's marker reports the
+   * newest shown server message at or before `date`. The marker stays, so a
+   * mark reported while the tab is hidden is sent once it is visible.
+   * Returns whether such a message is shown.
+   */
+  markUpTo(date: Date): boolean {
+    if (this.destroyed) return false;
+    const t = date.getTime();
+    let newest: Message | undefined;
+    for (const item of this.window.state.items) {
+      if (item.sendStatus !== undefined) continue;
+      const ms = item.createdAt.getTime();
+      if (ms <= t && (!newest || ms > newest.createdAt.getTime())) newest = item;
+    }
+    if (!newest) return false;
+    if (!this.marker) this.marker = this.createMarker();
+    this.marker.update({ atLatest: true, atBottom: true, newest: { id: newest.id, createdAt: newest.createdAt } });
+    return true;
   }
 
   addUpdateListener(listener: Models.ItemList.ItemListUpdateListener<Message>): void {
@@ -93,6 +123,8 @@ export class LegacyItemList implements Models.ItemList.ItemList<Message> {
   destroy(notify = true): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.marker?.dispose();
+    this.marker = null;
     this.unsubscribe();
     this.window.destroy();
     this.onDestroy(this);

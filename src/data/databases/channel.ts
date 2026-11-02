@@ -73,8 +73,13 @@ class ChannelManager {
   }
 
   /** ChannelStore.watchMessage: reply parents, pinned messages (no window needed) */
-  public watchMessage(channelId: string, messageId: string, onChange: (message: Message | undefined) => void): Unsubscribe {
-    return chat.channels.watchMessage(channelId, messageId, onChange);
+  public watchMessage(
+    channelId: string,
+    messageId: string,
+    onChange: (message: Message | undefined) => void,
+    onError?: (error: unknown) => void,
+  ): Unsubscribe {
+    return chat.channels.watchMessage(channelId, messageId, onChange, onError);
   }
 
   /** ReadStateStore.createMarker: one per mounted message window */
@@ -147,7 +152,9 @@ class ChannelManager {
 
   /**
    * @deprecated use `watchMessage`. Resolves with the message once it is
-   * known (from memory, else fetched); later changes go to `onchange`.
+   * known (from memory, else fetched), or with `item: undefined` when the
+   * first fetch fails (the watch stays and retries on the next live signal);
+   * later changes go to `onchange`.
    */
   public getMessageById(
     channelId: string,
@@ -173,6 +180,11 @@ class ChannelManager {
         } else if (!unsubscribed) {
           onchange(message);
         }
+      }, () => {
+        // the caller gets its unsubscribe even if the message cannot be fetched now
+        if (!first) return;
+        first = false;
+        resolve(result);
       });
       if (unsubscribed) unsubscribe();
     });
@@ -180,23 +192,12 @@ class ChannelManager {
 
   /**
    * @deprecated the list marks through `createMarker(channelId).update(...)`.
-   * One mark up to the shown message with this createdAt (the newest shown
-   * one at or before it), through the read-state store.
+   * Marks up to the shown message with this createdAt (the newest shown one
+   * at or before it) through each legacy list's marker in the read-state
+   * store (kept per list, so a hidden tab's mark is sent once visible).
    */
   public setChannelLastRead(channelId: string, lastRead: Date) {
-    const t = lastRead.getTime();
-    let newest: Message | undefined;
-    for (const list of this.legacyLists.get(channelId) ?? []) {
-      for (const item of list.window.state.items) {
-        if (item.sendStatus !== undefined) continue;
-        const ms = item.createdAt.getTime();
-        if (ms <= t && (!newest || ms > newest.createdAt.getTime())) newest = item;
-      }
-    }
-    if (!newest) return;
-    const marker = chat.readState.createMarker(channelId);
-    marker.update({ atLatest: true, atBottom: true, newest: { id: newest.id, createdAt: newest.createdAt } });
-    marker.dispose();
+    for (const list of this.legacyLists.get(channelId) ?? []) list.markUpTo(lastRead);
   }
 
   /** @deprecated windows load by themselves */
@@ -228,7 +229,7 @@ class ChannelManager {
           const set = this.legacyLists.get(channelId);
           set?.delete(l);
           if (set?.size === 0) this.legacyLists.delete(channelId);
-        });
+        }, () => chat.readState.createMarker(channelId));
         lists.add(list);
         let set = this.legacyLists.get(channelId);
         if (!set) this.legacyLists.set(channelId, (set = new Set()));

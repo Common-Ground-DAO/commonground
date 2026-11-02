@@ -850,12 +850,13 @@ class LoginManager {
             if (outcome.kind === 'superseded') {
               // this tab's device is not the stored one any more
               this._currentUser = null;
+              // either way this account's in-memory chat data goes
+              channelDatabaseManager.userId = undefined;
+              clearChat();
               if (!this.readStoredUser()) {
                 // another tab logged out
                 securityStepState.setUser(null);
                 webSocketManager.logout();
-                channelDatabaseManager.userId = undefined;
-                clearChat();
                 this.state = "anonymous";
               }
               // else another tab logged in: autoLogin follows the stored user

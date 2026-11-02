@@ -27,7 +27,7 @@ import connectionManager from 'data/appstate/connection';
 import webSocketManager from 'data/appstate/webSocket';
 import type { LiveKind, ResumeReason, Transport } from 'data/appstate/transport';
 import { createChannelStore } from './channelStore';
-import { createReadStateStore } from './readStateStore';
+import { createReadStateStore, hasReadState } from './readStateStore';
 import { createNotificationStore } from './notificationStore';
 import { systemClock } from './util';
 import type {
@@ -75,6 +75,8 @@ export type ChatEventInputs = {
   user: {
     readonly userId: string | undefined;
     onChange(listener: (userId: string | undefined) => void): Unsubscribe;
+    /** the account before the login settled (own-message classification) */
+    readonly accountId?: string | undefined;
   };
 };
 
@@ -143,8 +145,12 @@ export function createChatEventSource(inputs: ChatEventInputs): DisposableChatEv
     }),
     inputs.user.onChange(u => {
       if (u === userId) return;
+      const before = userId;
       userId = u;
       user.emit(u);
+      // the socket went live before the login settled (page load, interactive
+      // login): the stores catch up now, as on any other live transition
+      if (before === undefined && u !== undefined && inputs.transport.live) live.emit('user');
     }),
   ];
   let disposed = false;
@@ -166,6 +172,9 @@ export function createChatEventSource(inputs: ChatEventInputs): DisposableChatEv
       return userId;
     },
     onUserChange: l => user.add(l),
+    get accountId() {
+      return inputs.user.accountId ?? userId;
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
@@ -211,6 +220,9 @@ export function createLoginUser(login: {
     get account() {
       return account;
     },
+    get accountId() {
+      return account;
+    },
     dispose() {
       unsub();
       listeners.clear();
@@ -242,8 +254,9 @@ export type ChatRuntimeDeps = {
 export type ChatRuntimeImpl = ChatRuntime & {
   /**
    * Read state already written to the shared persistence by its owner (the
-   * merged community/chat rows after a snapshot): merged into memory only,
-   * as a snapshot without syncSeq, so a snapshot is applied to the rows once.
+   * merged community/chat rows after a snapshot): merged into memory only
+   * (ReadStateStore.applyStored: the rows' seq/counted kept, never counted
+   * as acknowledged), so a snapshot is applied to the rows once.
    */
   applyStoredReadState(states: ChannelReadState[]): void;
   /** login: the login response's notification count */
@@ -254,9 +267,7 @@ export type ChatRuntimeImpl = ChatRuntime & {
 };
 
 /** community channel or DM: the channels that have read state (no article comments, no call chats) */
-export function hasReadState(access: API.Messages.MessageAccess | undefined): boolean {
-  return !!access && ('communityId' in access || 'chatId' in access) && !('callId' in access) && !('articleId' in access);
-}
+export { hasReadState };
 
 function isDm(access: API.Messages.MessageAccess | undefined): boolean {
   return !!access && 'chatId' in access;
@@ -291,7 +302,7 @@ function trackWindows(store: ChannelStore) {
       };
       return w;
     },
-    watchMessage: (channelId, messageId, onChange) => store.watchMessage(channelId, messageId, onChange),
+    watchMessage: (channelId, messageId, onChange, onError) => store.watchMessage(channelId, messageId, onChange, onError),
     createMessage: (message, options) => store.createMessage(message, options),
     retrySend: (channelId, messageId) => store.retrySend(channelId, messageId),
     discardPending: (channelId, messageId) => store.discardPending(channelId, messageId),
@@ -323,11 +334,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntimeImpl {
   // the closures below run only after construction (events, sends)
   const accessOf = (channelId: string) => rawChannels.getAccessForChannel(channelId);
 
-  /** inputs whose persistence write is done by someone else */
-  const persisted = new WeakSet<ReadStateInput>();
+  /** DM message inputs are written by `dmMessage` (with lastMessage) */
   const persistence: ReadStatePersistence | undefined = deps.persistence && {
     apply: input => {
-      if (persisted.has(input)) return Promise.resolve();
       if (deps.dmMessage && input.kind === 'message' && isDm(accessOf(input.channelId))) return Promise.resolve();
       return deps.persistence!.apply(input);
     },
@@ -374,7 +383,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntimeImpl {
       if (event.action !== 'new') return;
       const access = accessOf(event.data.channelId);
       if (!isDm(access)) return;
-      writeDm(event.data.channelId, messageFromApi(event.data), event.data.creatorId === events.userId);
+      writeDm(event.data.channelId, messageFromApi(event.data), event.data.creatorId === (events.accountId ?? events.userId));
     })
     : noop;
 
@@ -384,17 +393,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntimeImpl {
     notifications,
     events,
     applyStoredReadState(states) {
-      for (const s of states) {
-        const input: ReadStateInput = {
-          kind: 'snapshot',
-          channelId: s.channelId,
-          lastRead: s.lastRead,
-          unread: s.unread,
-          lastMessageDate: s.lastMessageDate,
-        };
-        persisted.add(input);
-        readState.apply(input);
-      }
+      for (const s of states) readState.applyStored(s);
     },
     setupAfterLogin(count) {
       notifications.setupAfterLogin(count);

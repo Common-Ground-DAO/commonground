@@ -226,6 +226,55 @@ describe('channelManager façade: @deprecated interim surface', () => {
     list.destroy();
   });
 
+  it('getMessageById resolves on a failed first fetch; the watch retries and reports later', async () => {
+    const { manager, server } = await setup();
+    const [m] = server.seed(C, 1);
+    server.fail('messagesById', new Error('Network down'), 1);
+    const changes: (string | undefined)[] = [];
+    const result = await manager.getMessageById(C, m.id, item => changes.push(item?.id));
+    expect(result.item).toBeUndefined();
+    server.goLive('restored');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    expect(changes).toEqual([m.id]);
+    result.unsubscribe();
+  });
+
+  it('a legacy init superseded by clear() resolves silently with 0', async () => {
+    const { manager, server } = await setup();
+    server.seed(C, 2);
+    server.hold('loadMessages');
+    server.hold('getChanges');
+    const list = manager.getMountedChannelDatabase(C).database.createItemList();
+    const init = list.init({ type: 'recent' });
+    await settle();
+    await manager.clear();
+    await expect(init).resolves.toBe(0);
+    server.release('loadMessages');
+    server.release('getChanges');
+    await settle();
+    list.destroy();
+  });
+
+  it('setChannelLastRead while hidden is sent once the tab is visible again', async () => {
+    const { manager, server } = await setup();
+    server.userId = 'user-me';
+    server.seed(C, 2);
+    const list = manager.getMountedChannelDatabase(C).database.createItemList();
+    await list.init({ type: 'recent' });
+    server.setVisible(false);
+    const newest = list.items.at(-1)!;
+    manager.setChannelLastRead(C, newest.createdAt);
+    await settle();
+    expect(server.callsOf('setChannelLastRead')).toHaveLength(0);
+    server.setVisible(true);
+    await settle();
+    const calls = server.callsOf('setChannelLastRead') as API.Messages.setChannelLastRead.Request[];
+    expect(calls).toHaveLength(1);
+    expect(calls[0].lastRead).toBe(newest.createdAt.toISOString());
+    list.destroy();
+  });
+
   it('setChannelLastRead marks once up to the shown message, via the read-state store', async () => {
     const { manager, server, rt } = await setup();
     server.userId = 'user-me';

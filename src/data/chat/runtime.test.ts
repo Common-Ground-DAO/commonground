@@ -241,7 +241,8 @@ describe('createChatEventSource', () => {
     for (const l of f.vis) l(false);
     for (const l of f.usr) l(ME);
     for (const l of f.usr) l(ME);
-    expect(seen).toEqual(['live:restored', 'resume:visible', 'vis:false', `user:${ME}`]);
+    // logged in while live: a `user` live follows, so the stores catch up
+    expect(seen).toEqual(['live:restored', 'resume:visible', 'vis:false', `user:${ME}`, 'live:user']);
     expect(source.visible).toBe(false);
     expect(source.userId).toBe(ME);
   });
@@ -373,6 +374,98 @@ describe('createChatRuntime', () => {
     rt.dispose();
   });
 
+  it('stored seq/counted dedupe live messages already counted in the row', async () => {
+    const { rt } = await runtimeSetup();
+    rt.applyStoredReadState([{ channelId: C, lastRead: '2026-11-02T10:00:00.000Z', unread: 4, seq: 7, counted: [8], lastMessageDate: '2026-11-02T11:00:00.000Z' }]);
+    const msg = (id: string, syncSeq: number) => ({ kind: 'message' as const, channelId: C, messageId: id, createdAt: '2026-11-02T11:05:00.000Z', syncSeq, own: false });
+    rt.readState.apply(msg('m8', 8)); // counted in the row already
+    expect(rt.readState.get(C)?.unread).toBe(4);
+    rt.readState.apply(msg('m9', 9));
+    expect(rt.readState.get(C)).toMatchObject({ unread: 5, counted: [8, 9] });
+    rt.dispose();
+  });
+
+  it('stored state never counts as acknowledged: a mark above the row lastRead is still sent', async () => {
+    const { rt, server } = await runtimeSetup();
+    server.seed(C, 1);
+    const w = rt.channels.openWindow(C);
+    await w.init({ type: 'recent' });
+    const newest = w.state.items[0];
+    // the row holds a local mark at the newest message that never reached the server
+    rt.applyStoredReadState([{ channelId: C, lastRead: newest.createdAt.toISOString(), unread: 0, seq: 3, counted: [], lastMessageDate: newest.createdAt.toISOString() }]);
+    const marker = rt.readState.createMarker(C);
+    marker.update({ atLatest: true, atBottom: true, newest: { id: newest.id, createdAt: newest.createdAt } });
+    await settle();
+    expect(server.callsOf('setChannelLastRead')).toHaveLength(1);
+    marker.dispose();
+    w.destroy();
+    rt.dispose();
+  });
+
+  it('clear tells watchers their message is gone, then refetches it', async () => {
+    const { rt, server } = await runtimeSetup();
+    const [m] = server.seed(C, 1);
+    const seen: (string | undefined)[] = [];
+    const unwatch = rt.channels.watchMessage(C, m.id, item => seen.push(item?.id));
+    await settle();
+    expect(seen).toEqual([m.id]);
+    rt.clear();
+    expect(seen).toEqual([m.id, undefined]);
+    await settle();
+    expect(seen).toEqual([m.id, undefined, m.id]);
+    unwatch();
+    rt.dispose();
+  });
+
+  it('watchMessage reports a failed fetch to onError and retries on the next live signal', async () => {
+    const { rt, server } = await runtimeSetup();
+    const [m] = server.seed(C, 1);
+    server.fail('messagesById', new Error('Network down'), 1);
+    const seen: (string | undefined)[] = [];
+    const errors: unknown[] = [];
+    const unwatch = rt.channels.watchMessage(C, m.id, item => seen.push(item?.id), e => errors.push(e));
+    await settle();
+    expect(errors).toHaveLength(1);
+    expect(seen).toEqual([]);
+    server.goLive('restored');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    expect(seen).toEqual([m.id]);
+    unwatch();
+    rt.dispose();
+  });
+
+  it('own messages are classified by the account before the login settled', async () => {
+    const { rt, server } = await runtimeSetup();
+    server.userId = undefined; // logging in
+    server.accountId = ME;
+    const e = server.post(C, { creatorId: ME, text: 'from my other tab' });
+    const createdAt = (e as Extract<Events.Message.Message, { action: 'new' }>).data.createdAt;
+    expect(rt.readState.get(C)).toMatchObject({ unread: 0, lastRead: createdAt });
+    rt.dispose();
+  });
+
+  it('notifications are not resynced without a user', async () => {
+    const { rt, server } = await runtimeSetup();
+    server.userId = undefined;
+    server.goLive('established');
+    server.resume('visible');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    expect(server.callsOf('getUnreadCount')).toHaveLength(0);
+    expect(server.callsOf('getSyncState')).toHaveLength(0);
+    rt.dispose();
+  });
+
+  it('a call chat access with a communityId gets no read state from live messages', async () => {
+    const { rt, server } = await runtimeSetup();
+    server.addChannel('call-ch2', { communityId: 'community-1' });
+    rt.channels.registerAccessForChannel({ channelId: 'call-ch2', callId: 'call-2', communityId: 'community-1' } as API.Messages.MessageAccess);
+    server.post('call-ch2', { text: 'in the call' });
+    expect(rt.readState.get('call-ch2')).toBeUndefined();
+    rt.dispose();
+  });
+
   it('article comments and call chats get no read state', async () => {
     const { rt, server } = await runtimeSetup();
     server.addChannel('article-ch', {});
@@ -393,7 +486,8 @@ describe('createChatRuntime', () => {
   it('stored read state is fed to memory only: a snapshot reaches the rows once', async () => {
     const { rt, persisted } = await runtimeSetup();
     rt.applyStoredReadState([{ channelId: C, lastRead: '2026-11-02T10:00:00.000Z', unread: 4, seq: 7, counted: [8], lastMessageDate: '2026-11-02T11:00:00.000Z' }]);
-    expect(rt.readState.get(C)).toMatchObject({ unread: 4, lastRead: '2026-11-02T10:00:00.000Z', seq: 0 });
+    // the row's seq and counted seqs are kept in memory
+    expect(rt.readState.get(C)).toMatchObject({ unread: 4, lastRead: '2026-11-02T10:00:00.000Z', seq: 7, counted: [8] });
     await settle();
     expect(persisted).toHaveLength(0);
     // an older stored value never moves lastRead back
@@ -523,6 +617,69 @@ describe('chat (app runtime)', () => {
     await settle();
     expect(server.callsOf('getSyncState')).toHaveLength(2);
     w.destroy();
+  });
+
+  it('page load: the socket is live before loggedin; the login then triggers the catch-up', async () => {
+    const { mod, server } = await appSetup();
+    mod.startChatRuntime();
+    mod.setChatAccountUser(ME); // stored user, login pending
+    setLoginState('loggingin');
+    app.onLive.emit('established');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    expect(server.callsOf('getSyncState')).toHaveLength(0);
+    expect(server.callsOf('getUnreadCount')).toHaveLength(0);
+    setLoginState('loggedin');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    expect(server.callsOf('getSyncState')).toHaveLength(1);
+    expect(server.callsOf('getUnreadCount')).toHaveLength(1);
+  });
+
+  it('interactive login: the socket login ack (live user) comes before loggedin', async () => {
+    const { mod, server } = await appSetup();
+    mod.startChatRuntime();
+    app.onLive.emit('established'); // anonymous
+    setLoginState('loggingin');
+    app.onLive.emit('user'); // socket login acked
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    expect(server.callsOf('getSyncState')).toHaveLength(0);
+    mod.setChatAccountUser(ME);
+    setLoginState('loggedin');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    expect(server.callsOf('getSyncState')).toHaveLength(1);
+  });
+
+  it('loggedin before the socket is live: the later live triggers one catch-up', async () => {
+    const { mod, server } = await appSetup();
+    app.live = false;
+    mod.startChatRuntime();
+    mod.setChatAccountUser(ME);
+    setLoginState('loggedin');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    app.live = true;
+    app.onLive.emit('established');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    // the user change itself schedules one sync too (robust either way); not more than two
+    expect(server.callsOf('getSyncState').length).toBeGreaterThanOrEqual(1);
+    expect(server.callsOf('getSyncState').length).toBeLessThanOrEqual(2);
+  });
+
+  it('own messages during the login are classified by the account', async () => {
+    const { mod, server } = await appSetup();
+    const access = server.addChannel(C);
+    mod.chat.channels.registerAccessForChannel(access);
+    mod.setChatAccountUser(ME);
+    setLoginState('loggingin');
+    const event = server.post(C, { creatorId: ME }, { deliver: false });
+    emitClientEvent(event);
+    expect(mod.chat.events.userId).toBeUndefined();
+    expect(mod.chat.events.accountId).toBe(ME);
+    expect(mod.chat.readState.get(C)?.unread).toBe(0);
   });
 
   it('the user is the account while logged in; visibility follows connectionManager', async () => {

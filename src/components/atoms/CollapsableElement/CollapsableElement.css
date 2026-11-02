@@ -1,5 +1,7 @@
+@reference '../../../tailwind.css';
+
 .collapsable-element {
-    @apply w-full flex flex-col items-start p-0 gap-0 self-stretch flex-none order-none flex-grow-0;
+    @apply w-full flex flex-col items-start p-0 gap-0 self-stretch flex-none order-none grow-0;
 
     > .collapsable-trigger {
         @apply w-full;

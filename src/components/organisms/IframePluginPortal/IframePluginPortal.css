@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .collapsed-iframe-button {
     @apply cursor-pointer p-2;
     color: var(--text-secondary);

@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .auth-flow {
   @apply flex flex-col items-center w-full gap-4;
   color: var(--cardTextMain);

@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .reaction-floating-element {
     @apply absolute cg-heading-1;
     bottom: 0px;

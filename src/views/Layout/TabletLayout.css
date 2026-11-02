@@ -17,7 +17,7 @@
 }
   
 .layout.tablet-layout {
-    grid-template-columns: [start menu-start] 80px [menu-end content-start] minmax(0, calc(theme('screens.xl') - 80px)) [content-end end];
+    grid-template-columns: [start menu-start] 80px [menu-end content-start] minmax(0, calc(1280px - 80px)) [content-end end];
     grid-template-rows: [start menu-start content-start] minmax(0, 100vh) [menu-end content-end end];
   
     > .menu, .menu-expanded {

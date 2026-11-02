@@ -1,3 +1,5 @@
+@reference '../../tailwind.css';
+
 .member-application-view {
     .member-application-view-inner {
       max-width: 800px;

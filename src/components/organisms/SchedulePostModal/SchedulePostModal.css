@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .schedule-post-modal {
     .modal-content {
         @apply flex flex-col gap-4;

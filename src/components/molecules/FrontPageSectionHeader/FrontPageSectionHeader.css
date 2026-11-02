@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .front-page-section-header {
     @apply w-full flex flex-col;
 }

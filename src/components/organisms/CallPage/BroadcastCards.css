@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .broadcast-container {
     video {
         max-height: 100%;

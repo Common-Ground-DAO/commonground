@@ -4,6 +4,6 @@
 
     &:disabled {
         background: var(--inputPlaceholder);
-        color: theme('colors.palette.brand.300');
+        color: var(--color-palette-brand-300);
     }
 }

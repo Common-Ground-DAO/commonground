@@ -1,5 +1,7 @@
+@reference '../../../../tailwind.css';
+
 .add-image-container {
-  @apply w-full h-auto flex items-center justify-center flex-none order-none self-stretch flex-grow-0 cursor-default relative;
+  @apply w-full h-auto flex items-center justify-center flex-none order-none self-stretch grow-0 cursor-default relative;
   background: none;
   border-radius: 6px;
   overflow: hidden;

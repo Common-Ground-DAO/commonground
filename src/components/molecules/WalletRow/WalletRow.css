@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .wallet-row {
   @apply w-full flex items-center justify-between p-4 gap-2 cg-border-xl flex-wrap;
   border: 1px solid var(--cardBorder);

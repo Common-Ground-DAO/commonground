@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .groupSlider-group-container {
     @apply grid grid-cols-2 gap-4 w-full;
 

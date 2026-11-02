@@ -145,7 +145,7 @@ const CommentMessage: React.FC<Props> = (props) => {
         scrollToMessage={scrollToMessage}
       />
     }
-    <div className='break-words'>
+    <div className='wrap-break-word'>
       <AllContentRenderer
         content={message.body.content}
       />

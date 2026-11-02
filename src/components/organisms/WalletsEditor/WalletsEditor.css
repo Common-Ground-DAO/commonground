@@ -1,18 +1,20 @@
+@reference '../../../tailwind.css';
+
 .wallets-editor {
-  @apply flex flex-col items-start self-stretch p-4 gap-4 flex-none flex-grow-0 order-none;
+  @apply flex flex-col items-start self-stretch p-4 gap-4 flex-none grow-0 order-none;
 
   background-color: var(--cardBg);
   border-radius: 12px;
 
   > .wallets-editor-content {
-    @apply flex flex-col items-start p-0 gap-4 self-stretch flex-none flex-grow-0;
+    @apply flex flex-col items-start p-0 gap-4 self-stretch flex-none grow-0;
 
     > .connected-wallets {
-      @apply flex flex-col items-start self-stretch p-0 gap-2 flex-none flex-grow-0 order-none;
+      @apply flex flex-col items-start self-stretch p-0 gap-2 flex-none grow-0 order-none;
     }
 
     > .add-another-wallet {
-      @apply flex flex-col items-start p-0 gap-2 self-stretch flex-none flex-grow-0 order-1;
+      @apply flex flex-col items-start p-0 gap-2 self-stretch flex-none grow-0 order-1;
     }
 
     .wallets-sub-section-title {
@@ -82,7 +84,7 @@
     }
 
     .btnIconRight {
-      @apply flex-grow text-right;
+      @apply grow text-right;
       > .connection-state {
         color: var(--cardTextSecondary);
       }

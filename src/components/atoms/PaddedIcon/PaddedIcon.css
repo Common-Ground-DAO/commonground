@@ -1,14 +1,16 @@
+@reference '../../../tailwind.css';
+
 .padded-icon {
     @apply flex items-center justify-center p-2.5 cg-border-l;
     background: var(--surface-subtleoverlay);
 }
 
 .padded-icon-success {
-    color: theme('colors.palette.success.400');
+    color: var(--color-palette-success-400);
     background-color: rgba(12, 243, 147, 0.10);
 }
 
 .padded-icon-info {
-    color: theme('colors.palette.info.400');
+    color: var(--color-palette-info-400);
     background-color: rgba(20, 177, 255, 0.10);
 }

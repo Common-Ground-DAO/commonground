@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .editorHoveringToolbar {
     @apply flex justify-center items-center py-1 px-2 absolute;
     gap: 2px;

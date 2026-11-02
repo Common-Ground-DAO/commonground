@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .comment-list {
     .message-field {
         @apply cg-border-m;

@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .gated-close {
     @apply flex items-center justify-center p-2 cursor-pointer absolute top-6 right-6 z-10;
     background: var(--surface-subtleoverlay);

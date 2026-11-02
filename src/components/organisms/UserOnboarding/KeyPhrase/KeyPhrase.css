@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .keyphrase {
     @apply w-full;
 

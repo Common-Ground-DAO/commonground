@@ -184,7 +184,7 @@ export default function Home() {
                 }}
               />
             </div>
-            {!isMobile && <div className='flex-shrink'>
+            {!isMobile && <div className='shrink'>
               <SearchInputField
                 value={search}
                 onChange={setSearch}

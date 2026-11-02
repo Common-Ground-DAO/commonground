@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .settings-list-item {
     @apply py-2 px-4 w-full flex justify-between cursor-pointer cg-border-xl cg-text-lg-400;
     color: var(--cardTextMain);

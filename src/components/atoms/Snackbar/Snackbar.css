@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .snackbar {
     @apply flex items-center justify-between cg-border-xl gap-2 p-4 cg-box-shadow-md absolute top-4 right-4 cursor-pointer;
     transform: translateY(-100px);

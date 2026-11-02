@@ -6,6 +6,7 @@ import path from 'node:path';
 import { defineConfig } from 'vite';
 import type { Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import svgr from 'vite-plugin-svgr';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import { absoluteSocialMeta } from './vite/absoluteSocialMeta';
@@ -13,11 +14,13 @@ import { baseUrlResolve } from './vite/baseUrlResolve';
 import { htmlEntryScripts } from './vite/htmlEntryScripts';
 import { serviceWorker } from './vite/serviceWorker';
 
-// The `browserslist.production` floors from package.json, in esbuild's
-// notation — Vite 8 still takes that for `build.target` and converts it for
-// Oxc (JS lowering) and Lightning CSS (`build.cssTarget` defaults to it).
-// Keep the two lists in sync.
-const BUILD_TARGET = ['chrome67', 'edge79', 'firefox68', 'opera54', 'safari14'];
+// The browser floor, in esbuild's notation — Vite 8 still takes that for
+// `build.target` and converts it for Oxc (JS lowering) and Lightning CSS
+// (`build.cssTarget` defaults to it; CSS lowering and vendor prefixes). The
+// only place the floor is defined (docs/frontend §9 "Toolchain"); raised with
+// Tailwind 4 (wave M4) to what its CSS needs: cascade layers (Safari 15.4,
+// Firefox 97, Chrome 99) and the `translate`/`rotate` properties (Chrome 104).
+const BUILD_TARGET = ['chrome104', 'edge104', 'firefox97', 'opera90', 'safari15.4'];
 
 // react-scripts' @svgr/webpack options, verbatim
 // (node_modules/react-scripts/config/webpack.config.js:392-401). `svgo: false`
@@ -174,8 +177,8 @@ const VENDOR_GROUPS: Readonly<Record<string, readonly string[]>> = {
  * - `vite/preload-helper` (`\0vite/preload-helper.js`) and
  *   `__vite-browser-external`: Vite's own.
  * - `@oxc-project+runtime@`: Oxc's transform helpers, which syntax lowering
- *   for `BUILD_TARGET` injects into any module that needs them (class fields
- *   for `chrome67`: `defineProperty`, `toPropertyKey`, `toPrimitive`,
+ *   for `BUILD_TARGET` injects into any module that needs them (measured
+ *   with the former `chrome67` floor: class fields → `defineProperty`, `toPropertyKey`, `toPrimitive`,
  *   `typeof`; private members: `classPrivateField*`, …). Ids look like
  *   `\0@oxc-project+runtime@0.155.0/helpers/esm/defineProperty.js` — no
  *   `node_modules/`, so without this entry they were unassigned and
@@ -371,6 +374,11 @@ export default defineConfig(() => ({
 
   plugins: [
     react(),
+    // Tailwind CSS 4. The setup and its configuration live in
+    // src/tailwind.css (no tailwind.config.js, no PostCSS config); component
+    // stylesheets `@reference` it. Vendor prefixes and lowering for
+    // `build.cssTarget` come from Lightning CSS when Vite minifies.
+    tailwindcss(),
     baseUrlResolve('src'),
     svgr({ include: '**/*.svg?react', svgrOptions: SVGR_OPTIONS }),
     // Scoped on purpose: first-party code uses none of this, it exists for

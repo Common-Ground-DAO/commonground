@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .call-configuration-box {
     @apply flex flex-col p-2 gap-2 flex-1 cg-border-xl cursor-pointer;
     background: var(--surface-subtleoverlay);

@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .switch-input-field {
     .switch {
         @apply w-auto mx-auto flex justify-center;

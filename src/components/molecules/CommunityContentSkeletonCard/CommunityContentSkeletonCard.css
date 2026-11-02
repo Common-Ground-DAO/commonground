@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .community-content-skeleton-card {
     @apply flex flex-col items-start relative;
     background: var(--transparent);
@@ -22,10 +24,6 @@
             -webkit-animation: shimmer 2s infinite;
             content: '';
         }
-        
-        @keyframes shimmer {
-            100% { transform: translateX(100%); }
-        }
     }
 
     .community-photo-container {
@@ -37,7 +35,7 @@
     }
 
     .community-card-footer {
-        @apply flex flex-col gap-3 pt-8 pb-4 px-3 flex-grow w-full;
+        @apply flex flex-col gap-3 pt-8 pb-4 px-3 grow w-full;
 
         .skeleton-placeholder-item {
             @apply flex gap-3 w-full flex-wrap;
@@ -62,6 +60,11 @@
         }
     }
 }
+
+@keyframes shimmer {
+    100% { transform: translateX(100%); }
+}
+
 
 .mobile-layout {
     .community-content-skeleton-card {

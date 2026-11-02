@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .external-link-preview {
     @apply cg-border-l w-full cursor-pointer;
     border: solid 1px var(--border-secondary);

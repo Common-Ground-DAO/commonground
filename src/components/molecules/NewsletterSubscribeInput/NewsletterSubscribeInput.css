@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .newsletterSubscribeContainer {
     @apply flex flex-col;
     max-width: 500px; 

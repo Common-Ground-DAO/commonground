@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .pinned-channel {
     @apply cg-border-l w-full cursor-pointer relative;
     animation: grow-in-pinned-channel 0.2s cubic-bezier(0.68, -0.55, 0.27, 1.55);
@@ -7,7 +9,7 @@
     }
     
     .pinned-channel-title {
-        @apply overflow-hidden whitespace-nowrap overflow-ellipsis;
+        @apply overflow-hidden whitespace-nowrap text-ellipsis;
         color: var(--text-secondary);
     }
     

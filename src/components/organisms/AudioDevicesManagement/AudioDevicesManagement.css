@@ -1,5 +1,7 @@
+@reference '../../../tailwind.css';
+
 .audio-devices-management {
-  @apply flex flex-col items-start self-stretch py-4 gap-8 flex-none order-1 flex-grow;
+  @apply flex flex-col items-start self-stretch py-4 gap-8 flex-none order-1 grow;
 
   .user-profile-management-title {
     @apply cg-heading-2;
@@ -7,7 +9,7 @@
   }
 
   .audio-input-devices {
-    @apply flex flex-col justify-center items-start self-stretch p-4 gap-2 flex-none flex-grow-0 order-1 cg-border-m;
+    @apply flex flex-col justify-center items-start self-stretch p-4 gap-2 flex-none grow-0 order-1 cg-border-m;
     background: var(--transparent);
 
     h3 {
@@ -16,12 +18,12 @@
     }
 
     .audio-input-devices-container {
-      @apply flex flex-col items-start self-stretch py-0 px-4 gap-2 flex-none order-1 flex-grow-0;
+      @apply flex flex-col items-start self-stretch py-0 px-4 gap-2 flex-none order-1 grow-0;
 
       padding-top: 0.375rem;
 
       .audio-input-device {
-        @apply cursor-pointer flex flex-row items-center gap-2 flex-none order-none flex-grow cg-text-lg-500;
+        @apply cursor-pointer flex flex-row items-center gap-2 flex-none order-none grow cg-text-lg-500;
         padding: 0.375rem 0;
         color: var(--cardTextSecondary);
 
@@ -32,7 +34,7 @@
       }
 
       .not-allowed {
-        @apply flex flex-row items-center gap-2 flex-none order-none flex-grow cg-text-lg-500;
+        @apply flex flex-row items-center gap-2 flex-none order-none grow cg-text-lg-500;
         padding: 0.375rem 0;
         color: var(--cardTextSecondary);
       }

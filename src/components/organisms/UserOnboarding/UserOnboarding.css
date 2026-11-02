@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .user-onboarding {
     --onboardingModalWidth: 400px;
     --onboardingModalHeight: 600px;

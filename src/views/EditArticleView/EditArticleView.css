@@ -1,3 +1,5 @@
+@reference '../../tailwind.css';
+
 .desktop-layout {
   .edit-article-view {
     @apply h-full;

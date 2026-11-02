@@ -43,7 +43,7 @@ const MentionSuggestion: React.FC<Props> = ({ currentInput = '', userData, menti
       <div title={displayName}>
         <Jdenticon userId={userData.id} onlineStatus={onlineStatus} />
       </div>
-      <div className="flex-grow min-w-0">
+      <div className="grow min-w-0">
         <div className='mentionSuggestion-username'>
           <span>@</span>
           <span className='mentionSuggestion-bold'>{boldDisplayName}</span>

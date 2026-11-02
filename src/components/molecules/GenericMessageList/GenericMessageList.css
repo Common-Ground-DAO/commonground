@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .generic-message-list {
   @apply flex flex-col w-full relative;
   user-select: text;
@@ -12,7 +14,7 @@
   }
     
   > .scrolling-message-list {
-    @apply flex-grow min-h-0 overflow-y-auto;
+    @apply grow min-h-0 overflow-y-auto;
   }
 
   .edit-container {
@@ -40,7 +42,7 @@
       @apply flex flex-row p-2;
 
       > div {
-        @apply flex flex-row items-center rounded px-2 py-0;
+        @apply flex flex-row items-center rounded-sm px-2 py-0;
         font-size: 14px;
         color: var(--errorColor);
         background: var(--transparent);

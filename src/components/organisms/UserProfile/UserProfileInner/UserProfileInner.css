@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .user-profile-inner {
     @apply px-4 mb-4 flex flex-col gap-6 mx-auto items-center relative;
     z-index: 1;

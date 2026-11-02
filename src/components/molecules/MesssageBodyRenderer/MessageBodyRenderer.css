@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .message-body-truncated {
   overflow: hidden;
   display: -webkit-box;

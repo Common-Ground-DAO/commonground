@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 
 .animated-tab-page-container {
     @apply relative;

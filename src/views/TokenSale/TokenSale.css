@@ -1,3 +1,5 @@
+@reference '../../tailwind.css';
+
 .tokensale-root {
     @apply w-full grid grid-cols-1 grid-flow-row pb-4;
 
@@ -107,7 +109,7 @@
         .tokensale-header {
             .tokensale-header-text {
                 .tokensale-header-text-bottom {
-                    @apply cg-heading-3 !important;
+                    @apply cg-heading-3!;
                 }
             }
         }

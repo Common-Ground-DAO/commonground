@@ -1,3 +1,5 @@
+@reference '../../tailwind.css';
+
 .home {
   .home-main-content {
     @apply flex flex-col gap-16;

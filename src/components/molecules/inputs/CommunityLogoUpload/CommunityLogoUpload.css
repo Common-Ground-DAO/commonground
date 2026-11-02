@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .community-logo-upload {
     @apply relative w-full h-full mx-auto mt-14 mb-16 flex items-center justify-center;
     max-width: 150px;

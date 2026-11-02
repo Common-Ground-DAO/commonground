@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .radiobutton {
     @apply flex p-4 items-center gap-2 cursor-pointer justify-between;
     flex: 1 0 0;

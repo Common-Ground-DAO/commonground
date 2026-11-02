@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .peer-reaction-overlay {
     @apply flex items-center justify-center pointer-events-none;
     position: absolute;

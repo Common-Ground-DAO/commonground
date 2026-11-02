@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .replied-to-message {
   @apply flex gap-1 py-1 cursor-pointer cg-text-lg-400;
   transition: all 0.1s ease-in-out;

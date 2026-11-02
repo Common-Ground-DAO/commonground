@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .role-photo {
     @apply flex items-center justify-center;
     background: var(--surface-subtleoverlay);

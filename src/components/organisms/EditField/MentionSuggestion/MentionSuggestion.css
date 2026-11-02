@@ -1,5 +1,7 @@
+@reference '../../../../tailwind.css';
+
 .mentionSuggestion {
-    @apply flex items-center w-full py-1 px-2 gap-2 rounded;
+    @apply flex items-center w-full py-1 px-2 gap-2 rounded-sm;
     font-weight: 400;
 
     .mentionSuggestion-bold {

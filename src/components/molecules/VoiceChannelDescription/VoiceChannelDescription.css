@@ -1,9 +1,11 @@
+@reference '../../../tailwind.css';
+
 .voice-channel-description {
   @apply flex flex-col items-start gap-1 overflow-hidden;
   width: 100%;
 
   > .voice-channel-community {
-    @apply flex flex-row items-center self-stretch gap-1 p-0 min-w-0 flex-grow-0 order-none;
+    @apply flex flex-row items-center self-stretch gap-1 p-0 min-w-0 grow-0 order-none;
     color: var(--audioWidgetTextMain);
 
     > .voice-channel-community-name {

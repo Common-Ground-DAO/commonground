@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .video-call-footer {
     @apply flex justify-center items-center gap-2 p-2 self-stretch flex-wrap;
     background: var(--surface-background-2nd);

@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .create-community-view {
   grid-column: content-left-start / content-full-end;
   border-left: none;

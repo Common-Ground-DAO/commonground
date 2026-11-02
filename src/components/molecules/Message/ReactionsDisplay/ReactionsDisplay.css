@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .reactions-display {
     @apply mt-1 flex;
     gap: 4px;

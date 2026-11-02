@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .removeWalletModal {
     @apply flex flex-col p-4 gap-8;
 

@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .conversations-menu {
   @apply h-full;
   background: var(--surface-background-2nd);

@@ -1,3 +1,5 @@
+@reference '../../tailwind.css';
+
 .desktop-layout {
   .events-view {
     @apply h-full w-full;

@@ -1,8 +1,10 @@
+@reference '../../../tailwind.css';
+
 .direct-message-bar {
   @apply mt-4 mx-4 flex justify-center;
 
   .direct-message-bar-inner {
-    @apply flex flex-row items-center justify-start py-1 px-2 box-border flex-none flex-grow-0 order-none w-full;
+    @apply flex flex-row items-center justify-start py-1 px-2 box-border flex-none grow-0 order-none w-full;
     background-color: var(--surface-background-2nd);
     border: 1px solid var(--cardBorder);
     border-radius: 6px;
@@ -11,11 +13,11 @@
     gap: 8px;
 
     .hexagonal-icon-button {
-      @apply flex-grow-0;
+      @apply grow-0;
     }
 
     .contact-person {
-      @apply flex items-center justify-center flex-none flex-grow gap-2;
+      @apply flex items-center justify-center flex-none grow gap-2;
   
       font-size: 16px;
       line-height: 24px;

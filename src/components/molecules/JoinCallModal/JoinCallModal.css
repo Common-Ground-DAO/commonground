@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .join-call-modal-desktop {
     @apply cg-border-xxl;
     width: 450px;

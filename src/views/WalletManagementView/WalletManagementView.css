@@ -1,3 +1,5 @@
+@reference '../../tailwind.css';
+
 .mobile-layout {
     .wallet-management-view {
         @apply flex flex-col p-0 h-full;

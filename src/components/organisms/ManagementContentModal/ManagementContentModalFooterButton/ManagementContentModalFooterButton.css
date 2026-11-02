@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .management-content-modal-footer {
     @apply px-2;
 }

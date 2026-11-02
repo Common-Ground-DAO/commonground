@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .user-profile-acc-btn {
     &.active {
         background: var(--surface-subtleactive, rgba(24, 78, 126, 0.15));

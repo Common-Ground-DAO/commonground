@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .community-requirements-modal {
     .modal-content {
         padding: 0 !important;
@@ -13,8 +15,8 @@
 }
 
 .requirement-tag {
-    @apply w-full p-2 gap-2 !important;
+    @apply w-full! p-2! gap-2!;
     .tagLabel {
-        @apply cg-text-lg-400 !important;
+        @apply cg-text-lg-400!;
     }
 }

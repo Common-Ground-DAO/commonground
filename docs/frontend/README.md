@@ -26,7 +26,10 @@
 > against commit 3e8b08e, 2026-11-01; "Service worker and module scripts" (§9) against commit
 > 3e8b08e, 2026-11-01; Tailwind CSS 4 (§9 "Styling: Tailwind CSS 4", the CSS row, the
 > build-target paragraph, "Dependency pins and constraints", wave M4) against commit
-> 440c779, 2026-11-02; inline background images (§9) against commit 591e6cf, 2026-11-02
+> 440c779, 2026-11-02; inline background images (§9) against commit 591e6cf, 2026-11-02;
+> the service worker's part in multi-tab coordination (§4 WebSocketManager and
+> ServiceWorkerManager, §8, §9 entry points) against commit 79187d2, 2026-11-02;
+> "Writers of the shared entity databases" (§ Dexie) against commit 212bbce, 2026-11-02
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -537,6 +540,16 @@ const data = {
 
 Tracks all registered IndexedDB databases, their creation time, and app version. Provides `deleteOldIndexedDbs()` for cleanup of stale databases (runs 10s after the tab becomes active).
 
+#### Writers of the shared entity databases
+
+The `communities`, `chat` and `users` databases are shared by all tabs of an origin, and any tab may apply the same socket event, possibly late (a throttled or frozen tab catches up). Their writers are therefore idempotent and order-safe:
+
+- **Entity events** (`cliCommunityEvent update`, area/role/channel/call events, `cliUserData`, `cliUserOwnData`) are skipped when the stored row has a newer `updatedAt` (`guardedPut` / `guardedUpdate` in `abstractDatabase.ts`, one rw transaction each); payloads without `updatedAt` apply as before. `cliPluginEvent new` upserts by plugin id.
+- **Server snapshots** (login data, detail-view fetches, `startChat`): areas, roles, channels and calls with an older `updatedAt` than the stored row do not replace it (their stamps come from the database). Communities and list views are not guarded this way and stay authoritative, because some community events are stamped with the API process clock rather than the row's `updatedAt`. Snapshots do not delete rows (chats, channels, areas, roles, calls) that an event wrote after the snapshot's request started: event writers stamp rows with a client-clock `localWrittenAt`, and callers may pass `requestStartedAt` (default: 60 s before the merge).
+- **Accepted narrow window**: a partial event skipped as older loses the fields only it carries (there are no per-field stamps), and an API-clock stamp ahead of the database clock can make a newer database-stamped event look older. Both last until the next snapshot of that community (detail-view refresh or login).
+- **Community URL change**: on every event that carries a `url`, each tab compares the URL in its own path with the URLs it has seen for that community (not with the shared row, which another tab may already have updated) and navigates to the URL the row holds now, unless another stored community holds the URL in its path now (a URL a renamed community gave up can be taken over). This also holds for a tab that replays an older URL change late.
+- **Read state** (`unread`, `lastRead`, `lastMessageDate` of community channels and DMs) is only written through `mergeReadState` (`src/data/chat/mergeReadState.ts`) inside the writer's transaction (`readStateRows.ts`): `lastRead` and `lastMessageDate` only move forward, a snapshot's `unread` is taken only if it knows at least the local `lastRead`, and a live message is counted once per `syncSeq` (older servers: only if newer than every message seen). The rows carry extra non-indexed fields: `readSeq`, `readCounted` and `serverLastRead`; DM rows also `lastMessageDate`. `serverLastRead` is the highest `lastRead` the server is known to hold (from snapshots, server answers with a count, and own messages); `channel.ts`'s send guard is seeded from it rather than from the local `lastRead`, so a local mark whose API call never happened is sent again after a reload. The schema versions are unchanged (no `versionchange` for open tabs of an older build). `readStatePersistence.ts` exposes this as the `ReadStatePersistence` of the chat-sync contract.
+
 #### Reactivity
 
 Dexie databases are made reactive in React via `useLiveQuery` from `dexie-react-hooks`. Context providers (especially `OwnDataProvider` and `CommunityProvider`) use `useLiveQuery` to subscribe to database changes, making the UI automatically update when data changes in IndexedDB.
@@ -607,7 +620,7 @@ Key behaviors:
 
 Manages the Socket.IO connection:
 - Uses `socket.io-client` with polling + websocket transports (websocket only in dev).
-- **Multi-tab coordination**: tabs report their state (including document visibility) over `BroadcastChannel('CG_WEBSOCKET_STATE')` and the service worker acts as referee, assigning exactly one tab the active-socket role (see §8). Only the active tab maintains the live connection; passive tabs receive state via broadcasts.
+- **Multi-tab coordination**: tabs report their state (including document visibility) over `BroadcastChannel('CG_WEBSOCKET_STATE')` and settle the active-socket role among themselves (see §8); the service worker no longer referees. Only the active tab maintains the live connection; passive tabs receive state via broadcasts.
 - Tab states: `active`, `active-throttled`, `passive`, `passive-throttled`, `unknown`, `tabClosed`.
 - Handles `buildId` events for version detection and forced updates.
 - Socket authentication: emits `getSignableSecret`, signs with device keypair, emits `login`.
@@ -628,7 +641,7 @@ Manages authentication:
 
 #### ServiceWorkerManager (`serviceWorker.ts`)
 
-Manages service worker lifecycle: registration, updates, installation, and communication. Handles push notification setup and participates in the multi-tab active-socket handoff (see §8).
+Manages service worker lifecycle: registration, updates, installation, and communication (`reload` after a new worker activates, `navigate` from a notification click, `channelVisited` to close a channel's push notifications). Handles push notification setup. It takes no part in tab roles.
 
 ### Data Managers (`src/data/managers/`)
 
@@ -1038,14 +1051,12 @@ Layout components wrap the route content and provide the navigation menu. On com
 
 ## 8. Multi-Tab Architecture
 
-The app coordinates behavior across multiple open tabs. A single service worker (`src/service-worker.ts`) acts as the **referee** for which tab owns the live WebSocket connection, which makes the handoff robust across tab open/close, visibility changes, and service-worker restarts.
+The app coordinates behavior across multiple open tabs.
 
-1. **WebSocket (active-tab election).** Each tab reports its state and document visibility over `BroadcastChannel('CG_WEBSOCKET_STATE')`. The service worker tracks the set of tabs and their states (`active` / `active-throttled` / `passive` / `passive-throttled`, plus a `visible` flag) and elects exactly one active tab:
-   - It waits for a full picture (heartbeats from known tabs) before reassigning roles, so a half-informed referee does not promote a second active tab.
-   - When no active tab exists, it prefers a **visible** passive tab (visible tabs are never timer-throttled).
-   - Collisions between two tabs both claiming the active role are broken deterministically in favor of the visible tab.
-   - If the active tab's connection is stuck in `connecting` far beyond normal, the role is handed to a fresh, non-throttled passive tab.
-   - Ghost tabs (e.g. banned during an initial service-worker install) are re-registered rather than left stranded.
+1. **WebSocket (active-tab election).** Each tab reports its state and document visibility over `BroadcastChannel('CG_WEBSOCKET_STATE')`; exactly one tab holds the live socket:
+   - A new tab asks for a role and is answered "active". Collisions between two tabs both claiming the active role are broken deterministically in favor of the visible tab (then the higher `tabId`); the loser becomes passive.
+   - A passive tab that becomes visible claims the active role (the live connection follows the tab the user is looking at).
+   - The service worker (`src/service-worker.ts`) no longer referees (no tab registry, promotion, bans or stuck-connection handover). For one release it only answers a role request with `active`, so pages of the previous build still open after an update connect (`src/serviceWorkerLegacyTabs.ts`, `TODO(chat-sync compat)`); details in [docs/realtime → Tab Coordination](../realtime/README.md#tab-coordination-1). The chat-sync transport replaces the election with one socket per tab (`docs/todo/ROADMAP_chat-sync.md`).
 
 2. **Login.** The `LoginManager` uses `BroadcastChannel('CG_LOGIN_STATE')` to synchronize login/logout across tabs. Passive tabs can delegate `LOGIN_REQUIRED` errors to the active tab.
 
@@ -1396,7 +1407,7 @@ with wave M3 (2026-11-01), Tailwind CSS 4 with wave M4 (2026-11-02).
 
 - **Main entry**: `src/index.tsx` -- the primary web app entry point.
 - **CG ID entry**: `src/index_cgid.tsx` -- alternative entry point for the CG Identity service.
-- **Service Worker**: `src/service-worker.ts` -- handles caching, push notifications, and multi-tab active-socket refereeing (§8).
+- **Service Worker**: `src/service-worker.ts` -- handles caching, push notifications and notification clicks, the update/reload flow, and a one-release compat answer to old pages' tab-role requests (§8).
 - **Config**: `src/common/config.ts` -- deployment configuration (dev/staging/prod), feature flags, URLs, chain set.
 - **Docker**: `docker/.env` -- environment variables of the dev compose stack (gitignored, generated from the tracked `docker/.env.example` on first `./run.sh`; see [docs/infrastructure §4](../infrastructure/README.md#4-environment-variables)).
 

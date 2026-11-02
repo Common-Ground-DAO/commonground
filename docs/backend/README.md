@@ -31,9 +31,13 @@
 > TypeORM 1.x (wave M2: `srv/util/datasource.ts`, §8) against commit 8dcbb42,
 > 2026-11-01; `callUpdateEmitter.ts` (call-ending sweeps, events), `/setChannelLastRead`
 > and the test list against commit 591e6cf, 2026-11-02; `onlineStatusCheck.ts` against commit
-> fc15832, 2026-11-02; `Message/getSyncState` (`srv/api/syncState.ts`,
-> `srv/repositories/syncState.ts`), the notification read/count routes, the
-> `chats`/`notifications` indexes and the test list against commit 312b5e7, 2026-11-02.
+> fc15832, 2026-11-02; the chat-sync message routes (`/getChanges`, idempotent
+> `/createMessage`, `/setChannelLastRead` answer, `syncSeq`), the `ChannelSyncState` entity
+> and the test list against commit 30ce83e, 2026-11-02; the `/createMessage` channel lock and
+> `createdAt` rule against commits 959064f and 1963d4f, 2026-11-02;
+> `Message/getSyncState` (`srv/api/syncState.ts`, `srv/repositories/syncState.ts`), the
+> notification read/count routes, the `chats`/`notifications` indexes and the test list
+> against commit 312b5e7, 2026-11-02.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -480,16 +484,19 @@ on the user row).
 
 ### `srv/api/messages.ts` -- Messaging Routes
 
-- `/createMessage` -- Create a new message
-- `/createModerationMessage` -- Create a moderation-flagged message
-- `/editMessage` -- Edit an existing message
+- `/createMessage` -- Create a new message. Idempotent on the client-chosen `id`: a known id is looked up first and answered without an INSERT (so it takes no sync seq), and the insert is `ON CONFLICT ("id") DO NOTHING` for two same-id creates racing; when the id exists, a request by the same creator in the same channel (message not deleted) succeeds with the stored message and emits no events or notifications, anything else fails with `NOT_ALLOWED`. A retry whose parent message was deleted in the meantime also returns the stored message. The insert runs under the channel's sync-sequence row lock and takes `createdAt` = max(`clock_timestamp()`, newest createdAt of the channel + 1 ms; the +1 ms chain only while it stays within 5 s of the clock, so a corrected clock does not date new messages in the future), so concurrent creates in one channel never collide on `UNIQUE(channelId, createdAt)`; a residual collision with a writer that skips the lock (an older API process during a deploy) is retried, up to 3 attempts. See [docs/database](../database/README.md#messages).
+- `/createModerationMessage` -- Create a moderation-flagged message (same insert)
+- `/editMessage` -- Edit an existing message. Response `{editedAt, updatedAt, syncSeq}` (+ `attachments`)
 - `/deleteMessage` -- Delete a message. Creator and channel are read from the stored message (`messageHelper.getMessageOwnership`), not from the request: the message must live in `access.channelId`, deleting another user's message needs `CHANNEL_MODERATE` / `CALL_MODERATE` there (chats and article comments: own messages only), and the `UPDATE` filters on creator, channel and id.
 - `/deleteAllUserMessages` -- Delete all messages from a user in a channel
 - `/loadMessages` -- Load messages with pagination
 - `/messagesById` -- Load specific messages by ID
 - `/loadUpdates` -- Load message updates since a timestamp
+- `/getChanges` -- chat-sync catch-up of one channel (`{access, cursor: "1:<seq>" | null, limit?: 1..200 (default 200)}`, contract `API.Messages.getChanges` in `src/common/types/api/messages.d.ts`). Read access as for `/loadMessages` (anonymous visitors for public channels); session users only, not on the bot allowlist. A cursor in the `1:<seq>` format that is at most 500 changes behind and not ahead of the channel's sequence returns every changed row with `syncSeq > cursor` in `syncSeq` order (`LIMIT limit + 1` for `hasMore`); deleted rows become `deletedIds`, the rest `messages`. The answer's `syncSeq`/`cursor` is the last returned seq when `hasMore`, else the channel's seq. `null`, any other format, a cursor ahead (e.g. after a database restore) or more than 500 behind answer `reset: true` with the latest 30 messages (newest first; rows not written since the migration carry `syncSeq: 0`). The channel's seq and the rows are read in one statement (one snapshot), see [docs/database](../database/README.md#message-sync-sequence).
 - `/setReaction`, `/unsetReaction` -- Message reactions
-- `/setChannelLastRead` -- Mark channel as read. The stored `lastRead` only moves forward (`GREATEST` of the stored and the posted value), so a tab posting an older read time does not bring unread state back; a posted time in the future is clamped to the server's `now()`; the `cliChannelLastRead` event to the user's other sockets carries the stored value. Every other write of `channelreadstate` (own new message, first-time initialisation in the community and chat lists) uses the same rule.
+- `/setChannelLastRead` -- Mark channel as read. Needs read access to the channel (same check as `/loadMessages`, login required). The stored `lastRead` only moves forward (`GREATEST` of the stored and the posted value), so a tab posting an older read time does not bring unread state back; a posted time in the future is clamped to the server's `now()`; an optional `messageId` of a message in `access.channelId` makes the server use that message's `createdAt` instead (an id from elsewhere falls back to `lastRead`). Response `{lastRead, unread, syncSeq}`: the stored value, the other users' not deleted messages after it (capped at 999) and the channel's sequence, from the same statement. The `cliChannelLastRead` event to the user's sockets carries the same fields plus `communityId` or `chatId`. Every other write of `channelreadstate` (own new message, first-time initialisation in the community and chat lists) uses the same rule.
+
+Every message write returns the row's `syncSeq` (set by the database trigger, see [docs/database](../database/README.md#message-sync-sequence)); `loadMessages`, `messagesById`, `loadUpdates`, the create response and every `cliMessageEvent` carry it (left out for rows not written since the migration). Delete events carry the highest seq of the deleted rows as `syncSeq` and all of them as `syncSeqs`; the `update` events for replies of a deleted parent carry their own.
 - `/getUrlPreview` -- Get URL preview metadata (Open Graph scrape of a client-supplied URL, at most 2048 chars). Requires a session. Results are cached for 1 h on the Valkey cache instance (`redis-cache`, client type `cache`) under `urlpreview:<sha256(url)>` — skipped, not waited for, while that instance is unreachable; cache misses are rate-limited per account (30/min). The page (≤ 1 MB, `text/*` or XHTML) and the `og:image` (≤ 8 MB, `image/*`) are fetched through `safeFetch` (see `srv/util/safeFetch.ts` below) and the HTML is passed to `open-graph-scraper` as `ogs({ html })`. Title and description are cut to 2000 chars; the returned `url` is the page's `og:url` only if that is an http(s) URL of at most 2048 chars, otherwise the requested URL. Previews larger than 8 KB serialized are returned but not cached. The preview image is stored through `saveImage()`, i.e. it passes the NSFW gate.
 - `/joinArticleEventRoom`, `/leaveArticleEventRoom` -- Join/leave article real-time rooms
 
@@ -803,6 +810,10 @@ All entities use TypeORM decorators and live in `srv/entities/`. The database is
 - `searchVector` (tsvector) -- full-text search
 - `editedAt` (timestamptz, nullable)
 - Soft delete via `deletedAt`
+- `syncSeq` (bigint, nullable, `select: false`) -- channel change sequence of the last write, set by trigger
+
+**`ChannelSyncState`** (`srv/entities/channel-sync-state.ts`, table: `channel_sync_state`)
+- PK `channelId`; `seq` (bigint) -- last message sync sequence of the channel, written only by the `messages` triggers
 
 **`Reaction`** (`srv/entities/reactions.ts`, table: `reactions`)
 - Composite PK: `itemId` + `userId`
@@ -1119,7 +1130,8 @@ The `db: Pool | PoolClient` parameter pattern enables functions to work both sta
 - Message loading with pagination, reactions, own-reaction tracking
 - URL preview generation, search via `to_tsvector`
 - Reaction management (set/unset with validation)
-- Channel read state management
+- Channel read state management (`setChannelLastRead` returns the stored value, unread count and channel seq)
+- chat-sync: `getChanges` (change list / reset page after a sync cursor), idempotent `createMessage`, `syncSeq` on every read and write
 
 **`srv/repositories/chats.ts`** -- `chatHelper`
 - DM chat creation (creates a Chat + Channel in one transaction)
@@ -1652,10 +1664,15 @@ with wave M2 (see below).
   `typingCache`, `userArticleVisibility`, `userArticleRoute`, `passkeyCore`,
   `passkeyRoutes`, `passkeyConfig`, `signupEmail`, `asyncHandler`,
   `registerPostRoute`, `uploadImageRoute`, `gatedFileRoute`, `callEnding`,
-  `notificationRoutes`, `syncState` and `syncStateDb` (getSyncState and the notification
-  read-state writes on real PostgreSQL, opt-in via
-  `CG_TEST_PG_HOST`/`CG_TEST_PG_PORT`, own schema) (the passkey tests drive
-  a software authenticator, `tests/helpers/softAuthenticator.ts`). `npx tsc --noEmit`
+  `messageSyncRepository`, `messageSyncRoutes`, `notificationRoutes` and `syncState`
+  (the passkey tests drive a software authenticator,
+  `tests/helpers/softAuthenticator.ts`). Against a
+  throwaway PostgreSQL, opt-in via `CG_TEST_PG_HOST` (skipped otherwise):
+  `securityStepDb`, `chatSyncSeqDb` (the message sync sequence: migration,
+  trigger under the `writer` role, commit order of concurrent writers, and
+  the message repository on the real schema; it creates and drops its own
+  database `cg_chat_sync_test`) and `syncStateDb` (getSyncState and the
+  notification read-state writes). `npx tsc --noEmit`
   does not cover `tests/` (see `docs/todo/TODO.md`). ts-jest compiles the specs
   with `srv/tsconfig.json`, which therefore lists `"types": ["node", "jest"]`:
   `@tsconfig/node24` ≥ 24.0.5 sets `types: ["node"]`, which would otherwise hide

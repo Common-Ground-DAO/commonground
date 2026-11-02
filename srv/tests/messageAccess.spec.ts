@@ -71,7 +71,7 @@ const asUser = (id: string) => ({ session: { user: { id } } });
 beforeEach(() => {
   jest.clearAllMocks();
   messageHelper.isChannelInAccessScope.mockResolvedValue(true);
-  messageHelper.deleteMessage.mockResolvedValue({ deletedIds: [MESSAGE], updatedParentIdToNull: [], dbNow: '' });
+  messageHelper.deleteMessage.mockResolvedValue({ deletedIds: [MESSAGE], deletedSyncSeqs: [1], updatedParentIdToNull: [], updatedParents: [], dbNow: '' });
   messageHelper.loadMessages.mockResolvedValue([]);
   permissionHelper.hasPermissions.mockResolvedValue(true);
   chatHelper.isUserInChat.mockResolvedValue(true);

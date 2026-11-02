@@ -452,18 +452,6 @@ export class WebSocketManager implements Transport {
     this.updateState();
   }
 
-  /** @deprecated use connect(); kept for old callers */
-  public checkConnectionStatus() {
-    if (document.visibilityState === 'visible' || !this._policyClosed) {
-      this.connect();
-    }
-  }
-
-  /** Drops the connection and reconnects (used after a stale pong). */
-  public disconnect() {
-    this.forceReconnect();
-  }
-
   private createSocket() {
     const transports = ['websocket'];
     if (config.DEPLOYMENT !== 'dev') {

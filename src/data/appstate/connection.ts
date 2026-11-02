@@ -15,8 +15,13 @@ type TabStateListener = (tabState: Common.TabState) => void;
 type UpdateAvailableListener = (updateAvailable: boolean) => void;
 type ErrorListener = (o: {origin: string, error: unknown}) => void;
 
-/** Debounce of the community/chat refresh after the socket is live again. */
-export const REFRESH_AFTER_RESTORE_DEBOUNCE_MS = 1_000;
+/**
+ * Debounce of the snapshot refresh after the socket is live again: a random
+ * delay in [MIN, MAX) so the tabs of all clients do not refresh in step
+ * after a server restart.
+ */
+export const REFRESH_AFTER_RESTORE_DEBOUNCE_MIN_MS = 1_000;
+export const REFRESH_AFTER_RESTORE_DEBOUNCE_MAX_MS = 3_000;
 
 const loginManagerP = (async () => {
   return (await import('./login')).default;
@@ -56,6 +61,8 @@ export class ConnectionManager {
   private _autoLoginTriggered = false;
   private _cleanUpIndexedDbsPromise: Promise<void> | null = null;
   private _refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  /** a `restored` happened while the page was hidden: refresh once it is visible */
+  private _refreshPending = false;
 
   constructor() {
     webSocketManager.onStateChange = this.setWebSocketState.bind(this);
@@ -195,19 +202,32 @@ export class ConnectionManager {
     }
   }
 
+  /** Only visible tabs refresh; a hidden one remembers it for its return. */
   private scheduleRefreshAfterRestore(): void {
+    if (document.visibilityState !== "visible") {
+      this._refreshPending = true;
+      return;
+    }
     if (this._refreshTimer !== undefined) {
       clearTimeout(this._refreshTimer);
     }
+    const delay = REFRESH_AFTER_RESTORE_DEBOUNCE_MIN_MS +
+      Math.random() * (REFRESH_AFTER_RESTORE_DEBOUNCE_MAX_MS - REFRESH_AFTER_RESTORE_DEBOUNCE_MIN_MS);
     this._refreshTimer = setTimeout(() => {
       this._refreshTimer = undefined;
+      if (document.visibilityState !== "visible") {
+        this._refreshPending = true;
+        return;
+      }
+      this._refreshPending = false;
       if (!webSocketManager.live) {
+        // the next `restored` schedules it again
         return;
       }
       loginManagerP
         .then(loginManager => loginManager.refreshAfterReconnect())
         .catch(e => console.error("Error refreshing data after reconnect", e));
-    }, REFRESH_AFTER_RESTORE_DEBOUNCE_MS);
+    }, delay);
   }
 
   // loginstate
@@ -244,6 +264,9 @@ export class ConnectionManager {
       // we might have been in the background for a while, check if we're
       // still online and logged in (the socket handles its own reconnect)
       if (this._visibilityState === "visible") {
+        if (this._refreshPending) {
+          this.scheduleRefreshAfterRestore();
+        }
         this.setOnlineState(navigator.onLine ? "online" : "offline", false);
         if (navigator.onLine) {
           loginManagerP.then(loginManager => {

@@ -9,8 +9,9 @@ import { importAsNewTab } from 'test/modules';
 import { useDataLayerFakeTimers } from 'test/timers';
 import { flushMicrotasks } from 'test/deferred';
 
-/** REFRESH_AFTER_RESTORE_DEBOUNCE_MS of connection.ts (which reads `window` at import) */
-const REFRESH_AFTER_RESTORE_DEBOUNCE_MS = 1_000;
+/** the refresh debounce of connection.ts (which reads `window` at import) */
+const REFRESH_MIN_MS = 1_000;
+const REFRESH_MAX_MS = 3_000;
 
 /*
  * connectionManager on top of the transport: the old app events fire on
@@ -53,7 +54,8 @@ async function openTab(deviceId?: string, options: { accept?: boolean } = {}) {
   });
   Object.assign(fake.serviceWorkerManager, { state: 'none', update: vi.fn(), finishSwInstallation: vi.fn() });
   const connectionModule = await importAsNewTab(() => import('data/appstate/connection'));
-  expect(connectionModule.REFRESH_AFTER_RESTORE_DEBOUNCE_MS).toBe(REFRESH_AFTER_RESTORE_DEBOUNCE_MS);
+  expect(connectionModule.REFRESH_AFTER_RESTORE_DEBOUNCE_MIN_MS).toBe(REFRESH_MIN_MS);
+  expect(connectionModule.REFRESH_AFTER_RESTORE_DEBOUNCE_MAX_MS).toBe(REFRESH_MAX_MS);
   const connectionManager = connectionModule.default;
   const { default: ws } = await import('data/appstate/webSocket');
   if (deviceId) await ws.login(deviceId);
@@ -113,11 +115,12 @@ describe('connectionManager', () => {
     expect(tab.appEvents).toEqual(['cliConnectionEstablished', 'cliConnectionRestored', 'cliConnectionRestored']);
   });
 
-  it('refreshes community/chat data (debounced) after a restored live, not after established', async () => {
+  it('refreshes the snapshot (jittered debounce) after a restored live, not after established', async () => {
     useDataLayerFakeTimers();
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.99);
     const tab = await openTab('dev-1');
     await settle();
-    await vi.advanceTimersByTimeAsync(REFRESH_AFTER_RESTORE_DEBOUNCE_MS * 2);
+    await vi.advanceTimersByTimeAsync(REFRESH_MAX_MS);
     expect(fake.loginManager.refreshAfterReconnect).not.toHaveBeenCalled();
 
     for (let i = 0; i < 2; i++) {
@@ -125,7 +128,27 @@ describe('connectionManager', () => {
       tab.socket.accept();
       await settle();
     }
-    await vi.advanceTimersByTimeAsync(REFRESH_AFTER_RESTORE_DEBOUNCE_MS);
+    await vi.advanceTimersByTimeAsync(REFRESH_MIN_MS);
+    expect(fake.loginManager.refreshAfterReconnect).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(REFRESH_MAX_MS - REFRESH_MIN_MS);
+    expect(fake.loginManager.refreshAfterReconnect).toHaveBeenCalledTimes(1);
+    random.mockRestore();
+  });
+
+  it('a hidden tab refreshes only once it becomes visible', async () => {
+    useDataLayerFakeTimers();
+    const tab = await openTab('dev-1');
+    await settle();
+    tab.env.hide();
+    tab.socket.drop('transport close');
+    tab.socket.accept();
+    await settle();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fake.loginManager.refreshAfterReconnect).not.toHaveBeenCalled();
+
+    tab.env.show();
+    await settle();
+    await vi.advanceTimersByTimeAsync(REFRESH_MAX_MS);
     expect(fake.loginManager.refreshAfterReconnect).toHaveBeenCalledTimes(1);
   });
 

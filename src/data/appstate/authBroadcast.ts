@@ -32,14 +32,46 @@ export const LOGIN_LOCK_WAIT_MS = 15_000;
 export const authTabId = randomSocketId();
 
 /**
- * Runs `fn` while holding the login lock. Without `navigator.locks`, or when
- * the lock cannot be had within LOGIN_LOCK_WAIT_MS, `fn` runs unserialised.
- * Never call it from inside `fn` (the lock is not reentrant).
+ * How long a tab may hold the login lock (one login: secret, signature,
+ * request). A hung request must not block the other tabs' logins: after this
+ * the caller gets LOGIN_LOCK_HOLD_TIMEOUT and the lock is released — before
+ * waiting tabs give up on the lock (LOGIN_LOCK_WAIT_MS).
  */
-export async function withLoginLock<T>(fn: () => Promise<T>): Promise<T> {
+export const LOGIN_LOCK_HOLD_MAX_MS = 10_000;
+
+export const LOGIN_LOCK_HOLD_TIMEOUT = 'LOGIN_LOCK_HOLD_TIMEOUT';
+
+export type LoginLockInfo = {
+  /** another tab held the lock first (it may just have logged in) */
+  waited: boolean;
+};
+
+function holdLimited<T>(run: () => Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(LOGIN_LOCK_HOLD_TIMEOUT)), LOGIN_LOCK_HOLD_MAX_MS);
+  });
+  return Promise.race([run(), timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Runs `fn` while holding the login lock, at most LOGIN_LOCK_HOLD_MAX_MS.
+ * Without `navigator.locks`, or when the lock cannot be had within
+ * LOGIN_LOCK_WAIT_MS, `fn` runs unserialised. `info.waited` tells whether
+ * another tab held the lock first. Never call it from inside `fn` (the lock
+ * is not reentrant).
+ */
+export async function withLoginLock<T>(fn: (info: LoginLockInfo) => Promise<T>): Promise<T> {
   const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
   if (!locks || typeof locks.request !== 'function') {
-    return fn();
+    return holdLimited(() => fn({ waited: false }));
+  }
+  const NOT_AVAILABLE = Symbol('not available');
+  const immediate = await locks.request(LOGIN_LOCK_NAME, { ifAvailable: true }, (lock) => {
+    return lock ? holdLimited(() => fn({ waited: false })) : NOT_AVAILABLE;
+  });
+  if (immediate !== NOT_AVAILABLE) {
+    return immediate as T;
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), LOGIN_LOCK_WAIT_MS);
@@ -48,14 +80,14 @@ export async function withLoginLock<T>(fn: () => Promise<T>): Promise<T> {
     return await locks.request(LOGIN_LOCK_NAME, { signal: controller.signal }, () => {
       started = true;
       clearTimeout(timer);
-      return fn();
+      return holdLimited(() => fn({ waited: true }));
     }) as T;
   } catch (e) {
     if (!started) {
       // timed out waiting (or the lock manager failed): do not block the login
       console.warn('Login lock not available, logging in without it', e);
       clearTimeout(timer);
-      return fn();
+      return holdLimited(() => fn({ waited: true }));
     }
     throw e;
   }

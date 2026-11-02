@@ -21,8 +21,6 @@ import signedOutNotice from "data/auth/signedOut";
 import { getAuthMode } from "data/auth/authMode";
 import { type AuthenticationResponseJSON } from "@simplewebauthn/browser";
 import notificationsApi from "data/api/notifications";
-import communityApi from "data/api/community";
-import chatApi from "data/api/chat";
 import { broadcastLoggedIn, broadcastLoggedOut, onAuthBroadcast, withLoginLock } from "./authBroadcast";
 import type { AuthBroadcastMessage } from "./transport";
 
@@ -43,8 +41,6 @@ function debugLog(...args: any[]) {
 // phrase some old clients kept in localStorage for a silent re-login.
 const MNEMONIC_KEY = 'CRYPTOGRAM_USER_MNEMONIC';
 const CURRENT_USER_KEY = 'CG_CURRENT_USER';
-/** parallel community requests of refreshAfterReconnect */
-const REFRESH_CONCURRENCY = 4;
 
 export type LoginOptions =
   { account: 'wallet' } |
@@ -63,7 +59,7 @@ class LoginManager {
   private _state: Common.LoginState = "pending";
   private _onStateChange: (state: Common.LoginState) => (Promise<void> | void) = () => undefined;
   private _onError: (error: unknown) => void = (error) => console.error("Uncaught error in LoginManager", error);
-  private _loginInProgress?: Promise<API.User.login.Response>;
+  private _loginInProgress?: Promise<API.User.login.Response | 'taken-over'>;
   /** a login of this tab is running (`_loginInProgress` lingers for a tick after it) */
   private _loginRunning = false;
   private _currentUser: CurrentUser | null = JSON.parse(localStorage.getItem(CURRENT_USER_KEY) || 'null');
@@ -197,7 +193,12 @@ class LoginManager {
         if (this.currentUser) {
           try {
             triedLogin = true;
-            result = await this._login({ deviceId: this.currentUser.deviceId });
+            const outcome = await this._login({ deviceId: this.currentUser.deviceId }, true);
+            if (outcome === 'taken-over') {
+              // another tab had just logged in: its session serves this tab too
+              return;
+            }
+            result = outcome;
           } catch (e) {
             if (e instanceof Error) {
               if (e.message === errors.server.NOT_FOUND) {
@@ -278,8 +279,13 @@ class LoginManager {
   }
 
   /** interactive login (or a device-key re-login with `deviceId`) */
-  public async login(options: LoginOptions) {
-    return this._login(options);
+  public async login(options: LoginOptions): Promise<API.User.login.Response> {
+    const result = await this._login(options);
+    if ((result as unknown) === 'taken-over') {
+      // joined a running page login that took another tab's session over
+      throw new Error("Login cancelled by user");
+    }
+    return result;
   }
 
   private __loginRequiredLoginPromise: Promise<void> | undefined;
@@ -460,14 +466,26 @@ class LoginManager {
       // this tab started a login or logout meanwhile, or adopted already
       return;
     }
+    if (sessionUserId !== userId) {
+      this._currentUser = stored;
+      securityStepState.setUser(userId);
+      await this.autoLogin();
+      return;
+    }
+    await this.takeOverSession(stored);
+  }
+
+  /**
+   * The session cookie already belongs to `stored` (another tab of this
+   * browser logged in): set up this tab's own state without an HTTP login.
+   * The shared IndexedDB data was written by that tab.
+   */
+  private async takeOverSession(stored: CurrentUser): Promise<void> {
+    const { userId } = stored;
     this._currentUser = stored;
     securityStepState.setUser(userId);
     stepUpManager.clear();
     channelDatabaseManager.userId = userId;
-    if (sessionUserId !== userId) {
-      await this.autoLogin();
-      return;
-    }
     if (!securityStepState.required) {
       webSocketManager.login(stored.deviceId).catch(e => debugLog("socket login", e));
     }
@@ -485,6 +503,39 @@ class LoginManager {
     if (this._currentUser?.userId === userId) {
       this.state = "loggedin";
     }
+  }
+
+  /**
+   * One HTTP device login: secret, signature, `User/login`. Call it only
+   * while holding the login lock: the server keeps one signable secret per
+   * session, so the secret of a concurrent login in another tab would
+   * replace this one. `requestStartedAt` is taken right before the login
+   * request (the snapshot is not older).
+   */
+  private async deviceLoginRequest(deviceId: string): Promise<{ response: API.User.login.Response; requestStartedAt: number }> {
+    const [keyPairObj, signableSecret] = await Promise.all([
+      getDeviceKeyPair(deviceId),
+      userApi.getSignableSecret()
+    ]);
+    const encoder = new TextEncoder();
+    const signature_arrayBuffer = await crypto.subtle.sign(
+      {
+        name: "ECDSA",
+        hash: "SHA-384"
+      },
+      keyPairObj.keyPair.privateKey as any,
+      encoder.encode(signableSecret)
+    );
+    const uint8arr = new Uint8Array(signature_arrayBuffer);
+    const base64Signature = btoa(String.fromCharCode(...Array.from(uint8arr)));
+    const requestStartedAt = Date.now();
+    const response = await userApi.login({
+      type: "device",
+      deviceId,
+      base64Signature,
+      secret: signableSecret
+    });
+    return { response, requestStartedAt };
   }
 
   private readStoredUser(): CurrentUser | null {
@@ -533,41 +584,56 @@ class LoginManager {
   }
 
   /**
-   * Catch-up of community/chat data once the socket is live again after a
-   * gap (connectionManager on `onLive('restored')`, debounced): events of the
-   * gap are lost, so the snapshot that every reconnect's forced device login
-   * used to deliver is fetched without a login. Communities are replaced only
-   * if every own community could be loaded (a partial list would drop the
-   * others).
+   * Catch-up of the entity data once the socket is live again after a gap
+   * (connectionManager on `onLive('restored')`, visible tabs, debounced):
+   * events of the gap are lost, so the tab re-runs the device `User/login`
+   * for its snapshot (own communities, chats, own data, unread count) — one
+   * request, under the login lock, without a state change. A device login of
+   * the same user keeps the session; a session of another user is not
+   * touched (the tab follows the stored user instead). The snapshot merges
+   * of the entity databases do not regress newer local rows.
    */
   public async refreshAfterReconnect(): Promise<void> {
-    if (this.state !== "loggedin" || !this.currentUser || this._windowReloadTriggered) {
+    if (
+      this.state !== "loggedin" || !this.currentUser || this._windowReloadTriggered ||
+      this._loginRunning || this.logoutPromise
+    ) {
       return;
     }
-    const userId = this.currentUser.userId;
-    const [chats, communities] = await Promise.allSettled([
-      chatApi.getChats(undefined),
-      (async () => {
-        const ids = ((await uniqueDb.uniques.get("OwnCommunityIds")) as Unique.OwnCommunityIds | undefined)?.ids || [];
-        const result: Models.Community.DetailViewFromApi[] = [];
-        for (let i = 0; i < ids.length; i += REFRESH_CONCURRENCY) {
-          result.push(...await Promise.all(ids.slice(i, i + REFRESH_CONCURRENCY).map(id => communityApi.getCommunityDetailView({ id }))));
+    const { userId, deviceId } = this.currentUser;
+    let result: { response: API.User.login.Response; requestStartedAt: number } | 'other-user' | undefined;
+    try {
+      result = await withLoginLock(async () => {
+        const status = await userApi.checkLoginStatus().catch(() => null);
+        if (!!status && status.userId !== null && status.userId !== userId) {
+          return 'other-user' as const;
         }
-        return result;
-      })(),
-    ]);
-    if (this.state !== "loggedin" || this.currentUser?.userId !== userId) {
+        if (this.state !== "loggedin" || this.currentUser?.userId !== userId) {
+          return undefined;
+        }
+        return this.deviceLoginRequest(deviceId);
+      });
+    } catch (e) {
+      if (e instanceof Error && e.message === errors.server.NOT_FOUND) {
+        await this.signedOutElsewhere();
+        return;
+      }
+      console.error("Error refreshing data after reconnect", e);
       return;
     }
-    const results = await Promise.allSettled([
-      chats.status === "fulfilled" ? chatDatabase.setupAfterLogin(chats.value) : Promise.reject(chats.reason),
-      communities.status === "fulfilled" ? communityDatabase.setupAfterLogin(communities.value) : Promise.reject(communities.reason),
-    ]);
-    for (const result of results) {
-      if (result.status === "rejected") {
-        console.error("Error refreshing data after reconnect", result.reason);
-      }
+    if (result === 'other-user') {
+      await this.followStoredUser();
+      return;
     }
+    if (!result || this.state !== "loggedin" || this.currentUser?.userId !== userId) {
+      return;
+    }
+    const { response, requestStartedAt } = result;
+    if (typeof response.stepUpValidUntil === 'number') {
+      stepUpManager.markAuthenticated(response.stepUpValidUntil);
+    }
+    securityStepState.set(response.securityStepRequired === true);
+    await this.setupAfterLogin(response, requestStartedAt);
   }
 
   /**
@@ -636,39 +702,46 @@ class LoginManager {
 
   // Private
 
-  private async _login(options: LoginOptions): Promise<API.User.login.Response> {
+  /**
+   * `mayTakeOver` (the page's device login): if another tab held the login
+   * lock first and the session belongs to the stored user afterwards, that
+   * tab has just logged in — take its session over (`'taken-over'`) instead
+   * of a second login.
+   */
+  private _login(options: LoginOptions): Promise<API.User.login.Response>;
+  private _login(options: LoginOptions, mayTakeOver: true): Promise<API.User.login.Response | 'taken-over'>;
+  private async _login(options: LoginOptions, mayTakeOver = false): Promise<API.User.login.Response | 'taken-over'> {
     if (!this._loginRunning || !this._loginInProgress) {
       this._loginRunning = true;
-      this._loginInProgress = new Promise<API.User.login.Response>(async (resolve, reject) => {
+      this._loginInProgress = new Promise<API.User.login.Response | 'taken-over'>(async (resolve, reject) => {
         try {
           this.state = "loggingin";
           let responseData: API.User.login.Response | undefined;
+          let requestStartedAt: number | undefined;
           if ('deviceId' in options) {
             const { deviceId } = options;
-            const [keyPairObj, signableSecret] = await Promise.all([
-              getDeviceKeyPair(deviceId),
-              userApi.getSignableSecret()
-            ]);
-            const encoder = new TextEncoder();
-            const signature_arrayBuffer = await crypto.subtle.sign(
-              {
-                name: "ECDSA",
-                hash: "SHA-384"
-              },
-              keyPairObj.keyPair.privateKey as any,
-              encoder.encode(signableSecret)
-            );
-            const uint8arr = new Uint8Array(signature_arrayBuffer);
-            const base64Signature = btoa(String.fromCharCode(...Array.from(uint8arr)));
-            if (this.state === 'loggingin') {
-              responseData = await withLoginLock(() => userApi.login({
-                type: "device",
-                deviceId,
-                base64Signature,
-                secret: signableSecret
-              }));
+            // secret, signature and login under one lock: the server keeps
+            // one signable secret per session (shared by all tabs)
+            const outcome = await withLoginLock(async ({ waited }) => {
+              if (waited && mayTakeOver) {
+                const stored = this.readStoredUser();
+                const status = await userApi.checkLoginStatus().catch(() => null);
+                if (!!stored && stored.deviceId === deviceId && status?.userId === stored.userId) {
+                  return { takeOver: stored };
+                }
+              }
+              if (this.state !== 'loggingin') {
+                return undefined;
+              }
+              return this.deviceLoginRequest(deviceId);
+            });
+            if (!!outcome && 'takeOver' in outcome) {
+              await this.takeOverSession(outcome.takeOver);
+              resolve('taken-over');
+              return;
             }
-    
+            responseData = outcome?.response;
+            requestStartedAt = outcome?.requestStartedAt;
           } else {
             const keyPair = await generateNewKeyPair();
             const publicKey = await window.crypto.subtle.exportKey(
@@ -727,6 +800,7 @@ class LoginManager {
             }
             if (this.state === 'loggingin') {
               const request = loginRequest;
+              requestStartedAt = Date.now();
               responseData = await withLoginLock(() => userApi.login(request));
               await saveDeviceKeyPair(responseData.ownData.id, responseData.deviceId, keyPair);
             }
@@ -752,7 +826,7 @@ class LoginManager {
                 stepUpManager.clear();
               }
               securityStepState.set(responseData.securityStepRequired === true);
-              await this.setupAfterLogin(responseData);
+              await this.setupAfterLogin(responseData, requestStartedAt);
               this.state = "loggedin";
               broadcastLoggedIn(responseData.ownData.id);
               resolve(responseData);
@@ -789,10 +863,11 @@ class LoginManager {
         }
       });
     }
-    return this._loginInProgress;
+    return this._loginInProgress as Promise<API.User.login.Response>;
   }
 
-  private async setupAfterLogin(data: API.User.login.Response) {
+  /** `requestStartedAt`: when the request of this snapshot started (entity-db snapshot merges) */
+  private async setupAfterLogin(data: API.User.login.Response, requestStartedAt?: number) {
     const serviceWorkerManager = (await import("./serviceWorker")).default;
     if (this._windowReloadTriggered === false) {
       channelDatabaseManager.userId = data.ownData.id;
@@ -804,13 +879,13 @@ class LoginManager {
           await userDatabase.clear();
           return userDatabase.setupAfterLogin(data.ownData);
         }),
-        communityDatabase.setupAfterLogin(data.communities).catch(async (e) => {
+        communityDatabase.setupAfterLogin(data.communities, { requestStartedAt }).catch(async (e) => {
           await communityDatabase.clear();
-          return communityDatabase.setupAfterLogin(data.communities);
+          return communityDatabase.setupAfterLogin(data.communities, { requestStartedAt });
         }),
-        chatDatabase.setupAfterLogin(data.chats).catch(async (e) => {
+        chatDatabase.setupAfterLogin(data.chats, { requestStartedAt }).catch(async (e) => {
           await chatDatabase.clear();
-          return chatDatabase.setupAfterLogin(data.chats);
+          return chatDatabase.setupAfterLogin(data.chats, { requestStartedAt });
         }),
         // not awaited: `loggedin` does not wait for the socket login (the
         // transport reports `live` itself)

@@ -32,8 +32,20 @@ const fake = vi.hoisted(() => {
     /** when set, the next User/login waits for it */
     loginGate: undefined as Deferred<void> | undefined,
     devices: new Map<string, string>(), // deviceId -> userId
+    /** the session's one signable secret (like `session.signSecret`): a new one replaces it */
+    secret: undefined as string | undefined,
+    secretCounter: 0,
+    invalidSecrets: 0,
+    /** when set, User/login never answers */
+    hangLogin: false,
   };
-  return { io: undefined as FakeIo | undefined, server, keyPair: undefined as CryptoKeyPair | undefined };
+  return {
+    io: undefined as FakeIo | undefined,
+    server,
+    keyPair: undefined as CryptoKeyPair | undefined,
+    /** options of every community/chat snapshot merge (setupAfterLogin) */
+    snapshots: [] as { db: string; options?: { requestStartedAt?: number } }[],
+  };
 });
 
 vi.mock('socket.io-client', () => ({
@@ -43,10 +55,23 @@ vi.mock('socket.io-client', () => ({
 vi.mock('data/api/user', () => ({
   default: {
     ensureSession: async () => undefined,
-    getSignableSecret: async () => 'http-secret',
+    getSignableSecret: async () => {
+      await Promise.resolve();
+      fake.server.secret = `http-secret-${++fake.server.secretCounter}`;
+      return fake.server.secret;
+    },
     checkLoginStatus: async () => ({ userId: fake.server.sessionUserId }),
-    login: async (request: { type: string; deviceId?: string }) => {
+    login: async (request: { type: string; deviceId?: string; secret?: string }) => {
       const { server } = fake;
+      if (server.hangLogin) return new Promise(() => undefined);
+      if (request.type === 'device') {
+        // one secret per session, used once (srv/api/user.ts)
+        if (!request.secret || request.secret !== server.secret) {
+          server.invalidSecrets++;
+          throw new Error('INVALID_SECRET');
+        }
+        server.secret = undefined;
+      }
       server.loginCalls++;
       server.concurrentLogins++;
       server.maxConcurrentLogins = Math.max(server.maxConcurrentLogins, server.concurrentLogins);
@@ -93,10 +118,15 @@ vi.mock('data/util/device', () => {
   };
 });
 
-const stubDb = () => ({ setupAfterLogin: async () => undefined, clear: async () => undefined });
+const stubDb = (db?: string) => ({
+  setupAfterLogin: async (_data: unknown, options?: { requestStartedAt?: number }) => {
+    if (db) fake.snapshots.push({ db, options });
+  },
+  clear: async () => undefined,
+});
 vi.mock('data/databases/user', () => ({ default: stubDb() }));
-vi.mock('data/databases/community', () => ({ default: stubDb() }));
-vi.mock('data/databases/chats', () => ({ default: stubDb() }));
+vi.mock('data/databases/community', () => ({ default: stubDb('community') }));
+vi.mock('data/databases/chats', () => ({ default: stubDb('chats') }));
 vi.mock('data/databases/notification', () => ({ default: { ...stubDb(), unreadCount: 0 } }));
 vi.mock('data/databases/messages', () => ({ default: {} }));
 vi.mock('data/databases/channel', () => ({ default: { userId: undefined, clear: async () => undefined } }));
@@ -116,7 +146,11 @@ beforeAll(async () => {
 });
 
 function resetServer() {
+  fake.snapshots.length = 0;
   Object.assign(fake.server, {
+    secret: undefined,
+    invalidSecrets: 0,
+    hangLogin: false,
     sessionUserId: null,
     loginCalls: 0,
     logoutCalls: 0,
@@ -189,9 +223,64 @@ describe('login lock', () => {
     gate.resolve();
     await Promise.all([loginA, loginB]);
 
-    expect(fake.server.loginCalls).toBe(2);
+    // the tab that waited for the lock found the session logged in and took it over
+    expect(fake.server.loginCalls).toBe(1);
     expect(fake.server.maxConcurrentLogins).toBe(1);
+    expect(fake.server.invalidSecrets).toBe(0);
     expect(a.loginManager.state).toBe('loggedin');
+    expect(b.loginManager.state).toBe('loggedin');
+    await settle();
+    expect(socketLoggedInAs(b.socket)).toBe('dev-1');
+  });
+
+  it('two tabs loading at once share the one session secret (secret, signature and login under one lock)', async () => {
+    setup();
+    storeUser('u1', 'dev-1');
+    const a = await openTab();
+    const b = await openTab();
+    const results = await Promise.all([
+      a.loginManager.autoLogin().then(() => 'ok', (e: Error) => e.message),
+      b.loginManager.autoLogin().then(() => 'ok', (e: Error) => e.message),
+    ]);
+    await settle();
+    expect(results).toEqual(['ok', 'ok']);
+    expect(fake.server.invalidSecrets).toBe(0);
+    expect(a.loginManager.state).toBe('loggedin');
+    expect(b.loginManager.state).toBe('loggedin');
+    expect(b.loginManager.currentUser?.userId).toBe('u1');
+    expect(b.ws.live).toBe(true);
+  });
+
+  it('a tab without a running login in another tab does its own device login (fresh snapshot after a reload)', async () => {
+    setup();
+    fake.server.sessionUserId = 'u1'; // the cookie survived the reload
+    await loggedInTab();
+    expect(fake.server.loginCalls).toBe(1);
+    expect(fake.snapshots.map(s => s.db).sort()).toEqual(['chats', 'community']);
+    expect(fake.snapshots.every(s => typeof s.options?.requestStartedAt === 'number')).toBe(true);
+  });
+
+  it('a hung login request releases the lock after LOGIN_LOCK_HOLD_MAX_MS', async () => {
+    useDataLayerFakeTimers();
+    setup();
+    storeUser('u1', 'dev-1');
+    const a = await openTab();
+    const b = await openTab();
+    fake.server.hangLogin = true;
+    const loginA = a.loginManager.autoLogin().then(() => 'ok', (e: Error) => e.message);
+    for (let i = 0; i < 1000 && (await navigator.locks.query()).held!.length === 0; i++) {
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
+    const loginB = b.loginManager.autoLogin().then(() => 'ok', (e: Error) => e.message);
+    await settle();
+    fake.server.hangLogin = false;
+    const { LOGIN_LOCK_HOLD_MAX_MS } = await import('data/appstate/authBroadcast');
+    await vi.advanceTimersByTimeAsync(LOGIN_LOCK_HOLD_MAX_MS);
+    for (let i = 0; i < 1000 && fake.server.loginCalls === 0; i++) {
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
+    expect(await loginA).toBe('LOGIN_LOCK_HOLD_TIMEOUT');
+    expect(await loginB).toBe('ok');
     expect(b.loginManager.state).toBe('loggedin');
   });
 
@@ -326,6 +415,58 @@ describe('LOGIN_REQUIRED', () => {
     await expect(tab.loginManager.loginRequiredErrorHandler()).resolves.toBeUndefined();
     expect(fake.server.loginCalls).toBe(2);
     expect(tab.loginManager.state).toBe('loggedin');
+  });
+});
+
+describe('refresh after a restored live', () => {
+  it('re-runs the device login snapshot under the lock, without a login-state change', async () => {
+    setup();
+    const tab = await loggedInTab();
+    fake.snapshots.length = 0;
+    const states: Common.LoginState[] = [];
+    tab.loginManager.onStateChange = (state) => { states.push(state); };
+    const before = Date.now();
+
+    await tab.loginManager.refreshAfterReconnect();
+
+    expect(fake.server.loginCalls).toBe(2);
+    expect(fake.server.invalidSecrets).toBe(0);
+    expect(states).toEqual([]);
+    expect(tab.loginManager.state).toBe('loggedin');
+    expect(fake.snapshots.map(s => s.db).sort()).toEqual(['chats', 'community']);
+    for (const snapshot of fake.snapshots) {
+      expect(snapshot.options?.requestStartedAt).toBeGreaterThanOrEqual(before);
+    }
+  });
+
+  it('runs one request per refresh and keeps the secret of a concurrent page login intact', async () => {
+    setup();
+    const a = await loggedInTab();
+    const b = await openTab();
+    const results = await Promise.all([
+      a.loginManager.refreshAfterReconnect().then(() => 'ok', (e: Error) => e.message),
+      b.loginManager.autoLogin().then(() => 'ok', (e: Error) => e.message),
+    ]);
+    expect(results).toEqual(['ok', 'ok']);
+    expect(fake.server.invalidSecrets).toBe(0);
+    expect(b.loginManager.state).toBe('loggedin');
+  });
+
+  it('does not log in over a session of another user', async () => {
+    setup();
+    const tab = await loggedInTab();
+    fake.server.sessionUserId = 'u2';
+    await tab.loginManager.refreshAfterReconnect();
+    expect(fake.server.loginCalls).toBe(1);
+  });
+
+  it('a device signed out elsewhere signs out on the refresh', async () => {
+    setup();
+    const tab = await loggedInTab();
+    fake.server.devices.delete('dev-1');
+    await tab.loginManager.refreshAfterReconnect();
+    await settle();
+    expect(tab.loginManager.state).toBe('anonymous');
   });
 });
 

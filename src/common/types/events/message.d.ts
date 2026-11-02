@@ -20,13 +20,27 @@ declare namespace Events {
       data:
         Pick<Models.Message.ApiMessage, "id" | "channelId" | "updatedAt">
         & { communityId?: string }
-        & Partial<Pick<Models.Message.ApiMessage, "body" | "attachments" | "parentMessageId" | "reactions">>;
+        // ownReaction: only in the copy sent to the reacting user's own room;
+        // syncSeq: chat-sync, absent on older servers
+        & Partial<Pick<Models.Message.ApiMessage, "body" | "attachments" | "parentMessageId" | "reactions" | "ownReaction" | "syncSeq" | "editedAt">>;
     } | {
       action: 'delete';
       data: {
         communityId?: string;
         channelId: string;
         deletedIds: string[];
+        /**
+         * chat-sync: highest syncSeq of the deleted rows; absent on older
+         * servers. (`new` carries `syncSeq` in its ApiMessage, `update` in
+         * its data; both are optional for the same reason.)
+         */
+        syncSeq?: number;
+        /**
+         * chat-sync: the syncSeq of every deleted row (a multi-row delete
+         * bumps several), so the client records all of them and sees no
+         * spurious gap; absent on older servers
+         */
+        syncSeqs?: number[];
       };
     });
 

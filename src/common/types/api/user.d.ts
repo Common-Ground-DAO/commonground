@@ -80,6 +80,10 @@ declare global {
                     webPushSubscription: Models.Notification.PushSubscription | null;
                     communities: Models.Community.DetailViewFromApi[];
                     chats: Models.Chat.ChatFromApi[];
+                    /**
+                     * servers before chat-sync may send a numeric string
+                     * (uncast int8 count); clients coerce it with `Number()`
+                     */
                     unreadNotificationCount: number;
                     /**
                      * the account must finish the account-security step before

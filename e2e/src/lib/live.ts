@@ -5,6 +5,7 @@
 import type { Page } from 'puppeteer';
 import { connectionState, EDITOR } from './app.ts';
 import { trackWebSockets } from './cdp.ts';
+import type { ExpectedFailure } from './harness.ts';
 import { assert, describe, sleep, until } from './ui.ts';
 import { EVAL_TIMEOUT_MS, within } from './within.ts';
 
@@ -280,8 +281,18 @@ export type ServerChannelState = {
   source: 'Message/getSyncState' | 'Community/getCommunityDetailView';
 };
 
-/** servers without Message/getSyncState (404) — remembered per page */
-const noSyncState = new WeakSet<Page>();
+/** the origins whose server has no Message/getSyncState (it answered 404) */
+const noSyncState = new Set<string>();
+const originOf = (page: Page) => new URL(page.url()).origin;
+
+/**
+ * The guard finding the first getSyncState probe of a server without it
+ * causes (Chrome logs the 404): pass to t.expectFailures around the first
+ * serverChannelState() of a flow.
+ */
+export function syncStateProbeFailures(session: string): ExpectedFailure[] {
+  return [{ session, kinds: ['console-error'], text: /^Failed to load resource: the server responded with a status of 404 \(\)$/, reason: 'probing Message/getSyncState on a server without it' }];
+}
 
 /**
  * The server's read state of a channel for the logged-in user, as the app
@@ -292,7 +303,7 @@ const noSyncState = new WeakSet<Page>();
 export async function serverChannelState(page: Page, communityPath: string, channelTitle: string, knownChannelId?: string): Promise<ServerChannelState> {
   let channelId = knownChannelId;
   let detail: ServerChannelState | undefined;
-  if (!channelId || noSyncState.has(page)) {
+  if (!channelId || noSyncState.has(originOf(page))) {
     const url = /^\/c\/([^/]+)\//.exec(communityPath)?.[1];
     assert(url, `not a community path: ${communityPath}`);
     const community = await apiCall<{ channels?: { channelId: string; title: string; lastRead: string | null; unread: number | string; lastMessageDate: string | null }[] }>(page, 'Community/getCommunityDetailView', { url });
@@ -301,7 +312,7 @@ export async function serverChannelState(page: Page, communityPath: string, chan
     channelId = channel.channelId;
     detail = { channelId, lastRead: channel.lastRead, unread: Number(channel.unread), lastMessageDate: channel.lastMessageDate, source: 'Community/getCommunityDetailView' };
   }
-  if (!noSyncState.has(page)) {
+  if (!noSyncState.has(originOf(page))) {
     try {
       const state = await apiCall<{ channels: { channelId: string; lastRead: string | null; unread: number; lastMessageDate: string | null }[] }>(page, 'Message/getSyncState', { channelIds: [channelId] });
       const channel = state.channels.find(c => c.channelId === channelId);
@@ -312,7 +323,7 @@ export async function serverChannelState(page: Page, communityPath: string, chan
       if (!(e instanceof ApiCallError && e.http === 404)) {
         throw e;
       }
-      noSyncState.add(page);
+      noSyncState.add(originOf(page));
     }
   }
   return detail ?? serverChannelState(page, communityPath, channelTitle);

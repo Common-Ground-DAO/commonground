@@ -6,7 +6,7 @@ import type { HTTPRequest, HTTPResponse, Page } from 'puppeteer';
 import type { Flow, Session } from '../lib/harness.ts';
 import { openChannel, sendMessage, waitAppReady } from '../lib/app.ts';
 import { liveTab, ownerAndMember } from '../lib/chatsync.ts';
-import { assertConnected, channelUnread, serverChannelState, waitChannelUnread, waitMessagesShown } from '../lib/live.ts';
+import { assertConnected, channelUnread, serverChannelState, syncStateProbeFailures, waitChannelUnread, waitMessagesShown } from '../lib/live.ts';
 import { expectVisibility, openTab, showTab } from '../lib/tabs.ts';
 import { assert, sleep, until } from '../lib/ui.ts';
 
@@ -33,7 +33,9 @@ export const csUnreadTabs: Flow = {
     const serverReads: [string, string][] = [];
     // every lastRead B's tabs sent for READ (setChannelLastRead), in order: [tab, ISO]
     const sent: [string, string][] = [];
-    const readChannelId = await t.step(`the server's id of "${READ}"`, async () => (await serverChannelState(member.page, community.path, READ)).channelId);
+    // the first read of the server's state also finds out whether it has Message/getSyncState
+    const readChannelId = await t.expectFailures(syncStateProbeFailures(member.name), () =>
+      t.step(`the server's read state of "${READ}"`, async () => (await serverChannelState(member.page, community.path, READ)).channelId), 500);
     const record = (where: string, lastRead: string | null | undefined) => {
       if (lastRead) {
         serverReads.push([where, lastRead]);

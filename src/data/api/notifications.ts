@@ -29,8 +29,13 @@ class NotificationsApiConnector extends BaseApiConnector {
     ); 
   }
   
+  /**
+   * `{ withTime: true }` (chat-sync) answers `{ unreadCount, unreadCountAt }`;
+   * without a body, and from older servers, the plain count (possibly a
+   * numeric string).
+   */
   public async getUnreadCount(
-    data: API.Notification.getUnreadCount.Request
+    data?: API.Notification.getUnreadCount.Request
   ): Promise<API.Notification.getUnreadCount.Response> {
     return await this.ajax<API.Notification.getUnreadCount.Response>(
       "POST",

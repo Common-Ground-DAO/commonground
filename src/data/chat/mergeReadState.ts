@@ -71,7 +71,8 @@ export function mergeReadState(stored: ChannelReadState | undefined, input: Read
         if (knowsOurLastRead && input.syncSeq >= base.seq) {
           takeSeqCount(input.unread, input.syncSeq);
         }
-      } else if (base.seq === 0 && knowsOurLastRead) {
+      } else if (base.seq === 0 && knowsOurLastRead && isoTime(input.lastMessageDate) >= isoTime(base.lastMessageDate)) {
+        // a seq-less snapshot older than a live message must not undo its count
         unread = clampCount(input.unread);
       }
       lastRead = maxIso(lastRead, input.lastRead);

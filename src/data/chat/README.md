@@ -34,6 +34,8 @@ comments in the files below are normative; this is the summary.
    visible slice).
 6. **Sends/edits** resolve once the pending item/overlay is shown and never
    reject; the outcome is `sendStatus`, then `retrySend`/`discardPending`.
+   `isEmpty` counts server items only: it can be true while a pending send
+   is shown, so the UI checks `items.length` for its empty-channel text.
 7. **Read state**: everything through `mergeReadState`; `lastRead`/
    `lastMessageDate` max-merged; seq'd snapshots plus `counted` seqs survive
    live events during the round trip. Marking is a level (latest + bottom +
@@ -44,8 +46,8 @@ comments in the files below are normative; this is the summary.
 
 | Contract piece | Slice |
 |---|---|
-| store factories + `mergeReadState` (pure, `src/data/chat/*.ts`) | store-core |
-| event source/API adapters, `data.channelManager` façade, `onOwnMessage` -> read state | messages-ui (connector methods `getChanges`/`getSyncState` in `data/api/messages.ts`: to be assigned) |
+| store factories + `mergeReadState` (pure, `src/data/chat/*.ts`), connector methods `getChanges`/`getSyncState` (`data/api/messages.ts`) and `getUnreadCount({ withTime })` | store-core |
+| event source/API adapters, `data.channelManager` façade, `onOwnMessage` -> read state | messages-ui |
 | `ReadStatePersistence` (Dexie, one transaction) | entity-dbs |
 | `Transport`, auth broadcast, `cg:login`, socket-id header, article-room re-join | transport |
 | compat answer on `CG_WEBSOCKET_STATE` | sw |
@@ -58,3 +60,13 @@ response type; the rewrite replaces it.
 Deploy window (new client, old server): a 404 on `getChanges`/`getSyncState` ->
 fall back to `loadMessages` + old snapshots for the page load; omit `messageId`
 until one succeeded (retry without it on a validation error).
+
+## Implementation files (store-core)
+
+- `index.ts` — factories, `mergeReadState`, `systemClock`; compile-time check
+  that `messageApi`/`notificationsApi` satisfy `ChatApi`/`NotificationApi`.
+- `channelStore.ts` (+ `messageVersion.ts`: wire conversion, version rule),
+  `readStateStore.ts`, `notificationStore.ts`, `mergeReadState.ts`, `util.ts`.
+- `testing/fakeServer.ts` — scripted fake server (ChatApi + NotificationApi +
+  ChatEventSource) for the unit tests: seqs, tombstones, held/failed
+  responses, events delivered late/duplicated/out of order, old-server mode.

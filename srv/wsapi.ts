@@ -32,6 +32,7 @@ import botTokenHelper from './repositories/botTokens';
 import botHelper from './repositories/bots';
 import * as typingCache from './repositories/typingCache';
 import { PresenceTracker, type ClusterProbe } from './util/presence';
+import { deviceSocketRoomKey } from './util/requestSocket';
 
 import cookieParser from 'cookie-parser';
 // The manual-unsign alternative below needs `cookie-signature`, which was
@@ -240,6 +241,9 @@ async function joinAuthenticatedRooms(
   socket.data.deviceId = identity.deviceId;
   const rooms = [
     deviceRoomKey(identity.deviceId),
+    // the socket's own room under the device it proved: what socket-scoped
+    // targeting addresses (srv/util/requestSocket.ts)
+    deviceSocketRoomKey(identity.deviceId, socket.id),
     userRoomKey(identity.userId),
     ...identity.roleIds.map(roleRoomKey),
     ...identity.communityIds.map(communityRoomKey),
@@ -249,6 +253,34 @@ async function joinAuthenticatedRooms(
     rooms.push(botTokenRoomKey(identity.tokenId));
   }
   await socket.join(rooms);
+}
+
+/**
+ * The socket `logout`: the socket leaves every room but its own and the
+ * temporary community visitor room, forgets its identity and releases its
+ * presence. Also run before a second `login` of the socket with another
+ * device or user, so it keeps no rooms of the previous login.
+ */
+async function leaveAuthenticatedRooms(socket: AppSocket) {
+  const { userId } = socket.data;
+  flushTypingStops(socket);
+  delete socket.data.userId;
+  delete socket.data.deviceId;
+  const leavePromises: (void | Promise<void>)[] = [];
+  const temporaryCommunityKey = communityRoomKey(socket.data.temporaryCommunityId || '');
+  for (const roomId of Array.from(socket.rooms)) {
+    // Skip the socket's own room (roomId === socket.id) and potential temporary rooms (like a community public room)
+    if (
+      roomId !== socket.id &&
+      temporaryCommunityKey !== roomId
+    ) {
+      leavePromises.push(socket.leave(roomId));
+    }
+  }
+  await Promise.all(leavePromises);
+  if (!!userId) {
+    presence.socketGone(userId);
+  }
 }
 
 // --- Typing presence ---------------------------------------------------------
@@ -593,6 +625,14 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
         }
         const { userId } = await deviceHelper.verifyDeviceAndGetUserId(data.deviceId, signableSecret, data.base64Signature);
         delete socket.data.signableSecret;
+        // a second login of this socket as another device or user: the
+        // rooms of the previous login go first
+        if (
+          (socket.data.deviceId !== undefined && socket.data.deviceId !== data.deviceId) ||
+          (socket.data.userId !== undefined && socket.data.userId !== userId)
+        ) {
+          await leaveAuthenticatedRooms(socket);
+        }
         if (await isSecurityStepRequiredForRealtime(userId)) {
           // the account must finish the account-security step first
           // (docs/auth-identity §11): no rooms, no events
@@ -698,26 +738,7 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
     });
 
     socket.on("logout", () => {
-      const { userId } = socket.data;
-      flushTypingStops(socket);
-      delete socket.data.userId;
-      delete socket.data.deviceId;
-      const leavePromises: (void | Promise<void>)[] = [];
-      const temporaryCommunityKey = communityRoomKey(socket.data.temporaryCommunityId || '');
-      for (const roomId of Array.from(socket.rooms)) {
-        // Skip the socket's own room (roomId === socket.id) and potential temporary rooms (like a community public room)
-        if (
-          roomId !== socket.id &&
-          temporaryCommunityKey !== roomId
-        ) {
-          leavePromises.push(socket.leave(roomId));
-        }
-      }
-      Promise.all(leavePromises).then(() => {
-        if (!!userId) {
-          presence.socketGone(userId);
-        }
-      });
+      void leaveAuthenticatedRooms(socket);
     });
 
     socket.on("disconnect", () => {

@@ -32,7 +32,8 @@
 > 440c779, 2026-11-02; inline background images (§9) against commit 591e6cf, 2026-11-02;
 > the service worker's part in multi-tab coordination (§4 WebSocketManager and
 > ServiceWorkerManager, §8, §9 entry points) against commit 79187d2, 2026-11-02;
-> "Writers of the shared entity databases" (§ Dexie) against commit 212bbce, 2026-11-02
+> "Writers of the shared entity databases" (§ Dexie) against commit 212bbce, 2026-11-02;
+> `signedOutElsewhere()` during the own logout against commit f97ef1b, 2026-11-02
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -1490,7 +1491,7 @@ After a **password** login, if the account has no passkey on this instance: once
 
 **Settings → Accounts → Sign out other devices** asks first ("Sign out other devices? Every other browser and app signed in to your account is signed out and has to sign in again. This device stays signed in."), then confirms it's you (`ensureRecentAuth`, like removing a passkey) and calls `User/signOutOtherDevices`. What it did shows below the button and as a snackbar: "Signed out 3 other devices." / "Signed out 1 other device." / "No other device was signed in." (`signedOutDevicesText`), or "Other devices will be signed out within a minute." when the server answers `delayed`. A replaced password (`EmailPage`, `EmailEditor`) adds the same sentence from `setPassword`'s `signedOutDevices` to "Password updated"; removing a passkey or an X/LUKSO/Farcaster account says "Your other devices were signed out." (docs/auth-identity §2).
 
-The device that was signed out learns it from the socket event `cliSignedOut`, or — when it was offline or closed — from the `NOT_FOUND` of its device key at the next automatic login. `LoginManager.signedOutElsewhere()` raises `signedOutNotice` and signs out locally (`logout()`); `SignedOutNotice` then shows "You were signed out — Your account was signed out on this device from another device, or its password, email address or sign-in methods were changed there. Sign in again to continue." with **Sign in** (opens the login modal) and **Not now**. A logout in another tab of the same browser (which deletes this device's key as well) shows no notice: the tab knows it from the `cg:auth` broadcast or the stored current user, and follows that tab's logout without a second `User/logout`.
+The device that was signed out learns it from the socket event `cliSignedOut`, or — when it was offline or closed — from the `NOT_FOUND` of its device key at the next automatic login. `LoginManager.signedOutElsewhere()` raises `signedOutNotice` and signs out locally (`logout()`); `SignedOutNotice` then shows "You were signed out — Your account was signed out on this device from another device, or its password, email address or sign-in methods were changed there. Sign in again to continue." with **Sign in** (opens the login modal) and **Not now**. A logout in another tab of the same browser (which deletes this device's key as well) shows no notice: the tab knows it from the `cg:auth` broadcast or the stored current user, and follows that tab's logout without a second `User/logout`. A `cliSignedOut` that arrives while the tab's own logout is in flight is ignored (the server could not tell the requesting socket apart, docs/realtime "Socket-scoped targeting").
 
 The X popup page (`/twitter-login`, `TwitterCallbackView`) shows "Too many attempts to connect X from this network. You can try again in …" when `Twitter/startLogin` was refused by its limit (`?error=rate-limited&retryAfter=`).
 

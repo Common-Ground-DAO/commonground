@@ -14,6 +14,7 @@ import eventHelper from "../repositories/event";
 import onchainHelper from "../repositories/onchain";
 import { CallPermission, CallType, ChannelPermission, CommunityApprovalState, CommunityEventPermission, CommunityPermission, PredefinedRole, RoleType, UserBlockState } from "../common/enums";
 import callHelper from "../repositories/calls";
+import { requestSockets, senderExcept } from "../util/requestSocket";
 import { createTranslator } from "short-uuid";
 import fileHelper from "../repositories/files";
 import axios from "../util/axios";
@@ -25,6 +26,31 @@ import userHelper from "../repositories/users";
 
 const communityRouter = express.Router();
 const t = createTranslator();
+
+/**
+ * `cliCallEvent new` to the given role rooms plus the call's present members
+ * and, when the Public role may see the call, the community room (nobody
+ * joins a Public role room). One emit, so every socket gets it once. If the
+ * extra targets cannot be read, the role rooms still get it.
+ */
+async function emitCallNew(callData: Models.Calls.Call, roleIds: string[]) {
+  let extra: Awaited<ReturnType<typeof callHelper.getCallEventExtraTargets>> = { activeMemberUserIds: [], publicCommunityId: null };
+  try {
+    extra = await callHelper.getCallEventExtraTargets(callData.id);
+  }
+  catch (e) {
+    console.error("Error reading the call's event targets", e);
+  }
+  eventHelper.emit({
+    type: 'cliCallEvent',
+    action: 'new',
+    data: callData,
+  }, {
+    roleIds,
+    userIds: extra.activeMemberUserIds,
+    communityIds: extra.publicCommunityId !== null ? [extra.publicCommunityId] : [],
+  });
+}
 
 registerPostRoute<
   API.Community.getCommunityList.Request,
@@ -89,9 +115,7 @@ registerPostRoute<
     };
     eventHelper.emit(event, {
       userIds: [user.id],
-    }, {
-      deviceIds: [user.deviceId],
-    });
+    }, senderExcept(requestSockets(request, user.deviceId)));
 
     return result;
   }
@@ -322,9 +346,7 @@ registerPostRoute<
     };
     eventHelper.emit(event, {
       userIds: [user.id],
-    }, {
-      deviceIds: [user.deviceId],
-    });
+    }, senderExcept(requestSockets(request, user.deviceId)));
 
     if (result.logoLargeId !== null) {
       fileHelper.scheduleCommunityPreviewUpdate(user.id, result.id, result.logoLargeId);
@@ -1214,13 +1236,7 @@ registerPostRoute<
       }
     }
 
-    eventHelper.emit({
-      type: 'cliCallEvent',
-      action: 'new',
-      data: callData,
-    }, {
-      roleIds: targetRoleIds,
-    });
+    await emitCallNew(callData, targetRoleIds);
     return callData;
   }
 );
@@ -1290,13 +1306,7 @@ registerPostRoute<
       }
     }
 
-    eventHelper.emit({
-      type: 'cliCallEvent',
-      action: 'new',
-      data: callData,
-    }, {
-      roleIds: targetRoleIds,
-    });
+    await emitCallNew(callData, targetRoleIds);
     return callData;
   }
 );
@@ -1370,9 +1380,7 @@ registerPostRoute<
     };
     eventHelper.emit(event, {
       userIds: [user.id],
-    }, {
-      deviceIds: [user.deviceId],
-    });
+    }, senderExcept(requestSockets(request, user.deviceId)));
   }
 );
 

@@ -13,7 +13,9 @@
 > without a user, the index of each user's sessions, signing out other devices and the pre-login
 > limits (§2, §3, §4, §5.4, §7, §8, §10, §11) against commit 23a4c1e, 2026-11-01; the per-tab
 > login state, login lock, cross-tab broadcast, `checkLoginStatus`, LOGIN_REQUIRED handling and
-> the signed-out path across tabs (§10) against commit 964f6b3, 2026-11-02
+> the signed-out path across tabs (§10) against commit 964f6b3, 2026-11-02; the logout's
+> sign-out of the device's other sockets against commit ce09d8a, 2026-11-02; the header-less
+> logout disconnect and the own-logout guard against commits 1b09f87 and f97ef1b, 2026-11-02
 
 # Authentication & Identity
 
@@ -433,6 +435,13 @@ mode (the response itself refreshes an existing session's store TTL and re-sends
 session's cookie).
 `POST /User/logout` deletes the device, destroys the session (`endLoginSession()`; the old id is
 dead and leaves the user's session index) and expires the cookie; no new session takes its place.
+Logout disconnects the device's sockets: when the request names its tab's socket
+(`x-cg-socket-id`), the device's other sockets (its other tabs) get `cliSignedOut` and are
+disconnected, and the requesting tab's socket logs out itself; requests without the header
+(older clients) disconnect all of the device's sockets without `cliSignedOut`
+([docs/realtime](../realtime/README.md#socket-scoped-targeting)). A tab ignores `cliSignedOut`
+while its own logout is in flight (`LoginManager.signedOutElsewhere`), so a logout whose socket the
+server could not tell apart shows no "signed out" notice.
 `POST /User/signOutOtherDevices` (step-up) ends every other session and device key of the account
 and answers `{ devices, delayed }`, the number of other devices signed out
 ([§2](#signing-out-other-devices)).

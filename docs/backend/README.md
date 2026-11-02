@@ -38,7 +38,11 @@
 > `Message/getSyncState` (`srv/api/syncState.ts`, `srv/repositories/syncState.ts`), the
 > notification read/count routes, the `chats`/`notifications` indexes and the test list
 > against commit 312b5e7, 2026-11-02; the real-PostgreSQL spec notes (`tests/helpers/testPg.ts`)
-> against commit c652a23, 2026-11-02.
+> against commit c652a23, 2026-11-02; socket-scoped targeting (`eventHelper`, `/logout`, the
+> article-room routes, message echo, call-chat delivery) and the test list against commit
+> ce09d8a, 2026-11-02; the review fixes (`logoutDeviceSockets`, per-socket article limit,
+> `emitMessageEvents` never rejects) against commit 1b09f87 and the test list (with
+> `callDeliveryTargetsDb`) against commit 7f39d24, 2026-11-02.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -397,7 +401,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/requestSignupEmailCode`, `/verifySignupEmailCode` -- verify the sign-up address before the account exists (`srv/util/signupEmail.ts`)
 - `/clearLoginSession` -- Clear session
 - `/checkLoginStatus` -- Check if logged in
-- `/logout` -- Log out (the session is destroyed, its id revoked and the cookie expired; no new session)
+- `/logout` -- Log out (the session is destroyed, its id revoked and the cookie expired; no new session). Logout disconnects the device's sockets: when the request names its socket (`x-cg-socket-id`), the other sockets get `cliSignedOut` first and the requesting one is left to log out itself; without the header all of them, no event ([docs/realtime](../realtime/README.md#socket-scoped-targeting))
 - `/signOutOtherDevices` -- step-up; ends every other session of the user (session generation in PostgreSQL + index) and deletes every other device key and unused transfer link, returns `{ devices }` (`srv/util/signOutOtherDevices.ts`, `srv/util/userSessions.ts`)
 - `/getSecurityStatus` -- what the account-security step still needs (`srv/util/securityStep.ts`)
 - `/createTransferLink` -- a one-time link for the session's own user to the instance `TRANSFER_TARGET_URL` names (off without it); limited per user
@@ -499,7 +503,9 @@ on the user row).
 
 Every message write returns the row's `syncSeq` (set by the database trigger, see [docs/database](../database/README.md#message-sync-sequence)); `loadMessages`, `messagesById`, `loadUpdates`, the create response and every `cliMessageEvent` carry it (left out for rows not written since the migration). Delete events carry the highest seq of the deleted rows as `syncSeq` and all of them as `syncSeqs`; the `update` events for replies of a deleted parent carry their own.
 - `/getUrlPreview` -- Get URL preview metadata (Open Graph scrape of a client-supplied URL, at most 2048 chars). Requires a session. Results are cached for 1 h on the Valkey cache instance (`redis-cache`, client type `cache`) under `urlpreview:<sha256(url)>` — skipped, not waited for, while that instance is unreachable; cache misses are rate-limited per account (30/min). The page (≤ 1 MB, `text/*` or XHTML) and the `og:image` (≤ 8 MB, `image/*`) are fetched through `safeFetch` (see `srv/util/safeFetch.ts` below) and the HTML is passed to `open-graph-scraper` as `ogs({ html })`. Title and description are cut to 2000 chars; the returned `url` is the page's `og:url` only if that is an http(s) URL of at most 2048 chars, otherwise the requested URL. Previews larger than 8 KB serialized are returned but not cached. The preview image is stored through `saveImage()`, i.e. it passes the NSFW gate.
-- `/joinArticleEventRoom`, `/leaveArticleEventRoom` -- Join/leave article real-time rooms
+- `/joinArticleEventRoom`, `/leaveArticleEventRoom` -- Join/leave article real-time rooms: the requesting socket only when the request names it (`x-cg-socket-id`), otherwise the device's sockets ([docs/realtime](../realtime/README.md#socket-scoped-targeting))
+
+The sender's own `cliMessageEvent` of `/createMessage`, `/createModerationMessage` and `/editMessage` skips only the sending socket when the request names it, otherwise the whole device (bots: always the device). Call-chat events also reach the call's present members and, for Public calls, the community room ([docs/realtime](../realtime/README.md#call-flow)).
 
 Every route that takes an access object (`communityId`, `chatId`, `callId`, or `articleId` with `articleCommunityId`/`articleUserId`, each together with `channelId`) runs `_checkAccessOrThrow`, which first checks that `channelId` is the channel of the named community, chat, call or article (`messageHelper.isChannelInAccessScope`) and then evaluates the permissions for that scope. An article access must name the article's community or user. Deleted community channels, chats and articles do not match; a user article that is not published yet only matches for its author. Message edits and reaction removal additionally filter on `access.channelId` in SQL.
 
@@ -1152,6 +1158,10 @@ The `db: Pool | PoolClient` parameter pattern enables functions to work both sta
 - Real-time event emission via Socket.IO Redis Emitter
 - Routes events to specific rooms (user, community, role, device, session, article)
 - `emit(event, target, except)` pattern for targeted delivery
+- Socket-scoped targeting for requests that carry `x-cg-socket-id` (`srv/util/requestSocket.ts`:
+  `getRequestSocketId`, `senderExcept`; rooms `deviceSocket:{deviceId}:{socketId}`):
+  `except.deviceSockets`, `requestSocketsJoinRooms`/`requestSocketsLeaveRooms` (article rooms),
+  `logoutDeviceSockets` (logout) — see [docs/realtime](../realtime/README.md#socket-scoped-targeting)
 
 **`srv/repositories/permissions.ts`** -- `permissionHelper`
 - Role permission queries for channels, calls, events, articles, and communities
@@ -1665,16 +1675,20 @@ with wave M2 (see below).
   `typingCache`, `userArticleVisibility`, `userArticleRoute`, `passkeyCore`,
   `passkeyRoutes`, `passkeyConfig`, `signupEmail`, `asyncHandler`,
   `registerPostRoute`, `uploadImageRoute`, `gatedFileRoute`, `callEnding`,
-  `messageSyncRepository`, `messageSyncRoutes`, `notificationRoutes` and `syncState`
-  (the passkey tests drive a software authenticator,
-  `tests/helpers/softAuthenticator.ts`). Against a
+  `messageSyncRepository`, `messageSyncRoutes`, `notificationRoutes`, `syncState`,
+  `socketTargeting` (the `x-cg-socket-id` helpers and `eventHelper` against a
+  model of the adapter's rooms), `socketTargetingRoutes` (exclusion sites,
+  article rooms, call delivery targets) and `callDeliveryTargets` (the passkey
+  tests drive a software authenticator, `tests/helpers/softAuthenticator.ts`). Against a
   throwaway PostgreSQL, opt-in via `CG_TEST_PG_HOST` (skipped otherwise):
   `securityStepDb` (resets the database `cryptogram`), `chatSyncSeqDb` (the
   message sync sequence: migration, trigger under the `writer` role, commit
   order of concurrent writers, and the message repository on the real
-  schema; it creates and drops its own database `cg_chat_sync_test`) and
+  schema; it creates and drops its own database `cg_chat_sync_test`),
   `syncStateDb` (getSyncState and the notification read-state writes; own
-  database `cg_sync_state_test`). They connect only to
+  database `cg_sync_state_test`) and `callDeliveryTargetsDb` (the call-chat
+  and new-call member/Public targets; own database `cg_call_delivery_test`).
+  They connect only to
   `CG_TEST_PG_HOST`:`CG_TEST_PG_PORT` (`tests/helpers/testPg.ts`), also for
   the `util/postgres` pools `securityStepDb` loads (it sets `DB_HOST`/`DB_PORT`
   from them and checks the loaded pool's target). `CG_TEST_PG_PORT` has no

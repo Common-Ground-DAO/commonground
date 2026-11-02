@@ -393,6 +393,12 @@ class LoginManager {
     if (!this.currentUser) {
       return;
     }
+    // this tab is logging out already: the server's sign-out of the device's
+    // sockets can reach this tab's socket too (when it could not tell the
+    // requesting socket apart), and it is no sign-out from elsewhere
+    if (this.logoutPromise) {
+      return;
+    }
     // a logout in another tab of this browser deletes this device's key as
     // well: no notice for that
     const stored = this.readStoredUser();

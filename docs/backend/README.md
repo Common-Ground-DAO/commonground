@@ -33,7 +33,7 @@
 > and the test list against commit 591e6cf, 2026-11-02; `onlineStatusCheck.ts` against commit
 > fc15832, 2026-11-02; the chat-sync message routes (`/getChanges`, idempotent
 > `/createMessage`, `/setChannelLastRead` answer, `syncSeq`), the `ChannelSyncState` entity
-> and the test list against commit 0ec82f6, 2026-11-02.
+> and the test list against commit 2c680a8, 2026-11-02.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 

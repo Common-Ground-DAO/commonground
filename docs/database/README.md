@@ -13,8 +13,8 @@
 > `roles_contracts_contracts` foreign key, the schema comparison) against commit 8dcbb42,
 > 2026-11-01; `channelreadstate` write rule and the `calls` open-calls index against commit
 > 591e6cf, 2026-11-02; the message sync sequence (`channel_sync_state`, `messages.syncSeq`,
-> the `messages_sync_seq_*` triggers) and the idempotent message insert against commit
-> 0ec82f6, 2026-11-02
+> the `messages_sync_seq_*` triggers, the delete lock order) and the idempotent message insert against commit
+> 2c680a8, 2026-11-02
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -546,6 +546,12 @@ Per-channel, commit-ordered change sequence for messages (chat-sync catch-up,
   last write had a seq `<= S` and none above. A rolled-back write releases its seq (no
   gap); an `INSERT … ON CONFLICT DO NOTHING` that inserts nothing still takes one
   (harmless gap). Writes to different channels do not wait for each other.
+- Lock order: an `UPDATE` locks its message row before the trigger takes the channel's
+  sequence row. A statement that writes several message rows must therefore lock all of
+  them first: `messageHelper.deleteMessage`/`deleteAllUserMessages` run in a transaction
+  that takes `SELECT … ORDER BY id FOR UPDATE` on the deleted rows and their replies before
+  the soft delete, so a concurrent edit or reaction on one of those rows cannot deadlock
+  with it.
 - Cost: one primary-key upsert on a small table per message write. Adding the column is
   catalog-only; while every row is NULL the partial index build is one sequential scan of
   `messages`. The migration's runtime on the production dump is measured in the cg.box

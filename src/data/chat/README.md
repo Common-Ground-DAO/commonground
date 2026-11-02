@@ -1,60 +1,60 @@
 # src/data/chat — chat-sync contract (for implementers)
 
 Working note for the chat-sync slices, not user documentation. Plan and
-decisions: `docs/todo/ROADMAP_chat-sync.md` ("Design", [1]–[11]).
+decisions: `docs/todo/ROADMAP_chat-sync.md` ("Design", [1]–[11]). The doc
+comments in the files below are normative; this is the summary.
 
 ## Files of the contract
 
-- `types.ts` — store interfaces (`ChannelStore`, `ChannelWindow`/`ItemWindow`,
-  `WindowChange`, `ReadStateStore`, `ReadStateInput`, `ReadStatePersistence`,
-  `NotificationStore`), injected deps (`ChatApi`, `NotificationApi`,
-  `ChatEventSource`, `ChatClock`), limits.
-- `data/appstate/transport.ts` — `Transport` (live / resume / updateAvailable,
-  `holdSocket`, `getRequestSocketId`), `SOCKET_ID_HEADER` (`x-cg-socket-id`,
-  fixed), `LOGIN_LOCK_NAME` (`cg:login`), hidden policy constants, auth
-  broadcast, legacy service-worker messages and the compat answer.
-- `common/types/api/messages.d.ts` — `getChanges`, `getSyncState`,
-  `setChannelLastRead` (+`messageId`, response), idempotent create;
-  `events/*.d.ts` — `syncSeq`, `cliChannelLastRead.unread`, notification
-  `unreadCount`. Every new field is optional except inside the new endpoints.
+- `types.ts` — stores, windows, `WindowChange`, `WINDOW_ERROR`, read-state
+  merge rules (`mergeReadState`), injected deps, limits.
+- `data/appstate/transport.ts` — `Transport`, `x-cg-socket-id` (fixed),
+  `cg:login`, hidden policy, auth broadcast, legacy SW messages.
+- `common/types/api/{messages,notifications}.d.ts`, `events/*.d.ts` — new
+  endpoints and fields (optional unless inside a new endpoint).
 
 ## Rules everyone relies on
 
-1. **Merge by `syncSeq`**: replace a message only with a higher seq; equal =
-   same version; without seq on either side fall back to `updatedAt`.
-   Tombstones are terminal.
-2. **Pages never delete**: a page is authoritative only for its own range and
-   only upserts. Removals come from tombstones and `getChanges` resets.
-3. **Reset** replaces the latest segment but keeps local items with
-   `syncSeq` above the reset's `syncSeq` and pending sends.
-4. **Catch-up** on `onLive` and `onResume` only: `getChanges` per open window,
-   `getSyncState` for read state, `getUnreadCount` for notifications. Gap
-   (`syncSeq > cursorSeq + 1`) -> debounced `getChanges`.
-5. **Windows** are ref-counted, any number per channel; `ItemListState` shape
-   kept; listeners get `(state, change)` synchronously; set the scroll lock
-   first. LRU of 20 channels without window, latest segment <= 200.
-6. **Read state**: `lastRead`/`lastMessageDate` max-merged everywhere through
-   one `mergeReadState`; a snapshot's `unread` is trusted only if its
-   `lastRead` >= local (and its seq >= local seq). Marking is a level:
-   at latest + at bottom + visible + logged in, re-evaluated on every input.
-7. **Notification count** comes from the server only, never `++/--`.
-8. **Pending sends** are inserted synchronously before the API call; retry
-   reuses the UUID; errors stay visible until retried or discarded.
+1. **Versions**: full versions replace on `syncSeq >=`, partial deltas apply
+   only on `>`; seq'd beats seq-less unless the seq-less one has a strictly
+   newer `updatedAt`. Tombstones are terminal.
+2. **Pages never delete** and only touch their own range. `getChanges` is a
+   change list: update known ids anywhere, insert unknown ids only at or above
+   the latest segment's oldest item.
+3. **Reset** (snapshot seq S): latest segment = page + local items with
+   seq > S at/above the page's oldest item + pending sends; detached segments
+   and loose items dropped; windows off the new segment re-init detached
+   (`reset{cause:'resync'}`).
+4. **Cursor** = `1:<seenSeq>`, the contiguous applied high-water mark (all
+   sources, incl. own create/edit responses). Open gap after 1.5 s ->
+   `getChanges`. Catch-up only on `onLive`/`onResume`.
+5. **Windows** are ref-counted; `ItemListState` kept; listeners get
+   `(state, change)` synchronously, set the scroll lock first. Pins: windows,
+   watchers, pending sends; LRU 20; latest segment <= 200 (never trims a
+   visible slice).
+6. **Sends/edits** resolve once the pending item/overlay is shown and never
+   reject; the outcome is `sendStatus`, then `retrySend`/`discardPending`.
+7. **Read state**: everything through `mergeReadState`; `lastRead`/
+   `lastMessageDate` max-merged; seq'd snapshots plus `counted` seqs survive
+   live events during the round trip. Marking is a level (latest + bottom +
+   visible + logged in).
+8. **Notification count** from the server only, newest `unreadCountAt` wins.
 
 ## Who implements what
 
 | Contract piece | Slice |
 |---|---|
-| `createChannelStore`, `createReadStateStore`, `createNotificationStore`, `mergeReadState` (pure, `src/data/chat/*.ts`) | store-core |
-| `ChatEventSource` + `ChatApi` adapters, `data.channelManager` façade | messages-ui (`getChanges`/`getSyncState` connector methods in `src/data/api/messages.ts` still to be assigned) |
-| `ReadStatePersistence` (Dexie, inside one transaction) | entity-dbs |
-| `Transport`, auth broadcast, `cg:login` lock, `x-cg-socket-id` header | transport |
+| store factories + `mergeReadState` (pure, `src/data/chat/*.ts`) | store-core |
+| event source/API adapters, `data.channelManager` façade, `onOwnMessage` -> read state | messages-ui (connector methods `getChanges`/`getSyncState` in `data/api/messages.ts`: to be assigned) |
+| `ReadStatePersistence` (Dexie, one transaction) | entity-dbs |
+| `Transport`, auth broadcast, `cg:login`, socket-id header, article-room re-join | transport |
 | compat answer on `CG_WEBSOCKET_STATE` | sw |
-| endpoints, `syncSeq`, event fields | srv-sync, srv-state |
+| endpoints, `syncSeq`, event fields, `getSyncState` null-lastRead semantics | srv-sync, srv-state |
 
-## Deploy window (new client, old server)
+Handoff for messages-ui: the contracts slice changed `src/data/databases/channel.ts`
+(`setChannelLastRead`: `.then(() => resolve())`) only to compile against the new
+response type; the rewrite replaces it.
 
-`getChanges`/`getSyncState` 404 -> remember for the page load, fall back to
-`loadMessages` + the existing snapshots. Send `setChannelLastRead.messageId`
-only after one of the two succeeded. Old servers omit `syncSeq`, `unread`,
-`unreadCount`: fall back as documented at each field.
+Deploy window (new client, old server): a 404 on `getChanges`/`getSyncState` ->
+fall back to `loadMessages` + old snapshots for the page load; omit `messageId`
+until one succeeded (retry without it on a validation error).

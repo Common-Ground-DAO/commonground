@@ -24,23 +24,40 @@ import type { LiveKind, ResumeReason, Unsubscribe } from 'data/appstate/transpor
 export type { Unsubscribe };
 
 // ---------------------------------------------------------------------------
-// Limits
+// Limits and error values
 // ---------------------------------------------------------------------------
 
-/** Channels without an open window kept in memory per tab (LRU). */
+/** Channels without a pin (see ChannelStore) kept in memory per tab (LRU). */
 export const CHANNEL_LRU_SIZE = 20;
-/** Max server messages of a channel's latest segment; older ones are dropped from memory. */
+/**
+ * Max server messages of a channel's latest segment; older ones are dropped
+ * from memory, except items inside a visible slice of an open window.
+ */
 export const LATEST_SEGMENT_MAX = 200;
 /** Page size for loadOlder/loadNewer/init when no count is given. */
 export const PAGE_SIZE = 30;
 /** `getChanges` limit the client sends. */
 export const GET_CHANGES_LIMIT = 200;
-/** Debounce of the catch-up scheduled by a sequence gap in a live event. */
+/** A seq gap that is still open after this triggers a `getChanges`. */
 export const GAP_RESYNC_DEBOUNCE_MS = 1_500;
 /** A send without answer after this shows "error-send"; a late success still resolves it. */
 export const SEND_TIMEOUT_MS = 20_000;
 /** Trailing throttle of setChannelLastRead after the first, immediate call. */
 export const MARK_READ_THROTTLE_MS = 1_000;
+/** ChannelReadState.counted keeps at most this many (the highest) seqs. */
+export const COUNTED_SEQS_MAX = 50;
+
+/**
+ * `Error.message` values a window's `init` rejects with.
+ * - NOT_FOUND (same string as `errors.client.NOT_FOUND`): `atItemId` target
+ *   does not exist, is deleted or not readable.
+ * - SUPERSEDED: a later `init` (or `destroy`) on the same window replaced
+ *   this one; callers ignore it (no snackbar).
+ */
+export const WINDOW_ERROR = {
+  NOT_FOUND: 'NOT_FOUND',
+  SUPERSEDED: 'WINDOW_INIT_SUPERSEDED',
+} as const;
 
 // ---------------------------------------------------------------------------
 // Injected dependencies
@@ -90,7 +107,10 @@ export interface ChatEventSource {
   onLastReadEvent(listener: (event: Events.Channel.LastRead) => void): Unsubscribe;
   onNotificationEvent(listener: (event: Events.Notification.Notification) => void): Unsubscribe;
 
-  /** Transport.onLive: socket logged in and rooms joined. Stores resync. */
+  /**
+   * Transport.onLive: socket logged in and rooms joined (also `user` after a
+   * login, user switch or logout on a live socket). Stores resync.
+   */
   onLive(listener: (kind: LiveKind) => void): Unsubscribe;
   /** Transport.onResume: socket stayed live, but the tab was away. Stores resync. */
   onResume(listener: (reason: ResumeReason) => void): Unsubscribe;
@@ -118,6 +138,14 @@ export type ChannelStoreDeps = {
   clock: ChatClock;
   /** client UUIDs for new messages (crypto.randomUUID in the app) */
   newId(): string;
+  /**
+   * Called once per own message when the server confirmed it (createMessage
+   * response, or the own `new` event / a page with the id, whichever comes
+   * first). The own socket gets no `new` event for it, so the façade
+   * forwards it to ReadStateStore.apply as
+   * `{ kind: 'message', own: true, … }`.
+   */
+  onOwnMessage?(message: Models.Message.Message): void;
 };
 
 export type ReadStateStoreDeps = {
@@ -153,8 +181,8 @@ export type WindowChange =
   /**
    * The visible slice was replaced. `init`: first load; `jump`: init at an
    * item/date or a detached segment; `latest`: jumpToLatest; `resync`: a
-   * catch-up reset replaced the latest segment while it was shown (keep the
-   * reading position by date).
+   * catch-up reset replaced the data under the slice (keep the reading
+   * position by date).
    */
   | { kind: 'reset'; cause: 'init' | 'jump' | 'latest' | 'resync' }
   /** older items added at the start (loadOlder) */
@@ -177,12 +205,14 @@ export type WindowListener<T extends Models.ItemList.Item> =
 /**
  * A view on an ordered item list. `state` keeps the existing
  * `Models.ItemList.ItemListState` shape (src/common/types/models/itemlist.d.ts):
- * - `items`: ascending by (createdAt, id). A new array on every change;
+ * - `items`: server items ascending by (createdAt, id), then pending items
+ *   (own unsent messages) in send order. A new array on every change;
  *   unchanged items keep their object identity.
  * - `rangeStart`/`rangeEnd`: createdAt of the first/last server item in
  *   `items` (null when there is none). No far-future sentinel any more.
  * - `withEndOfList`: the slice ends at the newest end of the latest segment;
- *   live items are appended (`append-live`).
+ *   live items are appended (`append-live`); pending items are shown only
+ *   then.
  * - `withStartOfList`: the oldest item of the list is included (the server
  *   returned a short page).
  * - `hasPreviousItemsLocally` / `hasNextItemsLocally`: items in memory were
@@ -196,10 +226,12 @@ export interface ItemWindow<T extends Models.ItemList.Item> {
   readonly state: Models.ItemList.ItemListState<T>;
   /**
    * `recent`: latest items; `atItemId`: the item and its neighbours, fetched
-   * from the server when not in memory, rejects with NOT_FOUND if it does not
-   * exist or is deleted; `atDate`: items around the date. Resolves with the
-   * number of items in the slice. May be called again (jump); a running
-   * init is superseded.
+   * from the server when not in memory; `atDate`: items around the date.
+   * Resolves with the number of items in the slice. May be called again
+   * (jump). Rejects with `new Error(WINDOW_ERROR.NOT_FOUND)` for a missing
+   * `atItemId` target and with `new Error(WINDOW_ERROR.SUPERSEDED)` when a
+   * later `init` or `destroy` replaced it; other errors are network/server
+   * errors.
    */
   init(options: Models.ItemList.ItemListInitOptions): Promise<number>;
   /** older items: from memory first, then one server page (default PAGE_SIZE) */
@@ -236,56 +268,93 @@ export type NewMessage = Pick<Models.Message.Message, 'channelId' | 'body' | 'at
  * In-memory message store of one tab; replaces ChannelDatabaseManager and
  * keeps the name `data.channelManager` (façade).
  *
- * Per channel: a contiguous "latest" segment (ends at "now", at most
+ * DATA PER CHANNEL: a contiguous "latest" segment (ends at "now", at most
  * LATEST_SEGMENT_MAX server messages, live-updated), detached segments
  * created by jumps (merged into latest when they meet), pending sends, edit
  * overlays, tombstones (deleted ids, kept for the channel's cache lifetime), a
  * loose map of single items (reply parents, pins; never part of a segment),
- * and the catch-up cursor (`getChanges` cursor + its numeric syncSeq).
- * Memory only. Channels with an open window are pinned; at most
- * CHANNEL_LRU_SIZE others stay cached (LRU), the rest are forgotten.
+ * and `seenSeq` (below). Memory only. A channel is pinned while it has an
+ * open window, a `watchMessage` watcher or a pending/failed send; at most
+ * CHANNEL_LRU_SIZE unpinned channels stay cached (LRU), the rest are
+ * forgotten. Trimming the latest segment to LATEST_SEGMENT_MAX never drops
+ * items inside the visible slice of an open window.
  *
- * Merge rule (one function for every source: pages, getChanges, live events,
- * HTTP responses):
- * - A stored message is replaced only by a version with a higher `syncSeq`;
- *   equal seq = same version, keep the stored one. `update` events are
- *   partial: their fields are applied only if their `syncSeq` is higher.
- *   When either side lacks `syncSeq` (old server, row not yet sequenced),
- *   compare `updatedAt` instead (full versions: newer or equal wins; partial
- *   updates: strictly newer wins).
+ * VERSION RULE (one function for every source: pages, getChanges, live
+ * events, HTTP responses). chat-sync servers send `syncSeq` on loadMessages,
+ * messagesById, getChanges, the createMessage/editMessage responses and all
+ * message events; it can still be missing (old server, row not written since
+ * the migration).
+ * - FULL version (a complete ApiMessage: pages, `new` events, create
+ *   response) replaces the stored one when `incoming.syncSeq >= stored.syncSeq`.
+ * - PARTIAL update (`update` event delta, edit/reaction responses) applies
+ *   its fields only when `incoming.syncSeq > stored.syncSeq`, and then sets
+ *   the stored syncSeq/updatedAt to its own.
+ * - Mixed: a version with syncSeq beats one without, unless the one without
+ *   has a strictly newer `updatedAt`. Both without: compare `updatedAt`
+ *   (full: newer or equal wins; partial: strictly newer wins).
+ * - Example: an edit at seq 11 and a reaction at seq 12 arrive as events in
+ *   the order 12, 11. The reaction delta (12) applies; the edit delta (11) is
+ *   dropped (11 < 12), so the body is stale for a moment. The gap 11 stays
+ *   open, the catch-up returns the full row at seq 12 (with the edit), and it
+ *   replaces the stored one because full versions win on `>=`.
  * - Tombstones (delete events, `deletedIds`) are terminal and beat any
- *   version; a later page cannot resurrect a tombstoned id.
- * - A server page (loadMessages, messagesById, getChanges non-reset) is
- *   authoritative only for its own range: it upserts what it contains and
- *   never removes items, and it never touches items outside
- *   [oldest, newest] of the page. So a snapshot can never delete a newer
- *   live item. Removals come only from tombstones and resets.
- * - `getChanges` reset (`reset: true`): the latest segment becomes the reset
- *   page, plus local items with `syncSeq` > the reset's `syncSeq` (newer than
- *   the page's snapshot), plus pending sends. Other local items of the latest
- *   segment are dropped. The cursor becomes the reset's cursor.
+ *   version; nothing resurrects a tombstoned id.
  *
- * Catch-up (`resync`): on ChatEventSource.onLive / onResume, for every
+ * PAGES (loadMessages, messagesById) are authoritative only for their own
+ * range [oldest, newest]: they upsert what they contain, never remove items
+ * and never touch items outside that range. So a snapshot can never delete a
+ * newer live item. Removals come only from tombstones and resets.
+ *
+ * GETCHANGES (non-reset) is a change list, not a range page: each message
+ * updates the known copy wherever it is (latest segment, detached segment,
+ * loose map) by the version rule. An unknown id is inserted into the latest
+ * segment only if its createdAt >= the oldest item of the latest segment (or
+ * the latest segment starts at the beginning of the channel); otherwise it is
+ * ignored (it is fetched when someone pages there). `deletedIds` tombstone.
+ *
+ * GETCHANGES RESET (`reset: true`, snapshot seq S):
+ * - The latest segment becomes the reset page, plus local items with
+ *   `syncSeq > S` whose createdAt >= the page's oldest item (or any createdAt
+ *   when the page reaches the start of the channel), plus pending sends.
+ *   Everything else of the latest segment is dropped.
+ * - Detached segments and loose items of the channel are dropped (watched
+ *   loose items are refetched with messagesById).
+ * - A window whose visible slice is not inside the new latest segment is
+ *   re-initialised as a detached segment at the createdAt of its first
+ *   visible item; its listeners get `reset{cause:'resync'}`. A window at the
+ *   latest end gets `reset{cause:'resync'}` too.
+ * - `seenSeq := S`.
+ *
+ * CURSOR AND GAPS. `seenSeq` is the contiguous applied high-water mark: all
+ * changes up to it are applied. Every applied syncSeq from any source (live
+ * events, getChanges, create/edit responses — own sends get no own event)
+ * is recorded; while `seenSeq + 1` is recorded, `seenSeq` advances. A
+ * recorded seq above `seenSeq + 1` is a gap; if it is still open after
+ * GAP_RESYNC_DEBOUNCE_MS, a `getChanges` runs (some seq bumps have no own
+ * event, so false gaps happen and are cheap). The request cursor is
+ * `` `1:${seenSeq}` `` (or `null` when the channel was never synced); after
+ * a getChanges, `seenSeq := max(seenSeq, response.syncSeq)` (all changes up
+ * to it are included).
+ *
+ * CATCH-UP (`resync`): on ChatEventSource.onLive / onResume, for every
  * channel with an open window (debounced, one at a time per channel):
- * `getChanges` from the stored cursor (`null` the first time), following
- * `hasMore`. A cached channel without window catches up from its cursor when
- * a window opens again. Live events that arrive meanwhile are applied too.
- * Gaps: a live event with `syncSeq > cursorSeq + 1` schedules a `getChanges`
- * after GAP_RESYNC_DEBOUNCE_MS (some seq bumps have no own event, so false
- * gaps happen and are cheap); an event with `syncSeq === cursorSeq + 1`
- * advances the cursor locally. Catch-up never plays sounds or alerts.
+ * `getChanges` from the cursor, following `hasMore`. A cached channel without
+ * window catches up when a window opens again. Live events that arrive
+ * meanwhile are applied too. Catch-up never plays sounds or alerts.
  *
- * Sending: createMessage inserts the pending item synchronously, before the
- * first await (`sendStatus: 'sending'`, `createdAt` = local send time, no
- * syncSeq), shown after the newest server item while `withEndOfList` (in
- * send order). It resolves by id with whichever comes first: the API
- * response, a live `new` event, or a page containing the id. Failure or
- * SEND_TIMEOUT_MS -> `error-send` (kept until retried or discarded, body and
- * attachments preserved). A retry reuses the id (idempotent create).
- * Edit: an overlay on the server item (`sendStatus: 'sending'`, new body,
- * attachments) until the response; success applies the server fields and
- * clears `sendStatus`; failure -> `error-update`. The overlay is also
- * dropped when a server version newer than the edit arrives.
+ * SENDING: createMessage inserts the pending item synchronously
+ * (`sendStatus: 'sending'`, `createdAt` = local send time, no syncSeq). It is
+ * resolved by id by whichever comes first: the API response, a live `new`
+ * event, or a page containing the id. Failure or SEND_TIMEOUT_MS ->
+ * `error-send` (kept until retried or discarded, body and attachments
+ * preserved; a late success still resolves it). A retry reuses the id
+ * (idempotent create).
+ * EDIT: an overlay on the server item (`sendStatus: 'sending'`, new body,
+ * attachments, parentMessageId). Success applies the edit as a partial
+ * update with the response's `syncSeq`/`updatedAt` and clears `sendStatus`;
+ * the overlay is dropped once a server version with
+ * `syncSeq >= response.syncSeq` is stored (without seq: on the response).
+ * Failure -> `error-update`.
  */
 export interface ChannelStore {
   /** remember how to address a channel; idempotent, later calls update it */
@@ -302,7 +371,9 @@ export interface ChannelStore {
    * Observe one message (reply parent, pinned message) without an open
    * window. Calls `onChange` synchronously when the message is in memory,
    * otherwise after a `messagesById` fetch; again on every change; with
-   * `undefined` when it is deleted or not found.
+   * `undefined` only when it is deleted or the server says it does not
+   * exist. A network error produces no callback; the fetch is retried on the
+   * next live signal.
    */
   watchMessage(
     channelId: string,
@@ -311,21 +382,24 @@ export interface ChannelStore {
   ): Unsubscribe;
 
   /**
-   * Send. The pending item is visible when this returns (synchronously);
-   * the promise resolves when the server accepted the message and rejects on
-   * failure (the item then shows `error-send`).
+   * Send. Resolves once the pending item is inserted (synchronously, before
+   * the API call) and never rejects: the outcome is reported only through
+   * the item's `sendStatus` in the windows (`error-send` -> retrySend /
+   * discardPending). Same call-site semantics as today.
    */
   createMessage(message: NewMessage, options?: { moderation?: boolean }): Promise<void>;
-  /** re-send a failed send (same id) or a failed edit */
+  /** re-send a failed send (same id) or a failed edit; same semantics as createMessage */
   retrySend(channelId: string, messageId: string): Promise<void>;
   /** drop a failed or pending send, or revert a failed edit overlay */
   discardPending(channelId: string, messageId: string): void;
+  /** like createMessage: resolves once the overlay is shown, never rejects; failure = `error-update` */
   editMessage(
     message: Models.Message.Message,
-    update: Pick<Models.Message.Message, 'body' | 'attachments'>,
+    update: Pick<Models.Message.Message, 'body' | 'attachments' | 'parentMessageId'>,
   ): Promise<void>;
-  /** delete on the server; tombstones the id on success without waiting for the event */
+  /** delete on the server; tombstones the id on success without waiting for the event; rejects on failure */
   deleteMessage(channelId: string, messageId: string, creatorId: string): Promise<void>;
+  /** reactions reject on failure (no item state for them) */
   setReaction(channelId: string, messageId: string, reaction: string): Promise<void>;
   unsetReaction(channelId: string, messageId: string): Promise<void>;
 
@@ -351,8 +425,13 @@ export type ChannelReadState = {
   lastRead: string | null;
   /** messages of others after lastRead; capped at API.Messages.UnreadCap */
   unread: number;
-  /** channel syncSeq that `unread` is valid at; 0 = unknown */
+  /** channel syncSeq of the last trusted server count; 0 = unknown */
   seq: number;
+  /**
+   * syncSeqs (> seq) of live messages already counted into `unread` since
+   * that server count; ascending, at most COUNTED_SEQS_MAX (the highest).
+   */
+  counted: number[];
   /** max of every value ever seen (ISO) */
   lastMessageDate: string | null;
 };
@@ -363,30 +442,41 @@ export type ChannelReadState = {
  * `mergeReadState(stored: ChannelReadState | undefined, input: ReadStateInput): ChannelReadState`,
  * in src/data/chat/readState.ts) that both the in-memory ReadStateStore and
  * the Dexie writers (community/chat DBs, inside their transaction) use, so
- * several tabs applying the same inputs converge:
- * - always: `lastRead := max`, `lastMessageDate := max`; afterwards, if
- *   lastRead >= lastMessageDate then `unread := 0`.
- * - `snapshot`: its `unread` is trusted only if its `lastRead` >= the stored
- *   one (null counts as oldest) and, when both have a seq, its `syncSeq` >=
- *   the stored `seq`; then `unread`/`seq` are taken from it. Otherwise the
- *   stored count stays (the snapshot is older than a local mark).
+ * several tabs applying the same inputs converge.
+ *
+ * Rules ("null" lastRead counts as oldest; dates compared by Date.parse):
+ * - Always `lastRead := max(stored, input)`.
+ * - `snapshot` WITH syncSeq S: taken when its lastRead >= stored lastRead and
+ *   S >= stored seq: `unread := snap.unread + counted.filter(s => s > S).length`,
+ *   `seq := S`, `counted := counted.filter(s => s > S)`. Otherwise the stored
+ *   count stays (the snapshot is older than a local mark or another
+ *   snapshot). `lastMessageDate := max`.
+ * - `snapshot` WITHOUT syncSeq (login response, getOwnCommunities, getChats,
+ *   community/chat events): sets `unread` only while stored `seq === 0`, and
+ *   only if its lastRead >= stored lastRead; never changes `seq`/`counted`.
+ *   `lastMessageDate := max`.
  * - `lastRead` (cliChannelLastRead, setChannelLastRead response, own mark):
- *   its `unread`, when present, is trusted if its `lastRead` >= the stored
- *   one after the max-merge.
- * - `message` (live `new`): own -> `lastRead := max(lastRead, createdAt)`
- *   (the server marks own posts read). Other -> counts +1 only if
- *   `createdAt > lastRead` and, with a syncSeq, `syncSeq > seq` (then
- *   `seq := syncSeq`); without a syncSeq (old server) only if
- *   `createdAt > lastMessageDate`. This makes a duplicate event a no-op;
- *   between snapshots the count is approximate and the next snapshot
- *   corrects it.
+ *   its `unread` is trusted only with a `syncSeq` >= stored seq and a lastRead
+ *   >= stored lastRead; then handled like a seq'd snapshot. Without syncSeq,
+ *   only the lastRead is merged.
+ * - `message` (live `new` of another user, or own via onOwnMessage):
+ *   own -> `lastRead := max(lastRead, createdAt)` (the server marks own posts
+ *   read). Other -> counts +1 only if `createdAt > lastRead` and, with a
+ *   syncSeq s, `s > seq && !counted.includes(s)` (then s is added to
+ *   `counted`); without a syncSeq (old server) only if
+ *   `createdAt > lastMessageDate`. AFTER that decision, always
+ *   `lastMessageDate := max(lastMessageDate, createdAt)`.
+ * - Finally, if lastRead >= lastMessageDate: `unread := 0`, `counted := []`.
+ *   `unread` is capped at API.Messages.UnreadCap.
+ * Between server counts the value is approximate; the next seq'd snapshot
+ * corrects it without losing messages counted live during its round trip.
  */
 export type ReadStateInput = {
   kind: 'snapshot';
   channelId: string;
   lastRead: string | null;
   unread: number;
-  /** from getSyncState; absent for the older snapshots (login, getOwnCommunities, getChats) */
+  /** from getSyncState; absent for the older snapshots */
   syncSeq?: number;
   lastMessageDate: string | null;
 } | {
@@ -394,6 +484,7 @@ export type ReadStateInput = {
   channelId: string;
   lastRead: string;
   unread?: number;
+  syncSeq?: number;
 } | {
   kind: 'message';
   channelId: string;
@@ -432,25 +523,28 @@ export interface ReadMarker {
 /**
  * Read state of all channels and DMs of one tab, plus level-triggered marking.
  *
- * Marking: the channel is marked read up to `newest.createdAt` (+ `messageId`
- * once the server supports it) while ANY of its markers has
- * `atLatest && atBottom && newest`, AND ChatEventSource.visible AND a user is
- * logged in. Re-evaluated on every marker update, visibility change and user
- * change: a level, not an edge. Sent only if newer than
- * max(lastRead, last sent value); the first call immediately, then a trailing
- * throttle of MARK_READ_THROTTLE_MS. While logged out or failing, the value
- * stays pending and is sent on the next login, live signal or trigger. No
- * IntersectionObserver, no DOM timestamps.
+ * Marking: the channel is marked read up to `newest.createdAt` while ANY of
+ * its markers has `atLatest && atBottom && newest`, AND
+ * ChatEventSource.visible AND a user is logged in. Re-evaluated on every
+ * marker update, visibility change and user change: a level, not an edge.
+ * Sent only if newer than max(lastRead, last sent value); the first call
+ * immediately, then a trailing throttle of MARK_READ_THROTTLE_MS. While
+ * logged out or failing, the value stays pending and is sent on the next
+ * login, live signal or trigger. `messageId` (= `newest.id`) is added once
+ * the server has shown chat-sync support in this page load; if the server
+ * still rejects it in validation, the call is retried without it and
+ * `messageId` is not sent again in this page load. The response is applied
+ * as a `lastRead` input. No IntersectionObserver, no DOM timestamps.
  *
  * Catch-up: on onLive / onResume it calls `getSyncState` and applies every
  * entry as a `snapshot` input (with syncSeq).
  *
  * Events: it subscribes itself to onLastReadEvent (`lastRead` input) and to
- * `new` message events (`message` input, `own` = creatorId === userId) of
- * channels that already have a read state or a registered access with
- * `communityId` or `chatId`. The older snapshots (login response,
- * getOwnCommunities, getChats, community/chat `new` events) are fed in by
- * their owners through `apply`.
+ * `new` message events of other users (`message` input) of channels that
+ * already have a read state or a registered access with `communityId` or
+ * `chatId`. Own messages arrive through ChannelStoreDeps.onOwnMessage (and
+ * own `new` events from other tabs/devices). The older snapshots are fed in
+ * by their owners through `apply`.
  */
 export interface ReadStateStore {
   get(channelId: string): ChannelReadState | undefined;
@@ -472,11 +566,14 @@ export interface ReadStateStore {
 /**
  * Notifications of one tab: memory + server, no Dexie, no chunks.
  *
- * Count: from the server only — login response (`Number()` it), the
- * `unreadCount` of every notification event, `getUnreadCount` on resync
- * (onLive / onResume), after markAsRead/markAllAsRead (unless an event with a
- * count arrived meanwhile) and whenever an event lacks `unreadCount` (old
- * server; debounced). Never `++`/`--`.
+ * Count: from the server only, never `++`/`--`. Sources: login response
+ * (`Number()` it), `unreadCount` of notification events,
+ * `getUnreadCount({ withTime: true })` on resync (onLive / onResume), after
+ * markAsRead/markAllAsRead, and (debounced) whenever an event lacks
+ * `unreadCount` (old server). The newest count wins: a count with
+ * `unreadCountAt` is taken only if that time is >= the stored one; a count
+ * without a time (login response, old server) is taken when it arrives and
+ * makes the stored time unknown (any timed count wins next).
  *
  * List (`openList`): first page on `init('recent')` (one fetch even if init
  * is called twice), the newest page again on resync while open. Live events

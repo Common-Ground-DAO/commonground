@@ -31,6 +31,7 @@ import buildId from './common/random_build_id';
 import botTokenHelper from './repositories/botTokens';
 import botHelper from './repositories/bots';
 import * as typingCache from './repositories/typingCache';
+import { PresenceTracker } from './util/presence';
 
 import cookieParser from 'cookie-parser';
 // The manual-unsign alternative below needs `cookie-signature`, which was
@@ -63,7 +64,6 @@ function decodeSessionId(cookieHeader: string): string | undefined {
   } */
 }
 
-const localOnlineUsers = new Set<string>();
 const localOnlineBotUsers = new Set<string>();
 let shuttingDown = false;
 
@@ -143,6 +143,18 @@ const io = new Server<
   pingInterval: 15000,
   pingTimeout: 15000,
   perMessageDeflate: false,
+});
+
+// Human presence (srv/util/presence.ts): online on login, offline only after
+// the grace period without a logged-in socket anywhere in the cluster.
+const presence = new PresenceTracker({
+  hasLocalSocket: (userId) => !!io.sockets.adapter.rooms.get(userRoomKey(userId))?.size,
+  // cluster-wide through the Redis adapter (local sockets plus every other
+  // wsapi process; rejects after the adapter's requestsTimeout)
+  hasClusterSocket: async (userId) => (await io.in(userRoomKey(userId)).fetchSockets()).length > 0,
+  markOnline: (userId) => userHelper.touchUserOnlineStatus([userId], { emitOwnData: true }),
+  markOffline: (userId) => userHelper.setUserOnlineStatus(userId, 'offline'),
+  isShuttingDown: () => shuttingDown,
 });
 
 type AppSocket = Socket<
@@ -554,7 +566,7 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
           return;
         }
         const ids = await userHelper.getUserRoleAndCommunityIds(userId);
-        localOnlineUsers.add(userId);
+        presence.socketAuthenticated(userId);
         await joinAuthenticatedRooms(socket, {
           userId,
           deviceId: data.deviceId,
@@ -570,7 +582,7 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
           socket.disconnect(false);
           return;
         }
-        await userHelper.setUserOnlineStatus(userId, 'online');
+        await presence.userLoggedIn(userId);
         // Only acknowledge success once identity, room membership, and presence
         // are fully established.
         callback("OK");
@@ -656,12 +668,7 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
       }
       Promise.all(leavePromises).then(() => {
         if (!!userId) {
-          const ownRoomSize = io.sockets.adapter.rooms.get(userRoomKey(userId))?.size;
-          if (!ownRoomSize) {
-            console.log(`User ${userId} has logged out the last socket and is offline`);
-            userHelper.setUserOnlineStatus(userId, 'offline');
-            localOnlineUsers.delete(userId);
-          }
+          presence.socketGone(userId);
         }
       });
     });
@@ -670,13 +677,7 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
       const { userId } = socket.data;
       flushTypingStops(socket);
       if (!!userId && !socket.data.botTokenId) {
-        const ownRoomSize = io.sockets.adapter.rooms.get(userRoomKey(userId))?.size;
-        if (!ownRoomSize) {
-          if (!shuttingDown) {
-            userHelper.setUserOnlineStatus(userId, 'offline');
-          }
-          localOnlineUsers.delete(userId);
-        }
+        presence.socketGone(userId);
       }
     });
   });
@@ -687,10 +688,11 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
 setInterval(async () => {
   if (!shuttingDown) {
     try {
-      const userIds = Array.from(localOnlineUsers);
+      // includes users in their offline grace period
+      const userIds = presence.onlineUserIds();
       const botUserIds = Array.from(localOnlineBotUsers);
       if (userIds.length > 0) {
-        await userHelper.touchUserOnlineStatus(userIds);
+        await userHelper.touchUserOnlineStatus(userIds, { emitOwnData: true });
       }
       await Promise.all(botUserIds.map(userId => syncBotConnectionPresence(userId)));
     }
@@ -703,25 +705,19 @@ setInterval(async () => {
 const shutdown = async (code = 0) => {
   shuttingDown = true;
   try {
+    // Human users are not set offline here: their clients reconnect (to
+    // another process, or to this one after a restart), and the login there
+    // refreshes their status. Users who do not come back are set offline by
+    // the onlineStatusCheck job once their status is 90 s stale.
+    presence.dispose();
     const sockets = await io.local.fetchSockets();
     const botUserIds = new Set<string>();
-    const offlineUserIds = sockets.reduce<string[]>((agg, socket) => {
+    for (const socket of sockets) {
       const { userId } = socket.data;
       if (!!userId && socket.data.botTokenId) {
         botUserIds.add(userId);
       }
-      else if (!!userId) {
-        const ownRoomSize = io.sockets.adapter.rooms.get(userRoomKey(userId))?.size;
-        if (ownRoomSize === 1) {
-          console.log(`User ${userId} will disconnect the last socket and then be offline`);
-          agg.push(userId);
-        }
-      }
       socket.disconnect(true);
-      return agg;
-    }, []);
-    if (offlineUserIds.length > 0) {
-      await userHelper.setUsersToOffline(offlineUserIds);
     }
     await Promise.all(Array.from(botUserIds).map(userId => setBotConnectionPresence(userId, 0)));
     io.close();

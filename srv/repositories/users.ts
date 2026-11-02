@@ -2626,7 +2626,10 @@ class UserHelper {
       ${__userWithNotifyIdsQuery('update_status')}
     `, [userId, status]);
 
-    if (status !== "offline") {
+    // Only a real change is emitted: the UPDATE returns no row when the
+    // status was already set (no own-data event on every socket login).
+    const updates = result.rows as UserWithNotifyIds[];
+    if (status !== "offline" && updates.length > 0) {
       eventHelper.emit({
         type: 'cliUserOwnData',
         data: {
@@ -2636,7 +2639,6 @@ class UserHelper {
         userIds: [userId],
       });
     }
-    const updates = result.rows as UserWithNotifyIds[];
     for (const update of updates) {
       eventHelper.emit({
         type: 'cliUserData',
@@ -2685,7 +2687,14 @@ class UserHelper {
     await Promise.allSettled(promises);
   }
 
-  public async touchUserOnlineStatus(userIds: string[]) {
+  /**
+   * Refreshes `onlineStatusUpdatedAt` of connected users and flips only
+   * `offline` ones to `online` (a status other than online/offline is left
+   * alone). Events go out for users whose status actually changed;
+   * `emitOwnData` also sends them `cliUserOwnData` (human users; bots do not
+   * use own data).
+   */
+  public async touchUserOnlineStatus(userIds: string[], options?: { emitOwnData?: boolean }) {
     if (userIds.length === 0) {
       return;
     }
@@ -2714,6 +2723,16 @@ class UserHelper {
 
     const updates = result.rows as UserWithNotifyIds[];
     for (const update of updates) {
+      if (options?.emitOwnData) {
+        eventHelper.emit({
+          type: 'cliUserOwnData',
+          data: {
+            onlineStatus: 'online',
+          },
+        }, {
+          userIds: [update.userId],
+        });
+      }
       eventHelper.emit({
         type: 'cliUserData',
         data: {

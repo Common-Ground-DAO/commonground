@@ -1,0 +1,290 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// Additional terms: see LICENSE-ADDITIONAL-TERMS.md
+
+/**
+ * `Message/getSyncState` against a real, throwaway PostgreSQL (skipped
+ * unless CG_TEST_PG_HOST is set). The test owns the schema
+ * `sync_state_test` (dropped and recreated; nothing outside it is touched)
+ * and creates the tables the query reads there, including
+ * `channel_sync_state` and `messages."syncSeq"` as the chat-sync migration
+ * defines them:
+ *
+ *   docker run -d --name pg-test -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=cryptogram cryptogram/db:18
+ *   CG_TEST_PG_HOST=127.0.0.1 CG_TEST_PG_PORT=55432 CG_TEST_PG_PASSWORD=pw yarn jest tests/syncStateDb.spec.ts
+ *
+ * The repository runs on a pool whose sessions are read-only
+ * (`default_transaction_read_only`), so any write it attempted would fail.
+ */
+
+import { Pool } from 'pg';
+
+const HOST = process.env.CG_TEST_PG_HOST;
+const PORT = Number(process.env.CG_TEST_PG_PORT) || 5432;
+const PASSWORD = process.env.CG_TEST_PG_PASSWORD || 'pw';
+const SCHEMA = 'sync_state_test';
+const describeDb = HOST ? describe : describe.skip;
+
+let mockReadOnlyPool: Pool | undefined;
+jest.mock('../util/postgres', () => ({
+  __esModule: true,
+  default: { query: (...args: any[]) => (mockReadOnlyPool as any).query(...args) },
+}));
+
+import syncStateHelper, { UNREAD_CAP } from '../repositories/syncState';
+
+const id = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
+
+const ME = id(1);
+const OTHER = id(2);
+
+// communities
+const C_MEMBER = id(0x100);    // I hold the Member role
+const C_DELETED = id(0x101);   // deleted community where I hold a role
+const C_FOREIGN = id(0x102);   // not a member, Public may read
+const C_UNCLAIMED = id(0x103); // my role assignment is not claimed
+const C_DELROLE = id(0x104);   // my only role is deleted
+
+// roles
+const R_MEMBER = id(0x200);
+const R_PUBLIC = id(0x201);
+const R_EXTRA = id(0x202);     // second claimed role, EXISTS only
+const R_DELETED_C = id(0x203);
+const R_FOREIGN_PUBLIC = id(0x204);
+const R_UNCLAIMED = id(0x205);
+const R_DELROLE = id(0x206);
+const R_OTHER_ONLY = id(0x207); // a role in C_MEMBER I do not hold
+
+// channels in C_MEMBER
+const CH_READ = id(0x300);          // Member: EXISTS + READ, lastRead set
+const CH_PUBLIC = id(0x301);        // only Public: EXISTS + READ
+const CH_EXISTS_ONLY = id(0x302);   // Member: EXISTS only
+const CH_SPLIT = id(0x303);         // Member: READ, extra role: EXISTS
+const CH_READ_NO_EXISTS = id(0x304);// Member: READ only
+const CH_DELETED = id(0x305);       // deleted channel
+const CH_OTHER_ROLE = id(0x306);    // only a role I do not hold
+const CH_NO_LASTREAD = id(0x307);   // readable, no lastRead
+const CH_MANY = id(0x308);          // more unread than the cap
+// channels elsewhere
+const CH_IN_DELETED_C = id(0x310);
+const CH_FOREIGN = id(0x311);
+const CH_UNCLAIMED = id(0x312);
+const CH_DELROLE = id(0x313);
+// chats
+const CHAT = id(0x400);
+const CHAT_CH = id(0x401);
+const CHAT_NO_LASTREAD = id(0x402);
+const CHAT_NO_LASTREAD_CH = id(0x403);
+const CHAT_FOREIGN = id(0x404);
+const CHAT_FOREIGN_CH = id(0x405);
+const CHAT_DELETED = id(0x406);
+const CHAT_DELETED_CH = id(0x407);
+
+describeDb('getSyncState on PostgreSQL', () => {
+  let admin: Pool;
+  const q = (sql: string, params?: unknown[]) => admin.query(sql, params);
+  const T0 = '2026-11-01T10:00:00.000Z';
+  let messageNo = 0;
+
+  /** messages at T0 + minutes */
+  async function addMessages(channelId: string, creatorId: string, minutes: number[], deleted = false) {
+    for (const minute of minutes) {
+      messageNo += 1;
+      await q(
+        `INSERT INTO messages ("id", "creatorId", "channelId", "createdAt", "deletedAt")
+         VALUES ($1, $2, $3, $4::timestamptz + make_interval(mins => $5), $6)`,
+        [id(0x10000 + messageNo), creatorId, channelId, T0, minute, deleted ? T0 : null],
+      );
+    }
+  }
+
+  beforeAll(async () => {
+    admin = new Pool({
+      host: HOST, port: PORT, user: 'postgres', password: PASSWORD, database: 'cryptogram',
+      options: `-c search_path=${SCHEMA}`,
+    });
+    mockReadOnlyPool = new Pool({
+      host: HOST, port: PORT, user: 'postgres', password: PASSWORD, database: 'cryptogram',
+      options: `-c search_path=${SCHEMA} -c default_transaction_read_only=on`,
+    });
+    await q(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
+    await q(`CREATE SCHEMA ${SCHEMA}`);
+    await q(`CREATE TYPE ccrp_permissions_enum AS ENUM ('CHANNEL_EXISTS', 'CHANNEL_READ', 'CHANNEL_WRITE', 'CHANNEL_MODERATE')`);
+    await q(`CREATE TABLE communities ("id" uuid PRIMARY KEY, "deletedAt" timestamptz)`);
+    await q(`CREATE TABLE roles ("id" uuid PRIMARY KEY, "communityId" uuid NOT NULL, "title" varchar(64) NOT NULL, "deletedAt" timestamptz)`);
+    await q(`CREATE TABLE roles_users_users ("roleId" uuid NOT NULL, "userId" uuid NOT NULL, "claimed" boolean NOT NULL DEFAULT false, PRIMARY KEY ("userId", "roleId"))`);
+    await q(`CREATE TABLE communities_channels ("channelId" uuid NOT NULL, "communityId" uuid NOT NULL, "deletedAt" timestamptz, PRIMARY KEY ("channelId", "communityId"))`);
+    await q(`CREATE TABLE communities_channels_roles_permissions ("communityId" uuid NOT NULL, "channelId" uuid NOT NULL, "roleId" uuid NOT NULL, "permissions" ccrp_permissions_enum[] NOT NULL, PRIMARY KEY ("communityId", "channelId", "roleId"))`);
+    await q(`CREATE TABLE chats ("id" uuid PRIMARY KEY, "channelId" uuid NOT NULL UNIQUE, "userIds" uuid[] NOT NULL, "deletedAt" timestamptz)`);
+    await q(`CREATE TABLE channelreadstate ("userId" uuid NOT NULL, "channelId" uuid NOT NULL, "lastRead" timestamptz(3) NOT NULL, PRIMARY KEY ("userId", "channelId"))`);
+    await q(`CREATE TABLE messages ("id" uuid PRIMARY KEY, "creatorId" uuid NOT NULL, "channelId" uuid NOT NULL, "createdAt" timestamptz(3) NOT NULL, "deletedAt" timestamptz(3), "syncSeq" bigint, UNIQUE ("channelId", "createdAt"))`);
+    await q(`CREATE INDEX ON messages ("channelId", "syncSeq")`);
+    await q(`CREATE TABLE channel_sync_state ("channelId" uuid PRIMARY KEY, "seq" bigint NOT NULL)`);
+    await q(`CREATE TABLE notifications ("id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "userId" uuid NOT NULL, "read" boolean NOT NULL DEFAULT false)`);
+
+    await q(`INSERT INTO communities VALUES ($1, NULL), ($2, now()), ($3, NULL), ($4, NULL), ($5, NULL)`,
+      [C_MEMBER, C_DELETED, C_FOREIGN, C_UNCLAIMED, C_DELROLE]);
+    await q(`INSERT INTO roles VALUES
+      ($1, $8, 'Member', NULL), ($2, $8, 'Public', NULL), ($3, $8, 'Extra', NULL), ($7, $8, 'Other', NULL),
+      ($4, $9, 'Member', NULL), ($5, $10, 'Public', NULL), ($6, $11, 'Member', NULL), ($12, $13, 'Member', now())`,
+      [R_MEMBER, R_PUBLIC, R_EXTRA, R_DELETED_C, R_FOREIGN_PUBLIC, R_UNCLAIMED, R_OTHER_ONLY,
+        C_MEMBER, C_DELETED, C_FOREIGN, C_UNCLAIMED, R_DELROLE, C_DELROLE]);
+    await q(`INSERT INTO roles_users_users VALUES
+      ($1, $6, true), ($2, $6, true), ($3, $6, true), ($4, $6, false), ($5, $6, true), ($7, $8, true)`,
+      [R_MEMBER, R_EXTRA, R_DELETED_C, R_UNCLAIMED, R_DELROLE, ME, R_OTHER_ONLY, OTHER]);
+
+    const channels: [string, string, boolean][] = [
+      [CH_READ, C_MEMBER, false], [CH_PUBLIC, C_MEMBER, false], [CH_EXISTS_ONLY, C_MEMBER, false],
+      [CH_SPLIT, C_MEMBER, false], [CH_READ_NO_EXISTS, C_MEMBER, false], [CH_DELETED, C_MEMBER, true],
+      [CH_OTHER_ROLE, C_MEMBER, false], [CH_NO_LASTREAD, C_MEMBER, false], [CH_MANY, C_MEMBER, false],
+      [CH_IN_DELETED_C, C_DELETED, false], [CH_FOREIGN, C_FOREIGN, false], [CH_UNCLAIMED, C_UNCLAIMED, false],
+      [CH_DELROLE, C_DELROLE, false],
+    ];
+    for (const [channelId, communityId, deleted] of channels) {
+      await q(`INSERT INTO communities_channels VALUES ($1, $2, $3)`, [channelId, communityId, deleted ? T0 : null]);
+    }
+    const readable = '{CHANNEL_EXISTS,CHANNEL_READ}';
+    const permissions: [string, string, string, string][] = [
+      [C_MEMBER, CH_READ, R_MEMBER, '{CHANNEL_EXISTS,CHANNEL_READ,CHANNEL_WRITE}'],
+      [C_MEMBER, CH_PUBLIC, R_PUBLIC, readable],
+      [C_MEMBER, CH_EXISTS_ONLY, R_MEMBER, '{CHANNEL_EXISTS}'],
+      [C_MEMBER, CH_EXISTS_ONLY, R_PUBLIC, '{CHANNEL_EXISTS}'],
+      [C_MEMBER, CH_SPLIT, R_MEMBER, '{CHANNEL_READ}'],
+      [C_MEMBER, CH_SPLIT, R_EXTRA, '{CHANNEL_EXISTS}'],
+      [C_MEMBER, CH_READ_NO_EXISTS, R_MEMBER, '{CHANNEL_READ}'],
+      [C_MEMBER, CH_DELETED, R_MEMBER, readable],
+      [C_MEMBER, CH_OTHER_ROLE, R_OTHER_ONLY, readable],
+      [C_MEMBER, CH_NO_LASTREAD, R_MEMBER, readable],
+      [C_MEMBER, CH_MANY, R_MEMBER, readable],
+      [C_DELETED, CH_IN_DELETED_C, R_DELETED_C, readable],
+      [C_FOREIGN, CH_FOREIGN, R_FOREIGN_PUBLIC, readable],
+      [C_UNCLAIMED, CH_UNCLAIMED, R_UNCLAIMED, readable],
+      [C_DELROLE, CH_DELROLE, R_DELROLE, readable],
+    ];
+    for (const [communityId, channelId, roleId, perms] of permissions) {
+      await q(`INSERT INTO communities_channels_roles_permissions VALUES ($1, $2, $3, $4)`, [communityId, channelId, roleId, perms]);
+    }
+    await q(`INSERT INTO chats VALUES ($1, $2, $9, NULL), ($3, $4, $9, NULL), ($5, $6, $10, NULL), ($7, $8, $9, now())`,
+      [CHAT, CHAT_CH, CHAT_NO_LASTREAD, CHAT_NO_LASTREAD_CH, CHAT_FOREIGN, CHAT_FOREIGN_CH, CHAT_DELETED, CHAT_DELETED_CH,
+        [ME, OTHER], [OTHER, id(3)]]);
+
+    // lastRead at T0 + 10 min where set
+    const lastRead = new Date(Date.parse(T0) + 10 * 60_000).toISOString();
+    for (const channelId of [CH_READ, CH_PUBLIC, CH_MANY, CHAT_CH]) {
+      await q(`INSERT INTO channelreadstate VALUES ($1, $2, $3)`, [ME, channelId, lastRead]);
+    }
+
+    // CH_READ: 2 of others after lastRead, 1 own after, 1 deleted after, 1 before
+    await addMessages(CH_READ, OTHER, [5, 11, 12]);
+    await addMessages(CH_READ, ME, [13]);
+    await addMessages(CH_READ, OTHER, [14], true);
+    // CH_PUBLIC: nothing after lastRead
+    await addMessages(CH_PUBLIC, OTHER, [1]);
+    // CH_NO_LASTREAD (community, no lastRead): messages exist, unread stays 0
+    await addMessages(CH_NO_LASTREAD, OTHER, [1, 2, 3]);
+    // CH_MANY: more than the cap
+    await q(
+      `INSERT INTO messages ("id", "creatorId", "channelId", "createdAt")
+       SELECT gen_random_uuid(), $1, $2, $3::timestamptz + make_interval(secs => g)
+       FROM generate_series(1, ${UNREAD_CAP + 50}) g`,
+      [OTHER, CH_MANY, lastRead],
+    );
+    // chat with lastRead: 1 before, 2 after (one own)
+    await addMessages(CHAT_CH, OTHER, [1, 20]);
+    await addMessages(CHAT_CH, ME, [21]);
+    // chat without lastRead: every message of others counts
+    await addMessages(CHAT_NO_LASTREAD_CH, OTHER, [1, 2, 3]);
+    await addMessages(CHAT_NO_LASTREAD_CH, ME, [4]);
+    await addMessages(CHAT_NO_LASTREAD_CH, OTHER, [5], true);
+    // invisible channels have messages too
+    await addMessages(CH_EXISTS_ONLY, OTHER, [30]);
+    await addMessages(CH_FOREIGN, OTHER, [30]);
+
+    await q(`INSERT INTO channel_sync_state VALUES ($1, 42), ($2, 9007199254740991)`, [CH_READ, CHAT_CH]);
+    await q(`INSERT INTO notifications ("userId", "read") VALUES ($1, false), ($1, false), ($1, true), ($2, false)`, [ME, OTHER]);
+  });
+
+  afterAll(async () => {
+    await q(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
+    await admin.end();
+    await mockReadOnlyPool?.end();
+  });
+
+  const byChannel = (channels: API.Messages.getSyncState.ChannelState[]) =>
+    Object.fromEntries(channels.map(c => [c.channelId, c]));
+
+  it('lists exactly the readable channels and chats', async () => {
+    const { channels } = await syncStateHelper.getSyncState(ME, {});
+    expect(channels.map(c => c.channelId).sort()).toEqual([
+      CH_READ, CH_PUBLIC, CH_SPLIT, CH_NO_LASTREAD, CH_MANY, CHAT_CH, CHAT_NO_LASTREAD_CH,
+    ].sort());
+  });
+
+  it('reports read state, unread counts and sequences', async () => {
+    const response = await syncStateHelper.getSyncState(ME, {});
+    const state = byChannel(response.channels);
+
+    expect(state[CH_READ]).toEqual({
+      channelId: CH_READ,
+      communityId: C_MEMBER,
+      syncSeq: 42,
+      lastRead: '2026-11-01T10:10:00.000Z',
+      lastMessageDate: '2026-11-01T10:13:00.000Z',
+      unread: 2,
+    });
+    expect(state[CH_PUBLIC]).toMatchObject({ communityId: C_MEMBER, syncSeq: 0, unread: 0 });
+    expect(state[CH_PUBLIC].chatId).toBeUndefined();
+    // community channel without lastRead: 0
+    expect(state[CH_NO_LASTREAD]).toMatchObject({ lastRead: null, unread: 0, lastMessageDate: '2026-11-01T10:03:00.000Z' });
+    // channel without messages
+    expect(state[CH_SPLIT]).toMatchObject({ lastMessageDate: null, lastRead: null, unread: 0, syncSeq: 0 });
+    // capped
+    expect(state[CH_MANY].unread).toBe(UNREAD_CAP);
+    // chat with lastRead: others after lastRead only
+    expect(state[CHAT_CH]).toEqual({
+      channelId: CHAT_CH,
+      chatId: CHAT,
+      syncSeq: 9007199254740991,
+      lastRead: '2026-11-01T10:10:00.000Z',
+      lastMessageDate: '2026-11-01T10:21:00.000Z',
+      unread: 1,
+    });
+    // chat without lastRead: every non-deleted message of others
+    expect(state[CHAT_NO_LASTREAD_CH]).toMatchObject({ chatId: CHAT_NO_LASTREAD, lastRead: null, unread: 3 });
+    expect(state[CHAT_NO_LASTREAD_CH].communityId).toBeUndefined();
+
+    expect(response.notificationUnreadCount).toBe(2);
+    expect(Number.isNaN(Date.parse(response.serverTime))).toBe(false);
+  });
+
+  it('restricts the answer to the requested channels, still by visibility', async () => {
+    const { channels } = await syncStateHelper.getSyncState(ME, {
+      channelIds: [CH_READ, CHAT_NO_LASTREAD_CH, CH_EXISTS_ONLY, CH_FOREIGN, CHAT_FOREIGN_CH, id(0xfff)],
+    });
+    expect(channels.map(c => c.channelId).sort()).toEqual([CH_READ, CHAT_NO_LASTREAD_CH].sort());
+
+    const empty = await syncStateHelper.getSyncState(ME, { channelIds: [] });
+    expect(empty.channels).toEqual([]);
+    expect(empty.notificationUnreadCount).toBe(2);
+  });
+
+  it('writes nothing', async () => {
+    const before = await q(`SELECT count(*)::int AS n FROM channelreadstate`);
+    await syncStateHelper.getSyncState(ME, {});
+    await syncStateHelper.getSyncState(OTHER, {});
+    const after = await q(`SELECT count(*)::int AS n FROM channelreadstate`);
+    expect(after.rows[0].n).toBe(before.rows[0].n);
+    // the repository's pool really refuses writes
+    await expect(mockReadOnlyPool!.query(`INSERT INTO channelreadstate VALUES ($1, $2, now())`, [ME, CH_NO_LASTREAD]))
+      .rejects.toThrow(/read-only transaction/);
+  });
+
+  it('gives another user only their own view', async () => {
+    const state = byChannel((await syncStateHelper.getSyncState(OTHER, {})).channels);
+    // OTHER holds only R_OTHER_ONLY in C_MEMBER, plus Public there
+    expect(Object.keys(state).sort()).toEqual([CH_OTHER_ROLE, CH_PUBLIC, CHAT_CH, CHAT_NO_LASTREAD_CH, CHAT_FOREIGN_CH].sort());
+    // OTHER has no lastRead on CHAT_CH: all of ME's messages count
+    expect(state[CHAT_CH]).toMatchObject({ lastRead: null, unread: 1 });
+    expect(state[CHAT_NO_LASTREAD_CH].unread).toBe(1);
+  });
+});

@@ -15,8 +15,8 @@
 > 591e6cf, 2026-11-02; the message sync sequence (`channel_sync_state`, `messages.syncSeq`,
 > the `messages_sync_seq_*` triggers, the delete lock order, the migration's write stall),
 > `idx_messages_channelId_createdAt_live` and the idempotent message insert against commit
-> 30ce83e, 2026-11-02; the `createMessage` channel lock and `createdAt` rule against the commit
-> after d2b9377, 2026-11-02
+> 30ce83e, 2026-11-02; the `createMessage` channel lock and `createdAt` rule against commits
+> 959064f and 1963d4f, 2026-11-02
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -505,7 +505,9 @@ All messages across all channel types. Unique constraint on `(channelId, created
 `channel_sync_state` row (`INSERT … ON CONFLICT DO UPDATE … WHERE false`, which locks
 without writing) and then sets `createdAt` = `updatedAt` = `GREATEST(clock_timestamp(),
 newest createdAt of the channel + 1 ms)`, so creates in one channel get distinct,
-increasing timestamps in sequence order even in bursts; a collision with a writer that
+increasing timestamps in sequence order even in bursts. The +1 ms chain is followed only
+while it stays within 5 s of the clock: after a clock that ran ahead was corrected, a new
+message takes `clock_timestamp()` instead of a future time. A collision with a writer that
 does not take the lock first (an API process from before this change, during a deploy) is
 retried, up to 3 attempts. The insert is idempotent on the
 client-chosen `id`: a known id is answered from a lookup without an INSERT (an INSERT

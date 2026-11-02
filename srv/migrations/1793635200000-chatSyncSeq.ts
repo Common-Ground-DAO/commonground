@@ -14,8 +14,19 @@ import { MigrationInterface, QueryRunner } from "typeorm";
 //   written since this migration keep NULL until their next write.
 // - "idx_messages_channelId_syncSeq": partial (only rows with a sequence),
 //   for `syncSeq > cursor` scans per channel. While every row is NULL the
-//   build is one sequential scan of messages with nothing to sort; its
-//   runtime on the production dump is measured in the cg.box dress rehearsal.
+//   build is one sequential scan of messages with nothing to sort.
+// - "idx_messages_channelId_createdAt_live": ("channelId", "createdAt")
+//   INCLUDE ("creatorId") WHERE "deletedAt" IS NULL, so the capped unread
+//   counts (setChannelLastRead, getSyncState: other users' live messages
+//   after lastRead) are index-only scans. Build measured on 6.5M messages:
+//   2.3 s.
+// WRITE STALL ON A LIVE DEPLOY: the ALTER TABLE takes ACCESS EXCLUSIVE and
+// both indexes are built without CONCURRENTLY (TypeORM runs all pending
+// migrations in one transaction, mode "all", and refuses a per-migration
+// `transaction = false`), so reads and writes of `messages` wait until the
+// whole migration run commits, together with the locks of every later
+// migration of the same deploy. The runtime on the production dump is
+// timed in the cg.box dress rehearsal.
 // - trigger "messages_sync_seq" (BEFORE INSERT OR UPDATE, FOR EACH ROW):
 //   increments the channel's row in channel_sync_state and writes the new
 //   value into NEW."syncSeq". The upsert keeps that row locked until the
@@ -42,6 +53,7 @@ export class ChatSyncSeq1793635200000 implements MigrationInterface {
 
         await queryRunner.query(`ALTER TABLE "messages" ADD "syncSeq" bigint`);
         await queryRunner.query(`CREATE INDEX "idx_messages_channelId_syncSeq" ON "messages" ("channelId", "syncSeq") WHERE "syncSeq" IS NOT NULL`);
+        await queryRunner.query(`CREATE INDEX "idx_messages_channelId_createdAt_live" ON "messages" ("channelId", "createdAt") INCLUDE ("creatorId") WHERE "deletedAt" IS NULL`);
 
         await queryRunner.query(`
             CREATE FUNCTION messages_set_sync_seq()
@@ -76,6 +88,7 @@ export class ChatSyncSeq1793635200000 implements MigrationInterface {
         await queryRunner.query(`DROP TRIGGER "messages_sync_seq_update" ON "messages"`);
         await queryRunner.query(`DROP TRIGGER "messages_sync_seq_insert" ON "messages"`);
         await queryRunner.query(`DROP FUNCTION messages_set_sync_seq()`);
+        await queryRunner.query(`DROP INDEX "idx_messages_channelId_createdAt_live"`);
         await queryRunner.query(`DROP INDEX "idx_messages_channelId_syncSeq"`);
         await queryRunner.query(`ALTER TABLE "messages" DROP COLUMN "syncSeq"`);
         await queryRunner.query(`DROP TABLE "channel_sync_state"`);

@@ -21,6 +21,8 @@ import { Channel } from "./channels";
 @Unique(['channelId', 'createdAt'])
 // partial ("syncSeq" IS NOT NULL), see migration 1793635200000-chatSyncSeq
 @Index('idx_messages_channelId_syncSeq', { synchronize: false })
+// ("channelId", "createdAt") INCLUDE ("creatorId") WHERE "deletedAt" IS NULL, same migration
+@Index('idx_messages_channelId_createdAt_live', { synchronize: false })
 export class Message {
     @PrimaryGeneratedColumn('uuid')
     id!: string;

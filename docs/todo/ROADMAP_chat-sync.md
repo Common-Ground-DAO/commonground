@@ -400,7 +400,7 @@ flows (outside `07-call.ts`) can start before.
   read-state model, notification model, what persists (if anything),
   migration (old IndexedDB stores deleted), test strategy, work breakdown for
   parallel execution. **Gate: maintainer approval.**
-- [ ] **P0 — Tests first.** vitest project for the data layer (fake-indexeddb,
+- [x] **P0 — Tests first.** Done: test-infra + e2e slices (see slice log). vitest project for the data layer (fake-indexeddb,
   Node `navigator.locks`, global `BroadcastChannel`); characterization tests of
   today's behaviour where useful; e2e scenarios E1–E8 (below), red where the
   current code is buggy.
@@ -429,6 +429,7 @@ flows (outside `07-call.ts`) can start before.
 
 - [x] srv-presence — presence grace period (30 s), cluster-wide batched offline
   check, change-only events, stale job emits offline — merge `6c9b07a`
+- [x] e2e — acceptance flows E1–E5, E7, E8 (`--flow chat-sync`), same-user multi-tab harness, CDP helpers, `force-reload-cold-sw` mode; baseline in the coordinator notes — merge `6e0e9af`
 - [x] srv-state — `getSyncState`, notification read/count fixes (emit only on change, counts as int, `unreadCountAt`), sync-state indexes, real-PG test target locked to `CG_TEST_PG_*` — merge `60e2580`
 - [x] transport — one socket per tab, live = login ack, hidden-tab policy, call hold, `cg:login` lock (secret+sign+login), auth broadcast, snapshot refresh after reconnect, `x-cg-socket-id`, `updateAvailable` — merge `84faa77`
 - [x] srv-sync — `syncSeq` trigger + migration, `getChanges`, idempotent `createMessage` with per-channel createdAt ordering, `setChannelLastRead` additions, deadlock-safe delete — merge `7f4cbbe`

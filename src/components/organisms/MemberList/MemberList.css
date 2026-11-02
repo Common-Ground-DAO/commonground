@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .group-member-list {
   @apply absolute h-auto flex flex-col;
   top: 0;

@@ -160,8 +160,6 @@ export default tseslint.config(
       'vite/**/*.ts',
       'tools/**/*.mjs',
       'eslint.config.mjs',
-      'postcss.config.js',
-      'tailwind.config.js',
     ],
     languageOptions: { globals: globals.node },
     rules: {

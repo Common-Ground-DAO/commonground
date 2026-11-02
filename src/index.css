@@ -1,6 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Chivo:wght@300;400;600&family=Open+Sans:wght@400;600&family=Poppins:wght@400;600&family=Space+Mono:wght@400;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&display=swap');
 
+/* Tailwind: theme, preflight, utilities and their configuration */
+@import './tailwind.css';
+
 @font-face {
   font-family: "Inter";
   src: url('/fonts/Inter-Regular.ttf');
@@ -18,10 +21,6 @@
   src: url('/fonts/Inter-Bold.ttf');
   font-weight: 600;
 }
-
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
 
 body {
   @apply font-default;
@@ -224,11 +223,11 @@ wcm-modal {
     -webkit-animation: shimmer 2s infinite;
     content: '';
   }
+}
 
-  @keyframes shimmer {
-    100% {
-      transform: translateX(100%);
-    }
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
   }
 }
 
@@ -472,43 +471,43 @@ body.light {
   --border-panels: #FFF;
 
   /* background */
-  --bgColor: theme('colors.palette.light.500');
+  --bgColor: var(--color-palette-light-500);
 
   /* General */
-  --linkColor: theme('colors.palette.brand.500');
-  --linkBorderColor: theme('colors.palette.brand500Transparent');
-  --verifiedBg: theme('colors.palette.brand.500');
-  --hr: theme('colors.palette.light.600');
-  --spinner: theme('colors.palette.brand.500');
-  --transparent: theme('colors.palette.transparent');
-  --darkTransparent: theme('colors.palette.darkTransparent');
-  --darkTransparentHover: theme('colors.palette.darkTransparentHover');
-  --brandLightTransparent: theme('colors.palette.brand500LightTransparent');
-  --brandTransparent: theme('colors.palette.brand500Transparent');
-  --imageBg: theme('colors.palette.light.600');
-  --imageBgHover: theme('colors.palette.light.500');
-  --jdenticonBorder: theme('colors.palette.light.50');
-  --successColor: theme('colors.palette.success.500');
-  --successBg: theme('colors.palette.success.200');
-  --warningColor: theme('colors.palette.warning.500');
-  --warningBg: theme('colors.palette.warning.100');
-  --errorColor: theme('colors.palette.error.500');
-  --errorBg: theme('colors.palette.error.200');
+  --linkColor: var(--color-palette-brand-500);
+  --linkBorderColor: var(--color-palette-brand500Transparent);
+  --verifiedBg: var(--color-palette-brand-500);
+  --hr: var(--color-palette-light-600);
+  --spinner: var(--color-palette-brand-500);
+  --transparent: var(--color-palette-transparent);
+  --darkTransparent: var(--color-palette-darkTransparent);
+  --darkTransparentHover: var(--color-palette-darkTransparentHover);
+  --brandLightTransparent: var(--color-palette-brand500LightTransparent);
+  --brandTransparent: var(--color-palette-brand500Transparent);
+  --imageBg: var(--color-palette-light-600);
+  --imageBgHover: var(--color-palette-light-500);
+  --jdenticonBorder: var(--color-palette-light-50);
+  --successColor: var(--color-palette-success-500);
+  --successBg: var(--color-palette-success-200);
+  --warningColor: var(--color-palette-warning-500);
+  --warningBg: var(--color-palette-warning-100);
+  --errorColor: var(--color-palette-error-500);
+  --errorBg: var(--color-palette-error-200);
   --transparentWeak: rgba(255, 255, 255, 0.3);
 
   /* experimental pie menu */
-  --pieMenuBg: theme('colors.palette.brand.700');
+  --pieMenuBg: var(--color-palette-brand-700);
 
   /* banner */
-  --bannerBg: theme('colors.palette.brand.50');
-  --bannerText: theme('colors.palette.brand.500');
+  --bannerBg: var(--color-palette-brand-50);
+  --bannerText: var(--color-palette-brand-500);
 
   /* sidebar */
-  --sidebarLogo: theme('colors.palette.brand.500');
+  --sidebarLogo: var(--color-palette-brand-500);
   --sidebarBg: var(--bgColor);
   --sidebarBorder: none;
-  --sidebarText: theme('colors.palette.light.950');
-  --sidebarButtonHover: theme('colors.palette.light.600');
+  --sidebarText: var(--color-palette-light-950);
+  --sidebarButtonHover: var(--color-palette-light-600);
 
   --audioWidgetBg: var(--cardBg);
   --audioWidgetBorder: var(--cardBorder);
@@ -520,181 +519,181 @@ body.light {
   /* Audio widget */
   --audioActiveBg: var(--audioWidgetBg);
   --audioActiveBorder: var(--audioWidgetBorder);
-  --audioInactiveBg: theme('colors.palette.transparent');
+  --audioInactiveBg: var(--color-palette-transparent);
   --audioInactiveBorder: var(--audioWidgetBorder);
 
   /* cards and content */
-  --headerText: theme('colors.palette.light.950');
-  --cardBg: theme('colors.palette.light.100');
+  --headerText: var(--color-palette-light-950);
+  --cardBg: var(--color-palette-light-100);
   --cardBgHover: var(--surface-hover);
-  --cardBorder: theme('colors.palette.light.600');
-  --cardTextMain: theme('colors.palette.light.950');
-  --cardTextSecondary: theme('colors.palette.light.800');
-  --cardSubBg: theme('colors.palette.brand.50');
-  --cardSubBgHover: theme('colors.palette.brand.100');
-  --cardSubText: theme('colors.palette.brand.500');
-  --cardSubTextSecondary: theme('colors.palette.brand.300');
-  --cardVerifiedText: theme('colors.palette.brand.500');
+  --cardBorder: var(--color-palette-light-600);
+  --cardTextMain: var(--color-palette-light-950);
+  --cardTextSecondary: var(--color-palette-light-800);
+  --cardSubBg: var(--color-palette-brand-50);
+  --cardSubBgHover: var(--color-palette-brand-100);
+  --cardSubText: var(--color-palette-brand-500);
+  --cardSubTextSecondary: var(--color-palette-brand-300);
+  --cardVerifiedText: var(--color-palette-brand-500);
 
   --cardSelectedBg: var(--surface-subtleactive);
   --cardSelectedText: var(--text-primary);
   --cardSelectedTextSecondary: var(--text-secondary)
     /* Articles */
-    --articleHeader: theme('colors.palette.light.950');
-  --articleText: theme('colors.palette.light.900');
+    --articleHeader: var(--color-palette-light-950);
+  --articleText: var(--color-palette-light-900);
 
   /* Community cards */
-  --communityCardBg: theme('colors.palette.light.50');
-  --communityCardBgHover: theme('colors.palette.light.100');
-  --communityCardBorder: theme('colors.palette.light.100');
-  --communityCardTextMain: theme('colors.palette.light.950');
+  --communityCardBg: var(--color-palette-light-50);
+  --communityCardBgHover: var(--color-palette-light-100);
+  --communityCardBorder: var(--color-palette-light-100);
+  --communityCardTextMain: var(--color-palette-light-950);
 
   /* Modal */
-  --modalBg: theme('colors.palette.light.100');
-  --modalHeaderBg: theme('colors.palette.light.200');
-  --modalText: theme('colors.palette.light.950');
-  --modalSecondary: theme('colors.palette.light.700');
+  --modalBg: var(--color-palette-light-100);
+  --modalHeaderBg: var(--color-palette-light-200);
+  --modalText: var(--color-palette-light-950);
+  --modalSecondary: var(--color-palette-light-700);
 
   /* Communities */
-  --communitiesContainerBg: theme('colors.palette.light.500');
-  --communitiesContainerBorder: solid 1px theme('colors.palette.light.600');
-  --communitiesContainerTitle: theme('colors.palette.light.950');
-  --communitiesContainerCount: theme('colors.palette.light.700');
-  --communitySidebarTitle: theme('colors.palette.light.100');
+  --communitiesContainerBg: var(--color-palette-light-500);
+  --communitiesContainerBorder: solid 1px var(--color-palette-light-600);
+  --communitiesContainerTitle: var(--color-palette-light-950);
+  --communitiesContainerCount: var(--color-palette-light-700);
+  --communitySidebarTitle: var(--color-palette-light-100);
   --communityDefaultImageBg: transparent;
 
   /* logos */
-  --logoMenuItemHoverBorder: theme('colors.palette.light.500');
-  --logoMenuItemActiveBorder: theme('colors.palette.brand.500');
+  --logoMenuItemHoverBorder: var(--color-palette-light-500);
+  --logoMenuItemActiveBorder: var(--color-palette-brand-500);
 
   /* breadcrumb */
   --breadcrumbBg: transparent;
-  --breadcrumbBgHover: theme('colors.palette.transparent');
-  --breadcrumbText: theme('colors.palette.brand.500');
-  --breadcrumbPastText: theme('colors.palette.light.700');
+  --breadcrumbBgHover: var(--color-palette-transparent);
+  --breadcrumbText: var(--color-palette-brand-500);
+  --breadcrumbPastText: var(--color-palette-light-700);
 
   /* inputs */
-  --inputBg: theme('colors.palette.light.600');
-  --inputText: theme('colors.palette.light.950');
-  --inputPlaceholder: theme('colors.palette.light.700');
+  --inputBg: var(--color-palette-light-600);
+  --inputText: var(--color-palette-light-950);
+  --inputPlaceholder: var(--color-palette-light-700);
   --inputBorder: transparent;
-  --inputHoverBg: theme('colors.palette.light.400');
-  --inputHoverText: theme('colors.palette.light.950');
-  --inputHoverBorder: theme('colors.palette.light.600');
-  --inputHoverPlaceholder: theme('colors.palette.light.700');
-  --inputFocusedBg: theme('colors.palette.light.50');
-  --inputFocusedText: theme('colors.palette.light.950');
-  --inputFocusedBorder: theme('colors.palette.brand.400');
-  --inputSubLabel: theme('colors.palette.light.700');
+  --inputHoverBg: var(--color-palette-light-400);
+  --inputHoverText: var(--color-palette-light-950);
+  --inputHoverBorder: var(--color-palette-light-600);
+  --inputHoverPlaceholder: var(--color-palette-light-700);
+  --inputFocusedBg: var(--color-palette-light-50);
+  --inputFocusedText: var(--color-palette-light-950);
+  --inputFocusedBorder: var(--color-palette-brand-400);
+  --inputSubLabel: var(--color-palette-light-700);
 
-  --chatInputBg: theme('colors.palette.light.100');
-  --chatInputBorder: theme('colors.palette.light.600');
-  --chatInputButton: theme('colors.palette.brand.500');
-  --chatInputButtonHoverBg: theme('colors.palette.brand.100');
+  --chatInputBg: var(--color-palette-light-100);
+  --chatInputBorder: var(--color-palette-light-600);
+  --chatInputButton: var(--color-palette-brand-500);
+  --chatInputButtonHoverBg: var(--color-palette-brand-100);
   --chatInputPlaceholder: var(--text-secondary);
 
-  --toggleBg: theme('colors.palette.light.600');
-  --toggleColor: theme('colors.palette.light.50');
-  --toggleActiveColor: theme('colors.palette.light.50');
+  --toggleBg: var(--color-palette-light-600);
+  --toggleColor: var(--color-palette-light-50);
+  --toggleActiveColor: var(--color-palette-light-50);
 
   /* dropdowns */
-  --dropdownBg: theme('colors.palette.light.100');
-  --dropdownBorder: solid 1px theme('colors.palette.light.600');
-  --dropdownTitle: theme('colors.palette.light.900');
-  --dropdownTitleBorder: theme('colors.palette.transparent');
-  --dropdownPrimaryText: theme('colors.palette.light.900');
-  --dropdownSubtitle: theme('colors.palette.light.700');
-  --dropdownSecondaryText: theme('colors.palette.light.900');
-  --dropdownHoverBg: theme('colors.palette.light.600');
-  --dropdownDisabledText: theme('colors.palette.light.700');
+  --dropdownBg: var(--color-palette-light-100);
+  --dropdownBorder: solid 1px var(--color-palette-light-600);
+  --dropdownTitle: var(--color-palette-light-900);
+  --dropdownTitleBorder: var(--color-palette-transparent);
+  --dropdownPrimaryText: var(--color-palette-light-900);
+  --dropdownSubtitle: var(--color-palette-light-700);
+  --dropdownSecondaryText: var(--color-palette-light-900);
+  --dropdownHoverBg: var(--color-palette-light-600);
+  --dropdownDisabledText: var(--color-palette-light-700);
 
   /* tooltips */
   --tooltipBg: #F6F6F6;
-  --tooltipSimpleBg: theme('colors.palette.light.50');
-  --tooltipSimpleBorder: theme('colors.palette.light.200');
-  --tooltipBorder: theme('colors.palette.light.50');
-  --tooltipText: theme('colors.palette.light.950');
-  --tooltipSimpleText: theme('colors.palette.light.900');
+  --tooltipSimpleBg: var(--color-palette-light-50);
+  --tooltipSimpleBorder: var(--color-palette-light-200);
+  --tooltipBorder: var(--color-palette-light-50);
+  --tooltipText: var(--color-palette-light-950);
+  --tooltipSimpleText: var(--color-palette-light-900);
 
   /* icons */
-  --iconPrimary: theme('colors.palette.light.950');
-  --iconSecondary: theme('colors.palette.light.700');
+  --iconPrimary: var(--color-palette-light-950);
+  --iconSecondary: var(--color-palette-light-700);
 
   /* Message */
-  --messageBg: theme('colors.palette.brand.100');
-  --messageText: theme('colors.palette.light.950');
-  --messageDate: theme('colors.palette.light.700');
-  --messageDateBorder: theme('colors.palette.light.600');
-  --messageSelfBg: theme('colors.palette.brand.500');
-  --messageSelfText: theme('colors.palette.light.100');
-  --messageSelfDate: theme('colors.palette.brand.200');
-  --messageSelfTextUnderline: theme('colors.palette.light.600');
-  --messageHoverBg: theme('colors.palette.brand.100');
-  --messageSelfHoverBg: theme('colors.palette.brand.600');
-  --messageMention: theme('colors.palette.brand.500');
-  --messageScrollInner: theme('colors.palette.brand.400');
+  --messageBg: var(--color-palette-brand-100);
+  --messageText: var(--color-palette-light-950);
+  --messageDate: var(--color-palette-light-700);
+  --messageDateBorder: var(--color-palette-light-600);
+  --messageSelfBg: var(--color-palette-brand-500);
+  --messageSelfText: var(--color-palette-light-100);
+  --messageSelfDate: var(--color-palette-brand-200);
+  --messageSelfTextUnderline: var(--color-palette-light-600);
+  --messageHoverBg: var(--color-palette-brand-100);
+  --messageSelfHoverBg: var(--color-palette-brand-600);
+  --messageMention: var(--color-palette-brand-500);
+  --messageScrollInner: var(--color-palette-brand-400);
 
   /* Empty state */
-  --emptyStateColor: theme('colors.palette.brand.500');
-  --emptyStateBorder: theme('colors.palette.brand.400');
+  --emptyStateColor: var(--color-palette-brand-500);
+  --emptyStateBorder: var(--color-palette-brand-400);
 
   /* tags */
   --tagDefaultBg: var(--surface-subtleoverlay);
-  --tagDefaultBgHover: theme('colors.palette.brand500Transparent');
-  --tagDefaultBorder: theme('colors.palette.transparent');
-  --tagDefaultText: theme('colors.palette.light.950');
-  --tagDefaultIcon: theme('colors.palette.light.700');
+  --tagDefaultBgHover: var(--color-palette-brand500Transparent);
+  --tagDefaultBorder: var(--color-palette-transparent);
+  --tagDefaultText: var(--color-palette-light-950);
+  --tagDefaultIcon: var(--color-palette-light-700);
 
-  --tagWarningBg: theme('colors.palette.warning.100');
-  --tagWarningBgHover: theme('colors.palette.warning.200');
-  --tagWarningBorder: theme('colors.palette.warning.100');
-  --tagWarningText: theme('colors.palette.warning.500');
-  --tagWarningIcon: theme('colors.palette.warning.500');
+  --tagWarningBg: var(--color-palette-warning-100);
+  --tagWarningBgHover: var(--color-palette-warning-200);
+  --tagWarningBorder: var(--color-palette-warning-100);
+  --tagWarningText: var(--color-palette-warning-500);
+  --tagWarningIcon: var(--color-palette-warning-500);
 
-  --tagSafeBg: theme('colors.palette.success.100');
-  --tagSafeBgHover: theme('colors.palette.success.200');
-  --tagSafeBorder: theme('colors.palette.success.100');
-  --tagSafeText: theme('colors.palette.success.500');
-  --tagSafeIcon: theme('colors.palette.success.500');
+  --tagSafeBg: var(--color-palette-success-100);
+  --tagSafeBgHover: var(--color-palette-success-200);
+  --tagSafeBorder: var(--color-palette-success-100);
+  --tagSafeText: var(--color-palette-success-500);
+  --tagSafeIcon: var(--color-palette-success-500);
 
-  --tagSuccessBg: theme('colors.palette.success.100');
-  --tagSuccessBgHover: theme('colors.palette.success.200');
-  --tagSuccessBorder: theme('colors.palette.success.100');
-  --tagSuccessText: theme('colors.palette.success.500');
-  --tagSuccessIcon: theme('colors.palette.success.500');
+  --tagSuccessBg: var(--color-palette-success-100);
+  --tagSuccessBgHover: var(--color-palette-success-200);
+  --tagSuccessBorder: var(--color-palette-success-100);
+  --tagSuccessText: var(--color-palette-success-500);
+  --tagSuccessIcon: var(--color-palette-success-500);
 
-  --tagErrorBg: theme('colors.palette.error.100');
-  --tagErrorBgHover: theme('colors.palette.error.200');
-  --tagErrorBorder: theme('colors.palette.error.100');
-  --tagErrorText: theme('colors.palette.error.500');
-  --tagErrorIcon: theme('colors.palette.error.500');
+  --tagErrorBg: var(--color-palette-error-100);
+  --tagErrorBgHover: var(--color-palette-error-200);
+  --tagErrorBorder: var(--color-palette-error-100);
+  --tagErrorText: var(--color-palette-error-500);
+  --tagErrorIcon: var(--color-palette-error-500);
 
-  --tagInfoBg: theme('colors.palette.brand.100');
-  --tagInfoBgHover: theme('colors.palette.brand.200');
-  --tagInfoBorder: theme('colors.palette.brand.100');
-  --tagInfoText: theme('colors.palette.brand.500');
-  --tagInfoIcon: theme('colors.palette.brand.500');
+  --tagInfoBg: var(--color-palette-brand-100);
+  --tagInfoBgHover: var(--color-palette-brand-200);
+  --tagInfoBorder: var(--color-palette-brand-100);
+  --tagInfoText: var(--color-palette-brand-500);
+  --tagInfoIcon: var(--color-palette-brand-500);
 
-  --tagHelpBg: theme('colors.palette.brand.500');
-  --tagHelpBgHover: theme('colors.palette.brand.500');
-  --tagHelpBorder: theme('colors.palette.brand.500');
-  --tagHelpText: theme('colors.palette.brand.100');
-  --tagHelpIcon: theme('colors.palette.brand.100');
+  --tagHelpBg: var(--color-palette-brand-500);
+  --tagHelpBgHover: var(--color-palette-brand-500);
+  --tagHelpBorder: var(--color-palette-brand-500);
+  --tagHelpText: var(--color-palette-brand-100);
+  --tagHelpIcon: var(--color-palette-brand-100);
 
   /* reaction item */
   --reactionItemBg: var(--cardBg);
-  --reactionItemText: theme('colors.palette.light.950');
-  --reactionItemHoverText: theme('colors.palette.light.950');
-  --reactionItemHoverBorder: theme('colors.palette.light.500');
-  --reactionItemFocusText: theme('colors.palette.brand.500');
-  --reactionItemFocusBorder: theme('colors.palette.brand.500');
+  --reactionItemText: var(--color-palette-light-950);
+  --reactionItemHoverText: var(--color-palette-light-950);
+  --reactionItemHoverBorder: var(--color-palette-light-500);
+  --reactionItemFocusText: var(--color-palette-brand-500);
+  --reactionItemFocusBorder: var(--color-palette-brand-500);
 
   /* Attachment */
-  --attachmentImageBg: theme('colors.palette.transparent');
+  --attachmentImageBg: var(--color-palette-transparent);
   --attachmentImageLoadingOverlay: rgba(0, 0, 0, 0.5);
-  --attachmentCloseButtonBg: theme('colors.palette.light.300');
-  --attachmentHoverBorder: theme('colors.palette.light.600');
-  --attachmentHoverBorderError: theme('colors.palette.error.400');
+  --attachmentCloseButtonBg: var(--color-palette-light-300);
+  --attachmentHoverBorder: var(--color-palette-light-600);
+  --attachmentHoverBorderError: var(--color-palette-error-400);
 
   /* Notification Message */
   --notificationMessageTitle: var(--cardTextMain);
@@ -704,7 +703,7 @@ body.light {
   --notificationMessageBgSelected: var(--cardSelectedBg);
 
   /* Notification Count */
-  --notificationCountText: theme('colors.palette.light.600');
+  --notificationCountText: var(--color-palette-light-600);
   --notificationCountBg: var(--text-primary);
 
   /* Conversation Element */
@@ -713,13 +712,13 @@ body.light {
   --dmCardBg: var(--cardBg);
   --dmCardHoverBg: var(--cardBgHover);
   --dmCardActiveBg: var(--cardSelectedBg);
-  --dmCardNotificationBorder: theme('colors.palette.brand.500');
+  --dmCardNotificationBorder: var(--color-palette-brand-500);
 
   /***** Buttons ******/
   /* primary */
   --btnPrimaryBg: #404BBB;
   --btnPrimaryBoxShadow: 0px -2px 0.75px 0px #A8D5FF inset, 0px 1px 0.7px 1px rgba(255, 255, 255, 0.24) inset, 0px 0px 0px 1px #8CBDF8;
-  --btnPrimaryText: theme('colors.palette.light.50');
+  --btnPrimaryText: var(--color-palette-light-50);
 
   --btnPrimaryActiveBg: #0F1768;
   --btnPrimaryActiveBoxShadow: 0px 2px 0.75px 0px #A8D5FF inset, 0px -1px 0.7px 1px rgba(255, 255, 255, 0.24) inset, 0px 0px 0px 1px #8CBDF8;
@@ -730,7 +729,7 @@ body.light {
   /* secondary */
   --btnSecondaryBg: #636CCA;
   --btnSecondaryBoxShadow: 0px 0px 0px 1px #090D39, 0px -2px 0.75px 0px rgba(8, 12, 53, 0.50) inset, 0px 2.1px 1.45px 0px rgba(255, 255, 255, 0.24) inset;
-  --btnSecondaryText: theme('colors.palette.light.50');
+  --btnSecondaryText: var(--color-palette-light-50);
 
   --btnSecondaryActiveBg: #232C89;
   --btnSecondaryActiveBoxShadow: 0px 0px 0px 1px #090D39, 0px -2px 0.75px 0px rgba(122, 127, 184, 0.50) inset, 0px 1px 0.7px 1px #181E61 inset;
@@ -741,12 +740,12 @@ body.light {
   /* chip */
   --btnChipBg: transparent;
   --btnChipText: var(--cardTextSecondary);
-  --btnChipBorder: 1px solid theme('colors.palette.light.800');
+  --btnChipBorder: 1px solid var(--color-palette-light-800);
   --btnChipIconLeftPrimary: var(--cardTextSecondary);
   --btnChipIconRightPrimary: var(--cardTextSecondary);
 
-  --btnChipHoverBorder: 1px solid theme('colors.palette.light.700');
-  --btnChipFocusBorder: 1px solid theme('colors.palette.light.600');
+  --btnChipHoverBorder: 1px solid var(--color-palette-light-700);
+  --btnChipFocusBorder: 1px solid var(--color-palette-light-600);
 
   /* audio */
   --btnAudioBg: transparent;
@@ -754,48 +753,48 @@ body.light {
   --btnAudioBorder: none;
   --btnAudioIconLeftPrimary: var(--cardTextMain);
   --btnAudioIconRightPrimary: var(--cardTextMain);
-  --btnAudioIconLeftComplementary: theme('colors.palette.error.400');
+  --btnAudioIconLeftComplementary: var(--color-palette-error-400);
 
-  --btnAudioFocusBg: theme('colors.palette.transparent');
+  --btnAudioFocusBg: var(--color-palette-transparent);
   --btnAudioFocusOutline: 2px solid var(--cardTextMain);
 
-  --btnAudioHoverBg: theme('colors.palette.transparent');
+  --btnAudioHoverBg: var(--color-palette-transparent);
 
   /* admin */
-  --btnAdminBg: theme('colors.palette.brand500LightTransparent');
-  --btnAdminText: theme('colors.palette.brand.500');
-  --btnAdminBorder: 1px solid theme('colors.palette.brand500LightTransparent');
-  --btnAdminIconLeftPrimary: theme('colors.palette.brand.500');
-  --btnAdminIconRightPrimary: theme('colors.palette.brand.500');
+  --btnAdminBg: var(--color-palette-brand500LightTransparent);
+  --btnAdminText: var(--color-palette-brand-500);
+  --btnAdminBorder: 1px solid var(--color-palette-brand500LightTransparent);
+  --btnAdminIconLeftPrimary: var(--color-palette-brand-500);
+  --btnAdminIconRightPrimary: var(--color-palette-brand-500);
 
-  --btnAdminFocusBg: theme('colors.palette.brand.500');
-  --btnAdminFocusBorder: 1px solid theme('colors.palette.brand.500');
-  --btnAdminFocusOutline: 2px solid theme('colors.palette.brand.500');
+  --btnAdminFocusBg: var(--color-palette-brand-500);
+  --btnAdminFocusBorder: 1px solid var(--color-palette-brand-500);
+  --btnAdminFocusOutline: 2px solid var(--color-palette-brand-500);
 
-  --btnAdminHoverBg: theme('colors.palette.brand500Transparent');
-  --btnAdminHoverBorder: 1px solid theme('colors.palette.brand500Transparent');
+  --btnAdminHoverBg: var(--color-palette-brand500Transparent);
+  --btnAdminHoverBorder: 1px solid var(--color-palette-brand500Transparent);
 
-  --btnAdminActiveText: theme('colors.palette.light.100');
-  --btnAdminActiveIconLeftPrimary: theme('colors.palette.light.100');
-  --btnAdminActiveIconRightPrimary: theme('colors.palette.light.100');
+  --btnAdminActiveText: var(--color-palette-light-100);
+  --btnAdminActiveIconLeftPrimary: var(--color-palette-light-100);
+  --btnAdminActiveIconRightPrimary: var(--color-palette-light-100);
 
   /* Borderless */
   --btnBorderlessBg: transparent;
-  --btnBorderlessText: theme('colors.palette.light.800');
+  --btnBorderlessText: var(--color-palette-light-800);
   --btnBorderlessBorder: 1px solid var(--transparent);
-  --btnBorderlessIconLeftPrimary: theme('colors.palette.light.800');
-  --btnBorderlessIconRightPrimary: theme('colors.palette.light.800');
+  --btnBorderlessIconLeftPrimary: var(--color-palette-light-800);
+  --btnBorderlessIconRightPrimary: var(--color-palette-light-800);
 
-  --btnBorderlessFocusText: theme('colors.palette.light.700');
-  --btnBorderlessFocusOutline: 2px solid theme('colors.palette.light.800');
+  --btnBorderlessFocusText: var(--color-palette-light-700);
+  --btnBorderlessFocusOutline: 2px solid var(--color-palette-light-800);
 
-  --btnBorderlessHoverText: theme('colors.palette.light.700');
+  --btnBorderlessHoverText: var(--color-palette-light-700);
 
-  --btnBorderlessActiveText: theme('colors.palette.light.700');
+  --btnBorderlessActiveText: var(--color-palette-light-700);
 
   /* text button */
-  --btnTextOff: theme('colors.palette.error.500');
-  --btnButtonOff: theme('colors.palette.error.100');
+  --btnTextOff: var(--color-palette-error-500);
+  --btnButtonOff: var(--color-palette-error-100);
   --btnTextualBg: transparent;
   --btnTextualText: var(--text-primary);
   --btnTextualBorder: 2px solid transparent;
@@ -810,38 +809,38 @@ body.light {
   --btnDisabledBoxShadow: 0px 0px 0px 1px #090D39;
 
   /* inactive */
-  --btnInactiveBg: theme('colors.palette.light.700');
-  --btnInactiveText: theme('colors.palette.light.100');
+  --btnInactiveBg: var(--color-palette-light-700);
+  --btnInactiveText: var(--color-palette-light-100);
 
   /* Menu Button */
-  --menuBtnActiveBorder: 2px solid theme('colors.palette.brand.500');
-  --menuBtnActiveBg: theme('colors.palette.brand500Transparent');
-  --menuBtnActiveIconColor: theme('colors.palette.brand.500');
-  --menuBtnNotificationText: theme('colors.palette.light.100');
+  --menuBtnActiveBorder: 2px solid var(--color-palette-brand-500);
+  --menuBtnActiveBg: var(--color-palette-brand500Transparent);
+  --menuBtnActiveIconColor: var(--color-palette-brand-500);
+  --menuBtnNotificationText: var(--color-palette-light-100);
 
   /* Menu Button */
-  --btnMenuBg: theme('colors.palette.light.800');
-  --btnMenuText: theme('colors.palette.light.800');
+  --btnMenuBg: var(--color-palette-light-800);
+  --btnMenuText: var(--color-palette-light-800);
   --btnMenuBorder: 2px solid transparent;
-  --btnMenuIconLeftPrimary: theme('colors.palette.light.800');
-  --btnMenuIconRightPrimary: theme('colors.palette.light.800');
+  --btnMenuIconLeftPrimary: var(--color-palette-light-800);
+  --btnMenuIconRightPrimary: var(--color-palette-light-800);
 
-  --btnMenuHoverText: theme('colors.palette.light.900');
-  --btnMenuHoverBorder: 2px solid theme('colors.palette.brand500Transparent');
-  --btnMenuHoverIconLeftPrimary: theme('colors.palette.light.900');
-  --btnMenuHoverIconRightPrimary: theme('colors.palette.light.900');
+  --btnMenuHoverText: var(--color-palette-light-900);
+  --btnMenuHoverBorder: 2px solid var(--color-palette-brand500Transparent);
+  --btnMenuHoverIconLeftPrimary: var(--color-palette-light-900);
+  --btnMenuHoverIconRightPrimary: var(--color-palette-light-900);
 
-  --btnMenuFocusText: theme('colors.palette.light.950');
-  --btnMenuFocusBorder: 2px solid theme('colors.palette.light.950');
-  --btnMenuFocusIconLeftPrimary: theme('colors.palette.light.950');
-  --btnMenuFocusIconRightPrimary: theme('colors.palette.light.950');
-  --btnMenuFocusOutline: 2px solid theme('colors.palette.light.500');
+  --btnMenuFocusText: var(--color-palette-light-950);
+  --btnMenuFocusBorder: 2px solid var(--color-palette-light-950);
+  --btnMenuFocusIconLeftPrimary: var(--color-palette-light-950);
+  --btnMenuFocusIconRightPrimary: var(--color-palette-light-950);
+  --btnMenuFocusOutline: 2px solid var(--color-palette-light-500);
 
-  --btnMenuActiveBg: theme('colors.palette.brand500Transparent');
-  --btnMenuActiveText: theme('colors.palette.light.950');
-  --btnMenuActiveBorder: 2px solid theme('colors.palette.light.950');
-  --btnMenuActiveIconLeftPrimary: theme('colors.palette.light.950');
-  --btnMenuActiveIconRightPrimary: theme('colors.palette.light.950');
+  --btnMenuActiveBg: var(--color-palette-brand500Transparent);
+  --btnMenuActiveText: var(--color-palette-light-950);
+  --btnMenuActiveBorder: 2px solid var(--color-palette-light-950);
+  --btnMenuActiveIconLeftPrimary: var(--color-palette-light-950);
+  --btnMenuActiveIconRightPrimary: var(--color-palette-light-950);
 
   /* destructive */
   --btnDestructiveBg: #FFF4E5;
@@ -856,11 +855,11 @@ body.light {
   --btnDestructiveFocusOutline: 2px solid #945600;
 
   /* final */
-  --btnFinalBg: theme('colors.palette.error.400');
+  --btnFinalBg: var(--color-palette-error-400);
   --btnFinalBoxShadow: 0px -2px 0.75px 0px rgba(114, 39, 39, 0.50) inset, 0px 1px 0.699999988079071px 1px rgba(255, 255, 255, 0.24) inset, 0px 0px 0px 1px #090D39;
   --btnFinalText: var(--btnPrimaryText);
 
-  --btnFinalActiveBg: theme('colors.palette.error.600');
+  --btnFinalActiveBg: var(--color-palette-error-600);
   --btnFinalActiveBoxShadow: 0px 2px 0.75px 0px rgba(114, 39, 39, 0.50) inset, 0px -1px 0.699999988079071px 1px rgba(255, 255, 255, 0.24) inset, 0px 0px 0px 1px #090D39;
 
   --btnFinalFocusBoxShadow: none;
@@ -939,43 +938,43 @@ body.dark {
   --border-panels: var(--surface-background-3rd);
 
   /* background */
-  --bgColor: theme('colors.palette.dark.500');
+  --bgColor: var(--color-palette-dark-500);
 
   /* General */
-  --linkColor: theme('colors.palette.brand.400');
-  --linkBorderColor: theme('colors.palette.brand500Transparent');
-  --verifiedBg: theme('colors.palette.brand.400');
-  --hr: theme('colors.palette.dark.300');
-  --spinner: theme('colors.palette.brand.400');
-  --transparent: theme('colors.palette.transparent');
-  --darkTransparent: theme('colors.palette.darkTransparent');
-  --darkTransparentHover: theme('colors.palette.darkTransparentHover');
-  --brandLightTransparent: theme('colors.palette.brand500LightTransparent');
-  --brandTransparent: theme('colors.palette.brand500Transparent');
-  --imageBg: theme('colors.palette.dark.700');
-  --imageBgHover: theme('colors.palette.dark.600');
-  --jdenticonBorder: theme('colors.palette.dark.50');
-  --successColor: theme('colors.palette.success.500');
-  --successBg: theme('colors.palette.success.200');
-  --warningColor: theme('colors.palette.warning.500');
-  --warningBg: theme('colors.palette.warning.100');
-  --errorColor: theme('colors.palette.error.500');
-  --errorBg: theme('colors.palette.error.200');
+  --linkColor: var(--color-palette-brand-400);
+  --linkBorderColor: var(--color-palette-brand500Transparent);
+  --verifiedBg: var(--color-palette-brand-400);
+  --hr: var(--color-palette-dark-300);
+  --spinner: var(--color-palette-brand-400);
+  --transparent: var(--color-palette-transparent);
+  --darkTransparent: var(--color-palette-darkTransparent);
+  --darkTransparentHover: var(--color-palette-darkTransparentHover);
+  --brandLightTransparent: var(--color-palette-brand500LightTransparent);
+  --brandTransparent: var(--color-palette-brand500Transparent);
+  --imageBg: var(--color-palette-dark-700);
+  --imageBgHover: var(--color-palette-dark-600);
+  --jdenticonBorder: var(--color-palette-dark-50);
+  --successColor: var(--color-palette-success-500);
+  --successBg: var(--color-palette-success-200);
+  --warningColor: var(--color-palette-warning-500);
+  --warningBg: var(--color-palette-warning-100);
+  --errorColor: var(--color-palette-error-500);
+  --errorBg: var(--color-palette-error-200);
   --transparentWeak: rgba(0, 0, 0, 0.3);
 
   /* experimental pie menu */
-  --pieMenuBg: theme('colors.palette.brand.900');
+  --pieMenuBg: var(--color-palette-brand-900);
 
   /* banner */
   --bannerBg: var(--surface-subtleoverlay);
   --bannerText: var(--text-primary);
 
   /* sidebar */
-  --sidebarLogo: theme('colors.palette.dark.50');
+  --sidebarLogo: var(--color-palette-dark-50);
   --sidebarBg: var(--surface-global-background);
   --sidebarBorder: none;
-  --sidebarText: theme('colors.palette.dark.50');
-  --sidebarButtonHover: theme('colors.palette.dark.300');
+  --sidebarText: var(--color-palette-dark-50);
+  --sidebarButtonHover: var(--color-palette-dark-300);
 
   --audioWidgetBg: var(--cardBg);
   --audioWidgetBorder: var(--cardBorder);
@@ -987,21 +986,21 @@ body.dark {
   /* Audio widget */
   --audioActiveBg: var(--audioWidgetBg);
   --audioActiveBorder: var(--audioWidgetBorder);
-  --audioInactiveBg: theme('colors.palette.transparent');
+  --audioInactiveBg: var(--color-palette-transparent);
   --audioInactiveBorder: var(--audioWidgetBorder);
 
   /* cards and content */
-  --headerText: theme('colors.palette.dark.50');
-  --cardBg: theme('colors.palette.dark.400');
+  --headerText: var(--color-palette-dark-50);
+  --cardBg: var(--color-palette-dark-400);
   --cardBgHover: var(--surface-hover);
-  --cardBorder: theme('colors.palette.dark.300');
-  --cardTextMain: theme('colors.palette.dark.50');
-  --cardTextSecondary: theme('colors.palette.dark.200');
-  --cardSubBg: theme('colors.palette.dark.300');
-  --cardSubBgHover: theme('colors.palette.dark.200');
-  --cardSubText: theme('colors.palette.dark.50');
-  --cardSubTextSecondary: theme('colors.palette.brand.200');
-  --cardVerifiedText: theme('colors.palette.dark.50');
+  --cardBorder: var(--color-palette-dark-300);
+  --cardTextMain: var(--color-palette-dark-50);
+  --cardTextSecondary: var(--color-palette-dark-200);
+  --cardSubBg: var(--color-palette-dark-300);
+  --cardSubBgHover: var(--color-palette-dark-200);
+  --cardSubText: var(--color-palette-dark-50);
+  --cardSubTextSecondary: var(--color-palette-brand-200);
+  --cardVerifiedText: var(--color-palette-dark-50);
 
   --cardSelectedBg: var(--surface-subtleactive);
   --cardSelectedText: var(--text-primary);
@@ -1017,165 +1016,165 @@ body.dark {
   /* Audio widget */
   --audioActiveBg: var(--audioWidgetBg);
   --audioActiveBorder: var(--audioWidgetBorder);
-  --audioInactiveBg: theme('colors.palette.transparent');
+  --audioInactiveBg: var(--color-palette-transparent);
   --audioInactiveBorder: var(--audioWidgetBorder);
 
   /* Articles */
-  --articleHeader: theme('colors.palette.dark.50');
-  --articleText: theme('colors.palette.dark.100');
+  --articleHeader: var(--color-palette-dark-50);
+  --articleText: var(--color-palette-dark-100);
 
   /* Community cards */
-  --communityCardBg: theme('colors.palette.dark.400');
-  --communityCardBgHover: theme('colors.palette.dark.300');
-  --communityCardBorder: theme('colors.palette.dark.300');
-  --communityCardTextMain: theme('colors.palette.dark.50');
+  --communityCardBg: var(--color-palette-dark-400);
+  --communityCardBgHover: var(--color-palette-dark-300);
+  --communityCardBorder: var(--color-palette-dark-300);
+  --communityCardTextMain: var(--color-palette-dark-50);
 
   /* Modal */
-  --modalBg: theme('colors.palette.dark.700');
-  --modalHeaderBg: theme('colors.palette.dark.800');
-  --modalText: theme('colors.palette.dark.50');
-  --modalSecondary: theme('colors.palette.light.200');
+  --modalBg: var(--color-palette-dark-700);
+  --modalHeaderBg: var(--color-palette-dark-800);
+  --modalText: var(--color-palette-dark-50);
+  --modalSecondary: var(--color-palette-light-200);
 
   /* Communities */
-  --communitiesContainerBg: theme('colors.palette.dark.500');
-  --communitiesContainerBorder: solid 2px theme('colors.palette.dark.400');
-  --communitiesContainerTitle: theme('colors.palette.dark.50');
-  --communitiesContainerCount: theme('colors.palette.dark.200');
-  --communitySidebarTitle: theme('colors.palette.dark.50');
+  --communitiesContainerBg: var(--color-palette-dark-500);
+  --communitiesContainerBorder: solid 2px var(--color-palette-dark-400);
+  --communitiesContainerTitle: var(--color-palette-dark-50);
+  --communitiesContainerCount: var(--color-palette-dark-200);
+  --communitySidebarTitle: var(--color-palette-dark-50);
   --communityDefaultImageBg: transparent;
 
   /* logos */
-  --logoMenuItemHoverBorder: theme('colors.palette.dark.500');
-  --logoMenuItemActiveBorder: theme('colors.palette.brand.500');
+  --logoMenuItemHoverBorder: var(--color-palette-dark-500);
+  --logoMenuItemActiveBorder: var(--color-palette-brand-500);
 
   /* breadcrumb */
   --breadcrumbBg: transparent;
-  --breadcrumbBgHover: theme('colors.palette.transparent');
-  --breadcrumbText: theme('colors.palette.dark.100');
-  --breadcrumbPastText: theme('colors.palette.dark.200');
+  --breadcrumbBgHover: var(--color-palette-transparent);
+  --breadcrumbText: var(--color-palette-dark-100);
+  --breadcrumbPastText: var(--color-palette-dark-200);
 
   /* inputs */
-  --inputBg: theme('colors.palette.dark.600');
-  --inputText: theme('colors.palette.dark.50');
-  --inputPlaceholder: theme('colors.palette.dark.200');
-  --inputBorder: theme('colors.palette.dark.300');
-  --inputHoverBg: theme('colors.palette.dark.700');
-  --inputHoverText: theme('colors.palette.dark.50');
-  --inputHoverBorder: theme('colors.palette.dark.200');
-  --inputHoverPlaceholder: theme('colors.palette.dark.200');
-  --inputFocusedBg: theme('colors.palette.dark.700');
-  --inputFocusedText: theme('colors.palette.dark.50');
-  --inputFocusedBorder: theme('colors.palette.brand.300');
-  --inputSubLabel: theme('colors.palette.dark.200');
+  --inputBg: var(--color-palette-dark-600);
+  --inputText: var(--color-palette-dark-50);
+  --inputPlaceholder: var(--color-palette-dark-200);
+  --inputBorder: var(--color-palette-dark-300);
+  --inputHoverBg: var(--color-palette-dark-700);
+  --inputHoverText: var(--color-palette-dark-50);
+  --inputHoverBorder: var(--color-palette-dark-200);
+  --inputHoverPlaceholder: var(--color-palette-dark-200);
+  --inputFocusedBg: var(--color-palette-dark-700);
+  --inputFocusedText: var(--color-palette-dark-50);
+  --inputFocusedBorder: var(--color-palette-brand-300);
+  --inputSubLabel: var(--color-palette-dark-200);
 
-  --chatInputBg: theme('colors.palette.dark.600');
-  --chatInputBorder: theme('colors.palette.dark.400');
-  --chatInputButton: theme('colors.palette.dark.50');
-  --chatInputButtonHoverBg: theme('colors.palette.dark.500');
+  --chatInputBg: var(--color-palette-dark-600);
+  --chatInputBorder: var(--color-palette-dark-400);
+  --chatInputButton: var(--color-palette-dark-50);
+  --chatInputButtonHoverBg: var(--color-palette-dark-500);
   --chatInputPlaceholder: var(--text-secondary);
 
-  --toggleBg: theme('colors.palette.dark.300');
-  --toggleColor: theme('colors.palette.dark.200');
-  --toggleActiveColor: theme('colors.palette.dark.50');
+  --toggleBg: var(--color-palette-dark-300);
+  --toggleColor: var(--color-palette-dark-200);
+  --toggleActiveColor: var(--color-palette-dark-50);
 
   /* dropdowns */
-  --dropdownBg: theme('colors.palette.dark.300');
-  --dropdownBorder: solid 1px theme('colors.palette.dark.200');
-  --dropdownTitle: theme('colors.palette.dark.50');
-  --dropdownTitleBorder: theme('colors.palette.transparent');
-  --dropdownPrimaryText: theme('colors.palette.dark.50');
-  --dropdownSubtitle: theme('colors.palette.dark.200');
-  --dropdownSecondaryText: theme('colors.palette.dark.50');
-  --dropdownHoverBg: theme('colors.palette.transparent');
-  --dropdownDisabledText: theme('colors.palette.dark.200');
+  --dropdownBg: var(--color-palette-dark-300);
+  --dropdownBorder: solid 1px var(--color-palette-dark-200);
+  --dropdownTitle: var(--color-palette-dark-50);
+  --dropdownTitleBorder: var(--color-palette-transparent);
+  --dropdownPrimaryText: var(--color-palette-dark-50);
+  --dropdownSubtitle: var(--color-palette-dark-200);
+  --dropdownSecondaryText: var(--color-palette-dark-50);
+  --dropdownHoverBg: var(--color-palette-transparent);
+  --dropdownDisabledText: var(--color-palette-dark-200);
 
   /* tooltips */
   --tooltipBg: #161820;
-  --tooltipSimpleBg: theme('colors.palette.dark.900');
-  --tooltipSimpleBorder: theme('colors.palette.dark.800');
-  --tooltipBorder: theme('colors.palette.dark.200');
-  --tooltipText: theme('colors.palette.dark.100');
-  --tooltipSimpleText: theme('colors.palette.dark.200');
+  --tooltipSimpleBg: var(--color-palette-dark-900);
+  --tooltipSimpleBorder: var(--color-palette-dark-800);
+  --tooltipBorder: var(--color-palette-dark-200);
+  --tooltipText: var(--color-palette-dark-100);
+  --tooltipSimpleText: var(--color-palette-dark-200);
 
   /* icons */
-  --iconPrimary: theme('colors.palette.dark.50');
-  --iconSecondary: theme('colors.palette.dark.200');
+  --iconPrimary: var(--color-palette-dark-50);
+  --iconSecondary: var(--color-palette-dark-200);
 
   /* Message */
-  --messageBg: theme('colors.palette.dark.400');
-  --messageText: theme('colors.palette.light.50');
-  --messageDate: theme('colors.palette.dark.200');
-  --messageDateBorder: theme('colors.palette.dark.300');
-  --messageSelfBg: theme('colors.palette.brand.200');
-  --messageSelfText: theme('colors.palette.dark.700');
-  --messageSelfDate: theme('colors.palette.dark.300');
-  --messageSelfTextUnderline: theme('colors.palette.dark.300');
-  --messageHoverBg: theme('colors.palette.dark.300');
-  --messageSelfHoverBg: theme('colors.palette.brand.100');
-  --messageMention: theme('colors.palette.brand.300');
-  --messageScrollInner: theme('colors.palette.brand.400');
+  --messageBg: var(--color-palette-dark-400);
+  --messageText: var(--color-palette-light-50);
+  --messageDate: var(--color-palette-dark-200);
+  --messageDateBorder: var(--color-palette-dark-300);
+  --messageSelfBg: var(--color-palette-brand-200);
+  --messageSelfText: var(--color-palette-dark-700);
+  --messageSelfDate: var(--color-palette-dark-300);
+  --messageSelfTextUnderline: var(--color-palette-dark-300);
+  --messageHoverBg: var(--color-palette-dark-300);
+  --messageSelfHoverBg: var(--color-palette-brand-100);
+  --messageMention: var(--color-palette-brand-300);
+  --messageScrollInner: var(--color-palette-brand-400);
 
   /* Empty state */
-  --emptyStateText: theme('colors.palette.dark.200');
-  --emptyStateBorder: theme('colors.palette.dark.300');
+  --emptyStateText: var(--color-palette-dark-200);
+  --emptyStateBorder: var(--color-palette-dark-300);
 
   /* tags */
   --tagDefaultBg: var(--surface-subtleoverlay);
-  --tagDefaultBgHover: theme('colors.palette.brand500Transparent');
-  --tagDefaultBorder: theme('colors.palette.transparent');
-  --tagDefaultText: theme('colors.palette.dark.50');
-  --tagDefaultIcon: theme('colors.palette.dark.200');
+  --tagDefaultBgHover: var(--color-palette-brand500Transparent);
+  --tagDefaultBorder: var(--color-palette-transparent);
+  --tagDefaultText: var(--color-palette-dark-50);
+  --tagDefaultIcon: var(--color-palette-dark-200);
 
-  --tagWarningBg: theme('colors.palette.warning.100');
-  --tagWarningBgHover: theme('colors.palette.warning.200');
-  --tagWarningBorder: theme('colors.palette.warning.100');
-  --tagWarningText: theme('colors.palette.warning.500');
-  --tagWarningIcon: theme('colors.palette.warning.500');
+  --tagWarningBg: var(--color-palette-warning-100);
+  --tagWarningBgHover: var(--color-palette-warning-200);
+  --tagWarningBorder: var(--color-palette-warning-100);
+  --tagWarningText: var(--color-palette-warning-500);
+  --tagWarningIcon: var(--color-palette-warning-500);
 
-  --tagSafeBg: theme('colors.palette.success.100');
-  --tagSafeBgHover: theme('colors.palette.success.200');
-  --tagSafeBorder: theme('colors.palette.success.100');
-  --tagSafeText: theme('colors.palette.success.500');
-  --tagSafeIcon: theme('colors.palette.success.500');
+  --tagSafeBg: var(--color-palette-success-100);
+  --tagSafeBgHover: var(--color-palette-success-200);
+  --tagSafeBorder: var(--color-palette-success-100);
+  --tagSafeText: var(--color-palette-success-500);
+  --tagSafeIcon: var(--color-palette-success-500);
 
-  --tagSuccessBg: theme('colors.palette.success.100');
-  --tagSuccessBgHover: theme('colors.palette.success.200');
-  --tagSuccessBorder: theme('colors.palette.success.100');
-  --tagSuccessText: theme('colors.palette.success.500');
-  --tagSuccessIcon: theme('colors.palette.success.500');
+  --tagSuccessBg: var(--color-palette-success-100);
+  --tagSuccessBgHover: var(--color-palette-success-200);
+  --tagSuccessBorder: var(--color-palette-success-100);
+  --tagSuccessText: var(--color-palette-success-500);
+  --tagSuccessIcon: var(--color-palette-success-500);
 
-  --tagErrorBg: theme('colors.palette.error.100');
-  --tagErrorBgHover: theme('colors.palette.error.200');
-  --tagErrorBorder: theme('colors.palette.error.100');
-  --tagErrorText: theme('colors.palette.error.500');
-  --tagErrorIcon: theme('colors.palette.error.500');
+  --tagErrorBg: var(--color-palette-error-100);
+  --tagErrorBgHover: var(--color-palette-error-200);
+  --tagErrorBorder: var(--color-palette-error-100);
+  --tagErrorText: var(--color-palette-error-500);
+  --tagErrorIcon: var(--color-palette-error-500);
 
-  --tagInfoBg: theme('colors.palette.brand.100');
-  --tagInfoBgHover: theme('colors.palette.brand.200');
-  --tagInfoBorder: theme('colors.palette.brand.100');
-  --tagInfoText: theme('colors.palette.brand.500');
-  --tagInfoIcon: theme('colors.palette.brand.500');
+  --tagInfoBg: var(--color-palette-brand-100);
+  --tagInfoBgHover: var(--color-palette-brand-200);
+  --tagInfoBorder: var(--color-palette-brand-100);
+  --tagInfoText: var(--color-palette-brand-500);
+  --tagInfoIcon: var(--color-palette-brand-500);
 
-  --tagHelpBg: theme('colors.palette.brand.500');
-  --tagHelpBgHover: theme('colors.palette.brand.400');
-  --tagHelpBorder: theme('colors.palette.brand.500');
+  --tagHelpBg: var(--color-palette-brand-500);
+  --tagHelpBgHover: var(--color-palette-brand-400);
+  --tagHelpBorder: var(--color-palette-brand-500);
   --tagHelpText: var(--cardTextMain);
   --tagHelpIcon: var(--cardTextMain);
 
   /* reaction item */
-  --reactionItemBg: theme('colors.palette.dark.300');
-  --reactionItemText: theme('colors.palette.dark.50');
-  --reactionItemHoverText: theme('colors.palette.dark.50');
-  --reactionItemHoverBorder: theme('colors.palette.dark.200');
-  --reactionItemFocusText: theme('colors.palette.dark.50');
-  --reactionItemFocusBorder: theme('colors.palette.dark.50');
+  --reactionItemBg: var(--color-palette-dark-300);
+  --reactionItemText: var(--color-palette-dark-50);
+  --reactionItemHoverText: var(--color-palette-dark-50);
+  --reactionItemHoverBorder: var(--color-palette-dark-200);
+  --reactionItemFocusText: var(--color-palette-dark-50);
+  --reactionItemFocusBorder: var(--color-palette-dark-50);
 
   /* Attachment */
-  --attachmentImageBg: theme('colors.palette.transparent');
+  --attachmentImageBg: var(--color-palette-transparent);
   --attachmentImageLoadingOverlay: rgba(0, 0, 0, 0.5);
-  --attachmentCloseButtonBg: theme('colors.palette.dark.300');
-  --attachmentHoverBorder: theme('colors.palette.dark.200');
-  --attachmentHoverBorderError: theme('colors.palette.error.400');
+  --attachmentCloseButtonBg: var(--color-palette-dark-300);
+  --attachmentHoverBorder: var(--color-palette-dark-200);
+  --attachmentHoverBorderError: var(--color-palette-error-400);
 
   /* Notification Message */
   --notificationMessageTitle: var(--cardTextMain);
@@ -1185,7 +1184,7 @@ body.dark {
   --notificationMessageBgSelected: var(--cardSelectedBg);
 
   /* Notification Count */
-  --notificationCountText: theme('colors.palette.dark.300');
+  --notificationCountText: var(--color-palette-dark-300);
   --notificationCountBg: var(--sidebarText);
 
   /* Conversation Element */
@@ -1194,13 +1193,13 @@ body.dark {
   --dmCardBg: var(--cardBg);
   --dmCardHoverBg: var(--cardBgHover);
   --dmCardActiveBg: var(--cardSelectedBg);
-  --dmCardNotificationBorder: theme('colors.palette.brand.500');
+  --dmCardNotificationBorder: var(--color-palette-brand-500);
 
   /***** Buttons ******/
   /* primary */
   --btnPrimaryBg: #404BBB;
   --btnPrimaryBoxShadow: 0px -2px 0.75px 0px color(display-p3 0.0079 0.0932 0.1882) inset, 0px 0px 0px 1px color(display-p3 0.074 0.0793 0.0869 / 0.50), 0px 1px 0.7px 1px color(display-p3 0.4656 0.4656 0.4656 / 0.24) inset;
-  --btnPrimaryText: theme('colors.palette.dark.50');
+  --btnPrimaryText: var(--color-palette-dark-50);
 
   --btnPrimaryActiveBg: #0F1768;
   --btnPrimaryActiveBoxShadow: 0px 2px 0.75px 0px color(display-p3 0.0079 0.0932 0.1882) inset, 0px 0px 0px 1px color(display-p3 0.074 0.0793 0.0869 / 0.50), 0px -1px 0.7px 1px color(display-p3 0.4656 0.4656 0.4656 / 0.24) inset;
@@ -1211,7 +1210,7 @@ body.dark {
   /* secondary */
   --btnSecondaryBg: #272D72;
   --btnSecondaryBoxShadow: 0px 0px 0px 1px #090D39, 0px -2px 0.75px 0px rgba(8, 12, 53, 0.50) inset, 0px 1px 0.7px 1px #4D539C inset;
-  --btnSecondaryText: theme('colors.palette.dark.50');
+  --btnSecondaryText: var(--color-palette-dark-50);
 
   --btnSecondaryActiveBg: #161C5A;
   --btnSecondaryActiveBoxShadow: 0px 0px 0px 1px #090D39, 0px -2px 0.75px 0px rgba(122, 127, 184, 0.50) inset, 0px 1px 0.7px 1px #181E61 inset;
@@ -1222,107 +1221,107 @@ body.dark {
   /* chip */
   --btnChipBg: transparent;
   --btnChipText: var(--cardSubText);
-  --btnChipBorder: 1px solid theme('colors.palette.dark.200');
+  --btnChipBorder: 1px solid var(--color-palette-dark-200);
   --btnChipIconLeftPrimary: var(--cardSubText);
   --btnChipIconRightPrimary: var(--cardSubText);
 
-  --btnChipHoverBorder: 1px solid theme('colors.palette.dark.100');
-  --btnChipFocusBorder: 1px solid theme('colors.palette.dark.50');
+  --btnChipHoverBorder: 1px solid var(--color-palette-dark-100);
+  --btnChipFocusBorder: 1px solid var(--color-palette-dark-50);
 
   /* audio */
   --btnAudioBg: transparent;
-  --btnAudioText: theme('colors.palette.dark.50');
+  --btnAudioText: var(--color-palette-dark-50);
   --btnAudioBorder: none;
-  --btnAudioIconLeftPrimary: theme('colors.palette.dark.50');
-  --btnAudioIconRightPrimary: theme('colors.palette.dark.50');
-  --btnAudioIconLeftComplementary: theme('colors.palette.error.400');
+  --btnAudioIconLeftPrimary: var(--color-palette-dark-50);
+  --btnAudioIconRightPrimary: var(--color-palette-dark-50);
+  --btnAudioIconLeftComplementary: var(--color-palette-error-400);
 
-  --btnAudioFocusBg: theme('colors.palette.transparent');
-  --btnAudioFocusOutline: 2px solid theme('colors.palette.dark.50');
+  --btnAudioFocusBg: var(--color-palette-transparent);
+  --btnAudioFocusOutline: 2px solid var(--color-palette-dark-50);
 
-  --btnAudioHoverBg: theme('colors.palette.transparent');
+  --btnAudioHoverBg: var(--color-palette-transparent);
 
   /* admin */
-  --btnAdminBg: theme('colors.palette.brand500LightTransparent');
-  --btnAdminText: theme('colors.palette.brand.50');
-  --btnAdminBorder: 1px solid theme('colors.palette.brand500LightTransparent');
-  --btnAdminIconLeftPrimary: theme('colors.palette.brand.50');
-  --btnAdminIconRightPrimary: theme('colors.palette.brand.50');
+  --btnAdminBg: var(--color-palette-brand500LightTransparent);
+  --btnAdminText: var(--color-palette-brand-50);
+  --btnAdminBorder: 1px solid var(--color-palette-brand500LightTransparent);
+  --btnAdminIconLeftPrimary: var(--color-palette-brand-50);
+  --btnAdminIconRightPrimary: var(--color-palette-brand-50);
 
-  --btnAdminFocusBg: theme('colors.palette.brand500LightTransparent');
-  --btnAdminFocusBorder: 1px solid theme('colors.palette.brand.50');
-  --btnAdminFocusOutline: 2px solid theme('colors.palette.brand.50');
+  --btnAdminFocusBg: var(--color-palette-brand500LightTransparent);
+  --btnAdminFocusBorder: 1px solid var(--color-palette-brand-50);
+  --btnAdminFocusOutline: 2px solid var(--color-palette-brand-50);
 
-  --btnAdminHoverBg: theme('colors.palette.brand500Transparent');
-  --btnAdminHoverBorder: 1px solid theme('colors.palette.brand500Transparent');
+  --btnAdminHoverBg: var(--color-palette-brand500Transparent);
+  --btnAdminHoverBorder: 1px solid var(--color-palette-brand500Transparent);
 
-  --btnAdminActiveText: theme('colors.palette.brand.50');
-  --btnAdminActiveIconLeftPrimary: theme('colors.palette.brand.50');
-  --btnAdminActiveIconRightPrimary: theme('colors.palette.brand.50');
+  --btnAdminActiveText: var(--color-palette-brand-50);
+  --btnAdminActiveIconLeftPrimary: var(--color-palette-brand-50);
+  --btnAdminActiveIconRightPrimary: var(--color-palette-brand-50);
 
   /* Borderless */
   --btnBorderlessBg: transparent;
-  --btnBorderlessText: theme('colors.palette.brand.100');
+  --btnBorderlessText: var(--color-palette-brand-100);
   --btnBorderlessBorder: 1px solid transparent;
-  --btnBorderlessIconLeftPrimary: theme('colors.palette.brand.50');
-  --btnBorderlessIconRightPrimary: theme('colors.palette.brand.50');
+  --btnBorderlessIconLeftPrimary: var(--color-palette-brand-50);
+  --btnBorderlessIconRightPrimary: var(--color-palette-brand-50);
 
-  --btnBorderlessFocusText: theme('colors.palette.brand.50');
-  --btnBorderlessFocusOutline: 2px solid theme('colors.palette.brand.50');
+  --btnBorderlessFocusText: var(--color-palette-brand-50);
+  --btnBorderlessFocusOutline: 2px solid var(--color-palette-brand-50);
 
-  --btnBorderlessHoverText: theme('colors.palette.dark.50');
+  --btnBorderlessHoverText: var(--color-palette-dark-50);
 
-  --btnBorderlessActiveText: theme('colors.palette.dark.50');
+  --btnBorderlessActiveText: var(--color-palette-dark-50);
 
   /* text button */
-  --btnTextOff: theme('colors.palette.error.100');
-  --btnButtonOff: theme('colors.palette.error.500');
+  --btnTextOff: var(--color-palette-error-100);
+  --btnButtonOff: var(--color-palette-error-500);
   --btnTextualBg: transparent;
-  --btnTextualText: theme('colors.palette.brand.50');
+  --btnTextualText: var(--color-palette-brand-50);
   --btnTextualBorder: 2px solid transparent;
   --btnTextualHoverBg: transparent;
-  --btnTextualHoverText: theme('colors.palette.brand.50');
-  --btnTextualHoverBorder: 2px solid theme('colors.palette.brand.50');
+  --btnTextualHoverText: var(--color-palette-brand-50);
+  --btnTextualHoverBorder: 2px solid var(--color-palette-brand-50);
   --btnTextualDisabledBg: transparent;
   --btnTextualDisabledBorder: transparent;
 
   /* disabled */
-  --btnDisabledText: theme('colors.palette.brand.300');
+  --btnDisabledText: var(--color-palette-brand-300);
   --btnDisabledBoxShadow: 0px 0px 0px 1px #090D39;
 
   /* inactive */
-  --btnInactiveBg: theme('colors.palette.dark.700');
-  --btnInactiveText: theme('colors.palette.dark.100');
+  --btnInactiveBg: var(--color-palette-dark-700);
+  --btnInactiveText: var(--color-palette-dark-100);
 
   /* Menu Button */
-  --menuBtnActiveBorder: 2px solid theme('colors.palette.brand.500');
-  --menuBtnActiveBg: theme('colors.palette.brand500Transparent');
-  --menuBtnActiveIconColor: theme('colors.palette.brand.500');
-  --menuBtnNotificationText: theme('colors.palette.dark.100');
+  --menuBtnActiveBorder: 2px solid var(--color-palette-brand-500);
+  --menuBtnActiveBg: var(--color-palette-brand500Transparent);
+  --menuBtnActiveIconColor: var(--color-palette-brand-500);
+  --menuBtnNotificationText: var(--color-palette-dark-100);
 
   /* Menu Button */
-  --btnMenuBg: theme('colors.palette.dark.800');
-  --btnMenuText: theme('colors.palette.dark.200');
+  --btnMenuBg: var(--color-palette-dark-800);
+  --btnMenuText: var(--color-palette-dark-200);
   --btnMenuBorder: 2px solid transparent;
-  --btnMenuIconLeftPrimary: theme('colors.palette.dark.200');
-  --btnMenuIconRightPrimary: theme('colors.palette.dark.200');
+  --btnMenuIconLeftPrimary: var(--color-palette-dark-200);
+  --btnMenuIconRightPrimary: var(--color-palette-dark-200);
 
-  --btnMenuHoverText: theme('colors.palette.dark.100');
-  --btnMenuHoverBorder: 2px solid theme('colors.palette.brand500Transparent');
-  --btnMenuHoverIconLeftPrimary: theme('colors.palette.dark.100');
-  --btnMenuHoverIconRightPrimary: theme('colors.palette.dark.100');
+  --btnMenuHoverText: var(--color-palette-dark-100);
+  --btnMenuHoverBorder: 2px solid var(--color-palette-brand500Transparent);
+  --btnMenuHoverIconLeftPrimary: var(--color-palette-dark-100);
+  --btnMenuHoverIconRightPrimary: var(--color-palette-dark-100);
 
-  --btnMenuFocusText: theme('colors.palette.dark.100');
-  --btnMenuFocusBorder: 2px solid theme('colors.palette.dark.100');
-  --btnMenuFocusIconLeftPrimary: theme('colors.palette.dark.100');
-  --btnMenuFocusIconRightPrimary: theme('colors.palette.dark.100');
-  --btnMenuFocusOutline: 2px solid theme('colors.palette.dark.500');
+  --btnMenuFocusText: var(--color-palette-dark-100);
+  --btnMenuFocusBorder: 2px solid var(--color-palette-dark-100);
+  --btnMenuFocusIconLeftPrimary: var(--color-palette-dark-100);
+  --btnMenuFocusIconRightPrimary: var(--color-palette-dark-100);
+  --btnMenuFocusOutline: 2px solid var(--color-palette-dark-500);
 
-  --btnMenuActiveBg: theme('colors.palette.brand500Transparent');
-  --btnMenuActiveText: theme('colors.palette.dark.50');
-  --btnMenuActiveBorder: 2px solid theme('colors.palette.dark.50');
-  --btnMenuActiveIconLeftPrimary: theme('colors.palette.dark.50');
-  --btnMenuActiveIconRightPrimary: theme('colors.palette.dark.50');
+  --btnMenuActiveBg: var(--color-palette-brand500Transparent);
+  --btnMenuActiveText: var(--color-palette-dark-50);
+  --btnMenuActiveBorder: 2px solid var(--color-palette-dark-50);
+  --btnMenuActiveIconLeftPrimary: var(--color-palette-dark-50);
+  --btnMenuActiveIconRightPrimary: var(--color-palette-dark-50);
 
   /* destructive */
   --btnDestructiveBg: #331E00;
@@ -1336,11 +1335,11 @@ body.dark {
   --btnDestructiveFocusOutline: 2px solid #F99100;
 
   /* final */
-  --btnFinalBg: theme('colors.palette.error.400');
+  --btnFinalBg: var(--color-palette-error-400);
   --btnFinalBoxShadow: 0px -2px 0.75px 0px rgba(114, 39, 39, 0.50) inset, 0px 1px 0.699999988079071px 1px rgba(255, 255, 255, 0.24) inset, 0px 0px 0px 1px #090D39;
   --btnFinalText: var(--btnPrimaryText);
 
-  --btnFinalActiveBg: theme('colors.palette.error.600');
+  --btnFinalActiveBg: var(--color-palette-error-600);
   --btnFinalActiveBoxShadow: 0px 2px 0.75px 0px rgba(114, 39, 39, 0.50) inset, 0px -1px 0.699999988079071px 1px rgba(255, 255, 255, 0.24) inset, 0px 0px 0px 1px #090D39;
 
   --btnFinalFocusBoxShadow: none;

@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 /* BUTTONS */
 
 .btnDefault, .btnPrimary, .btnSecondary, .btnBorderless, .btnInactive, .btnAdmin, .btnAudio, .btnTextual, .btnMenu, .btnChip, .btnDestructive, .btnFinal {
@@ -115,15 +117,17 @@
         background: var(--surface-subtleactive);
     }
 
+    /* child rules spelled out per state, see .btnAdmin */
     &:disabled, &:hover:disabled, &:active:disabled, &:active:hover:disabled, &:focus:disabled {
         color: var(--text-secondary, #9298B8);
         box-shadow: none !important;
-        .btnIconLeft, .btnIconRight {
-            color: var(--text-secondary, #9298B8);
-        }
-        .btnText {
-            color: var(--text-secondary, #9298B8);
-        }
+    }
+    &:disabled .btnIconLeft, &:hover:disabled .btnIconLeft, &:active:disabled .btnIconLeft, &:active:hover:disabled .btnIconLeft, &:focus:disabled .btnIconLeft,
+    &:disabled .btnIconRight, &:hover:disabled .btnIconRight, &:active:disabled .btnIconRight, &:active:hover:disabled .btnIconRight, &:focus:disabled .btnIconRight {
+        color: var(--text-secondary, #9298B8);
+    }
+    &:disabled .btnText, &:hover:disabled .btnText, &:active:disabled .btnText, &:active:hover:disabled .btnText, &:focus:disabled .btnText {
+        color: var(--text-secondary, #9298B8);
     }
 }
 
@@ -189,22 +193,26 @@
         border: var(--btnAdminHoverBorder);
     }
 
+    /*
+     * Child rules of a selector list are spelled out per state: nested under
+     * the list, native CSS nesting would give them the specificity of the
+     * most specific state (`:is()`), not their own as under postcss-nested.
+     */
     &.active, &.active:hover, &:active, &:active:hover {
         color: var(--btnAdminActiveText);
-       
-        .btnText {
-            color: var(--btnAdminActiveText);
-        }
-        .btnIconLeft {
-            --iconPrimary: var(--btnAdminActiveIconLeftPrimary);
-            --iconSecondary: var(--btnAdminActiveIconLeftSecondary);
-            --iconComplementary: var(--btnAdminActiveIconLeftComplementary);
-        }
-        .btnIconRight {
-            --iconPrimary: var(--btnAdminActiveIconRightPrimary);
-            --iconSecondary: var(--btnAdminActiveIconRightSecondary);
-            --iconComplementary: var(--btnAdminActiveIconRightComplementary);
-        }
+    }
+    &.active .btnText, &.active:hover .btnText, &:active .btnText, &:active:hover .btnText {
+        color: var(--btnAdminActiveText);
+    }
+    &.active .btnIconLeft, &.active:hover .btnIconLeft, &:active .btnIconLeft, &:active:hover .btnIconLeft {
+        --iconPrimary: var(--btnAdminActiveIconLeftPrimary);
+        --iconSecondary: var(--btnAdminActiveIconLeftSecondary);
+        --iconComplementary: var(--btnAdminActiveIconLeftComplementary);
+    }
+    &.active .btnIconRight, &.active:hover .btnIconRight, &:active .btnIconRight, &:active:hover .btnIconRight {
+        --iconPrimary: var(--btnAdminActiveIconRightPrimary);
+        --iconSecondary: var(--btnAdminActiveIconRightSecondary);
+        --iconComplementary: var(--btnAdminActiveIconRightComplementary);
     }
 
     &.active {
@@ -280,13 +288,15 @@
         }
     }
 
+    /* child rules spelled out per state, see .btnAdmin */
     &:disabled, &:hover:disabled, &:active:disabled, &:active:hover:disabled, &:focus:disabled {
         background-color: var(--btnTextualDisabledBg) !important;
         border-color: var(--btnTextualDisabledBorder);
         box-shadow: none !important;
-        .btnIconLeft, .btnIconRight {
-            color: var(--btnDisabledText);
-        }
+    }
+    &:disabled .btnIconLeft, &:hover:disabled .btnIconLeft, &:active:disabled .btnIconLeft, &:active:hover:disabled .btnIconLeft, &:focus:disabled .btnIconLeft,
+    &:disabled .btnIconRight, &:hover:disabled .btnIconRight, &:active:disabled .btnIconRight, &:active:hover:disabled .btnIconRight, &:focus:disabled .btnIconRight {
+        color: var(--btnDisabledText);
     }
 
     .btnIconLeft {
@@ -342,24 +352,24 @@
         }
     }
 
+    /* child rules spelled out per state, see .btnAdmin */
     &.active, &.active:hover, &:active, &:active:hover {
         color: var(--btnMenuActiveText);
         background-color: var(--btnMenuActiveBg);
         border: var(--btnMenuActiveBorder);
-
-        .btnText {
-            color: var(--btnMenuActiveText);
-        }
-        .btnIconLeft {
-            --iconPrimary: var(--btnMenuActiveIconLeftPrimary);
-            --iconSecondary: var(--btnMenuActiveIconLeftSecondary);
-            --iconComplementary: var(--btnMenuActiveIconLeftComplementary);
-        }
-        .btnIconRight {
-            --iconPrimary: var(--btnMenuActiveIconRightPrimary);
-            --iconSecondary: var(--btnMenuActiveIconRightSecondary);
-            --iconComplementary: var(--btnMenuActiveIconRightComplementary);
-        }
+    }
+    &.active .btnText, &.active:hover .btnText, &:active .btnText, &:active:hover .btnText {
+        color: var(--btnMenuActiveText);
+    }
+    &.active .btnIconLeft, &.active:hover .btnIconLeft, &:active .btnIconLeft, &:active:hover .btnIconLeft {
+        --iconPrimary: var(--btnMenuActiveIconLeftPrimary);
+        --iconSecondary: var(--btnMenuActiveIconLeftSecondary);
+        --iconComplementary: var(--btnMenuActiveIconLeftComplementary);
+    }
+    &.active .btnIconRight, &.active:hover .btnIconRight, &:active .btnIconRight, &:active:hover .btnIconRight {
+        --iconPrimary: var(--btnMenuActiveIconRightPrimary);
+        --iconSecondary: var(--btnMenuActiveIconRightSecondary);
+        --iconComplementary: var(--btnMenuActiveIconRightComplementary);
     }
 
     &.active {
@@ -386,17 +396,17 @@
         }
     }
 
+    /* child rules spelled out per state, see .btnAdmin */
     &:disabled, &:hover:disabled, &:active:disabled, &:active:hover:disabled, &:focus:disabled {
         box-shadow: none !important;
         color: var(--cardBgHover);
-        
-        .btnIconLeft {
-            --iconPrimary: var(--cardBgHover);
-            --btnMenuHoverIconLeftPrimary: var(--cardBgHover);
-        }
-        .btnText {
-            color: var(--cardBgHover);
-        }
+    }
+    &:disabled .btnIconLeft, &:hover:disabled .btnIconLeft, &:active:disabled .btnIconLeft, &:active:hover:disabled .btnIconLeft, &:focus:disabled .btnIconLeft {
+        --iconPrimary: var(--cardBgHover);
+        --btnMenuHoverIconLeftPrimary: var(--cardBgHover);
+    }
+    &:disabled .btnText, &:hover:disabled .btnText, &:active:disabled .btnText, &:active:hover:disabled .btnText, &:focus:disabled .btnText {
+        color: var(--cardBgHover);
     }
 }
 

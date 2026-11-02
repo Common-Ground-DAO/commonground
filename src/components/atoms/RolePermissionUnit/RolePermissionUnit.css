@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .role-permission-unit {
     @apply flex p-2 gap-1 cg-border-l w-fit items-center whitespace-nowrap;
 

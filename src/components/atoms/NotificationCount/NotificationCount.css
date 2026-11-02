@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .notification-count {
     @apply inline-block py-0 px-2.5;
     top: 0;

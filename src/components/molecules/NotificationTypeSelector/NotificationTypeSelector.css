@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .notificationTypeSelector {
     .notificationTypeSelectorButton {
         @apply w-full flex justify-between;

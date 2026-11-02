@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .community-header {
   @apply whitespace-pre flex flex-col cursor-pointer relative w-full;
   z-index: 10;
@@ -39,7 +41,7 @@
         --iconPrimary: var(--errorColor);
 
         >div {
-          @apply flex flex-row items-center rounded px-2 py-0;
+          @apply flex flex-row items-center rounded-sm px-2 py-0;
           font-size: 14px;
           color: var(--errorColor);
           background: var(--darkTransparent);

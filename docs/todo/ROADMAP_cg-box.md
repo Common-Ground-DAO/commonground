@@ -248,7 +248,11 @@ and a browser pass on the test VM:
   7.18.4; the service worker reads cached scripts into memory before handing
   them over, which fixed intermittent start-up failures with Vite 8's finer
   chunking; accepted on the test VM)
-- [ ] **M4** Tailwind 4 (visual regressions — screenshot comparison of key views)
+- [x] **M4** Tailwind 4 (visual regressions — screenshot comparison of key views)
+  (done 2026-11-02: Tailwind CSS 4.3.3 with its configuration in
+  `src/tailwind.css`; the browser floor is now Safari 15.4, Chrome/Edge 104,
+  Firefox 97; the screenshot comparison of the key views is identical to the
+  Tailwind 3 build; accepted on the test VM)
 
 ### P3 — Move features (parallel to P2)
 
@@ -381,6 +385,15 @@ and a browser pass on the test VM:
   the UI shows the wait and another way in; countdowns on "send again"; input
   checks in the forms; 8-digit email codes and hourly code-login failure
   budgets per the maintainer's review of the screenshot walkthrough.)
+- [ ] **G13 Runtime fixes.** Long-standing defects found in a 2026-11-02
+  analysis: inline backgrounds without an image URL request `…/undefined`;
+  calls whose call server goes away are never ended (no periodic sweep), so
+  they linger on the home page; the server-side last-read time of a channel
+  can move backwards; call role setup builds invalid SQL when no role
+  permissions are passed; a scheduled call's duration is added as milliseconds.
+  The client message cache and the tab/socket hand-off are replaced in a
+  separate package (`docs/todo/ROADMAP_chat-sync.md` on branch
+  `feature/chat-sync`); G6 waits for it, since both touch the service worker.
 
 ### P4 — Security gate (before the rehearsal is signed off)
 

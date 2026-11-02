@@ -1,5 +1,7 @@
+@reference '../../../tailwind.css';
+
 .live-call-card {
-    @apply w-full flex flex-col justify-start items-start p-4 gap-4 flex-none order-none flex-grow-0 cursor-pointer h-full;
+    @apply w-full flex flex-col justify-start items-start p-4 gap-4 flex-none order-none grow-0 cursor-pointer h-full;
     border: 1px solid var(--cardBorder);
     background: var(--surface-background-2nd);
     border-radius: 12px;

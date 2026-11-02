@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .call-peers-container {
     @apply flex flex-col items-center flex-1 overflow-hidden self-stretch;
     

@@ -61,7 +61,7 @@ const TagHeader: React.FC<Props> = (props) => {
       </div>
 
       <div className='flex gap-2 items-center shrink-0 h-fit'>
-        <div className='flex-shrink-0'>
+        <div className='shrink-0'>
           <TagFilterMenu
             activeTags={activeTags}
             setActiveTags={setActiveTags}

@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .email-editor-container {
     @apply p-4 cg-border-xl flex flex-col gap-4 w-full;
     background: var(--surface-background-2nd);

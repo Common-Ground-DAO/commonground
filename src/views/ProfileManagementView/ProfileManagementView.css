@@ -1,3 +1,5 @@
+@reference '../../tailwind.css';
+
 .mobile-layout {
     .profile-management-view {
         @apply flex flex-col p-0 h-full;

@@ -1,5 +1,7 @@
+@reference '../../../tailwind.css';
+
 .collapsable-group {
-    @apply flex flex-col items-start p-0 self-stretch flex-none order-none flex-grow-0;
+    @apply flex flex-col items-start p-0 self-stretch flex-none order-none grow-0;
 
     border: 1px solid var(--cardBorder);
     border-radius: 12px;

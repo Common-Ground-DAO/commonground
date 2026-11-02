@@ -1,5 +1,7 @@
+@reference '../../../tailwind.css';
+
 .menu-button-container {
-  @apply flex flex-row flex-grow-0 flex-none items-center;
+  @apply flex flex-row grow-0 flex-none items-center;
   /* padding: 0.125rem; */
   transition: background-color 100ms, border-color 100ms, color 100ms;
 
@@ -57,10 +59,12 @@
   
     &.active, &.active:hover {
       border: var(--btnMenuActiveBorder);
-  
-      > button.btnMenu {
-        border: none;
-      }
+    }
+
+    /* not nested under the list: native nesting would give both the
+       specificity of `.active:hover` (`:is()`) */
+    &.active > button.btnMenu, &.active:hover > button.btnMenu {
+      border: none;
     }
 
     &:hover {
@@ -119,12 +123,12 @@
     background: none;
 
     > button.btnMenu {
-      @apply flex flex-col gap-0 p-0 outline-none w-12 min-w-0 border-none;
+      @apply flex flex-col gap-0 p-0 outline-hidden w-12 min-w-0 border-none;
       background: none;
       border-radius: 12px;
   
       > .btnText {
-        @apply w-full mt-1 overflow-hidden text-ellipsis whitespace-nowrap flex-grow flex-shrink flex-auto;
+        @apply w-full mt-1 overflow-hidden text-ellipsis whitespace-nowrap grow shrink flex-auto;
         font-style: normal;
         font-weight: 400;
         font-size: 11px;
@@ -165,13 +169,5 @@
 
   .audio-widget {
     background: none;
-  }
-}
-
-.mobile-pie-menu {
-  .menu-button-container {
-    > button.btnMenu {
-      width: 'auto !important';
-    }
   }
 }

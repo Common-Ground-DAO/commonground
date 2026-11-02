@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .reauth-dialog {
   @apply flex flex-col gap-4 p-4;
   width: min(380px, 100%);

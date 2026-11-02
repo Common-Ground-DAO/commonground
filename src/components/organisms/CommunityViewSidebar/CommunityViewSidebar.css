@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .floating-left-bar-overlay {
   position: absolute;
   width: 100vw;
@@ -90,7 +92,7 @@
       }
 
       .own-communities-container {
-        @apply p-0 !important;
+        @apply p-0!;
         position: absolute;
         top: 0;
         display: block;

@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .community-skeleton-card-container {
     @apply flex flex-col items-center rounded-md;
     background: var(--transparent);
@@ -26,16 +28,16 @@
             -webkit-animation: shimmer 2s infinite;
             content: '';
         }
-        
-        @keyframes shimmer {
-            100% {
-            transform: translateX(100%);
-            }
-        }
     }
 
     .community-photo-container {
         @apply inline-block w-full h-full;
         background: var(--imageBg);
+    }
+}
+
+@keyframes shimmer {
+    100% {
+    transform: translateX(100%);
     }
 }

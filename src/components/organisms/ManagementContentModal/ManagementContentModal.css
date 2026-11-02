@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 #management-content-modal-root {
     @apply absolute;
     top: 0;

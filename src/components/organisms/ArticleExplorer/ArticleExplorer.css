@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .article-explorer-container {
     @apply h-full w-full flex flex-col gap-4 items-center;
     

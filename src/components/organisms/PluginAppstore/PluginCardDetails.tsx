@@ -131,7 +131,7 @@ const PluginCardDetails: React.FC<Props> = (props) => {
 
       <div className='grid grid-flow-row grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-6'>
         <div className='flex flex-col gap-2 cg-text-secondary cg-text-md-500'>
-          <p className='cg-text-secondary cg-text-md-500 break-words'>Hosted at: {plugin.url}</p>
+          <p className='cg-text-secondary cg-text-md-500 wrap-break-word'>Hosted at: {plugin.url}</p>
           {plugin.permissions.mandatory.length > 0 && <div className='flex flex-col gap-1'>
             <span>Mandatory permissions:</span>
             <div className='flex flex-wrap gap-1'>{plugin.permissions.mandatory.map(permission => <PermissionLabel key={permission} permission={permission} />)}</div>

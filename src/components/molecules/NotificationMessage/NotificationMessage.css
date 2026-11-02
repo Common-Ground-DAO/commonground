@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .notificationMessage {
     @apply flex flex-col px-2 py-3 gap-1 items-start cursor-pointer cg-border-l;
 

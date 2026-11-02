@@ -1,25 +1,22 @@
+@reference '../../../../tailwind.css';
+
+/*
+ * Only what takes effect. This stylesheet loads before the App chunk, and
+ * preflight/@tailwindcss/forms win the ties against these element rules
+ * (under Tailwind 3 by coming later, now by sitting in their cascade layer):
+ * margin, padding, color, background, border colour, `resize`, the focus
+ * styles and the placeholder colour always came from there. Spelled out
+ * here, they would win under Tailwind 4.
+ */
 textarea {
-    @apply w-full py-2 px-4 my-1 cursor-text;
-    color: var(--inputText);
-    background-color: var(--surface-input);
-    border: 1px solid var(--border-secondary, #3C425E);
-    resize: none;
+    @apply w-full cursor-text;
+    border-style: solid;
     overflow: hidden;
-
-    &.autogrow {
-        resize: none;
-        height: 40px;
-    }
 }
 
-textarea:focus {
-    border: 1px solid var(--inputFocusedBorder);
-    outline: none;
-    box-shadow: none;
-}
-
-textarea::placeholder {
-    color: var(--inputPlaceholder);
+textarea.autogrow {
+    resize: none;
+    height: 40px;
 }
 
 textarea:hover {

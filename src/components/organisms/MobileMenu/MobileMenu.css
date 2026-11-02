@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .mobile-menu {
   @apply flex flex-row justify-between gap-0;
   background: var(--surface-background-2nd);

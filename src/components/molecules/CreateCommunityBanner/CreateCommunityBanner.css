@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .create-community-banner {
   @apply flex flex-row items-center justify-between p-8 gap-4 flex-wrap relative overflow-hidden cursor-pointer cg-border-xl cg-heading-4;
   background: var(--bannerBg);

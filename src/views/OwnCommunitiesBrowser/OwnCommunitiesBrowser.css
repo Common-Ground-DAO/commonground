@@ -1,3 +1,5 @@
+@reference '../../tailwind.css';
+
 .own-communities {
   @apply grid h-full;
   /*grid-template-rows: [start header-start] 40px [header-end community-list-start] 1fr [community-list-end end];*/
@@ -10,7 +12,7 @@
   }
 
   .own-communities-header {
-    @apply flex flex-row self-stretch justify-between items-end flex-none flex-grow-0;
+    @apply flex flex-row self-stretch justify-between items-end flex-none grow-0;
     grid-row: header-start / header-end;
     height: calc(22px + 1.25rem);
     width: 100%;
@@ -22,7 +24,7 @@
     }
 
     .own-communities-title {
-      @apply flex items-center flex-none flex-grow-0 pb-1 px-4 cg-text-lg-500;
+      @apply flex items-center flex-none grow-0 pb-1 px-4 cg-text-lg-500;
       color: var(--cardTextMain);
       height: 22px;
     }
@@ -51,7 +53,7 @@
 
       .community-card-footer {
         .community-card-title {
-          @apply flex w-full justify-center flex-none flex-grow-0 items-start overflow-hidden;
+          @apply flex w-full justify-center flex-none grow-0 items-start overflow-hidden;
           color: var(--cardTextMain);
 
           > * {
@@ -96,7 +98,7 @@
     }
 
     &.dragging-over {
-      background: theme('colors.palette.transparent');
+      background: var(--color-palette-transparent);
       .draggable-container {
         opacity: 0.6;
       }

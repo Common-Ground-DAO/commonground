@@ -1,3 +1,5 @@
+@reference '../../tailwind.css';
+
 .direct-messages {
   background: var(--surface-global-background);
   display: grid;

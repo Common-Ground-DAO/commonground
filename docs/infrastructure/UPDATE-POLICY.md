@@ -8,7 +8,9 @@
 > Renovate majors list and the `glob` chain (wave M2) against commit 8dcbb42, 2026-11-01;
 > Vite 8 out of the Renovate majors list, esbuild out of the binaries table (wave M3,
 > step A) against commit 3e8b08e, 2026-11-01; react-router 7 (wave M3, step B: the
-> react-router advisories, the Renovate majors list) against commit 3e8b08e, 2026-11-01
+> react-router advisories, the Renovate majors list) against commit 3e8b08e, 2026-11-01;
+> Tailwind 4 out of the Renovate majors list, which is gone with it (wave M4), against
+> commit 440c779, 2026-11-02
 
 # Update policy: 7-day minimum release age (3 days for security fixes)
 
@@ -90,7 +92,7 @@ every workspace when updating this list and replace it as a whole.
 
 | Workspace | Before → after the refresh |
 |---|---|
-| root | 171 → 27 (critical 3 → 0, high 54 → 4; the unused Truffle devDependencies were removed) |
+| root | 171 → 27 (critical 3 → 0, high 54 → 4; the unused Truffle devDependencies were removed); 24 after wave M4 (2026-11-02: high 4, moderate 18, low 2 — `postcss-selector-parser` 6.0.10 left with the unused `@tailwindcss/typography`) |
 | `srv/` | 139 → 44 (critical 5 → 2, high 65 → 20) |
 | `sdk/` | 28 → **0** |
 | `contracts/` | 234 → 92 (critical 12 → 2, high 91 → 28) |
@@ -139,9 +141,7 @@ The two fixes that were still younger than 7 days (`joi` 17.13.9,
   (GHSA-g3hv-75wg-m249) and `glob` 9–14.0.1 (GHSA-3g3m-2fjr-6pw4) under
   typescript-eslint, eslint-plugin-react, workbox-build 7.4.1 and jest
   (glob patterns come from our own config, no AbortSignal; TypeORM 1.x uses
-  `tinyglobby` instead);
-  `postcss-selector-parser` 6.0.10 (GHSA-rj75-hqrm-r3gf, pinned exactly by
-  `@tailwindcss/typography`; parses our own CSS at build time); `deepmerge`
+  `tinyglobby` instead); `deepmerge`
   via jest-config; deprecated `eslint` 9 (ESLint 10 is a major) and
   `intersection-observer` (`@giphy/react-components`).
 - **bcrypt 5 install chain** (`srv/`): `tar` 6.2.1 (critical
@@ -378,17 +378,18 @@ repository root:
 - PRs target `develop`, on Monday mornings (Europe/Berlin), grouped per
   workspace for minor/patch updates; at most 8 open / 4 per hour.
 - **Majors** are only opened after approval on the Dependency Dashboard. The
-  deferred major (Tailwind 4; decision 7) is
-  disabled outright — it is done by hand in wave M4; drop it from
-  the list once its wave is merged. joi 18 and TypeScript 6 (wave M1),
-  Express 5 and TypeORM 1.x (wave M2: `express`, `@types/express`,
-  `@types/express-serve-static-core`, `typeorm`), Vite 8 (wave M3, step A:
-  `vite`; its plugins `@vitejs/plugin-react`, `vite-plugin-svgr` and
-  `vite-plugin-node-polyfills` were never on the list) and react-router 7
-  (wave M3, step B: `react-router`, `react-router-dom` — the latter is no
-  longer a dependency) left the list with their wave: a joi 19, Express 6,
-  TypeORM 2, Vite 9 or react-router 8 major is proposed normally (dashboard
-  approval required; react-router 8 already exists).
+  deferred majors of decision 7 were disabled outright while they were done
+  by hand in waves M1–M4; each left the list with its wave, and with
+  Tailwind 4 (wave M4: `tailwindcss`) the list and its rule are gone. joi 18
+  and TypeScript 6 (wave M1), Express 5 and TypeORM 1.x (wave M2: `express`,
+  `@types/express`, `@types/express-serve-static-core`, `typeorm`), Vite 8
+  (wave M3, step A: `vite`; its plugins `@vitejs/plugin-react`,
+  `vite-plugin-svgr` and `vite-plugin-node-polyfills` were never on the list),
+  react-router 7 (wave M3, step B: `react-router`, `react-router-dom` — the
+  latter is no longer a dependency) and Tailwind 4 (its new
+  `@tailwindcss/vite` plugin was never on the list): a joi 19, Express 6,
+  TypeORM 2, Vite 9, react-router 8 or Tailwind 5 major is proposed normally
+  (dashboard approval required; react-router 8 already exists).
   TypeScript majors stay disabled through a rule of their own — TypeScript 7
   ships no compiler API yet, so ts-node (Hardhat in `contracts/` and
   `docker/hardhat/node/`), ts-jest (`srv/`) and typescript-eslint (supports

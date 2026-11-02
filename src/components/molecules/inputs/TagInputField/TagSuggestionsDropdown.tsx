@@ -130,7 +130,7 @@ const TagSuggestionsDropdown: React.FC<TagSuggestionsDropdownProps> = ({
     <ul 
       tabIndex={-1} // Important for DaisyUI dropdown to receive focus for keyboard nav if needed
       ref={dropdownRef}
-      className="dropdown menu p-2 shadow rounded-box w-full mt-1 z-50 overflow-y-auto rounded-lg simple-scrollbar-thin"
+      className="dropdown menu p-2 shadow-sm rounded-box w-full mt-1 z-50 overflow-y-auto rounded-lg simple-scrollbar-thin"
       style={{
         backgroundColor: 'var(--surface-background-2nd)',
         border: '1px solid var(--border-subtle)', // Added 1px solid assuming --border-subtle is a color

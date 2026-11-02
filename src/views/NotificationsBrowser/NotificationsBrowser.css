@@ -1,3 +1,5 @@
+@reference '../../tailwind.css';
+
 .layout-notifications {
   @apply h-full;
   .notifications-menu {

@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .mobile-voice-call-manager {
     @apply flex flex-row items-center justify-between gap-4 p-2 -mt-14;
     background: var(--audioWidgetBg);

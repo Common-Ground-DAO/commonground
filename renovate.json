@@ -67,14 +67,6 @@
       "dependencyDashboardApproval": true
     },
     {
-      "description": "The deferred majors (roadmap decision 7) are done by hand in waves M3-M4 — no Renovate PRs. Drop a name from this list once its wave is merged (M1, joi 18 + TypeScript 6, M2, Express 5 + TypeORM 1.x, and M3, Vite 8 + react-router 7, are done; TypeScript majors have their own rule below).",
-      "matchPackageNames": [
-        "tailwindcss"
-      ],
-      "matchUpdateTypes": ["major"],
-      "enabled": false
-    },
-    {
       "description": "TypeScript majors stay disabled after wave M1 (TypeScript 6): TypeScript 7 ships no compiler API yet, so ts-node (Hardhat in contracts/ and docker/hardhat/node/), ts-jest (srv/) and typescript-eslint (supports < 6.1.0) cannot use it. Re-enable once they support it.",
       "matchPackageNames": ["typescript"],
       "matchUpdateTypes": ["major"],

@@ -1,3 +1,5 @@
+@reference '../../tailwind.css';
+
 .desktop-layout {
   .role-management-view {
     @apply h-full;

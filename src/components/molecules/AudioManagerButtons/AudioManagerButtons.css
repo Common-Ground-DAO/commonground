@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .audio-manager-buttons {
   @apply flex flex-col-reverse items-center justify-between m-0 gap-1 w-full;
   color: var(--cardTextMain);
@@ -14,7 +16,7 @@
 }
 
 .mobile-voice-call-manager .audio-manager-buttons {
-  @apply h-auto w-auto m-0 flex-row flex-grow-0 flex-shrink-0 basis-auto gap-1;
+  @apply h-auto w-auto m-0 flex-row grow-0 shrink-0 basis-auto gap-1;
 }
 
 .audio-waves-animation {

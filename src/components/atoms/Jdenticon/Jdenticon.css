@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .jdenticon {
     @apply relative m-0;
 

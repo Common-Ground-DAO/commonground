@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .bookmark-button {
     @apply flex items-center justify-center p-2 cg-border-l;
     color: var(--text-secondary);

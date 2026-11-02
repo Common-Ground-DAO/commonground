@@ -144,7 +144,7 @@ function AccessRuleModal(props: { accessrules: Models.Community.AccessRules, are
         {ruleData}
         <div className="flex justify-center mt-4">
           <Button
-            className='btnSecondary accessrule-modal-close-btn w-full py-3 rounded'
+            className='btnSecondary accessrule-modal-close-btn w-full py-3 rounded-sm'
             onClick={close}
             text='Close'
           />
@@ -165,7 +165,7 @@ const ContractDetails = (props: { contracts: Record<string, Models.Contract.Data
             <div>
               {contract.data.name}
             </div>
-            <div className="p-1 rounded text-sm" style={{ backgroundColor: '#FFFFFF18' }}>
+            <div className="p-1 rounded-sm text-sm" style={{ backgroundColor: '#FFFFFF18' }}>
               {contract.data.symbol}
             </div>
           </>
@@ -174,8 +174,8 @@ const ContractDetails = (props: { contracts: Record<string, Models.Contract.Data
             ERC1155
           </div>
         )}
-        <div className="flex-grow" />
-        <div className="py-1 px-2 rounded" style={{ backgroundColor: '#F9F9F9', color: '#242424', fontWeight: '500' }}>
+        <div className="grow" />
+        <div className="py-1 px-2 rounded-sm" style={{ backgroundColor: '#F9F9F9', color: '#242424', fontWeight: '500' }}>
           {formatUnits(BigInt(rule.amount), contract.data.type === "ERC20" ? contract.data.decimals : 0)}
         </div>
       </div>

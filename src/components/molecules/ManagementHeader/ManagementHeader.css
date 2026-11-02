@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .management-header-mobile {
     @apply flex items-center justify-between p-4;
     color: var(--cardTextMain);

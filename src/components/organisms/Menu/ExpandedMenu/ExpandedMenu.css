@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .menu-expanded {
     @apply grid overflow-x-hidden pb-4 gap-4 pr-4;
     padding-left: 18px;
@@ -14,7 +16,7 @@
 
     .menu-buttons {
         grid-row: 2;
-        @apply flex flex-col items-start gap-1 flex-none flex-grow-0 m-0;
+        @apply flex flex-col items-start gap-1 flex-none grow-0 m-0;
 
         .menu-non-nft-button {
             .jdenticon {
@@ -30,88 +32,18 @@
 
         &.top {
             animation: fadeInTop 500ms forwards;
-
-            @keyframes fadeInTop {
-                0% {
-                    -webkit-mask-position: 0 50%;
-                    mask-position: 0 50%;
-                }
-
-                50% {
-                    -webkit-mask-size: 100% 100%;
-                    mask-size: 100% 100%;
-                }
-
-                100% {
-                    -webkit-mask-size: 100% 170%;
-                    mask-size: 100% 170%;
-                    -webkit-mask-position: 0 100%;
-                    mask-position: 0 100%;
-                }
-            }
         }
 
         &.middle.down {
             animation: fadeInMiddleDown 500ms forwards;
-
-            @keyframes fadeInMiddleDown {
-                0% {
-                    -webkit-mask-position: 0 100%;
-                    mask-position: 0 100%;
-                    -webkit-mask-size: 100% 170%;
-                    mask-size: 100% 170%;
-                }
-
-                100% {
-                    -webkit-mask-size: 100% 100%;
-                    mask-size: 100% 100%;
-                    -webkit-mask-position: 0 50%;
-                    mask-position: 0 50%;
-                }
-            }
         }
 
         &.middle.up {
             animation: fadeInMiddleUp 500ms forwards;
-
-            @keyframes fadeInMiddleUp {
-                0% {
-                    -webkit-mask-size: 100% 170%;
-                    mask-size: 100% 170%;
-                    -webkit-mask-position: 0 0%;
-                    mask-position: 0 0%;
-                }
-
-                100% {
-                    -webkit-mask-size: 100% 100%;
-                    mask-size: 100% 100%;
-                    -webkit-mask-position: 0 50%;
-                    mask-position: 0 50%;
-                }
-            }
         }
 
         &.bottom {
             animation: fadeInBottom 500ms forwards;
-
-            @keyframes fadeInBottom {
-                0% {
-                    -webkit-mask-position: 0 50%;
-                    mask-position: 0 50%;
-                }
-
-                50% {
-                    -webkit-mask-size: 100% 100%;
-                    mask-size: 100% 100%;
-                }
-
-                100% {
-                    -webkit-mask-size: 100% 170%;
-                    mask-size: 100% 170%;
-                    -webkit-mask-position: 0 0%;
-                    mask-position: 0 0%;
-                }
-            }
         }
     }
 
@@ -182,5 +114,78 @@
                 display: none;
             }
         }
+    }
+}
+
+@keyframes fadeInBottom {
+    0% {
+        -webkit-mask-position: 0 50%;
+        mask-position: 0 50%;
+    }
+
+    50% {
+        -webkit-mask-size: 100% 100%;
+        mask-size: 100% 100%;
+    }
+
+    100% {
+        -webkit-mask-size: 100% 170%;
+        mask-size: 100% 170%;
+        -webkit-mask-position: 0 0%;
+        mask-position: 0 0%;
+    }
+}
+
+
+@keyframes fadeInMiddleUp {
+    0% {
+        -webkit-mask-size: 100% 170%;
+        mask-size: 100% 170%;
+        -webkit-mask-position: 0 0%;
+        mask-position: 0 0%;
+    }
+
+    100% {
+        -webkit-mask-size: 100% 100%;
+        mask-size: 100% 100%;
+        -webkit-mask-position: 0 50%;
+        mask-position: 0 50%;
+    }
+}
+
+
+@keyframes fadeInMiddleDown {
+    0% {
+        -webkit-mask-position: 0 100%;
+        mask-position: 0 100%;
+        -webkit-mask-size: 100% 170%;
+        mask-size: 100% 170%;
+    }
+
+    100% {
+        -webkit-mask-size: 100% 100%;
+        mask-size: 100% 100%;
+        -webkit-mask-position: 0 50%;
+        mask-position: 0 50%;
+    }
+}
+
+
+@keyframes fadeInTop {
+    0% {
+        -webkit-mask-position: 0 50%;
+        mask-position: 0 50%;
+    }
+
+    50% {
+        -webkit-mask-size: 100% 100%;
+        mask-size: 100% 100%;
+    }
+
+    100% {
+        -webkit-mask-size: 100% 170%;
+        mask-size: 100% 170%;
+        -webkit-mask-position: 0 100%;
+        mask-position: 0 100%;
     }
 }

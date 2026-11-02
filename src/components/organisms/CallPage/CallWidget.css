@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .video-call-container {
     @apply overflow-hidden w-full;
     max-width: 800px;

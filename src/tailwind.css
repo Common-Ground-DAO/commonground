@@ -1,0 +1,433 @@
+/*
+ * Tailwind CSS 4: the whole setup and its configuration (CSS-first; this
+ * replaces tailwind.config.js). Used two ways:
+ *  - `@import`ed by the two entry stylesheets (src/index.css,
+ *    src/index_cgid.css) — emits theme variables, preflight and the utilities
+ *    at that spot, before the entry's own rules, like v3's `@tailwind` lines;
+ *  - `@reference`d by every component stylesheet that uses `@apply`, so those
+ *    see the same theme and custom utilities and emit nothing of their own.
+ *
+ * Unlike `@import 'tailwindcss'`, this puts only preflight (and the plugins'
+ * base styles) into a cascade layer, `base`:
+ *  - The utilities are unlayered (`@tailwind utilities` at the end of this
+ *    file). The app's ~320 plain stylesheets and styled-components are
+ *    unlayered, and unlayered rules beat every layered rule regardless of
+ *    specificity — with layered utilities an element rule like `svg { … }` or
+ *    `h3 { … }` in src/index.css, or a `.foo` rule against a `hover:`
+ *    utility, would suddenly win. Unlayered, utilities and app CSS compete by
+ *    specificity and source order exactly as under v3.
+ *  - The theme is `inline`: utilities carry their values (`.px-4 {
+ *    padding-left: 1rem; padding-right: 1rem }`) instead of `var(--spacing)`
+ *    references, as under v3 — values Lightning CSS can still compute and
+ *    lower for `build.cssTarget`, which it cannot do for a declaration that
+ *    contains `var()`. Tailwind 4 itself targets Safari 16.4+; the build
+ *    floor and what it means for this CSS is in docs/frontend §9.
+ *
+ * The layer order is fixed here and only here: `properties` (Tailwind's
+ * `@property` fallbacks for older browsers), then `base`. Component
+ * stylesheets never open a layer — the first stylesheet to name a layer
+ * would fix the order, and the CSS chunks load in the order the app imports
+ * them, not this file first.
+ *
+ * See docs/frontend/README.md §9 ("Styling: Tailwind CSS 4").
+ */
+
+@layer properties, base;
+@import 'tailwindcss/theme.css' theme(inline);
+@import 'tailwindcss/preflight.css' layer(base);
+
+/* @tailwindcss/aspect-ratio is gone: Tailwind 4 has native `aspect-*`. */
+@plugin '@tailwindcss/forms';
+
+/*
+ * Class scanning, exactly the v3 `content` globs. Automatic source detection
+ * is off (`source(none)` below); it would scan the whole repository (srv/,
+ * docs/, contracts/, …).
+ */
+@source './**/*.{js,jsx,ts,tsx}';
+@source '../index.html';
+@source '../index_cgid.html';
+
+/*
+ * The v3 `safelist`: classes built at runtime or arriving in content that the
+ * scanner cannot see.
+ */
+@source inline('w-1/3 w-1/2 w-3/4 block text-center justify-center flex flex-col flex-row items-center gap-4 break-words max-w-full');
+@source inline('{p,px,py,pl,pr,pt,pb,m,mx,my,ml,mr,mt,mb}-{1,2,3,4,5,6,7,8,9,10,11,12,16,20,24,28,32}');
+
+/*
+ * `dark:` follows the app's own toggle (DarkModeProvider puts `dark` on
+ * <body>), not the OS preference. No utility uses the variant today; v3
+ * defaulted to the media query.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  /*
+   * The v3 config replaced the font families instead of extending them, so
+   * `font-sans`/`font-serif`/`font-mono` did not exist; keep it that way.
+   */
+  --font-*: initial;
+  --font-default: Inter, sans-serif;
+  --font-caption: Inter, sans-serif;
+
+  /*
+   * v3's line heights of the font sizes: fixed lengths, which children with
+   * a font size of their own inherit as they are. v4 uses ratios
+   * (`calc(1.25 / 0.875)`), which children inherit as a factor.
+   */
+  --text-xs--line-height: 1rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg--line-height: 1.75rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl--line-height: 2rem;
+  --text-3xl--line-height: 2.25rem;
+  --text-4xl--line-height: 2.5rem;
+
+  /*
+   * The default-palette families the app uses (error texts, a few
+   * backgrounds), at their v3 values: v4's oklch palette is visibly more
+   * saturated (red-500 #ef4444 -> #fb2c36). @tailwindcss/forms draws input
+   * borders with gray-500 and focus/checked states with blue-600.
+   */
+  --color-gray-50: #f9fafb;
+  --color-gray-100: #f3f4f6;
+  --color-gray-200: #e5e7eb;
+  --color-gray-300: #d1d5db;
+  --color-gray-400: #9ca3af;
+  --color-gray-500: #6b7280;
+  --color-gray-600: #4b5563;
+  --color-gray-700: #374151;
+  --color-gray-800: #1f2937;
+  --color-gray-900: #111827;
+  --color-gray-950: #030712;
+
+  --color-red-50: #fef2f2;
+  --color-red-100: #fee2e2;
+  --color-red-200: #fecaca;
+  --color-red-300: #fca5a5;
+  --color-red-400: #f87171;
+  --color-red-500: #ef4444;
+  --color-red-600: #dc2626;
+  --color-red-700: #b91c1c;
+  --color-red-800: #991b1b;
+  --color-red-900: #7f1d1d;
+  --color-red-950: #450a0a;
+
+  --color-yellow-50: #fefce8;
+  --color-yellow-100: #fef9c3;
+  --color-yellow-200: #fef08a;
+  --color-yellow-300: #fde047;
+  --color-yellow-400: #facc15;
+  --color-yellow-500: #eab308;
+  --color-yellow-600: #ca8a04;
+  --color-yellow-700: #a16207;
+  --color-yellow-800: #854d0e;
+  --color-yellow-900: #713f12;
+  --color-yellow-950: #422006;
+
+  --color-blue-50: #eff6ff;
+  --color-blue-100: #dbeafe;
+  --color-blue-200: #bfdbfe;
+  --color-blue-300: #93c5fd;
+  --color-blue-400: #60a5fa;
+  --color-blue-500: #3b82f6;
+  --color-blue-600: #2563eb;
+  --color-blue-700: #1d4ed8;
+  --color-blue-800: #1e40af;
+  --color-blue-900: #1e3a8a;
+  --color-blue-950: #172554;
+}
+
+/*
+ * The app's own palette (`bg-palette-brand-500`, …). `static`: always emitted
+ * as variables on :root, because stylesheets use them as
+ * `var(--color-palette-…)` (src/index.css's color scheme, a few components),
+ * which Tailwind does not see when it decides which variables are used.
+ */
+@theme inline static {
+  --color-palette-warning-50: #fff4e5;
+  --color-palette-warning-100: #ffeacc;
+  --color-palette-warning-200: #ffd599;
+  --color-palette-warning-300: #ffbd61;
+  --color-palette-warning-400: #ffa82e;
+  --color-palette-warning-500: #f99100;
+  --color-palette-warning-600: #c77400;
+  --color-palette-warning-700: #945600;
+  --color-palette-warning-800: #663c00;
+  --color-palette-warning-900: #331e00;
+  --color-palette-warning-950: #190f00;
+
+  --color-palette-success-50: #e2fef2;
+  --color-palette-success-100: #c5fce5;
+  --color-palette-success-200: #85f9c9;
+  --color-palette-success-300: #4bf6af;
+  --color-palette-success-400: #0cf393;
+  --color-palette-success-500: #09b76e;
+  --color-palette-success-600: #079258;
+  --color-palette-success-700: #067044;
+  --color-palette-success-800: #04492c;
+  --color-palette-success-900: #022717;
+  --color-palette-success-950: #01130c;
+
+  --color-palette-info-50: #e0f5ff;
+  --color-palette-info-100: #e0f5ff;
+  --color-palette-info-200: #8ad8ff;
+  --color-palette-info-300: #4dc3ff;
+  --color-palette-info-400: #14b1ff;
+  --color-palette-info-500: #008ed6;
+  --color-palette-info-600: #0074ad;
+  --color-palette-info-700: #005580;
+  --color-palette-info-800: #003a57;
+  --color-palette-info-900: #001b29;
+  --color-palette-info-950: #000e14;
+
+  --color-palette-error-50: #fce9ea;
+  --color-palette-error-100: #f8d3d4;
+  --color-palette-error-200: #f1a2a5;
+  --color-palette-error-300: #ea767a;
+  --color-palette-error-400: #e2464b;
+  --color-palette-error-500: #d32127;
+  --color-palette-error-600: #a81a1f;
+  --color-palette-error-700: #801418;
+  --color-palette-error-800: #540d0f;
+  --color-palette-error-900: #2c0708;
+  --color-palette-error-950: #160304;
+
+  --color-palette-dark-50: #e7e8ee;
+  --color-palette-dark-100: #cccedb;
+  --color-palette-dark-200: #9094b0;
+  --color-palette-dark-300: #393c51;
+  --color-palette-dark-400: #282a39;
+  --color-palette-dark-500: #222430;
+  --color-palette-dark-600: #1b1d27;
+  --color-palette-dark-700: #15161e;
+  --color-palette-dark-800: #0d0d12;
+  --color-palette-dark-900: #060709;
+  --color-palette-dark-950: #040406;
+
+  --color-palette-light-50: #fcfcfc;
+  --color-palette-light-100: #fcfcfc;
+  --color-palette-light-200: #fafafa;
+  --color-palette-light-300: #f7f7f7;
+  --color-palette-light-400: #f5f5f5;
+  --color-palette-light-500: #f1f1f1;
+  --color-palette-light-600: #dedede;
+  --color-palette-light-700: #919191;
+  --color-palette-light-800: #616161;
+  --color-palette-light-900: #303030;
+  --color-palette-light-950: #171717;
+
+  --color-palette-brand-50: #ecedf8;
+  --color-palette-brand-100: #d9dbf2;
+  --color-palette-brand-200: #b3b7e5;
+  --color-palette-brand-300: #8d93d8;
+  --color-palette-brand-400: #636cca;
+  --color-palette-brand-500: #404bbb;
+  --color-palette-brand-600: #333b94;
+  --color-palette-brand-700: #272d72;
+  --color-palette-brand-800: #1a1e4c;
+  --color-palette-brand-900: #0d0f26;
+  --color-palette-brand-950: #070813;
+
+  --color-palette-transparent: rgba(255, 255, 255, 0.03);
+  --color-palette-darkTransparent: rgba(0, 0, 0, 0.5);
+  --color-palette-darkTransparentHover: rgba(0, 0, 0, 0.6);
+  --color-palette-brand500LightTransparent: rgba(64, 75, 187, 0.1);
+  --color-palette-brand500Transparent: rgba(64, 75, 187, 0.2);
+  --color-palette-transparentError: rgba(228, 108, 108, 0.1);
+}
+
+/*
+ * Design-system classes (in v3 a plugin's `addComponents`). They have to be
+ * utilities to work with `@apply`.
+ */
+
+/* Border radius */
+@utility rounded-cg {
+  border-radius: 9px;
+}
+
+@utility rounded-b-cg {
+  border-bottom-left-radius: 9px;
+  border-bottom-right-radius: 9px;
+}
+
+@utility cg-border-s {
+  border-radius: 4px;
+}
+
+@utility cg-border-m {
+  border-radius: 6px;
+}
+
+@utility cg-border-l {
+  border-radius: 8px;
+}
+
+@utility cg-border-xl {
+  border-radius: 12px;
+}
+
+@utility cg-border-xxl {
+  border-radius: 16px;
+}
+
+/* Typography */
+@utility cg-heading-1 {
+  font-weight: 600;
+  font-size: 37.32px;
+  line-height: 130%;
+  letter-spacing: -1.12px;
+}
+
+@utility cg-heading-2 {
+  font-weight: 600;
+  font-size: 25.92px;
+  line-height: 130%;
+  letter-spacing: -0.778px;
+}
+
+@utility cg-heading-3 {
+  font-weight: 600;
+  font-size: 20.2px;
+  line-height: 130%;
+  letter-spacing: -0.606px;
+}
+
+@utility cg-heading-4 {
+  font-weight: 600;
+  font-size: 18px;
+  line-height: 28px;
+}
+
+@utility cg-heading-5 {
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 24px;
+}
+
+@utility cg-heading-6 {
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+@utility cg-text-lg-400 {
+  font-weight: 400;
+  font-size: 15px;
+  line-height: 130%;
+  letter-spacing: -0.011em;
+}
+
+@utility cg-text-lg-500 {
+  font-weight: 500;
+  font-size: 15px;
+  line-height: 130%;
+  letter-spacing: -0.011em;
+}
+
+@utility cg-text-md-400 {
+  font-weight: 400;
+  font-size: 14.2px;
+  line-height: 130%;
+  letter-spacing: -0.006em;
+}
+
+@utility cg-text-md-500 {
+  font-weight: 500;
+  font-size: 14.2px;
+  line-height: 130%;
+  letter-spacing: -0.006em;
+}
+
+@utility cg-text-sm-400 {
+  font-weight: 400;
+  font-size: 12.6px;
+  line-height: 130%;
+}
+
+@utility cg-text-sm-500 {
+  font-weight: 500;
+  font-size: 12.6px;
+  line-height: 130%;
+}
+
+@utility cg-caption-md-400-no-transform {
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+@utility cg-caption-md-400 {
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 16px;
+  text-transform: uppercase;
+}
+
+@utility cg-caption-md-600 {
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 16px;
+  text-transform: uppercase;
+}
+
+/* Box shadows */
+@utility cg-box-shadow-sm {
+  box-shadow: 0px 0px 1px rgba(0, 0, 0, 0.2), 0px 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+@utility cg-box-shadow-md {
+  box-shadow: 0px 0px 1px rgba(0, 0, 0, 0.16), 0px 2px 10px rgba(0, 0, 0, 0.08);
+}
+
+@utility cg-box-shadow-lg {
+  box-shadow: 0px 0px 2px rgba(0, 0, 0, 0.08), 0px 4px 16px rgba(0, 0, 0, 0.16);
+}
+
+@utility cg-box-shadow-xl {
+  box-shadow: 0px 0px 4px rgba(0, 0, 0, 0.08), 0px 6px 32px rgba(0, 0, 0, 0.16);
+}
+
+/*
+ * Preflight as in v3 where v4 changed it and the difference shows: the
+ * default border color (v4: `currentColor`; v3's gray-200) and the pointer
+ * cursor on buttons (v4: `default`). The placeholder color (v4: the text
+ * color at 50 %) needs nothing here: @tailwindcss/forms sets it for inputs
+ * and textareas after preflight, as under v3.
+ */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200);
+  }
+
+  button,
+  [role='button'] {
+    cursor: pointer;
+  }
+
+  :disabled {
+    cursor: default;
+  }
+
+  /*
+   * The ALTCHA widget resets its insides with `.altcha * { all:
+   * revert-layer }`. Without layers (v3) that fell back to the browser
+   * defaults; with preflight and @tailwindcss/forms in this layer it would
+   * fall back to them (the logo SVG turned `display: block` and the widget
+   * 4 px shorter). Reverting this layer as well restores v3; `div.` outranks
+   * the forms plugin's `[type='checkbox']`.
+   */
+  div.altcha * {
+    all: revert-layer;
+  }
+}
+
+/* Unlayered on purpose, see the top of this file. */
+@tailwind utilities source(none);

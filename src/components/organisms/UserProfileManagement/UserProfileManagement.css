@@ -1,5 +1,7 @@
+@reference '../../../tailwind.css';
+
 .user-profile-management {
-  @apply flex flex-col items-start self-stretch py-4 gap-8 flex-none order-1 flex-grow;
+  @apply flex flex-col items-start self-stretch py-4 gap-8 flex-none order-1 grow;
 
   .user-profile-management-title {
     @apply cg-heading-2;
@@ -7,14 +9,14 @@
   }
 
   > .user-profile-description {
-    @apply w-full flex flex-col items-start p-0 gap-4 flex-none order-1 flex-grow-0;
+    @apply w-full flex flex-col items-start p-0 gap-4 flex-none order-1 grow-0;
 
     > .user-profile-photo-with-blurred-background {
       @apply w-72;
     }
   
     > .user-name-editor {
-      @apply flex flex-row items-baseline justify-between flex-none order-1 flex-grow-0;
+      @apply flex flex-row items-baseline justify-between flex-none order-1 grow-0;
   
       .inline-input {
         @apply inline w-auto p-1 pl-0 cursor-text;
@@ -51,10 +53,10 @@
     }
 
     > .user-about-box {
-      @apply w-full flex flex-col items-start p-0 gap-1 flex-none order-2 flex-grow-0;
+      @apply w-full flex flex-col items-start p-0 gap-1 flex-none order-2 grow-0;
 
       > .user-about-box-title {
-        @apply flex flex-col items-start self-stretch p-2 gap-1 flex-none order-none flex-grow-0;
+        @apply flex flex-col items-start self-stretch p-2 gap-1 flex-none order-none grow-0;
 
         > .main-title {
           @apply cg-text-lg-500;
@@ -79,10 +81,10 @@
     }
 
     > .user-social-box {
-      @apply w-full flex flex-col items-start p-0 gap-1 flex-none order-2 flex-grow-0;
+      @apply w-full flex flex-col items-start p-0 gap-1 flex-none order-2 grow-0;
 
       > .user-social-box-title {
-        @apply flex flex-col items-start self-stretch p-2 gap-1 flex-none order-none flex-grow-0;
+        @apply flex flex-col items-start self-stretch p-2 gap-1 flex-none order-none grow-0;
 
         > .main-title {
           @apply cg-text-lg-500;

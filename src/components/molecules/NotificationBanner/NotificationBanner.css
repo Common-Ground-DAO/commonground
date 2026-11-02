@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .notification-banner {
     @apply flex flex-col p-4 justify-center items-center gap-4 cg-border-xl;
     background: var(--surface-background-2nd);

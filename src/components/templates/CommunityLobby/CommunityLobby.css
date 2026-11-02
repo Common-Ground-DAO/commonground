@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .community-lobby {
     @apply flex flex-col gap-4 w-full h-full items-center;
 }

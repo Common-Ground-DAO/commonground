@@ -30,7 +30,8 @@
 > one-hour pre-login sessions in that runbook against commit 23a4c1e, 2026-11-01;
 > Vite 8 / Rolldown (§2 package-manager allowlist, "Frontend build steps",
 > output layout incl. the worker's buffered scripts, chunking; §6 dev-server commands)
-> against commit 3e8b08e, 2026-11-01
+> against commit 3e8b08e, 2026-11-01; Tailwind CSS 4 in "Frontend build steps" (the
+> build row, the memory figure) against commit 440c779, 2026-11-02
 
 # Common Ground Infrastructure Documentation
 
@@ -399,7 +400,7 @@ legacy Azure pipelines — runs the same four steps in this order:
 |---|---|---|
 | type-check | `yarn typecheck` | `tsc --noEmit` for `src/**` plus `tsconfig.node.json` for the Vite-side files. The old webpack build ran ForkTsChecker inline; a Vite build type-checks nothing, so without this a type error ships silently. |
 | lint | `yarn lint` | `eslint .` against `eslint.config.mjs`. Same reason: react-scripts ran ESLintPlugin inline. Errors fail the build, warnings do not — the same contract CRA had. |
-| build | `yarn build` | `vite build` → `build/`. |
+| build | `yarn build` | `vite build` → `build/`. The CSS goes through Tailwind CSS 4 as a Vite plugin (`@tailwindcss/vite`, configured in `src/tailwind.css`) and Lightning CSS; there is no PostCSS step and no `postcss.config.js`/`tailwind.config.js` any more (wave M4, [docs/frontend §9 "Styling: Tailwind CSS 4"](../frontend/README.md#styling-tailwind-css-4)). |
 | HTML rewrite check | `yarn check:html-rewrite` | `tools/checkHtmlRewriteCompat.mjs` checks both emitted shells against their two serve-time consumers, which fail *silently* when the markup shape drifts: the real meta-rewrite logic of `srv/api/getRoutes.ts`, and the Caddy edge — each shell loads `/instance-config.js` once as a deferred classic script before the entry module, every inline script of `index.html` has its sha256 in the CSP of `docker/caddy/common.caddy`, and `index_cgid.html` has no inline script. |
 
 **Environment.** `DEPLOYMENT=prod` and `NODE_OPTIONS=--max-old-space-size=4096`
@@ -414,7 +415,10 @@ failed without it. Vite 8 (Rolldown, wave M3) changed the picture: on Node 26
 2026-11-01; most of the bundling now runs in Rolldown's native code, outside
 the V8 heap). The flag stays at 4096 anyway — it costs nothing and keeps the
 margin; re-measure when dependencies grow, with 5120 as the fallback if a build
-ever OOMs.
+ever OOMs. Tailwind CSS 4 (wave M4) raised the peak again, outside the heap:
+measured side by side on 2026-11-02 (fresh builder container, cgroup
+`memory.peak`, page cache included), ~3.7 GiB against ~2.8 GiB for the
+e857ee5 build; it still passes with `--max-old-space-size=2048`.
 The legacy Azure pipelines additionally set `PUBLIC_URL` (see below).
 
 Three CRA-era variables are **gone** and must not be reintroduced:

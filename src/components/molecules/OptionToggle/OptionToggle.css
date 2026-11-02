@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .toggle-title {
     @apply cg-text-lg-500 flex items-center gap-1;
     color: var(--cardTextMain);

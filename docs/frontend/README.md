@@ -24,7 +24,9 @@
 > against commit 3e8b08e, 2026-11-01; react-router 7 (§5 SuspenseRouter, top-level
 > routes, "Routing on react-router 7", the dependency table and pins, wave M3)
 > against commit 3e8b08e, 2026-11-01; "Service worker and module scripts" (§9) against commit
-> 3e8b08e, 2026-11-01
+> 3e8b08e, 2026-11-01; Tailwind CSS 4 (§9 "Styling: Tailwind CSS 4", the CSS row, the
+> build-target paragraph, "Dependency pins and constraints", wave M4) against commit
+> 440c779, 2026-11-02
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -1104,18 +1106,24 @@ of a1460cb):
   files of a package without `"type": "module"`). Harmless today; see
   `docs/todo/TODO.md`.
 
-`build.target` is explicit (`BUILD_TARGET` in `vite.config.ts` — `chrome67,
-edge79, firefox68, opera54, safari14`), so Vite 8's default target
+`build.target` is explicit (`BUILD_TARGET` in `vite.config.ts` — `chrome104,
+edge104, firefox97, opera90, safari15.4`), so Vite 8's default target
 (`'baseline-widely-available'`, ≈ Safari 16.4) never applies. Vite 8 still
-takes the target in esbuild notation and converts it for Oxc and Lightning CSS. Keeping the floor
-at **`safari14`** is deliberate, and a product call rather than a build call:
-it is what keeps plain browsing and login working on iOS 14–15, while web push
-is gated at iOS ≥ 16.4 anyway (`src/context/NotificationProvider.tsx`;
-user-facing copy in `src/components/molecules/PWA/PWA.tsx`). If the floor is
-ever raised, two places must move together: `BUILD_TARGET` (esbuild notation)
-and the `browserslist.production` key in `package.json` (consumed by
-autoprefixer via `postcss.config.js`) — nothing derives the JS target from
-browserslist; `vite.config.ts` duplicates the floors by hand.
+takes the target in esbuild notation and converts it for Oxc and Lightning
+CSS; `build.cssTarget` defaults to it, so the CSS is lowered and
+vendor-prefixed for the same floor. `BUILD_TARGET` is the only place the floor
+is defined (the `browserslist` key in `package.json` is gone: its last
+reader, autoprefixer, left with Tailwind 4).
+
+The floor is a product decision (2026-11-02, wave M4): **Safari 15.4 (iOS
+15.4), Chrome/Edge 104, Firefox 97** (Opera 90 is Chromium 104). Until then it
+was `chrome67, edge79, firefox68, opera54, safari14`. Tailwind CSS 4 set the
+new values: preflight and the `@tailwindcss/forms` base styles sit in a
+cascade layer (Safari 15.4, Firefox 97, Chrome 99), and the transform
+utilities use the individual `translate`/`rotate` properties (Chrome 104).
+iOS 14 and iOS 15.0–15.3 are below the floor. Web push is gated at iOS ≥ 16.4
+anyway (`src/context/NotificationProvider.tsx`; user-facing copy in
+`src/components/molecules/PWA/PWA.tsx`).
 
 | Concern | Where |
 |---|---|
@@ -1129,14 +1137,184 @@ browserslist; `vite.config.ts` duplicates the floors by hand.
 | Dependency aliases | Two exact-match `resolve.alias` entries in `vite.config.ts`, both load-bearing. `@tensorflow/tfjs` → `src/moderation/tfjs.ts` is described in the NSFW pre-check section above. `altcha-widget-element` → `altcha` loads the widget bundle under a stub module name so its `.d.ts` (which augments `react/jsx-runtime` and would shadow the whole JSX namespace — first observed under @types/react 18) never enters the TS program; the stub is `src/types/altcha-widget-element.d.ts`. altcha 3 moved that augmentation out of the default types entry into `altcha/types/react`, so the hazard is narrower now, but the alias is what keeps it out for good. (An earlier third alias pinning `@metamask/sdk` to its browser UMD file was removed in the 2026-08 wagmi-2 migration: the SDK is no longer a direct dependency — wagmi's `metaMask` connector imports it dynamically — and 0.33's `browser`/`module` fields both point at the browser ESM build, so Vite resolves it correctly unaided; measured, the precache is 60 KB smaller without the alias.) |
 | Chunking | `build.rolldownOptions.output.codeSplitting` in `vite.config.ts`: nine vendor groups (`vendor-web3`, `vendor-icons`, `vendor-charts`, `vendor-mediasoup`, `vendor-emoji`, `vendor-editor`, `vendor-dnd`, `vendor-react`, `vendor-shared`) split what Vite's default chunking put into one ~5.4 MiB `App` chunk (a Vite 6 measurement; the groups carried over unchanged in the Vite 7 bump — same chunk set, every chunk same-size or marginally smaller). Since Vite 8 they are one Rolldown group each, with `vendor-react` and `vendor-shared` at a higher `priority` than the feature groups — not the function-form `manualChunks` (deprecated; Rolldown emulates it as a single group whose members claim shared dependencies in alphabetical order, which put `vendor-charts` into the CG ID entry). Same packages per vendor chunk as under Rollup, except that `lodash`, `idb-keyval` and `fast-safe-stringify` are no longer pulled into `vendor-web3` and `vendor-shared` additionally pins Oxc's lowering helpers and the `global` shim (`SHARED_HELPERS`) — bundler-generated or injected modules every feature group shares, which otherwise land in whichever group reaches them first. `node_modules` only — `src/` keeps the default behavior, because splitting first-party modules is what turns an import cycle into a TDZ crash. `assertCgidEntryChunks` (same file) fails the build if the CG ID entry ever statically reaches a group other than `vendor-react`/`vendor-shared`. Details and the rules the table follows: [docs/infrastructure](../infrastructure/README.md#frontend-build-steps). Changing it needs a browser pass. |
 | Sourcemaps | `build.sourcemap: true` on every build path (the app is AGPL). **JS only** — Vite emits no `.css.map` (neither under Rollup nor under Rolldown), unlike CRA; and since Vite 8 the small `modulepreload-polyfill` chunk, which also carries Rolldown's runtime helpers, has no `.map` either. The service worker excludes maps from the precache, so they only cost bandwidth when devtools opens them. |
-| CSS | `postcss.config.js` (`tailwindcss/nesting` → `tailwindcss` → `autoprefixer`), `tailwind.config.js`. Minified by Lightning CSS (Vite 8 default), which rejects invalid CSS that esbuild passed through — a build error from `[lightningcss minify]` means a real CSS bug. |
-| Type-check | `yarn typecheck` — `tsc --noEmit` over `src/**` plus `tsconfig.node.json` over the Vite-side files. TypeScript 6.0 (wave M1, 2026-10-31; before that 5.9 — and 4.5 could not even *parse* viem's TS-5 `.d.ts` files, which silently disabled semantic checking). The tsconfigs use no option TS 6 deprecates (no `ignoreDeprecations`), so they are ready for TS 7: `moduleResolution: "bundler"` (Vite resolves the imports; this also enforces package `exports`, hence `mediasoup-client/types` instead of the unexported `mediasoup-client/lib/types`), the `paths` mapping above instead of `baseUrl`, no `dom.iterable` (part of `dom` since TS 6) and no `esModuleInterop`/`allowSyntheticDefaultImports` (always on since TS 6). `tsconfig.json` targets **es2020**: not es5, because TS 5.5+ grammar-checks regex syntax against the target and rejects the `u` flag + `\p{…}` escapes in `src/common/validators.ts`; and not es2018 any more, because viem 2 and its `ox` dependency ship `.ts` sources with BigInt literals, which tsc rejects below ES2020. Nothing emits from this tsconfig — shipped output is transpiled by Vite against `build.target`, which mirrors the `browserslist` floors. |
+| CSS | Tailwind CSS 4 through the `@tailwindcss/vite` plugin (`vite.config.ts`); setup and configuration in `src/tailwind.css` — there is no `tailwind.config.js` and no PostCSS config any more (see "Styling: Tailwind CSS 4" below). Nesting is native CSS nesting, lowered by Lightning CSS. Minified by Lightning CSS (Vite 8 default), which also adds the vendor prefixes for `build.cssTarget` (autoprefixer's job until wave M4) and rejects invalid CSS that esbuild passed through — a build error from `[lightningcss minify]` means a real CSS bug. |
+| Type-check | `yarn typecheck` — `tsc --noEmit` over `src/**` plus `tsconfig.node.json` over the Vite-side files. TypeScript 6.0 (wave M1, 2026-10-31; before that 5.9 — and 4.5 could not even *parse* viem's TS-5 `.d.ts` files, which silently disabled semantic checking). The tsconfigs use no option TS 6 deprecates (no `ignoreDeprecations`), so they are ready for TS 7: `moduleResolution: "bundler"` (Vite resolves the imports; this also enforces package `exports`, hence `mediasoup-client/types` instead of the unexported `mediasoup-client/lib/types`), the `paths` mapping above instead of `baseUrl`, no `dom.iterable` (part of `dom` since TS 6) and no `esModuleInterop`/`allowSyntheticDefaultImports` (always on since TS 6). `tsconfig.json` targets **es2020**: not es5, because TS 5.5+ grammar-checks regex syntax against the target and rejects the `u` flag + `\p{…}` escapes in `src/common/validators.ts`; and not es2018 any more, because viem 2 and its `ox` dependency ship `.ts` sources with BigInt literals, which tsc rejects below ES2020. Nothing emits from this tsconfig — shipped output is transpiled by Vite against `build.target` (`BUILD_TARGET`). |
 | Lint | `yarn lint` — `eslint.config.mjs` (ESLint 9 flat config: typescript-eslint + react + react-hooks), calibrated to the severities the old `react-app` preset enforced. Errors fail, warnings do not. |
 | Tests | `yarn test` — Vitest 4 (`vitest.config.ts`; it already ran on its own Vite 8 copy before wave M3, now it shares the app's) over `src/**/*.test.{ts,tsx}`; a small unit suite so far (instance config, the image-filter client modules, the upload connector, an EditField helper). Not part of the build scripts yet. |
 
 Neither type-check nor lint happens during `vite build`, which is why the docker
 build scripts run them as explicit steps — see
 [docs/infrastructure](../infrastructure/README.md#frontend-build-steps).
+
+### Styling: Tailwind CSS 4
+
+The app styles with ~320 plain stylesheets next to their components (most of
+them `@apply` Tailwind utilities), utility classes in JSX, styled-components
+in some places, and a color scheme of CSS variables in `src/index.css`
+(`body.light` / `body.dark`, switched by `DarkModeProvider`). **Tailwind CSS 4**
+(4.3.3 since wave M4, 2026-11-02; before that 3.4) runs as the
+`@tailwindcss/vite` plugin. The `@tailwindcss/postcss` route was not taken:
+nothing else needs PostCSS, and with the Vite plugin `postcss.config.js`,
+`autoprefixer` and the direct `postcss` dependency are gone (Lightning CSS
+prefixes, see the CSS row above).
+
+**Configuration lives in `src/tailwind.css`** (CSS-first; `tailwind.config.js`
+is gone): `@theme` (the `palette-*` colors, the fonts), `@utility` (the
+`cg-*` typography, radius and shadow classes, in v3 a plugin's
+`addComponents`), `@plugin` (`@tailwindcss/forms`; `@tailwindcss/aspect-ratio`
+is gone, v4 has `aspect-*` built in, and so is `@tailwindcss/typography`,
+which no `prose` class used), `@source`
+(the v3 `content` globs, and the v3 `safelist` as `@source inline(...)`) and
+`@custom-variant dark` (the `.dark` class, not the OS preference — no utility
+uses `dark:` today). It is used two ways:
+
+- `src/index.css` and `src/index_cgid.css` `@import` it at the top — it emits
+  the theme variables, preflight and the utilities there, before the entry's
+  own rules, like v3's three `@tailwind` lines did.
+- Every other stylesheet that uses `@apply` (or `theme()`) starts with
+  `@reference '<relative path>/tailwind.css';`. Each stylesheet is compiled on
+  its own, and without the reference it does not know the utilities: the
+  build fails with `Cannot apply unknown utility class`. A new stylesheet
+  needs the line too.
+
+**The cascade is kept as under v3**, which is why the file does not
+`@import 'tailwindcss'`:
+
+- The utilities and the theme variables are **unlayered**. Stock Tailwind 4
+  puts utilities into `@layer utilities`, and an unlayered rule beats every
+  layered rule regardless of specificity: the element rules in
+  `src/index.css` (`svg { display: inline-block }`, `h1`…`h5`, `label span`)
+  and any component rule against a `hover:` utility would suddenly win.
+  Unlayered, utilities and the app's stylesheets compete by specificity and
+  order as before (the CSS chunks and the order the app loads them in are
+  unchanged — the `App` chunk with `src/index.css` comes after the chunks
+  of `Button`, `Modal`, `MobileLayout`, … that the entry pulls in first).
+- Preflight, the plugins' base styles (`@tailwindcss/forms`) and a small
+  compatibility block are in `@layer base`, below every unlayered rule. The
+  compatibility block restores what v4's preflight changed visibly: the
+  default border color (v3's gray-200, v4: `currentColor`) and the pointer
+  cursor on buttons. The placeholder color needs nothing: `@tailwindcss/forms`
+  sets it after preflight, as under v3. Being layered also changes
+  `!important`: preflight's `[hidden] { display: none !important }` (new in
+  v4) beats every unlayered `!important`, because for important declarations
+  the layer order is reversed — an element with the `hidden` attribute stays
+  hidden whatever the app's CSS says.
+- **Layer order** is fixed in `src/tailwind.css` and only there:
+  `@layer properties, base;` (Tailwind's `@property` fallbacks, then
+  preflight). Component stylesheets never open a layer — whichever stylesheet
+  names a layer first fixes the order, and the CSS chunks load in the order
+  the app imports them. Apart from the layers, the cascade follows the chunk
+  load order, as under v3. (In the built files Lightning CSS drops the
+  statement as redundant: the main and CG ID entries open `@layer properties`
+  and then `@layer base`, in that order. The only other layered output is the
+  `@layer properties` block Tailwind adds to a component chunk whose `@apply`
+  uses a `@property`-based utility, e.g. `MobileLayout` — it names
+  `properties` only, so the order holds.)
+- Under v3 preflight and the forms base styles were unlayered rules in the
+  `App` chunk, so they **won ties** against element rules in stylesheets that
+  load before it. `TextAreaField.css` (part of an entry chunk) had a
+  `textarea { … }` rule whose margin, padding, color, background, border
+  color, `resize`, focus and placeholder styles therefore never took effect;
+  in v4 they would. They are removed; what did take effect (width, cursor,
+  overflow, border style, the hover and `autogrow` rules) stays. A new bare
+  element rule for form controls has to reckon with this the same way.
+- Third-party widgets that reset with `all: revert-layer` now fall back to
+  the `base` layer instead of the browser defaults. ALTCHA does
+  (`.altcha * { … }`); the compatibility block reverts that layer for it too
+  (`div.altcha *`), otherwise the widget's logo turns `display: block` and
+  the captcha box shrinks by 4 px. ALTCHA is the only bundled code that uses
+  `revert-layer`.
+- The theme is `inline` (`theme(inline)`, `@theme inline`): a utility carries
+  its value (`.px-4 { padding-left: 1rem; padding-right: 1rem }`) instead of
+  `var(--spacing)`. Lightning CSS cannot lower a declaration with `var()` in
+  it, so with references v4's logical properties (`padding-inline`, …) would
+  reach browsers below `build.cssTarget` unlowered. The palette is also
+  `static`: always emitted as variables, because `src/index.css` and a few
+  components use `var(--color-palette-…)`, which Tailwind does not count as a
+  use when it decides which variables to emit.
+- The default-palette families the app uses (`gray`, `red`, `yellow`,
+  `blue`) are pinned to their v3 hex values — v4's oklch palette is visibly
+  more saturated — and so are v3's fixed line heights of `text-xs`…`text-4xl`
+  (v4 uses ratios, which children with a font size of their own inherit
+  differently). The v3 config replaced the font families instead of
+  extending them, so `font-sans`/`font-serif`/`font-mono` still do not exist.
+- The `cg-*` classes are utilities now, sorted among all utilities by the
+  properties they set and how many, no longer in their definition order (the
+  v3 components layer kept that). So among themselves the text classes now
+  come in Tailwind's order (`cg-heading-1`…`3`, `cg-text-lg-*`,
+  `cg-text-md-*`, `cg-caption-md-600`, then `cg-heading-4`/`5`,
+  `cg-text-sm-*`): where an element carries two of them, the winner may have
+  changed. Against core utilities they still come before `text-*`/`font-*`
+  and `cg-border-*` before `rounded-*`, but `cg-box-shadow-*` comes *after*
+  `shadow-*`. No element combines a shadow pair today.
+
+**Native CSS nesting** replaced `tailwindcss/nesting` (postcss-nested), and it
+differs in three ways that matter here:
+
+- `@keyframes` inside a style rule is invalid there and was **dropped
+  silently**, rule and all (the mobile menu's fade animations, the skeleton
+  shimmer). Keyframes go at the top level of the file.
+- A nested rule under a **selector list** (`&.active, &.active:hover { .btnText
+  { … } }`) becomes `:is(…) .btnText`, which takes the specificity of the
+  most specific entry for all of them; postcss-nested produced one selector
+  per entry. Where the entries differ in specificity (state lists in
+  `Button.css`, `MenuButton.css`, `ReactionEmojiItem.css`) the child rules
+  are spelled out per entry. Lists of equal specificity (the twelve `.btn*`
+  classes) are fine.
+- Sass-style suffixes (`&-title`) do not exist in native nesting; the
+  stylesheets never used them.
+
+**v4 syntax** the migration needed (the official `@tailwindcss/upgrade` 4.3.3
+did the JSX part; its output was reviewed, and two of its renames were wrong
+because the class names are also the app's own: `blur` in `PreviewCards`
+and `rounded` on `TextInputField`'s `inputClassName`, which
+`.input.rounded` styles): `flex-grow`/`flex-shrink` → `grow`/`shrink`,
+`rounded` → `rounded-sm`, `shadow` → `shadow-sm`, `outline-none` →
+`outline-hidden`, `overflow-ellipsis` → `text-ellipsis`, `break-words` →
+`wrap-break-word`, `bg-gradient-to-t` → `bg-linear-to-t`, `aspect-3` (from
+the aspect-ratio plugin) → `aspect-3/1`, `@apply x !important` → `@apply x!`,
+`theme('colors.palette.…')` → `var(--color-palette-…)`, `theme('screens.xl')`
+→ the literal `1280px` (v4's breakpoint is `80rem`). The app's own
+`@keyframes spin` (`App.css`, `.spinner`) is `cg-spin` now: Tailwind 4 emits a
+`spin` of its own, and Lightning CSS merged the two.
+
+**Measured against the v3 build** (e857ee5): every CSS file flattened to
+(selector, property) pairs, `:is()` expanded, shorthands and logical
+properties normalized — the only differences in the app's own rules are
+`outline-hidden` (a transparent outline only in forced-colors mode instead of
+always) and `rounded-full` (`calc(infinity * 1px)`); an invalid declaration
+Lightning CSS dropped (`width: 'auto !important'` in `MenuButton.css`) is
+deleted. Preflight differs where v4 changed it (it resets margin and
+padding on every element, buttons and inputs get `font: inherit`,
+`border-radius: 0`, a transparent background, `[hidden]` is `!important`,
+…). CSS output with the raised floor: 476 KB instead of 481 KB (75 KB instead
+of 73 KB gzipped; with the old `safari14`/`chrome67` floor it was 526 KB / 77 KB,
+mostly `:-webkit-any()` copies of lowered nested selector lists). The JS shrank
+by ~120 KiB (~30 KiB gzipped), Oxc lowering less for the new floor. The build prints 9
+`SOURCEMAP_BROKEN` warnings for the Tailwind plugin's CSS transforms;
+harmless, Vite emits no CSS source maps anyway. **Visual check:** 30 key views
+(home, explore, lobby, channel with messages/reactions/image/link, article
+and editor, login/sign-up incl. error and limit messages, user settings incl.
+"Sign out other devices", community settings, `?modal=` dialogs, the
+start-call dialog, stake, app store, DMs, notifications, the phone menu) at
+1280 px and 400 px in light and dark, both builds served by the same
+instance with the same data: 114 screenshot pairs, pixel-identical after the
+two fixes above (ALTCHA, `TextAreaField.css`; the layer-order and
+`TextAreaField.css` rework after review re-checked on the affected views) apart from one anti-aliased
+pixel; a second baseline pass showed no run-to-run noise. Not covered:
+hover/focus states beyond a message hover, the in-call UI, old browsers.
+
+**Browsers between the floor and Tailwind's own target.** Tailwind 4 is
+built for Safari 16.4+, Chrome 111+, Firefox 128+; the floor
+(`BUILD_TARGET`, see "Toolchain") is Safari 15.4, Chrome/Edge 104,
+Firefox 97. In that range the utilities carry plain values, Lightning CSS
+lowers nesting and colors, cascade layers work, and the utilities built on
+registered custom properties (`@property`: `shadow-*`, `ring`, the style of
+`border`, `blur`, `translate-*`/`rotate-*`, gradients) get their start values
+from Tailwind's fallback (`@layer properties`, applied where `@property` is
+missing). Below the floor the layout breaks: without cascade layers the
+whole `base` layer (preflight, the forms base styles) and that fallback are
+ignored.
 
 ### Dependency pins and constraints
 
@@ -1146,10 +1324,10 @@ Constraints in the root `package.json` that are not self-explanatory. The
 and the 2026-10-31 refresh (F6) moved every package to its newest in-major
 release that has passed the 7-day age gate (except `mediasoup-client`, which
 moves together with the backend's `mediasoup` and its pinned worker); the
-remaining major jump (Tailwind 4) is scheduled in
-`docs/todo/ROADMAP_cg-box.md`; TypeScript 6 and joi 18 came with wave M1
-(2026-10-31), Vite 8 (with `@vitejs/plugin-react` 6, `vite-plugin-svgr` 5 and
-`vite-plugin-node-polyfills` 0.28) and react-router 7 with wave M3 (2026-11-01).
+deferred majors came in waves (`docs/todo/ROADMAP_cg-box.md`): TypeScript 6
+and joi 18 with wave M1 (2026-10-31), Vite 8 (with `@vitejs/plugin-react` 6,
+`vite-plugin-svgr` 5 and `vite-plugin-node-polyfills` 0.28) and react-router 7
+with wave M3 (2026-11-01), Tailwind CSS 4 with wave M4 (2026-11-02).
 
 - **`resolutions`**: `@types/react` → `"19"` keeps every `@types/react@*`
   consumer on one copy; a second copy makes components from other packages fail
@@ -1173,6 +1351,13 @@ remaining major jump (Tailwind 4) is scheduled in
   GHSA-337j-9hxr-rhxg), and 7.18.4 is the release the lockfile resolves. 7.18.5 was 5 days old at the
   time (age gate); its changes are SSR/RSC-only. react-router 8 exists; it is
   a separate major for the Renovate dashboard.
+- **`tailwindcss` and `@tailwindcss/vite`** (`^4.3.3`, wave M4, 2026-11-02)
+  move together: the plugin depends on exactly its own version of
+  `tailwindcss` (and of `@tailwindcss/node`/`@tailwindcss/oxide`, whose
+  native binaries come as optional per-platform packages — no install
+  script, so `enableScripts: false` is fine). `@tailwindcss/forms` `^0.5.11`
+  is the release the lockfile already resolved; it works as a v4 `@plugin`. `@tailwindcss/node` pins its
+  own `lightningcss` 1.32.0, so the tree holds that and Vite's copy.
 - **`history`** is a direct dependency because `SuspenseRouter` imports
   `createBrowserHistory` from it; react-router has not depended on it since
   6.x, so without the declaration it would be a phantom dependency.

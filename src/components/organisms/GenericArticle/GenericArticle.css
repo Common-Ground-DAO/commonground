@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .articleView {
   @apply relative flex flex-col gap-4 items-center h-full m-auto;
   color: var(--articleHeader);
@@ -23,7 +25,7 @@
   }
 
   .articleViewTitle {
-    @apply flex flex-col items-start justify-center self-stretch p-0 gap-2 flex-none order-none flex-grow-0;
+    @apply flex flex-col items-start justify-center self-stretch p-0 gap-2 flex-none order-none grow-0;
 
     .articleViewTitleInfo {
       @apply w-full cg-heading-1;
@@ -32,7 +34,7 @@
     }
 
     .articleViewSubtitleInfo {
-      @apply flex flex-row items-center justify-between self-stretch py-1 flex-grow-0 flex-wrap;
+      @apply flex flex-row items-center justify-between self-stretch py-1 grow-0 flex-wrap;
       gap: 0.625rem;
 
       font-size: 16px;

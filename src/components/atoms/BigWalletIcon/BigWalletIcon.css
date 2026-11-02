@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .big-wallet-icon {
     @apply flex p-4 flex-col justify-center items-center gap-2 cg-border-xxl relative;
     background: var(--surface-background-3rd, #272937);

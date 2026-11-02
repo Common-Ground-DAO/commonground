@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .ruleButtonDivider {
     @apply absolute w-full;
     border: 1px solid var(--btnSecondaryHoverBg);

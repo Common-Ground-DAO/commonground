@@ -1,5 +1,7 @@
+@reference '../../../tailwind.css';
+
 .wallet-manager-row {
-  @apply flex flex-row items-center self-stretch p-0 px-2 gap-4 flex-none flex-grow-0 order-none;
+  @apply flex flex-row items-center self-stretch p-0 px-2 gap-4 flex-none grow-0 order-none;
 
   min-height: 56px;
 
@@ -27,25 +29,25 @@
   }
 
   > .wallet-manager-action-bar {
-    @apply flex flex-row items-center justify-between self-stretch p-0 gap-0 flex-none flex-grow order-none;
+    @apply flex flex-row items-center justify-between self-stretch p-0 gap-0 flex-none grow order-none;
 
     > .connector-name {
-      @apply flex flex-row items-center p-0 gap-0 order-none flex-grow-0 cg-heading-4;
+      @apply flex flex-row items-center p-0 gap-0 order-none grow-0 cg-heading-4;
   
       color: var(--cardText);
     }
   
     > .connector-state {
-      @apply flex flex-row items-center p-0 gap-2 order-1 flex-grow-0 cg-text-lg-500;
+      @apply flex flex-row items-center p-0 gap-2 order-1 grow-0 cg-text-lg-500;
     }
 
     .connector-issue {
-      @apply flex flex-row items-center p-0 gap-0 order-1 flex-grow-0;
+      @apply flex flex-row items-center p-0 gap-0 order-1 grow-0;
       color: var(--errorColor);
     }
 
     button {
-      @apply flex flex-row items-center order-2 flex-grow-0;
+      @apply flex flex-row items-center order-2 grow-0;
     }
   }
 }

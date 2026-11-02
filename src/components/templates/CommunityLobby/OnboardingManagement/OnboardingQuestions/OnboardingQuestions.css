@@ -1,3 +1,5 @@
+@reference '../../../../../tailwind.css';
+
 .onboarding-input-container {
     @apply flex px-4 items-center gap-2 self-stretch cg-border-l w-full;
     border: 1px solid var(--border-subtle, rgba(25, 27, 38, 0.03));

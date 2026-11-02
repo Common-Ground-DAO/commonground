@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .user-profile-main-content {
   @apply mt-4 px-4 mx-auto;
   max-width: 832px;

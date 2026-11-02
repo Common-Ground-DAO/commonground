@@ -1,5 +1,7 @@
+@reference '../../../../tailwind.css';
+
 .roles-management-desktop {
-    @apply gap-6 !important;
+    @apply gap-6!;
     .roles-management-desktop-content {
         @apply grid gap-8 w-full;
         grid-template-columns: minmax(200px, 300px) 1fr;

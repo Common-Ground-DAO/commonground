@@ -226,8 +226,9 @@ that stack — confirm and delete:
   Vite 8 warns that `vite.config.ts` and `vite/*.ts` use ESM syntax in a package without
   `"type": "module"`, which the native config loader (planned as a future default) will
   not support. Harmless with today's bundling loader. Fix: `.mts` files (or `"type":
-  "module"`, which would also need `postcss.config.js`/`tailwind.config.js` as `.cjs`
-  and `import.meta.dirname` instead of `__dirname`), then drop the notice from the docs.
+  "module"`, which would also need `import.meta.dirname` instead of `__dirname`; the
+  CommonJS `postcss.config.js`/`tailwind.config.js` are gone since wave M4), then drop
+  the notice from the docs.
 - [ ] **`start_https` blocks `app.cg.local` / `bs-local.com`** (2026-11-01, found in
   wave M3, not caused by it) — `Caddyfile.vite` serves both names, but Vite's host
   check rejects them ("Blocked request") because the dev server behind Caddy is plain
@@ -414,9 +415,13 @@ wave has to *change*.
   ~900 KiB on both Vite 7 and Vite 8 (the barrel chunk is now named `util`), and
   `vendor-shared` is 58 KiB (56 KiB on Vite 7; it now also holds Oxc's lowering
   helpers and the `global` shim). Delete this bullet once the wave is merged.
-- **Tailwind 4 (M4)** — `postcss.config.js` runs the v3 chain
-  (`tailwindcss/nesting` → `tailwindcss` → `autoprefixer`); v4 ships its own PostCSS
-  plugin and handles nesting/prefixing itself (TODO(verify) at pickup).
+- **Tailwind 4 (M4)** — done 2026-11-02 (tailwindcss 4.3.3 through
+  `@tailwindcss/vite`; `postcss.config.js`, `tailwind.config.js`, `autoprefixer`,
+  `postcss`, `@tailwindcss/aspect-ratio` and the unused `@tailwindcss/typography`
+  are gone; configuration in `src/tailwind.css`; docs/frontend §9 "Styling:
+  Tailwind CSS 4"). The browser floor was raised with it (decided 2026-11-02:
+  Safari 15.4, Chrome/Edge 104, Firefox 97; `browserslist` dropped; docs/frontend
+  §9 "Toolchain"). Delete this bullet once the wave is merged.
 
 ## Image filter: evaluate a hentai-capable server model
 

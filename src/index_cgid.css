@@ -1,6 +1,5 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Tailwind: theme, preflight, utilities and their configuration */
+@import './tailwind.css';
 
 .cgid-header {
     padding-top: 3rem;

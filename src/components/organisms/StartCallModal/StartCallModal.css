@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .start-call-modal {
     @apply flex flex-col gap-4;
 

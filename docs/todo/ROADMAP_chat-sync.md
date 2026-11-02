@@ -429,6 +429,7 @@ flows (outside `07-call.ts`) can start before.
 
 - [x] srv-presence — presence grace period (30 s), cluster-wide batched offline
   check, change-only events, stale job emits offline — merge `6c9b07a`
+- [x] entity-dbs — idempotent/order-safe community, chats, user writers; seq-guarded unread; `serverLastRead` send guard; snapshot deletions guarded — merge `04b5c57`
 - [x] sw — service-worker tab-role referee removed, one-release compat answer for old pages — merge `7d4442e`
 - [x] develop G13 merged — `c6f0d5b`
 - [x] contracts — `src/data/chat/types.ts`, `src/data/appstate/transport.ts`, additive API/event types — merge `b961fbd`

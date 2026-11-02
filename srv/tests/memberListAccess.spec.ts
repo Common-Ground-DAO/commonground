@@ -3,15 +3,18 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 /**
- * `/Community/getMemberList` answers from the memberlist service.
+ * `/Community/getMemberList` and `/Community/getUserCommunityRoleIds` answer
+ * from the memberlist service.
  *
  * - getMemberList: members of the community (a claimed role in the live
  *   community) get the full answer for any window, search and role filter.
  *   Everyone else may only ask for the first few members (offset 0,
  *   limit <= 6, no search, no role filter) and gets a preview: counts and
  *   member ids, without roles, presence split or per-role counts.
+ * - getUserCommunityRoleIds: needs a session; the caller is the user
+ *   themself or a member of the community.
  *
- * The route handler is captured from `registerPostRoute` and called
+ * The route handlers are captured from `registerPostRoute` and called
  * directly, with every repository and the memberlist request mocked.
  */
 
@@ -60,6 +63,8 @@ const COMMUNITY = '00000000-0000-4000-8000-0000000000c1';
 const asUser = (id: string) => ({ session: { user: { id } } });
 const anonymous = () => ({ session: {} });
 const getMemberList = (req: any, data: any) => handlers['/getMemberList'](req, {}, { communityId: COMMUNITY, ...data });
+const getUserCommunityRoleIds = (req: any, userId: string) =>
+  handlers['/getUserCommunityRoleIds'](req, {}, { userId, communityId: COMMUNITY });
 
 // what memberlist answers: ids in its binary (utf16le) encoding
 const toBinary = (uuid: string) => Buffer.from(uuid.replace(/-/g, ''), 'hex').toString('utf16le');
@@ -168,5 +173,38 @@ describe('/getMemberList', () => {
       await expect(getMemberList(anonymous(), data)).rejects.toThrow('LOGIN_REQUIRED');
       expect(axios.post).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('/getUserCommunityRoleIds', () => {
+  beforeEach(() => {
+    axios.post.mockResolvedValue({ data: [toBinary(ROLE)] });
+  });
+
+  it('answers the user themself, member or not', async () => {
+    await expect(getUserCommunityRoleIds(asUser(ME), ME)).resolves.toEqual([ROLE]);
+    expect(permissionHelper.isMemberOfActiveCommunity).not.toHaveBeenCalled();
+    expect(JSON.parse(axios.post.mock.calls[0][1])).toEqual({
+      userId: toBinary(ME),
+      communityId: toBinary(COMMUNITY),
+    });
+  });
+
+  it('answers a member of the community about another user', async () => {
+    permissionHelper.isMemberOfActiveCommunity.mockResolvedValue(true);
+    await expect(getUserCommunityRoleIds(asUser(ME), ONLINE)).resolves.toEqual([ROLE]);
+    expect(permissionHelper.isMemberOfActiveCommunity).toHaveBeenCalledWith(ME, COMMUNITY);
+  });
+
+  it('refuses a non-member asking about another user', async () => {
+    await expect(getUserCommunityRoleIds(asUser(ME), ONLINE)).rejects.toThrow('NOT_ALLOWED');
+    expect(permissionHelper.isMemberOfActiveCommunity).toHaveBeenCalledWith(ME, COMMUNITY);
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  it('asks a visitor to log in', async () => {
+    await expect(getUserCommunityRoleIds(anonymous(), ONLINE)).rejects.toThrow('LOGIN_REQUIRED');
+    expect(permissionHelper.isMemberOfActiveCommunity).not.toHaveBeenCalled();
+    expect(axios.post).not.toHaveBeenCalled();
   });
 });

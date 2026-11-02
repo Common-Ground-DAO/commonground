@@ -330,6 +330,15 @@ API.Community.getUserCommunityRoleIds.Response
   '/getUserCommunityRoleIds',
   validators.API.Community.getUserCommunityRoleIds,
   async (request, response, data) => {
+    // a user's roles in a community are visible to the user themself and to
+    // the members of that community
+    const { user } = request.session;
+    if (!user) {
+      throw new Error(errors.server.LOGIN_REQUIRED);
+    }
+    if (user.id !== data.userId && !(await permissionHelper.isMemberOfActiveCommunity(user.id, data.communityId))) {
+      throw new Error(errors.server.NOT_ALLOWED);
+    }
     const roleIdsBinary = await axios.post<API.Community.getUserCommunityRoleIds.Response>(
       'http://memberlist:4000/getUserCommunityRoleIds',
       JSON.stringify({

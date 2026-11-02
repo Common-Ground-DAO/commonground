@@ -27,8 +27,7 @@
 > 3e8b08e, 2026-11-01; Tailwind CSS 4 (§9 "Styling: Tailwind CSS 4", the CSS row, the
 > build-target paragraph, "Dependency pins and constraints", wave M4) against commit
 > 440c779, 2026-11-02; inline background images (§9) against commit 591e6cf, 2026-11-02;
-> "Writers of the shared entity databases" (§ Dexie) against the chat-sync/entity-dbs
-> branch, 2026-11-02
+> "Writers of the shared entity databases" (§ Dexie) against commit cd6e8a0, 2026-11-02
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 

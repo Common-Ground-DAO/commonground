@@ -48,10 +48,12 @@ export const SOCKET_ID_PATTERN = /^[A-Za-z0-9_-]{20}$/;
  * The only Web Lock of the design: serialises HTTP logins (device login and
  * interactive logins) across the tabs of one browser profile, because an
  * anonymous -> user login regenerates the session id and two concurrent ones
- * would invalidate each other's cookie. Held only around one login request
- * (+ the immediate re-check of `User/checkLoginStatus` when a tab got the
- * lock after another tab logged in). Nothing else waits on it. Without
- * `navigator.locks` the login runs unserialised.
+ * would invalidate each other's cookie. Held only around one login
+ * exchange — for a device login `User/getSignableSecret`, the signature and
+ * `User/login` together, since the session keeps one signable secret — plus
+ * the re-check of `User/checkLoginStatus` when a tab got the lock after
+ * another tab logged in (and the post-reconnect snapshot login). Nothing
+ * else waits on it. Without `navigator.locks` the login runs unserialised.
  */
 export const LOGIN_LOCK_NAME = 'cg:login';
 
@@ -78,12 +80,13 @@ export const RESUME_MIN_HIDDEN_MS = 30_000;
  *   start of a socket login until its ack.
  *
  * connectionManager emits the app events `cliConnectionEstablished` /
- * `cliConnectionRestored` exactly at these transitions (no longer on the raw
- * socket `connect`), and `Common.WebSocketState` reports `connected` only
+ * `cliConnectionRestored` exactly at the `established` / `restored`
+ * transitions (no longer on the raw socket `connect`; `user` has no app
+ * event), and `Common.WebSocketState` reports `connected` only
  * while live. `version-update` stops being a socket state (see
  * Transport.updateAvailable).
  */
-export type LiveKind = 'established' | 'restored';
+export type LiveKind = 'established' | 'restored' | 'user';
 
 /**
  * Why a tab whose socket stayed live asks for a catch-up:
@@ -282,9 +285,11 @@ export type LegacyWorkerToTabMessage = {
  * does not mirror stale values; it connects as "active". All other legacy
  * messages (heartbeats, 'tabClosed') are ignored; there are no bans. Several
  * old pages answered this way resolve collisions among themselves as before
- * (visible tab wins). The page-to-worker `postMessage`s of old pages,
- * `{ type: 'STOP_TAB_HANDLING' }` and `{ type: 'CHANNEL_VISITED', channelId }`,
- * are accepted and ignored. Remove this in the release after chat-sync.
+ * (visible tab wins). Of the page-to-worker `postMessage`s of old pages,
+ * `{ type: 'STOP_TAB_HANDLING' }` is accepted and ignored;
+ * `{ type: 'CHANNEL_VISITED', channelId }` stays handled (it closes that
+ * channel's push notifications, for new pages too). Remove this in the
+ * release after chat-sync.
  */
 export type LegacyCompatAnswer = {
   type: 'WorkerToTab';

@@ -6,6 +6,7 @@ import type { ElementHandle, Page } from 'puppeteer';
 import { waitLoginSettled, type FlowContext } from './harness.ts';
 import { writeTestPng } from './images.ts';
 import { clickText, describe, fill, findByText, hasText, sleep, until, waitText } from './ui.ts';
+import { EVAL_TIMEOUT_MS, within } from './within.ts';
 
 /**
  * App-level helpers shared by the flows: readiness, the connection
@@ -17,15 +18,16 @@ import { clickText, describe, fill, findByText, hasText, sleep, until, waitText 
  * and — unless `settleLogin` is false — the device login of this page load
  * is done (see waitLoginSettled; only the reload flow acts before that).
  */
-export async function waitAppReady(page: Page, options: { timeout?: number; settleLogin?: boolean } = {}) {
-  const { timeout = 30_000, settleLogin = true } = options;
+export async function waitAppReady(page: Page, options: { timeout?: number; settleLogin?: boolean; tab?: boolean } = {}) {
+  const { timeout = 30_000, settleLogin = true, tab = false } = options;
   await page.waitForFunction(() => {
     const preview = document.getElementById('cg-preview');
     const indicator = document.getElementById('cg-connection-indicator');
     return !!indicator && (!preview || getComputedStyle(preview).opacity === '0' || getComputedStyle(preview).display === 'none' || getComputedStyle(preview).visibility === 'hidden');
   }, { timeout, polling: 200 }).catch(describe('the app shell to finish loading', timeout));
   if (settleLogin) {
-    await waitLoginSettled(page);
+    // a further tab of a logged-in browser (t.tab) may not log in itself
+    await waitLoginSettled(page, 1000, 20_000, { optionalLogin: tab });
   }
 }
 
@@ -36,11 +38,11 @@ export async function waitAppReady(page: Page, options: { timeout?: number; sett
  * hidden, so the class is the signal, not the text.
  */
 export async function connectionState(page: Page): Promise<string> {
-  return page.evaluate(() => {
+  return within(page.evaluate(() => {
     const el = document.getElementById('cg-connection-indicator');
     const cls = Array.from(el?.classList ?? []).find(c => c.startsWith('cg-connection-indicator-'));
     return cls ? cls.slice('cg-connection-indicator-'.length) : 'missing';
-  });
+  }), EVAL_TIMEOUT_MS, 'the connection indicator');
 }
 
 /**
@@ -178,4 +180,40 @@ export async function openChannel(t: FlowContext, page: Page, channelPath: strin
   await navigate(t, page, channelPath);
   await page.waitForSelector(EDITOR, { visible: true, timeout: 30_000 });
   await sleep(300);
+}
+
+/**
+ * Edits the own message containing `text` in the open channel: the hover
+ * tooltip's edit button, then `suffix` appended in the composer (it is
+ * prefilled with the message) and sent. Resolves when the sender's list
+ * shows the edited text.
+ */
+export async function editMessage(page: Page, text: string, suffix: string) {
+  const id = await waitMessageConfirmed(page, text, 10_000);
+  const item = await page.waitForSelector(`.message-item[id="${id}"]`, { visible: true });
+  await item!.hover();
+  await page.waitForSelector('#tooltip-root .message-tooltip', { visible: true, timeout: 10_000 });
+  // own message: emoji list, emoji picker | reply | edit | delete | pin
+  const edit = await page.evaluateHandle(() => {
+    const tooltip = document.querySelector('#tooltip-root .message-tooltip')!;
+    const children = Array.from(tooltip.children);
+    const separators = children.filter(el => el.classList.contains('cg-separator-vertical'));
+    const afterSecond = children.indexOf(separators[1]) + 1;
+    return children[afterSecond]?.tagName === 'BUTTON' ? children[afterSecond] : null;
+  });
+  const button = edit.asElement() as ElementHandle<Element> | null;
+  if (!button) {
+    throw new Error('no edit button in the message tooltip');
+  }
+  await button.click();
+  await page.waitForSelector('.message-item.editing', { timeout: 10_000 });
+  const editor = await page.waitForSelector(EDITOR, { visible: true });
+  await editor!.click();
+  await page.keyboard.press('End');
+  await page.keyboard.type(suffix, { delay: 3 });
+  await page.keyboard.press('Enter');
+  await page.waitForFunction((msgId: string, edited: string) => {
+    const el = document.getElementById(msgId);
+    return !!el && !el.classList.contains('editing') && !!(el.querySelector('.message-item-message') as HTMLElement | null)?.innerText.includes(edited);
+  }, { timeout: 10_000 }, id, `${text}${suffix}`);
 }

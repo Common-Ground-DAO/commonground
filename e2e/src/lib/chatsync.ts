@@ -4,7 +4,7 @@
 
 import type { FlowContext, Session } from './harness.ts';
 import { signUp, type Account } from './account.ts';
-import { createChannel, createCommunity, joinCommunity, type Community } from './app.ts';
+import { createChannel, createCommunity, joinCommunity, navigate, type Community } from './app.ts';
 import { prepareLivePage } from './live.ts';
 
 /**
@@ -42,6 +42,9 @@ export async function ownerAndMember(t: FlowContext, options: {
     const community = await createCommunity(t, owner.page);
     const channels: Record<string, string> = {};
     for (const title of options.channels ?? []) {
+      // from the community page each time: the channel settings stay on the
+      // created channel's form otherwise
+      await navigate(t, owner.page, community.path);
       channels[title] = await createChannel(t, owner.page, community, title);
     }
     const memberAccount = await signUp(t, member, 'password', options.member ?? 'csmember');

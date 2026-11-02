@@ -328,7 +328,11 @@ export type NewMessage = Pick<Models.Message.Message, 'channelId' | 'body' | 'at
  * CURSOR AND GAPS. `seenSeq` is the contiguous applied high-water mark: all
  * changes up to it are applied. Every applied syncSeq from any source (live
  * events, getChanges, create/edit responses — own sends get no own event)
- * is recorded; while `seenSeq + 1` is recorded, `seenSeq` advances. A
+ * is recorded (a delete event records every seq in `syncSeqs`, else its
+ * `syncSeq`); while `seenSeq + 1` is recorded, `seenSeq` advances. A delta
+ * dropped because the stored syncSeq is higher is NOT recorded: its gap
+ * stays open and the gap catch-up fetches the full row. An equal-seq
+ * duplicate counts as recorded. A
  * recorded seq above `seenSeq + 1` is a gap; if it is still open after
  * GAP_RESYNC_DEBOUNCE_MS, a `getChanges` runs (some seq bumps have no own
  * event, so false gaps happen and are cheap). The request cursor is
@@ -351,10 +355,11 @@ export type NewMessage = Pick<Models.Message.Message, 'channelId' | 'body' | 'at
  * (idempotent create).
  * EDIT: an overlay on the server item (`sendStatus: 'sending'`, new body,
  * attachments, parentMessageId). Success applies the edit as a partial
- * update with the response's `syncSeq`/`updatedAt` and clears `sendStatus`;
- * the overlay is dropped once a server version with
- * `syncSeq >= response.syncSeq` is stored (without seq: on the response).
- * Failure -> `error-update`.
+ * update with the response's `syncSeq`/`updatedAt` and clears `sendStatus`.
+ * The overlay is dropped only once that response partial was applied, or
+ * once a FULL version with `syncSeq >= response.syncSeq` is stored (without
+ * seq: on the response). A newer partial from someone else (e.g. a
+ * reaction) does not drop it. Failure -> `error-update`.
  */
 export interface ChannelStore {
   /** remember how to address a channel; idempotent, later calls update it */
@@ -430,6 +435,8 @@ export type ChannelReadState = {
   /**
    * syncSeqs (> seq) of live messages already counted into `unread` since
    * that server count; ascending, at most COUNTED_SEQS_MAX (the highest).
+   * Truncation is an accepted approximation: a duplicate event below the
+   * lowest kept seq can be counted twice until the next server count.
    */
   counted: number[];
   /** max of every value ever seen (ISO) */
@@ -444,7 +451,8 @@ export type ChannelReadState = {
  * the Dexie writers (community/chat DBs, inside their transaction) use, so
  * several tabs applying the same inputs converge.
  *
- * Rules ("null" lastRead counts as oldest; dates compared by Date.parse):
+ * Rules ("stored" = the record before this merge; "null" lastRead counts
+ * as oldest; dates compared by Date.parse):
  * - Always `lastRead := max(stored, input)`.
  * - `snapshot` WITH syncSeq S: taken when its lastRead >= stored lastRead and
  *   S >= stored seq: `unread := snap.unread + counted.filter(s => s > S).length`,

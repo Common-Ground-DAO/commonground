@@ -31,7 +31,9 @@ declare global {
                 /**
                  * chat-sync: `{ withTime: true }` asks for the object answer.
                  * Older servers ignore the body (the route has no validator)
-                 * and answer with the plain count.
+                 * and answer with the plain count. A validator added on the
+                 * new server must keep accepting a call with no body (old
+                 * clients) and answer it with the plain count.
                  */
                 type Request = undefined | { withTime: true };
                 /**

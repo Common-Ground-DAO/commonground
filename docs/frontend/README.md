@@ -32,7 +32,9 @@
 > 440c779, 2026-11-02; inline background images (§9) against commit 591e6cf, 2026-11-02;
 > the service worker's part in multi-tab coordination (§4 WebSocketManager and
 > ServiceWorkerManager, §8, §9 entry points) against commit 79187d2, 2026-11-02;
-> "Writers of the shared entity databases" (§ Dexie) against commit 212bbce, 2026-11-02
+> "Writers of the shared entity databases" (§ Dexie) against commit 212bbce, 2026-11-02;
+> the message/comment lists on chat-sync windows (`GenericMessageList`, `CommentList`,
+> `Message`, `useChannelReadMarking`) against commit 65db935, 2026-11-02
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -107,10 +109,10 @@ Composed of atoms; represent small, functional UI units.
 
 | Component | Purpose |
 |---|---|
-| `Message` | Single chat message display (text, attachments, reactions). Its `MessageTooltip` sub-component hosts the per-message actions incl. the **Report** action. |
+| `Message` | Single chat message display (text, attachments, reactions). Its `MessageTooltip` sub-component hosts the per-message actions incl. the **Report** action. Re-renders on every change of the message object (edits, reactions, `sendStatus`); a pending own send is faded, a failed send or edit shows Retry and Discard / Undo edit (`retrySend` / `discardPending` of the channel store). Every item carries `data-timestamp` (scroll anchoring). |
 | `MesssageBodyRenderer` | Renders message/article body content into React elements. Note the triple-`s` directory name. See §6 for the markdown pipeline. Exports `MessageBodyRenderer`, `AllContentRenderer`, and (in `MarkdownContent.tsx`) `MarkdownContent` + `toMarkdownSource`. |
 | `CommentMessage` | Article/post comment display |
-| `CommentList` | List of comments |
+| `CommentList` | List of comments: one chat-sync window (`chat.channels.openWindow`), newest first, "load more" via `loadOlder`; failed comments offer Retry/Discard. `ArticleCommentSection` joins the article event room while the transport is live and again on every `onLive`. |
 | `Dialog` | Confirmation/action dialog |
 | `Dropdown` | Dropdown menu |
 | `EmojiPickerTooltip` | Emoji picker in a tooltip popover |
@@ -169,7 +171,7 @@ Composed of atoms; represent small, functional UI units.
 | `SectionEnd` / `SectionEndGroups` | Section dividers |
 | `FrontPageSectionHeader` | Section header for home page |
 | `ManagementHeader` / `ManagementHeader2` | Headers for admin views |
-| `GenericMessageList` | Reusable message list container |
+| `GenericMessageList` | Reusable message list container. Opens one chat-sync `ChannelWindow` per channel and inits it once its list is mounted (`recent`, or `atItemId` for a focus target; `jumpToLatest` after a send or the scroll-down helper while detached). The window listener sets the `Scrollable` lock from `WindowChange.kind` before rendering (`scrollAnchoring.ts`): older/newer pages and trims at the top lock by the visible item's `data-timestamp`, an own send or a live message while at the bottom scrolls to the bottom, a jump scrolls to its target, a catch-up reset keeps the position. Read marking via `useChannelReadMarking` (no IntersectionObserver). Reply parents and pinned messages use `watchMessage` (no window needed). |
 | `CollapsableGroup` | Collapsable section group |
 | `AreaList` | List of community areas |
 | `CallList` | List of active calls |
@@ -491,6 +493,7 @@ The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `Wa
 |---|---|
 | `useLocalStorage` | Persistent state backed by `localStorage`. Supports cross-tab synchronization via `StorageEvent` and same-tab synchronization via a `changeListeners` map. Returns `[value, setValue]` like `useState`. |
 | `useAsyncMemo` | Like `useMemo` but for async computations. |
+| `useChannelReadMarking` | Level-triggered read marking of a mounted message window: reports `{atLatest, atBottom, newest server item}` to a `chat.readState` marker on every change; the store marks the channel read while a marker has all three, the tab is visible and logged in. None for call chats and article comments. |
 | `useOnScreen` | Detects if an element is visible in the viewport via `IntersectionObserver`. |
 | `usePremiumTier` | Returns the current user's premium tier (`'free'`, `'silver'`, `'gold'`). Also exports `useUserPremiumTier` (for arbitrary users) and `useCommunityPremiumTier` (for communities with tiers `'BASIC'`, `'PRO'`, `'ENTERPRISE'`). |
 | `useSentinelLoadMore` | Infinite scroll helper. Uses `IntersectionObserver` on a sentinel element to trigger `loadMore` callbacks. |

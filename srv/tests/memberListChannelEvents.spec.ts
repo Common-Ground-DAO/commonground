@@ -11,7 +11,7 @@
  */
 
 import { decideChannelEvent, findAdminRoleId, MAX_CHANNEL_EVENT_DEFERRALS } from '../util/memberListChannelEvents';
-import { channelMemberListOrEmpty, emptyChannelMemberList } from '../common/channelMemberList';
+import { channelMemberListOrEmpty, emptyChannelMemberList } from '../common/memberLists';
 import { convertBinaryMemberListToUuid } from '../util/memberListHelpers';
 import { PredefinedRole, RoleType } from '../common/enums';
 

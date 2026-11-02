@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import BaseApiConnector from "./baseConnector";
-import { channelMemberListOrEmpty } from "common/channelMemberList";
+import { channelMemberListOrEmpty, memberListOrEmpty } from "common/memberLists";
 
 class CommunityApiConnector extends BaseApiConnector {
   constructor() {
@@ -79,12 +79,14 @@ class CommunityApiConnector extends BaseApiConnector {
   public async getMemberList(
     data: API.Community.getMemberList.Request
   ): Promise<API.Community.getMemberList.Response> {
-    const result = await this.ajax<API.Community.getMemberList.Response>(
+    const result = await this.ajax<API.Community.getMemberList.Response | null | undefined>(
       "POST",
       '/getMemberList',
       data
     );
-    return result;
+    // a reply without a list (e.g. for a community created a moment ago)
+    // counts as an empty one; failed requests reject as before
+    return memberListOrEmpty(result);
   }
 
   public async getChannelMemberList(

@@ -11,7 +11,7 @@ import { convertUuidToBinary, convertBinaryToUuid } from './util/memberListHelpe
 import { asyncRequestHandler } from './util/asyncHandler';
 import { describeErrorForLog } from './util/errorLog';
 import { decideChannelEvent, MAX_CHANNEL_EVENT_DEFERRALS } from './util/memberListChannelEvents';
-import { emptyChannelMemberList } from './common/channelMemberList';
+import { emptyChannelMemberList, emptyMemberList } from './common/memberLists';
 
 type PgNotifyEvent = Events.PgNotify.UserDataChange | Events.PgNotify.UserRoleChange | Events.PgNotify.CommunityRoleChange | Events.PgNotify.ChannelRolePermissionChange;
 
@@ -68,8 +68,9 @@ type ChannelMemberListArr = {
 
 let client: PoolClient;
 const changeEvents: PgNotifyEvent[] = [];
-// channel events that arrived before their community's roles; retried first
-// in the next batch (memberListChannelEvents.ts)
+// safety net: channel events that arrived before their community's roles are
+// retried first in the next batch (memberListChannelEvents.ts) — in normal
+// operation the rolechange NOTIFY always comes first
 const deferredChannelEvents: { event: Events.PgNotify.ChannelRolePermissionChange; deferrals: number }[] = [];
 
 const userDataByUserId = new Map<string, UserData>();
@@ -596,6 +597,11 @@ function updateUserChannelGroup(options: {
 }
 
 function handleEvents() {
+  processChangeEvents();
+  setTimeout(handleEvents, 1000);
+}
+
+function processChangeEvents() {
   const retried = deferredChannelEvents.splice(0);
   const deferralsByEvent = new Map<PgNotifyEvent, number>(retried.map(d => [d.event, d.deferrals]));
   const deferredCommunityIds = new Set<string>();
@@ -1027,8 +1033,6 @@ function handleEvents() {
       memberList._all = memberList.admin.concat(memberList.moderator, memberList.writer, memberList.reader, memberList.offline);
     }
   }
-
-  setTimeout(handleEvents, 1000);
 }
 
 function getMemberListWindow(options: {
@@ -1037,24 +1041,26 @@ function getMemberListWindow(options: {
   limit: number;
   search?: string;
   roleId?: string;
-}): Models.Community.MemberList | undefined {
+}): Models.Community.MemberList {
   const { communityId, offset, limit, search: _search, roleId } = options;
+  // a community this service does not know (yet — a new one appears with the
+  // next event batch) answers an empty list, never an empty body
   const search = _search?.toLocaleLowerCase();
   const communityRoles = roleDataByCommunityId.get(communityId);
   if (!communityRoles) {
     console.trace("ERROR (SKIP): Community roles not found for communityId:", convertBinaryToUuid(communityId));
-    return undefined;
+    return emptyMemberList();
   }
   const communityRoleIdArray = Array.from(communityRoles.keys());
   const memberRoleId = communityRoleIdArray.find(roleId => communityRoles.get(roleId)?.roleType === RoleType.PREDEFINED && communityRoles.get(roleId)?.title === PredefinedRole.Member);
   if (!memberRoleId) {
     console.trace("ERROR (SKIP): Member role not found for communityId:", convertBinaryToUuid(communityId));
-    return undefined;
+    return emptyMemberList();
   }
   const memberIds = userIdsByRoleId.get(memberRoleId);
   if (!memberIds) {
     console.trace("ERROR (SKIP): Member ids not found for memberRoleId:", convertBinaryToUuid(memberRoleId));
-    return undefined;
+    return emptyMemberList();
   }
   const memberListWindow: Models.Community.MemberList = {
     totalCount: memberIds.size,
@@ -1066,12 +1072,12 @@ function getMemberListWindow(options: {
   const memberList = memberListByCommunityId.get(communityId);
   if (!memberList) {
     console.trace("ERROR (SKIP): Member list not found for communityId:", convertBinaryToUuid(communityId));
-    return undefined;
+    return emptyMemberList();
   }
   const memberSet = memberIdsByCommunityId.get(communityId);
   if (!memberSet) {
     console.trace("ERROR (SKIP): Member set not found for communityId:", convertBinaryToUuid(communityId));
-    return undefined;
+    return emptyMemberList();
   }
 
   let _offset = offset;
@@ -1297,7 +1303,10 @@ async function init() {
   handleEvents();
 }
 
-const ready = init();
+// started only as the service's entry point; tests import this module for
+// `memberListForTests`
+const isMain = require.main === module;
+const ready: Promise<void> = isMain ? init() : Promise.resolve();
 
 // a failing request (e.g. initialisation failed) answers 500; the api's caller
 // turns that into its generic error response
@@ -1345,20 +1354,32 @@ app.post('/getUserCommunityRoleIds', express.json(), asyncRequestHandler(async (
   res.json(Array.from(communityRoleData.keys()).filter(roleId => userData.roleIds.has(roleId)));
 }, requestFailed));
 
-app.listen(4000);
-
 const shutdown = async (code = 0) => {
   process.exit(code);
 }
 
-fakeHealthcheck();
+if (isMain) {
+  app.listen(4000);
 
-process.on("SIGTERM", () => shutdown());
-process.on("unhandledRejection", (reason, promise) => {
-  console.trace('Unhandled Rejection at:', promise, 'reason:', reason);
-  shutdown(1);
-});
-process.on("uncaughtException", (error, origin) => {
-  console.trace('Uncaught Exception at:', error, 'origin:', origin);
-  shutdown(1);
-});
+  fakeHealthcheck();
+
+  process.on("SIGTERM", () => shutdown());
+  process.on("unhandledRejection", (reason, promise) => {
+    console.trace('Unhandled Rejection at:', promise, 'reason:', reason);
+    shutdown(1);
+  });
+  process.on("uncaughtException", (error, origin) => {
+    console.trace('Uncaught Exception at:', error, 'origin:', origin);
+    shutdown(1);
+  });
+}
+
+/** the event processing and the windows, driven by tests (tests/memberListEvents.spec.ts) */
+export const memberListForTests = {
+  queueEvent: (event: PgNotifyEvent) => { changeEvents.push(event); },
+  processChangeEvents,
+  getMemberListWindow,
+  getChannelMemberListWindow,
+  hasChannelMemberList: (communityId: string, channelId: string) =>
+    memberListByCommunityIdByChannelId.get(communityId)?.has(channelId) === true,
+};

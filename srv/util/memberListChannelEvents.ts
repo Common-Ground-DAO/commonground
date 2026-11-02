@@ -10,10 +10,12 @@ import { PredefinedRole, RoleType } from '../common/enums';
  * import) so the decision can be tested.
  *
  * A channel the service does not know yet needs its community's Admin role.
- * If the community's roles have not been processed yet, the event is deferred
- * to the next batch instead of being dropped, so the channel is not lost;
- * once one event of a community is deferred, the later ones of that community
- * in the same batch are deferred too, so they keep their order.
+ * In normal operation the roles are always known by then: the permission rows
+ * reference `roles` by foreign key, so the role's `rolechange` NOTIFY is
+ * always delivered first. As a safety net, an event that still finds no roles
+ * is deferred to the next batch instead of being dropped; once one event of a
+ * community is deferred, the later ones of that community in the same batch
+ * are deferred too, so they keep their order.
  */
 
 /** batches (one per second) an event may be deferred before it is dropped */

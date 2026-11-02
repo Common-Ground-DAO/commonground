@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 // aliased: called from a plain setup helper, not a React hook
 import { useDataLayerFakeTimers as installFakeTimers } from 'test/timers';
 import { flushMicrotasks } from 'test/deferred';
-import { createReadStateStore, SYNC_STATE_DEBOUNCE_MS } from './readStateStore';
+import { createReadStateStore, MARK_READ_RETRY_MS, SYNC_STATE_DEBOUNCE_MS } from './readStateStore';
 import { FakeChatServer, ME } from './testing/fakeServer';
 import { systemClock } from './util';
 import { MARK_READ_THROTTLE_MS, type ReadStateInput, type ReadStatePersistence } from './types';
@@ -197,19 +197,60 @@ describe('ReadStateStore: level-triggered marking', () => {
     off.dispose();
   });
 
-  it('a failed mark stays pending and is retried on the next live signal', async () => {
+  it('a failed mark is retried with backoff, without further triggers', async () => {
+    const { server, store } = setup();
+    const [m] = server.seed(C, 1);
+    server.fail('setChannelLastRead', new Error('Unexpected status: 500'), 3);
+    store.createMarker(C).update({ atLatest: true, atBottom: true, newest: newestOf(m) });
+    await settle();
+    const calls = () => server.callsOf('setChannelLastRead').length;
+    expect(calls()).toBe(1);
+    await vi.advanceTimersByTimeAsync(MARK_READ_RETRY_MS[0] - 1);
+    expect(calls()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await settle();
+    expect(calls()).toBe(2);
+    await vi.advanceTimersByTimeAsync(MARK_READ_RETRY_MS[1]);
+    await settle();
+    expect(calls()).toBe(3);
+    await vi.advanceTimersByTimeAsync(MARK_READ_RETRY_MS[2]);
+    await settle();
+    expect(calls()).toBe(4);
+    expect(server.channels.get(C)!.lastRead.get(ME)).toBe(m.createdAt);
+    // success: no more calls
+    await vi.advanceTimersByTimeAsync(MARK_READ_RETRY_MS[3] * 2);
+    expect(calls()).toBe(4);
+  });
+
+  it('a live signal retries a failed mark at once and resets the backoff', async () => {
     const { server, store } = setup();
     const [m] = server.seed(C, 1);
     server.fail('setChannelLastRead', new Error('Network down'), 1);
     store.createMarker(C).update({ atLatest: true, atBottom: true, newest: newestOf(m) });
     await settle();
-    expect(server.callsOf('setChannelLastRead')).toHaveLength(1);
-    // no timer of its own: nothing happens until a trigger
-    await vi.advanceTimersByTimeAsync(MARK_READ_THROTTLE_MS * 5);
-    expect(server.callsOf('setChannelLastRead')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(MARK_READ_THROTTLE_MS);
     await live(server);
     expect(server.callsOf('setChannelLastRead')).toHaveLength(2);
     expect(store.get(C)!.lastRead).toBe(m.createdAt);
+    await vi.advanceTimersByTimeAsync(MARK_READ_RETRY_MS[3]);
+    expect(server.callsOf('setChannelLastRead')).toHaveLength(2);
+  });
+
+  it('getSyncState in flight across clear() and a new login: the new user is still synced', async () => {
+    const { server, store } = setup();
+    server.seed(C, 3);
+    server.hold('getSyncState');
+    await live(server);
+    expect(server.heldCount('getSyncState')).toBe(1);
+    store.clear();
+    server.setUser('user-b');
+    await live(server);
+    server.release('getSyncState');
+    await settle();
+    await vi.advanceTimersByTimeAsync(1000);
+    await settle();
+    expect(server.callsOf('getSyncState')).toHaveLength(2);
+    expect(store.get(C)).toMatchObject({ seq: 3 });
   });
 
   it('adds messageId once getSyncState succeeded', async () => {

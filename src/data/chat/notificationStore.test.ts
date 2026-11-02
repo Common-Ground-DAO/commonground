@@ -225,4 +225,53 @@ describe('NotificationStore: list', () => {
     expect(store.unreadCount).toBe(0);
     expect(w.state.items).toEqual([]);
   });
+
+  it('a failed markAsRead does not revert a read confirmed by the server meanwhile', async () => {
+    const { server, store } = setup();
+    const ev = server.addNotification({}, { deliver: false });
+    const id = (ev as { data: { id: string } }).data.id;
+    const { w } = await openList(store);
+    server.hold('markAsRead');
+    server.fail('markAsRead', new Error('Network down'), 1);
+    const p = store.markAsRead(id);
+    await settle();
+    server.readNotificationElsewhere(id);
+    server.release('markAsRead');
+    await p;
+    await settle();
+    expect(w.state.items.find(n => n.id === id)!.read).toBe(true);
+  });
+
+  it('markAllAsRead: one call while in flight; a failure reverts only the optimistic copies', async () => {
+    const { server, store } = setup();
+    const a = (server.addNotification({}, { deliver: false }) as { data: { id: string } }).data.id;
+    server.addNotification({}, { deliver: false });
+    const { w } = await openList(store);
+    server.hold('markAllAsRead');
+    server.fail('markAllAsRead', new Error('Network down'), 1);
+    const p1 = store.markAllAsRead();
+    const p2 = store.markAllAsRead();
+    expect(w.state.items.every(n => n.read)).toBe(true);
+    await settle();
+    expect(server.callsOf('markAllAsRead')).toHaveLength(1);
+    server.readNotificationElsewhere(a);
+    server.release('markAllAsRead');
+    await Promise.all([p1, p2]);
+    await settle();
+    expect(w.state.items.map(n => n.read)).toEqual([true, false]);
+  });
+
+  it('a stream of count-less events cannot postpone the count refetch forever', async () => {
+    const { server, store } = setup({ oldServer: true });
+    store.setupAfterLogin(0);
+    for (let i = 0; i < 10; i++) {
+      server.addNotification();
+      await vi.advanceTimersByTimeAsync(COUNT_REFETCH_DEBOUNCE_MS / 2);
+    }
+    await settle();
+    expect(server.callsOf('getUnreadCount').length).toBeGreaterThanOrEqual(2);
+    await vi.advanceTimersByTimeAsync(COUNT_REFETCH_DEBOUNCE_MS);
+    await settle();
+    expect(store.unreadCount).toBe(10);
+  });
 });

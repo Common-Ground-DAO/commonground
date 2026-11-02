@@ -23,6 +23,8 @@ import { isHttpNotFound, isValidationError, Timer } from './util';
 
 /** coalesces onLive/onResume bursts into one getSyncState */
 export const SYNC_STATE_DEBOUNCE_MS = 50;
+/** backoff of a failed setChannelLastRead (the last value repeats); reset on success or a new trigger */
+export const MARK_READ_RETRY_MS = [2_000, 5_000, 15_000, 60_000] as const;
 
 type Target = { id: string; createdAt: Date };
 
@@ -33,7 +35,11 @@ type MarkState = {
   sentMs: number;
   inFlight: boolean;
   lastCallAt: number | null;
+  /** trailing throttle */
   timer: Timer;
+  /** consecutive failures of the call */
+  failures: number;
+  retryTimer: Timer;
 };
 
 class MarkerImpl implements ReadMarker {
@@ -189,7 +195,9 @@ class ReadStateStoreImpl implements ReadStateStore {
           const generation = this.generation;
           try {
             const resp = await this.deps.api.getSyncState({});
-            if (generation !== this.generation || this.disposed) return;
+            if (this.disposed) return;
+            // cleared meanwhile (logout / user switch): drop this answer, run again if asked
+            if (generation !== this.generation) continue;
             this.serverSupportsSync = true;
             for (const c of resp.channels) {
               this.applyInput({
@@ -206,7 +214,10 @@ class ReadStateStoreImpl implements ReadStateStore {
           }
         }
         // a live signal is a trigger for pending marks too
-        for (const channelId of [...this.marks.keys()]) this.trySend(channelId);
+        for (const [channelId, m] of [...this.marks]) {
+          this.resetBackoff(m);
+          this.trySend(channelId);
+        }
         this.evaluateAll();
       } while (this.syncAgain && !this.disposed);
     } finally {
@@ -237,7 +248,15 @@ class ReadStateStoreImpl implements ReadStateStore {
   private mark(channelId: string): MarkState {
     let m = this.marks.get(channelId);
     if (!m) {
-      m = { want: null, sentMs: -Infinity, inFlight: false, lastCallAt: null, timer: new Timer(this.deps.clock) };
+      m = {
+        want: null,
+        sentMs: -Infinity,
+        inFlight: false,
+        lastCallAt: null,
+        timer: new Timer(this.deps.clock),
+        failures: 0,
+        retryTimer: new Timer(this.deps.clock),
+      };
       this.marks.set(channelId, m);
     }
     return m;
@@ -265,6 +284,7 @@ class ReadStateStoreImpl implements ReadStateStore {
     const threshold = Math.max(this.serverLastRead.get(channelId) ?? -Infinity, m.sentMs, m.want ? m.want.createdAt.getTime() : -Infinity);
     if (target.createdAt.getTime() > threshold) {
       m.want = { id: target.id, createdAt: target.createdAt };
+      this.resetBackoff(m);
       // show it as read at once (own mark); the server answer is merged later
       if (events.userId) this.applyInput({ kind: 'lastRead', channelId, lastRead: target.createdAt.toISOString() }, 'own-mark');
     }
@@ -297,6 +317,7 @@ class ReadStateStoreImpl implements ReadStateStore {
       resp => {
         if (generation !== this.generation || this.disposed) return;
         m.inFlight = false;
+        this.resetBackoff(m);
         m.sentMs = Math.max(m.sentMs, value.createdAt.getTime());
         if (m.want && m.want.createdAt.getTime() <= m.sentMs) m.want = null;
         const input: ReadStateInput = resp
@@ -308,10 +329,18 @@ class ReadStateStoreImpl implements ReadStateStore {
       },
       () => {
         if (generation !== this.generation || this.disposed) return;
-        // stays pending: sent again on the next login, live signal or trigger
+        // stays pending: retried with backoff, and on the next login, live signal or trigger
         m.inFlight = false;
+        const delay = MARK_READ_RETRY_MS[Math.min(m.failures, MARK_READ_RETRY_MS.length - 1)];
+        m.failures++;
+        m.retryTimer.start(delay, () => this.trySend(channelId));
       },
     );
+  }
+
+  private resetBackoff(m: MarkState): void {
+    m.failures = 0;
+    m.retryTimer.clear();
   }
 
   private async send(access: API.Messages.MessageAccess, value: Target): Promise<API.Messages.setChannelLastRead.Response> {
@@ -333,7 +362,10 @@ class ReadStateStoreImpl implements ReadStateStore {
     this.generation++;
     this.states.clear();
     this.serverLastRead.clear();
-    for (const m of this.marks.values()) m.timer.clear();
+    for (const m of this.marks.values()) {
+      m.timer.clear();
+      m.retryTimer.clear();
+    }
     this.marks.clear();
   }
 
@@ -344,7 +376,10 @@ class ReadStateStoreImpl implements ReadStateStore {
     for (const u of this.unsubs) u();
     this.unsubs.length = 0;
     this.syncTimer.clear();
-    for (const m of this.marks.values()) m.timer.clear();
+    for (const m of this.marks.values()) {
+      m.timer.clear();
+      m.retryTimer.clear();
+    }
     this.marks.clear();
     this.listeners.clear();
   }

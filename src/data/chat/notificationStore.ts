@@ -155,6 +155,7 @@ class NotificationStoreImpl implements NotificationStore {
   private readonly inFlightRead = new Set<string>();
   /** ids marked read by this tab that are not in the loaded list */
   private readonly readIds = new Set<string>();
+  private markAllInFlight: Promise<void> | null = null;
 
   private readonly refetchTimer: Timer;
   private readonly resyncTimer: Timer;
@@ -215,7 +216,8 @@ class NotificationStoreImpl implements NotificationStore {
   }
 
   private scheduleCountRefetch(): void {
-    this.refetchTimer.start(COUNT_REFETCH_DEBOUNCE_MS, () => {
+    // `ensure`: a stream of count-less events must not postpone the refetch forever
+    this.refetchTimer.ensure(COUNT_REFETCH_DEBOUNCE_MS, () => {
       this.fetchCount().catch(noop);
     });
   }
@@ -390,6 +392,7 @@ class NotificationStoreImpl implements NotificationStore {
   }
 
   private notify(hints?: Map<ListWindow, WindowChange>): void {
+    if (this.disposed) return;
     for (const w of [...this.windows]) {
       const next = this.computeState(w);
       const change = hints?.get(w) ?? this.diff(w.state, next);
@@ -496,8 +499,10 @@ class NotificationStoreImpl implements NotificationStore {
     const known = i >= 0 ? this.items[i] : undefined;
     if ((known ? known.read : this.readIds.has(notificationId)) || this.inFlightRead.has(notificationId)) return;
     this.inFlightRead.add(notificationId);
+    let optimistic: Notification | undefined;
     if (known) {
-      this.items[i] = { ...known, read: true };
+      optimistic = { ...known, read: true };
+      this.items[i] = optimistic;
       this.notify();
     }
     const generation = this.generation;
@@ -509,9 +514,10 @@ class NotificationStoreImpl implements NotificationStore {
       }
     } catch {
       if (generation === this.generation) {
+        // revert only our optimistic copy (a server update may have confirmed it meanwhile)
         const j = this.items.findIndex(n => n.id === notificationId);
-        if (j >= 0 && this.items[j].read && known && !known.read) {
-          this.items[j] = { ...this.items[j], read: false };
+        if (j >= 0 && optimistic && this.items[j] === optimistic && known) {
+          this.items[j] = known;
           this.notify();
         }
       }
@@ -520,20 +526,39 @@ class NotificationStoreImpl implements NotificationStore {
     }
   }
 
-  async markAllAsRead(): Promise<void> {
-    const changed = new Set(this.items.filter(n => !n.read).map(n => n.id));
-    if (changed.size > 0) {
-      this.items = this.items.map(n => (changed.has(n.id) ? { ...n, read: true } : n));
-      this.notify();
+  markAllAsRead(): Promise<void> {
+    if (!this.markAllInFlight) {
+      this.markAllInFlight = this.runMarkAllAsRead().finally(() => {
+        this.markAllInFlight = null;
+      });
     }
+    return this.markAllInFlight;
+  }
+
+  private async runMarkAllAsRead(): Promise<void> {
+    /** optimistic copy -> the item before */
+    const optimistic = new Map<Notification, Notification>();
+    this.items = this.items.map(n => {
+      if (n.read) return n;
+      const copy = { ...n, read: true };
+      optimistic.set(copy, n);
+      return copy;
+    });
+    if (optimistic.size > 0) this.notify();
     const generation = this.generation;
     try {
       await this.deps.api.markAllAsRead(undefined);
       if (generation === this.generation) this.fetchCount().catch(noop);
     } catch {
-      if (generation === this.generation && changed.size > 0) {
-        this.items = this.items.map(n => (changed.has(n.id) && n.read ? { ...n, read: false } : n));
-        this.notify();
+      if (generation === this.generation && optimistic.size > 0) {
+        let reverted = false;
+        this.items = this.items.map(n => {
+          const before = optimistic.get(n);
+          if (!before) return n;
+          reverted = true;
+          return before;
+        });
+        if (reverted) this.notify();
       }
     }
   }

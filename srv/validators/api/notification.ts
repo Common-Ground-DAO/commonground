@@ -21,6 +21,14 @@ const notificationApi = {
     updatedAfter: common.DateString.required(),
   }).strict(true).required(),
 
+  /**
+   * `{ withTime: true }` asks for `{ unreadCount, unreadCountAt }`; a call
+   * without a body (older clients) arrives as `{}` and gets the plain count.
+   */
+  getUnreadCount: Joi.object<{ withTime: true }>({
+    withTime: Joi.boolean(),
+  }).strict(true).required(),
+
   markAsRead: Joi.object<API.Notification.markAsRead.Request>({
     notificationId: common.Uuid.required(),
   }).strict(true).required(),

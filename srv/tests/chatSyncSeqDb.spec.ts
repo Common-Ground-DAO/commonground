@@ -9,8 +9,11 @@
  * cluster-wide roles `writer`/`reader` if missing — never point it at a
  * server with data:
  *
- *   docker run -d --name pg-test -e POSTGRES_PASSWORD=pw postgres:18
- *   CG_TEST_PG_HOST=<host> CG_TEST_PG_PASSWORD=pw yarn jest tests/chatSyncSeqDb.spec.ts
+ *   docker run -d --name pg-test -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=pw postgres:18
+ *   CG_TEST_PG_HOST=127.0.0.1 CG_TEST_PG_PORT=55432 CG_TEST_PG_PASSWORD=pw yarn jest tests/chatSyncSeqDb.spec.ts
+ *
+ * Host and port come only from CG_TEST_PG_HOST / CG_TEST_PG_PORT
+ * (tests/helpers/testPg.ts).
  *
  * - the migration up / down / up, with its GRANTs;
  * - the trigger under the api's role `writer`: inserts, real and no-op
@@ -25,12 +28,13 @@
 import { Pool, type PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { ChatSyncSeq1793635200000 as Migration } from '../migrations/1793635200000-chatSyncSeq';
+import { TEST_PG_HOST, TEST_PG_PORT, TEST_PG_PASSWORD, describeDb } from './helpers/testPg';
 
-const HOST = process.env.CG_TEST_PG_HOST;
-const ADMIN_PASSWORD = process.env.CG_TEST_PG_PASSWORD || 'pw';
+const HOST = TEST_PG_HOST;
+const PORT = TEST_PG_PORT;
+const ADMIN_PASSWORD = TEST_PG_PASSWORD;
 const WRITER_PASSWORD = 'writer-test';
 const DATABASE = 'cg_chat_sync_test';
-const describeDb = HOST ? describe : describe.skip;
 
 // repositories/messages runs on this pool (the api's role); set in beforeAll
 let mockWriterPool: Pool | undefined;
@@ -82,7 +86,7 @@ describeDb('message sync sequence on PostgreSQL', () => {
   let warn: jest.SpyInstance;
   beforeAll(async () => {
     warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
-    server = new Pool({ host: HOST, user: 'postgres', password: ADMIN_PASSWORD, database: 'postgres', max: 2 });
+    server = new Pool({ host: HOST, port: PORT, user: 'postgres', password: ADMIN_PASSWORD, database: 'postgres', max: 2 });
     await server.query(`DROP DATABASE IF EXISTS ${DATABASE} WITH (FORCE)`);
     await server.query(`CREATE DATABASE ${DATABASE}`);
     for (const role of ['writer', 'reader']) {
@@ -90,7 +94,7 @@ describeDb('message sync sequence on PostgreSQL', () => {
     }
     await server.query(`ALTER ROLE writer LOGIN PASSWORD '${WRITER_PASSWORD}'`);
 
-    admin = new Pool({ host: HOST, user: 'postgres', password: ADMIN_PASSWORD, database: DATABASE, max: 30 });
+    admin = new Pool({ host: HOST, port: PORT, user: 'postgres', password: ADMIN_PASSWORD, database: DATABASE, max: 30 });
     // the parts of the schema the message statements touch, as before the
     // migration (owned by the migrating superuser; writer has table rights)
     await q(`CREATE TABLE channels (id uuid PRIMARY KEY DEFAULT gen_random_uuid())`);
@@ -130,7 +134,7 @@ describeDb('message sync sequence on PostgreSQL', () => {
     preMigrationMessage = { id: inserted.rows[0].id, channelId };
     await migration.up(runner);
 
-    writer = new Pool({ host: HOST, user: 'writer', password: WRITER_PASSWORD, database: DATABASE, max: 30 });
+    writer = new Pool({ host: HOST, port: PORT, user: 'writer', password: WRITER_PASSWORD, database: DATABASE, max: 30 });
     mockWriterPool = writer;
     // the final DROP DATABASE ... WITH (FORCE) may still meet a closing connection
     for (const pool of [server, admin, writer]) {

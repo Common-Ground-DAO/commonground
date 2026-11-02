@@ -402,7 +402,7 @@ class CallHelper {
     let roleInsert: string = ``;
     if (rolePermissions === undefined) {
       roleInsert = `, (
-        ${format("%L::UUID", callId)}
+        ${format("%L::UUID", callId)},
         (SELECT id FROM member_role),
         ARRAY[${format("%L", MEMBER_PERMISSIONS)}]::"public"."callpermissions_permissions_enum"[]
       )`;
@@ -468,13 +468,29 @@ class CallHelper {
           ON ce."communityId" = c."id"
         WHERE ce.id = $1
       ),
+      -- an event call that was ended (its call server restarted or went
+      -- away, or everyone left after the scheduled end) can be started
+      -- again: memberships left open by the ended call are closed, and
+      -- "endedAt" is reset below
+      close_stale_members AS (
+        UPDATE callmembers
+        SET "leftAt" = COALESCE("leftAt", NOW())
+        WHERE "callId" = (SELECT id FROM get_call)
+          AND "leftAt" IS NULL
+          AND EXISTS (
+            SELECT 1 FROM calls
+            WHERE id = (SELECT id FROM get_call)
+              AND "endedAt" IS NOT NULL
+          )
+      ),
       update_call AS (
         UPDATE calls
         SET
           "callCreator" = $3,
           "callServerId" = $2,
           "startedAt" = NOW(),
-          "updatedAt" = NOW()
+          "updatedAt" = NOW(),
+          "endedAt" = NULL
         WHERE id = (SELECT id FROM get_call)
         RETURNING
           id,
@@ -557,6 +573,7 @@ class CallHelper {
         "updatedAt" = NOW()
       WHERE id = $1
         AND "scheduleDate" IS NULL
+        AND "endedAt" IS NULL
       RETURNING id
     `, [callId]);
     if (result.rowCount === 0) {
@@ -579,12 +596,122 @@ class CallHelper {
         "endedAt" = NOW(),
         "updatedAt" = NOW()
       WHERE id = $1
+        AND "endedAt" IS NULL
       RETURNING id
     `, [callId]);
     if (result.rowCount === 0) {
       return null;
     }
     return result.rows[0].id as string;
+  }
+
+  /**
+   * Ends calls that nobody is in any more (run periodically by the jobs
+   * process, `jobs/callUpdateEmitter.ts`):
+   * - non-scheduled calls that never had a member, once they are older than
+   *   `END_CALL_AFTER_EMPTY_PERIOD`;
+   * - non-scheduled calls whose members have all left, the last one more than
+   *   `END_CALL_AFTER_ALL_LEFT_PERIOD` ago. The call server's room normally
+   *   ends such a call as soon as its last peer leaves (`softEndCall`); this
+   *   catches calls whose room went away without ending them;
+   * - event calls whose members have all left, once the event's scheduled end
+   *   has passed; a scheduled call without an event row (the event's scheduled
+   *   end is unknown, `ce."scheduleDate"` is NULL) as soon as nobody is in it.
+   */
+  public async endEmptyCalls() {
+    const result = await pool.query<{ id: string; communityId: string }>(`
+      WITH stale_calls AS (
+        SELECT cl.id
+        FROM calls cl
+        LEFT JOIN callmembers cm
+          ON cm."callId" = cl.id
+        WHERE cl."scheduleDate" IS NULL
+          AND cl."startedAt" < now() - interval '${config.END_CALL_AFTER_EMPTY_PERIOD} milliseconds'
+          AND cl."endedAt" IS NULL
+        GROUP BY cl.id
+        HAVING COUNT(cm.id) = 0
+          OR (
+            COUNT(cm.id) = COUNT(cm."leftAt")
+            AND MAX(cm."leftAt") < now() - interval '${config.END_CALL_AFTER_ALL_LEFT_PERIOD} milliseconds'
+          )
+      ), event_calls AS (
+        SELECT
+          cl.id,
+          ce."scheduleDate",
+          ce."duration" * interval '1 minute' AS "duration"
+        FROM calls cl
+        LEFT JOIN communities_events ce
+          ON ce."callId" = cl.id
+        LEFT JOIN callmembers cm
+          ON cm."callId" = cl.id
+        WHERE (ce.id IS NOT NULL OR cl."scheduleDate" IS NOT NULL)
+          AND cl."startedAt" < now() - interval '${config.END_CALL_AFTER_EMPTY_PERIOD} milliseconds'
+          AND cl."endedAt" IS NULL
+        GROUP BY cl.id, ce."scheduleDate", ce."duration"
+        HAVING COUNT(cm.id) = COUNT(cm."leftAt")
+      ), end_calls AS (
+        SELECT id FROM stale_calls
+        UNION
+        SELECT id FROM event_calls
+        WHERE
+          "scheduleDate" IS NULL
+          OR "scheduleDate" + "duration" < now()
+      )
+      UPDATE calls
+        SET "endedAt" = now(), "updatedAt" = now()
+      WHERE id = ANY(SELECT id FROM end_calls)
+        AND "endedAt" IS NULL
+      RETURNING id, "communityId"
+    `);
+    return result.rows;
+  }
+
+  /**
+   * Ends every open call of a call server that is gone: the server row was
+   * deleted (`deletedAt`), no longer exists, or its heartbeat (`updatedAt`,
+   * written every `CALLSERVER_UPDATE_DATA_INTERVAL` by the mediasoup process)
+   * is older than `CALLSERVER_GONE_AFTER_MILLISECONDS`. Event calls included,
+   * like `resetCallServer` does on a call server restart: an ended event call
+   * can be started again (`startScheduledCall`). Open memberships are closed
+   * and `previewUserIds` cleared.
+   *
+   * End and leave times are the server's last sign of life (deletion or last
+   * heartbeat), not the time of the sweep.
+   */
+  public async endCallsOfGoneCallServers() {
+    const result = await pool.query<{ id: string; communityId: string }>(`
+      WITH gone_calls AS (
+        SELECT
+          c.id,
+          GREATEST(c."startedAt", COALESCE(cs."deletedAt", cs."updatedAt", now())) AS "endedAt"
+        FROM calls c
+        LEFT JOIN callservers cs
+          ON cs.id = c."callServerId"
+        WHERE c."endedAt" IS NULL
+          AND c."callServerId" IS NOT NULL
+          AND (
+            cs.id IS NULL
+            OR cs."deletedAt" IS NOT NULL
+            OR cs."updatedAt" < now() - interval '${config.CALLSERVER_GONE_AFTER_MILLISECONDS} milliseconds'
+          )
+      ), left_members AS (
+        UPDATE callmembers cm
+        SET "leftAt" = GREATEST(cm."joinedAt", gc."endedAt")
+        FROM gone_calls gc
+        WHERE cm."callId" = gc.id
+          AND cm."leftAt" IS NULL
+      )
+      UPDATE calls c
+      SET
+        "endedAt" = gc."endedAt",
+        "updatedAt" = now(),
+        "previewUserIds" = ARRAY[]::UUID[]
+      FROM gone_calls gc
+      WHERE c.id = gc.id
+        AND c."endedAt" IS NULL
+      RETURNING c.id, c."communityId"
+    `);
+    return result.rows;
   }
 
   public async getCallState(callId: string) {
@@ -821,13 +948,12 @@ class CallHelper {
     permissions: Common.CallPermission[];
   }[]) {
     let roleInsert: string = await this.getRolesForExistingCalls(callId, communityId, rolePermissions);
-    //delete existing permissions
-    const deleteQuery = format(`
+    //delete existing permissions, then insert the new ones (one transaction:
+    //a failing insert must not leave the call without permissions)
+    const deleteQuery = `
       DELETE FROM callpermissions
       WHERE "callId" = $1
-    `);
-    await pool.query(deleteQuery, [callId]);
-    // then insert new permissions
+    `;
     const updateQuery = format(`
       WITH member_role AS (
         SELECT id
@@ -854,7 +980,18 @@ class CallHelper {
         )
         ${roleInsert})
         SELECT 1;`);
-    await pool.query(updateQuery, [communityId]);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(deleteQuery, [callId]);
+      await client.query(updateQuery, [communityId]);
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   public getCallSlots(premiumTier: Models.Community.PremiumName | "FREE", callType: CallType) {

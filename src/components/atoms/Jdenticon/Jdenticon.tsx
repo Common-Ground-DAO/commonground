@@ -10,6 +10,7 @@ import { useSignedUrl } from "../../../hooks/useSignedUrl";
 import './Jdenticon.css';
 import { useUserData } from "context/UserDataProvider";
 import { getOnlineStatusName } from "../../../util";
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
   userId: string;
@@ -78,7 +79,7 @@ export default function Jdenticon(props: Props) {
     <div
       className={`jdenticon${predefinedSize ? ` jdenticon-${predefinedSize}` : ''}${!!onClick ? ` cursor-pointer` : ''}${floatingBorder ? ' floating-border' : ''}`}
       style={{
-        backgroundImage: `url(${preparedImageUrl || imageUrl})`,
+        backgroundImage: cssBackgroundImage(preparedImageUrl || imageUrl),
         backgroundPosition: 'center',
         backgroundRepeat: 'no-repeat',
         backgroundSize: 'cover',

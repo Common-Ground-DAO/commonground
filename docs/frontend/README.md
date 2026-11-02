@@ -26,7 +26,7 @@
 > against commit 3e8b08e, 2026-11-01; "Service worker and module scripts" (§9) against commit
 > 3e8b08e, 2026-11-01; Tailwind CSS 4 (§9 "Styling: Tailwind CSS 4", the CSS row, the
 > build-target paragraph, "Dependency pins and constraints", wave M4) against commit
-> 440c779, 2026-11-02
+> 440c779, 2026-11-02; inline background images (§9) against commit 591e6cf, 2026-11-02
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -1157,6 +1157,16 @@ in some places, and a color scheme of CSS variables in `src/index.css`
 nothing else needs PostCSS, and with the Vite plugin `postcss.config.js`,
 `autoprefixer` and the direct `postcss` dependency are gone (Lightning CSS
 prefixes, see the CSS row above).
+
+**Inline background images** go through `cssBackgroundImage(url)`
+(`src/util/cssBackground.ts`): `style={{ backgroundImage: cssBackgroundImage(imageUrl) }}`.
+It returns a quoted, escaped `url("…")`, or `none` while the URL is missing
+(a signed URL that is still loading, a user without a profile picture). A
+template like `` `url(${imageUrl})` `` renders `url(undefined)` in that case,
+which the browser resolves against the current path — on a route ending in
+`/` such as `/c/<community>/call/<id>/` it requests `…/<id>/undefined`. The
+e2e suite fails a flow on any same-origin request with an `undefined` or
+`null` path segment (`e2e/README.md`).
 
 **Configuration lives in `src/tailwind.css`** (CSS-first; `tailwind.config.js`
 is gone): `@theme` (the `palette-*` colors, the fonts), `@utility` (the

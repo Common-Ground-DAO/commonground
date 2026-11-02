@@ -140,3 +140,17 @@ describe('messageHelper.isChannelInAccessScope', () => {
     expect(poolQuery).not.toHaveBeenCalled();
   });
 });
+
+describe('messageHelper.setChannelLastRead', () => {
+  it('never moves the stored read marker backwards and returns the stored value', async () => {
+    const stored = new Date('2026-11-02T12:00:00.000Z');
+    poolQuery.mockResolvedValue({ rows: [{ lastRead: stored }] });
+    await expect(messageHelper.setChannelLastRead(USER, {
+      access: { communityId: SCOPE, channelId: CHANNEL },
+      lastRead: '2026-11-02T11:00:00.000Z',
+    })).resolves.toBe(stored.toISOString());
+    const [sql, params] = poolQuery.mock.calls[0];
+    expect(normalize(sql)).toContain('VALUES ($1, $2, LEAST($3::timestamptz, now())) ON CONFLICT ("userId", "channelId") DO UPDATE SET "lastRead" = GREATEST(channelreadstate."lastRead", EXCLUDED."lastRead") RETURNING "lastRead"');
+    expect(params).toEqual([USER, CHANNEL, '2026-11-02T11:00:00.000Z']);
+  });
+});

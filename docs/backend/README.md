@@ -29,7 +29,8 @@
 > 23a4c1e, 2026-11-01; Express 5 (wave M2: the route registration pattern,
 > raw routes and `asyncHandler`, §8) against commit 56e7c34, 2026-11-01;
 > TypeORM 1.x (wave M2: `srv/util/datasource.ts`, §8) against commit 8dcbb42,
-> 2026-11-01.
+> 2026-11-01; `callUpdateEmitter.ts` (call-ending sweeps, events), `/setChannelLastRead`
+> and the test list against commit 591e6cf, 2026-11-02.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -485,7 +486,7 @@ on the user row).
 - `/messagesById` -- Load specific messages by ID
 - `/loadUpdates` -- Load message updates since a timestamp
 - `/setReaction`, `/unsetReaction` -- Message reactions
-- `/setChannelLastRead` -- Mark channel as read
+- `/setChannelLastRead` -- Mark channel as read. The stored `lastRead` only moves forward (`GREATEST` of the stored and the posted value), so a tab posting an older read time does not bring unread state back; a posted time in the future is clamped to the server's `now()`; the `cliChannelLastRead` event to the user's other sockets carries the stored value. Every other write of `channelreadstate` (own new message, first-time initialisation in the community and chat lists) uses the same rule.
 - `/getUrlPreview` -- Get URL preview metadata (Open Graph scrape of a client-supplied URL, at most 2048 chars). Requires a session. Results are cached for 1 h on the Valkey cache instance (`redis-cache`, client type `cache`) under `urlpreview:<sha256(url)>` — skipped, not waited for, while that instance is unreachable; cache misses are rate-limited per account (30/min). The page (≤ 1 MB, `text/*` or XHTML) and the `og:image` (≤ 8 MB, `image/*`) are fetched through `safeFetch` (see `srv/util/safeFetch.ts` below) and the HTML is passed to `open-graph-scraper` as `ogs({ html })`. Title and description are cut to 2000 chars; the returned `url` is the page's `og:url` only if that is an http(s) URL of at most 2048 chars, otherwise the requested URL. Previews larger than 8 KB serialized are returned but not cached. The preview image is stored through `saveImage()`, i.e. it passes the NSFW gate.
 - `/joinArticleEventRoom`, `/leaveArticleEventRoom` -- Join/leave article real-time rooms
 
@@ -1339,8 +1340,15 @@ Located in `srv/jobs/`. All jobs are designed to run as **worker threads** (they
 - **Logic:** Finds roles with airdrop configurations past their end date that haven't been executed. For each, finds eligible members (those who claimed the role), calculates distribution using configurable price functions, and records airdrop entries.
 
 ### `callUpdateEmitter.ts`
-- **Purpose:** Monitors call server status and emits real-time updates about active calls.
-- **Logic:** Tracks call servers, their online status, and ongoing calls. Ends empty/stale calls. Emits updates to relevant community rooms.
+- **Purpose:** Monitors call server status, ends calls nobody can be in any more, and emits real-time updates about active calls.
+- **Startup:** `LISTEN callchange` / `callmemberchange` / `callserverchange` first, then loads the live call servers (heartbeat younger than `CALLSERVER_STALE_AFTER_MILLISECONDS`, not deleted) and their ongoing calls into memory, then runs the call-server sweep below once. Because the listener is up before anything is ended, calls ended at startup reach the clients like any other.
+- **Events:** every `callchange` UPDATE that carries an `endedAt` is emitted as `cliCallEvent` `delete` to the call's community room (through the Redis emitter), no matter which process ended the call (the call server's room, a moderator, a call server reset, the sweeps below) and whether the call server is still known to the job. Other call updates and member joins/leaves are emitted as `cliCallEvent` `update` for calls of known call servers.
+- **Sweeps** (SQL in `srv/repositories/calls.ts`; a run that is still in flight when the next interval tick arrives makes that tick a no-op, so runs never overlap):
+  - `endEmptyCalls`, every second: non-scheduled calls that never had a member (after `END_CALL_AFTER_EMPTY_PERIOD`, 10 s) or whose members have all left, the last one more than `END_CALL_AFTER_ALL_LEFT_PERIOD` (60 s) ago — the room normally ends such a call when its last peer leaves, so this only catches calls whose room went away without ending them; event calls whose members have all left once `scheduleDate + duration` minutes has passed; scheduled calls without an event row as soon as nobody is in them.
+  - `endCallsOfGoneCallServers`, at startup and every `ORPHANED_CALLS_SWEEP_INTERVAL` (15 s): every open call whose call server is gone, event calls included (as `resetCallServer` does when a call server restarts; an ended event call can be started again, see below). Liveness signal: the call server's row in `callservers` — mediasoup writes `updatedAt` every `CALLSERVER_UPDATE_DATA_INTERVAL` (2 s) and sets `deletedAt` when it shuts down. A server counts as gone when its row is deleted or missing, or its `updatedAt` is older than `CALLSERVER_GONE_AFTER_MILLISECONDS` (60 s, deliberately longer than the 10 s stale period so a server that misses a few heartbeats keeps its calls). Open memberships are closed and `previewUserIds` cleared; end and leave times are the server's last sign of life (`deletedAt`, else `updatedAt`), not the sweep time. This covers call servers that stop without SIGTERM (OOM, `docker kill`, host crash) and do not come back under the same URL (which would reset their calls, `resetCallServer`), e.g. after a domain change or with `CG_ENABLE_CALLS=false`. The community call list and the home page list read only open calls, so they show such calls until the sweep has ended them.
+  - Both filter on open calls; the partial index `idx_calls_communityId_open` (`"endedAt" IS NULL`) keeps them from scanning the call history.
+- **Restarting an event call:** `callHelper.startScheduledCall` resets `endedAt` and closes the memberships an ended call left open, so an event call ended by a call server restart or the sweep can be started and joined again (the call server's `getOrCreateRoom` only accepts calls without `endedAt`). `softEndCall` and `endCallForEveryone` only end a call that is still open (no second end, no second `delete` event).
+- **Tests:** `tests/callEnding.spec.ts` (SQL shape of both sweeps, `startScheduledCall` and `updateCallPermissions`). Against a running disposable instance: `e2e/checks/call-sweep.sh` (`e2e/README.md`, "Checks") — real Postgres, Valkey and job-runner: sweeps and their `delete` events, the job-runner startup, event and scheduled calls, restarting an ended event call, the permission rewrite, the read marker.
 
 ---
 
@@ -1618,7 +1626,7 @@ with wave M2 (see below).
   `safeFetch`, `urlPreview`, `redisManager`, `pluginRequest`, `protooConnectionGate`,
   `typingCache`, `userArticleVisibility`, `userArticleRoute`, `passkeyCore`,
   `passkeyRoutes`, `passkeyConfig`, `signupEmail`, `asyncHandler`,
-  `registerPostRoute`, `uploadImageRoute` and `gatedFileRoute` (the passkey tests drive
+  `registerPostRoute`, `uploadImageRoute`, `gatedFileRoute` and `callEnding` (the passkey tests drive
   a software authenticator, `tests/helpers/softAuthenticator.ts`). `npx tsc --noEmit`
   does not cover `tests/` (see `docs/todo/TODO.md`). ts-jest compiles the specs
   with `srv/tsconfig.json`, which therefore lists `"types": ["node", "jest"]`:

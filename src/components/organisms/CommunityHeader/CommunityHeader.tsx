@@ -35,6 +35,7 @@ import { Asterisk, ChatsTeardrop, DoorOpen, Envelope, EnvelopeSimple, HandWaving
 import { useOwnUser } from "context/OwnDataProvider";
 import communityApi from "data/api/community";
 import { useEmailConfirmationContext } from "context/EmailConfirmationProvider";
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
   onHeaderClick?: () => void;
@@ -271,10 +272,10 @@ const CommunityHeader: React.FC<Props> = ({ onHeaderClick, banned, collapsed }) 
       className={`community-header${location.pathname === `/community/${community.id}` ? " community-header-active" : ""}${collapsed ? ' collapsed' : ''}`}
       onClick={handleHeaderClick}
     >
-      {collapsed && <div style={{ backgroundImage: `url(${imageUrl})` }} className='community-header-background-blurred' />}
+      {collapsed && <div style={{ backgroundImage: cssBackgroundImage(imageUrl) }} className='community-header-background-blurred' />}
       <div className={`community-container`}>
         {settingsModal}
-        <div style={imageUrl ? { backgroundImage: `url(${imageUrl})` } : undefined} className='community-header-group-image' />
+        <div style={imageUrl ? { backgroundImage: cssBackgroundImage(imageUrl) } : undefined} className='community-header-group-image' />
         <div className="lobby-title-container">
           {!!banned ? (
             <div className="you-are-banned">

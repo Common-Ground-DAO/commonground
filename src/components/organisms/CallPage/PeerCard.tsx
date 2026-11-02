@@ -23,6 +23,7 @@ import { canModerateCalls } from "./HelperFunctions/callHelpers";
 import { useLiveQuery } from "dexie-react-hooks";
 import data from "data";
 import PeerReactionOverlay from "./PeerReactionOverlay/PeerReactionOverlay";
+import { cssBackgroundImage } from 'util/cssBackground';
 
 interface PeerViewProps {
   user: RoomPeer;
@@ -316,7 +317,7 @@ const PeerCard: React.FC<PeerViewProps> = ({
   }, [audioConsumer?.locallyPaused, audioConsumer?.remotelyPaused, call?.callType, hasModeratePermissions, isVideoEnabled, roomClient, setPrefferedLayers, spotlightedItem, user.id, user.isMe, videoConsumer]);
 
   const trigger = useMemo(() => {
-    const backgroundImageStyle = { backgroundImage: `url(${imageUrl})` };
+    const backgroundImageStyle = { backgroundImage: cssBackgroundImage(imageUrl) };
     const talkingClassName = hasTalked.current
       ? user.isTalking
         ? "talking"

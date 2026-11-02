@@ -20,6 +20,7 @@ import { getUrl } from 'common/util';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import EventCard from '../EventCard/EventCard';
 import { useCommunityListView } from 'context/CommunityListViewProvider';
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = Omit<Models.Message.LinkPreviewAttachment, "type"> & {
   onRemove?: () => void;
@@ -109,7 +110,7 @@ const ExternalLinkPreview: React.FC<Props> = (props) => {
     }
     else {
       if (!imageUrl) return null;
-      return <div style={{ backgroundImage: `url(${imageUrl})` }} className='external-link-image' />;
+      return <div style={{ backgroundImage: cssBackgroundImage(imageUrl) }} className='external-link-image' />;
     }
   }, [imageUrl, props.imageData?.size.width, props.imageData?.size.height]);
 

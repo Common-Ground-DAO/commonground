@@ -10,6 +10,7 @@ import VerifiedIcon from "../../../components/atoms/icons/16/Verified.svg?react"
 
 import './CommunityHeader.css';
 import { useCommunityPremiumTier } from "hooks/usePremiumTier";
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
 };
@@ -50,7 +51,7 @@ const CommunityHeaderSimple: React.FC<Props> = () => {
   return (
     <div className={'community-header'}>
       <div className={`community-container`}>
-        <div style={imageUrl ? { backgroundImage: `url(${imageUrl})` } : undefined} className='community-header-group-image' />
+        <div style={imageUrl ? { backgroundImage: cssBackgroundImage(imageUrl) } : undefined} className='community-header-group-image' />
         <div className="lobby-title-container">
           {communityHeader}
         </div>

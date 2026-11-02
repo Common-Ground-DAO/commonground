@@ -7,7 +7,8 @@
 > note (Caddy in front of 4443 in dev too) against commit fe3937f, 2026-10-31;
 > the browser-socket session room (cookie optional), `watchCgIdRequest` and `sess-revoked:`
 > against commit eab2a27, 2026-11-01; `sess-user:`, the session TTLs and the signed-out devices'
-> `cliSignedOut` + disconnect against commit 23a4c1e, 2026-11-01
+> `cliSignedOut` + disconnect against commit 23a4c1e, 2026-11-01; room close hardening and
+> the call-ending safety net (Room Lifecycle, Call Flow) against commit 591e6cf, 2026-11-02
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -249,7 +250,7 @@ The `Room` class (`srv/mediasoup/room.ts`) wraps a protoo Room and a MediaSoup R
 1. **Creation** (`Room.create`): Allocates a MediaSoup Router (with media codecs), an `AudioLevelObserver` (threshold -50dB, interval 500ms), and an `ActiveSpeakerObserver` (interval 2500ms).
 2. **Worker assignment**: Workers are assigned round-robin via `getMediasoupWorker()`.
 3. **Room map**: Active rooms are stored in `rooms: Map<string, Room>`.
-4. **Close**: When the last peer leaves or all broadcasters leave (in broadcast mode), the room closes. On close, it emits either `'close'` (soft -- call the `softEndCall`) or `'forceClose'` (moderator-initiated -- calls `endCallForEveryone`).
+4. **Close**: When the last peer leaves or all broadcasters leave (in broadcast mode), the room closes. On close, it emits either `'close'` (soft -- call the `softEndCall`) or `'forceClose'` (moderator-initiated -- calls `endCallForEveryone`). The peer `close` handler guards each of its steps (leaving the membership, updating `previewUserIds`, the notifications to the remaining peers, closing transports) separately, so a database error or a notification to a peer that disconnects at the same moment does not skip the last-peer / last-broadcaster check; `Room.close()` emits its event even if closing the protoo Room or the Router throws. A failed `softEndCall` / `endCallForEveryone` is retried after 1, 5 and 15 s. Calls whose room still went away without ending them are ended by the jobs process (`callUpdateEmitter`, docs/backend §6).
 
 ### Transports
 
@@ -623,7 +624,8 @@ enum CallType {
 4. **Permission checks:** `hasJoinPermissions` and `hasModeratePermissions` verify role-based permissions via the `callpermissions` table.
 5. **Member tracking:** On join, `callHelper.insertCallMember` creates a `CallMembership` row. On leave, `callHelper.callMemberLeave` soft-deletes it. `previewUserIds` is updated on join/leave.
 6. **End call:** When the last peer leaves, `callHelper.softEndCall` is called. For forced end, `callHelper.endCallForEveryone` is called.
-7. **Server cleanup:** On SIGTERM, `callHelper.resetCallServer` clears the server's association with active calls.
+7. **Server cleanup:** On SIGTERM, and on start, `callHelper.resetCallServer` ends the calls of this call server (matched by its URL), event calls included. A failure at start is logged and does not keep the call server from registering its call update listener. An ended event call can be started again (`startScheduledCall` resets `endedAt`).
+8. **Safety net (jobs process):** `callUpdateEmitter` ends non-scheduled calls whose members have all left more than 60 s ago (checked every second), and every open call (event calls included) of call servers that are gone — row deleted or missing, or heartbeat (`callservers.updatedAt`, written every 2 s) older than 60 s (checked every 15 s). Every call that gets an `endedAt`, by whichever path, is sent to the community room as `cliCallEvent` `delete`.
 
 ### Broadcast Mode
 

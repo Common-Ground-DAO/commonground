@@ -92,7 +92,7 @@ async function _createMessage(
         now()
       )
       ON CONFLICT ("userId", "channelId")
-      DO UPDATE SET "lastRead" = EXCLUDED."lastRead"
+      DO UPDATE SET "lastRead" = GREATEST(channelreadstate."lastRead", EXCLUDED."lastRead")
     ), creator_data AS (
       SELECT "displayAccount", coalesce((SELECT json_agg(
         json_build_object(
@@ -648,24 +648,34 @@ class MessageHelper {
     return await _unsetReaction(pool, userId, data);
   }
 
+  /**
+   * Moves the user's read marker of a channel forward. The stored value never
+   * moves backwards: a tab posting an older `lastRead` leaves the newer one in
+   * place. A posted time in the future is clamped to the server's `now()`
+   * (`EXCLUDED."lastRead"` is the clamped value), so a client clock that runs
+   * ahead cannot mark messages that do not exist yet as read. Returns the
+   * stored (effective) value as an ISO string.
+   */
   public async setChannelLastRead(
     userId: string,
     data: API.Messages.setChannelLastRead.Request,
-  ) {
-    return await pool.query(`
+  ): Promise<string> {
+    const result = await pool.query<{ lastRead: Date | string }>(`
       INSERT INTO channelreadstate (
         "userId",
         "channelId",
         "lastRead"
       )
-      VALUES ($1, $2, $3)
+      VALUES ($1, $2, LEAST($3::timestamptz, now()))
       ON CONFLICT ("userId", "channelId")
-      DO UPDATE SET "lastRead" = EXCLUDED."lastRead"
+      DO UPDATE SET "lastRead" = GREATEST(channelreadstate."lastRead", EXCLUDED."lastRead")
+      RETURNING "lastRead"
     `, [
       userId,
       data.access.channelId,
       data.lastRead,
     ]);
+    return new Date(result.rows[0].lastRead).toISOString();
   }
 
   public async getChannelMessageNotifyData({ channelId }: { channelId: string }) {

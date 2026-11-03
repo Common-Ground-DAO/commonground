@@ -1183,11 +1183,13 @@ The `db: Pool | PoolClient` parameter pattern enables functions to work both sta
   channel, article, call or event. A custom role with the title "Public" is an ordinary role. Block
   states (ban, chat mute) are checked by the write routes themselves (e.g. `/createMessage`), not
   here, so reading through the Public role stays open to everyone
-- The listings follow the same rule (events, articles, feed, newsletter history, search, the
-  homepage calls): a role counts only as a live role of the item's community, the user's claimed
-  roles through a join on `roles_users_users` that names the user (a primary-key lookup), everyone
-  else through the predefined Public role. The Member role's permissions count for members only, so
-  the homepage shows a call to non-members only when the Public role may see it
+- The listings follow the same rule (events, articles, feed, newsletter history, the homepage
+  calls): a role counts only as a live role of the item's community, the user's claimed roles
+  through a join on `roles_users_users` that names the user (a primary-key lookup), everyone else
+  through the predefined Public role. The Member role's permissions count for members only, so
+  the homepage shows a call to non-members only when the Public role may see it. Article search
+  (`/Search/searchArticles`) runs without the user and lists community articles through the
+  Public role only (and published user articles), also for logged-in users
 
 **`srv/repositories/files.ts`** -- `fileHelper`
 - S3 storage operations (upload, download, signed URLs)

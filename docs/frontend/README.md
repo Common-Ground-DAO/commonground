@@ -50,7 +50,7 @@
 > `GenericMessageList`'s failed-jump level against commit c5f74d3, 2026-11-03; the socket's
 > drop of a signed-out device (`deviceSignedOut`) and the device check of a late sign-out
 > against commits 1b9948c and d386911, 2026-11-03; the predefined-role helpers (`src/util/predefinedRoles.ts`)
-> against commit 138c630, 2026-11-03
+> against commits 138c630 and 8bb443a, 2026-11-03
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -1235,7 +1235,7 @@ e2e suite fails a flow on any same-origin request with an `undefined` or
 **Predefined roles** (Admin, Member, Public) are recognised by type and title, never by the
 title alone (`src/util/predefinedRoles.ts`): `isPredefinedRole`/`isPublicRole` for role objects,
 `isPredefinedRolePermission`/`isPublicRolePermission` for `rolePermissions` entries (by
-`roleType`; by title only where a list has no `roleType`). A custom role with such a title is an
+`roleType`; by title only where a list has no `roleType`). The lists the client builds carry `roleType` too, and a community refresh treats a changed `roleType` as a changed channel. A custom role with such a title is an
 ordinary role.
 
 **Configuration lives in `src/tailwind.css`** (CSS-first; `tailwind.config.js`

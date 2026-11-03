@@ -50,7 +50,7 @@
 > of `permissionHelper` (predefined Public role, owning community) and the test list against
 > commits dac9eaf, 9385d52, b3fa87b, 24922f5 and 7814781, 2026-11-03; the role title rule on
 > update, the event role check before any write, the join/ban membership lock and the
-> `roleType` of role permission lists against commits 0e4c794, d6354ef, 3bd44c0 and 138c630,
+> `roleType` of role permission lists against commits 0e4c794, d6354ef, 3bd44c0, 138c630, 3082f2a and 8bb443a,
 > 2026-11-03.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
@@ -351,7 +351,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 
 **Roles:**
 - `/createRole`, `/updateRole`, `/deleteRole` -- the titles of the predefined roles (Admin, Member, Public) are reserved, in any letter case (`srv/util/roleTitles.ts`): `/createRole` refuses them (validator); `/updateRole` lets a custom role keep the reserved title it already carries and refuses a change to one (`INVALID_REQUEST`, checked against the stored role in `communityHelper.updateRole`)
-- Role permission lists of channels, articles and events (`rolePermissions`, as read from the server) carry `roleType` next to `roleTitle`, so clients tell a predefined role from a custom role with the same title (`src/util/predefinedRoles.ts`); the write validators accept the field and ignore it (the role is named by `roleId`)
+- Role permission lists of channels, articles and events (`rolePermissions`) carry `roleType` next to `roleTitle`, so clients tell a predefined role from a custom role with the same title (`src/util/predefinedRoles.ts`): the lists the server reads, the Admin entry it adds, the `cliChannelEvent` `new`/`update` lists (each role's stored title and type, not the request's) and the lists the web client builds. The write validators accept the optional field; the server names the role by `roleId` and does not store it. The web client sends it, so the backend goes out before (or with) the frontend
 - `/checkCommunityRoleClaimability` -- Check if user can claim a token-gated role
 - `/claimRole` -- Claim a token-gated role
 - `/addUserToRoles`, `/removeUserFromRoles`

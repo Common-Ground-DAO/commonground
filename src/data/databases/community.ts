@@ -187,7 +187,11 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
             console.log("CommunityDatabase: Clear community tables: No action required.");
           }
         },
-      ).then(() => {
+      ).catch(e => {
+        // the database stays usable with the old rows (snapshots replace
+        // them); waiting for ever would block every reader
+        console.error("CommunityDatabase: clearing the tables after an upgrade failed", e);
+      }).then(() => {
         this.__ready.resolve?.();
       });
     }

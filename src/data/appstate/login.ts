@@ -164,8 +164,10 @@ class LoginManager {
   }
   private setCurrentUser(data: CurrentUser | null) {
     if (data) {
-      // logged in: no logout of this browser runs any more
+      // logged in: no logout of this browser runs any more, and "You were
+      // signed out — Sign in" is over
       this.removeLogoutMarker();
+      signedOutNotice.dismiss();
     }
     this._currentUser = data;
     securityStepState.setUser(data?.userId ?? null);
@@ -355,9 +357,10 @@ class LoginManager {
   public async loginRequiredErrorHandler(): Promise<void> {
     if (!this.__loginRequiredLoginPromise) {
       this.__loginRequiredLoginPromise = (async () => {
-        if (this.logoutPromise) {
-          // expected while logging out: the session is gone before the
-          // current user (e.g. the windows the logout re-inits)
+        if (this.logoutPromise || this.__signedOutPromise) {
+          // expected while logging out or following another tab's logout:
+          // the session is gone before the current user (e.g. the windows
+          // the logout re-inits)
           return;
         }
         if (!this.currentUser) {
@@ -375,6 +378,10 @@ class LoginManager {
           return;
         }
         const userId = this.currentUser.userId;
+        if (this.otherTabsLogoutMarker(userId)) {
+          // another tab is logging this user out: no device login over it
+          return;
+        }
         const sessionIsOurs = await withLoginLock(async () => {
           try {
             const status = await userApi.checkLoginStatus();
@@ -429,8 +436,13 @@ class LoginManager {
    * CG_CURRENT_USER changed) follows it, without a second `User/logout` and
    * without a notice (unless that tab was signed out from elsewhere too).
    * Without either, the decision waits SIGNED_OUT_RECHECK_MS and is taken
-   * under the login lock, so of several tabs signed out from elsewhere only
-   * the first one calls `User/logout`; the others follow it.
+   * under the login lock, so of several tabs signed out from elsewhere
+   * normally only the first one calls `User/logout` and the others follow it
+   * (localStorage is only eventually consistent across processes; a second
+   * `User/logout` is harmless, it hits a session that is gone). A tab that
+   * follows another tab's logout for OTHER_TAB_LOGOUT_WAIT_MS without that
+   * tab finishing (closed or reloaded after it wrote its marker) treats it as
+   * a sign-out from elsewhere.
    */
   private signedOutElsewhere(): Promise<void> {
     if (!this.__signedOutPromise) {
@@ -445,20 +457,23 @@ class LoginManager {
 
   private async runSignedOutElsewhere() {
     const userId = this._currentUser?.userId;
+    const deviceId = this._currentUser?.deviceId;
     // this tab is logging out already: the server's sign-out of the device's
     // sockets can reach this tab's socket too (when it could not tell the
     // requesting socket apart), and it is no sign-out from elsewhere
     if (!userId || this.logoutPromise) {
       return;
     }
+    const storedIsOurs = () => {
+      const stored = this.readStoredUser();
+      return stored?.userId === userId && stored.deviceId === deviceId;
+    };
     // dropped or logging out meanwhile (another tab's broadcast, this tab's logout)
     const handled = () => !this._currentUser || this._currentUser.userId !== userId || !!this.logoutPromise;
     const startedAt = Date.now();
-    let otherTabSeen = false;
     let otherTabSignedOutElsewhere = false;
     const seeMarker = () => {
       const marker = this.otherTabsLogoutMarker(userId);
-      otherTabSeen ||= !!marker;
       otherTabSignedOutElsewhere ||= !!marker?.elsewhere;
       return marker;
     };
@@ -474,7 +489,7 @@ class LoginManager {
         followed();
         return;
       }
-      if (this.readStoredUser()?.userId !== userId) {
+      if (!storedIsOurs()) {
         // another tab of this browser has signed out already: follow it
         await this.dropLoginOfOtherTab();
         followed();
@@ -485,19 +500,20 @@ class LoginManager {
       // a tab that never finishes its logout (closed, frozen) is not waited for
       if (waited >= (marker ? OTHER_TAB_LOGOUT_WAIT_MS : SIGNED_OUT_RECHECK_MS)) {
         const logOut = await withLoginLock(async () => {
-          if (handled() || this.readStoredUser()?.userId !== userId) return false;
+          if (handled() || !storedIsOurs()) return false;
           if (seeMarker() && Date.now() - startedAt < OTHER_TAB_LOGOUT_WAIT_MS) return false;
-          // the other tabs see it before they get the lock
-          this._logoutSignedOutElsewhere = !otherTabSeen || otherTabSignedOutElsewhere;
-          this.writeLogoutMarker(userId, this._logoutSignedOutElsewhere);
+          // the other tabs see it before they get the lock. A logout of
+          // another tab that did not finish in time is a leftover marker (that
+          // tab closed or reloaded): this is a sign-out from elsewhere too.
+          this._logoutSignedOutElsewhere = true;
+          this.writeLogoutMarker(userId, true);
           return true;
         });
         if (!logOut) {
           // another tab decided first: follow it
           continue;
         }
-        const ownLogout = otherTabSeen || Date.now() - this._loggedOutInOtherTabAt < 30_000;
-        if (!ownLogout || otherTabSignedOutElsewhere) {
+        if (Date.now() - this._loggedOutInOtherTabAt >= 30_000) {
           signedOutNotice.show();
         }
         await this.logout();
@@ -662,6 +678,8 @@ class LoginManager {
   private async takeOverSession(stored: CurrentUser): Promise<void> {
     const { userId } = stored;
     this._currentUser = stored;
+    // signed in again (in another tab): the signed-out notice is over here too
+    signedOutNotice.dismiss();
     securityStepState.setUser(userId);
     stepUpManager.clear();
     channelDatabaseManager.userId = userId;
@@ -670,8 +688,9 @@ class LoginManager {
     }
     // the access of the DMs and channels (and their read state) from the rows
     // the other tab wrote: this tab's stores were cleared or never had them.
-    // Rows written after this read come in with the read-state catch-up.
-    await Promise.all([
+    // Rows written after this read come in with the read-state catch-up. Not
+    // awaited: windows wait for an access themselves, the login does not.
+    Promise.all([
       chatDatabase.registerStoredChats(),
       communityDatabase.registerStoredChannels(),
     ]).catch(e => console.error("Error registering the stored channels after a login in another tab", e));

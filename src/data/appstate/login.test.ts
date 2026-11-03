@@ -750,6 +750,54 @@ describe('logout and login in other tabs', () => {
     expect(fake.server.logoutCalls).toBe(1);
   });
 
+  it('a leftover logout marker of a vanished tab: after the follow wait it is a sign-out from elsewhere (notice)', async () => {
+    useDataLayerFakeTimers();
+    setup();
+    const tab = await loggedInTab();
+    const { default: notice } = await import('data/auth/signedOut');
+    notice.dismiss();
+    // another tab wrote its marker and was closed before its User/logout
+    localStorage.setItem('CG_LOGOUT_IN_PROGRESS', JSON.stringify({ userId: 'u1', tabId: 'gone-tab', at: Date.now() }));
+    fake.server.sessionUserId = null;
+    fake.clientEventHandlers.get('cliSignedOut')!();
+    const { OTHER_TAB_LOGOUT_WAIT_MS } = await import('data/appstate/login');
+    await vi.advanceTimersByTimeAsync(OTHER_TAB_LOGOUT_WAIT_MS - 500);
+    expect(tab.loginManager.state).toBe('loggedin'); // still following
+    await vi.advanceTimersByTimeAsync(1_000);
+    await until(() => tab.loginManager.state === 'anonymous');
+    expect(notice.shown).toBe(true);
+    expect(fake.server.logoutCalls).toBe(1);
+  });
+
+  it('signing in again dismisses the notice, also in a tab that takes that login over', async () => {
+    setup();
+    const a = await loggedInTab();
+    const { default: noticeA } = await import('data/auth/signedOut');
+    const b = await secondTab();
+    noticeA.show();
+    b.notice.show();
+    // A signs in again (its own login), B takes it over
+    await a.loginManager.logout();
+    await settle();
+    noticeA.show();
+    b.notice.show();
+    storeUser('u1', 'dev-1');
+    await a.loginManager.login({ deviceId: 'dev-1' });
+    await settle();
+    expect(noticeA.shown).toBe(false);
+    await until(() => b.loginManager.state === 'loggedin');
+    expect(b.notice.shown).toBe(false);
+  });
+
+  it('a LOGIN_REQUIRED while another tab logs this user out starts no device login', async () => {
+    setup();
+    const tab = await loggedInTab();
+    localStorage.setItem('CG_LOGOUT_IN_PROGRESS', JSON.stringify({ userId: 'u1', tabId: 'other-tab', at: Date.now() }));
+    fake.server.sessionUserId = null;
+    await tab.loginManager.loginRequiredErrorHandler();
+    expect(fake.server.loginCalls).toBe(1);
+  });
+
   it('a cliSignedOut while the tab logs out itself shows no "signed out elsewhere" notice', async () => {
     setup();
     const tab = await loggedInTab();

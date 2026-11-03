@@ -752,7 +752,7 @@ function processChangeEvents() {
         continue;
       }
       const roleData = roleDataByCommunityId.get(communityId)?.get(event.roleId);
-      if (roleData?.roleType === RoleType.PREDEFINED || roleData?.title === PredefinedRole.Member) {
+      if (roleData?.roleType === RoleType.PREDEFINED && roleData?.title === PredefinedRole.Member) {
         // update general member set
         const memberSet = memberIdsByCommunityId.get(communityId);
         if (!memberSet) {

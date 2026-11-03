@@ -98,6 +98,7 @@ async function _getEventCTE(
           INNER JOIN roles r
             ON r."id" = cep."roleId"
             AND r."deletedAt" IS NULL
+            AND r."communityId" = ce."communityId"
           WHERE cep."communityEventId" = ce."id"
         ) sub
       ) as "rolePermissions"
@@ -107,13 +108,14 @@ async function _getEventCTE(
       INNER JOIN roles r
         ON cep."roleId" = r.id
         AND r."deletedAt" IS NULL
+        AND r."communityId" = ce."communityId"
       ${!!data.selfOnly
       ? `INNER JOIN "communities_events_participants" cep2
           ON (cep2."userId" = ${format("%L::UUID", data.userId)} AND cep2."eventId" = ce.id)`
       : ''}
       ${!!data.userId
       ? `LEFT JOIN roles_users_users ruu
-          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)`
+          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ruu."userId" = ${format("%L::UUID", data.userId)})`
       : ''}
       ${!!data.onlyVerifiedOrFollowing || !!data.tags?.length
       ? `INNER JOIN communities c
@@ -712,6 +714,12 @@ class CommunityEventHelper {
           FROM roles_users_users ruu
           INNER JOIN communities_events_permissions cep
             ON cep."roleId" = ruu."roleId"
+          INNER JOIN communities_events ce
+            ON ce."id" = cep."communityEventId"
+          INNER JOIN roles r
+            ON r."id" = cep."roleId"
+            AND r."deletedAt" IS NULL
+            AND r."communityId" = ce."communityId"
           WHERE ruu."userId" = communities_events_participants."userId"
             AND cep."communityEventId" = $1
             AND cep."permissions" @> ARRAY['EVENT_ATTEND']::"public"."communities_events_permissions_permissions_enum"[]
@@ -788,16 +796,22 @@ class CommunityEventHelper {
     //check wether the user has a role with the COMMUNITY event attend permission
     const hasPermissionQuery = await pool.query(`
       SELECT
-        "roleId"
-      FROM communities_events_permissions
-      WHERE "communityEventId" = $1
-      AND "roleId" IN (
+        cep."roleId"
+      FROM communities_events_permissions cep
+      INNER JOIN communities_events ce
+        ON ce."id" = cep."communityEventId"
+      INNER JOIN roles r
+        ON r."id" = cep."roleId"
+        AND r."deletedAt" IS NULL
+        AND r."communityId" = ce."communityId"
+      WHERE cep."communityEventId" = $1
+      AND cep."roleId" IN (
         SELECT "roleId"
         FROM roles_users_users
         WHERE "userId" = $2
         AND "claimed" = TRUE
       )
-      AND "permissions" @> ARRAY[${format("%L", CommunityEventPermission.EVENT_ATTEND)}]::"public"."communities_events_permissions_permissions_enum"[]
+      AND cep."permissions" @> ARRAY[${format("%L", CommunityEventPermission.EVENT_ATTEND)}]::"public"."communities_events_permissions_permissions_enum"[]
     `, [data.eventId, userId]);
     const hasPermission = hasPermissionQuery.rows.length > 0;
 

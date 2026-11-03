@@ -220,9 +220,10 @@ class NewsletterHelper {
             INNER JOIN roles r
                 ON carp."roleId" = r."id"
                 AND r."deletedAt" IS NULL
+                AND r."communityId" = ca."communityId"
             ${!!userId
                 ? `LEFT JOIN roles_users_users ruu
-                    ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)`
+                    ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ruu."userId" = ${format("%L::UUID", userId)})`
                 : ''}
             WHERE (
                 ${!!userId

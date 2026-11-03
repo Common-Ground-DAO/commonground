@@ -1023,6 +1023,7 @@ class CallHelper {
       INNER JOIN roles r
         ON  cp."roleId" = r."id"
         AND r."deletedAt" IS NULL
+        AND r."communityId" = c."communityId"
       INNER JOIN roles_users_users ruu
         ON  ruu."roleId" = r."id"
         AND ruu."claimed" = TRUE
@@ -1339,6 +1340,7 @@ class CallHelper {
       INNER JOIN "roles" r
         ON cp."roleId" = r."id"
         AND r."deletedAt" IS NULL
+        AND r."communityId" = cl."communityId"
       LEFT JOIN LATERAL (
         SELECT "communityId", "activeUntil"
         FROM communities_premium
@@ -1349,14 +1351,16 @@ class CallHelper {
       ) cpr ON TRUE
       ${!!userId
         ? `LEFT JOIN roles_users_users ruu
-            ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)`
+            ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ruu."userId" = ${format("%L::UUID", userId)})`
         : ''}
       WHERE
         cl."endedAt" IS NULL
         AND (
           ${!!userId ? format('ruu."userId" = %L::UUID OR', userId) : ''}
+          -- non-members see what the community's Public role may see; the
+          -- Member role counts for members only (through ruu above)
           (
-            r."title" = ${format("%L", PredefinedRole.Member)}
+            r."title" = ${format("%L", PredefinedRole.Public)}
             AND r."type" = ${format("%L", RoleType.PREDEFINED)}
           )
         )

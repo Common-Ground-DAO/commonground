@@ -21,7 +21,9 @@
 > `updatedAt` cursor (chat-sync close-out) against commit 3567377, 2026-11-03; the lock order
 > and `lock_timeout` of `1793635200000-chatSyncSeq` and `1793635100000-syncStateIndexes`
 > against commit 330fe2f, 2026-11-03; the `mediasoup` role's column grants on `communities` and
-> `user_community_state` against commit eebc3cf, 2026-11-03
+> `user_community_state` against commit eebc3cf, 2026-11-03; the data cleanup
+> `1793635400000-permissionDataCleanup` (incl. the community order rebuild and the channel/article step)
+> against commits ccffa3b and 5f50cc0, 2026-11-03
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -1312,6 +1314,41 @@ export class AddPluginsTable1738852388814 implements MigrationInterface {
 - Granting `writer`/`reader` on every new table is mandatory: `staking_positions` was created without grants in `1784170800000` and every runtime query failed until the follow-up `1784180000000-grantStakingPositions` added them.
 - Removals get a drop migration too. `1785542400000-dropFeedsDomain` drops the never-created feeds tables with `IF EXISTS` and a no-op `down()`; `1785628800000-dropWizardDomain` drops the five `wizard*` tables **including their rows** (maintainer decision 2026-08-01, backups exist) and its `down()` recreates the schema — constraint names, indexes and grants included — from the four creating migrations, without data. `communities` is untouched by the wizard drop: the only FK runs `wizards."communityId" -> communities(id)`.
   `1785632400000-dropFuelAeternityWallets` is the third variant: it deletes rows *and* shrinks an enum — `DELETE FROM wallets WHERE type IN ('fuel','aeternity')` first (their `wallet_balances` follow via `ON DELETE CASCADE`), then the rename/create/re-cast/drop dance on `wallets_type_enum`, bracketed by dropping and re-adding the two unique constraints on the column. Its `down()` restores the enum but not the rows.
+- Data cleanups bring old rows in line with a rule the code now enforces. `1793635400000-permissionDataCleanup`
+  follows the permission rules of the owning community (call and event role permissions name live roles of
+  that community; a ban removes the membership in the same transaction, see docs/backend `/setUserBlockState`):
+  1. `callpermissions` rows whose role is not a live role of the call's community (another community's role
+     or a deleted role) — exactly the rows every permission read leaves out (it joins
+     `r."deletedAt" IS NULL AND r."communityId" = calls."communityId"`); the Admin row of every call stays;
+  2. the same for `communities_events_permissions` against `communities_events."communityId"`;
+  3. `communities_channels_roles_permissions` and `communities_articles_roles_permissions` rows whose role
+     is not a live role of the row's `"communityId"` (channel and article writes check the role ids, a
+     role's deletion removes its rows; these are rows from before the checks, if any);
+  4. for every user with an active ban (`blockState = 'BANNED'`, `blockStateUntil` NULL or in the future)
+     what the ban's membership removal does in the database: all of the user's `roles_users_users` rows of
+     the community (claimed or not, any role type), the community out of `users."communityOrder"`, the
+     user's `user_channel_settings` of the community, `user_community_state."userLeftCommunity" = now()`,
+     `communities."memberCount"` minus one per removed holder of the predefined Member role (not below 0)
+     and `"updatedAt" = now()`; the same for the live user-owned bots of that user in the community (the
+     bot reconciliation removes them once the owner is no member). The community's creator and holders of
+     its claimed predefined Admin role are left alone (`setUserBlockState` refuses to ban them).
+     The trigger `community_order_validation` (AFTER UPDATE on `users`) refuses a `communityOrder` that
+     does not hold exactly the user's claimed Member communities, and existing orders can be out of step
+     with the roles already. The new order is therefore built to match: the old order without the removed
+     communities, duplicates and communities without a claimed Member role, then the missing claimed
+     Member communities (by id). Only orders that contain a removed community are written.
+
+  Roles are neither renamed nor deleted. Each step logs its row counts; a second run changes nothing.
+  The statements take only `ROW EXCLUSIVE` and row locks, each lock request waits at most 5 s
+  (`lock_timeout`, as in `1793635200000-chatSyncSeq`). A leave, ban or join running at the same time
+  writes the same `roles_users_users` rows and waits for these row locks, so a removal is counted once;
+  the membership advisory lock is not taken (one lock per banned pair until the end of the run could
+  exhaust the shared lock table). Measured on the migrated schema with all triggers, 2.3M
+  `roles_users_users` rows, 1.9M `user_community_state` rows (15k active bans, 1.8k banned users with an
+  order out of step) and 604k `callpermissions` rows: about 2.8 s in total. Covered by
+  `srv/tests/permissionDataCleanupDb.spec.ts`, which runs the migration chain first
+  (`srv/tests/helpers/migratedDb.ts`). `down()` is a documented no-op: the rows are not kept anywhere (a
+  restore needs a backup from before the migration).
 
 ---
 

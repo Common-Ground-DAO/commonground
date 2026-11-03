@@ -130,7 +130,7 @@ function buildCommunityArm(userId: string | undefined, data: API.Feed.getPostLis
     FROM communities_articles ca
     INNER JOIN communities_articles_roles_permissions carp
       ON ca."communityId" = carp."communityId" AND ca."articleId" = carp."articleId"
-    INNER JOIN roles r ON carp."roleId" = r."id" AND r."deletedAt" IS NULL
+    INNER JOIN roles r ON carp."roleId" = r."id" AND r."deletedAt" IS NULL AND r."communityId" = ca."communityId"
     INNER JOIN articles a ON carp."articleId" = a."id"
     ${needsPremium ? `LEFT JOIN LATERAL (
       SELECT "activeUntil"
@@ -140,7 +140,7 @@ function buildCommunityArm(userId: string | undefined, data: API.Feed.getPostLis
       ORDER BY "activeUntil" DESC
       LIMIT 1
     ) cpr ON TRUE` : ''}
-    ${userId ? `LEFT JOIN roles_users_users ruu ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)` : ''}
+    ${userId ? `LEFT JOIN roles_users_users ruu ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ruu."userId" = ${format('%L::uuid', userId)})` : ''}
     WHERE (
         ${userId ? format('ruu."userId" = %L::uuid OR', userId) : ''}
         (r."title" = ${format('%L', PredefinedRole.Public)} AND r."type" = ${format('%L', RoleType.PREDEFINED)})

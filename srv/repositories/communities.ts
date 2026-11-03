@@ -288,6 +288,7 @@ async function _getCommunityDetailView<Ext>(
               INNER JOIN roles r2
                 ON r2."id" = ccrp."roleId"
                 AND r2."deletedAt" IS NULL
+                AND r2."communityId" = ccrp."communityId"
               WHERE ccrp."communityId" = ch."communityId"
                 AND ccrp."channelId" = ch."channelId"
             ) sub
@@ -3549,6 +3550,8 @@ class CommunityHelper {
               AND ca."articleId" = carp."articleId"
           INNER JOIN roles r
             ON carp."roleId" = r."id"
+            AND r."deletedAt" IS NULL
+            AND r."communityId" = ca."communityId"
           INNER JOIN articles a
             ON carp."articleId" = a."id"
 

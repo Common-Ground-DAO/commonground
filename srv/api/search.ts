@@ -178,7 +178,7 @@ class SearchHelper {
       LEFT JOIN roles r
         ON r."id" = carp."roleId" AND r."deletedAt" IS NULL AND r."communityId" = ca."communityId"
       ${!!userId ? `LEFT JOIN roles_users_users ruu
-        ON r."id" = ruu."roleId" AND ruu."claimed" = TRUE` : ''}
+        ON r."id" = ruu."roleId" AND ruu."claimed" = TRUE AND ruu."userId" = ${format('%L::UUID', userId)}` : ''}
       LEFT JOIN users_articles ua
         ON a."id" = ua."articleId" AND ua."deletedAt" IS NULL
       WHERE a."deletedAt" IS NULL

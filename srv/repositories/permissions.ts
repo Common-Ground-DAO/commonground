@@ -161,7 +161,7 @@ class PermissionHelper {
           ON c."id" = cp."callId"
           AND c."communityId" = r."communityId"
         LEFT JOIN roles_users_users ruu
-          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)
+          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ${!!options.userId ? 'ruu."userId" = $2' : 'FALSE'})
         WHERE r."deletedAt" IS NULL
           AND (
             ${!!options.userId ? 'ruu."userId" = $2 OR' : ''}
@@ -181,7 +181,7 @@ class PermissionHelper {
           INNER JOIN communities_channels_roles_permissions ccrp
             ON r."id" = ccrp."roleId"
           LEFT JOIN roles_users_users ruu
-            ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)
+            ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ${!!options.userId ? 'ruu."userId" = $3' : 'FALSE'})
           WHERE r."deletedAt" IS NULL
             AND (
               ${!!options.userId ? 'ruu."userId" = $3 OR' : ''}
@@ -203,7 +203,7 @@ class PermissionHelper {
           INNER JOIN communities_articles_roles_permissions carp
             ON r."id" = carp."roleId"
           LEFT JOIN roles_users_users ruu
-            ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)
+            ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ${!!options.userId ? 'ruu."userId" = $3' : 'FALSE'})
           WHERE r."deletedAt" IS NULL
             AND (
               ${!!options.userId ? 'ruu."userId" = $3 OR' : ''}
@@ -223,7 +223,7 @@ class PermissionHelper {
           SELECT array_to_json(r."permissions") AS "permissions"
           FROM roles r
           LEFT JOIN roles_users_users ruu
-            ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)
+            ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ${!!options.userId ? 'ruu."userId" = $2' : 'FALSE'})
           WHERE r."deletedAt" IS NULL
             AND (
               ${!!options.userId ? 'ruu."userId" = $2 OR' : ''}
@@ -246,7 +246,7 @@ class PermissionHelper {
           ON ce."id" = cep."communityEventId"
           AND ce."communityId" = r."communityId"
         LEFT JOIN roles_users_users ruu
-          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)
+          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ${!!options.userId ? 'ruu."userId" = $2' : 'FALSE'})
         WHERE r."deletedAt" IS NULL
           AND (
             ${!!options.userId ? 'ruu."userId" = $2 OR' : ''}

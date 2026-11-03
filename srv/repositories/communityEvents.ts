@@ -115,7 +115,7 @@ async function _getEventCTE(
       : ''}
       ${!!data.userId
       ? `LEFT JOIN roles_users_users ruu
-          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)`
+          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ruu."userId" = ${format("%L::UUID", data.userId)})`
       : ''}
       ${!!data.onlyVerifiedOrFollowing || !!data.tags?.length
       ? `INNER JOIN communities c

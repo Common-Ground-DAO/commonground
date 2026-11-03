@@ -216,7 +216,7 @@ async function _getCommunityArticleList(
     ) cpr ON TRUE
     ${!!userId
       ? `LEFT JOIN roles_users_users ruu
-           ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)`
+           ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ruu."userId" = ${format("%L::UUID", userId)})`
       : ''}
     WHERE (
         (
@@ -334,7 +334,7 @@ async function _getCommunityArticleListForEmails(
     ) cpr ON TRUE
     ${!!userId
       ? `LEFT JOIN roles_users_users ruu
-           ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)`
+           ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ruu."userId" = ${format("%L::UUID", userId)})`
       : ''}
     WHERE (
         (
@@ -456,7 +456,7 @@ async function _getCommunityArticleDetailView(
       ON carp."articleId" = a."id"
     ${!!userId
       ? `LEFT JOIN roles_users_users ruu
-          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)`
+          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ruu."userId" = ${format("%L::UUID", userId)})`
       : ''}
     WHERE (
         ${!!userId

@@ -140,7 +140,7 @@ function buildCommunityArm(userId: string | undefined, data: API.Feed.getPostLis
       ORDER BY "activeUntil" DESC
       LIMIT 1
     ) cpr ON TRUE` : ''}
-    ${userId ? `LEFT JOIN roles_users_users ruu ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)` : ''}
+    ${userId ? `LEFT JOIN roles_users_users ruu ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ruu."userId" = ${format('%L::uuid', userId)})` : ''}
     WHERE (
         ${userId ? format('ruu."userId" = %L::uuid OR', userId) : ''}
         (r."title" = ${format('%L', PredefinedRole.Public)} AND r."type" = ${format('%L', RoleType.PREDEFINED)})

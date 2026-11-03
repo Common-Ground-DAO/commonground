@@ -8,6 +8,7 @@ import chatHelper from "../repositories/chats";
 import eventHelper from "../repositories/event";
 import validators from "../validators";
 import { registerPostRoute } from "./util";
+import { requestSockets, senderExcept } from "../util/requestSocket";
 const chatRouter = express.Router();
 
 registerPostRoute<
@@ -31,9 +32,7 @@ registerPostRoute<
     };
     eventHelper.emit(event, {
       userIds: chat.userIds,
-    }, {
-      deviceIds: [user.deviceId],
-    });
+    }, senderExcept(requestSockets(request, user.deviceId)));
 
     return chat;
   }
@@ -64,9 +63,7 @@ registerPostRoute<
     };
     eventHelper.emit(event, {
       userIds: chat.userIds,
-    }, {
-      deviceIds: [user.deviceId],
-    });
+    }, senderExcept(requestSockets(request, user.deviceId)));
   }
 );
 

@@ -20,6 +20,7 @@ import { BellAlertIcon as BellAlertIconOutline } from '@heroicons/react/24/outli
 import { BellAlertIcon as BellAlertIconSolid } from '@heroicons/react/24/solid';
 import PinnedChatOptionsModal from 'components/molecules/PinnedChatOptionsModal/PinnedChatOptionsModal';
 import data from 'data';
+import { chat } from 'data/chat/runtime';
 import { PopoverHandle } from 'components/atoms/Tooltip/Tooltip';
 import { getUrl } from 'common/util';
 import { useLoadedCommunityContext, useSafeCommunityContext } from 'context/CommunityProvider';
@@ -37,6 +38,7 @@ import { getDisplayName } from '../../../util';
 import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal';
 import Button from 'components/atoms/Button/Button';
 import BotBadge from 'components/atoms/BotBadge/BotBadge';
+import { isPredefinedRolePermission } from "util/predefinedRoles";
 
 type Props = {
   community: Models.Community.DetailView;
@@ -62,7 +64,7 @@ export default function TextChannel(props: Props) {
 
   const membersCanWrite = useMemo(() => {
     if (!channel) return false;
-    const memberPermission = channel.rolePermissions.find(permission => permission.roleTitle === PredefinedRole.Member);
+    const memberPermission = channel.rolePermissions.find(permission => isPredefinedRolePermission(permission, PredefinedRole.Member));
     return memberPermission?.permissions.includes('CHANNEL_WRITE');
   }, [channel]);
 
@@ -368,17 +370,11 @@ const PinnedMessage: React.FC<{
   const { isMobile } = useWindowSizeContext();
   const creator = useUserData(message?.creatorId);
 
+  // watched in the store: works before the channel's message list is mounted
+  // (the header renders first) and follows edits and deletion
   useEffect(() => {
-    const resultPromise = data.channelManager.getMessageById(channelId, messageId, (updatedMessage) => {
-      setMessage(updatedMessage);
-    }).then(result => {
-      setMessage(result.item);
-      return result;
-    });
-
-    return () => {
-      resultPromise.then(result => result.unsubscribe());
-    };
+    setMessage(null);
+    return chat.channels.watchMessage(channelId, messageId, setMessage);
   }, [channelId, messageId]);
 
   const onUnpin = async (ev: React.MouseEvent) => {

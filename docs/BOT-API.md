@@ -205,6 +205,13 @@ curl --fail-with-body -sS \
   "$CG_URL/api/bot/v1/messages/createMessage"
 ```
 
+`createMessage` is idempotent on `id`: when a request fails without an answer
+(timeout, dropped connection), send it again with the same `id`. If the first
+attempt was stored, the retry succeeds with the stored message and no second
+`cliMessageEvent` or notification is sent. An `id` already used by another
+user, in another channel or for a message that was deleted since fails with
+`NOT_ALLOWED`. A retry counts against the rate limits like a new message.
+
 Load recent messages:
 
 ```sh
@@ -262,7 +269,9 @@ socket.on("cliBotScopesEvent", async (event) => {
 socket.on("connect_error", (error) => console.error(error.message));
 ```
 
-Community message event data includes `communityId`. `new` carries a complete
+Community message event data includes `communityId`. Message events without
+`communityId` (the chat of a call in a community the bot is in) may arrive as
+well; they are not part of the v1 contract, ignore them. `new` carries a complete
 API message plus `creatorIsBot`. A selected `@mention`
 is a body element with `{type: "mention", userId, alias}`; compare `userId`
 with the ID from `/whoami`, never with the editable alias. Replies carry
@@ -272,7 +281,10 @@ multi-bot mention or reply loops.
 
 `update` carries `id`, `communityId`, `channelId`,
 `updatedAt`, and the changed message fields. `delete` carries `channelId` and
-`communityId` plus `deletedIds`. `cliBotScopesEvent` with action `refresh`
+`communityId` plus `deletedIds`. Messages in REST answers and events may also
+carry `syncSeq` (and a `delete` `syncSeq`/`syncSeqs`): the channel's change
+sequence used by the web app's catch-up. Bots can ignore these fields; the
+catch-up route itself is not part of v1. `cliBotScopesEvent` with action `refresh`
 instructs the client to replace its cached scope list after an installation,
 removal, or role assignment change. These two events are the supported public
 v1 event contract.

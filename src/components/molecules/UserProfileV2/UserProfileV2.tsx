@@ -42,6 +42,7 @@ import { useSafeCommunityContext } from 'context/CommunityProvider';
 import communityApi from 'data/api/community';
 import { mayLoadUserCommunityRoleIds, shouldWarnAboutRoleIdsError } from 'util/userCommunityRoleIds';
 import { PredefinedRole } from 'common/enums';
+import { isPredefinedRole } from 'util/predefinedRoles';
 import TagInputField, { tagStringToPredefinedTag } from '../inputs/TagInputField/TagInputField';
 import Tag, { TagIcon } from 'components/atoms/Tag/Tag';
 import BotBadge from 'components/atoms/BotBadge/BotBadge';
@@ -405,8 +406,8 @@ const UserProfileV2: React.FC<Props> = (props) => {
     const { rolesById } = commContext;
     const roles = roleIds?.map(roleId => rolesById.get(roleId));
     return {
-      roles: roles?.map(role => role?.title).filter(title => !!title && title !== PredefinedRole.Admin) || [],
-      isAdmin: roles?.some(role => role?.title === PredefinedRole.Admin)
+      roles: roles?.filter(role => !!role && !!role.title && !isPredefinedRole(role, PredefinedRole.Admin)).map(role => role!.title) || [],
+      isAdmin: roles?.some(role => !!role && isPredefinedRole(role, PredefinedRole.Admin))
     }
   }, [commContext, roleIds]);
 

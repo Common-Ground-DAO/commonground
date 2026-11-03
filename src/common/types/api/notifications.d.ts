@@ -28,8 +28,24 @@ declare global {
             }
 
             namespace getUnreadCount {
-                type Request = undefined;
-                type Response = number;
+                /**
+                 * chat-sync: `{ withTime: true }` asks for the object answer.
+                 * Older servers ignore the body (the route has no validator)
+                 * and answer with the plain count. A validator added on the
+                 * new server must keep accepting a call with no body (old
+                 * clients) and answer it with the plain count.
+                 */
+                type Request = undefined | { withTime: true };
+                /**
+                 * Plain count without `withTime` (and from older servers,
+                 * which may send it as a numeric string; `Number()` it). With
+                 * `withTime`: the count and the database `now()` (ISO) it was
+                 * read at.
+                 */
+                type Response = number | {
+                    unreadCount: number;
+                    unreadCountAt: string;
+                };
             }
 
             namespace markAsRead {

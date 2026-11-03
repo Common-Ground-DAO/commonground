@@ -49,6 +49,7 @@ jest.mock('../repositories/notifications', () => ({ __esModule: true, default: {
 jest.mock('../repositories/files', () => ({ __esModule: true, default: {} }));
 jest.mock('../repositories/articles', () => ({ __esModule: true, default: {} }));
 jest.mock('../repositories/bots', () => ({ __esModule: true, default: {} }));
+jest.mock('../repositories/calls', () => ({ __esModule: true, default: { getActiveMemberUserIds: jest.fn().mockResolvedValue([]) } }));
 jest.mock('../util/botPrincipal', () => ({ allowBotRoute: jest.fn() }));
 jest.mock('../util/botRateLimit', () => ({ enforceBotRateLimit: jest.fn() }));
 jest.mock('../util/rateLimit', () => ({ __esModule: true, default: () => jest.fn() }));
@@ -71,7 +72,7 @@ const asUser = (id: string) => ({ session: { user: { id } } });
 beforeEach(() => {
   jest.clearAllMocks();
   messageHelper.isChannelInAccessScope.mockResolvedValue(true);
-  messageHelper.deleteMessage.mockResolvedValue({ deletedIds: [MESSAGE], updatedParentIdToNull: [], dbNow: '' });
+  messageHelper.deleteMessage.mockResolvedValue({ deletedIds: [MESSAGE], deletedSyncSeqs: [1], updatedParentIdToNull: [], updatedParents: [], dbNow: '' });
   messageHelper.loadMessages.mockResolvedValue([]);
   permissionHelper.hasPermissions.mockResolvedValue(true);
   chatHelper.isUserInChat.mockResolvedValue(true);

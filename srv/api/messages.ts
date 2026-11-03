@@ -4,7 +4,7 @@
 
 import express from "express";
 import errors from "../common/errors";
-import { ArticlePermission, CallPermission, ChannelPermission, CommunityPermission, PredefinedRole } from "../common/enums";
+import { ArticlePermission, CallPermission, ChannelPermission, CommunityPermission, PredefinedRole, RoleType } from "../common/enums";
 import chatHelper from "../repositories/chats";
 import communityHelper from "../repositories/communities";
 import eventHelper from "../repositories/event";
@@ -25,6 +25,8 @@ import articleHelper from "../repositories/articles";
 import botHelper from "../repositories/bots";
 import { allowBotRoute } from "../util/botPrincipal";
 import { enforceBotRateLimit } from "../util/botRateLimit";
+import { requestSockets, senderExcept, type RequestSockets } from "../util/requestSocket";
+import callHelper from "../repositories/calls";
 
 const t = createTranslator();
 
@@ -88,6 +90,15 @@ for (const route of [
 }
 
 const ARTICLE_ROOM_LIMIT = 5;
+/**
+ * Socket-scoped article rooms (`session.socketArticleRooms`): at most
+ * ARTICLE_ROOM_LIMIT per socket, and at most this many entries per session
+ * (entries of closed tabs are never left explicitly). Both are soft bounds:
+ * concurrent requests of one session write the session last-write-wins, so
+ * an entry can be lost while its socket stays in the room (until it
+ * disconnects).
+ */
+const SESSION_SOCKET_ARTICLE_ROOM_LIMIT = 50;
 
 function isExactCommunityChannelAccess(
   access: API.Messages.MessageAccess,
@@ -148,8 +159,6 @@ export async function _checkAccessOrThrow(access: { channelId: string, callId: s
 export async function _checkAccessOrThrow(access: { channelId: string, articleId: string, articleUserId: string } | { channelId: string, articleId: string, articleCommunityId: string }, permissions: ArticlePermission[], userId?: string): Promise<void>;
 export async function _checkAccessOrThrow(access: { channelId: string, chatId: string }, userId?: string): Promise<void>;
 export async function _checkAccessOrThrow(access: API.Messages.MessageAccess, userIdOrPermissions?: ArticlePermission[] | ChannelPermission[] | CallPermission[] | string, userId?: string) {
-  console.log('checkAccessOrThrow', access);
-
   // Every permission below is evaluated for the community, chat, call or
   // article in the access object, while the message queries use
   // `access.channelId`; both must refer to the same channel.
@@ -237,17 +246,32 @@ export async function _checkAccessOrThrow(access: API.Messages.MessageAccess, us
   }
 }
 
-async function emitMessageEvents(events: Events.Message.Message[], access: API.Messages.MessageAccess, excludeObject?: {
+type MessageEventExcept = {
   userIds?: string[];
   deviceIds?: string[];
-}) {
+  deviceSockets?: { deviceId: string; socketId: string }[];
+};
+
+/**
+ * Emits message events to everyone who may read the channel. Callers do not
+ * wait for it, so it never rejects: a failed target query is logged (the
+ * events of that call are lost to live delivery; clients catch up through
+ * `getChanges`).
+ */
+function emitMessageEvents(events: Events.Message.Message[], access: API.Messages.MessageAccess, excludeObject?: MessageEventExcept): Promise<void> {
+  return emitMessageEventsToReaders(events, access, excludeObject).catch(e => {
+    console.error("Error emitting message events", e);
+  });
+}
+
+async function emitMessageEventsToReaders(events: Events.Message.Message[], access: API.Messages.MessageAccess, excludeObject?: MessageEventExcept) {
   if ('communityId' in access) {
     const channelRolePermissions = await communityHelper.getCommunityChannelRolePermissions(access.communityId, access.channelId);
     const notifyRoles = channelRolePermissions.filter(d => (
       d.permissions.includes("CHANNEL_EXISTS") &&
       d.permissions.includes("CHANNEL_READ")
     ));
-    const publicRole = notifyRoles.find(d => d.roleTitle === PredefinedRole.Public);
+    const publicRole = notifyRoles.find(d => d.roleType === RoleType.PREDEFINED && d.roleTitle === PredefinedRole.Public);
     for (const event of events) {
       const scopedEvent: Events.Message.Message = {
         ...event,
@@ -265,15 +289,32 @@ async function emitMessageEvents(events: Events.Message.Message[], access: API.M
     }
   }
   else if ('callId' in access) {
-    // Todo: only send to call participants
-    const callRolePermissions = await communityHelper.getCallRolePermissions(access.callId, access.channelId);
+    // the reader roles, the call's present members who may read its chat
+    // (also when that comes from Public) and, when Public may read, the
+    // community room (members and visitors): nobody joins a Public role
+    // room. One emit, so a socket in several of these rooms gets each event
+    // once. Either query may fail on its own: the other targets still get
+    // the event.
+    const [callRolePermissions, activeMemberUserIds] = await Promise.all([
+      communityHelper.getCallRolePermissions(access.callId, access.channelId).catch(e => {
+        console.error("Error reading the call's reader roles", e);
+        return [] as Awaited<ReturnType<typeof communityHelper.getCallRolePermissions>>;
+      }),
+      callHelper.getActiveMemberUserIds(access.callId, [CallPermission.CALL_EXISTS, CallPermission.CHANNEL_READ]).catch(e => {
+        console.error("Error reading the call's present members", e);
+        return [] as string[];
+      }),
+    ]);
     const notifyRoles = callRolePermissions.filter(d => (
       d.permissions.includes("CALL_EXISTS") &&
       d.permissions.includes("CHANNEL_READ")
     ));
+    const publicRole = notifyRoles.find(d => d.roleType === RoleType.PREDEFINED && d.roleTitle === PredefinedRole.Public);
     for (const event of events) {
       eventHelper.emit(event, {
         roleIds: notifyRoles.map(d => d.roleId),
+        userIds: activeMemberUserIds,
+        communityIds: publicRole ? [publicRole.communityId] : [],
       }, excludeObject);
     }
   }
@@ -297,8 +338,50 @@ async function emitMessageEvents(events: Events.Message.Message[], access: API.M
   }
 }
 
+/**
+ * The events of a (soft) delete: one `delete` with every deleted id, its
+ * highest `syncSeq` and all of them in `syncSeqs` (a multi-row delete bumps
+ * the channel sequence once per row), plus an `update` for every reply whose
+ * parent was deleted (`parentMessageId: null`, with its own `syncSeq`).
+ */
+export function deleteResultEvents(
+  channelId: string,
+  result: Awaited<ReturnType<typeof messageHelper.deleteMessage>>,
+): Events.Message.Message[] {
+  const events: Events.Message.Message[] = [];
+  if (result.deletedIds.length > 0) {
+    events.push({
+      type: "cliMessageEvent",
+      action: "delete",
+      data: {
+        channelId,
+        deletedIds: result.deletedIds,
+        ...(result.deletedSyncSeqs.length > 0 ? {
+          syncSeq: result.deletedSyncSeqs.reduce((max, seq) => Math.max(max, seq)),
+          syncSeqs: result.deletedSyncSeqs,
+        } : {}),
+      },
+    });
+  }
+  for (const parent of result.updatedParents) {
+    events.push({
+      type: "cliMessageEvent",
+      action: "update",
+      data: {
+        id: parent.id,
+        channelId,
+        parentMessageId: null,
+        updatedAt: result.dbNow,
+        syncSeq: parent.syncSeq,
+      },
+    });
+  }
+  return events;
+}
+
 async function createMessage(
   user: User,
+  sender: RequestSockets,
   data: API.Messages.createMessage.Request,
   isModerationMessage: boolean,
   creatorIsBot = false,
@@ -390,11 +473,21 @@ async function createMessage(
       messageIds: [data.parentMessageId],
     }))[0];
     if (!parentMessage) {
+      // a retry of a create whose parent was deleted in the meantime
+      const stored = await messageHelper.getOwnStoredMessage(user.id, access.channelId, data.id);
+      if (stored) {
+        return stored;
+      }
       throw new Error(errors.server.NOT_FOUND);
     }
   }
 
-  const { message, userAlias } = await messageHelper.createMessage(user.id, data);
+  const { message, userAlias, created } = await messageHelper.createMessage(user.id, data);
+  if (!created) {
+    // a retry of a create that is stored already: its events and
+    // notifications went out with the first one
+    return message;
+  }
 
   const event: Events.Message.Message = {
     type: "cliMessageEvent",
@@ -402,7 +495,7 @@ async function createMessage(
     data: { ...message, creatorIsBot },
   };
 
-  emitMessageEvents([event], access, { deviceIds: [user.deviceId] });
+  emitMessageEvents([event], access, senderExcept(sender));
 
   let notifications: (Omit<Models.Notification.ApiNotification, "id" | "createdAt" | "updatedAt" | "read"> & { userId: string })[] = [];
   const previewText = message.body.content.reduce<string[]>((agg, val) => {
@@ -635,7 +728,7 @@ registerPostRoute<
     }
     await permissionHelper.hasTrustOrThrow({ userId: user.id, trust: '1.0' });
 
-    return createMessage(user, data, false, !!request.botPrincipal);
+    return createMessage(user, requestSockets(request, user.deviceId), data, false, !!request.botPrincipal);
   }
 );
 
@@ -653,7 +746,7 @@ registerPostRoute<
     }
     await permissionHelper.hasTrustOrThrow({ userId: user.id, trust: '1.0' });
 
-    return createMessage(user, data, true);
+    return createMessage(user, requestSockets(request, user.deviceId), data, true);
   }
 );
 
@@ -703,13 +796,17 @@ registerPostRoute<
         id,
         channelId: access.channelId,
         updatedAt: result.updatedAt,
+        editedAt: result.editedAt,
+        syncSeq: result.syncSeq,
       },
     };
 
-    emitMessageEvents([event], data.access, { deviceIds: [user.deviceId] });
+    emitMessageEvents([event], data.access, senderExcept(requestSockets(request, user.deviceId)));
 
     const returnVal: API.Messages.editMessage.Response = {
       editedAt: result.editedAt,
+      updatedAt: result.updatedAt,
+      syncSeq: result.syncSeq,
     }
     if (updateData.attachments) {
       returnVal.attachments = updateData.attachments;
@@ -786,31 +883,10 @@ registerPostRoute<
       channelId: access.channelId,
       creatorId: message.creatorId,
     });
-    const events: Events.Message.Message[] = [{
-      type: "cliMessageEvent",
-      action: "delete",
-      data: {
-        channelId: access.channelId,
-        deletedIds: [data.messageId],
-      },
-    }];
-
-    if (!!result && result.updatedParentIdToNull.length > 0) {
-      result.updatedParentIdToNull.forEach(messageId => {
-        events.push({
-          type: "cliMessageEvent",
-          action: "update",
-          data: {
-            id: messageId,
-            channelId: access.channelId,
-            parentMessageId: null,
-            updatedAt: result.dbNow,
-          },
-        });
-      })
+    const events = deleteResultEvents(access.channelId, result);
+    if (events.length > 0) {
+      emitMessageEvents(events, data.access);
     }
-
-    emitMessageEvents(events, data.access);
   }
 );
 
@@ -842,29 +918,10 @@ registerPostRoute<
 
     const result = await messageHelper.deleteAllUserMessages(data);
 
-    const events: Events.Message.Message[] = [];
-    events.push({
-      type: "cliMessageEvent",
-      action: "delete",
-      data: {
-        channelId: data.access.channelId,
-        deletedIds: result.deletedIds,
-      },
-    });
-    for (const updatedMessageId of result.updatedParentIdToNull) {
-      events.push({
-        type: "cliMessageEvent",
-        action: "update",
-        data: {
-          channelId: data.access.channelId,
-          id: updatedMessageId,
-          updatedAt: result.dbNow,
-          parentMessageId: null,
-        },
-      });
+    const events = deleteResultEvents(data.access.channelId, result);
+    if (events.length > 0) {
+      emitMessageEvents(events, access);
     }
-
-    emitMessageEvents(events, access);
   }
 );
 
@@ -944,6 +1001,7 @@ registerPostRoute<
           id: data.messageId,
           updatedAt: result.updatedAt,
           reactions: result.reactions,
+          syncSeq: result.syncSeq,
         },
       };
       emitMessageEvents([event], access, { userIds: [user.id] });
@@ -986,6 +1044,7 @@ registerPostRoute<
           id: data.messageId,
           updatedAt: result.updatedAt,
           reactions: result.reactions,
+          syncSeq: result.syncSeq,
         },
       };
       emitMessageEvents([event], access, { userIds: [user.id] });
@@ -1015,17 +1074,48 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
+    const { access } = data;
+    await checkMessageReadAccess(access, user.id);
     // the stored value: newer than the posted one if another tab got further
-    const lastRead = await messageHelper.setChannelLastRead(user.id, data);
+    const { lastRead, unread, syncSeq } = await messageHelper.setChannelLastRead(user.id, data);
 
     const event: Events.Channel.LastRead = {
       type: 'cliChannelLastRead',
-      channelId: data.access.channelId,
+      channelId: access.channelId,
       lastRead,
+      unread,
+      syncSeq,
     };
+    if ('communityId' in access) {
+      event.communityId = access.communityId;
+    }
+    else if ('chatId' in access) {
+      event.chatId = access.chatId;
+    }
     eventHelper.emit(event, {
       userIds: [user.id],
     });
+
+    return { lastRead, unread, syncSeq };
+  }
+);
+
+/**
+ * chat-sync catch-up of one channel (contract: API.Messages.getChanges).
+ * Same read access as `loadMessages`; not on the bot allowlist.
+ */
+registerPostRoute<
+  API.Messages.getChanges.Request,
+  API.Messages.getChanges.Response
+>(
+  messagingRouter,
+  '/getChanges',
+  validators.API.Message.getChanges,
+  async (request, response, data) => {
+    const userId = request.session.user?.id;
+    await checkMessageReadAccess(data.access, userId);
+
+    return await messageHelper.getChanges(userId, data);
   }
 );
 
@@ -1142,12 +1232,44 @@ registerPostRoute<
       await _checkAccessOrThrow(data.access, [
         ArticlePermission.ARTICLE_READ,
       ], user.id);
+      const { articleId } = data.access;
+      const sockets = requestSockets(request, user.deviceId);
+
+      if (sockets.socketId !== null) {
+        // only the requesting socket: another tab of the device keeps (or
+        // never gets) its own article rooms
+        const { socketId } = sockets;
+        let rooms = (request.session.socketArticleRooms || [])
+          .filter(r => r.articleId !== articleId || r.socketId !== socketId);
+        const evict = (old: { articleId: string; socketId: string }) => {
+          rooms = rooms.filter(r => r !== old);
+          eventHelper.requestSocketsLeaveRooms({ deviceId: user.deviceId, socketId: old.socketId }, {
+            articleIds: [old.articleId],
+          });
+        };
+        // the limit per socket: the oldest room of this socket goes, other
+        // tabs keep theirs
+        const own = rooms.filter(r => r.socketId === socketId);
+        while (own.length >= ARTICLE_ROOM_LIMIT) {
+          evict(own.shift()!);
+        }
+        // the session's bound: the oldest entries (mostly closed tabs) go
+        while (rooms.length >= SESSION_SOCKET_ARTICLE_ROOM_LIMIT) {
+          evict(rooms[0]);
+        }
+        rooms.push({ articleId, socketId });
+        request.session.socketArticleRooms = rooms;
+        eventHelper.requestSocketsJoinRooms(sockets, {
+          articleIds: [articleId],
+        });
+        return;
+      }
 
       if (request.session.temporaryArticleIds && request.session.temporaryArticleIds.length >= ARTICLE_ROOM_LIMIT) {
         const oldArticleId = request.session.temporaryArticleIds.shift();
         if (oldArticleId) {
           // TODO: Emit leave event for the old article room
-          eventHelper.deviceLeaveRooms(user.deviceId, {
+          eventHelper.requestSocketsLeaveRooms(sockets, {
             articleIds: [oldArticleId],
           });
         }
@@ -1156,9 +1278,9 @@ registerPostRoute<
       if (!request.session.temporaryArticleIds) {
         request.session.temporaryArticleIds = [];
       }
-      request.session.temporaryArticleIds.push(data.access.articleId);
-      eventHelper.deviceJoinRooms(user.deviceId, {
-        articleIds: [data.access.articleId],
+      request.session.temporaryArticleIds.push(articleId);
+      eventHelper.requestSocketsJoinRooms(sockets, {
+        articleIds: [articleId],
       });
     }
   }
@@ -1180,9 +1302,17 @@ registerPostRoute<
         ArticlePermission.ARTICLE_READ,
       ], user.id);
       const articleId = data.access.articleId;
-      request.session.temporaryArticleIds = request.session.temporaryArticleIds?.filter(id => id !== articleId);
-      eventHelper.deviceLeaveRooms(user.deviceId, {
-        articleIds: [data.access.articleId],
+      const sockets = requestSockets(request, user.deviceId);
+      if (sockets.socketId !== null) {
+        const { socketId } = sockets;
+        request.session.socketArticleRooms = request.session.socketArticleRooms
+          ?.filter(r => r.articleId !== articleId || r.socketId !== socketId);
+      }
+      else {
+        request.session.temporaryArticleIds = request.session.temporaryArticleIds?.filter(id => id !== articleId);
+      }
+      eventHelper.requestSocketsLeaveRooms(sockets, {
+        articleIds: [articleId],
       });
     }
   }

@@ -14,6 +14,7 @@ import eventHelper from "../repositories/event";
 import onchainHelper from "../repositories/onchain";
 import { CallPermission, CallType, ChannelPermission, CommunityApprovalState, CommunityEventPermission, CommunityPermission, PredefinedRole, RoleType, UserBlockState } from "../common/enums";
 import callHelper from "../repositories/calls";
+import { requestSockets, senderExcept } from "../util/requestSocket";
 import { createTranslator } from "short-uuid";
 import fileHelper from "../repositories/files";
 import axios from "../util/axios";
@@ -27,6 +28,31 @@ import messageHelper from "../repositories/messages";
 
 const communityRouter = express.Router();
 const t = createTranslator();
+
+/**
+ * `cliCallEvent new` to the given role rooms plus the call's present members
+ * and, when the Public role may see the call, the community room (nobody
+ * joins a Public role room). One emit, so every socket gets it once. If the
+ * extra targets cannot be read, the role rooms still get it.
+ */
+async function emitCallNew(callData: Models.Calls.Call, roleIds: string[]) {
+  let extra: Awaited<ReturnType<typeof callHelper.getCallEventExtraTargets>> = { activeMemberUserIds: [], publicCommunityId: null };
+  try {
+    extra = await callHelper.getCallEventExtraTargets(callData.id);
+  }
+  catch (e) {
+    console.error("Error reading the call's event targets", e);
+  }
+  eventHelper.emit({
+    type: 'cliCallEvent',
+    action: 'new',
+    data: callData,
+  }, {
+    roleIds,
+    userIds: extra.activeMemberUserIds,
+    communityIds: extra.publicCommunityId !== null ? [extra.publicCommunityId] : [],
+  });
+}
 
 /** the most members a caller outside the community sees in the preview */
 const MEMBER_LIST_PREVIEW_LIMIT = 6;
@@ -119,9 +145,7 @@ registerPostRoute<
     };
     eventHelper.emit(event, {
       userIds: [user.id],
-    }, {
-      deviceIds: [user.deviceId],
-    });
+    }, senderExcept(requestSockets(request, user.deviceId)));
 
     return result;
   }
@@ -400,7 +424,7 @@ registerPostRoute<
     const result = await communityHelper.createCommunity(data, user.id);
 
     const roleIds = result.roles.filter(r => {
-      return (
+      return r.type === RoleType.PREDEFINED && (
         r.title === PredefinedRole.Admin ||
         r.title === PredefinedRole.Member
       )
@@ -417,9 +441,7 @@ registerPostRoute<
     };
     eventHelper.emit(event, {
       userIds: [user.id],
-    }, {
-      deviceIds: [user.deviceId],
-    });
+    }, senderExcept(requestSockets(request, user.deviceId)));
 
     if (result.logoLargeId !== null) {
       fileHelper.scheduleCommunityPreviewUpdate(user.id, result.id, result.logoLargeId);
@@ -1309,13 +1331,7 @@ registerPostRoute<
       }
     }
 
-    eventHelper.emit({
-      type: 'cliCallEvent',
-      action: 'new',
-      data: callData,
-    }, {
-      roleIds: targetRoleIds,
-    });
+    await emitCallNew(callData, targetRoleIds);
     return callData;
   }
 );
@@ -1385,13 +1401,7 @@ registerPostRoute<
       }
     }
 
-    eventHelper.emit({
-      type: 'cliCallEvent',
-      action: 'new',
-      data: callData,
-    }, {
-      roleIds: targetRoleIds,
-    });
+    await emitCallNew(callData, targetRoleIds);
     return callData;
   }
 );
@@ -1465,9 +1475,7 @@ registerPostRoute<
     };
     eventHelper.emit(event, {
       userIds: [user.id],
-    }, {
-      deviceIds: [user.deviceId],
-    });
+    }, senderExcept(requestSockets(request, user.deviceId)));
   }
 );
 
@@ -1566,6 +1574,8 @@ registerPostRoute<
     if (data.duration > 8 * 60) {
       throw new Error(errors.server.EVENT_TOO_LONG);
     }
+    // every role id, before the event's call is created
+    await communityEventHelper.checkEventRolePermissions(data.communityId, data.rolePermissions);
 
     if (data.type !== "reminder") {
       const communityCallTier = await communityHelper.getCommunityPremiumTier(data.communityId);
@@ -1620,6 +1630,8 @@ registerPostRoute<
     if (new Date(data.scheduleDate).getTime() < new Date().getTime()) {
       throw new Error(errors.server.EVENT_SCHEDULE_IN_THE_PAST);
     }
+    // every role id, before the event or its call is changed
+    await communityEventHelper.checkEventRolePermissions(eventData.communityId, data.rolePermissions);
 
     // // Can't go for something that would delete a call
     // if (eventData.type !== 'external' && data.type === 'external') {

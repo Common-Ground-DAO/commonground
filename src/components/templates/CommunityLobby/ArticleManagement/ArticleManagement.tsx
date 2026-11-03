@@ -12,6 +12,7 @@ import communityArticleManager from "data/managers/communityArticleManager";
 import { PredefinedRole } from "common/enums";
 import { useSnackbarContext } from "context/SnackbarContext";
 import GenericArticleManagement from "components/organisms/GenericArticleManagement/GenericArticleManagement";
+import { isPredefinedRole } from "util/predefinedRoles";
 
 type Props = {
     community: Models.Community.DetailView;
@@ -39,13 +40,14 @@ export default function ArticleManagement(props: Props) {
     const navigate = useNavigate();
 
     const emptyCommunityArticle: Pick<Models.Community.CommunityArticle, "communityId" | "rolePermissions" | "url" | 'published' | 'sentAsNewsletter' | 'markAsNewsletter'> = useMemo(() => {
-        const publicRole = roles.find(role => role.title === PredefinedRole.Public);
+        const publicRole = roles.find(role => isPredefinedRole(role, PredefinedRole.Public));
         const rolePermissions: Models.Community.CommunityArticlePermission[] = [];
         if (publicRole) {
             rolePermissions.push({
                 permissions: ['ARTICLE_PREVIEW', 'ARTICLE_READ'],
                 roleId: publicRole.id,
-                roleTitle: publicRole.title
+                roleTitle: publicRole.title,
+                roleType: publicRole.type,
             });
         }
         return {

@@ -147,6 +147,7 @@ class SearchHelper {
                   JSON_BUILD_OBJECT(
                     'roleId', r2."id",
                     'roleTitle', r2."title",
+                    'roleType', r2."type",
                     'permissions', carp2."permissions"
                   )
                 ), '[]'::json)

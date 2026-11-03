@@ -11,7 +11,14 @@
 > §5.5, §6, §8) against commit 2fad7d3, 2026-11-01; 8-digit email codes and the hourly email-code
 > failure budgets (§4, §5.5, §6, §8) against commit 2fad7d3, 2026-11-01; the store TTL of sessions
 > without a user, the index of each user's sessions, signing out other devices and the pre-login
-> limits (§2, §3, §4, §5.4, §7, §8, §10, §11) against commit 23a4c1e, 2026-11-01
+> limits (§2, §3, §4, §5.4, §7, §8, §10, §11) against commit 23a4c1e, 2026-11-01; the per-tab
+> login state, login lock, cross-tab broadcast, `checkLoginStatus`, LOGIN_REQUIRED handling and
+> the signed-out path across tabs (§10) against commit 964f6b3, 2026-11-02, the logout marker
+> and the signed-out re-check against commit 9d00729, 2026-11-03; the logout's
+> sign-out of the device's other sockets against commit ce09d8a, 2026-11-02; the header-less
+> logout disconnect and the own-logout guard against commits 1b09f87 and f97ef1b, 2026-11-02; the post-login setup
+> (no notification database) against commit 1e6a0d4, 2026-11-03; the socket's immediate drop of
+> a signed-out device against commit 1b9948c, 2026-11-03
 
 # Authentication & Identity
 
@@ -431,6 +438,13 @@ mode (the response itself refreshes an existing session's store TTL and re-sends
 session's cookie).
 `POST /User/logout` deletes the device, destroys the session (`endLoginSession()`; the old id is
 dead and leaves the user's session index) and expires the cookie; no new session takes its place.
+Logout disconnects the device's sockets: when the request names its tab's socket
+(`x-cg-socket-id`), the device's other sockets (its other tabs) get `cliSignedOut` and are
+disconnected, and the requesting tab's socket logs out itself; requests without the header
+(older clients) disconnect all of the device's sockets without `cliSignedOut`
+([docs/realtime](../realtime/README.md#socket-scoped-targeting)). A tab ignores `cliSignedOut`
+while its own logout is in flight (`LoginManager.signedOutElsewhere`), so a logout whose socket the
+server could not tell apart shows no "signed out" notice.
 `POST /User/signOutOtherDevices` (step-up) ends every other session and device key of the account
 and answers `{ devices, delayed }`, the number of other devices signed out
 ([§2](#signing-out-other-devices)).
@@ -1104,8 +1118,10 @@ scoped to the allow-listed surface.
 The client login lifecycle is owned by `LoginManager` (`src/data/appstate/login.ts`). States are
 `pending` → `anonymous` / `loggingin` / `loggedin` / `loggingout` (`Common.LoginState`).
 
-- **Current user** is cached in `localStorage` under `CG_CURRENT_USER` (`{ userId, deviceId }`), and
-  changes are mirrored to other tabs via a `storage` event and a `CG_LOGIN_STATE` `BroadcastChannel`.
+- **Current user** is cached in `localStorage` under `CG_CURRENT_USER` (`{ userId, deviceId }`).
+  Every tab keeps its own login state; logins and logouts reach the other tabs as
+  `BroadcastChannel('cg:auth')` notices (`src/data/appstate/authBroadcast.ts`), with the `storage`
+  event on `CG_CURRENT_USER` (and a re-check when a tab becomes visible) as fallback.
 - **Auto-login** (`autoLogin`, `src/data/appstate/login.ts`): if offline, it optimistically
   trusts the cached user; otherwise it reconstructs the current user from IndexedDB device keypairs +
   local `OwnData`, then performs a `device` login. The deprecated stored-mnemonic fallback runs only
@@ -1115,11 +1131,34 @@ The client login lifecycle is owned by `LoginManager` (`src/data/appstate/login.
   `stepUpValidUntil` from its response (the session's earlier sign-in, e.g. right after a reload) or
   clears it; `logout()` and a logout in another tab clear it. It is only an estimate used to confirm before a WebAuthn ceremony — the
   server's `REAUTH_REQUIRED` stays authoritative.
-- **Multi-tab coordination**: only the active tab performs the network login; passive tabs wait for a
-  `LOGIN_FINISHED`/`LOGIN_ERROR` broadcast (`loginRequiredErrorHandler`). This avoids concurrent
-  device-signature races across tabs.
-- **`checkLoginStatus`** compares the server's `userId` against the cached one and logs out on
-  mismatch.
+- **Multi-tab coordination**: every tab runs its own `device` login once per page load (on its
+  first socket connect; a socket reconnect logs only the socket in). All HTTP logins (`device`,
+  interactive, `createUser`, transfer links) run one at a time across the tabs of a browser under
+  the Web Lock `cg:login`, because an anonymous → user login regenerates the session id
+  ([§2](#when-a-session-exists)) and the tabs share its cookie; a `device` login of the same user
+  keeps the session. A device login holds the lock for `User/getSignableSecret`, the signature and
+  `User/login` together: the session keeps one signable secret, which a concurrent login in another
+  tab would replace. A tab that had to wait for the lock and then finds the session logged in as
+  the stored user takes it over instead of logging in again. A tab waits at most 15 s for the lock
+  (a frozen tab keeps its locks). After 10 s a slow request releases the lock for the other tabs,
+  but its tab keeps waiting for it and starts no further step without the lock (it queues again
+  once). An `INVALID_SECRET` (a late secret request of another tab replaced the secret) is retried
+  once under the lock with a fresh secret. Inside the lock a tab compares the stored current user
+  with the device it is about to log in and follows the stored user if they differ (no login over
+  another user's new session). A page device login that fails with anything but `NOT_FOUND` is
+  retried with a backoff (5/15/60 s, ±50 %) and on the next visibility/online check (never sooner than 5 s after the failure); `User/logout` also runs under the lock.
+  After its socket was live again following a gap, a visible tab re-runs the device `User/login`
+  for its snapshot (debounced, under the lock; no login-state change). On another tab's logout a tab drops its own login (socket `logout`, in-memory state)
+  without a second `User/logout`; on another tab's login an anonymous tab checks
+  `User/checkLoginStatus` and takes the session over without an HTTP login (else it logs in with its
+  device key); a login of another user is handled as a logout first. For one release a logout also
+  posts `'anonymous'` on the legacy `CG_LOGIN_STATE` channel for older pages still open.
+- **`loginRequiredErrorHandler`** (a request answered `LOGIN_REQUIRED`, any tab): under the login
+  lock it re-checks `User/checkLoginStatus`; only if the session is not this tab's user any more it
+  runs `autoLogin()`.
+- **`checkLoginStatus`** (on becoming visible or online, logged-in tabs): a session without a user
+  gets the silent re-login above; a session of another user is never logged out from here — the tab
+  follows the stored current user (another tab's login).
 - **Keepalive**: `WebSocketManager` calls `POST /User/ensureSession` every 29 minutes (it creates
   no session, [§4](#4-the-login-endpoint)); there is no call on start — the socket needs no session
   cookie. It also keeps a session without a user alive while the tab is open (its store TTL is an
@@ -1129,12 +1168,18 @@ The client login lifecycle is owned by `LoginManager` (`src/data/appstate/login.
   [§2](#signing-out-other-devices)) or a `NOT_FOUND` for the device at the automatic login makes
   `LoginManager.signedOutElsewhere()` sign out locally (`logout()`: local databases, device key,
   current user) and raise `signedOutNotice` (`src/data/auth/signedOut.ts`); `SignedOutNotice`
-  shows "You were signed out" with "Sign in" / "Not now". The other tabs follow the logout through
-  the `CG_LOGIN_STATE` broadcast. A logout in another tab of the same browser (which deletes this
-  device's key too) shows no notice: the tab knows it from the broadcast or the stored current
-  user.
-- **Post-login setup** (`setupAfterLogin`): seeds the local Dexie databases (user, communities, chats,
-  notifications), logs the socket in, and registers the push subscription.
+  shows "You were signed out" with "Sign in" / "Not now". Every tab gets `cliSignedOut`; its
+  socket drops the device at once (it reconnects anonymously, never with the revoked key), and it
+  re-checks for 1 s and decides under the login lock, so normally one tab calls `User/logout`
+  and the others follow it (all show the notice; a second `User/logout` is harmless). Signing
+  in again, also in another tab, dismisses the notice. A logout in another tab of the same browser (which
+  deletes this device's key too, and whose `cliSignedOut` reaches the other tabs before that tab
+  is done) shows no notice: the logging-out tab writes `CG_LOGOUT_IN_PROGRESS` before its
+  `User/logout`, and a tab that sees it, the changed stored current user or the broadcast follows
+  that logout.
+- **Post-login setup** (`setupAfterLogin`): seeds the local Dexie databases (user, communities,
+  chats), hands the notification count to the in-memory chat stores (`setupChatAfterLogin`), starts the socket login (not awaited: the transport reports when the tab is live),
+  and registers the push subscription.
 
 **Account-security step and transfer links (client).** Login responses set
 `securityStepState` (`src/data/auth/securityStep.ts`) from `securityStepRequired`, and

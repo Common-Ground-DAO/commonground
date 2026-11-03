@@ -17,7 +17,7 @@ import RoleCard from 'components/molecules/RoleCard/RoleCard';
 import Tag from 'components/atoms/Tag/Tag';
 import Scrollable from 'components/molecules/Scrollable/Scrollable';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
-import { PredefinedRole } from 'common/enums';
+import { RoleType } from 'common/enums';
 import ToggleInputField from 'components/molecules/inputs/ToggleInputField/ToggleInputField';
 import TextInputField from 'components/molecules/inputs/TextInputField/TextInputField';
 import { useOwnUser } from 'context/OwnDataProvider';
@@ -39,7 +39,7 @@ const CommunityJoinedModal: React.FC<Props> = ({ community, onClose }) => {
 
   const roles = useLiveQuery(async () => {
     const allRoles = await data.community.getRoles(community.id);
-    return allRoles.filter(role => ![PredefinedRole.Admin, PredefinedRole.Member, PredefinedRole.Public].includes(role.title as any));
+    return allRoles.filter(role => role.type !== RoleType.PREDEFINED);
   }, [community.id]) || [];
 
   useEffect(() => {

@@ -40,6 +40,7 @@ import dayjs from "dayjs";
 import userHelper from "./users";
 import emailHelper from "./emails";
 import botHelper from "./bots";
+import { isReservedRoleTitle } from "../util/roleTitles";
 
 /* Community Retrieval */
 
@@ -280,6 +281,7 @@ async function _getCommunityDetailView<Ext>(
               SELECT JSON_BUILD_OBJECT(
                 'roleId', r2."id",
                 'roleTitle', r2."title",
+                'roleType', r2."type",
                 'permissions', ccrp."permissions"
               ) AS "item"
               FROM "communities_channels_roles_permissions" ccrp
@@ -1169,7 +1171,7 @@ async function _updateRole(
     SET ${setArray.join(',')}, "updatedAt" = NOW()
     WHERE "communityId" = $1 AND "id" = $2 AND "deletedAt" IS NULL
     ${_noPredefined ? format('AND "type" <> %L', RoleType.PREDEFINED) : ''}
-    ${_noAdmin ? format('AND "title" <> %L', PredefinedRole.Admin) : ''}
+    ${_noAdmin ? format('AND NOT ("type" = %L AND "title" = %L)', RoleType.PREDEFINED, PredefinedRole.Admin) : ''}
     RETURNING "updatedAt"
   `;
   const result = await db.query(query, params);
@@ -1231,7 +1233,7 @@ async function _addUserToRoles(
       SELECT "id", "title", $2::UUID AS "userId", TRUE AS "claimed"
       FROM roles
       WHERE "communityId" = $1
-        AND "title" <> ${format('%L', PredefinedRole.Public)}
+        AND NOT ("type" = ${format('%L', RoleType.PREDEFINED)} AND "title" = ${format('%L', PredefinedRole.Public)})
         AND "id" = ANY(ARRAY[${roleIds.map(s => format('%L', s)).join(',')}]::uuid[])
         AND "deletedAt" IS NULL
     )
@@ -1260,7 +1262,7 @@ async function _removeUserFromRoles(
     WITH role_data AS (
       SELECT "id" FROM roles
       WHERE "communityId" = $1
-        AND "title" <> ${format('%L', PredefinedRole.Member)}
+        AND NOT ("type" = ${format('%L', RoleType.PREDEFINED)} AND "title" = ${format('%L', PredefinedRole.Member)})
         AND "id" = ANY(ARRAY[${roleIds.map(s => format('%L::UUID', s)).join(',')}])
     )
     DELETE FROM roles_users_users
@@ -1272,6 +1274,140 @@ async function _removeUserFromRoles(
   return {
     deletedUserRoles: result.rows as { roleId: string }[]
   }
+}
+
+type MembershipRemoval = {
+  memberCount: number;
+  deletedRolesIds: string[];
+  communityOrder: string[];
+  updatedAt: string;
+};
+
+/**
+ * Removes the user's membership of the community in one statement: all of
+ * the user's roles of it, the community from the user's order, the channel
+ * settings, and one from the member count. Null when the user holds no role
+ * of the community (nothing changes then).
+ */
+async function _removeCommunityMembership(
+  db: Pool | PoolClient,
+  userId: string,
+  communityId: string,
+): Promise<MembershipRemoval | null> {
+  const result = await db.query(`
+      WITH delete_roles AS (
+        DELETE FROM roles_users_users
+        WHERE "userId" = $1
+          AND "roleId" = ANY(
+            SELECT "id" FROM roles
+            WHERE "communityId" = $2
+          )
+        RETURNING "roleId"
+      ),
+      user_update AS (
+        UPDATE users u
+        SET "communityOrder" =
+          CASE
+            WHEN u."communityOrder" @> ARRAY[$2::UUID]
+            THEN array_remove(u."communityOrder", $2::UUID)
+            ELSE u."communityOrder"
+          END
+        WHERE u.id = $1
+          AND EXISTS (SELECT 1 FROM delete_roles)
+        RETURNING "communityOrder"
+      ),
+      channel_setting_delete AS (
+        DELETE FROM user_channel_settings
+        WHERE "userId" = $1
+          AND "communityId" = $2
+      ),
+      user_community_state_update AS (
+        UPDATE user_community_state
+        SET "userLeftCommunity" = now()
+        WHERE "userId" = $1
+          AND "communityId" = $2
+      )
+      UPDATE communities
+      SET "memberCount" = "memberCount" - 1, "updatedAt" = now()
+      WHERE id = $2 AND EXISTS (SELECT 1 FROM delete_roles)
+      RETURNING "memberCount", (
+        SELECT array_to_json(array_agg("roleId"))
+        FROM delete_roles
+      ) AS "deletedRolesIds",
+      (SELECT "communityOrder" FROM user_update),
+      "updatedAt"
+    `, [userId, communityId]);
+  if (result.rows.length !== 1) {
+    return null;
+  }
+  return result.rows[0] as MembershipRemoval;
+}
+
+/**
+ * Runs `fn` in a transaction on a client of its own. On failure the
+ * transaction is rolled back and the original error is thrown; a client
+ * whose ROLLBACK fails is discarded instead of going back to the pool.
+ */
+async function _inTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  let broken: Error | undefined;
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      console.error("ROLLBACK failed", rollbackError);
+      broken = rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError));
+    }
+    throw e;
+  } finally {
+    client.release(broken);
+  }
+}
+
+/**
+ * Takes the transaction-scoped lock on the membership of `userId` in
+ * `communityId`. Joining and banning take it before they read or change the
+ * membership, so they run one after the other.
+ */
+async function _lockMembership(db: PoolClient, userId: string, communityId: string) {
+  await db.query(`SELECT pg_advisory_xact_lock(hashtextextended('membership:' || $1::text || ':' || $2::text, 0))`, [communityId, userId]);
+}
+
+/** Whether `userId` has an active ban (no end, or an end in the future) in `communityId`. */
+async function _isBanned(db: Pool | PoolClient, userId: string, communityId: string): Promise<boolean> {
+  const result = await db.query(`
+    SELECT 1
+    FROM user_community_state
+    WHERE "userId" = $1
+      AND "communityId" = $2
+      AND "blockState" = ${format('%L', UserBlockState.BANNED)}
+      AND ("blockStateUntil" > NOW() OR "blockStateUntil" IS NULL)
+  `, [userId, communityId]);
+  return result.rows.length > 0;
+}
+
+/**
+ * A channel role permission list with each role's stored title and type
+ * (for events), whatever the request said about them.
+ */
+function _withStoredRoles(
+  rolePermissions: Models.Community.CommunityChannelPermission[],
+  roles: { id: string; title: string; type: RoleType }[],
+): Models.Community.CommunityChannelPermission[] {
+  return rolePermissions.map(rp => {
+    const role = roles.find(r => r.id === rp.roleId);
+    return {
+      roleId: rp.roleId,
+      roleTitle: role?.title ?? rp.roleTitle,
+      roleType: role?.type,
+      permissions: rp.permissions,
+    };
+  });
 }
 
 async function _getCommunityRoles(
@@ -1546,9 +1682,15 @@ class CommunityHelper {
   }
 
   private async joinCommunity(userId: string, communityId: string, questionnaireAnswers?: Models.Community.QuestionnaireAnswer[]): Promise<Models.Community.DetailViewFromApi> {
-    const blockState = await this.getUserBlockState(userId, communityId);
-    if (blockState !== 'BANNED') {
-      const result = await pool.query(`
+    // the ban check and the role insert hold the user's membership lock, as
+    // a ban does (setUserBlockState): a join and a ban of the same user and
+    // community run one after the other
+    const result = await _inTransaction(async client => {
+      await _lockMembership(client, userId, communityId);
+      if (await _isBanned(client, userId, communityId)) {
+        throw new Error(errors.server.NOT_ALLOWED);
+      }
+      return client.query(`
         WITH member_role AS (
           SELECT r."id" FROM roles r
           WHERE r."communityId" = $2::UUID
@@ -1586,111 +1728,15 @@ class CommunityHelper {
         WHERE id = $2::UUID AND EXISTS (SELECT 1 FROM role_insert)
         RETURNING "memberCount", (SELECT "communityOrder" FROM user_update), "updatedAt"
       `, [userId, communityId]);
-      if (result.rows.length !== 1) {
-        throw new Error(errors.server.NOT_ALLOWED);
-      }
-      const data = await this.getCommunityDetailView({ id: communityId }, userId);
-      const memberRoleId = data.roles.find(r => r.title === PredefinedRole.Member)?.id;
-      if (!memberRoleId) {
-        throw new Error("Member Role not found, this is - theoretically - impossible. If this happened, a member role was either not created or deleted, which should not happen.");
-      }
-      eventHelper.emit({
-        type: "cliCommunityEvent",
-        action: "update",
-        data: {
-          id: communityId,
-          memberCount: result.rows[0].memberCount,
-          updatedAt: result.rows[0].updatedAt,
-        },
-      }, {
-        communityIds: [communityId],
-      });
-      eventHelper.emit({
-        type: "cliMembershipEvent",
-        action: "join",
-        data: {
-          communityId: communityId,
-          userId: userId,
-          roleIds: [memberRoleId],
-        },
-      }, {
-        communityIds: [communityId],
-      });
-      eventHelper.emit({
-        type: "cliUserOwnData",
-        data: {
-          communityOrder: result.rows[0].communityOrder,
-        },
-      }, {
-        userIds: [userId]
-      });
-      eventHelper.userJoinRooms(userId, {
-        roleIds: [memberRoleId],
-        communityIds: [communityId],
-      });
-      return data;
-    }
-
-    throw new Error(errors.server.NOT_ALLOWED);
-  }
-
-  public async leaveCommunity(userId: string, communityId: string): Promise<Models.Community.DetailViewFromApi> {
-    const result = await pool.query(`
-      WITH delete_roles AS (
-        DELETE FROM roles_users_users
-        WHERE "userId" = $1
-          AND "roleId" = ANY(
-            SELECT "id" FROM roles
-            WHERE "communityId" = $2
-          )
-        RETURNING "roleId"
-      ),
-      user_update AS (
-        UPDATE users u
-        SET "communityOrder" =
-          CASE
-            WHEN u."communityOrder" @> ARRAY[$2::UUID]
-            THEN array_remove(u."communityOrder", $2::UUID)
-            ELSE u."communityOrder"
-          END
-        WHERE u.id = $1
-          AND EXISTS (SELECT 1 FROM delete_roles)
-        RETURNING "communityOrder"
-      ),
-      channel_setting_delete AS (
-        DELETE FROM user_channel_settings
-        WHERE "userId" = $1
-          AND "communityId" = $2
-      ),
-      user_community_state_update AS (
-        UPDATE user_community_state
-        SET "userLeftCommunity" = now()
-        WHERE "userId" = $1
-          AND "communityId" = $2
-      )
-      UPDATE communities
-      SET "memberCount" = "memberCount" - 1, "updatedAt" = now()
-      WHERE id = $2 AND EXISTS (SELECT 1 FROM delete_roles)
-      RETURNING "memberCount", (
-        SELECT array_to_json(array_agg("roleId"))
-        FROM delete_roles
-      ) AS "deletedRolesIds",
-      (SELECT "communityOrder" FROM user_update),
-      "updatedAt"
-    `, [userId, communityId]);
+    });
     if (result.rows.length !== 1) {
       throw new Error(errors.server.NOT_ALLOWED);
     }
-    const leaveResult: {
-      memberCount: number;
-      deletedRolesIds: string[];
-      communityOrder: string[]
-    } = result.rows[0];
     const data = await this.getCommunityDetailView({ id: communityId }, userId);
-    eventHelper.userLeaveRooms(userId, {
-      roleIds: result.rows[0].deletedRolesIds,
-      communityIds: [communityId],
-    });
+    const memberRoleId = data.roles.find(r => r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Member)?.id;
+    if (!memberRoleId) {
+      throw new Error("Member Role not found, this is - theoretically - impossible. If this happened, a member role was either not created or deleted, which should not happen.");
+    }
     eventHelper.emit({
       type: "cliCommunityEvent",
       action: "update",
@@ -1698,6 +1744,62 @@ class CommunityHelper {
         id: communityId,
         memberCount: result.rows[0].memberCount,
         updatedAt: result.rows[0].updatedAt,
+      },
+    }, {
+      communityIds: [communityId],
+    });
+    eventHelper.emit({
+      type: "cliMembershipEvent",
+      action: "join",
+      data: {
+        communityId: communityId,
+        userId: userId,
+        roleIds: [memberRoleId],
+      },
+    }, {
+      communityIds: [communityId],
+    });
+    eventHelper.emit({
+      type: "cliUserOwnData",
+      data: {
+        communityOrder: result.rows[0].communityOrder,
+      },
+    }, {
+      userIds: [userId]
+    });
+    eventHelper.userJoinRooms(userId, {
+      roleIds: [memberRoleId],
+      communityIds: [communityId],
+    });
+    return data;
+  }
+
+  public async leaveCommunity(userId: string, communityId: string): Promise<Models.Community.DetailViewFromApi> {
+    const leaveResult = await _removeCommunityMembership(pool, userId, communityId);
+    if (!leaveResult) {
+      throw new Error(errors.server.NOT_ALLOWED);
+    }
+    return this.afterMembershipRemoved(userId, communityId, leaveResult);
+  }
+
+  /**
+   * What follows a removed membership (`_removeCommunityMembership`): the
+   * user's sockets leave the community and role rooms, the community and the
+   * user hear about it, and the user's bots are reconciled.
+   */
+  private async afterMembershipRemoved(userId: string, communityId: string, leaveResult: MembershipRemoval): Promise<Models.Community.DetailViewFromApi> {
+    const data = await this.getCommunityDetailView({ id: communityId }, userId);
+    eventHelper.userLeaveRooms(userId, {
+      roleIds: leaveResult.deletedRolesIds,
+      communityIds: [communityId],
+    });
+    eventHelper.emit({
+      type: "cliCommunityEvent",
+      action: "update",
+      data: {
+        id: communityId,
+        memberCount: leaveResult.memberCount,
+        updatedAt: leaveResult.updatedAt,
       },
     }, {
       communityIds: [communityId]
@@ -1767,23 +1869,36 @@ class CommunityHelper {
       `, [data.userId, data.communityId]);
     }
     else {
-      if (data.blockState === UserBlockState.BANNED) {
+      // A ban ends the membership: the roles go and the block state is
+      // stored in one transaction, so a failure leaves neither half behind
+      // and fails the request. The events and room changes follow after.
+      // It holds the user's membership lock, as joining does
+      // (joinCommunity), so a join running at the same time comes after it
+      // and sees the ban.
+      const removedMembership = await _inTransaction(async client => {
+        await _lockMembership(client, data.userId, data.communityId);
+        const removed = data.blockState === UserBlockState.BANNED
+          ? await _removeCommunityMembership(client, data.userId, data.communityId)
+          : null;
+        await client.query(`
+          INSERT INTO user_community_state ("userId", "communityId", "blockState", "blockStateUntil", "blockStateUpdatedAt")
+          VALUES ($1, $2, $3, $4, now())
+          ON CONFLICT ("userId", "communityId")
+          DO UPDATE SET
+            "blockState" = EXCLUDED."blockState",
+            "blockStateUntil" = EXCLUDED."blockStateUntil",
+            "blockStateUpdatedAt" = now()
+        `, [data.userId, data.communityId, data.blockState, data.until]);
+        return removed;
+      });
+      if (removedMembership) {
         try {
-          await this.leaveCommunity(data.userId, data.communityId);
+          await this.afterMembershipRemoved(data.userId, data.communityId, removedMembership);
         }
         catch (e) {
-          console.error("Could not make user leave community as of ban", e);
+          console.error("Could not send the membership updates of a ban", e);
         }
       }
-      await pool.query(`
-        INSERT INTO user_community_state ("userId", "communityId", "blockState", "blockStateUntil", "blockStateUpdatedAt")
-        VALUES ($1, $2, $3, $4, now())
-        ON CONFLICT ("userId", "communityId")
-        DO UPDATE SET
-          "blockState" = EXCLUDED."blockState",
-          "blockStateUntil" = EXCLUDED."blockStateUntil",
-          "blockStateUpdatedAt" = now()
-      `, [data.userId, data.communityId, data.blockState, data.until]);
     }
   }
 
@@ -1933,6 +2048,7 @@ class CommunityHelper {
                 agg.push({
                   roleId: role.id,
                   roleTitle: role.title,
+                  roleType: role.type,
                   permissions
                 })
               }
@@ -1946,7 +2062,7 @@ class CommunityHelper {
         userId,
         communityId,
         roleIds: roles
-          .filter(r => r.title === PredefinedRole.Admin || r.title === PredefinedRole.Member)
+          .filter(r => r.type === RoleType.PREDEFINED && (r.title === PredefinedRole.Admin || r.title === PredefinedRole.Member))
           .map(r => r.id)
       });
       const communityOrderResult = await client.query(`
@@ -2044,7 +2160,7 @@ class CommunityHelper {
       });
       await eventHelper.userJoinRooms(userId, {
         roleIds: roles
-          .filter(r => r.title === PredefinedRole.Admin || r.title === PredefinedRole.Member)
+          .filter(r => r.type === RoleType.PREDEFINED && (r.title === PredefinedRole.Admin || r.title === PredefinedRole.Member))
           .map(r => r.id),
         communityIds: [communityId],
       });
@@ -2156,6 +2272,7 @@ class CommunityHelper {
         {
           roleId: adminId,
           roleTitle: PredefinedRole.Admin,
+          roleType: RoleType.PREDEFINED,
           permissions: rolePermissionPresets.Channel.Admin
         },
         ...data.rolePermissions,
@@ -2176,7 +2293,7 @@ class CommunityHelper {
     const eventCommunityIds = new Set<string>();
     for (const r of roleData) {
       if (r.permissions.includes(ChannelPermission.CHANNEL_EXISTS)) {
-        if (r.title === PredefinedRole.Public) {
+        if (r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Public) {
           eventCommunityIds.add(data.communityId);
         } else {
           eventRoleIds.add(r.id);
@@ -2189,6 +2306,13 @@ class CommunityHelper {
       data: {
         ...data,
         ...result,
+        // as stored, with each role's title and type
+        rolePermissions: roleData.map(r => ({
+          roleId: r.id,
+          roleTitle: r.title,
+          roleType: r.type,
+          permissions: r.permissions,
+        })),
         lastRead: new Date().toISOString(),
         lastMessageDate: null,
         pinType: null,
@@ -2228,6 +2352,7 @@ class CommunityHelper {
       data.rolePermissions.push({
         roleId: adminRole.id,
         roleTitle: PredefinedRole.Admin,
+        roleType: RoleType.PREDEFINED,
         permissions: rolePermissionPresets.Channel.Admin,
       });
     }
@@ -2253,6 +2378,10 @@ class CommunityHelper {
     const deleteRoleIds = new Set<string>();
 
     let extra: Partial<Models.Community.Channel> | undefined;
+    // the events carry each role's stored title and type, not the request's
+    if (!!data.rolePermissions) {
+      extra = { rolePermissions: _withStoredRoles(data.rolePermissions, communityRoles) };
+    }
     if (!data.rolePermissions) {
       oldPermissions.forEach(p => {
         if (p.permissions.includes(ChannelPermission.CHANNEL_EXISTS)) {
@@ -2364,7 +2493,7 @@ class CommunityHelper {
         data: {
           ...channel,
           lastRead: new Date().toISOString(),
-          rolePermissions: data.rolePermissions,
+          rolePermissions: _withStoredRoles(data.rolePermissions, communityRoles),
           pinType: null,
           notifyType: null,
           pinnedUntil: null,
@@ -2499,6 +2628,22 @@ class CommunityHelper {
     let result: Awaited<ReturnType<typeof _updateRole>>;
     await client.query("BEGIN");
     try {
+      // a reserved title (Admin, Member, Public) only as the role's own,
+      // unchanged title: a custom role that carries one from before stays
+      // editable, but no role takes one anew
+      if (data.title !== undefined && isReservedRoleTitle(data.title)) {
+        const current = await client.query<{ title: string }>(`
+          SELECT "title"
+          FROM roles
+          WHERE "id" = $1
+            AND "communityId" = $2
+            AND "deletedAt" IS NULL
+        `, [data.id, data.communityId]);
+        if (current.rows[0]?.title.trim() !== data.title) {
+          throw new Error(errors.server.INVALID_REQUEST);
+        }
+      }
+
       // check potential community token
       const { assignmentRules } = data;
       if (!!assignmentRules && assignmentRules.type === "token") {
@@ -3583,6 +3728,7 @@ class CommunityHelper {
       INNER JOIN roles r
         ON r."id" = ccrp."roleId"
         AND r."deletedAt" IS NULL
+        AND r."communityId" = ccrp."communityId"
       WHERE ccrp."channelId" = $1
         AND ccrp."communityId" = $2
     `;
@@ -3594,7 +3740,7 @@ class CommunityHelper {
       permissions: Common.ChannelPermission[];
       roleTitle: string;
       roleId: string;
-      type: Models.Community.Role["type"],
+      roleType: Models.Community.Role["type"],
     }[];
   }
 
@@ -3653,6 +3799,7 @@ class CommunityHelper {
         AND r."deletedAt" IS NULL
       INNER JOIN calls c
         ON c."id" = cp."callId"
+        AND c."communityId" = r."communityId"
       WHERE cp."callId" = $1
         AND c."channelId" = $2
     `;
@@ -3665,7 +3812,7 @@ class CommunityHelper {
       roleTitle: string;
       roleId: string;
       communityId: string;
-      type: Models.Community.Role["type"],
+      roleType: Models.Community.Role["type"],
     }[];
   }
 
@@ -4002,7 +4149,7 @@ class CommunityHelper {
   })[]): void {
     for (const community of communities) {
       const myRoleIds = new Set(community.myRoleIds);
-      const myRoles = community.roles.filter(r => myRoleIds.has(r.id) || r.title === "Public");
+      const myRoles = community.roles.filter(r => myRoleIds.has(r.id) || (r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Public));
       community.channels = community.channels.filter(channel => {
         for (const myRole of myRoles) {
           const permissions = channel.rolePermissions.find(rp => rp.roleId === myRole.id)?.permissions;

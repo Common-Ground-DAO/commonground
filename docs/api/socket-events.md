@@ -52,7 +52,7 @@ Payloads below are the object **minus `type`**. Most are
 
 | Event name | Shape summary | Proven by |
 | --- | --- | --- |
-| `cliMessageEvent` | `new` / `update` / `delete` message in a channel | r2-realtime message round-trips, two-client A→B |
+| `cliMessageEvent` | `new` / `update` / `delete` message in a channel; additive `syncSeq` (channel change sequence; `delete` also `syncSeqs`), see [docs/realtime](../realtime/README.md#message-and-read-state-events-chat-sync-fields) | r2-realtime message round-trips, two-client A→B |
 | `cliCommunityEvent` | `new-or-full-update` / `update` / `delete` community | r2-realtime (community create hydration) |
 | `cliChannelEvent` | `new` / `update` / `delete` channel | store-applied (R2) |
 | `cliAreaEvent` | `new` / `update` / `delete` area | catalog-only |
@@ -61,12 +61,12 @@ Payloads below are the object **minus `type`**. Most are
 | `cliMembershipEvent` | `join`/`leave`/`roles_added`/`roles_removed` | r2-realtime "B sees A's membership join" |
 | `cliMyRolesEvent` | *flat* `{ communityId, rolesGained, rolesLost }` | catalog-only |
 | `cliChatEvent` | `new` / `update` / `delete` DM chat | r3-content DM delivery |
-| `cliChannelLastRead` | *flat* `{ channelId, lastRead }` | r2-realtime cross-device read cursor |
+| `cliChannelLastRead` | *flat* `{ channelId, lastRead }`, additive `unread`, `syncSeq`, `communityId` or `chatId` | r2-realtime cross-device read cursor |
 | `cliNotificationEvent` | `new` / `update` / `allread` / `delete` | r3-content Follower notification |
 | `cliUserData` | `{ data: Partial<UserData> & {id} }` (presence) | store-applied (R2/R3) |
 | `cliUserOwnData` | `{ data: Partial<OwnData> }` | store-applied (R2) |
 | `cliWalletEvent` | `new` / `update` / `delete` wallet | catalog-only |
-| `cliSignedOut` | *flat* `{}` — sent to the devices of an account that were just signed out from elsewhere ([auth-identity §2](../auth-identity/README.md#signing-out-other-devices)); the server disconnects their sockets right after | catalog-only |
+| `cliSignedOut` | *flat* `{}` — sent to the devices of an account that were just signed out from elsewhere ([auth-identity §2](../auth-identity/README.md#signing-out-other-devices)), and to the other sockets of a device that logged out in one tab (requests with `x-cg-socket-id`, [realtime](../realtime/README.md#socket-scoped-targeting)); the server disconnects their sockets right after | catalog-only |
 | `cliCallEvent` | `new` / `update` / `delete` call | catalog-only (see protoo for media) |
 | `cliTypingEvent` | *flat* `{ access, userId, isTyping }` typing presence | r2-typing start/stop delivery, self-exclusion |
 | `cliBotScopesEvent` | bot token scope change | catalog-only |

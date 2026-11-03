@@ -7,8 +7,11 @@
  * set; the database `cryptogram` is reset by this test — never point it at
  * a database with data):
  *
- *   docker run -d --name pg-test -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=cryptogram cryptogram/db:18
- *   CG_TEST_PG_HOST=<host> CG_TEST_PG_PASSWORD=pw yarn jest tests/securityStepDb.spec.ts
+ *   docker run -d --name pg-test -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=cryptogram cryptogram/db:18
+ *   CG_TEST_PG_HOST=127.0.0.1 CG_TEST_PG_PORT=55432 CG_TEST_PG_PASSWORD=pw yarn jest tests/securityStepDb.spec.ts
+ *
+ * Host and port come only from CG_TEST_PG_HOST / CG_TEST_PG_PORT
+ * (tests/helpers/testPg.ts), also for the util/postgres pools it loads.
  *
  * - the migration up / down / up, with its GRANTs;
  * - the realtime check of the account-security step under the call
@@ -26,12 +29,13 @@ import { Pool } from 'pg';
 import { webcrypto } from 'node:crypto';
 import { TransferLinksAndSecurityStep1793520000000 as Migration } from '../migrations/1793520000000-transferLinksAndSecurityStep';
 import { SessionGenerations1793560000000 as GenerationsMigration } from '../migrations/1793560000000-sessionGenerations';
+import { TEST_PG_HOST, TEST_PG_PORT, TEST_PG_PASSWORD, describeDb } from './helpers/testPg';
 
-const HOST = process.env.CG_TEST_PG_HOST;
-const ADMIN_PASSWORD = process.env.CG_TEST_PG_PASSWORD || 'pw';
+const HOST = TEST_PG_HOST;
+const PORT = TEST_PG_PORT;
+const ADMIN_PASSWORD = TEST_PG_PASSWORD;
 const MEDIASOUP_PASSWORD = 'mediasoup-test';
 const WRITER_PASSWORD = 'writer-test';
-const describeDb = HOST ? describe : describe.skip;
 const REDIS_URL = process.env.CG_TEST_REDIS_URL;
 
 jest.mock('../redis', () => require('./helpers/memoryRedis'));
@@ -44,6 +48,8 @@ describeDb('account-security step and transfer links on PostgreSQL', () => {
   function withRole<T>(role: 'admin' | 'writer' | 'mediasoup', load: () => T): T {
     const saved = { ...process.env };
     process.env.DB_HOST = HOST;
+    // util/postgres takes DB_PORT (default 5432): always the test server's
+    process.env.DB_PORT = String(PORT);
     process.env.BASE_URL = 'https://cg.box';
     process.env.DEPLOYMENT = 'prod';
     delete process.env.CG_LEGACY_CGID;
@@ -61,6 +67,11 @@ describeDb('account-security step and transfer links on PostgreSQL', () => {
     let result!: T;
     jest.isolateModules(() => {
       result = load();
+      // whatever the modules connect through is the test server
+      const { options } = require('../util/postgres').default as Pool;
+      if (options.host !== HOST || options.port !== PORT) {
+        throw new Error(`util/postgres points at ${options.host}:${options.port}, not the test server`);
+      }
     });
     process.env = saved;
     return result;
@@ -75,7 +86,7 @@ describeDb('account-security step and transfer links on PostgreSQL', () => {
   beforeAll(async () => {
     // util/postgres warns about missing Docker secrets outside dev
     warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
-    admin = new Pool({ host: HOST, user: 'postgres', password: ADMIN_PASSWORD, database: 'cryptogram', max: 25 });
+    admin = new Pool({ host: HOST, port: PORT, user: 'postgres', password: ADMIN_PASSWORD, database: 'cryptogram', max: 25 });
     await q(`DROP TABLE IF EXISTS transfer_tokens, passkeys, wallets, devices, users CASCADE`);
     await q(`DROP FUNCTION IF EXISTS security_step_db_required(uuid, text)`);
     await q(`DROP FUNCTION IF EXISTS session_generation_of(uuid)`);

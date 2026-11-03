@@ -1,6 +1,11 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit 4a9754f8f, 2026-08-04; NSFW pre-check
+> Status: verified against commit 4a9754f8f, 2026-08-04; ConnectionManager,
+> WebSocketManager, LoginManager cross-tab behaviour, `ConnectionStatusIndicator`, the
+> `x-cg-socket-id` header and §8 items 1–2 (independent tabs) against commit 964f6b3,
+> 2026-11-02; `data/index.ts`, the database table, "Chat runtime and
+> `data.channelManager`", the read-state paragraph and §8 item 3 against commit
+> 50d27f2 (chat-sync/wiring) and its review fixes, 2026-11-02; NSFW pre-check
 > section against the fix/image-filter-review-53 branch, 2026-08-15; wallet,
 > motion, drag & drop and toolchain notes plus "Dependency pins and
 > constraints" against commit 935232158, 2026-10-31; dev env file pointer
@@ -26,7 +31,26 @@
 > against commit 3e8b08e, 2026-11-01; "Service worker and module scripts" (§9) against commit
 > 3e8b08e, 2026-11-01; Tailwind CSS 4 (§9 "Styling: Tailwind CSS 4", the CSS row, the
 > build-target paragraph, "Dependency pins and constraints", wave M4) against commit
-> 440c779, 2026-11-02; inline background images (§9) against commit 591e6cf, 2026-11-02
+> 440c779, 2026-11-02; inline background images (§9) against commit 591e6cf, 2026-11-02;
+> the service worker's part in multi-tab coordination (§4 WebSocketManager and
+> ServiceWorkerManager, §8, §9 entry points) against commit 79187d2, 2026-11-02;
+> "Writers of the shared entity databases" (§ Dexie) against commit 212bbce, 2026-11-02;
+> `signedOutElsewhere()` during the own logout against commit f97ef1b, 2026-11-02;
+> `data.notification`, `NotificationProvider` and `NotificationsBrowser` (unread count,
+> list, marking read) against commit f9f6327, 2026-11-02; the message/comment lists on
+> chat-sync windows (`GenericMessageList`, `CommentList`, `Message`, `ArticleCommentSection`,
+> `useChannelReadMarking`) against commit caf7b67, 2026-11-03; the data layer after the
+> chat-sync removal (database table, `dbTracker` and the obsolete-database cleanup, "Chat
+> runtime and `data.channelManager`", "Chat stores", ConnectionManager,
+> §8) against commit 1e6a0d4, 2026-11-03; why memory + server and the open
+> persistence item ("Chat stores", chat-sync close-out) against commit 3567377, 2026-11-03; `Message`'s
+> `data-send-status` against commit dea7c6a, 2026-11-03; the logout across tabs
+> (`CG_LOGOUT_IN_PROGRESS`, the signed-out re-check), the session take-over's channel
+> access, the deferred DM re-init and `WINDOW_ERROR.NO_ACCESS` against commit 9d00729, 2026-11-03; `SendStatusNotice` and
+> `GenericMessageList`'s failed-jump level against commit c5f74d3, 2026-11-03; the socket's
+> drop of a signed-out device (`deviceSignedOut`) and the device check of a late sign-out
+> against commits 1b9948c and d386911, 2026-11-03; the predefined-role helpers (`src/util/predefinedRoles.ts`)
+> against commits 138c630 and 8bb443a, 2026-11-03
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -101,10 +125,11 @@ Composed of atoms; represent small, functional UI units.
 
 | Component | Purpose |
 |---|---|
-| `Message` | Single chat message display (text, attachments, reactions). Its `MessageTooltip` sub-component hosts the per-message actions incl. the **Report** action. |
+| `Message` | Single chat message display (text, attachments, reactions). Its `MessageTooltip` sub-component hosts the per-message actions incl. the **Report** action. Re-renders on every change of the message object (edits, reactions, `sendStatus`); a pending own send is faded and offers no tooltip actions or swipe-to-reply while `sendStatus` is `sending` / `error-send`, a failed send or edit shows Retry and Discard / Undo edit (`retrySend` / `discardPending` of the channel store) through `SendStatusNotice`. Every item carries `data-timestamp` (scroll anchoring); `data-send-status` (the `sendStatus` value) is set only while a send or edit is in flight or failed, so an item without it shows the stored server version (the e2e suite relies on it). |
 | `MesssageBodyRenderer` | Renders message/article body content into React elements. Note the triple-`s` directory name. See §6 for the markdown pipeline. Exports `MessageBodyRenderer`, `AllContentRenderer`, and (in `MarkdownContent.tsx`) `MarkdownContent` + `toMarkdownSource`. |
-| `CommentMessage` | Article/post comment display |
-| `CommentList` | List of comments |
+| `CommentMessage` | Article/post comment display; a failed comment shows `SendStatusNotice` |
+| `SendStatusNotice` | Notice of a failed own send or edit (`sendStatus` `error-send` / `error-update`) with Retry and Discard / Undo edit, for `Message` (through `MessageBodyRenderer`) and `CommentMessage`. A polite `role="status"` region (a remounted failed item does not interrupt again); the buttons' accessible names start with the visible label and quote a message excerpt, and they are described by the notice text. Discard moves focus to the composer of the same list (`.generic-message-list` / `.comment-list`), or to the list itself on touch devices and without a composer, when the button had focus. |
+| `CommentList` | List of comments: one chat-sync window (`chat.channels.openWindow`), newest first, "load more" via `loadOlder`; failed comments offer Retry/Discard. `ArticleCommentSection` joins the article event room while the transport is live and again on every `onLive`; the room is ref-counted per access (`articleEventRooms.ts`), so it is left only when the last section of that article unmounts. |
 | `Dialog` | Confirmation/action dialog |
 | `Dropdown` | Dropdown menu |
 | `EmojiPickerTooltip` | Emoji picker in a tooltip popover |
@@ -114,7 +139,7 @@ Composed of atoms; represent small, functional UI units.
 | `UserProfilePhoto` | User avatar with optional status indicator |
 | `UserProfileV2` | Compact user profile card |
 | `UsernameWithVerifiedIcon` | Username with optional verification badge |
-| `ConnectionStatusIndicator` | Shows websocket/network connection status banner. Right after a (re)load the socket starts out disconnected until the tab connected; "Disconnected" is held back for the first 10 s (unless a connection had already been made), so a slow first connect is no outage banner |
+| `ConnectionStatusIndicator` | Shows websocket/network connection status banner. "Connected" means live (socket logged in, rooms joined). Right after a (re)load the socket starts out disconnected until the tab is live; "Disconnected" is held back for the first 10 s (unless the tab had been live already), so a slow first connect is no outage banner. "Connecting"/"Disconnected" appear only after 3 s and only while the page is visible (a hidden tab closes its socket on purpose); an account in the security step shows no connection problem. The state logic is the pure `indicatorState.ts` (tested) |
 | `CommunityCard` | Community discovery card |
 | `CommunitySkeletonCard` | Loading skeleton for community card |
 | `CommunityContentSkeletonCard` | Loading skeleton for community content |
@@ -163,7 +188,7 @@ Composed of atoms; represent small, functional UI units.
 | `SectionEnd` / `SectionEndGroups` | Section dividers |
 | `FrontPageSectionHeader` | Section header for home page |
 | `ManagementHeader` / `ManagementHeader2` | Headers for admin views |
-| `GenericMessageList` | Reusable message list container |
+| `GenericMessageList` | Reusable message list container. Opens one chat-sync `ChannelWindow` per channel and inits it once its list is mounted (`recent`, or `atItemId` for a focus target; `jumpToLatest` after a send or the scroll-down helper while detached). The window listener sets the `Scrollable` lock from `WindowChange.kind` before rendering (`scrollAnchoring.ts`): older/newer pages and trims at the top lock by the visible item's `data-timestamp`, an own send or a live message while at the bottom scrolls to the bottom, a jump scrolls to its target, a catch-up reset keeps the position. A change that adds items below without scrolling to them (a page appended below, a reset that keeps the position or goes to an element) clears the list's at-bottom level until the `Scrollable` reports its position again, so new items are never marked read unseen. A jump to a message outside the window (`scrollToMessage`) clears it as well; when the jump does not apply (not found, network) the previous level is restored and a position report requested, so read marking does not pause. Read marking via `useChannelReadMarking` (no IntersectionObserver). Reply parents and pinned messages use `watchMessage` (no window needed). |
 | `CollapsableGroup` | Collapsable section group |
 | `AreaList` | List of community areas |
 | `CallList` | List of active calls |
@@ -353,7 +378,7 @@ Views are full pages composed of templates/organisms. They live in `src/views/` 
 
 | View | Route | Purpose |
 |---|---|---|
-| `NotificationsBrowser` | `/notifications/`, `/notifications/:notificationShortUuid/` | Notification list (optionally focused on one notification) |
+| `NotificationsBrowser` | `/notifications/`, `/notifications/:notificationShortUuid/` | Notification list (optionally focused on one notification): one `data.notification.openList()` window, first page once `loginState` is `loggedin`, older pages via `loadOlder`; one `markAsRead` per click or selection (the selection marks an id once; a click on an unread item always marks, so it retries after a failure); a "Mark all read" button (`markAllAsRead`) while the count is > 0; spinner until the first page is there, then the empty state |
 
 ### Auth and Verification
 
@@ -438,7 +463,7 @@ The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `Wa
 |---|---|
 | `CallProvider` | Voice/video call state. Manages `RoomClient` (MediaSoup wrapper), call reducer state (peers, consumers, producers), join/leave/mute actions. |
 | `CallDevicesProvider` | Audio/video device selection for calls. |
-| `NotificationProvider` | Notification state and unread counts. |
+| `NotificationProvider` | Push subscription / PWA state and the unread notification count (subscribed via `data.notification.subscribeUnreadCount`, always a number). |
 
 #### UI State Providers
 
@@ -485,6 +510,7 @@ The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `Wa
 |---|---|
 | `useLocalStorage` | Persistent state backed by `localStorage`. Supports cross-tab synchronization via `StorageEvent` and same-tab synchronization via a `changeListeners` map. Returns `[value, setValue]` like `useState`. |
 | `useAsyncMemo` | Like `useMemo` but for async computations. |
+| `useChannelReadMarking` | Level-triggered read marking of a mounted message window: reports `{atLatest, atBottom, newest server item}` to a `chat.readState` marker on every change; the store marks the channel read while a marker has all three, the tab is visible and logged in. None for call chats and article comments. |
 | `useOnScreen` | Detects if an element is visible in the viewport via `IntersectionObserver`. |
 | `usePremiumTier` | Returns the current user's premium tier (`'free'`, `'silver'`, `'gold'`). Also exports `useUserPremiumTier` (for arbitrary users) and `useCommunityPremiumTier` (for communities with tiers `'BASIC'`, `'PRO'`, `'ENTERPRISE'`). |
 | `useSentinelLoadMore` | Infinite scroll helper. Uses `IntersectionObserver` on a sentinel element to trigger `loadMore` callbacks. |
@@ -512,12 +538,11 @@ All databases are aggregated in `src/data/index.ts`:
 ```typescript
 const data = {
   community: communityDB,    // CommunityDatabase
-  notification: notificationDB, // NotificationDatabase
-  message: messageDB,         // MessageDatabase
+  notification: notificationDB, // façade over chat.notifications (NotificationStore)
   user: userDB,               // UserDatabase
   signedUrls: signedUrlsDB,   // SignedUrlsDatabase
   chats: chatsDB,             // ChatsDatabase
-  channelManager: channelDatabaseManager, // ChannelDatabaseManager
+  channelManager,             // façade over the chat stores (channel.ts)
 };
 ```
 
@@ -525,17 +550,55 @@ const data = {
 |---|---|---|---|
 | `CommunityDatabase` | `community.ts` | `communities`, `areas`, `channels`, `roles`, `calls`, `communityListViews`, `communityMembers`, `status` | Stores community detail views, areas, channels, roles, calls, and member data. Handles retrieval by ID and URL. Manages staleness checks (120s TTL). |
 | `UserDatabase` | `user.ts` | `userData`, `status` | Stores user profile data. Batch-retrieves missing user data by ID. |
-| `MessageDatabase` | `messages.ts` | `messages`, `chunks` | Stores messages in chunks for pagination. Supports loading messages before/after a given message. |
-| `ChannelDatabaseManager` | `channel.ts` | (dynamic per channel) | Manages per-channel `ChunkedItemDatabase` instances. Handles real-time message events, last-read tracking, and cross-tab synchronization via `BroadcastChannel('channelDatabaseManager_events')`. |
-| `ChunkedItemDatabase` | `channel/chunkedDatabase.ts` | `items`, `chunks`, `status` | Generic chunked list database used for channel messages. Items are stored in chunks (size 10-40, target 30) with start/end timestamps. Supports efficient range queries, chunk merging, and gap detection. Coordinates via `BroadcastChannel('chunkedDatabase-<dbName>')`. |
+| `channelManager` (`data.channelManager`) | `channel.ts` | none (memory) | Façade over the tab's chat stores, see "Chat runtime and `data.channelManager`" below. |
 | `ChatsDatabase` | `chats.ts` | Chat conversations and last messages. |
-| `NotificationDatabase` | `notification.ts` | Notification storage and unread counts. |
+| `data.notification` | `notification.ts` | none (no Dexie) | Thin façade over the tab's `NotificationStore` (`chat.notifications`, `src/data/chat/notificationStore.ts`): memory + server only. The unread count is always a number and comes from the server only (login value, `unreadCount` of `cliNotificationEvent`, `getUnreadCount` after a resync or a mark-read), `subscribeUnreadCount` is multi-subscriber; `openList()` gives an item window (`init`, `loadOlder`, `destroy`) on one list kept in memory while no window is open (live events still apply; after a resync without an open window the next `init` reloads the newest page); `markAsRead` is a no-op for read or in-flight items; `setupAfterLogin(count)` is synchronous; `clear()` on logout. |
 | `SignedUrlsDatabase` | `signedUrls.ts` | Cache for signed asset URLs. |
 | `UniqueDatabase` | `unique.ts` | Key-value store for singleton data (`OwnData`, `CommunityDetailViewUpdateTimestamps`, etc.). |
 
 #### dbTracker (`src/data/databases/dbTracker.ts`)
 
-Tracks all registered IndexedDB databases, their creation time, and app version. Provides `deleteOldIndexedDbs()` for cleanup of stale databases (runs 10s after the tab becomes active).
+Tracks all registered IndexedDB databases, their creation time, and app version, in `localStorage` (`CG_KNOWN_INDEXEDDBS`, synced between tabs by the `storage` event). `knownDatabaseNames()` lists them; `forgetDatabase(name)` drops a deleted one.
+
+#### Obsolete databases (`src/data/databases/obsoleteDatabases.ts`)
+
+Messages and notifications are not stored in IndexedDB (memory + server, see "Chat stores"). The databases of the removed client caches are deleted on startup: `commonGroundDB_chunked_databases` (the chunked message/notification cache), every other `commonGroundDB_chunked_*` (per-name databases of older builds) and `commonGroundDB_messages` (an older message cache). `connectionManager` runs `deleteObsoleteDatabases()` once per page, 10 s after startup (`OBSOLETE_DATABASE_CLEANUP_DELAY_MS`), in every tab (deleting is idempotent), fire-and-forget: names come from the fixed list, `dbTracker` and `indexedDB.databases()` where supported; the call never rejects and only logs failures; a `blocked` delete (a page of an older build still has the database open) is not waited for — the browser finishes it once that page closes the database; a request that reports nothing within 10 s is left to the browser. Deleted names are dropped from `dbTracker`. No data is migrated: the server is the source of truth.
+
+#### Writers of the shared entity databases
+
+The `communities`, `chat` and `users` databases are shared by all tabs of an origin, and any tab may apply the same socket event, possibly late (a throttled or frozen tab catches up). Their writers are therefore idempotent and order-safe:
+
+- **Entity events** (`cliCommunityEvent update`, area/role/channel/call events, `cliUserData`, `cliUserOwnData`) are skipped when the stored row has a newer `updatedAt` (`guardedPut` / `guardedUpdate` in `abstractDatabase.ts`, one rw transaction each); payloads without `updatedAt` apply as before. `cliPluginEvent new` upserts by plugin id.
+- **Server snapshots** (login data, detail-view fetches, `startChat`): areas, roles, channels and calls with an older `updatedAt` than the stored row do not replace it (their stamps come from the database). Communities and list views are not guarded this way and stay authoritative, because some community events are stamped with the API process clock rather than the row's `updatedAt`. Snapshots do not delete rows (chats, channels, areas, roles, calls) that an event wrote after the snapshot's request started: event writers stamp rows with a client-clock `localWrittenAt`, and callers may pass `requestStartedAt` (default: 60 s before the merge).
+- **Accepted narrow window**: a partial event skipped as older loses the fields only it carries (there are no per-field stamps), and an API-clock stamp ahead of the database clock can make a newer database-stamped event look older. Both last until the next snapshot of that community (detail-view refresh or login).
+- **Community URL change**: on every event that carries a `url`, each tab compares the URL in its own path with the URLs it has seen for that community (not with the shared row, which another tab may already have updated) and navigates to the URL the row holds now, unless another stored community holds the URL in its path now (a URL a renamed community gave up can be taken over). This also holds for a tab that replays an older URL change late.
+- **Read state** (`unread`, `lastRead`, `lastMessageDate` of community channels and DMs) is only written through `mergeReadState` (`src/data/chat/mergeReadState.ts`) inside the writer's transaction (`readStateRows.ts`): `lastRead` and `lastMessageDate` only move forward, a snapshot's `unread` is taken only if it knows at least the local `lastRead`, and a live message is counted once per `syncSeq` (older servers: only if newer than every message seen). The rows carry extra non-indexed fields: `readSeq`, `readCounted` and `serverLastRead`; DM rows also `lastMessageDate`. `serverLastRead` is the highest `lastRead` the server is known to hold (from snapshots, server answers with a count, and own messages); it is kept on the rows and passed to `registerAccessForChannel`, but the send decision is the in-memory `ReadStateStore`'s (the only sender of `setChannelLastRead`), from its own server-acknowledged value. After every merge (page load, login, `getOwnCommunities`/`getChats`, community/chat events, `startChat`) `community.ts`/`chats.ts` hand the merged rows' read state to that store (`data.channelManager.applyStoredReadState` → `ReadStateStore.applyStored`: memory only, with the rows' `readSeq`/`readCounted` so a message counted in the row is not counted again, and never treated as server-acknowledged), so a snapshot is applied to the rows once and mirrored in memory. The schema versions are unchanged (no `versionchange` for open tabs of an older build). `readStatePersistence.ts` exposes this as the `ReadStatePersistence` of the chat-sync contract.
+
+#### Chat runtime and `data.channelManager`
+
+`src/data/chat/runtime.ts` builds the tab's three chat-sync stores once (contract `src/data/chat/types.ts`): `chat.channels` (`ChannelStore`: messages in memory, ref-counted windows, sends/edits with `sendStatus`), `chat.readState` (`ReadStateStore`: read state plus level-triggered marking, persisted through `readStatePersistence.ts`) and `chat.notifications` (`NotificationStore`). Their `chat.events` (`ChatEventSource`) is made of the `cliMessageEvent`/`cliChannelLastRead`/`cliNotificationEvent` handlers (`connectionManager.registerClientEventHandler`), `webSocketManager` `live`/`onLive`/`onResume`, `connectionManager` visibility, and the account `login.ts` sets via `data.channelManager.userId`, which counts as the stores' user only while the login state is `loggedin` (own messages are classified by the account, also while the login settles). The runtime starts when `channel.ts` loads, before the socket connects. The socket usually goes live before the login settles (page load, interactive login); stores do not catch up without a user, so when the user becomes known while the socket is live the event source fires `onLive('user')` (the read-state store's own user-change trigger is debounced into the same `getSyncState`; while the socket is not live it waits for the next `onLive`, so each login costs one `getSyncState`). Notification counts are not fetched without a user.
+
+- **Login hook-up** (`login.ts`): `setupChatAfterLogin(count)` with the login response's notification count (also for a login adopted from another tab); `clearChat()` on a logout in another tab; the tab's own logout clears through `data.channelManager.clear()`. Clearing empties all three stores, reports `undefined` to message watchers (then refetches them) and re-inits the channel windows that had been initialised (`init({ type: 'recent' })`) — DM windows only once a user is logged in again (their requests need a login); channel access stays registered. A login superseded by another tab's login or logout also clears. A login taken over from another tab registers the access and read state of the stored chat and channel rows (`chatDatabase.registerStoredChats`, `communityDatabase.registerStoredChannels`); channels and DMs `getSyncState` reports without a known access are registered from its `chatId`/`communityId` as well. A window whose channel access stays unknown rejects its `init` with `WINDOW_ERROR.NO_ACCESS` after 30 s (`ACCESS_WAIT_MS`); the store re-inits it by itself (the usual `reset`) once the access is registered. The take-over does not wait for the row registration.
+- **DMs**: a received or own DM message is written to the chat row by `chatDatabase.newMessageReceived` (read state plus `lastMessage`, one transaction); the store's persistence skips message inputs of DMs, so each input reaches the row once. Article comments and call chats have no read state.
+- **Edits** are sent without image metadata (`imageData`/`largeImageData`), as the message validators accept only the ids; the shown overlay keeps it.
+- **`data.channelManager`** passes through to the stores: `registerAccessForChannel`, `getAccessForChannel`, `openWindow`, `watchMessage`, `createMarker`, `createMessage` (resolves once the pending item is shown, never rejects), `retrySend`, `discardPending`, `editMessage`, `deleteMessage`, `setReaction`, `unsetReaction`, `deleteChannelDatabase` (= `forgetChannel`), `clear`. The list components use the stores directly (`chat.channels.openWindow`, `chat.channels.watchMessage`, `chat.readState.createMarker`).
+
+#### Chat stores (`src/data/chat/`)
+
+Contract and normative rules: the doc comments in `src/data/chat/types.ts` (summary in `src/data/chat/README.md`); transport contract `src/data/appstate/transport.ts`. The store cores are pure TypeScript with injected API, event source and clock, unit-tested in vitest against a scripted fake server (`src/data/chat/testing/fakeServer.ts`). The server is the source of truth for messages, read state and unread counts; everything in the stores is per tab and may be dropped at any time.
+
+Why memory + server (2026-11, chat-sync): the stores replace a chunked message/notification cache in IndexedDB (`ChunkedItemDatabase`) that tabs kept in sync over BroadcastChannel and Web Locks. Its cross-tab chunk protocol caused the worst defects — one missed broadcast left inconsistent chunk links and a channel empty for good, an empty "complete" server page arriving after a live message deleted that message, a list stopped following new messages after a reconnect, stale snapshots overwrote newer local state — and repairing it in place was judged riskier than replacing it. A cache that may be dropped at any time and a server-side catch-up cursor make all of these impossible by construction instead of by coordination.
+
+- **Messages (`ChannelStore`).** Per channel: a contiguous "latest" segment (at most `LATEST_SEGMENT_MAX` = 200 server messages, live-updated), detached segments created by jumps (merged when they meet the latest one), pending sends, edit overlays, tombstones, and a loose map for reply parents and pinned messages (`watchMessage` works without a window). A channel stays in memory while it has an open window, a watcher or a pending/failed send; at most `CHANNEL_LRU_SIZE` = 20 others are cached (LRU). Memory only — after a reload the history needs a round trip. (A latest-N snapshot per channel in IndexedDB would be a pure add-on — one writer per transaction, LRU, whole-store wipe on logout, a cache-schema constant — and is not built; it is an open item in `docs/todo/TODO.md`, to be decided on the reload timings of the e2e flow `cs-login-time`.)
+- **Windows** are ref-counted, any number per channel, and keep the `Models.ItemList.ItemListState` shape. Listeners get `(state, change)` synchronously, `change.kind` ∈ `reset` (cause `init`/`jump`/`latest`/`resync`) | `prepend` | `append-page` | `append-live` | `update` | `trim`, so the list sets its scroll lock before rendering.
+- **Version rule** (every source: pages, `getChanges`, live events, HTTP responses): a full message replaces the stored one when its `syncSeq` is `>=`, a partial update applies only when `>`; a version with `syncSeq` beats one without unless the one without has a strictly newer `updatedAt`; tombstones are terminal. A page (`loadMessages`, `messagesById`) is authoritative only for its own range and never removes items, so a snapshot cannot delete a newer live message.
+- **Sending:** the pending item is inserted synchronously before the API call (`sendStatus: 'sending'`); failure or 20 s without answer → `error-send`, shown with Retry/Discard; a retry reuses the client UUID (the server's `createMessage` is idempotent on it). An edit is an overlay until its response is applied; success clears `sendStatus`, failure → `error-update`.
+- **Read state (`ReadStateStore`)** for community channels and DMs (call chats and article comments have none): every input goes through `mergeReadState` — `lastRead` and `lastMessageDate` are max-merged, a snapshot's `unread` is taken only if its `lastRead` is at least the local one, and an unread count for a channel without an open window starts from the `getSyncState` snapshot at seq S and counts a live `new` event (not own, newer than `lastRead`) only if its `syncSeq` is above S (counted seqs are kept, so several tabs applying the same event count it once). Marking read is level-triggered: while a window is at the latest segment, scrolled to the bottom, the document visible and the user logged in, the store marks up to the `createdAt` of the newest server message received (`useChannelReadMarking` → `createMarker(...).update({atLatest, atBottom, newest})`); re-evaluated on every change of these inputs, deferred until login, retried with a backoff (2/5/15/60 s), the first call immediate then a 1 s trailing throttle. It is the only sender of `setChannelLastRead`.
+- **Notifications (`NotificationStore`):** memory + server; the first page when the list opens and again on resync while it is open; live `new`/`update`/`delete`/`allread` applied idempotently. The unread count comes from the server only (login response, `unreadCount` of each event, `getUnreadCount({ withTime: true })` on resync and after marking; the newest `unreadCountAt` wins); there is no client-side `++`/`--`.
+- **Catch-up.** On `onLive` (socket login ack after a connect or reconnect, or a user change on a live socket) and `onResume` (the socket stayed live but the tab was away: visible again after ≥ 30 s hidden, `pageshow` from bfcache, `resume`, `online`), each store resyncs, debounced (50 ms): the read-state store calls `getSyncState` (all readable channels and DMs, plus the notification count), the channel store calls `getChanges` from each open window's cursor (`"1:<seenSeq>"`, the contiguous applied high-water mark of `syncSeq`s; following `hasMore`), the notification store refetches its count and open list. Live events that arrive meanwhile are applied too. A cached channel without a window catches up when a window opens again. A live event whose `syncSeq` leaves a gap that is still open after 1.5 s triggers a `getChanges` for that channel (some seq bumps have no event, so false gaps are possible and cheap). A null or too-old cursor gets `reset: true` with the latest page: the latest segment is replaced, keeping local items with a higher `syncSeq` and pending sends; windows whose slice is off the new segment re-init (`reset`, cause `resync`). Catch-up never plays sounds or shows alerts.
+- **Entity data** (communities, chats, own user) has no sync cursor: after a `restored` live the login manager refreshes its snapshot (§4 ConnectionManager), and the Dexie writers are monotonic (see "Writers of the shared entity databases").
+- **Old server** (a short window during a deploy): a 404 on `getChanges` falls back to a `loadMessages` reconcile, a 404 on `getSyncState` to the login/`getOwnCommunities`/`getChats` snapshots, for the rest of the page load; `setChannelLastRead`'s optional `messageId` is sent only once the server has shown chat-sync support and dropped after a validation error.
+- **Logout:** `chat.channels.clear()`, `chat.readState.clear()` and `chat.notifications.clear()` (via `clearChat()`), then initialised windows re-init (DM windows at the next login). A `LOGIN_REQUIRED` while the tab logs out does not start a login.
 
 #### Reactivity
 
@@ -556,6 +619,7 @@ All API communication goes through connector classes that extend `BaseApiConnect
 - All requests use `withCredentials: true` (cookie-based auth).
 - Sends/receives JSON by default; supports `ArrayBuffer` for binary uploads.
 - Response format: `{ status: "OK", data: T }` or `{ status: "ERROR", error: string }`.
+- Sends `x-cg-socket-id` (`SOCKET_ID_HEADER`) on every request: the tab's connected socket id, else a random per-tab id in the same format (`src/data/appstate/requestSocketId.ts`), read per request.
 - On `LOGIN_REQUIRED` error, automatically triggers `loginManager.loginRequiredErrorHandler()` and retries the request once.
 - On `REAUTH_REQUIRED` (a sensitive action, docs/auth-identity §8), asks `stepUpManager` (`src/data/auth/stepUp.ts`) to open the "Confirm it's you" dialog and retries the request once after a confirmation; when cancelled (or no dialog is mounted) the call rejects with `REAUTH_REQUIRED`. Concurrent requests share one dialog. Pinned by `baseConnector.test.ts`.
 
@@ -588,29 +652,31 @@ These are singleton classes that manage non-UI application state. They are NOT R
 #### ConnectionManager (`connection.ts`)
 
 The central state coordinator. Manages:
-- **WebSocket state**: `disconnected` | `connecting` | `connected` | `version-update`
+- **WebSocket state**: `disconnected` | `connecting` | `connected` (`connected` only while the tab is live: socket logged in, rooms joined; a newer build on the server is `updateAvailable`, not a socket state)
+- **Update available**: `updateAvailable` (+ `updateAvailableChange` listener) — a newer build is deployed
 - **Login state**: `pending` | `anonymous` | `loggingin` | `loggedin` | `loggingout`
 - **Service worker state**: `pending` | `none` | `installing` | `installed` | `update-available` | etc.
 - **Visibility state**: mirrors `document.visibilityState`
 - **Online state**: `online` | `offline`
-- **Tab state**: `active` | `active-throttled` | `passive` | `passive-throttled` | `unknown`
 
 Provides a typed listener system (`addListener` / `removeListener`) and a client event handler system (`registerClientEventHandler` / `unregisterClientEventHandler`) for real-time server events.
 
 Key behaviors:
-- On WebSocket connect: triggers auto-login or login status check.
-- On `version-update`: triggers service worker update.
-- On disconnect: emits `cliConnectionLost` event.
-- Runs IndexedDB cleanup 10s after tab becomes active.
+- Starts the `WebSocketManager` once the login manager is loaded; on the first socket connect of the page it runs `loginManager.autoLogin()` (the HTTP device login, once per page load).
+- Emits `cliConnectionEstablished` / `cliConnectionRestored` when the tab becomes live (`onLive` `established` / `restored`), not on the raw socket connect. After `restored` a visible tab calls `loginManager.refreshAfterReconnect()` (random 1–3 s debounce; a hidden tab does it when it becomes visible): it re-runs the device `User/login` for its snapshot (own communities, chats, own data, unread count) under the login lock without a login-state change, and passes `requestStartedAt` to the community/chat snapshot merges.
+- On `updateAvailable`: triggers the service worker update.
+- On `disconnected`: emits `cliConnectionLost`.
+- On becoming visible or online: `loginManager.checkLoginStatus()`.
+- Deletes the IndexedDB databases of removed caches 10 s after the page load, fire-and-forget (in every tab; see "Obsolete databases" in §3).
 
 #### WebSocketManager (`webSocket.ts`)
 
-Manages the Socket.IO connection:
+Manages this tab's Socket.IO connection and implements `Transport` (`src/data/appstate/transport.ts`, the contract for the data layer):
 - Uses `socket.io-client` with polling + websocket transports (websocket only in dev).
-- **Multi-tab coordination**: tabs report their state (including document visibility) over `BroadcastChannel('CG_WEBSOCKET_STATE')` and the service worker acts as referee, assigning exactly one tab the active-socket role (see §8). Only the active tab maintains the live connection; passive tabs receive state via broadcasts.
-- Tab states: `active`, `active-throttled`, `passive`, `passive-throttled`, `unknown`, `tabClosed`.
-- Handles `buildId` events for version detection and forced updates.
-- Socket authentication: emits `getSignableSecret`, signs with device keypair, emits `login`.
+- **One socket per tab**, no tab roles (see §8). `live`, `onLive(kind)`, `onLiveChange`, `onResume(reason)`, `updateAvailable`/`onUpdateAvailable`, `holdSocket('call')`, `getRequestSocketId()`. Details: [docs/realtime](../realtime/README.md#socketio-client).
+- Hidden-tab policy: closes the socket after 5 min hidden (not while a hold is active), at once on `freeze`/`pagehide`; reconnects on visible, `pageshow` (persisted), `resume`, `online`.
+- Socket authentication: emits `getSignableSecret`, signs with device keypair, emits `login`; `login(deviceId)` resolves on the `"OK"` ack (20 s ack timeout, retries with a randomised backoff, a new connection only after two timeouts in a row). A reconnect logs the socket in again; no HTTP login.
+- Handles `buildId` events: a different build sets `updateAvailable`; the socket keeps working.
 - Ping/pong for disconnect detection.
 - All server events prefixed with `cli` are forwarded to `ConnectionManager.eventHandler`.
 
@@ -623,12 +689,13 @@ Manages authentication:
 - An interactive login and `createUser` mark the session as freshly authenticated for `stepUpManager`; a device-key re-login, `logout()` and a logout in another tab clear it.
 - `autoLogin()`: attempts login with the stored device keypair; the deprecated mnemonic re-login (`CRYPTOGRAM_USER_MNEMONIC`) only runs on a legacy CG ID instance — elsewhere the stored phrase is removed.
 - `setupAfterLogin()`: initializes all Dexie databases with login response data.
-- `logout()`: clears all databases, removes device keypair, resets state.
-- Cross-tab login coordination via `BroadcastChannel('CG_LOGIN_STATE')`.
+- `logout()`: clears all databases, removes device keypair, resets state, then broadcasts the logout.
+- Every tab has its own login state. HTTP logins (device, interactive, `createUser`, transfer link) run under the Web Lock `cg:login` (wait at most 15 s); a device login holds it for secret, signature and request (one signable secret per session). After 10 s (`LOGIN_LOCK_HOLD_MAX_MS`) the lock is released for the other tabs, but the holder keeps waiting for its own request; it only starts no further step (signature, request) without the lock — it queues again once. A device login answered `INVALID_SECRET` (a late secret request of another tab replaced the secret) is repeated once under the lock with a fresh secret. Inside the lock a tab compares the stored current user with the device it is about to log in and follows the stored user if they differ. A page device login that fails with anything but `NOT_FOUND` is retried with a backoff (5/15/60 s, ±50 %) and on the next visibility/online check (never sooner than 5 s after the failure); `User/logout` also runs under the lock. A tab that had to wait for the lock and then finds the session logged in as the stored user takes it over instead of a second login. Logins and logouts are broadcast on `BroadcastChannel('cg:auth')` (`authBroadcast.ts`), with the `storage` event on `CG_CURRENT_USER` (and a re-check when the tab becomes visible) as fallback: another tab's logout drops this tab's login without a second `User/logout`; another tab's login is taken over after `User/checkLoginStatus` (no HTTP login); another user's login counts as a logout first. A logout also posts `'anonymous'` on the legacy `CG_LOGIN_STATE` channel for one release (older pages still open); nothing listens there.
+- `loginRequiredErrorHandler()` (any tab): under the login lock re-checks the session with `User/checkLoginStatus`; only if it is not this tab's user any more it runs `autoLogin()`.
 
 #### ServiceWorkerManager (`serviceWorker.ts`)
 
-Manages service worker lifecycle: registration, updates, installation, and communication. Handles push notification setup and participates in the multi-tab active-socket handoff (see §8).
+Manages service worker lifecycle: registration, updates, installation, and communication (`reload` after a new worker activates, `navigate` from a notification click, `channelVisited` to close a channel's push notifications). Handles push notification setup. It takes no part in tab roles.
 
 ### Data Managers (`src/data/managers/`)
 
@@ -1038,20 +1105,17 @@ Layout components wrap the route content and provide the navigation menu. On com
 
 ## 8. Multi-Tab Architecture
 
-The app coordinates behavior across multiple open tabs. A single service worker (`src/service-worker.ts`) acts as the **referee** for which tab owns the live WebSocket connection, which makes the handoff robust across tab open/close, visibility changes, and service-worker restarts.
+Every tab is independent: it owns its WebSocket connection, its login state and its in-memory data. There are no tab roles, no leader tab and no referee; the page never opens `BroadcastChannel('CG_WEBSOCKET_STATE')`, and the service worker takes no part. Correctness does not depend on cross-tab coordination: a background tab only has to be correct once it is visible again, and every tab catches up from the server after a (re)connect (§3 "Chat stores", [docs/realtime → Tab Coordination](../realtime/README.md#tab-coordination-1) for the reasons behind this model).
 
-1. **WebSocket (active-tab election).** Each tab reports its state and document visibility over `BroadcastChannel('CG_WEBSOCKET_STATE')`. The service worker tracks the set of tabs and their states (`active` / `active-throttled` / `passive` / `passive-throttled`, plus a `visible` flag) and elects exactly one active tab:
-   - It waits for a full picture (heartbeats from known tabs) before reassigning roles, so a half-informed referee does not promote a second active tab.
-   - When no active tab exists, it prefers a **visible** passive tab (visible tabs are never timer-throttled).
-   - Collisions between two tabs both claiming the active role are broken deterministically in favor of the visible tab.
-   - If the active tab's connection is stuck in `connecting` far beyond normal, the role is handed to a fresh, non-throttled passive tab.
-   - Ghost tabs (e.g. banned during an initial service-worker install) are re-registered rather than left stranded.
+1. **WebSocket (one per tab).** Every tab connects its own socket (`WebSocketManager`, §4). Visible tabs — also several side by side — are always connected; a hidden tab closes its socket after 5 minutes unless it is in a call, and on `freeze`/`pagehide` at once; it reconnects when it comes back. The cost is one socket per open, non-idle tab. For one release the service worker still answers role requests of pages of the previous build with `active` (`src/serviceWorkerLegacyTabs.ts`, marked `COMPAT — remove one release after chat-sync`), see [docs/realtime → Tab Coordination](../realtime/README.md#tab-coordination-1).
 
-2. **Login.** The `LoginManager` uses `BroadcastChannel('CG_LOGIN_STATE')` to synchronize login/logout across tabs. Passive tabs can delegate `LOGIN_REQUIRED` errors to the active tab.
+2. **Login.** Each tab tracks its own login state. HTTP logins (for a device login: secret, signature and request) run one at a time across tabs under the Web Lock `cg:login`; logins and logouts are broadcast on `BroadcastChannel('cg:auth')` with the `CG_CURRENT_USER` storage event as fallback, and every tab follows them itself (§4, LoginManager). A `LOGIN_REQUIRED` is handled in the tab that got it.
 
-3. **Channel data.** The `ChannelDatabaseManager` uses `BroadcastChannel('channelDatabaseManager_events')` (and per-database `chunkedDatabase-<name>` channels) to coordinate channel subscriptions and chunk updates across tabs.
+3. **Channel data.** Messages and notifications are held in memory per tab (`chat.channels`, `chat.notifications`, §3 "Chat stores"); tabs do not exchange them, each catches up on `onLive`/`onResume`. Since the server sends a message created in one tab to the sender's other tabs too (only the sending socket is excluded, [docs/realtime → Socket-scoped targeting](../realtime/README.md#socket-scoped-targeting)), they see it live. Read state is shared through the community/chat rows (`mergeReadState`, idempotent across tabs) and from the server (`cliChannelLastRead`, `getSyncState`).
 
-4. **localStorage.** Used for cross-tab state sync (`StorageEvent` listener) for current user, last WebSocket connection time, and various preferences.
+4. **Alerts.** No tab plays sounds or shows desktop notifications for messages; desktop notifications come only from Web Push in the service worker, and the only sounds are call sounds in the tab that is in the call. So "exactly one tab alerts" needs no election. A later feature with in-tab alerts would need one (e.g. a Web Lock, keeping in mind that a frozen tab keeps its locks).
+
+5. **localStorage.** Used for cross-tab state sync (`StorageEvent` listener) for the current user and various preferences.
 
 ---
 
@@ -1167,6 +1231,12 @@ which the browser resolves against the current path — on a route ending in
 `/` such as `/c/<community>/call/<id>/` it requests `…/<id>/undefined`. The
 e2e suite fails a flow on any same-origin request with an `undefined` or
 `null` path segment (`e2e/README.md`).
+
+**Predefined roles** (Admin, Member, Public) are recognised by type and title, never by the
+title alone (`src/util/predefinedRoles.ts`): `isPredefinedRole`/`isPublicRole` for role objects,
+`isPredefinedRolePermission`/`isPublicRolePermission` for `rolePermissions` entries (by
+`roleType`; by title only where a list has no `roleType`). The lists the client builds carry `roleType` too, and a community refresh treats a changed `roleType` as a changed channel. A custom role with such a title is an
+ordinary role.
 
 **Configuration lives in `src/tailwind.css`** (CSS-first; `tailwind.config.js`
 is gone): `@theme` (the `palette-*` colors, the fonts), `@utility` (the
@@ -1396,7 +1466,7 @@ with wave M3 (2026-11-01), Tailwind CSS 4 with wave M4 (2026-11-02).
 
 - **Main entry**: `src/index.tsx` -- the primary web app entry point.
 - **CG ID entry**: `src/index_cgid.tsx` -- alternative entry point for the CG Identity service.
-- **Service Worker**: `src/service-worker.ts` -- handles caching, push notifications, and multi-tab active-socket refereeing (§8).
+- **Service Worker**: `src/service-worker.ts` -- handles caching, push notifications and notification clicks, the update/reload flow, and a one-release compat answer to old pages' tab-role requests (§8).
 - **Config**: `src/common/config.ts` -- deployment configuration (dev/staging/prod), feature flags, URLs, chain set.
 - **Docker**: `docker/.env` -- environment variables of the dev compose stack (gitignored, generated from the tracked `docker/.env.example` on first `./run.sh`; see [docs/infrastructure §4](../infrastructure/README.md#4-environment-variables)).
 
@@ -1474,7 +1544,7 @@ After a **password** login, if the account has no passkey on this instance: once
 
 **Settings → Accounts → Sign out other devices** asks first ("Sign out other devices? Every other browser and app signed in to your account is signed out and has to sign in again. This device stays signed in."), then confirms it's you (`ensureRecentAuth`, like removing a passkey) and calls `User/signOutOtherDevices`. What it did shows below the button and as a snackbar: "Signed out 3 other devices." / "Signed out 1 other device." / "No other device was signed in." (`signedOutDevicesText`), or "Other devices will be signed out within a minute." when the server answers `delayed`. A replaced password (`EmailPage`, `EmailEditor`) adds the same sentence from `setPassword`'s `signedOutDevices` to "Password updated"; removing a passkey or an X/LUKSO/Farcaster account says "Your other devices were signed out." (docs/auth-identity §2).
 
-The device that was signed out learns it from the socket event `cliSignedOut`, or — when it was offline or closed — from the `NOT_FOUND` of its device key at the next automatic login. `LoginManager.signedOutElsewhere()` raises `signedOutNotice` and signs out locally (`logout()`); `SignedOutNotice` then shows "You were signed out — Your account was signed out on this device from another device, or its password, email address or sign-in methods were changed there. Sign in again to continue." with **Sign in** (opens the login modal) and **Not now**. A logout in another tab of the same browser (which deletes this device's key as well) shows no notice: the tab knows it from the `CG_LOGIN_STATE` broadcast or the stored current user.
+The device that was signed out learns it from the socket event `cliSignedOut`, or — when it was offline or closed — from the `NOT_FOUND` of its device key at the next automatic login. `LoginManager.signedOutElsewhere()` raises `signedOutNotice` and signs out locally (`logout()`); `SignedOutNotice` then shows "You were signed out — Your account was signed out on this device from another device, or its password, email address or sign-in methods were changed there. Sign in again to continue." with **Sign in** (opens the login modal) and **Not now**. A logout in another tab of the same browser (which deletes this device's key as well) shows no notice: the server's `cliSignedOut` reaches the other tabs before that tab is done, so a logging-out tab writes `CG_LOGOUT_IN_PROGRESS` (user, tab, time) to localStorage before its `User/logout`, and a tab that sees it — or a changed stored current user, or the `cg:auth` broadcast — follows that logout without a second `User/logout`. Without any of these the tab re-checks for 1 s (an older page writes no marker) and then decides under the login lock, so of several tabs signed out from elsewhere normally one calls `User/logout` (its marker says `elsewhere`) and the others follow it; each of them shows the notice (localStorage is only eventually consistent across processes, so a second `User/logout` can happen; it is harmless, the session is gone). A tab whose logout never finishes is followed for at most 10 s; then the marker counts as a leftover (that tab closed or reloaded) and the sign-out as one from elsewhere, with the notice. Signing in again — in this tab or in another one this tab takes over — dismisses the notice. While a tab follows another tab's logout, a `LOGIN_REQUIRED` starts no device login. A `cliSignedOut` that arrives while the tab's own logout is in flight is ignored (the server could not tell the requesting socket apart, docs/realtime "Socket-scoped targeting"). In every case — also during that re-check — the device's session and key are gone on the server, so the tab drops the device from its socket at once (`webSocketManager.deviceSignedOut`): the reconnect after the server's disconnect, and any reconnect on a return of the tab, is anonymous, never a socket login with the revoked key; nor does a refresh after a restored live run a device login while the tab is signing out. A socket login answered `ERROR` for a device the socket no longer wants is not reported as an error. A sign-out refers to one device — for `cliSignedOut` (which names none) the one the socket's login was acked for when it arrived, for a `NOT_FOUND` the one that login used — and is ignored when that is no longer the tab's current device (a late event after a switch to another user or device must not end the new session); a `cliSignedOut` during a socket login still waiting for its ack is not acted on either (a device that is really gone shows up at its next HTTP device login).
 
 The X popup page (`/twitter-login`, `TwitterCallbackView`) shows "Too many attempts to connect X from this network. You can try again in …" when `Twitter/startLogin` was refused by its limit (`?error=rate-limited&retryAfter=`).
 

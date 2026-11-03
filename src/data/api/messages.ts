@@ -90,6 +90,28 @@ class MessagesApiConnector extends BaseApiConnector {
     ); 
   }
 
+  /** chat-sync catch-up of one channel (404 on servers before chat-sync) */
+  public async getChanges(
+    data: API.Messages.getChanges.Request
+  ): Promise<API.Messages.getChanges.Response> {
+    return await this.ajax<API.Messages.getChanges.Response>(
+      "POST",
+      '/getChanges',
+      data
+    );
+  }
+
+  /** chat-sync read-only snapshot of all readable channels (404 on servers before chat-sync) */
+  public async getSyncState(
+    data: API.Messages.getSyncState.Request
+  ): Promise<API.Messages.getSyncState.Response> {
+    return await this.ajax<API.Messages.getSyncState.Response>(
+      "POST",
+      '/getSyncState',
+      data
+    );
+  }
+
   public async setReaction(
     data: API.Messages.setReaction.Request
   ): Promise<API.Messages.setReaction.Response> {

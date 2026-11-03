@@ -22,6 +22,7 @@ import {
 import { signApiSecret } from "data/util/device";
 import loginManager from "data/appstate/login";
 import { CallType } from "common/enums";
+import { isMediaRefusal, RefusedMediaKind } from "./mediaRefusal";
 
 export class RoomClient {
   private _closed: boolean;
@@ -53,6 +54,7 @@ export class RoomClient {
   private _highQuality: boolean;
   private _onNewPeer: () => void;
   private _onPeerLeft: () => void;
+  private _onMediaRefused: (kind: RefusedMediaKind) => void;
   private _sendTransportRestartAttempts = 0;
   private _sendTransportRestarting = false;
   broadcasters: Map<string, string>;
@@ -73,6 +75,7 @@ export class RoomClient {
     callCreator,
     onNewPeer,
     onPeerLeft,
+    onMediaRefused,
     audioOnly,
     highQuality
   }: {
@@ -90,6 +93,8 @@ export class RoomClient {
     callCreator: string;
     onNewPeer: () => void;
     onPeerLeft: () => void;
+    /** the call server refused to take media of this kind from us */
+    onMediaRefused?: (kind: RefusedMediaKind) => void;
     audioOnly: boolean;
     highQuality: boolean;
   }) {
@@ -144,6 +149,7 @@ export class RoomClient {
     }
 
     this._dispatch = dispatch;
+    this._onMediaRefused = onMediaRefused ?? (() => {});
 
     if (this._callType === CallType.DEFAULT) {
       this._onNewPeer = onNewPeer;
@@ -623,6 +629,7 @@ export class RoomClient {
       }
     } catch (error) {
       console.error("enableMic() | failed:%o", error);
+      if (isMediaRefusal(error)) this._onMediaRefused("audio");
 
       if (track) track.stop();
     }
@@ -1174,6 +1181,7 @@ export class RoomClient {
       }
     } catch (error) {
       console.error("enableWebcam() | failed:%o", error);
+      if (isMediaRefusal(error)) this._onMediaRefused("video");
 
       if (track) track.stop();
     }
@@ -1369,6 +1377,7 @@ export class RoomClient {
       }
     } catch (error) {
       console.error("enableShare() | failed:%o", error);
+      if (isMediaRefusal(error)) this._onMediaRefused("share");
 
       if (track) track.stop();
     }

@@ -7,6 +7,8 @@ import errors from "common/errors";
 import stepUpManager, { stepUpRequestForRoute } from "../auth/stepUp";
 import securityStepState from "../auth/securityStep";
 import { ApiRequestError } from "./apiError";
+import { SOCKET_ID_HEADER } from "../appstate/transport";
+import { getRequestSocketId } from "../appstate/requestSocketId";
 
 function unwrapResult<T>(result: API.AjaxResponse<T> | undefined, fallbackError: string): T {
   if (result && result.status === "OK") {
@@ -62,6 +64,9 @@ export default class BaseApiConnector {
       oReq.open(method, `${this.baseUrl}${uri}`);
       oReq.withCredentials = true;
       oReq.setRequestHeader('Accept', 'application/json');
+      // read per request (it changes on reconnect): the server leaves only
+      // this socket out of the echo of the request's own events
+      oReq.setRequestHeader(SOCKET_ID_HEADER, getRequestSocketId());
       if (sendBuffer) {
         oReq.setRequestHeader('Content-Type', 'application/octet-stream');
         oReq.send(data);

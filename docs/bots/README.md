@@ -1,6 +1,6 @@
 # Bot Accounts
 
-> Status: verified against commit 523fceccd, 2026-07-25; Bot API v1 surface (edge routing) against commit fe3937f, 2026-10-31
+> Status: verified against commit 523fceccd, 2026-07-25; Bot API v1 surface (edge routing) against commit fe3937f, 2026-10-31; the human-presence separation (Connection presence) against commit fc66601, 2026-11-02
 
 Common Ground supports **bot accounts**: programmable actors that read and post
 in community channels through a small, versioned bearer API and Socket.IO
@@ -420,8 +420,9 @@ tracked separately from human online/away/busy/invisible semantics:
   derived from the count of live token-authenticated sockets. Per-server Redis
   leases keep the count consistent across multiple websocket servers, and a
   shutdown / stale-cleanup path resets counts to 0.
-- Bots are **not** added to `localOnlineUsers` and never call
-  `setUserOnlineStatus`; bot connectivity does not create human presence.
+- Bots are **not** tracked by the human `PresenceTracker`
+  (`srv/util/presence.ts`) and get no grace period; bot connectivity does not
+  create human presence.
 - The `bots` view surfaces a `connectionStatus` of `connected` (when the bot
   user is online and at least one socket is live) or `offline`. This is pure
   transport state: REST activity cannot make a bot appear connected, and the bot

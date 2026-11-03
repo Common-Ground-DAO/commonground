@@ -30,9 +30,28 @@
 > raw routes and `asyncHandler`, §8) against commit 56e7c34, 2026-11-01;
 > TypeORM 1.x (wave M2: `srv/util/datasource.ts`, §8) against commit 8dcbb42,
 > 2026-11-01; `callUpdateEmitter.ts` (call-ending sweeps, events), `/setChannelLastRead`
-> and the test list against commit 591e6cf, 2026-11-02; the community check of
-> the message access scope, `/getMemberList`, `/getUserCommunityRoleIds` and the
-> memberlist routes against commit 8e88b9a, 2026-11-03.
+> and the test list against commit 591e6cf, 2026-11-02; `onlineStatusCheck.ts` against commit
+> fc15832, 2026-11-02; the chat-sync message routes (`/getChanges`, idempotent
+> `/createMessage`, `/setChannelLastRead` answer, `syncSeq`), the `ChannelSyncState` entity
+> and the test list against commit 30ce83e, 2026-11-02; the `/createMessage` channel lock and
+> `createdAt` rule against commits 959064f and 1963d4f, 2026-11-02;
+> `Message/getSyncState` (`srv/api/syncState.ts`, `srv/repositories/syncState.ts`), the
+> notification read/count routes, the `chats`/`notifications` indexes and the test list
+> against commit 312b5e7, 2026-11-02; the real-PostgreSQL spec notes (`tests/helpers/testPg.ts`)
+> against commit c652a23, 2026-11-02; socket-scoped targeting (`eventHelper`, `/logout`, the
+> article-room routes, message echo, call-chat delivery) and the test list against commit
+> ce09d8a, 2026-11-02; the review fixes (`logoutDeviceSockets`, per-socket article limit,
+> `emitMessageEvents` never rejects) against commit 1b09f87 and the test list (with
+> `callDeliveryTargetsDb`) against commit 7f39d24, 2026-11-02; the community check of the
+> message access scope, `/getMemberList`, `/getUserCommunityRoleIds` and the memberlist
+> routes against commit 8e88b9a, 2026-11-03; the `/getChanges` cursor note (no epoch), the
+> single `/Message` mount and the test list against commit 330fe2f, 2026-11-03; the call and event
+> role ids, `/setUserBlockState` (ban transaction), the reserved role titles, the role resolution
+> of `permissionHelper` (predefined Public role, owning community) and the test list against
+> commits dac9eaf, 9385d52, b3fa87b, 24922f5 and 7814781, 2026-11-03; the role title rule on
+> update, the event role check before any write, the join/ban membership lock and the
+> `roleType` of role permission lists against commits 0e4c794, d6354ef, 3bd44c0, 138c630, 3082f2a and 8bb443a,
+> 2026-11-03.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -313,9 +332,9 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/getCommunityList` -- List communities for the current user
 - `/getCommunitiesById` -- Get communities by IDs
 - `/getCommunityDetailView` -- Full community detail view
-- `/joinCommunity` -- Join a community
+- `/joinCommunity` -- Join a community. The ban check and the Member role insert run in one transaction under the same membership lock (advisory lock on community + user) that a ban takes, so a join and a ban of the same user run one after the other
 - `/leaveCommunity` -- Leave a community
-- `/setUserBlockState` -- Ban/unban users
+- `/setUserBlockState` -- Ban/unban users. A ban removes the user's roles of the community and stores the block state in one transaction (if either fails, nothing is kept and the request fails); the leave events and room changes follow after the commit
 - `/getMemberList` -- Get community members: the full list for members, a short preview (first members by name, ids only) for others while the community is not deleted
 - `/getChannelMemberList` -- Get channel members
 - `/getMemberNewsletterCount` -- Count newsletter subscribers
@@ -331,7 +350,8 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/setChannelPinState` -- Pin/unpin channels
 
 **Roles:**
-- `/createRole`, `/updateRole`, `/deleteRole`
+- `/createRole`, `/updateRole`, `/deleteRole` -- the titles of the predefined roles (Admin, Member, Public) are reserved, in any letter case (`srv/util/roleTitles.ts`): `/createRole` refuses them (validator); `/updateRole` lets a custom role keep the reserved title it already carries and refuses a change to one (`INVALID_REQUEST`, checked against the stored role in `communityHelper.updateRole`)
+- Role permission lists of channels, articles and events (`rolePermissions`) carry `roleType` next to `roleTitle`, so clients tell a predefined role from a custom role with the same title (`src/util/predefinedRoles.ts`): the lists the server reads, the Admin entry it adds, the `cliChannelEvent` `new`/`update` lists (each role's stored title and type, not the request's) and the lists the web client builds. The write validators accept the optional field; the server names the role by `roleId` and does not store it. The web client sends it, so the backend goes out before (or with) the frontend
 - `/checkCommunityRoleClaimability` -- Check if user can claim a token-gated role
 - `/claimRole` -- Claim a token-gated role
 - `/addUserToRoles`, `/removeUserFromRoles`
@@ -358,6 +378,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 **Calls (voice/video):**
 - `/getCall`, `/startCall`, `/startScheduledCall`
 - `/getCurrentCalls`, `/getCallParticipantEvents`
+- The role permissions of `/startCall` and of the event routes (`/createCommunityEvent`, `/updateCommunityEvent`, which create or update the event's call) may name only live roles of the community; any other role id is refused (`NOT_ALLOWED`) before anything is written (the event routes check the full list first, `communityEventHelper.checkEventRolePermissions`). Media, join and moderation rights inside the call are checked by the call server ([docs/realtime](../realtime/README.md#producers))
 
 **Tags:**
 - `/getTagFrequencyData`
@@ -391,7 +412,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/requestSignupEmailCode`, `/verifySignupEmailCode` -- verify the sign-up address before the account exists (`srv/util/signupEmail.ts`)
 - `/clearLoginSession` -- Clear session
 - `/checkLoginStatus` -- Check if logged in
-- `/logout` -- Log out (the session is destroyed, its id revoked and the cookie expired; no new session)
+- `/logout` -- Log out (the session is destroyed, its id revoked and the cookie expired; no new session). Logout disconnects the device's sockets: when the request names its socket (`x-cg-socket-id`), the other sockets get `cliSignedOut` first and the requesting one is left to log out itself; without the header all of them, no event ([docs/realtime](../realtime/README.md#socket-scoped-targeting))
 - `/signOutOtherDevices` -- step-up; ends every other session of the user (session generation in PostgreSQL + index) and deletes every other device key and unused transfer link, returns `{ devices }` (`srv/util/signOutOtherDevices.ts`, `srv/util/userSessions.ts`)
 - `/getSecurityStatus` -- what the account-security step still needs (`srv/util/securityStep.ts`)
 - `/createTransferLink` -- a one-time link for the session's own user to the instance `TRANSFER_TARGET_URL` names (off without it); limited per user
@@ -479,22 +500,41 @@ on the user row).
 
 ### `srv/api/messages.ts` -- Messaging Routes
 
-- `/createMessage` -- Create a new message
-- `/createModerationMessage` -- Create a moderation-flagged message
-- `/editMessage` -- Edit an existing message
+- `/createMessage` -- Create a new message. Idempotent on the client-chosen `id`: a known id is looked up first and answered without an INSERT (so it takes no sync seq), and the insert is `ON CONFLICT ("id") DO NOTHING` for two same-id creates racing; when the id exists, a request by the same creator in the same channel (message not deleted) succeeds with the stored message and emits no events or notifications, anything else fails with `NOT_ALLOWED`. A retry whose parent message was deleted in the meantime also returns the stored message. The insert runs under the channel's sync-sequence row lock and takes `createdAt` = max(`clock_timestamp()`, newest createdAt of the channel + 1 ms; the +1 ms chain only while it stays within 5 s of the clock, so a corrected clock does not date new messages in the future), so concurrent creates in one channel never collide on `UNIQUE(channelId, createdAt)`; a residual collision with a writer that skips the lock (an older API process during a deploy) is retried, up to 3 attempts. See [docs/database](../database/README.md#messages).
+- `/createModerationMessage` -- Create a moderation-flagged message (same insert)
+- `/editMessage` -- Edit an existing message. Response `{editedAt, updatedAt, syncSeq}` (+ `attachments`)
 - `/deleteMessage` -- Delete a message. Creator and channel are read from the stored message (`messageHelper.getMessageOwnership`), not from the request: the message must live in `access.channelId`, deleting another user's message needs `CHANNEL_MODERATE` / `CALL_MODERATE` there (chats and article comments: own messages only), and the `UPDATE` filters on creator, channel and id.
 - `/deleteAllUserMessages` -- Delete all messages from a user in a channel
 - `/loadMessages` -- Load messages with pagination
 - `/messagesById` -- Load specific messages by ID
 - `/loadUpdates` -- Load message updates since a timestamp
+- `/getChanges` -- chat-sync catch-up of one channel (`{access, cursor: "1:<seq>" | null, limit?: 1..200 (default 200)}`, contract `API.Messages.getChanges` in `src/common/types/api/messages.d.ts`). Read access as for `/loadMessages` (anonymous visitors for public channels); session users only, not on the bot allowlist. A cursor in the `1:<seq>` format that is at most 500 changes behind and not ahead of the channel's sequence returns every changed row with `syncSeq > cursor` in `syncSeq` order (`LIMIT limit + 1` for `hasMore`); deleted rows become `deletedIds`, the rest `messages`. The answer's `syncSeq`/`cursor` is the last returned seq when `hasMore`, else the channel's seq. `null`, any other format, a cursor ahead of the channel's seq or more than 500 behind answer `reset: true` with the latest 30 messages (newest first; rows not written since the migration carry `syncSeq: 0`). The channel's seq and the rows are read in one statement (one snapshot), see [docs/database](../database/README.md#message-sync-sequence). The cursor carries no epoch: a database restore (or any other reset of a channel's `channel_sync_state` row) is noticed only while the client's cursor is still ahead of the restored seq. Once new writes have taken the channel's seq past the cursor again, the cursor is taken at face value: the client misses the changes between the restored seq and its cursor and keeps messages the restore removed, until its next reset. Clients build the cursor themselves (`1:${seenSeq}` in `src/data/chat/channelStore.ts`), so an epoch would need a new cursor format on both sides.
 - `/setReaction`, `/unsetReaction` -- Message reactions
-- `/setChannelLastRead` -- Mark channel as read. The stored `lastRead` only moves forward (`GREATEST` of the stored and the posted value), so a tab posting an older read time does not bring unread state back; a posted time in the future is clamped to the server's `now()`; the `cliChannelLastRead` event to the user's other sockets carries the stored value. Every other write of `channelreadstate` (own new message, first-time initialisation in the community and chat lists) uses the same rule.
+- `/setChannelLastRead` -- Mark channel as read. Needs read access to the channel (same check as `/loadMessages`, login required). The stored `lastRead` only moves forward (`GREATEST` of the stored and the posted value), so a tab posting an older read time does not bring unread state back; a posted time in the future is clamped to the server's `now()`; an optional `messageId` of a message in `access.channelId` makes the server use that message's `createdAt` instead (an id from elsewhere falls back to `lastRead`). Response `{lastRead, unread, syncSeq}`: the stored value, the other users' not deleted messages after it (capped at 999) and the channel's sequence, from the same statement. The `cliChannelLastRead` event to the user's sockets carries the same fields plus `communityId` or `chatId`. Every other write of `channelreadstate` (own new message, first-time initialisation in the community and chat lists) uses the same rule.
+
+Every message write returns the row's `syncSeq` (set by the database trigger, see [docs/database](../database/README.md#message-sync-sequence)); `loadMessages`, `messagesById`, `loadUpdates`, the create response and every `cliMessageEvent` carry it (left out for rows not written since the migration). Delete events carry the highest seq of the deleted rows as `syncSeq` and all of them as `syncSeqs`; the `update` events for replies of a deleted parent carry their own.
 - `/getUrlPreview` -- Get URL preview metadata (Open Graph scrape of a client-supplied URL, at most 2048 chars). Requires a session. Results are cached for 1 h on the Valkey cache instance (`redis-cache`, client type `cache`) under `urlpreview:<sha256(url)>` — skipped, not waited for, while that instance is unreachable; cache misses are rate-limited per account (30/min). The page (≤ 1 MB, `text/*` or XHTML) and the `og:image` (≤ 8 MB, `image/*`) are fetched through `safeFetch` (see `srv/util/safeFetch.ts` below) and the HTML is passed to `open-graph-scraper` as `ogs({ html })`. Title and description are cut to 2000 chars; the returned `url` is the page's `og:url` only if that is an http(s) URL of at most 2048 chars, otherwise the requested URL. Previews larger than 8 KB serialized are returned but not cached. The preview image is stored through `saveImage()`, i.e. it passes the NSFW gate.
-- `/joinArticleEventRoom`, `/leaveArticleEventRoom` -- Join/leave article real-time rooms
+- `/joinArticleEventRoom`, `/leaveArticleEventRoom` -- Join/leave article real-time rooms: the requesting socket only when the request names it (`x-cg-socket-id`), otherwise the device's sockets ([docs/realtime](../realtime/README.md#socket-scoped-targeting))
+
+The sender's own `cliMessageEvent` of `/createMessage`, `/createModerationMessage` and `/editMessage` skips only the sending socket when the request names it, otherwise the whole device (bots: always the device). Call-chat events also reach the call's present members and, for Public calls, the community room ([docs/realtime](../realtime/README.md#call-flow)).
 
 Every route that takes an access object (`communityId`, `chatId`, `callId`, or `articleId` with `articleCommunityId`/`articleUserId`, each together with `channelId`) runs `_checkAccessOrThrow`, which first checks that `channelId` is the channel of the named community, chat, call or article (`messageHelper.isChannelInAccessScope`) and then evaluates the permissions for that scope. An article access must name the article's community or user. Deleted community channels, the channels of a deleted community, deleted chats and deleted articles do not match; a user article that is not published yet only matches for its author. Message edits and reaction removal additionally filter on `access.channelId` in SQL.
 
 A subset of message routes is also reachable over the Bot API v1 surface (see below). At module load, `messages.ts` allowlists `POST /BotV1/messages/{loadMessages, messagesById, loadUpdates, createMessage, setReaction, unsetReaction}` for bot bearer principals. When a request carries a `botPrincipal`, the handler resolves the acting user from the bot instead of the session, requires an exact `{communityId, channelId}` access target, enforces the per-token bot rate limits, and verifies the bot's active membership/policy for that community before proceeding.
+
+### `srv/api/syncState.ts` -- Read-State Snapshot
+
+Mounted at `/Message` after the message router, in the same `app.use` behind one `securityStep` (`srv/api.ts`; a request runs the step once), so the route is `/Message/getSyncState`.
+
+- `/getSyncState` -- `{ channelIds? }` (at most 500 unique UUIDs; Joi validator in `srv/validators/api/syncState.ts`) → `{ serverTime, notificationUnreadCount, channels }`. Session users only: not on the bot allowlist, and a bot principal is refused in the handler. One statement (`syncStateHelper.getChannelStates`, `srv/repositories/syncState.ts`) returns one entry per community channel the user can read and per chat the user is a member of, each with `channelId`, `communityId` or `chatId`, `syncSeq`, `lastMessageDate`, `lastRead` and `unread`:
+  - community channels: in the communities where the user holds a claimed, not deleted role (the communities `getOwnCommunities` lists; deleted communities and channels excluded), the channels for which the user's claimed roles plus the community's predefined `Public` role together grant `CHANNEL_EXISTS` and `CHANNEL_READ` -- the same rule as the message read check. Public channels of communities the user is not a member of are not listed;
+  - chats: not deleted, `userIds` contains the user;
+  - `syncSeq`: the channel's `channel_sync_state.seq`, `0` without a row;
+  - `unread`: non-deleted messages of others after `lastRead`, capped at 999 (`API.Messages.UnreadCap`). Without a `channelreadstate` row: `0` for community channels, every non-deleted message of others for chats.
+
+  `notificationUnreadCount` and `serverTime` are the unread notification count and the database `now()` it was read at. The route writes nothing (unlike `getOwnCommunities` and `getChats`, which create missing `channelreadstate` rows). `channelIds: []` answers with no channels.
+
+  `channelIds` only narrows the same set: a requested channel is answered only if it is in the set above, so an explicitly requested Public channel of a community the user is not a member of is left out as well. A missing entry therefore means "no snapshot for this channel", not "no access" -- read access is decided by the message routes (`loadMessages`, `getChanges`), and clients must not treat a missing entry as a permission answer.
 
 ### `srv/api/chats.ts` -- DM / Chat Routes
 
@@ -506,8 +546,10 @@ A subset of message routes is also reachable over the Bot API v1 surface (see be
 
 - `/loadNotifications` -- Load notification list
 - `/loadUpdates` -- Load notification updates
-- `/getUnreadCount` -- Get unread count
-- `/markAsRead`, `/markAllAsRead` -- Mark notifications read
+- `/getUnreadCount` -- Unread count as a number; with `{ withTime: true }` the object `{ unreadCount, unreadCountAt }` (`unreadCountAt` = database `now()` of the count). A call without a body (older clients) gets the plain number.
+- `/markAsRead` -- Marks one notification read. Only an unread notification is written, and the `cliNotificationEvent` `update` goes out only for that change (already read: no write, no event); an unknown id answers `NOT_FOUND`.
+- `/markAllAsRead` -- Marks the user's unread notifications read; `allread` is emitted only when at least one changed.
+- The `new`, `update` and `allread` events carry `unreadCount` and `unreadCountAt` (`notificationHelper.withUnreadCount`; left out if the count cannot be read). The login response's `unreadNotificationCount` is a number too.
 - `/getPublicVapidKey` -- Get VAPID key for web push
 - `/registerWebPushSubscription`, `/unregisterWebPushSubscription` -- Web push management
 - `/channelPushNotificationClosed` -- Handle push notification dismissal
@@ -786,6 +828,10 @@ All entities use TypeORM decorators and live in `srv/entities/`. The database is
 - `searchVector` (tsvector) -- full-text search
 - `editedAt` (timestamptz, nullable)
 - Soft delete via `deletedAt`
+- `syncSeq` (bigint, nullable, `select: false`) -- channel change sequence of the last write, set by trigger
+
+**`ChannelSyncState`** (`srv/entities/channel-sync-state.ts`, table: `channel_sync_state`)
+- PK `channelId`; `seq` (bigint) -- last message sync sequence of the channel, written only by the `messages` triggers
 
 **`Reaction`** (`srv/entities/reactions.ts`, table: `reactions`)
 - Composite PK: `itemId` + `userId`
@@ -800,6 +846,7 @@ All entities use TypeORM decorators and live in `srv/entities/`. The database is
 - `userIds` (UUID array) -- participants
 - `adminIds` (UUID array)
 - `channelId` (UUID, unique) -- associated channel for messages
+- GIN index `idx_chats_userIds_gin` on `userIds` for the membership test (`"userIds" @> ARRAY[user]`), added by `1793635100000-syncStateIndexes`
 
 ### Notification Domain
 
@@ -814,6 +861,7 @@ All entities use TypeORM decorators and live in `srv/entities/`. The database is
 - `message` (varchar 256)
 - `isRead` (boolean, default false)
 - `data` (jsonb, nullable) -- extra notification data
+- Partial index `idx_notifications_userId_unread` on `userId` where `read = FALSE` for the unread count, added by `1793635100000-syncStateIndexes`
 
 ### Content Domain
 
@@ -1100,15 +1148,20 @@ The `db: Pool | PoolClient` parameter pattern enables functions to work both sta
 - Message loading with pagination, reactions, own-reaction tracking
 - URL preview generation, search via `to_tsvector`
 - Reaction management (set/unset with validation)
-- Channel read state management
+- Channel read state management (`setChannelLastRead` returns the stored value, unread count and channel seq)
+- chat-sync: `getChanges` (change list / reset page after a sync cursor), idempotent `createMessage`, `syncSeq` on every read and write
 
 **`srv/repositories/chats.ts`** -- `chatHelper`
 - DM chat creation (creates a Chat + Channel in one transaction)
 - Chat retrieval with unread counts and last message
 - Chat closing (soft delete)
 
+**`srv/repositories/syncState.ts`** -- `syncStateHelper`
+- Read-only read-state snapshot of all readable community channels and chats (`Message/getSyncState`, see above)
+
 **`srv/repositories/notifications.ts`** -- `notificationHelper`
 - Notification creation and delivery
+- Unread count (`getUnreadCount`, `getUnreadCountWithTime`, `withUnreadCount` for events)
 - Web push notification sending (via `web-push` library)
 - Batch operations (mark as read, load with pagination)
 
@@ -1116,10 +1169,19 @@ The `db: Pool | PoolClient` parameter pattern enables functions to work both sta
 - Real-time event emission via Socket.IO Redis Emitter
 - Routes events to specific rooms (user, community, role, device, session, article)
 - `emit(event, target, except)` pattern for targeted delivery
+- Socket-scoped targeting for requests that carry `x-cg-socket-id` (`srv/util/requestSocket.ts`:
+  `getRequestSocketId`, `senderExcept`; rooms `deviceSocket:{deviceId}:{socketId}`):
+  `except.deviceSockets`, `requestSocketsJoinRooms`/`requestSocketsLeaveRooms` (article rooms),
+  `logoutDeviceSockets` (logout) — see [docs/realtime](../realtime/README.md#socket-scoped-targeting)
 
 **`srv/repositories/permissions.ts`** -- `permissionHelper`
 - Role permission queries for channels, calls, events, articles, and communities
-- User permission checks (e.g., does user have CHANNEL_WRITE in a channel?)
+- User permission checks (e.g., does user have CHANNEL_WRITE in a channel?): the union of the
+  user's claimed, live roles and the community's predefined Public role (type `PREDEFINED`,
+  title `Public`; it stands for everyone, visitors included), all of the community that owns the
+  channel, article, call or event. A custom role with the title "Public" is an ordinary role. Block
+  states (ban, chat mute) are checked by the write routes themselves (e.g. `/createMessage`), not
+  here, so reading through the Public role stays open to everyone
 
 **`srv/repositories/files.ts`** -- `fileHelper`
 - S3 storage operations (upload, download, signed URLs)
@@ -1230,7 +1292,9 @@ Note: the Staking routes carry no validators (they take no meaningful request bo
 (OpenAPI 3.1) is generated from the compiled validators by
 `sdk/tools/generate-openapi.mjs`, run inside the backend image
 (`sdk/tools/generate-openapi.sh`, i.e. `yarn openapi` in `sdk/`) — request
-bodies come from `describe()` output; responses carry the standard envelope
+bodies come from `describe()` output, and a body is marked `required` only when
+the validator rejects `{}` (what `registerPostRoute` validates for a request
+without a body); responses carry the standard envelope
 with an open `data` schema, since response types are TypeScript-only. The
 output is deterministic, and `generate-openapi.sh --check` (`yarn
 openapi:check`) is the drift guard: **a validator change must be committed
@@ -1330,8 +1394,8 @@ Located in `srv/jobs/`. All jobs are designed to run as **worker threads** (they
 - **Logic:** Queries features expiring within 3 minutes that have `autoRenew` set. Checks if the entity has enough point balance. If so, deducts points and extends the active period. Emits real-time events on renewal or expiration.
 
 ### `onlineStatusCheck.ts`
-- **Purpose:** Sets stale users to offline.
-- **Logic:** Updates users whose `onlineStatusUpdatedAt` is older than 90 seconds and status is not already offline. Simple cleanup query.
+- **Purpose:** Sets stale users to offline (fallback for wsapi processes that crashed, stopped, or lost a presence decision).
+- **Logic:** `setStaleUsersOffline` (`srv/repositories/userPresence.ts`, a light module so the job does not load all of `users.ts`) updates users whose `onlineStatusUpdatedAt` is older than 90 seconds and status is not already offline, resets the socket count of stale bots, and emits `cliUserData { onlineStatus: 'offline' }` to each changed user's communities. The job then waits for the Redis publishes (`PING` on the emitter connection) and exits. See [docs/realtime](../realtime/README.md#online-status--heartbeat).
 
 ### `stakingAccrual.ts`
 - **Purpose:** Credits Spark for on-chain staking positions.
@@ -1350,7 +1414,7 @@ Located in `srv/jobs/`. All jobs are designed to run as **worker threads** (they
   - `endCallsOfGoneCallServers`, at startup and every `ORPHANED_CALLS_SWEEP_INTERVAL` (15 s): every open call whose call server is gone, event calls included (as `resetCallServer` does when a call server restarts; an ended event call can be started again, see below). Liveness signal: the call server's row in `callservers` — mediasoup writes `updatedAt` every `CALLSERVER_UPDATE_DATA_INTERVAL` (2 s) and sets `deletedAt` when it shuts down. A server counts as gone when its row is deleted or missing, or its `updatedAt` is older than `CALLSERVER_GONE_AFTER_MILLISECONDS` (60 s, deliberately longer than the 10 s stale period so a server that misses a few heartbeats keeps its calls). Open memberships are closed and `previewUserIds` cleared; end and leave times are the server's last sign of life (`deletedAt`, else `updatedAt`), not the sweep time. This covers call servers that stop without SIGTERM (OOM, `docker kill`, host crash) and do not come back under the same URL (which would reset their calls, `resetCallServer`), e.g. after a domain change or with `CG_ENABLE_CALLS=false`. The community call list and the home page list read only open calls, so they show such calls until the sweep has ended them.
   - Both filter on open calls; the partial index `idx_calls_communityId_open` (`"endedAt" IS NULL`) keeps them from scanning the call history.
 - **Restarting an event call:** `callHelper.startScheduledCall` resets `endedAt` and closes the memberships an ended call left open, so an event call ended by a call server restart or the sweep can be started and joined again (the call server's `getOrCreateRoom` only accepts calls without `endedAt`). `softEndCall` and `endCallForEveryone` only end a call that is still open (no second end, no second `delete` event).
-- **Tests:** `tests/callEnding.spec.ts` (SQL shape of both sweeps, `startScheduledCall` and `updateCallPermissions`). Against a running disposable instance: `e2e/checks/call-sweep.sh` (`e2e/README.md`, "Checks") — real Postgres, Valkey and job-runner: sweeps and their `delete` events, the job-runner startup, event and scheduled calls, restarting an ended event call, the permission rewrite, the read marker.
+- **Tests:** `tests/callEnding.spec.ts` (SQL shape of both sweeps, `startScheduledCall`, `updateCallPermissions` and the role-id check of `createCall`/`updateCall`). Against a running disposable instance: `e2e/checks/call-sweep.sh` (`e2e/README.md`, "Checks") — real Postgres, Valkey and job-runner: sweeps and their `delete` events, the job-runner startup, event and scheduled calls, restarting an ended event call, the permission rewrite, the read marker.
 
 ---
 
@@ -1628,8 +1692,41 @@ with wave M2 (see below).
   `safeFetch`, `urlPreview`, `redisManager`, `pluginRequest`, `protooConnectionGate`,
   `typingCache`, `userArticleVisibility`, `userArticleRoute`, `passkeyCore`,
   `passkeyRoutes`, `passkeyConfig`, `signupEmail`, `asyncHandler`,
-  `registerPostRoute`, `uploadImageRoute`, `gatedFileRoute` and `callEnding` (the passkey tests drive
-  a software authenticator, `tests/helpers/softAuthenticator.ts`). `npx tsc --noEmit`
+  `registerPostRoute`, `uploadImageRoute`, `gatedFileRoute`, `callEnding`,
+  `messageSyncRepository`, `messageSyncRoutes`, `notificationRoutes`, `syncState`,
+  `socketTargeting` (the `x-cg-socket-id` helpers and `eventHelper` against a
+  model of the adapter's rooms), `socketTargetingRoutes` (exclusion sites,
+  article rooms, call delivery targets), `socketLogin` (the end of the socket login
+  when the socket went away meanwhile), `callDeliveryTargets`, `callMediaKind` (the
+  permission a `produce` needs and the order of the produce checks), `communityBan` (the ban transaction and the membership lock of joining and banning), `communityEventRoles` (the event role check before any write) and
+  `roleTitleValidator` (the reserved role titles) (the passkey
+  tests drive a software authenticator, `tests/helpers/softAuthenticator.ts`). Against a
+  throwaway PostgreSQL, opt-in via `CG_TEST_PG_HOST` (skipped otherwise):
+  `securityStepDb` (resets the database `cryptogram`), `chatSyncSeqDb` (the
+  message sync sequence: migration — each step in one transaction, its lock order and
+  `lock_timeout` —, trigger under the `writer` role, commit
+  order of concurrent writers, and the message repository on the real
+  schema; it creates and drops its own database `cg_chat_sync_test`),
+  `syncStateDb` (getSyncState and the notification read-state writes; own
+  database `cg_sync_state_test`), `callDeliveryTargetsDb` (the call-chat
+  and new-call member/Public targets; own database `cg_call_delivery_test`),
+  `callJoinPermissionDb` and `callMediaPermissionDb` (who may join, send media
+  into and moderate a call, as the call server's role `mediasoup`; own databases
+  `cg_call_join_test`, `cg_call_media_test`) and `permissionPublicRoleDb` (role
+  resolution of `permissionHelper`: the predefined Public role and the owning
+  community; own database `cg_permission_public_test`).
+  They connect only to
+  `CG_TEST_PG_HOST`:`CG_TEST_PG_PORT` (`tests/helpers/testPg.ts`), also for
+  the `util/postgres` pools `securityStepDb` loads (it sets `DB_HOST`/`DB_PORT`
+  from them and checks the loaded pool's target). `CG_TEST_PG_PORT` has no
+  default: with the host set and the port missing the specs fail instead of
+  falling back to `DB_PORT`, `PGPORT` or 5432, so they never reach another
+  PostgreSQL on the machine (such as a dev stack). Run them against a
+  throwaway server on a port of its own, e.g.
+  `docker run -d --name pg-test -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=cryptogram cryptogram/db:18`,
+  then `CG_TEST_PG_HOST=127.0.0.1 CG_TEST_PG_PORT=55432 CG_TEST_PG_PASSWORD=pw yarn jest --runInBand tests/securityStepDb.spec.ts tests/chatSyncSeqDb.spec.ts tests/syncStateDb.spec.ts`
+  (`CG_TEST_PG_PASSWORD` defaults to `pw`), and remove the container with
+  `docker rm -fv pg-test`. `npx tsc --noEmit`
   does not cover `tests/` (see `docs/todo/TODO.md`). ts-jest compiles the specs
   with `srv/tsconfig.json`, which therefore lists `"types": ["node", "jest"]`:
   `@tsconfig/node24` ≥ 24.0.5 sets `types: ["node"]`, which would otherwise hide

@@ -5,7 +5,7 @@
 import type { Page } from 'puppeteer';
 import type { Flow } from '../lib/harness.ts';
 import { signUp } from '../lib/account.ts';
-import { createChannel, createCommunity, EDITOR, joinCommunity, navigate, openChannel, sendMessage, waitMessageConfirmed } from '../lib/app.ts';
+import { createChannel, createCommunity, EDITOR, joinCommunity, openChannel, sendMessage, waitMessageConfirmed } from '../lib/app.ts';
 import { assert, sleep } from '../lib/ui.ts';
 
 /** the message element whose body contains `text` */
@@ -23,7 +23,8 @@ async function hoverMessage(page: Page, id: string) {
 /**
  * Community + channel + real-time chat between two users: the owner creates
  * a community and a channel, a second user joins; messages, a reaction and
- * an edit show up in the other browser over the websocket without a reload.
+ * an edit (with its "edited" marker) show up in the other browser over the
+ * websocket without a reload.
  */
 export const communityChat: Flow = {
   id: 'community-chat',
@@ -109,15 +110,9 @@ export const communityChat: Flow = {
           (!withMarker || !!item.querySelector('.message-item-date-container.edited'));
       }, { timeout: 10_000 }, id, edited, marker);
       await shows(owner.page, true);
-      await shows(member.page, false);
-      // the "edited" marker (pencil + second time) in the other browser
-      const markerLive = await shows(member.page, true).then(() => true, () => false);
-      if (!markerLive) {
-        await navigate(t, member.page, community.path);
-        await openChannel(t, member.page, channel);
-        const afterReopen = await shows(member.page, true).then(() => true, () => false);
-        t.note(`FINDING: the edited message reached the member in real time, but its "edited" marker ${afterReopen ? 'only appears after reopening the channel' : 'does not appear there at all (not even after reopening the channel)'} (soft check, not failed)`);
-      }
+      // the "edited" marker (pencil + second time) in the other browser, live
+      // (the update event carries `editedAt`)
+      await shows(member.page, true);
     });
   },
 };

@@ -6,6 +6,7 @@ import app from './util/express';
 import userRouter from './api/user';
 import communityRouter from './api/community';
 import messageRouter from './api/messages';
+import syncStateRouter from './api/syncState';
 import fileRouter from './api/files';
 import chatRouter from './api/chats';
 import contractRouter from './api/contracts';
@@ -46,7 +47,8 @@ const securityStep = securityStepMiddleware(emailEnabled);
 app.use('/Chat', securityStep, chatRouter);
 app.use('/Community', securityStep, communityRouter);
 app.use('/File', securityStep, fileRouter);
-app.use('/Message', securityStep, messageRouter);
+// one mount, so the security step runs once for /Message/getSyncState too
+app.use('/Message', securityStep, messageRouter, syncStateRouter);
 app.use('/User', securityStep, userRouter);
 app.use('/Contract', securityStep, contractRouter);
 app.use('/Notification', securityStep, notificationRouter);

@@ -20,6 +20,7 @@ import MiniLoginBanner from '../LoginBanner/MiniLoginBanner';
 import LinkPreviewLoader from '../LinkPreview/LinkPreviewLoader';
 import YoutubeIframe from 'components/atoms/YoutubeIframe/YoutubeIframe';
 import MarkdownContent, { toMarkdownSource } from './MarkdownContent';
+import SendStatusNotice from '../SendStatusNotice/SendStatusNotice';
 
 type RenderableElement = Models.BaseArticle.ContentElementV2 | Models.Message.BodyContentV1 | Common.Content.ModerationSpecial;
 
@@ -439,8 +440,12 @@ const MessageBodyRenderer = (props: {
   message: Models.Message.Message,
   truncate?: boolean,
   hideTimestamp?: boolean,
+  /** retry a failed send or edit (shown with `sendStatus` error-send / error-update) */
+  onRetry?: () => void;
+  /** discard a failed send or revert a failed edit */
+  onDiscard?: () => void;
 }) => {
-  const { message, truncate, hideTimestamp } = props;
+  const { message, truncate, hideTimestamp, onRetry, onDiscard } = props;
 
   const className = [
     truncate ? "message-body-truncated" : "",
@@ -456,8 +461,13 @@ const MessageBodyRenderer = (props: {
         isEdited={message.editedAt !== null}
         hideTimestamp={hideTimestamp}
       />
-      {message.sendStatus === "error-send" && <span className="text-xs text-red-500">error sending</span>}
-      {message.sendStatus === "error-update" && <span className="text-xs text-red-500">error updating</span>}
+      {(message.sendStatus === "error-send" || message.sendStatus === "error-update") && <SendStatusNotice
+        messageId={message.id}
+        content={message.body.content}
+        sendStatus={message.sendStatus}
+        onRetry={onRetry}
+        onDiscard={onDiscard}
+      />}
     </div>
   )
 }

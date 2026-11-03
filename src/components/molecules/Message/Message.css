@@ -224,3 +224,7 @@
     @apply cg-box-shadow-sm;
   }
 }
+/* own message not yet confirmed by the server */
+.message-item.sending .message-item-message {
+  opacity: 0.6;
+}

@@ -8,7 +8,28 @@
 > the browser-socket session room (cookie optional), `watchCgIdRequest` and `sess-revoked:`
 > against commit eab2a27, 2026-11-01; `sess-user:`, the session TTLs and the signed-out devices'
 > `cliSignedOut` + disconnect against commit 23a4c1e, 2026-11-01; room close hardening and
-> the call-ending safety net (Room Lifecycle, Call Flow) against commit 591e6cf, 2026-11-02
+> the call-ending safety net (Room Lifecycle, Call Flow) against commit 591e6cf, 2026-11-02;
+> human online status (grace period, batched cluster-wide offline check with one retry, touch
+> sets, change-only events, the stale job's events) against commit fc15832, 2026-11-02;
+> the chat-sync fields of `cliMessageEvent` and `cliChannelLastRead` against commit 30ce83e,
+> 2026-11-02; the page side of the tab/socket model (Socket.IO Client, Tab Coordination: one
+> socket per tab, live signal, hidden-tab policy, login lock and post-reconnect snapshot)
+> against commit 964f6b3, 2026-11-02; the service worker's part in tab coordination (no
+> referee, one-release compat answer) against commit 79187d2, 2026-11-02; the notification
+> routes and the `cliNotificationEvent` count fields against commit 3f204f4, 2026-11-02;
+> socket-scoped targeting (`deviceSocket:` room, echo exclusion, article rooms, logout),
+> call chat / `cliCallEvent new` delivery against commit ce09d8a, 2026-11-02; the logout
+> without a header, per-socket article limit, second socket login, the never-rejecting message
+> emit and the deploy-mix notes against commits 1b09f87 and f97ef1b, 2026-11-02; Tab
+> Coordination after the chat-sync removal (why independent tabs, catch-up after a
+> (re)connect, logout across tabs, the compat markers; no `tabState`/`lastDisconnect` any
+> more) against commit 1e6a0d4, 2026-11-03; the end of the socket login (`finishSocketLogin`) against
+> commit 043641d, 2026-11-03; the logout marker across tabs against commit 9d00729, 2026-11-03; the
+> anonymous reconnect after `cliSignedOut` against commit 1b9948c, 2026-11-03; who may join a call's
+> room (`hasPermissionToJoinCall`, Public role) against commits 2484880 and eebc3cf, 2026-11-03; media
+> permissions on `produce`, the join and moderation checks (roles of the call's community, the
+> predefined Public role, bans), the call role ids, the server-side demotion and the client's refusal
+> warning against commits 7814781, 9385d52, dac9eaf and ae660a0, 2026-11-03
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -113,8 +134,9 @@ Sockets are organized into rooms based on identity and membership. Room key func
 | `cgIdRequestRoomKey(frontendRequestId)` | `cgIdRequest:{frontendRequestId}` | Legacy CG ID: the socket that watches a CG ID popup request (`watchCgIdRequest`) |
 | `articleRoomKey(articleId)` | `article:{articleId}` | Target viewers of a specific article |
 | `botTokenRoomKey(tokenId)` | `botToken:{tokenId}` | Target all sockets authenticated with a specific bot token |
+| `deviceSocketRoomKey(deviceId, socketId)` (`srv/util/requestSocket.ts`) | `deviceSocket:{deviceId}:{socketId}` | One logged-in socket of a device: what [socket-scoped targeting](#socket-scoped-targeting) addresses |
 
-For browser clients with a session cookie, the socket immediately joins its `expressSession:{sessionId}` room on connection. On `login`, it joins `user:`, `device:`, all `role:`, and all `community:` rooms for that user (via `joinAuthenticatedRooms`). For bot clients the same room set (minus `expressSession:`, plus `botToken:`) is joined inside the handshake middleware, before the `connection` event.
+For browser clients with a session cookie, the socket immediately joins its `expressSession:{sessionId}` room on connection. On `login`, it joins `user:`, `device:`, `deviceSocket:{deviceId}:{socket.id}`, all `role:`, and all `community:` rooms for that user (via `joinAuthenticatedRooms`). For bot clients the same room set (minus `expressSession:`, plus `botToken:`) is joined inside the handshake middleware, before the `connection` event.
 
 ### Client-to-Server Events
 
@@ -122,7 +144,7 @@ For browser clients with a session cookie, the socket immediately joins its `exp
 |---|---|---|---|
 | `getSignableSecret` | none | `(secret: string)` | Server generates a cryptographically random hex string, stores it on `socket.data.signableSecret`, returns it to the client for device authentication |
 | `cgPing` | none | `(timestamp: number)` | Returns `Date.now()` for client-side latency/clock-drift detection |
-| `login` | `{ deviceId, secret, base64Signature }` | `("OK" \| "ERROR")` | Authenticates the socket. Verifies the device signature against the signable secret. On success, joins user/device/role/community rooms and sets user online status |
+| `login` | `{ deviceId, secret, base64Signature }` | `("OK" \| "ERROR")` | Authenticates the socket. Verifies the device signature against the signable secret. A socket already logged in as another device or user first leaves every room of that login (as on `logout`). On success, joins user/device/`deviceSocket:`/role/community rooms and sets user online status |
 | `logout` | none | none | Leaves all rooms except the temporary community visitor room. Sets user offline if this was the last socket |
 | `joinCommunityVisitorRoom` | `{ communityId }` | none | Joins the community room temporarily so a non-member viewing a public community receives its live events. Validated with Joi. Leaves the previous visitor room first (unless the user is a member of it) |
 | `watchCgIdRequest` | `{ frontendRequestId }` | none | Legacy CG ID: joins `cgIdRequest:{frontendRequestId}` so the popup's result (`cliCgIdSignResponse`) reaches this socket; one request per socket (the previous one is left). Validated with Joi. The client re-sends it after a reconnect |
@@ -135,6 +157,24 @@ For browser clients with a session cookie, the socket immediately joins its `exp
 |---|---|---|
 | `buildId` | `(backendBuildId: string, timestamp: number)` | Sent immediately on connection. Client compares build IDs to detect app updates |
 | `cli*` (any event starting with "cli") | varies | All application events (messages, notifications, call updates, etc.) are prefixed with `cli` and dispatched through the `onAny` handler on the client |
+
+#### Message and read-state events (chat-sync fields)
+
+Types in `src/common/types/events/{message,channel}.d.ts`; emitted from `srv/api/messages.ts`.
+All fields below are additive; clients that do not know them ignore them.
+
+| Event | Sync fields |
+|---|---|
+| `cliMessageEvent` `new` | the full `ApiMessage` incl. `syncSeq` (the channel change sequence of the row, see [docs/database](../database/README.md#message-sync-sequence)) |
+| `cliMessageEvent` `update` | `syncSeq` of the write; an edit also carries `editedAt`; reactions carry it in both the room copy and the reacting user's `ownReaction` copy; replies of a deleted parent (`parentMessageId: null`) carry their own |
+| `cliMessageEvent` `delete` | `syncSeq` = highest seq of the deleted rows, `syncSeqs` = the seq of every deleted row (a multi-row delete bumps the sequence once per row). Sent only when a row was deleted |
+| `cliChannelLastRead` | `lastRead` (stored, max-merged), `unread` (other users' messages after it, capped at 999), `syncSeq` (the channel seq that count is valid at), and `communityId` (community channels) or `chatId` (DMs); to the user's own room |
+
+A client that misses events (disconnect, reload, frozen tab) catches up per channel with
+`POST /Message/getChanges` from its last contiguous `syncSeq` (see
+[docs/backend](../backend/README.md#srvapimessagests----messaging-routes)). Seq bumps
+without an event exist (a same-id create in another channel losing a race: its `ON CONFLICT DO NOTHING` insert), so a gap in
+the received seqs is a hint to call `getChanges`, not proof of a lost event.
 
 ### Event Emission (Server-Side)
 
@@ -151,18 +191,60 @@ class EventHelper {
 }
 ```
 
-The `emit` method takes an event and a target specifying which rooms to broadcast to (by userIds, roleIds, communityIds, deviceIds, sessionIds, articleIds), with optional exclusions. The event's `type` field becomes the Socket.IO event name; the rest is the payload.
+The `emit` method takes an event and a target specifying which rooms to broadcast to (by userIds, roleIds, communityIds, deviceIds, sessionIds, articleIds), with optional exclusions (the same lists plus `deviceSockets`, see below). The event's `type` field becomes the Socket.IO event name; the rest is the payload. One emit to several rooms reaches every socket once, however many of the rooms it is in.
+
+### Socket-scoped targeting
+
+New clients send the id of the tab's socket.io socket in every HTTP request, header
+`x-cg-socket-id` (`SOCKET_ID_HEADER` in `src/data/appstate/transport.ts`; a tab without a socket
+sends a random id of the same format). The server reads it with `getRequestSocketId()`
+(`srv/util/requestSocket.ts`): only a single value matching `^[A-Za-z0-9_-]{20}$` counts, and bot
+requests never use it (the Bot API keeps the per-device behaviour). The header name is fixed (the
+cg.box gateway allows it by name).
+
+The header never selects a socket on its own. Every socket-scoped operation addresses the room
+`deviceSocket:{deviceId}:{socketId}`, built from the **session's** device and the header; wsapi
+joins that room at socket login with the device the socket proved, and the socket leaves it with
+its other authenticated rooms on socket `logout` or disconnect (and before a second socket `login`
+as another device or user, which first leaves every room of the previous login). An id of another
+device's socket, an unknown id or the id of a socket that is not logged in therefore names an empty
+room: nothing is excluded, nothing joins or leaves. No lookup per request; cluster-wide because
+rooms live in the adapter.
+
+During a deploy, sockets logged in on a wsapi process older than this change are not in their
+`deviceSocket:` room until they reconnect and log in again. For those tabs: they get their own
+events back (the chat-sync client store merges by message id and `syncSeq`); an article join
+joins nothing and a leave leaves nothing (no live article comments until the reconnect; the
+catch-up covers them); and a logout cannot tell the requesting socket from the others, so all
+of the device's sockets get `cliSignedOut` and are disconnected — the requesting tab ignores
+the event because its own logout is in flight (`LoginManager.signedOutElsewhere`). The same
+holds for a tab whose header carries its fallback id (no socket, or a stale one).
+
+| Site | With a valid header | Without one (old clients) |
+|---|---|---|
+| Echo of the request's own event: `createMessage`, `createModerationMessage`, `editMessage` (`srv/api/messages.ts`), `startChat`, `closeChat` (`srv/api/chats.ts`), `joinCommunity`, `createCommunity`, `setChannelPinState` (`srv/api/community.ts`) | `except: { deviceSockets: [{deviceId, socketId}] }` — only the sending socket misses it; the sender's other tabs get it live | `except: { deviceIds: [deviceId] }` — the whole device |
+| `/Message/joinArticleEventRoom`, `/leaveArticleEventRoom` | `eventHelper.requestSocketsJoinRooms/LeaveRooms` on the requesting socket only, so closing an article in one tab keeps the other tab in the room. Tracked in the session as `socketArticleRooms` (`{articleId, socketId}`): at most 5 per socket (a sixth join leaves that socket's oldest room; other tabs keep theirs) and at most 50 per session (the oldest entries, mostly of closed tabs, are left first). Both are soft bounds: concurrent requests of one session save the session last-write-wins, so an entry can get lost while its socket stays in the room until it disconnects | the device's sockets, tracked in `temporaryArticleIds` (at most 5) |
+| `/User/logout` (logout disconnects the device's sockets: `eventHelper.logoutDeviceSockets`) | `cliSignedOut` to the device's other sockets, then `disconnectSockets(false)` on them; the requesting socket is left out (its tab sends the socket `logout` itself) | `disconnectSockets(false)` on all of the device's sockets, no `cliSignedOut` (an old client would show it as a sign-out from elsewhere) |
+
+Reactions keep excluding the whole user and re-sending the `ownReaction` copy to the user room,
+unchanged.
 
 ### Online Status & Heartbeat
 
-- On `login`, `userHelper.setUserOnlineStatus(userId, 'online')` is called and the userId is added to the process-local `localOnlineUsers` set.
-- On disconnect/logout, if no other sockets remain for that user (`io.sockets.adapter.rooms.get(userRoomKey(userId))?.size` is falsy), the user is set offline. Bot sockets are excluded from this path and handled via the bot-presence mechanism instead (see below).
-- A 60-second interval calls `userHelper.touchUserOnlineStatus(userIds)` for all locally connected human users and re-syncs bot presence for all locally connected bot users.
-- On graceful shutdown (`SIGTERM`, plus `unhandledRejection` / `uncaughtException`), all human users whose last remaining socket is on this instance are batch-set to offline, all bot users have their presence cleared, and every socket is disconnected before `io.close()` and `process.exit`.
+Human presence is one column per user (`users.onlineStatus` + `onlineStatusUpdatedAt`). The decisions live in `PresenceTracker` (`srv/util/presence.ts`, specs `srv/tests/presence.spec.ts`); wsapi passes it the socket lookups and the repository writes.
+
+- On `login` the user is tracked by the process (`socketAuthenticated`, before the rooms are joined; a pending offline is cancelled) and `userHelper.touchUserOnlineStatus([userId], { emitOwnData: true })` runs: it flips only `offline` to `online` and refreshes `onlineStatusUpdatedAt` otherwise, so a status other than online/offline is never overwritten by a login. If the socket disconnected while the login was in flight (its disconnect handler may have run before the user id was set), the login releases the presence itself (`socketGone`, and leaves any room the join still added) instead of acknowledging — also when the device key turned out to be revoked meanwhile (`srv/util/socketLogin.ts`, `srv/tests/socketLogin.spec.ts`). A connected socket with a revoked key gets `ERROR` and is disconnected; its disconnect handler releases the presence. socket.io 4.8 leaves every room at a disconnect and makes a later `join` a no-op (checked by the spec).
+- On disconnect/socket `logout`, if no other socket of the user remains on this process (`io.sockets.adapter.rooms.get(userRoomKey(userId))?.size` is falsy), a **grace period** of `PRESENCE_OFFLINE_GRACE_MS` (30 s) starts. A login on this process within it cancels the offline. Short disconnect/reconnect cycles (hidden tabs, network loss, reloads) therefore do not change the status. Bot sockets are excluded from this path and handled via the bot-presence mechanism instead (see below).
+- When grace periods expire, the decisions due within `PRESENCE_DECISION_BATCH_MS` (500 ms) of each other are taken together (a proxy reload drops many sockets at once): one cluster lookup and one `userHelper.setUsersOffline(userIds)` UPDATE. The lookup is a `presenceProbe` server-side emit with acknowledgement through the Redis adapter (`io.serverSideEmitWithAck`): every other wsapi process answers with the subset of the user ids it holds a logged-in socket for, so only ids travel (no handshake or socket data as with `fetchSockets`). Users found elsewhere get no write — the other process keeps them. If a process does not answer within the adapter's `requestsTimeout` (5 s), the answers received still count and the remaining users are decided once more after `PRESENCE_RETRY_DELAY_MS` (10 s), staying tracked meanwhile; if the second lookup is incomplete too, they go offline. A process that does not know `presenceProbe` (an older build during a rolling deploy) counts as not answering. A login on this process that lands during the lookup or the write is detected (login sequence per user) and wins; a login on another process that races the offline write is not detected, and that process's next touch restores `online` within 60 s.
+- Events go out only on a real change: the UPDATEs return a row only when the status changed, and only then are `cliUserData` (to all the user's communities and the user) and, for `online`, `cliUserOwnData { onlineStatus }` (to the user) emitted. Each change also fires `pg_notify('userdatachange')` for `memberlist` (users trigger).
+- A 60-second interval refreshes every human user the process tracks (`touchSets()`): users with a logged-in socket here get `touchUserOnlineStatus(userIds, { emitOwnData: true })`, which also flips them back online if something set them offline; users in their grace period or waiting for the retry only get `refreshOnlineStatusTimestamps` (timestamp, never a status flip), so an offline decided by another process is not undone. It also re-syncs bot presence for all locally connected bot users.
+- The `onlineStatusCheck` job (every 30 s) sets users offline whose status has not been refreshed for 90 s (`setStaleUsersOffline`, `srv/repositories/userPresence.ts`) and emits `cliUserData { onlineStatus: 'offline' }` for each of them, so other clients see it too. It is the fallback for a crashed process and a decision lost on shutdown. (A frozen client is not one of its cases: while the server still holds its socket the user is touched every 60 s, and once the ping timeout drops the socket the normal grace path decides.) Because grace users are refreshed, it never fires before a grace decision.
+- On graceful shutdown (`SIGTERM`, plus `unhandledRejection` / `uncaughtException`), pending grace decisions are dropped and human users are **not** set offline: their clients reconnect (to another process, or to this one after a restart) and the login refreshes them; users who do not come back go offline through the stale job. All bot users have their presence cleared, and every socket is disconnected before `io.close()` and `process.exit`.
+- `/User/setOwnStatus` stores a status in Redis (`ud:{userId}`, see `UserDataManager` below), which nothing reads; the `away`/`dnd`/`invisible` values of `users.onlineStatus` have no writer.
 
 ### Tab Coordination
 
-Multiple browser tabs share one Socket.IO connection. Coordination happens over a `BroadcastChannel('CG_WEBSOCKET_STATE')` shared between every tab (`src/data/appstate/webSocket.ts`) and the **service worker** (`src/service-worker.ts`), which acts as a referee. Only one tab (the "active" tab) holds the socket at any time; passive tabs mirror its connection state and do not process live events. See [Frontend Real-time → Tab Coordination](#tab-coordination-1) for the full protocol, including the visibility-based handoff and the service-worker referee.
+Every browser tab owns its own Socket.IO connection and login state (`src/data/appstate/webSocket.ts`); there are no tab roles and the page does not talk to the service worker about sockets. A visible tab is always connected, a hidden tab closes its socket after 5 minutes unless it is in a call. Each tab's socket logs in with the device key, so one user has one socket per open, non-idle tab (browsers allow 200–255 connections per host; each socket login costs the server a handful of queries). A tab that missed events catches up over HTTP (`Message/getSyncState`, `Message/getChanges`, see [Message and read-state events](#message-and-read-state-events-chat-sync-fields)); presence counts users, not sockets, and its grace period keeps reconnecting tabs from flapping the status. See [Frontend Real-time → Tab Coordination](#tab-coordination-1).
 
 ---
 
@@ -205,7 +287,7 @@ Bot presence is tracked separately from human online status, because a bot may h
 
 `eventHelper.disconnectBotTokenSockets(tokenId)` (`srv/repositories/event.ts`) calls `io.in(botToken:{tokenId}).disconnectSockets(true)` across all instances via the Redis adapter. It is invoked when a token is revoked (`botTokenHelper`), and when a bot is uninstalled or banned (`botHelper`), so live sockets for an invalidated token are torn down immediately rather than lingering until their next request.
 
-Browser sockets of devices that were signed out from elsewhere (another device's "Sign out other devices", or a replaced password, email or removed sign-in method, [auth-identity §2](../auth-identity/README.md#signing-out-other-devices)) are handled the same way: `eventHelper.signOutDeviceSockets(deviceIds)` emits `cliSignedOut` to their `device:{deviceId}` rooms and then calls `disconnectSockets(false)` on them, through the same publisher in this order. The client signs out locally on the event; a socket that reconnects cannot log in again, its device key is gone. The socket `login` verifies the key with the same lookup as the HTTP device login, which rejects a key below the account's session generation, and after joining its rooms checks once more that its key is still valid (one DB read) and disconnects if it is not — a key that became invalid between the check and the joining.
+Browser sockets of devices that were signed out from elsewhere (another device's "Sign out other devices", or a replaced password, email or removed sign-in method, [auth-identity §2](../auth-identity/README.md#signing-out-other-devices)) are handled the same way: `eventHelper.signOutDeviceSockets(deviceIds)` emits `cliSignedOut` to their `device:{deviceId}` rooms and then calls `disconnectSockets(false)` on them, through the same publisher in this order. A logout in one tab does the same for the device's other sockets (`logoutDeviceSockets`, see [Socket-scoped targeting](#socket-scoped-targeting)). On the event the client drops the device from its socket at once (`webSocketManager.deviceSignedOut`), so the reconnect after the disconnect is anonymous, and signs out locally; a socket login with that device would fail anyway, its key is gone. The socket `login` verifies the key with the same lookup as the HTTP device login, which rejects a key below the account's session generation, and after joining its rooms checks once more that its key is still valid (one DB read) and disconnects if it is not — a key that became invalid between the check and the joining.
 
 ---
 
@@ -269,7 +351,24 @@ A Producer represents a media track (audio or video) being sent by a peer to the
 2. The Producer is added to the `AudioLevelObserver` and `ActiveSpeakerObserver` (if audio).
 3. Consumers are automatically created for all other joined peers.
 
-In broadcast mode, only peers in the `_broadcasters` map are allowed to produce.
+In broadcast mode, only peers in the `_broadcasters` map are allowed to produce. In an audio-only
+call, video is refused.
+
+**Media permissions.** Before it creates the Producer, the room checks the call permission of the
+media kind (`authorizeProduce` → `callHelper.hasPermissionToSendMedia`, `srv/mediasoup/room.ts`,
+`srv/mediasoup/mediaPermissions.ts`): `AUDIO_SEND` for audio, `SHARE_SCREEN` for video the client
+marks as a screen share (`appData.share`, as `RoomClient.enableShare` sends it), `VIDEO_SEND` for
+other video. The roles are resolved as for joining (`hasPermissionToJoinCall`, see Ended Call
+Protection): the user's claimed, live roles of the call's community plus that community's predefined
+Public role, on a call that has not ended in a community that is not deleted. The call creator and
+the call's moderators (`CALL_MODERATE` on the call through a claimed role, or a claimed role with the
+community permission `WEBRTC_MODERATE`) may send every kind — the web client's "moderate" preset
+has no `SHARE_SCREEN`. On a broadcast, a peer on the stage may send without a per-kind check (being
+put there by the creator or a moderator is the permission). A user with an active ban in the
+community sends nothing. A refusal answers the `produce` request with `NOT_ALLOWED`; the web client
+then shows a warning for the mic, camera or screen share (`onMediaRefused`, `src/util/RoomClient.tsx`,
+`src/context/CallProvider.tsx`). Producers that already exist are not re-checked when a call's
+permissions change.
 
 ### Consumers
 
@@ -302,7 +401,7 @@ A PostgreSQL keepalive query (`SELECT 1`) runs every 60 seconds on the LISTEN co
 
 ### Ended Call Protection
 
-`getOrCreateRoom` reads `callHelper.getCallState(roomId)` once, before any Room is created, and rejects the connection if the call does not exist, `endedAt` is set, or the user is neither the call creator nor allowed to join (`callHelper.hasPermissionToJoinCall`, the same rule as the `join` request); the same row provides the room parameters (call type, creator, slots, stage slots, audio-only, high quality). This prevents joining calls that have already ended in the database. If the connection that caused a Room's creation is gone before it is attached, the Room is closed again (`closeIfEmpty`). Room creation and joining are serialized per `roomId` (one `AwaitQueue` per room).
+`getOrCreateRoom` reads `callHelper.getCallState(roomId)` once, before any Room is created, and rejects the connection if the call does not exist, `endedAt` is set, or the user may not join (`callHelper.hasPermissionToJoinCall`, the same rule as the `join` request: the call has not ended, its community is not deleted, the user has no active ban in that community, and the user created the call or `CALL_JOIN` on the call is granted to one of the user's claimed, live roles of the call's community or to that community's predefined Public role (type `PREDEFINED`; a custom role titled "Public" is an ordinary role) — a call open to the Public role can be joined by every logged-in user who sees it through that role, members or not); the same row provides the room parameters (call type, creator, slots, stage slots, audio-only, high quality). This prevents joining calls that have already ended in the database. If the connection that caused a Room's creation is gone before it is attached, the Room is closed again (`closeIfEmpty`). Room creation and joining are serialized per `roomId` (one `AwaitQueue` per room).
 
 ---
 
@@ -405,47 +504,57 @@ The schemas are `.strict(true)` (no type coercion — `"1"` is not accepted wher
 The `WebSocketManager` singleton manages the Socket.IO connection:
 
 - **Connection:** `io(WS_URL, { transports: ['polling', 'websocket'], path: '/api/ws/', reconnection: true, reconnectionDelayMax: 10000 })`. In dev mode, polling is skipped (websocket-only).
-- **Authentication flow:**
-  1. On `connect`, emit `cgPing` for clock sync.
-  2. Emit `getSignableSecret` to get a challenge.
-  3. Sign the secret with the device key.
-  4. Emit `login` with `{ deviceId, secret, base64Signature }`.
-  5. Track login state via `socket.cg_loggedin` (0 = not logged in, 1 = in progress, 2 = logged in).
-- **Event routing:** Uses `socket.onAny()` to catch all events. Events are only dispatched when this tab is `active`/`active-throttled`; passive tabs ignore them. Events starting with `cli` are forwarded to the registered `clientEventHandler`. The `buildId` event has its own handler.
-- **Reconnection logic:** Handles `disconnect` with reason-specific behavior:
-  - `io server disconnect` -- Immediately reconnect.
-  - `io client disconnect` -- Stay disconnected (intentional).
-  - `transport close/error` -- Reconnect (state `connecting`) if online, disconnect if offline.
-- **Connect-error handling:** socket.io keeps retrying (`reconnection: true`), but after 5 consecutive `connect_error`s while still in `connecting`, the displayed state is surfaced as `disconnected` so the UI does not claim "connecting" forever.
-- **Disconnect detection:** A 59-second `cgPing` interval detects stale connections. If the last pong is >110 seconds old, forces reconnect. The same 110s staleness check runs when a stalled active tab becomes visible again.
-- **Version detection:** When `buildId` from server differs from the client build, triggers `version-update` state.
+- **Contract:** it implements `Transport` (`src/data/appstate/transport.ts`); `connectionManager.start`s it once the login manager is loaded, so a stored device is known before the first socket login.
+- **Authentication flow (socket login):**
+  1. On `connect`, emit `cgPing` for clock sync and re-send the socket-scoped joins (`watchCgIdRequest`).
+  2. If the tab has a device: emit `getSignableSecret` to get a challenge, sign it with the device key, emit `login` with `{ deviceId, secret, base64Signature }`. Each ack (and the signature) has a 20 s timeout. A timeout retries the login after the backoff below; after two timeouts in a row the retry restarts the connection.
+  3. On `"OK"` (the server has joined all rooms) the tab is **live**. An anonymous tab is live right after step 1. `"SECURITY_STEP_REQUIRED"` and `"ERROR"` are not live; `"ERROR"`, a failed signature and an ack timeout are retried with a backoff (5 s, 15 s, 60 s, each ±50 % random) while the tab is visible; a `"SECURITY_STEP_REQUIRED"` is not asked again on the same connection.
+  4. A login, user switch or logout on a connected socket runs the same steps (a `logout` first if the socket was logged in) and is not live in between. Socket logins never overlap: the server runs socket handlers concurrently.
+- **Live signal:** `live` is true only while connected and logged in (or anonymous and set up); `Common.WebSocketState` is `connected` only while live. `onLive(kind)` fires on every transition to live: `established` (first in this page load), `restored` (after the connection was lost or closed by policy), `user` (same connection, its user changed). `onResume(reason)` (`visible` after ≥ 30 s hidden, `pageshow` from bfcache, `resume`, `online`) fires only when the socket stayed live; otherwise the tab reconnects and only the later `onLive` fires.
+- **Event routing:** Uses `socket.onAny()` to catch all events and forwards those starting with `cli` to the registered `clientEventHandler` (every tab handles its own events). The `buildId` event has its own handler.
+- **Reconnection logic:** A reconnect performs the socket login only (no HTTP device login). Handles `disconnect` with reason-specific behavior:
+  - `io server disconnect` -- Immediately reconnect (unless closed by policy).
+  - `io client disconnect` -- Stay disconnected (policy close, or a deliberate restart).
+  - other reasons (`transport close`, `ping timeout`, …) -- socket.io reconnects with its backoff; a visible tab that comes back (`visible`, `pageshow`, `resume`, `online`) reconnects at once instead of waiting for the backoff.
+- **Connect-error handling:** socket.io keeps retrying (`reconnection: true`), but after 5 consecutive `connect_error`s the displayed state is `disconnected` so the UI does not claim "connecting" forever.
+- **Disconnect detection:** A 59-second `cgPing` interval detects stale connections. If the last pong is >110 seconds old, forces reconnect. The same check runs when a live tab comes back.
+- **Version detection:** When `buildId` from server differs from the client build, `updateAvailable` is set (once per page load) and the service-worker update starts. The socket, pings, socket re-login and reconnects keep working.
+- **Request socket id:** `getRequestSocketId()` is the connected socket's id, else a random per-tab id in the same format; `BaseApiConnector` sends it as `x-cg-socket-id` on every API request.
 
 ### Tab Coordination
 
-Exactly one tab (the "active" tab) holds the Socket.IO connection; every other tab is "passive" and mirrors the active tab's connection state without processing live events. Coordination uses a `BroadcastChannel('CG_WEBSOCKET_STATE')` shared by all tabs **and** the service worker (`src/service-worker.ts`), which acts as a referee.
+Every tab owns its Socket.IO connection, its login state and its in-memory data (messages, read state, notifications: `src/data/chat/`, [docs/frontend §3 "Chat stores"](../frontend/README.md#chat-stores-srcdatachat)). There is no leader tab, no relay of events between tabs and no shared message cache; the page never opens `BroadcastChannel('CG_WEBSOCKET_STATE')`.
 
-**Participants and messages:**
+**Why independent tabs.** Before, the service worker assigned one "active" tab that owned the socket and the others mirrored it, with a chunked message cache in IndexedDB shared over BroadcastChannel. Browser behaviour makes any such hand-off fragile: Chrome closes every WebSocket of a page it freezes (not only on bfcache), Chrome for Android freezes hidden tabs after about a minute, iOS suspends a backgrounded tab almost at once (Firefox does not freeze); a frozen tab keeps its Web Locks, so a lock alone is no safe leader election; SharedWorker is not available on every supported browser (Safari 16, Chrome for Android); and Socket.IO connection-state recovery does not work with the classic Redis adapter in use and covers neither reloads nor new tabs. Every model ends in "socket gone → reconnect → catch up", so the client relies on that alone: background tabs only have to be correct once they are visible again. The only cross-tab mechanisms left are the login lock and the auth broadcast below.
 
-- Each tab has a random `tabId` and a `tabState`. It broadcasts `TabToWorker` messages (`tabId`, `tabState`, optional `visible`, `socketState`, `lastEventTime`, `lastDisconnect`).
-- The service worker broadcasts `WorkerToTab` messages assigning a `tabState` to a specific `tabId`, and relays `socketState` / `lastEventTime` / `lastDisconnect` so passive tabs and freshly opened tabs converge on the last known state.
-- Tab states: `active`, `active-throttled`, `passive`, `passive-throttled`, `unknown`. `tabClosed` is a message value (sent on `beforeunload`), not a resting state. The `*-throttled` variants mark tabs whose heartbeat has slowed (backgrounded / timer-throttled).
-- `lastEventTime` is persisted to `localStorage('CG_LAST_KNOWN_WS_CONNCETION')` (and mirrored via the `storage` event) for cross-tab awareness of the last event received.
+**Catch-up after a (re)connect (`src/data/chat/`):**
 
-**Service-worker referee (`src/service-worker.ts`):**
+- "Live" means socket logged in and rooms joined: `onLive` (and the app events `cliConnectionEstablished` / `cliConnectionRestored`) fire only after the socket `login` ack, because events emitted between `connect` and the room join are lost on the server.
+- Triggers (each store debounces them into one round): `onLive` — first login ack of the page (`established`), after a lost or policy-closed connection (`restored`), a user change on the same connection (`user`, also when the login settles after the socket went live) — and `onResume` while the socket stayed live (`visible` after ≥ 30 s hidden, `pageshow` from bfcache, `resume`, `online`).
+- On each round: `Message/getSyncState` (read state of every readable channel and DM plus the notification count), `Message/getChanges` for every open message window from its `"1:<seq>"` cursor, and the notification count/open list. Live events arriving meanwhile are applied too; the stores merge by `syncSeq`, so order and duplicates do not matter. A live event that leaves a `syncSeq` gap open for 1.5 s triggers a `getChanges` of that channel.
+- Community, chat and own-user data are refreshed by the device `User/login` snapshot after a `restored` live (below); their Dexie writers are monotonic. A reconnect never runs a full HTTP device login.
 
-- Maintains a registry of known tabs (`tabId`, `tabState`, `visible`) plus an `alive` heartbeat map. Tabs that go silent for >4s are marked `*-throttled`; >70s are dropped.
-- `selectNewActiveTabIfAppropriate()` promotes a passive tab to active whenever no active tab exists, preferring a `visible` passive tab. It is deliberately inert for the first 2.5s after the worker (re)starts, since the browser terminates idle workers and the registry must repopulate from heartbeats before any reassignment — otherwise a half-informed referee would fight the tabs' own collision handling.
-- If the active tab's `socketState` has been stuck in `connecting` for >45s (a throttled background tab can stall there), the referee demotes it and hands the active role to a fresh passive tab.
-- On worker `activate` (a new build), all currently-known tabIds are added to a `bannedTabIds` set, the registry is cleared, and every client is told to reload. Banned tabIds are ignored until they re-register with a new tabId.
-- The referee only acts while `handleTabStates` is true (there are controlled window clients and tab handling has not been disabled via a `STOP_TAB_HANDLING` message).
+**Hidden-tab policy (`webSocket.ts`):**
 
-**Tab-side handoff and collision handling (`webSocket.ts`):**
+- Visible tabs (also several in split view) are always connected.
+- A hidden tab closes its socket (`socket.disconnect()`, no auto-reconnect) after `HIDDEN_DISCONNECT_AFTER_MS` (5 min) unless a `SocketHold` is active. `CallProvider` holds the socket while the tab is in a call; after the last release of a hidden tab the 5 minutes start from the release. Inside the 5 minutes socket.io's own reconnection stays on.
+- `freeze` and `pagehide` close the socket at once, holds or not (`pagehide` replaces `beforeunload`; nothing is written to localStorage per event or on unload).
+- After such a policy close the tab reconnects only on `visibilitychange` to visible, `pageshow` (persisted), `resume` or `online` while visible — never on a timer while hidden.
 
-- **Visibility handoff:** when a `passive`/`passive-throttled` tab becomes `visible`, it immediately claims `active` and connects — the live connection follows the tab the user is looking at. An active tab that becomes visible after a long stall (last pong >110s old) forces a reconnect.
-- **Born-visible tabs:** a tab that is foreground at first assignment never fires `visibilitychange`, so when it is initially assigned `passive` while visible it claims `active` on the spot.
-- **Collision tie-break:** if two tabs both believe they are active, they resolve deterministically — the visible tab wins; with equal visibility the higher `tabId` wins. Exactly one side yields, demotes itself to passive, and disconnects its socket.
-- **Ghost re-registration:** `reRegister()` abandons a banned tabId and negotiates a fresh one; used when the worker banned the tab at activation but the page keeps running (e.g. the worker's first install).
-- In dev (`serviceWorkerManager.state === 'none'`, port 3000) there is no worker, so the single tab is forced `active` and only one tab is supported.
+**Login across tabs (`login.ts`, `authBroadcast.ts`):**
+
+- The HTTP device login runs once per page load in every tab (on the first socket connect). Each HTTP login holds the Web Lock `cg:login` for its whole exchange — for a device login: `User/getSignableSecret`, signature and `User/login`, because the server keeps one signable secret per session and the tabs share the session cookie. A tab that had to wait for the lock re-checks `User/checkLoginStatus` and takes the session over if it belongs to the stored user (another tab has just logged in). After 10 s (`LOGIN_LOCK_HOLD_MAX_MS`) the lock is released for the other tabs, but the holder keeps waiting for its own request; it only starts no further step (signature, request) without the lock — it queues again once. A device login answered `INVALID_SECRET` (a late secret request of another tab replaced the secret) is repeated once under the lock with a fresh secret. Inside the lock a tab compares the stored current user with the device it is about to log in and follows the stored user if they differ. A page device login that fails with anything but `NOT_FOUND` is retried with a backoff (5/15/60 s, ±50 %) and on the next visibility/online check (never sooner than 5 s after the failure); `User/logout` also runs under the lock. A waiting tab logs in without the lock after 15 s (a frozen tab keeps its locks). After a `restored` live a visible tab re-runs the device `User/login` for its snapshot (own communities, chats, own data, unread count) under the same lock, debounced by a random 1–3 s; a hidden tab does so when it becomes visible.
+- A logout or login is broadcast on `BroadcastChannel('cg:auth')`; the `storage` event on `CG_CURRENT_USER` is the fallback. On a logout every other tab emits socket `logout` and drops its login state (no second `User/logout`); on a login an anonymous tab takes over the session after `User/checkLoginStatus`; a login of another user is handled as a logout first. For one release a logout also posts `'anonymous'` on `CG_LOGIN_STATE` for still-open older pages (`authBroadcast.ts`, marked `COMPAT — remove one release after chat-sync`).
+- On the server, `User/logout` disconnects the device's other sockets and sends them `cliSignedOut` first (see [Socket-scoped targeting](#socket-scoped-targeting)), before the logging-out tab has finished. That tab writes `CG_LOGOUT_IN_PROGRESS` to localStorage before the request; a tab that gets `cliSignedOut` and sees it (or the changed `CG_CURRENT_USER`, or the broadcast) follows the logout without the "signed out" notice and without a second `User/logout`. Otherwise it re-checks for 1 s and decides under `cg:login`, so of several tabs signed out from elsewhere normally one logs out and the others follow (a second `User/logout` is harmless) ([docs/frontend §10](../frontend/README.md)). A disconnected tab reconnects anonymously.
+
+**Service worker (`src/service-worker.ts`, compat answer in `src/serviceWorkerLegacyTabs.ts`):** precache, Web Push, `notificationclick`, the update/`reload` flow and `CHANNEL_VISITED` (a page that opens a channel closes that channel's push notifications) are its only jobs. For one release it keeps a compat answer for pages of the previous build (marked `COMPAT — remove one release after chat-sync`, together with the `Legacy*` types in `src/data/appstate/transport.ts`):
+
+- Every `TabToWorker` with `tabState: 'unknown'` gets exactly `{ type: 'WorkerToTab', tabId, tabState: 'active' }` back: no socket state is relayed, so the tab does not mirror stale values. Every other message on the channel (heartbeats, `tabClosed`) is ignored; there is no tab registry, no promotion and no ban list.
+- Only the activated worker answers (its own `self.serviceWorker.state`; where that is missing, once its `activate` handler ran or when it started up already active after a browser restart); a new worker that is installed but still waiting stays silent next to the worker of the previous build.
+- New pages never open this channel (see above). Purpose: pages of the previous build that are still open after an update without having reloaded on the `reload` message `activate` posts to every client connect instead of waiting for a role forever. The answer is removed one release after chat-sync; new pages give every tab its own socket and never use the channel.
+- Several old pages answered "active" settle on one active tab through their own collision tie-break (visible tab wins, else the higher `tabId`). When the active tab closes, a passive tab takes over once it becomes visible (visibility handoff); nobody promotes a hidden passive tab.
+- Accepted regression: for old pages that never reload, nothing promotes a passive tab any more, so when the active old tab closes, the passive one shows "Disconnected" until its visibility changes. Its reach is tiny, because old pages reload at most 1.5 s after `activate`.
+- `STOP_TAB_HANDLING` messages of old pages are ignored.
 
 ### WebRTC Client
 
@@ -621,11 +730,27 @@ enum CallType {
 1. **Start call:** Frontend calls `data.community.startCall()` API, which creates a `Call` row and assigns a call server.
 2. **Join call:** Frontend creates a `RoomClient` with the call server URL, which opens a protoo WebSocket to the call server.
 3. **Room creation:** On the call server, if no Room exists for the callId, one is created (with a MediaSoup Router).
-4. **Permission checks:** `hasJoinPermissions` and `hasModeratePermissions` verify role-based permissions via the `callpermissions` table.
+4. **Permission checks:** `hasJoinPermissions`, `hasModeratePermissions` and `authorizeProduce` (on `produce`, see Producers) verify role-based permissions via the `callpermissions` table, for roles of the call's community only. Moderation (`callHelper.hasPermissionToModerateCall`) needs `CALL_MODERATE` on the call through a claimed role, or a claimed role with `WEBRTC_MODERATE`, both of the call's community, or being the call's creator, and in every case no active ban in that community (a banned creator can neither join nor moderate). `startCall` (and the event routes that create or update a call) accept only role ids of live roles of the call's community (`NOT_ALLOWED` otherwise).
 5. **Member tracking:** On join, `callHelper.insertCallMember` creates a `CallMembership` row. On leave, `callHelper.callMemberLeave` soft-deletes it. `previewUserIds` is updated on join/leave.
 6. **End call:** When the last peer leaves, `callHelper.softEndCall` is called. For forced end, `callHelper.endCallForEveryone` is called.
 7. **Server cleanup:** On SIGTERM, and on start, `callHelper.resetCallServer` ends the calls of this call server (matched by its URL), event calls included. A failure at start is logged and does not keep the call server from registering its call update listener. An ended event call can be started again (`startScheduledCall` resets `endedAt`).
 8. **Safety net (jobs process):** `callUpdateEmitter` ends non-scheduled calls whose members have all left more than 60 s ago (checked every second), and every open call (event calls included) of call servers that are gone — row deleted or missing, or heartbeat (`callservers.updatedAt`, written every 2 s) older than 60 s (checked every 15 s). Every call that gets an `endedAt`, by whichever path, is sent to the community room as `cliCallEvent` `delete`.
+
+**Live delivery of call chat and new calls.** Nobody joins a Public role room, so role rooms alone
+miss everyone who sees a call only through the Public role. Call-chat `cliMessageEvent`s
+(`emitMessageEvents`, `srv/api/messages.ts`) therefore go, in one emit, to the role rooms with
+`CALL_EXISTS` + `CHANNEL_READ`, to the user rooms of the call's present members
+(`callmembers.leftAt IS NULL`) who hold those permissions through a claimed role or the predefined
+Public role, both of the call's community (`callHelper.getActiveMemberUserIds`, evaluated like
+`permissionHelper.hasPermissions`), and to
+the community room (members and visitors) when Public is among those roles. `cliCallEvent` `new`
+(`startCall`, `startScheduledCall`, `emitCallNew` in `srv/api/community.ts`) goes to its role rooms
+plus the present members with `CALL_EXISTS` and the community room when Public has `CALL_EXISTS`
+(`callHelper.getCallEventExtraTargets`, one statement; if it fails, the role rooms still get the
+event). For call chat the role query and the member query each fall back to "none" on their own
+(the other targets still get the event); `emitMessageEvents`, which no caller waits for, never
+rejects — a failed target query of any channel kind is logged. Members who join after a message
+catch up through `getChanges`.
 
 ### Broadcast Mode
 
@@ -634,7 +759,8 @@ In broadcast mode (`CallType.BROADCAST`):
 - Non-broadcasters can only consume (listen/watch), not produce.
 - Moderators can promote/demote broadcasters via `promoteBroadcaster`/`demoteBroadcaster` requests.
 - Non-broadcasters can raise/lower their hand to request broadcast access.
-- When demoted, the **client-side** closes its own send transport and stops all producers (mic, webcam, share). The server only removes the peer from the broadcasters map and notifies all peers.
+- When demoted, the client closes its own send transport and stops all producers (mic, webcam, share). The server removes the peer from the broadcasters map, closes the peer's producers and producing transport, and notifies all peers.
+- A peer on the stage needs no per-kind media permission; a user with an active ban in the community cannot produce (see Producers).
 - If all broadcasters leave, the room closes.
 - When a non-creator peer joins an empty broadcast room and has moderate permissions, they are automatically promoted to broadcaster.
 
@@ -681,9 +807,9 @@ All routes are POST under the notification router (`srv/api/notifications.ts`):
 |---|---|
 | `/loadNotifications` | Load notifications with pagination (before/after cursor, unread filter) |
 | `/loadUpdates` | Load notifications updated since a timestamp (for incremental sync) |
-| `/getUnreadCount` | Get count of unread notifications |
-| `/markAsRead` | Mark a single notification as read (emits `cliNotificationEvent` via Socket.IO) |
-| `/markAllAsRead` | Mark all notifications as read (emits `cliNotificationEvent`) |
+| `/getUnreadCount` | Count of unread notifications as a number; `{ withTime: true }` answers `{ unreadCount, unreadCountAt }`. A call without a body (older clients) gets the plain number |
+| `/markAsRead` | Mark a single unread notification as read; emits `cliNotificationEvent` `update` only when it was unread (already read: no write, no event) |
+| `/markAllAsRead` | Mark the unread notifications as read; emits `cliNotificationEvent` `allread` only when at least one changed |
 | `/getPublicVapidKey` | Return the VAPID public key for push subscription |
 | `/registerWebPushSubscription` | Store the push subscription on the device record |
 | `/unregisterWebPushSubscription` | Remove the push subscription from the device record |
@@ -699,6 +825,15 @@ The `sendWsOrWebPushNotificationEvent` method (`srv/repositories/notifications.t
 4. **Error handling:** On 410/404 (subscription expired), removes the subscription from the device. Other errors are logged.
 5. **Notification preferences:** Community-scoped notifications are gated by the recipient's per-community preference flags (e.g. `notifyMentions`, `notifyReplies`, `notifyCalls`); DMs are gated by `dmNotifications`.
 6. **Socket.IO fallback:** For notification types that are stored in the DB (not DMs, ChannelMessages, or Calls), also emits the event via `eventHelper.emit` for real-time Socket.IO delivery.
+
+### Unread count in notification events
+
+`cliNotificationEvent` `new` (stored types only, see 6. above), `update` and `allread` carry two additional fields next to `action`/`data`:
+
+- `unreadCount` -- the user's unread notification count after the change, a number;
+- `unreadCountAt` -- the database `now()` (ISO) of the statement that read the count.
+
+The count is read in its own statement after the write (`notificationHelper.withUnreadCount`), so a count with a later `unreadCountAt` includes every change committed before it; clients keep the count with the newest time. If the count cannot be read, the event goes out without both fields (as from older servers) and clients refresh with `getUnreadCount`. The web-push payload of a `new` notification is unchanged (no count). No server path emits `delete` today; the type keeps it. The same count, as a number, is the login response's `unreadNotificationCount` and `notificationUnreadCount` of `Message/getSyncState` ([docs/backend](../backend/README.md)).
 
 ---
 
@@ -805,7 +940,8 @@ Key prefixes:
 | `srv/redis/index.ts` | RedisManager: two Valkey instances (state, cache), up to five lazily created clients |
 | `srv/redis/client.ts` | The one `createClient` call: `RESP: 2`, `error` listener, reconnect logging |
 | `srv/redis/userdata.ts` | UserDataManager for online status tracking |
-| `srv/repositories/event.ts` | EventHelper: emit Socket.IO events from any process; `disconnectBotTokenSockets` |
+| `srv/repositories/event.ts` | EventHelper: emit Socket.IO events from any process; `disconnectBotTokenSockets`; socket-scoped `requestSocketsJoinRooms`/`LeaveRooms`, `logoutDeviceSockets` |
+| `srv/util/requestSocket.ts` | `x-cg-socket-id` header (`getRequestSocketId`), `deviceSocketRoomKey`, `senderExcept` |
 | `srv/repositories/notifications.ts` | NotificationHelper: CRUD + web push delivery |
 | `srv/entities/call.ts` | Call, CallMembership, CallPermissions entities |
 | `srv/entities/callserver.ts` | CallServer entity |
@@ -813,8 +949,8 @@ Key prefixes:
 | `srv/entities/notifications.ts` | Notification entity |
 | `srv/api/notifications.ts` | Notification REST API routes |
 | `srv/common/enums.ts` | CallType, CallPermission enums |
-| `src/data/appstate/webSocket.ts` | Frontend Socket.IO client (WebSocketManager), tab-side handoff & collision handling |
-| `src/service-worker.ts` | Service worker: tab-coordination referee, web push display, precaching |
+| `src/data/appstate/webSocket.ts` | Frontend Socket.IO client (WebSocketManager, implements `Transport` from `transport.ts`): one socket per tab, live signal, hidden-tab policy |
+| `src/service-worker.ts` | Service worker: precaching, web push display and notification clicks, update/reload; one-release compat answer to old pages' tab-role requests (`src/serviceWorkerLegacyTabs.ts`) |
 | `src/util/RoomClient.tsx` | Frontend protoo + mediasoup-client |
 | `src/util/urlFactory.ts` | Builds protoo WebSocket URL |
 | `src/context/CallProvider.tsx` | React context for call state management |

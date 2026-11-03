@@ -6891,6 +6891,7 @@ __metadata:
     eslint: "npm:^9"
     eslint-plugin-react: "npm:^7.37.5"
     eslint-plugin-react-hooks: "npm:^7.1.1"
+    fake-indexeddb: "npm:6.2.6"
     globals: "npm:^17.9.0"
     history: "npm:^5.3.0"
     joi: "npm:^18.3.1"
@@ -8578,6 +8579,13 @@ __metadata:
     readable-stream: "npm:^3.6.2 || ^4.4.2"
     webextension-polyfill: "npm:>=0.10.0 <1.0"
   checksum: 10c0/5645ba63b8e77996b75a5aae5a37d169fef13b65d575fa72b0cf9199c7ecd46df7ef76fbf7d6384b375544e48eb2c8912b62200320ed2a5ef9526a00fcc148d9
+  languageName: node
+  linkType: hard
+
+"fake-indexeddb@npm:6.2.6":
+  version: 6.2.6
+  resolution: "fake-indexeddb@npm:6.2.6"
+  checksum: 10c0/d55b3155548f08da1c9d7552314eed30fd1880c1f7643654c8b0c1fdf80591682d9f88e7a5c481113f48b994cb09820d61eee0dd8b966ca4f4497fce0eb748de
   languageName: node
   linkType: hard
 

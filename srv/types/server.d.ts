@@ -20,6 +20,11 @@ declare {
                     },
                     callback: (allowed: boolean) => void,
                 ) => Promise<void>,
+                // wsapi presence: which of these users have a logged-in socket on the answering process
+                "presenceProbe": (
+                    userIds: string[],
+                    callback: (presentUserIds: string[]) => void,
+                ) => void,
             }
 
             interface SocketData {

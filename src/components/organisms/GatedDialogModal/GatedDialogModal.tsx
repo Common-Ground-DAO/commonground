@@ -18,6 +18,7 @@ import Jdenticon from 'components/atoms/Jdenticon/Jdenticon';
 import { useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 import JoinCommunityButton from 'components/atoms/JoinCommunityButton/JoinCommunityButton';
+import { isPredefinedRolePermission } from "util/predefinedRoles";
 
 export type CalculatedPermission = null | {
   type: 'community',
@@ -34,7 +35,7 @@ export type CalculatedPermission = null | {
 
 export async function calculatePermissions(article: API.Community.getArticleList.Response[0]): Promise<CalculatedPermission> {
   const { rolePermissions } = article.communityArticle;
-  const publicPermission = rolePermissions.find(permission => permission.roleTitle === PredefinedRole.Public);
+  const publicPermission = rolePermissions.find(permission => isPredefinedRolePermission(permission, PredefinedRole.Public));
   const publicCanRead = publicPermission?.permissions.find(permission => permission === 'ARTICLE_READ');
   if (publicCanRead) return null;
 
@@ -45,7 +46,7 @@ export async function calculatePermissions(article: API.Community.getArticleList
     return null;
   }
 
-  const memberPermission = rolePermissions.find(permission => permission.roleTitle === PredefinedRole.Member);
+  const memberPermission = rolePermissions.find(permission => isPredefinedRolePermission(permission, PredefinedRole.Member));
   const memberCanRead = memberPermission?.permissions.find(permission => permission === 'ARTICLE_READ');
   // Also ask for community join if not part of the community
   if (!community || memberCanRead) return {

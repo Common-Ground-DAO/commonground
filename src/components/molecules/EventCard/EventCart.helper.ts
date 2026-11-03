@@ -4,6 +4,7 @@
 
 import { PredefinedRole } from "common/enums";
 import data from "data";
+import { isPredefinedRolePermission } from "util/predefinedRoles";
 
 export type GatedStatus = {
   type: 'preview' | 'attend';
@@ -15,7 +16,7 @@ export async function isEventGated(
 ): Promise<GatedStatus> {
   // Short-circuit if public or member can attend to avoid async fetch
   const publicCanRead = event.rolePermissions.some(rolePermission =>
-    ((rolePermission.roleTitle === PredefinedRole.Public || rolePermission.roleTitle === PredefinedRole.Member) &&
+    ((isPredefinedRolePermission(rolePermission, PredefinedRole.Public) || isPredefinedRolePermission(rolePermission, PredefinedRole.Member)) &&
     rolePermission.permissions.includes('EVENT_ATTEND'))
   );
   if (publicCanRead) return null;
@@ -24,11 +25,11 @@ export async function isEventGated(
   const community = myCommunities.find(comm => comm.id === event.communityId);
   const ownRoleIds: string[] = [];
 
-  const publicRoleId = event.rolePermissions.find(role => role.roleTitle === PredefinedRole.Public)?.roleId;
+  const publicRoleId = event.rolePermissions.find(role => isPredefinedRolePermission(role, PredefinedRole.Public))?.roleId;
   if (publicRoleId) ownRoleIds.push(publicRoleId);
   if (community) {
     ownRoleIds.push(...community.myRoleIds);
-    const memberRoleId = event.rolePermissions.find(role => role.roleTitle === PredefinedRole.Member)?.roleId;
+    const memberRoleId = event.rolePermissions.find(role => isPredefinedRolePermission(role, PredefinedRole.Member))?.roleId;
     if (memberRoleId) ownRoleIds.push(memberRoleId);
   }
 

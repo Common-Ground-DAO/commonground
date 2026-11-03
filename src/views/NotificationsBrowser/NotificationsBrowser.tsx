@@ -25,14 +25,17 @@ import { createTranslator } from 'short-uuid';
 import NotificationBanner from 'components/molecules/NotificationBanner/NotificationBanner';
 import { useOwnUser } from 'context/OwnDataProvider';
 import { useMultipleUserData } from 'context/UserDataProvider';
-import { filterNotifications } from './NotificationsBrowser.helper';
+import { createNotificationReadMarking, filterNotifications } from './NotificationsBrowser.helper';
 import { useMultipleCommunityListViews } from 'context/CommunityListViewProvider';
 import config from 'common/config';
 import { BETWEEN_LOADS_TIMEOUT } from 'components/molecules/GenericMessageList/ScrollingMessageList/ScrollingMessageList';
 import { useCommunityJoinedContext } from 'context/CommunityJoinedProvider';
 import { useSidebarDataDisplayContext } from 'context/SidebarDataDisplayProvider';
+import { useNotificationContext } from 'context/NotificationProvider';
+import { WINDOW_ERROR, type ItemWindow } from 'data/chat/types';
 
 const t = createTranslator();
+const EMPTY_ITEMS: Models.Notification.Notification[] = [];
 
 export default function NotificationsBrowser() {
   const navigate = useNavigate();
@@ -44,57 +47,57 @@ export default function NotificationsBrowser() {
   const loadingRef = useRef<HTMLDivElement>(null);
   const { isMobile } = useWindowSizeContext();
 
-  const listener: Models.ItemList.ItemListUpdateListener<Models.Notification.Notification> = useCallback((data) => {
-    if (!_readyToLoadRef.current && data.items.length > 0) {
-      _readyToLoadRef.current = true;
-      setReadyToLoad(true);
-    }
-    if (!data.isDestroyed) {
-      setItems(data.items);
-    }
-    else {
-      setItems([]);
-    }
-  }, []);
-
-  const itemList = useMemo(() => {
-    const _itemList = data.notification.createItemList();
-    _itemList
-      .init({ type: 'recent' })
-      .then(itemCount => {
-        itemList.addUpdateListener(listener);
-        listener(itemList.state);
-      });
-    return _itemList;
-  }, []);
+  const scrollableRef = useRef<ScrollableHandle>(null);
+  // one window on the tab's notification list (created in the effect, so a
+  // StrictMode remount gets a fresh one instead of a destroyed one)
+  const listRef = useRef<ItemWindow<Models.Notification.Notification> | null>(null);
+  const [list, setList] = useState<ItemWindow<Models.Notification.Notification> | null>(null);
+  const [listState, setListState] = useState<Models.ItemList.ItemListState<Models.Notification.Notification> | null>(null);
 
   useEffect(() => {
+    const w = data.notification.openList();
+    listRef.current = w;
+    setList(w);
+    setListState(w.state);
+    const unsubscribe = w.subscribe((state, change) => {
+      // lock before rendering: older items are added below the visible ones (DESC)
+      if (change.kind === 'prepend') {
+        scrollableRef.current?.lockScrollForNextUpdate({ type: 'lockByVisibleItemDate', elementClassWithTimestamp: 'notificationMessage', dateOrder: 'DESC' });
+      }
+      setListState(state);
+    });
     return () => {
-      itemList.removeUpdateListener(listener);
+      unsubscribe();
+      w.destroy();
+      if (listRef.current === w) listRef.current = null;
     };
-  }, [itemList, listener]);
+  }, []);
 
-  const [items, setItems] = useState<Models.Notification.Notification[]>(itemList.items);
-  const { webSocketState } = useConnectionContext();
+  const items = listState?.items ?? EMPTY_ITEMS;
+  const { webSocketState, loginState } = useConnectionContext();
+  const { unreadCount } = useNotificationContext();
   const { openModal } = useCommunityJoinedContext();
   const { currentData, showTooltip } = useSidebarDataDisplayContext();
-  const [readyToLoad, setReadyToLoad] = useState<boolean>(false);
   const [activeCommunityId, setActiveCommunityId] = useState<string | undefined>();
   const [activeChannelId, setActiveChannelId] = useState<string | undefined>();
   const [activeMessageId, setActiveMessageId] = useState<string | undefined>();
   const [activeArticleId, setActiveArticleId] = useState<string | undefined>();
   const [navigateWhenNotificationExists, setNavigateWhenNotificationExists] = useState<boolean>(false);
-  const scrollableRef = useRef<ScrollableHandle>(null);
-  const _readyToLoadRef = useRef<boolean>(false);
   const loadPreviousTriggered = useRef<boolean>(false);
   const ownUser = useOwnUser();
+  const readMarking = useMemo(() => createNotificationReadMarking(id => data.notification.markAsRead(id)), []);
 
-  // destroy itemList on final unmount
+  // first page once logged in; again after a logout/login (clear() leaves the
+  // window not ready) or, after a failed init, when the connection state changes
+  const ready = !!listState?.ready;
+  const loggedIn = loginState === "loggedin";
   useEffect(() => {
-    return () => {
-      itemList.destroy();
-    };
-  }, []);
+    if (!list || !loggedIn || ready) return;
+    list.init({ type: 'recent' }).catch(e => {
+      if (e instanceof Error && e.message === WINDOW_ERROR.SUPERSEDED) return;
+      console.error("Could not load notifications", e);
+    });
+  }, [list, loggedIn, ready, webSocketState]);
 
   const communityIds = useMemo(() => {
     return Array.from(new Set(items.map(item => item.subjectCommunityId).filter(id => id !== null) as string[]))
@@ -138,9 +141,8 @@ export default function NotificationsBrowser() {
     return notificationShortUuid ? t.toUUID(notificationShortUuid) : undefined;
   }, [notificationShortUuid]);
 
-  const { state } = itemList;
-
-  const hasMoreItems = state.hasPreviousItemsLocally || state.hasPreviousItemsOnRemote || false;
+  const hasMoreItems = ready && (!!listState?.hasPreviousItemsLocally || !!listState?.hasPreviousItemsOnRemote);
+  const showLoadingItem = hasMoreItems && items.length > 0 && webSocketState === "connected";
 
   const events = useMemo(() => {
     let events = [...items].reverse();
@@ -172,9 +174,7 @@ export default function NotificationsBrowser() {
     else {
       const notification = events.find(n => n.id === selectedId);
       if (!!notification) {
-        if (notification.read === false) {
-          setTimeout(() => data.notification.markAsRead(selectedId), 0);
-        }
+        readMarking.onSelected(notification);
         if (navigateWhenNotificationExists === false) {
           switch (notification.type) {
             case 'Mention':
@@ -222,7 +222,7 @@ export default function NotificationsBrowser() {
         setActiveMessageId(undefined);
       }
     }
-  }, [activeArticleId, currentData, events, isMobile, navigateWhenNotificationExists, selectedId, showTooltip]);
+  }, [activeArticleId, currentData, events, isMobile, navigateWhenNotificationExists, readMarking, selectedId, showTooltip]);
 
   useEffect(() => {
     if (navigateWhenNotificationExists === true) {
@@ -365,55 +365,34 @@ export default function NotificationsBrowser() {
           }
         }
       }
-      if (notification.read === false) {
-        await data.notification.markAsRead(notification.id);
-      }
+      readMarking.onClick(notification);
     }
-  }, [communities, isMobile, navigate, openModal, showTooltip]);
+  }, [communities, isMobile, navigate, openModal, readMarking, showTooltip]);
+
+  const markAllAsRead = useCallback(() => {
+    void data.notification.markAllAsRead();
+  }, []);
 
   const toggleHideRead = useCallback(() => {
     setHideRead(last => !last);
     navigate(getUrl({ type: "notifications" }));
   }, [navigate, setHideRead]);
 
+  // stable (the observer below is created once): reads the window from the ref
   const loadMore = useCallback(() => {
-    if (!loadPreviousTriggered.current) {
-      loadPreviousTriggered.current = true;
-      const { state: { hasPreviousItemsLocally, hasPreviousItemsOnRemote, rangeStart } } = itemList;
-      if (hasPreviousItemsLocally) {
-        itemList.update({ growStart: config.ITEMLIST_BATCH_SIZE })
-          .then(() => {
-            scrollableRef.current?.lockScrollForNextUpdate({ type: 'lockByVisibleItemDate', elementClassWithTimestamp: 'notificationMessage', dateOrder: 'DESC' });
-          })
-          .finally(() => {
-            setTimeout(() => {
-              loadPreviousTriggered.current = false;
-            }, BETWEEN_LOADS_TIMEOUT);
-          });
-      }
-      else if (hasPreviousItemsOnRemote && rangeStart) {
-        data.notification.loadItems({ order: 'DESC', createdBefore: rangeStart })
-          .then(() => {
-            if (itemList.state.hasPreviousItemsLocally) {
-              return itemList.update({ growStart: config.ITEMLIST_BATCH_SIZE })
-                .then(() => {
-                  scrollableRef.current?.lockScrollForNextUpdate({ type: 'lockByVisibleItemDate', elementClassWithTimestamp: 'notificationMessage', dateOrder: 'DESC' });
-                });
-            }
-          })
-          .finally(() => {
-            setTimeout(() => {
-              loadPreviousTriggered.current = false;
-            }, BETWEEN_LOADS_TIMEOUT);
-          });
-      }
-      else {
-        console.log('NotificationBrowser: No more items to load');
-        loadPreviousTriggered.current = false;
-      }
-    }
-
-  }, [itemList]);
+    const w = listRef.current;
+    if (!w || loadPreviousTriggered.current) return;
+    const { ready, hasPreviousItemsLocally, hasPreviousItemsOnRemote } = w.state;
+    if (!ready || !(hasPreviousItemsLocally || hasPreviousItemsOnRemote)) return;
+    loadPreviousTriggered.current = true;
+    w.loadOlder(config.ITEMLIST_BATCH_SIZE)
+      .catch(e => console.error("Could not load older notifications", e))
+      .finally(() => {
+        setTimeout(() => {
+          loadPreviousTriggered.current = false;
+        }, BETWEEN_LOADS_TIMEOUT);
+      });
+  }, []);
 
   const messageObserver = useMemo(() => {
     const observer = new IntersectionObserver(
@@ -426,7 +405,7 @@ export default function NotificationsBrowser() {
       }
     );
     return observer;
-  }, []);
+  }, [loadMore]);
 
   const loadingItem = useMemo(() => {
     return <div className='notifications-loading-item' ref={loadingRef}>
@@ -438,7 +417,7 @@ export default function NotificationsBrowser() {
 
   useEffect(() => {
     const loadingDiv = loadingRef.current;
-    if (loadingDiv && webSocketState === "connected") {
+    if (loadingDiv && showLoadingItem) {
       setTimeout(() => {
         if (isElementOverlappingViewport(loadingDiv)) {
           loadMore();
@@ -449,7 +428,7 @@ export default function NotificationsBrowser() {
         messageObserver.unobserve(loadingDiv);
       };
     }
-  }, [messageObserver, hasMoreItems, readyToLoad, itemList, webSocketState]);
+  }, [messageObserver, showLoadingItem, loadMore]);
 
   const emptyMessage = useMemo(() => {
     return <EmptyState
@@ -470,6 +449,9 @@ export default function NotificationsBrowser() {
             <ToggleInputField toggled={hideRead} />
             <span>Hide read</span>
           </div>
+          {unreadCount > 0 && <button type='button' className='notifications-mark-all-read' onClick={markAllAsRead}>
+            Mark all read
+          </button>}
         </div>
         <SearchField value={search} onChange={setSearch} />
       </div>
@@ -486,8 +468,8 @@ export default function NotificationsBrowser() {
             notification={notification}
             onClick={onMessageClick(notification)}
           />)}
-          {events.length === 0 && emptyMessage}
-          {hasMoreItems && readyToLoad && webSocketState === "connected" && loadingItem}
+          {events.length === 0 && (ready || !loggedIn ? emptyMessage : loadingItem)}
+          {showLoadingItem && loadingItem}
         </div>
       </Scrollable>
     </div>

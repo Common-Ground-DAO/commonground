@@ -65,12 +65,17 @@ registerPostRoute<
 >(
   notificationRouter,
   '/getUnreadCount',
-  undefined,
+  // a call without a body (older clients) is validated as `{}`
+  validators.API.Notification.getUnreadCount,
   async (request, response, data) => {
     const { user } = request.session;
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
+    if (data?.withTime === true) {
+      return await notificationHelper.getUnreadCountWithTime(user.id);
+    }
+    // older clients: the plain count
     return await notificationHelper.getUnreadCount(user.id);
   }
 );
@@ -87,18 +92,22 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    const { updatedAt } = await notificationHelper.markAsRead(user.id, data);
+    const result = await notificationHelper.markAsRead(user.id, data);
+    // already read: nothing changed, nothing to tell the other tabs
+    if (!result.changed) {
+      return;
+    }
 
-    const event: Events.Notification.Event = {
+    const event: Events.Notification.Event = await notificationHelper.withUnreadCount(user.id, {
       type: "cliNotificationEvent",
       action: "update",
       data: {
         id: data.notificationId,
-        updatedAt,
+        updatedAt: result.updatedAt,
         read: true,
       },
-    }
-    eventHelper.emit(event, {
+    });
+    await eventHelper.emit(event, {
       userIds: [user.id],
     });
   }
@@ -117,13 +126,19 @@ registerPostRoute<
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
     const result = await notificationHelper.markAllAsRead(user.id);
+    // nothing was unread: no event
+    if (result.changed === 0 || result.updatedAt === null) {
+      return;
+    }
 
-    const event: Events.Notification.Event = {
+    const event: Events.Notification.Event = await notificationHelper.withUnreadCount(user.id, {
       type: "cliNotificationEvent",
       action: "allread",
-      data: result,
-    }
-    eventHelper.emit(event, {
+      data: {
+        updatedAt: result.updatedAt,
+      },
+    });
+    await eventHelper.emit(event, {
       userIds: [user.id],
     });
   }

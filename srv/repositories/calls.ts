@@ -4,7 +4,7 @@
 
 import format from "pg-format";
 import config from "../common/config";
-import { CallPermission, CallType, CommunityPermission, CommunityPremiumFeatureName, PredefinedRole, RoleType } from "../common/enums";
+import { CallPermission, CallType, CommunityPermission, CommunityPremiumFeatureName, PredefinedRole, RoleType, UserBlockState } from "../common/enums";
 import errors from "../common/errors";
 import pool from "../util/postgres";
 
@@ -24,10 +24,106 @@ export const MODERATOR_PERMISSIONS: CallPermission[] = [
   CallPermission.END_CALL_FOR_EVERYONE,
 ];
 
+/**
+ * SQL condition: the user `userId` has an active ban in the community
+ * `communityId` (no end, or an end in the future). Arguments are SQL
+ * expressions; `bannedState` stands for `UserBlockState.BANNED`.
+ */
+function userBannedSql(userId: string, communityId: string, bannedState: string) {
+  return `EXISTS (
+    SELECT 1
+    FROM user_community_state ucs
+    WHERE ucs."userId" = ${userId}
+      AND ucs."communityId" = ${communityId}
+      AND ucs."blockState" = ${bannedState}
+      AND (ucs."blockStateUntil" > now() OR ucs."blockStateUntil" IS NULL)
+  )`;
+}
+
+/**
+ * SQL condition: one of `permissions` (a SQL array expression) is granted on
+ * the call row `call` to one of the user's claimed, live roles of the call's
+ * community or, with `includePublic`, to that community's predefined Public
+ * role (type `predefinedType`, title `publicTitle`). Arguments are SQL
+ * expressions.
+ */
+function callPermissionOfUserSql(userId: string, call: string, permissions: string, predefinedType: string, publicTitle: string, includePublic = true) {
+  return `EXISTS (
+    SELECT 1
+    FROM callpermissions cp
+    INNER JOIN roles r
+      ON  r."id" = cp."roleId"
+      AND r."deletedAt" IS NULL
+      AND r."communityId" = ${call}."communityId"
+    LEFT JOIN roles_users_users ruu
+      ON  ruu."roleId" = r."id"
+      AND ruu."userId" = ${userId}
+      AND ruu."claimed" = TRUE
+    WHERE cp."callId" = ${call}."id"
+      AND cp."permissions" && ${permissions}::"public"."callpermissions_permissions_enum"[]
+      AND (
+        ruu."userId" IS NOT NULL
+        ${includePublic ? `OR (r."type" = ${predefinedType} AND r."title" = ${publicTitle})` : ''}
+      )
+  )`;
+}
+
+/**
+ * SQL condition: one of the user's claimed, live roles of the community
+ * holds the community permission `permission`. Arguments are SQL expressions.
+ */
+function claimedCommunityPermissionSql(userId: string, communityId: string, permission: string) {
+  return `EXISTS (
+    SELECT 1
+    FROM roles r
+    INNER JOIN roles_users_users ruu
+      ON  ruu."roleId" = r."id"
+      AND ruu."userId" = ${userId}
+      AND ruu."claimed" = TRUE
+    WHERE r."communityId" = ${communityId}
+      AND r."deletedAt" IS NULL
+      AND r."permissions" @> ARRAY[${permission}]::"public"."roles_permissions_enum"[]
+  )`;
+}
+
 type CallCommunityExtraData = {
   communityId: string;
   communityUrl: string;
   communityTitle: string;
+}
+
+/**
+ * The users with an open membership in the call `callId` whose claimed roles
+ * plus the predefined Public role (title `publicTitle`), both of the call's
+ * community, hold every permission of
+ * `permissions` on it (the union over the roles, as
+ * `permissionHelper.hasPermissions` evaluates call permissions). Arguments
+ * are SQL expressions (placeholders or columns).
+ */
+function activeMembersWithPermissionsSql(callId: string, publicTitle: string, permissions: string) {
+  return `
+    SELECT DISTINCT cm."userId"
+    FROM callmembers cm
+    WHERE cm."callId" = ${callId}
+      AND cm."leftAt" IS NULL
+      AND (
+        SELECT COALESCE(array_agg(DISTINCT perm), '{}')
+        FROM callpermissions cp
+        INNER JOIN calls cl
+          ON  cl."id" = cp."callId"
+        INNER JOIN roles r
+          ON  r."id" = cp."roleId"
+          AND r."deletedAt" IS NULL
+          AND r."communityId" = cl."communityId"
+        LEFT JOIN roles_users_users ruu
+          ON  ruu."roleId" = r."id"
+          AND ruu."claimed" = TRUE
+          AND ruu."userId" = cm."userId"
+        CROSS JOIN LATERAL unnest(cp."permissions") AS perm
+        WHERE cp."callId" = cm."callId"
+          AND (ruu."userId" IS NOT NULL OR (r."type" = ${format('%L', RoleType.PREDEFINED)} AND r."title" = ${publicTitle}))
+      ) @> ${permissions}::"public"."callpermissions_permissions_enum"[]
+  `;
 }
 
 class CallHelper {
@@ -325,7 +421,7 @@ class CallHelper {
       ), member_role AS (
         SELECT id
         FROM roles
-        WHERE "communityId" = $1
+        WHERE "communityId" = $9
           AND "type" = ${format("%L", RoleType.PREDEFINED)}
           AND "title" = ${format("%L", PredefinedRole.Member)}
       ), admin_role AS (
@@ -365,6 +461,33 @@ class CallHelper {
     }
   }
 
+  /**
+   * The role permissions to store for a call of `communityId`, without the
+   * Admin role (it always gets MODERATOR_PERMISSIONS). Every role id must be
+   * a live role of that community; otherwise the request is refused with
+   * NOT_ALLOWED.
+   */
+  private async getCheckedRolePermissions(communityId: string, rolePermissions: { roleId: string; permissions: Common.CallPermission[] }[]) {
+    const rolesResult = await pool.query(`
+      SELECT "id", "type", "title"
+      FROM roles
+      WHERE "communityId" = $1
+        AND "deletedAt" IS NULL
+    `, [communityId]);
+    const roles = rolesResult.rows as { id: string; type: RoleType; title: string }[];
+    const adminRole = roles.find(r => r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Admin);
+    if (!adminRole) {
+      throw new Error(errors.server.UNKNOWN);
+    }
+    const communityRoleIds = new Set(roles.map(r => r.id));
+    for (const rolePermission of rolePermissions) {
+      if (!communityRoleIds.has(rolePermission.roleId)) {
+        throw new Error(errors.server.NOT_ALLOWED);
+      }
+    }
+    return rolePermissions.filter(p => p.roleId !== adminRole.id);
+  }
+
   private async getRoles(communityId: string, rolePermissions?: { roleId: string; permissions: Common.CallPermission[] }[]) {
     let roleInsert: string = ``;
     if (rolePermissions === undefined) {
@@ -374,26 +497,14 @@ class CallHelper {
         ARRAY[${format("%L", MEMBER_PERMISSIONS)}]::"public"."callpermissions_permissions_enum"[]
       )`;
     } else if (rolePermissions.length > 0) {
-      const adminRoleQuery = await pool.query(`
-        SELECT id
-        FROM roles
-        WHERE "communityId" = $1
-          AND "type" = ${format("%L", RoleType.PREDEFINED)}
-          AND "title" = ${format("%L", PredefinedRole.Admin)}
-      `, [communityId]);
-
-      const adminRole = adminRoleQuery.rows[0] as {
-        id: string;
-      };
-      if (!adminRole) {
-        throw new Error(errors.server.UNKNOWN);
+      rolePermissions = await this.getCheckedRolePermissions(communityId, rolePermissions);
+      if (rolePermissions.length > 0) {
+        roleInsert = `,` + rolePermissions.map(role => format(`(
+            (SELECT id FROM insert_call),
+            %L::uuid,
+            ARRAY[${format("%L", role.permissions)}]::"public"."callpermissions_permissions_enum"[])
+          `, role.roleId)).join(",");
       }
-      rolePermissions = rolePermissions.filter(p => p.roleId !== adminRole.id);
-      roleInsert = `,` + rolePermissions.map(role => format(`(
-          (SELECT id FROM insert_call),
-          %L::uuid, 
-          ARRAY[${format("%L", role.permissions)}]::"public"."callpermissions_permissions_enum"[])
-        `, role.roleId)).join(",");
     }
     return roleInsert;
   }
@@ -407,26 +518,14 @@ class CallHelper {
         ARRAY[${format("%L", MEMBER_PERMISSIONS)}]::"public"."callpermissions_permissions_enum"[]
       )`;
     } else if (rolePermissions.length > 0) {
-      const adminRoleQuery = await pool.query(`
-        SELECT id
-        FROM roles
-        WHERE "communityId" = $1
-          AND "type" = ${format("%L", RoleType.PREDEFINED)}
-          AND "title" = ${format("%L", PredefinedRole.Admin)}
-      `, [communityId]);
-
-      const adminRole = adminRoleQuery.rows[0] as {
-        id: string;
-      };
-      if (!adminRole) {
-        throw new Error(errors.server.UNKNOWN);
+      rolePermissions = await this.getCheckedRolePermissions(communityId, rolePermissions);
+      if (rolePermissions.length > 0) {
+        roleInsert = `,` + rolePermissions.map(role => format(`(
+            ${format("%L::UUID", callId)},
+            %L::uuid,
+            ARRAY[${format("%L", role.permissions)}]::"public"."callpermissions_permissions_enum"[])
+          `, role.roleId)).join(",");
       }
-      rolePermissions = rolePermissions.filter(p => p.roleId !== adminRole.id);
-      roleInsert = `,` + rolePermissions.map(role => format(`(
-          ${format("%L::UUID", callId)},
-          %L::uuid, 
-          ARRAY[${format("%L", role.permissions)}]::"public"."callpermissions_permissions_enum"[])
-        `, role.roleId)).join(",");
     }
     return roleInsert;
   }
@@ -863,6 +962,54 @@ class CallHelper {
     await pool.query(query, [url]);
   }
 
+  /**
+   * The users who are in the call right now (an open membership) and hold
+   * `permissions` on it through their claimed roles or the Public role,
+   * evaluated like `permissionHelper.hasPermissions` for calls.
+   */
+  public async getActiveMemberUserIds(callId: string, permissions: CallPermission[]): Promise<string[]> {
+    const result = await pool.query(
+      activeMembersWithPermissionsSql('$1', '$2', '$3'),
+      [callId, PredefinedRole.Public, permissions],
+    );
+    return (result.rows as { userId: string }[]).map(r => r.userId);
+  }
+
+  /**
+   * Who gets a call's live events beyond its role rooms: the users in the
+   * call right now who may see it, and the community (its room holds members
+   * and visitors) when the Public role may see the call — nobody joins a
+   * Public role room.
+   */
+  public async getCallEventExtraTargets(callId: string): Promise<{
+    activeMemberUserIds: string[];
+    publicCommunityId: string | null;
+  }> {
+    const result = await pool.query(`
+      SELECT
+        ARRAY(${activeMembersWithPermissionsSql('c."id"', '$2', 'ARRAY[$3]')}) AS "activeMemberUserIds",
+        CASE WHEN EXISTS (
+          SELECT 1
+          FROM callpermissions cp
+          INNER JOIN roles r
+            ON  r."id" = cp."roleId"
+            AND r."deletedAt" IS NULL
+            AND r."communityId" = c."communityId"
+            AND r."type" = ${format('%L', RoleType.PREDEFINED)}
+          WHERE cp."callId" = c."id"
+            AND r."title" = $2
+            AND cp."permissions" @> ARRAY[$3]::"public"."callpermissions_permissions_enum"[]
+        ) THEN c."communityId" ELSE NULL END AS "publicCommunityId"
+      FROM calls c
+      WHERE c."id" = $1
+    `, [callId, PredefinedRole.Public, CallPermission.CALL_EXISTS]);
+    const row = result.rows[0] as { activeMemberUserIds: string[]; publicCommunityId: string | null } | undefined;
+    return {
+      activeMemberUserIds: row?.activeMemberUserIds ?? [],
+      publicCommunityId: row?.publicCommunityId ?? null,
+    };
+  }
+
   public async getUserIdsToNotify({ communityId, callId }: { communityId: string, callId: string }) {
     const query = `
       SELECT DISTINCT u."id"
@@ -889,57 +1036,114 @@ class CallHelper {
     return rows.map(r => r.id);
   }
 
+  /**
+   * Whether `userId` may moderate the call `callId`: `CALL_MODERATE` on the
+   * call through one of the user's claimed, live roles of the call's
+   * community, or `WEBRTC_MODERATE` on such a role, or being the call's
+   * creator; and in every case no active ban in the call's community.
+   */
   public async hasPermissionToModerateCall(
     userId: string,
     callId: string,
   ) {
-    const query = `
-    SELECT SUM("count") > 0 AS "hasPermission"
-    FROM (
-        SELECT COUNT(*) 
-        FROM roles_users_users ruu
-        INNER JOIN roles r
-          ON ruu."roleId" = r."id"
-          AND r."deletedAt" IS NULL
-        INNER JOIN callpermissions cp
-          ON cp."roleId" = r."id"
-          AND cp."callId" = ${format("%L::uuid", callId)}
-          AND cp."permissions" @> ${format('ARRAY[%L]::"public"."callpermissions_permissions_enum"[]', [CallPermission.CALL_MODERATE,])}
-        WHERE ruu."userId" = ${format("%L::uuid", userId)}
-          AND ruu."claimed" = TRUE
-      UNION
-        SELECT COUNT(*)
-        FROM roles_users_users ruu
-        INNER JOIN roles r
-          ON ruu."roleId" = r."id"
-          AND r."deletedAt" IS NULL
-        WHERE ruu."userId" = ${format("%L::uuid", userId)}
-          AND r."permissions" @> ${format('ARRAY[%L]::"public"."roles_permissions_enum"[]', [CommunityPermission.WEBRTC_MODERATE,])}
-          AND ruu."claimed" = TRUE
-      ) as "count" 
-    `;
-    const result = await pool.query(query);
+    const result = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM calls c
+        WHERE c."id" = $1
+          AND NOT ${userBannedSql('$2', 'c."communityId"', '$5')}
+          AND (
+            c."callCreator" = $2
+            OR ${callPermissionOfUserSql('$2', 'c', 'ARRAY[$3]', '', '', false)}
+            OR ${claimedCommunityPermissionSql('$2', 'c."communityId"', '$4')}
+          )
+      ) AS "hasPermission"
+    `, [callId, userId, CallPermission.CALL_MODERATE, CommunityPermission.WEBRTC_MODERATE, UserBlockState.BANNED]);
     return result.rows[0].hasPermission as boolean;
   }
 
+  /**
+   * Whether the (logged-in) user `userId` may join the room of the call
+   * `callId`: the call has not ended, its community is not deleted, the user
+   * is not banned from that community, and the user created the call or
+   * `CALL_JOIN` is granted to one of the user's claimed, live roles of the
+   * call's community or to that community's predefined Public role. A call
+   * open to the Public role can be joined by everyone who may see it through
+   * that role, members and non-members alike.
+   */
   public async hasPermissionToJoinCall(
     userId: string,
     callId: string,
   ) {
-    const query = `
-    SELECT COUNT(*) > 0 AS "hasPermission"
-    FROM roles_users_users ruu
-    INNER JOIN roles r
-      ON ruu."roleId" = r."id"
-      AND r."deletedAt" IS NULL
-    INNER JOIN callpermissions cp
-      ON cp."roleId" = r."id"
-      AND cp."callId" = ${format("%L::uuid", callId)}
-      AND cp."permissions" @> ${format('ARRAY[%L]::"public"."callpermissions_permissions_enum"[]', [CallPermission.CALL_JOIN,])}
-    WHERE ruu."userId" = ${format("%L::uuid", userId)}
-      AND ruu."claimed" = TRUE
-    `;
-    const result = await pool.query(query);
+    const result = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM calls c
+        INNER JOIN communities co
+          ON  co."id" = c."communityId"
+          AND co."deletedAt" IS NULL
+        WHERE c."id" = $1
+          AND c."endedAt" IS NULL
+          AND NOT ${userBannedSql('$2', 'c."communityId"', '$6')}
+          AND (
+            c."callCreator" = $2
+            OR ${callPermissionOfUserSql('$2', 'c', 'ARRAY[$3]', '$4', '$5')}
+          )
+      ) AS "hasPermission"
+    `, [callId, userId, CallPermission.CALL_JOIN, RoleType.PREDEFINED, PredefinedRole.Public, UserBlockState.BANNED]);
+    return result.rows[0].hasPermission as boolean;
+  }
+
+  /**
+   * Whether the (logged-in) user `userId` may send media of the kind that
+   * `permission` stands for (`AUDIO_SEND`, `VIDEO_SEND`, `SHARE_SCREEN`) into
+   * the call `callId`. The roles are resolved as for joining
+   * (`hasPermissionToJoinCall`): the call has not ended, its community is not
+   * deleted, the user is not banned from it, and the permission is granted to
+   * one of the user's claimed, live roles of the call's community or to its
+   * predefined Public role. The call creator and the call's moderators
+   * (`CALL_MODERATE` on the call through a claimed role, or a claimed role
+   * with `WEBRTC_MODERATE`) may send every kind.
+   *
+   * `onStage`: the user is on the stage of a broadcast. Being put there by
+   * the creator or a moderator is the permission to send; only the call, the
+   * community and the ban are checked.
+   */
+  public async hasPermissionToSendMedia(
+    userId: string,
+    callId: string,
+    permission: CallPermission.AUDIO_SEND | CallPermission.VIDEO_SEND | CallPermission.SHARE_SCREEN,
+    onStage = false,
+  ) {
+    const result = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM calls c
+        INNER JOIN communities co
+          ON  co."id" = c."communityId"
+          AND co."deletedAt" IS NULL
+        WHERE c."id" = $1
+          AND c."endedAt" IS NULL
+          AND NOT ${userBannedSql('$2', 'c."communityId"', '$6')}
+          AND (
+            $9::boolean
+            OR c."callCreator" = $2
+            OR ${callPermissionOfUserSql('$2', 'c', 'ARRAY[$3]', '$4', '$5')}
+            OR ${callPermissionOfUserSql('$2', 'c', 'ARRAY[$7]', '$4', '$5', false)}
+            OR ${claimedCommunityPermissionSql('$2', 'c."communityId"', '$8')}
+          )
+      ) AS "hasPermission"
+    `, [
+      callId,
+      userId,
+      permission,
+      RoleType.PREDEFINED,
+      PredefinedRole.Public,
+      UserBlockState.BANNED,
+      CallPermission.CALL_MODERATE,
+      CommunityPermission.WEBRTC_MODERATE,
+      onStage,
+    ]);
     return result.rows[0].hasPermission as boolean;
   }
 

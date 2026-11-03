@@ -9,6 +9,8 @@
  *
  * - `getMemberListWindow` (no search, no role filter) lists the online
  *   members first, then the offline ones, each by display name.
+ * - Only holders of the Member role are listed: revoking another predefined
+ *   role (Admin) or a non-member's presence change does not touch the list.
  * - `getMemberListPreview` answers the first members by display name (ties
  *   by id) whatever their presence: the selection and its order stay the same
  *   when members go online or offline, and follow a rename on its own. A
@@ -134,5 +136,72 @@ describe('memberlist service: community member list', () => {
 
   it('answers an empty preview for a community it does not know yet', () => {
     expect(ml.getMemberListPreview({ communityId: 'nope', limit: 6 })).toEqual(emptyMemberList());
+  });
+});
+
+describe('memberlist service: only members are listed', () => {
+  // q-alice, q-bob and q-carl are members, q-alice is Admin as well; q-dave
+  // only holds a custom role of the community
+  const Q = 'q1';
+  const qUser = (userId: string, onlineStatus: Models.User.OnlineStatus, displayName: string) => ml.queueEvent({
+    type: 'userdatachange', userId, onlineStatus, displayAccount: 'cg', platformBan: null,
+    accounts: [{ type: 'cg', displayName }],
+  } as Events.PgNotify.UserDataChange);
+  const qPreview = () => ml.getMemberListPreview({ communityId: Q, limit: 6 });
+  const qWindow = () => ml.getMemberListWindow({ communityId: Q, offset: 0, limit: 80 });
+  const listed = () => {
+    const result = qWindow();
+    return { ids: [...ids(result.online), ...ids(result.offline)].sort(), totalCount: result.totalCount };
+  };
+
+  beforeAll(() => {
+    qUser('q-alice', 'offline', 'Alice');
+    qUser('q-bob', 'online', 'Bob');
+    qUser('q-carl', 'offline', 'Carl');
+    qUser('q-dave', 'offline', 'Dave');
+    ml.queueEvent({ type: 'rolechange', communityId: Q, roleId: 'q1-admin', title: PredefinedRole.Admin, roleType: RoleType.PREDEFINED, deleted: false });
+    ml.queueEvent({ type: 'rolechange', communityId: Q, roleId: 'q1-member', title: PredefinedRole.Member, roleType: RoleType.PREDEFINED, deleted: false });
+    ml.queueEvent({ type: 'rolechange', communityId: Q, roleId: 'q1-custom', title: 'Custom', roleType: RoleType.CUSTOM_MANUAL_ASSIGN, deleted: false });
+    ml.queueEvent({
+      type: 'channelrolepermissionchange', communityId: Q, channelId: 'q1-ch', roleId: 'q1-member',
+      permissions: [ChannelPermission.CHANNEL_EXISTS, ChannelPermission.CHANNEL_READ],
+    });
+    for (const userId of ['q-alice', 'q-bob', 'q-carl']) {
+      ml.queueEvent({ type: 'userrolechange', userId, roleId: 'q1-member', hasRole: true });
+    }
+    ml.queueEvent({ type: 'userrolechange', userId: 'q-alice', roleId: 'q1-admin', hasRole: true });
+    ml.queueEvent({ type: 'userrolechange', userId: 'q-dave', roleId: 'q1-custom', hasRole: true });
+    ml.processChangeEvents();
+  });
+
+  it('lists the members only', () => {
+    expect(listed()).toEqual({ ids: ['q-alice', 'q-bob', 'q-carl'], totalCount: 3 });
+    expect(ids(qPreview().offline)).toEqual(['q-alice', 'q-bob', 'q-carl']);
+  });
+
+  it('keeps a member listed when another predefined role (Admin) is revoked', () => {
+    ml.queueEvent({ type: 'userrolechange', userId: 'q-alice', roleId: 'q1-admin', hasRole: false });
+    ml.processChangeEvents();
+    expect(listed()).toEqual({ ids: ['q-alice', 'q-bob', 'q-carl'], totalCount: 3 });
+    expect(ids(qPreview().offline)).toEqual(['q-alice', 'q-bob', 'q-carl']);
+    expect(qPreview().totalCount).toBe(3);
+
+    // a later presence change keeps ids and count in step
+    qUser('q-alice', 'online', 'Alice');
+    ml.processChangeEvents();
+    expect(ids(qWindow().online)).toEqual(['q-alice', 'q-bob']);
+    expect(listed()).toEqual({ ids: ['q-alice', 'q-bob', 'q-carl'], totalCount: 3 });
+    expect(qPreview().totalCount).toBe(3);
+  });
+
+  it('does not list a non-member whose presence changes', () => {
+    qUser('q-dave', 'online', 'Dave');
+    ml.processChangeEvents();
+    expect(listed()).toEqual({ ids: ['q-alice', 'q-bob', 'q-carl'], totalCount: 3 });
+    expect(ids(qPreview().offline)).toEqual(['q-alice', 'q-bob', 'q-carl']);
+
+    qUser('q-dave', 'offline', 'Dave');
+    ml.processChangeEvents();
+    expect(listed()).toEqual({ ids: ['q-alice', 'q-bob', 'q-carl'], totalCount: 3 });
   });
 });

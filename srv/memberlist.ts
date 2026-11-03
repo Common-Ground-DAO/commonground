@@ -641,14 +641,18 @@ function processChangeEvents() {
               console.trace("Member set not found for communityId:", convertBinaryToUuid(communityId));
               continue;
             }
-            updatedCommunityMemberLists.add(communityId);
-            if (event.onlineStatus === 'offline') {
-              memberSet.online.delete(event.userId);
-              memberSet.offline.add(event.userId);
-            }
-            else {
-              memberSet.online.add(event.userId);
-              memberSet.offline.delete(event.userId);
+            // only members are in the community's lists; a user with other
+            // roles of the community only changes its channel lists
+            if (memberSet._all.has(event.userId)) {
+              updatedCommunityMemberLists.add(communityId);
+              if (event.onlineStatus === 'offline') {
+                memberSet.online.delete(event.userId);
+                memberSet.offline.add(event.userId);
+              }
+              else {
+                memberSet.online.add(event.userId);
+                memberSet.offline.delete(event.userId);
+              }
             }
 
             const rolePermissionsByChannelId = rolePermissionsByCommunityIdByChannelId.get(communityId);

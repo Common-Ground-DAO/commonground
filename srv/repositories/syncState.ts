@@ -4,7 +4,7 @@
 
 import format from "pg-format";
 import pool from "../util/postgres";
-import { ChannelPermission, PredefinedRole } from "../common/enums";
+import { ChannelPermission, PredefinedRole, RoleType } from "../common/enums";
 import notificationHelper from "./notifications";
 // the one ceiling of every `unread` count (`API.Messages.UnreadCap`), shared
 // with the `setChannelLastRead` answer
@@ -77,6 +77,7 @@ export function buildSyncStateQuery(filtered: boolean): string {
       FROM roles r
       INNER JOIN my_communities mc ON mc."id" = r."communityId"
       WHERE r."title" = ${format('%L', PredefinedRole.Public)}
+        AND r."type" = ${format('%L', RoleType.PREDEFINED)}
         AND r."deletedAt" IS NULL
     ),
     readable AS (

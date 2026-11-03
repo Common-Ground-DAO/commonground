@@ -5,7 +5,7 @@
 import format from "pg-format";
 import pool from "../util/postgres";
 import eventHelper from "./event";
-import { ArticlePermission, CommunityPermission, PredefinedRole } from "../common/enums";
+import { ArticlePermission, CommunityPermission, PredefinedRole, RoleType } from "../common/enums";
 
 class NewsletterHelper {
 
@@ -228,7 +228,7 @@ class NewsletterHelper {
                 ${!!userId
                 ? format('ruu."userId" = %L::UUID OR', userId)
                 : ''}
-                r."title" = ${format("%L", PredefinedRole.Public)}
+                (r."title" = ${format("%L", PredefinedRole.Public)} AND r."type" = ${format("%L", RoleType.PREDEFINED)})
             )
             AND ca."deletedAt" IS NULL
             AND ca."communityId" = $1

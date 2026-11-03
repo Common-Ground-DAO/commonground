@@ -26,7 +26,9 @@ const normalize = (sql: string) => sql.replace(/\s+/g, ' ');
 function expectMemberPermissionFilter(text: string, callId: string, permissions: string) {
   expect(text).toContain(`FROM callmembers cm WHERE cm."callId" = ${callId} AND cm."leftAt" IS NULL`);
   expect(text).toContain('ON ruu."roleId" = r."id" AND ruu."claimed" = TRUE AND ruu."userId" = cm."userId"');
-  expect(text).toContain('AND (ruu."userId" IS NOT NULL OR r."title" = $2)');
+  // roles of the call's community only; Public is the predefined role
+  expect(text).toContain('INNER JOIN calls cl ON cl."id" = cp."callId" INNER JOIN roles r ON r."id" = cp."roleId" AND r."deletedAt" IS NULL AND r."communityId" = cl."communityId"');
+  expect(text).toContain(`AND (ruu."userId" IS NOT NULL OR (r."type" = 'PREDEFINED' AND r."title" = $2))`);
   expect(text).toContain(`) @> ${permissions}::"public"."callpermissions_permissions_enum"[]`);
 }
 
@@ -52,7 +54,7 @@ describe('getCallEventExtraTargets', () => {
     const [sql, params] = poolQuery.mock.calls[0];
     const text = normalize(sql);
     expectMemberPermissionFilter(text, 'c."id"', 'ARRAY[$3]');
-    expect(text).toContain('r."deletedAt" IS NULL WHERE cp."callId" = c."id" AND r."title" = $2 AND cp."permissions" @> ARRAY[$3]');
+    expect(text).toContain(`r."deletedAt" IS NULL AND r."communityId" = c."communityId" AND r."type" = 'PREDEFINED' WHERE cp."callId" = c."id" AND r."title" = $2 AND cp."permissions" @> ARRAY[$3]`);
     expect(params).toEqual([CALL, 'Public', 'CALL_EXISTS']);
   });
 

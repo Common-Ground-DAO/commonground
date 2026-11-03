@@ -41,12 +41,17 @@ const CALL_PUBLIC = id(0x200);      // Public: EXISTS + JOIN, Member: CHANNEL_RE
 const CALL_PUBLIC_READ = id(0x201); // Public: EXISTS + CHANNEL_READ
 const CALL_PRIVATE = id(0x202);     // Member: EXISTS + CHANNEL_READ only
 const CALL_DELETED_PUBLIC = id(0x203); // only a deleted Public role: EXISTS + CHANNEL_READ
+const CALL_CUSTOM_PUBLIC = id(0x204);  // only a custom role titled "Public": EXISTS + CHANNEL_READ
+const CALL_FOREIGN_PUBLIC = id(0x205); // only another community's Public role: EXISTS + CHANNEL_READ
 const UNKNOWN_CALL = id(0x2ff);
+const OTHER_COMMUNITY = id(0x101);
 // roles
 const R_PUBLIC = id(0x300);
 const R_MEMBER = id(0x301);
 const R_DELETED = id(0x302);        // claimed by DELROLE, full permissions, deleted
 const R_PUBLIC_DELETED = id(0x303);
+const R_CUSTOM_PUBLIC = id(0x304);
+const R_OTHER_PUBLIC = id(0x305);
 // users
 const MEMBER = id(0x400);           // claimed Member, two open memberships
 const VISITOR = id(0x401);          // no role: Public only
@@ -74,7 +79,8 @@ describeDb('call delivery targets on PostgreSQL', () => {
     const permissionValues = Object.values(CallPermission).map(p => `'${p}'`).join(', ');
     await q(`CREATE TYPE "public"."callpermissions_permissions_enum" AS ENUM (${permissionValues})`);
     await q(`CREATE TABLE calls ("id" uuid PRIMARY KEY, "communityId" uuid NOT NULL)`);
-    await q(`CREATE TABLE roles ("id" uuid PRIMARY KEY, "communityId" uuid NOT NULL, "title" varchar(64) NOT NULL, "deletedAt" timestamptz)`);
+    await q(`CREATE TYPE "public"."roles_type_enum" AS ENUM ('PREDEFINED', 'CUSTOM_MANUAL_ASSIGN', 'CUSTOM_AUTO_ASSIGN')`);
+    await q(`CREATE TABLE roles ("id" uuid PRIMARY KEY, "communityId" uuid NOT NULL, "title" varchar(64) NOT NULL, "deletedAt" timestamptz, "type" "public"."roles_type_enum" NOT NULL DEFAULT 'PREDEFINED')`);
     await q(`CREATE TABLE roles_users_users ("roleId" uuid NOT NULL, "userId" uuid NOT NULL, "claimed" boolean NOT NULL DEFAULT false, PRIMARY KEY ("userId", "roleId"))`);
     await q(`CREATE TABLE callpermissions ("callId" uuid NOT NULL, "roleId" uuid NOT NULL, "permissions" "public"."callpermissions_permissions_enum"[] NOT NULL, PRIMARY KEY ("callId", "roleId"))`);
     await q(`CREATE TABLE callmembers ("id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "callId" uuid NOT NULL, "userId" uuid NOT NULL, "leftAt" timestamptz)`);
@@ -93,6 +99,9 @@ describeDb('call delivery targets on PostgreSQL', () => {
       [CALL_PUBLIC, CALL_PUBLIC_READ, CALL_PRIVATE, CALL_DELETED_PUBLIC, COMMUNITY]);
     await q(`INSERT INTO roles VALUES ($1, $5, 'Public', NULL), ($2, $5, 'Member', NULL), ($3, $5, 'Old', now()), ($4, $5, 'Public', now())`,
       [R_PUBLIC, R_MEMBER, R_DELETED, R_PUBLIC_DELETED, COMMUNITY]);
+    await q(`INSERT INTO calls VALUES ($1, $3), ($2, $3)`, [CALL_CUSTOM_PUBLIC, CALL_FOREIGN_PUBLIC, COMMUNITY]);
+    await q(`INSERT INTO roles VALUES ($1, $3, 'Public', NULL, 'CUSTOM_MANUAL_ASSIGN'), ($2, $4, 'Public', NULL, 'PREDEFINED')`,
+      [R_CUSTOM_PUBLIC, R_OTHER_PUBLIC, COMMUNITY, OTHER_COMMUNITY]);
     await q(`INSERT INTO roles_users_users VALUES ($1, $3, true), ($1, $4, false), ($2, $5, true), ($1, $6, true), ($1, $7, true)`,
       [R_MEMBER, R_DELETED, MEMBER, UNCLAIMED, DELROLE, LEFT, ELSEWHERE]);
     const permissions: [string, string, string][] = [
@@ -102,12 +111,14 @@ describeDb('call delivery targets on PostgreSQL', () => {
       [CALL_PUBLIC_READ, R_PUBLIC, '{CALL_EXISTS,CALL_JOIN,CHANNEL_READ}'],
       [CALL_PRIVATE, R_MEMBER, '{CALL_EXISTS,CALL_JOIN,CHANNEL_READ}'],
       [CALL_DELETED_PUBLIC, R_PUBLIC_DELETED, '{CALL_EXISTS,CHANNEL_READ}'],
+      [CALL_CUSTOM_PUBLIC, R_CUSTOM_PUBLIC, '{CALL_EXISTS,CHANNEL_READ}'],
+      [CALL_FOREIGN_PUBLIC, R_OTHER_PUBLIC, '{CALL_EXISTS,CHANNEL_READ}'],
     ];
     for (const [callId, roleId, perms] of permissions) {
       await q(`INSERT INTO callpermissions VALUES ($1, $2, $3)`, [callId, roleId, perms]);
     }
     const memberships: [string, string, boolean][] = [];
-    for (const callId of [CALL_PUBLIC, CALL_PUBLIC_READ, CALL_PRIVATE, CALL_DELETED_PUBLIC]) {
+    for (const callId of [CALL_PUBLIC, CALL_PUBLIC_READ, CALL_PRIVATE, CALL_DELETED_PUBLIC, CALL_CUSTOM_PUBLIC, CALL_FOREIGN_PUBLIC]) {
       memberships.push(
         [callId, MEMBER, false], [callId, MEMBER, false], // a second open membership (rejoin)
         [callId, VISITOR, false], [callId, UNCLAIMED, false], [callId, DELROLE, false],
@@ -148,6 +159,11 @@ describeDb('call delivery targets on PostgreSQL', () => {
       expect(await callHelper.getActiveMemberUserIds(CALL_DELETED_PUBLIC, CHAT)).toEqual([]);
     });
 
+    it('a custom role titled "Public" and another community\'s Public role grant nothing', async () => {
+      expect(await callHelper.getActiveMemberUserIds(CALL_CUSTOM_PUBLIC, CHAT)).toEqual([]);
+      expect(await callHelper.getActiveMemberUserIds(CALL_FOREIGN_PUBLIC, CHAT)).toEqual([]);
+    });
+
     it('CALL_EXISTS alone through Public: every present user of that call, none of another call', async () => {
       expect(sorted(await callHelper.getActiveMemberUserIds(CALL_PUBLIC, [CallPermission.CALL_EXISTS])))
         .toEqual(sorted([MEMBER, VISITOR, UNCLAIMED, DELROLE]));
@@ -172,6 +188,13 @@ describeDb('call delivery targets on PostgreSQL', () => {
 
     it('a deleted Public role: no community, no members', async () => {
       expect(await callHelper.getCallEventExtraTargets(CALL_DELETED_PUBLIC))
+        .toEqual({ activeMemberUserIds: [], publicCommunityId: null });
+    });
+
+    it('a custom role titled "Public" or another community\'s Public role: no community, no members', async () => {
+      expect(await callHelper.getCallEventExtraTargets(CALL_CUSTOM_PUBLIC))
+        .toEqual({ activeMemberUserIds: [], publicCommunityId: null });
+      expect(await callHelper.getCallEventExtraTargets(CALL_FOREIGN_PUBLIC))
         .toEqual({ activeMemberUserIds: [], publicCommunityId: null });
     });
 

@@ -1231,7 +1231,7 @@ async function _addUserToRoles(
       SELECT "id", "title", $2::UUID AS "userId", TRUE AS "claimed"
       FROM roles
       WHERE "communityId" = $1
-        AND "title" <> ${format('%L', PredefinedRole.Public)}
+        AND NOT ("type" = ${format('%L', RoleType.PREDEFINED)} AND "title" = ${format('%L', PredefinedRole.Public)})
         AND "id" = ANY(ARRAY[${roleIds.map(s => format('%L', s)).join(',')}]::uuid[])
         AND "deletedAt" IS NULL
     )
@@ -2176,7 +2176,7 @@ class CommunityHelper {
     const eventCommunityIds = new Set<string>();
     for (const r of roleData) {
       if (r.permissions.includes(ChannelPermission.CHANNEL_EXISTS)) {
-        if (r.title === PredefinedRole.Public) {
+        if (r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Public) {
           eventCommunityIds.add(data.communityId);
         } else {
           eventRoleIds.add(r.id);
@@ -3583,6 +3583,7 @@ class CommunityHelper {
       INNER JOIN roles r
         ON r."id" = ccrp."roleId"
         AND r."deletedAt" IS NULL
+        AND r."communityId" = ccrp."communityId"
       WHERE ccrp."channelId" = $1
         AND ccrp."communityId" = $2
     `;
@@ -3594,7 +3595,7 @@ class CommunityHelper {
       permissions: Common.ChannelPermission[];
       roleTitle: string;
       roleId: string;
-      type: Models.Community.Role["type"],
+      roleType: Models.Community.Role["type"],
     }[];
   }
 
@@ -3653,6 +3654,7 @@ class CommunityHelper {
         AND r."deletedAt" IS NULL
       INNER JOIN calls c
         ON c."id" = cp."callId"
+        AND c."communityId" = r."communityId"
       WHERE cp."callId" = $1
         AND c."channelId" = $2
     `;
@@ -3665,7 +3667,7 @@ class CommunityHelper {
       roleTitle: string;
       roleId: string;
       communityId: string;
-      type: Models.Community.Role["type"],
+      roleType: Models.Community.Role["type"],
     }[];
   }
 
@@ -4002,7 +4004,7 @@ class CommunityHelper {
   })[]): void {
     for (const community of communities) {
       const myRoleIds = new Set(community.myRoleIds);
-      const myRoles = community.roles.filter(r => myRoleIds.has(r.id) || r.title === "Public");
+      const myRoles = community.roles.filter(r => myRoleIds.has(r.id) || (r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Public));
       community.channels = community.channels.filter(channel => {
         for (const myRole of myRoles) {
           const permissions = channel.rolePermissions.find(rp => rp.roleId === myRole.id)?.permissions;

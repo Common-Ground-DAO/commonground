@@ -32,7 +32,8 @@ type CallCommunityExtraData = {
 
 /**
  * The users with an open membership in the call `callId` whose claimed roles
- * plus the Public role (title `publicTitle`) hold every permission of
+ * plus the predefined Public role (title `publicTitle`), both of the call's
+ * community, hold every permission of
  * `permissions` on it (the union over the roles, as
  * `permissionHelper.hasPermissions` evaluates call permissions). Arguments
  * are SQL expressions (placeholders or columns).
@@ -46,16 +47,19 @@ function activeMembersWithPermissionsSql(callId: string, publicTitle: string, pe
       AND (
         SELECT COALESCE(array_agg(DISTINCT perm), '{}')
         FROM callpermissions cp
+        INNER JOIN calls cl
+          ON  cl."id" = cp."callId"
         INNER JOIN roles r
           ON  r."id" = cp."roleId"
           AND r."deletedAt" IS NULL
+          AND r."communityId" = cl."communityId"
         LEFT JOIN roles_users_users ruu
           ON  ruu."roleId" = r."id"
           AND ruu."claimed" = TRUE
           AND ruu."userId" = cm."userId"
         CROSS JOIN LATERAL unnest(cp."permissions") AS perm
         WHERE cp."callId" = cm."callId"
-          AND (ruu."userId" IS NOT NULL OR r."title" = ${publicTitle})
+          AND (ruu."userId" IS NOT NULL OR (r."type" = ${format('%L', RoleType.PREDEFINED)} AND r."title" = ${publicTitle}))
       ) @> ${permissions}::"public"."callpermissions_permissions_enum"[]
   `;
 }
@@ -928,6 +932,8 @@ class CallHelper {
           INNER JOIN roles r
             ON  r."id" = cp."roleId"
             AND r."deletedAt" IS NULL
+            AND r."communityId" = c."communityId"
+            AND r."type" = ${format('%L', RoleType.PREDEFINED)}
           WHERE cp."callId" = c."id"
             AND r."title" = $2
             AND cp."permissions" @> ARRAY[$3]::"public"."callpermissions_permissions_enum"[]

@@ -222,7 +222,7 @@ describe('call chat delivery', () => {
 
   it('adds the community room when Public may read the call chat', async () => {
     communityHelper.getCallRolePermissions.mockResolvedValue([
-      { roleId: 'r-public', roleTitle: 'Public', communityId: COMMUNITY, permissions: ['CALL_EXISTS', 'CHANNEL_READ'] },
+      { roleId: 'r-public', roleTitle: 'Public', roleType: 'PREDEFINED', communityId: COMMUNITY, permissions: ['CALL_EXISTS', 'CHANNEL_READ'] },
     ]);
     await edit(asUser());
     expect(eventHelper.emit).toHaveBeenCalledWith(
@@ -232,10 +232,22 @@ describe('call chat delivery', () => {
     );
   });
 
+  it('a custom role titled "Public" is an ordinary role room, not the community', async () => {
+    communityHelper.getCallRolePermissions.mockResolvedValue([
+      { roleId: 'r-custom', roleTitle: 'Public', roleType: 'CUSTOM_MANUAL_ASSIGN', communityId: COMMUNITY, permissions: ['CALL_EXISTS', 'CHANNEL_READ'] },
+    ]);
+    await edit(asUser());
+    expect(eventHelper.emit).toHaveBeenCalledWith(
+      expect.anything(),
+      { roleIds: ['r-custom'], userIds: [], communityIds: [] },
+      DEVICE_EXCEPT,
+    );
+  });
+
   it('a failed member query still reaches the role rooms and the community', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     communityHelper.getCallRolePermissions.mockResolvedValue([
-      { roleId: 'r-public', roleTitle: 'Public', communityId: COMMUNITY, permissions: ['CALL_EXISTS', 'CHANNEL_READ'] },
+      { roleId: 'r-public', roleTitle: 'Public', roleType: 'PREDEFINED', communityId: COMMUNITY, permissions: ['CALL_EXISTS', 'CHANNEL_READ'] },
     ]);
     callHelper.getActiveMemberUserIds.mockRejectedValue(new Error('db down'));
     await edit(asUser());
@@ -280,7 +292,7 @@ describe('call chat delivery', () => {
 
   it('a new call-chat message goes to the same targets', async () => {
     communityHelper.getCallRolePermissions.mockResolvedValue([
-      { roleId: 'r-public', roleTitle: 'Public', communityId: COMMUNITY, permissions: ['CALL_EXISTS', 'CHANNEL_READ'] },
+      { roleId: 'r-public', roleTitle: 'Public', roleType: 'PREDEFINED', communityId: COMMUNITY, permissions: ['CALL_EXISTS', 'CHANNEL_READ'] },
     ]);
     callHelper.getActiveMemberUserIds.mockResolvedValue([OTHER]);
     messageHelper.createMessage.mockResolvedValue({

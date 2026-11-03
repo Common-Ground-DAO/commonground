@@ -452,7 +452,7 @@ async function _getCommunityArticleDetailView(
         ${!!userId
           ? format('ruu."userId" = %L::UUID OR', userId)
           : ''}
-        r."title" = ${format("%L", PredefinedRole.Public)}
+        (r."title" = ${format("%L", PredefinedRole.Public)} AND r."type" = ${format("%L", RoleType.PREDEFINED)})
       )
       AND ca."deletedAt" IS NULL
       AND ca."communityId" = $1

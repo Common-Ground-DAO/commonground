@@ -268,12 +268,22 @@ export default function GenericMessageList(props: Props) {
     }
     const w = current.window;
     // until the list reports its position again: not reading at the bottom
+    const wasAtBottom = atBottomRef.current;
     atBottomRef.current = false;
     setAtBottom(false);
     void runInit({ type: 'atItemId', itemId: messageId }, { type: 'element', elementId: messageId })
       .then(count => {
-        if (!!count && viewRef.current?.window === w) {
+        if (viewRef.current?.window !== w) return;
+        if (!!count) {
           setTargetFocusId(messageId);
+        }
+        else if (initializingRef.current === 0 && !atBottomRef.current) {
+          // the jump did not apply (not found, network) and nothing else is
+          // loading: the view did not move, so the previous level holds, and
+          // the list's next position report confirms or corrects it
+          atBottomRef.current = wasAtBottom;
+          setAtBottom(wasAtBottom);
+          scrollableRef.current?.forceUpdate();
         }
       });
   }, [runInit, setTargetFocusId]);

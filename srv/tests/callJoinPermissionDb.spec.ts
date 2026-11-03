@@ -71,6 +71,10 @@ const BANNED = id(0x404);     // banned (no roles left), ban without end
 const BAN_OVER = id(0x405);   // a ban that has run out
 const MUTED = id(0x406);      // chat-muted, no roles
 const BAN_TIMED = id(0x407);  // banned until tomorrow, no roles
+const BANNED_MEMBER = id(0x408); // banned, still holds the claimed Member role
+const FOREIGN = id(0x409);    // claimed member of the other community only
+const R_OTHER_MEMBER = id(0x308);
+const CALL_FOREIGN_ROLE = id(0x20a); // only the other community's Member role: EXISTS + JOIN
 
 describeDb('call join permission on PostgreSQL', () => {
   let server: Pool;
@@ -125,6 +129,7 @@ describeDb('call join permission on PostgreSQL', () => {
       [CALL_PUBLIC_DELROLE, COMMUNITY, false],
       [CALL_FOREIGN_PUBLIC, COMMUNITY, false],
       [CALL_CUSTOM_PUBLIC, COMMUNITY, false],
+      [CALL_FOREIGN_ROLE, COMMUNITY, false],
     ];
     for (const [callId, communityId, ended] of calls) {
       await q(`INSERT INTO calls VALUES ($1, $2, $3)`, [callId, communityId, ended ? new Date() : null]);
@@ -138,12 +143,15 @@ describeDb('call join permission on PostgreSQL', () => {
       [R_CUSTOM_PUBLIC, COMMUNITY, 'Public', 'CUSTOM_MANUAL_ASSIGN', false],
       [R_DELCOM_MEMBER, DELETED_COMMUNITY, 'Member', 'PREDEFINED', false],
       [R_DELCOM_PUBLIC, DELETED_COMMUNITY, 'Public', 'PREDEFINED', false],
+      [R_OTHER_MEMBER, OTHER_COMMUNITY, 'Member', 'PREDEFINED', false],
     ];
     for (const [roleId, communityId, title, type, deleted] of roles) {
       await q(`INSERT INTO roles VALUES ($1, $2, $3, $4, $5)`, [roleId, communityId, title, type, deleted ? new Date() : null]);
     }
     await q(`INSERT INTO roles_users_users VALUES ($1, $4, true), ($2, $5, true), ($3, $5, true), ($2, $6, false)`,
       [R_ADMIN, R_MEMBER, R_DELCOM_MEMBER, ADMIN, MEMBER, UNCLAIMED]);
+    await q(`INSERT INTO roles_users_users VALUES ($1, $2, true), ($3, $4, true)`, [R_MEMBER, BANNED_MEMBER, R_OTHER_MEMBER, FOREIGN]);
+    await q(`INSERT INTO user_community_state ("userId", "communityId", "blockState", "blockStateUntil") VALUES ($1, $2, 'BANNED', NULL)`, [BANNED_MEMBER, COMMUNITY]);
     await q(`INSERT INTO user_community_state ("userId", "communityId", "blockState", "blockStateUntil") VALUES ($1, $4, 'BANNED', NULL), ($2, $4, 'BANNED', now() - interval '1 day'), ($3, $4, 'CHAT_MUTED', NULL), ($5, $4, 'BANNED', now() + interval '1 day')`,
       [BANNED, BAN_OVER, MUTED, COMMUNITY, BAN_TIMED]);
     // a ban elsewhere does not matter
@@ -164,6 +172,7 @@ describeDb('call join permission on PostgreSQL', () => {
       [CALL_PUBLIC_DELROLE, R_PUBLIC_DELETED, JOIN],
       [CALL_FOREIGN_PUBLIC, R_OTHER_PUBLIC, JOIN],
       [CALL_CUSTOM_PUBLIC, R_CUSTOM_PUBLIC, JOIN],
+      [CALL_FOREIGN_ROLE, R_OTHER_MEMBER, JOIN],
     ];
     for (const [callId, roleId, perms] of permissions) {
       await q(`INSERT INTO callpermissions VALUES ($1, $2, $3)`, [callId, roleId, perms]);
@@ -213,13 +222,23 @@ describeDb('call join permission on PostgreSQL', () => {
     });
   });
 
-  describe('a call open to the Member role (claimed roles, unchanged)', () => {
+  describe('a call open to the Member role (claimed roles)', () => {
     it('a claimed member joins; non-members, unclaimed members and banned users do not', async () => {
       expect(await mayJoin(MEMBER, CALL_MEMBER)).toBe(true);
       expect(await mayJoin(ADMIN, CALL_MEMBER)).toBe(true);
       expect(await mayJoin(VISITOR, CALL_MEMBER)).toBe(false);
       expect(await mayJoin(UNCLAIMED, CALL_MEMBER)).toBe(false);
       expect(await mayJoin(BANNED, CALL_MEMBER)).toBe(false);
+    });
+
+    it('a banned user who still holds a claimed role does not join, through it or through Public', async () => {
+      expect(await mayJoin(BANNED_MEMBER, CALL_MEMBER)).toBe(false);
+      expect(await mayJoin(BANNED_MEMBER, CALL_PUBLIC)).toBe(false);
+    });
+
+    it('a role of another community on the call grants nothing to its holders', async () => {
+      expect(await mayJoin(FOREIGN, CALL_FOREIGN_ROLE)).toBe(false);
+      expect(await mayJoin(MEMBER, CALL_FOREIGN_ROLE)).toBe(false);
     });
   });
 

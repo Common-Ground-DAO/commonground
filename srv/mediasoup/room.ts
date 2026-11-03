@@ -11,6 +11,7 @@ import errors from '../common/errors';
 import callHelper from '../repositories/calls';
 import { CallType } from '../common/enums';
 import { EventEmitter } from 'events';
+import { MediaSendPermission, mediaPermissionOf } from './mediaPermissions';
 
 const logger = new Logger('Room');
 /**
@@ -721,6 +722,8 @@ export default class Room extends EventEmitter {
                         }
                     }
 
+                    await this.hasSendMediaPermissions(peer.id, mediaPermissionOf(kind, appData));
+
                     if (!transport)
                         throw new Error(`transport with id "${transportId}" not found`);
 
@@ -1308,6 +1311,20 @@ export default class Room extends EventEmitter {
             if (!hasPermission) {
                 throw new Error(errors.server.NOT_ALLOWED);
             }
+        }
+    }
+
+    /**
+     * A peer may send media of a kind when its roles grant the matching call
+     * permission (see `callHelper.hasPermissionToSendMedia`). On a broadcast,
+     * the stage check of `produce` comes first, and being on the stage is the
+     * permission.
+     */
+    private async hasSendMediaPermissions(peerId: string, permission: MediaSendPermission) {
+        const onStage = this._callType === CallType.BROADCAST && !!this._broadCasters.get(peerId);
+        const hasPermission = await callHelper.hasPermissionToSendMedia(peerId, this._roomId, permission, onStage);
+        if (!hasPermission) {
+            throw new Error(errors.server.NOT_ALLOWED);
         }
     }
 

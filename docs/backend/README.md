@@ -45,7 +45,10 @@
 > `callDeliveryTargetsDb`) against commit 7f39d24, 2026-11-02; the community check of the
 > message access scope, `/getMemberList`, `/getUserCommunityRoleIds` and the memberlist
 > routes against commit 8e88b9a, 2026-11-03; the `/getChanges` cursor note (no epoch), the
-> single `/Message` mount and the test list against commit 330fe2f, 2026-11-03.
+> single `/Message` mount and the test list against commit 330fe2f, 2026-11-03; the call and event
+> role ids, `/setUserBlockState` (ban transaction), the reserved role titles, the role resolution
+> of `permissionHelper` (predefined Public role, owning community) and the test list against
+> commits dac9eaf, 9385d52, b3fa87b, 24922f5 and 7814781, 2026-11-03.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -328,7 +331,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/getCommunityDetailView` -- Full community detail view
 - `/joinCommunity` -- Join a community
 - `/leaveCommunity` -- Leave a community
-- `/setUserBlockState` -- Ban/unban users
+- `/setUserBlockState` -- Ban/unban users. A ban removes the user's roles of the community and stores the block state in one transaction (if either fails, nothing is kept and the request fails); the leave events and room changes follow after the commit
 - `/getMemberList` -- Get community members: the full list for members, a short preview (first members by name, ids only) for others while the community is not deleted
 - `/getChannelMemberList` -- Get channel members
 - `/getMemberNewsletterCount` -- Count newsletter subscribers
@@ -344,7 +347,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/setChannelPinState` -- Pin/unpin channels
 
 **Roles:**
-- `/createRole`, `/updateRole`, `/deleteRole`
+- `/createRole`, `/updateRole`, `/deleteRole` -- the titles of the predefined roles (Admin, Member, Public) are reserved: a custom role cannot take one, in any letter case
 - `/checkCommunityRoleClaimability` -- Check if user can claim a token-gated role
 - `/claimRole` -- Claim a token-gated role
 - `/addUserToRoles`, `/removeUserFromRoles`
@@ -371,6 +374,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 **Calls (voice/video):**
 - `/getCall`, `/startCall`, `/startScheduledCall`
 - `/getCurrentCalls`, `/getCallParticipantEvents`
+- The role permissions of `/startCall` and of the event routes (`/createCommunityEvent`, `/updateCommunityEvent`, which create or update the event's call) may name only live roles of the community; any other role id is refused (`NOT_ALLOWED`) before anything is written. Media, join and moderation rights inside the call are checked by the call server ([docs/realtime](../realtime/README.md#producers))
 
 **Tags:**
 - `/getTagFrequencyData`
@@ -519,7 +523,7 @@ A subset of message routes is also reachable over the Bot API v1 surface (see be
 Mounted at `/Message` after the message router, in the same `app.use` behind one `securityStep` (`srv/api.ts`; a request runs the step once), so the route is `/Message/getSyncState`.
 
 - `/getSyncState` -- `{ channelIds? }` (at most 500 unique UUIDs; Joi validator in `srv/validators/api/syncState.ts`) → `{ serverTime, notificationUnreadCount, channels }`. Session users only: not on the bot allowlist, and a bot principal is refused in the handler. One statement (`syncStateHelper.getChannelStates`, `srv/repositories/syncState.ts`) returns one entry per community channel the user can read and per chat the user is a member of, each with `channelId`, `communityId` or `chatId`, `syncSeq`, `lastMessageDate`, `lastRead` and `unread`:
-  - community channels: in the communities where the user holds a claimed, not deleted role (the communities `getOwnCommunities` lists; deleted communities and channels excluded), the channels for which the user's claimed roles plus the community's `Public` role together grant `CHANNEL_EXISTS` and `CHANNEL_READ` -- the same rule as the message read check. Public channels of communities the user is not a member of are not listed;
+  - community channels: in the communities where the user holds a claimed, not deleted role (the communities `getOwnCommunities` lists; deleted communities and channels excluded), the channels for which the user's claimed roles plus the community's predefined `Public` role together grant `CHANNEL_EXISTS` and `CHANNEL_READ` -- the same rule as the message read check. Public channels of communities the user is not a member of are not listed;
   - chats: not deleted, `userIds` contains the user;
   - `syncSeq`: the channel's `channel_sync_state.seq`, `0` without a row;
   - `unread`: non-deleted messages of others after `lastRead`, capped at 999 (`API.Messages.UnreadCap`). Without a `channelreadstate` row: `0` for community channels, every non-deleted message of others for chats.
@@ -1168,7 +1172,12 @@ The `db: Pool | PoolClient` parameter pattern enables functions to work both sta
 
 **`srv/repositories/permissions.ts`** -- `permissionHelper`
 - Role permission queries for channels, calls, events, articles, and communities
-- User permission checks (e.g., does user have CHANNEL_WRITE in a channel?)
+- User permission checks (e.g., does user have CHANNEL_WRITE in a channel?): the union of the
+  user's claimed, live roles and the community's predefined Public role (type `PREDEFINED`,
+  title `Public`; it stands for everyone, visitors included), all of the community that owns the
+  channel, article, call or event. A custom role with the title "Public" is an ordinary role. Block
+  states (ban, chat mute) are checked by the write routes themselves (e.g. `/createMessage`), not
+  here, so reading through the Public role stays open to everyone
 
 **`srv/repositories/files.ts`** -- `fileHelper`
 - S3 storage operations (upload, download, signed URLs)
@@ -1401,7 +1410,7 @@ Located in `srv/jobs/`. All jobs are designed to run as **worker threads** (they
   - `endCallsOfGoneCallServers`, at startup and every `ORPHANED_CALLS_SWEEP_INTERVAL` (15 s): every open call whose call server is gone, event calls included (as `resetCallServer` does when a call server restarts; an ended event call can be started again, see below). Liveness signal: the call server's row in `callservers` — mediasoup writes `updatedAt` every `CALLSERVER_UPDATE_DATA_INTERVAL` (2 s) and sets `deletedAt` when it shuts down. A server counts as gone when its row is deleted or missing, or its `updatedAt` is older than `CALLSERVER_GONE_AFTER_MILLISECONDS` (60 s, deliberately longer than the 10 s stale period so a server that misses a few heartbeats keeps its calls). Open memberships are closed and `previewUserIds` cleared; end and leave times are the server's last sign of life (`deletedAt`, else `updatedAt`), not the sweep time. This covers call servers that stop without SIGTERM (OOM, `docker kill`, host crash) and do not come back under the same URL (which would reset their calls, `resetCallServer`), e.g. after a domain change or with `CG_ENABLE_CALLS=false`. The community call list and the home page list read only open calls, so they show such calls until the sweep has ended them.
   - Both filter on open calls; the partial index `idx_calls_communityId_open` (`"endedAt" IS NULL`) keeps them from scanning the call history.
 - **Restarting an event call:** `callHelper.startScheduledCall` resets `endedAt` and closes the memberships an ended call left open, so an event call ended by a call server restart or the sweep can be started and joined again (the call server's `getOrCreateRoom` only accepts calls without `endedAt`). `softEndCall` and `endCallForEveryone` only end a call that is still open (no second end, no second `delete` event).
-- **Tests:** `tests/callEnding.spec.ts` (SQL shape of both sweeps, `startScheduledCall` and `updateCallPermissions`). Against a running disposable instance: `e2e/checks/call-sweep.sh` (`e2e/README.md`, "Checks") — real Postgres, Valkey and job-runner: sweeps and their `delete` events, the job-runner startup, event and scheduled calls, restarting an ended event call, the permission rewrite, the read marker.
+- **Tests:** `tests/callEnding.spec.ts` (SQL shape of both sweeps, `startScheduledCall`, `updateCallPermissions` and the role-id check of `createCall`/`updateCall`). Against a running disposable instance: `e2e/checks/call-sweep.sh` (`e2e/README.md`, "Checks") — real Postgres, Valkey and job-runner: sweeps and their `delete` events, the job-runner startup, event and scheduled calls, restarting an ended event call, the permission rewrite, the read marker.
 
 ---
 
@@ -1684,7 +1693,9 @@ with wave M2 (see below).
   `socketTargeting` (the `x-cg-socket-id` helpers and `eventHelper` against a
   model of the adapter's rooms), `socketTargetingRoutes` (exclusion sites,
   article rooms, call delivery targets), `socketLogin` (the end of the socket login
-  when the socket went away meanwhile) and `callDeliveryTargets` (the passkey
+  when the socket went away meanwhile), `callDeliveryTargets`, `callMediaKind` (the
+  permission a `produce` needs), `communityBan` (the ban transaction) and
+  `roleTitleValidator` (the reserved role titles) (the passkey
   tests drive a software authenticator, `tests/helpers/softAuthenticator.ts`). Against a
   throwaway PostgreSQL, opt-in via `CG_TEST_PG_HOST` (skipped otherwise):
   `securityStepDb` (resets the database `cryptogram`), `chatSyncSeqDb` (the
@@ -1693,8 +1704,13 @@ with wave M2 (see below).
   order of concurrent writers, and the message repository on the real
   schema; it creates and drops its own database `cg_chat_sync_test`),
   `syncStateDb` (getSyncState and the notification read-state writes; own
-  database `cg_sync_state_test`) and `callDeliveryTargetsDb` (the call-chat
-  and new-call member/Public targets; own database `cg_call_delivery_test`).
+  database `cg_sync_state_test`), `callDeliveryTargetsDb` (the call-chat
+  and new-call member/Public targets; own database `cg_call_delivery_test`),
+  `callJoinPermissionDb` and `callMediaPermissionDb` (who may join, send media
+  into and moderate a call, as the call server's role `mediasoup`; own databases
+  `cg_call_join_test`, `cg_call_media_test`) and `permissionPublicRoleDb` (role
+  resolution of `permissionHelper`: the predefined Public role and the owning
+  community; own database `cg_permission_public_test`).
   They connect only to
   `CG_TEST_PG_HOST`:`CG_TEST_PG_PORT` (`tests/helpers/testPg.ts`), also for
   the `util/postgres` pools `securityStepDb` loads (it sets `DB_HOST`/`DB_PORT`

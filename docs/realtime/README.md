@@ -26,7 +26,10 @@
 > more) against commit 1e6a0d4, 2026-11-03; the end of the socket login (`finishSocketLogin`) against
 > commit 043641d, 2026-11-03; the logout marker across tabs against commit 9d00729, 2026-11-03; the
 > anonymous reconnect after `cliSignedOut` against commit 1b9948c, 2026-11-03; who may join a call's
-> room (`hasPermissionToJoinCall`, Public role) against commits 2484880 and eebc3cf, 2026-11-03
+> room (`hasPermissionToJoinCall`, Public role) against commits 2484880 and eebc3cf, 2026-11-03; media
+> permissions on `produce`, the join and moderation checks (roles of the call's community, the
+> predefined Public role, bans), the call role ids, the server-side demotion and the client's refusal
+> warning against commits 7814781, 9385d52, dac9eaf and ae660a0, 2026-11-03
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -348,7 +351,24 @@ A Producer represents a media track (audio or video) being sent by a peer to the
 2. The Producer is added to the `AudioLevelObserver` and `ActiveSpeakerObserver` (if audio).
 3. Consumers are automatically created for all other joined peers.
 
-In broadcast mode, only peers in the `_broadcasters` map are allowed to produce.
+In broadcast mode, only peers in the `_broadcasters` map are allowed to produce. In an audio-only
+call, video is refused.
+
+**Media permissions.** Before it creates the Producer, the room checks the call permission of the
+media kind (`hasSendMediaPermissions` → `callHelper.hasPermissionToSendMedia`, `srv/mediasoup/room.ts`,
+`srv/mediasoup/mediaPermissions.ts`): `AUDIO_SEND` for audio, `SHARE_SCREEN` for video the client
+marks as a screen share (`appData.share`, as `RoomClient.enableShare` sends it), `VIDEO_SEND` for
+other video. The roles are resolved as for joining (`hasPermissionToJoinCall`, see Ended Call
+Protection): the user's claimed, live roles of the call's community plus that community's predefined
+Public role, on a call that has not ended in a community that is not deleted. The call creator and
+the call's moderators (`CALL_MODERATE` on the call through a claimed role, or a claimed role with the
+community permission `WEBRTC_MODERATE`) may send every kind — the web client's "moderate" preset
+has no `SHARE_SCREEN`. On a broadcast, a peer on the stage may send without a per-kind check (being
+put there by the creator or a moderator is the permission). A user with an active ban in the
+community sends nothing. A refusal answers the `produce` request with `NOT_ALLOWED`; the web client
+then shows a warning for the mic, camera or screen share (`onMediaRefused`, `src/util/RoomClient.tsx`,
+`src/context/CallProvider.tsx`). Producers that already exist are not re-checked when a call's
+permissions change.
 
 ### Consumers
 
@@ -381,7 +401,7 @@ A PostgreSQL keepalive query (`SELECT 1`) runs every 60 seconds on the LISTEN co
 
 ### Ended Call Protection
 
-`getOrCreateRoom` reads `callHelper.getCallState(roomId)` once, before any Room is created, and rejects the connection if the call does not exist, `endedAt` is set, or the user is neither the call creator nor allowed to join (`callHelper.hasPermissionToJoinCall`, the same rule as the `join` request: the call has not ended, its community is not deleted, and `CALL_JOIN` on the call is granted to one of the user's claimed roles or to the predefined Public role of the call's community — a call open to the Public role can be joined by every logged-in user who sees it through that role, members or not, except users banned from the community); the same row provides the room parameters (call type, creator, slots, stage slots, audio-only, high quality). This prevents joining calls that have already ended in the database. If the connection that caused a Room's creation is gone before it is attached, the Room is closed again (`closeIfEmpty`). Room creation and joining are serialized per `roomId` (one `AwaitQueue` per room).
+`getOrCreateRoom` reads `callHelper.getCallState(roomId)` once, before any Room is created, and rejects the connection if the call does not exist, `endedAt` is set, or the user is neither the call creator nor allowed to join (`callHelper.hasPermissionToJoinCall`, the same rule as the `join` request: the call has not ended, its community is not deleted, the user has no active ban in that community, and `CALL_JOIN` on the call is granted to one of the user's claimed, live roles of the call's community or to that community's predefined Public role (type `PREDEFINED`; a custom role titled "Public" is an ordinary role) — a call open to the Public role can be joined by every logged-in user who sees it through that role, members or not); the same row provides the room parameters (call type, creator, slots, stage slots, audio-only, high quality). This prevents joining calls that have already ended in the database. If the connection that caused a Room's creation is gone before it is attached, the Room is closed again (`closeIfEmpty`). Room creation and joining are serialized per `roomId` (one `AwaitQueue` per room).
 
 ---
 
@@ -710,7 +730,7 @@ enum CallType {
 1. **Start call:** Frontend calls `data.community.startCall()` API, which creates a `Call` row and assigns a call server.
 2. **Join call:** Frontend creates a `RoomClient` with the call server URL, which opens a protoo WebSocket to the call server.
 3. **Room creation:** On the call server, if no Room exists for the callId, one is created (with a MediaSoup Router).
-4. **Permission checks:** `hasJoinPermissions` and `hasModeratePermissions` verify role-based permissions via the `callpermissions` table.
+4. **Permission checks:** `hasJoinPermissions`, `hasModeratePermissions` and `hasSendMediaPermissions` (on `produce`, see Producers) verify role-based permissions via the `callpermissions` table, for roles of the call's community only. Moderation (`callHelper.hasPermissionToModerateCall`) needs `CALL_MODERATE` on the call through a claimed role, or a claimed role with `WEBRTC_MODERATE`, both of the call's community, and no active ban; the call creator always may. `startCall` (and the event routes that create or update a call) accept only role ids of live roles of the call's community (`NOT_ALLOWED` otherwise).
 5. **Member tracking:** On join, `callHelper.insertCallMember` creates a `CallMembership` row. On leave, `callHelper.callMemberLeave` soft-deletes it. `previewUserIds` is updated on join/leave.
 6. **End call:** When the last peer leaves, `callHelper.softEndCall` is called. For forced end, `callHelper.endCallForEveryone` is called.
 7. **Server cleanup:** On SIGTERM, and on start, `callHelper.resetCallServer` ends the calls of this call server (matched by its URL), event calls included. A failure at start is logged and does not keep the call server from registering its call update listener. An ended event call can be started again (`startScheduledCall` resets `endedAt`).
@@ -720,8 +740,9 @@ enum CallType {
 miss everyone who sees a call only through the Public role. Call-chat `cliMessageEvent`s
 (`emitMessageEvents`, `srv/api/messages.ts`) therefore go, in one emit, to the role rooms with
 `CALL_EXISTS` + `CHANNEL_READ`, to the user rooms of the call's present members
-(`callmembers.leftAt IS NULL`) who hold those permissions through a claimed role or Public
-(`callHelper.getActiveMemberUserIds`, evaluated like `permissionHelper.hasPermissions`), and to
+(`callmembers.leftAt IS NULL`) who hold those permissions through a claimed role or the predefined
+Public role, both of the call's community (`callHelper.getActiveMemberUserIds`, evaluated like
+`permissionHelper.hasPermissions`), and to
 the community room (members and visitors) when Public is among those roles. `cliCallEvent` `new`
 (`startCall`, `startScheduledCall`, `emitCallNew` in `srv/api/community.ts`) goes to its role rooms
 plus the present members with `CALL_EXISTS` and the community room when Public has `CALL_EXISTS`
@@ -738,7 +759,8 @@ In broadcast mode (`CallType.BROADCAST`):
 - Non-broadcasters can only consume (listen/watch), not produce.
 - Moderators can promote/demote broadcasters via `promoteBroadcaster`/`demoteBroadcaster` requests.
 - Non-broadcasters can raise/lower their hand to request broadcast access.
-- When demoted, the **client-side** closes its own send transport and stops all producers (mic, webcam, share). The server only removes the peer from the broadcasters map and notifies all peers.
+- When demoted, the client closes its own send transport and stops all producers (mic, webcam, share). The server removes the peer from the broadcasters map, closes the peer's producers and producing transport, and notifies all peers.
+- A peer on the stage needs no per-kind media permission; a user with an active ban in the community cannot produce (see Producers).
 - If all broadcasters leave, the room closes.
 - When a non-creator peer joins an empty broadcast room and has moderate permissions, they are automatically promoted to broadcaster.
 

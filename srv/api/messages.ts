@@ -159,8 +159,6 @@ export async function _checkAccessOrThrow(access: { channelId: string, callId: s
 export async function _checkAccessOrThrow(access: { channelId: string, articleId: string, articleUserId: string } | { channelId: string, articleId: string, articleCommunityId: string }, permissions: ArticlePermission[], userId?: string): Promise<void>;
 export async function _checkAccessOrThrow(access: { channelId: string, chatId: string }, userId?: string): Promise<void>;
 export async function _checkAccessOrThrow(access: API.Messages.MessageAccess, userIdOrPermissions?: ArticlePermission[] | ChannelPermission[] | CallPermission[] | string, userId?: string) {
-  console.log('checkAccessOrThrow', access);
-
   // Every permission below is evaluated for the community, chat, call or
   // article in the access object, while the message queries use
   // `access.channelId`; both must refer to the same channel.

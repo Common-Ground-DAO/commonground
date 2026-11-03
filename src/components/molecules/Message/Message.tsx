@@ -100,6 +100,9 @@ export default function Message(props: Props) {
 
   const canModerateUser = communityState.state === "loaded" && communityState.communityPermissions.has('COMMUNITY_MODERATE');
   const ownMessage = !!ownUser && ownUser?.id === message.creatorId;
+  // a pending or failed own send (or an edit in flight): no server actions
+  // (react, reply, edit, delete, pin) until the server has the current version
+  const serverActionsDisabled = message.sendStatus === 'sending' || message.sendStatus === 'error-send';
 
   // `setCurrentId` moved into `useDelayGroup` in `@floating-ui/react` 0.27, and
   // the `currentId`/`delayedCloseTimeoutRef` branch it used to guard was dead:
@@ -113,7 +116,7 @@ export default function Message(props: Props) {
 
   const { x, y, refs, strategy, context, update, isPositioned } = useFloating({
     placement: "top-end",
-    open: messageIsHovered && !isImageModalOpen,
+    open: messageIsHovered && !isImageModalOpen && !serverActionsDisabled,
     onOpenChange,
     middleware: [
       offset({ mainAxis: -6 })
@@ -179,7 +182,7 @@ export default function Message(props: Props) {
   const touchListener = useCallback((type: 'start' | 'move' | 'end' | 'cancel', event: React.TouchEvent<HTMLDivElement>) => {
     const current = context.refs.reference.current as HTMLDivElement | null;
     const replyDiv = replyIndicatorDivRef.current;
-    if (canReply && current && replyDiv && !!ownUser?.id) {
+    if (canReply && !serverActionsDisabled && current && replyDiv && !!ownUser?.id) {
       switch (type) {
         case 'start': {
           touchOngoingRef.current = true;
@@ -272,7 +275,7 @@ export default function Message(props: Props) {
         replyDiv.style.transform = `translate(-${touchShiftRef.current}px, 0px) ${touchTriggeredRef.current ? 'scale(1)' : 'scale(0.8)'}`;
       }
     }
-  }, [context.refs.reference.current, showReplyIndicator, replyClick, message, canReply, ownUser?.id]);
+  }, [context.refs.reference.current, showReplyIndicator, replyClick, message, canReply, serverActionsDisabled, ownUser?.id]);
 
   const tooltipSetReaction = React.useCallback((reaction: string) => {
     setReaction(reaction);
@@ -393,7 +396,7 @@ export default function Message(props: Props) {
   }, [message, attachments, setReaction, unsetReaction, canModerateUser, channelId, retrySend, discardPending]);
 
   const messageHoveredContent = useMemo(() => {
-    if (messageIsHovered) {
+    if (messageIsHovered && !serverActionsDisabled) {
       return ReactDOM.createPortal((
         <AnimatePresence>
           <motion.div
@@ -428,7 +431,7 @@ export default function Message(props: Props) {
     else {
       return null;
     }
-  }, [messageIsHovered, message, channelId, editClick, refs.setFloating, floatingStyle, replyClick, tooltipSetReaction, update])
+  }, [messageIsHovered, serverActionsDisabled, message, channelId, editClick, refs.setFloating, floatingStyle, replyClick, tooltipSetReaction, update])
 
   const returnValue = useMemo(() => {
     const content = (

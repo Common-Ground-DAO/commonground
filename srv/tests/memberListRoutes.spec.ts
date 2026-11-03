@@ -12,6 +12,10 @@
 
 const handlers: Record<string, (request: any, response: any, data: any) => Promise<any>> = {};
 const axiosPost = jest.fn();
+// `/getChannelMemberList` checks channel access before asking memberlist;
+// these cases always pass it (channelMemberListAccess.spec.ts covers the check)
+const messageHelper = { isChannelInActiveCommunity: jest.fn() };
+const permissionHelper = { hasPermissions: jest.fn() };
 
 jest.mock('../api/util', () => ({
   registerPostRoute: (_router: unknown, path: string, _validator: unknown, handler: any) => {
@@ -31,11 +35,13 @@ jest.mock('../validators', () => {
 jest.mock('../redis', () => ({ __esModule: true, default: { get: jest.fn(), getClient: jest.fn(() => ({})) } }));
 jest.mock('../api/emails', () => ({ __esModule: true, default: {}, emailEnabled: () => false }));
 for (const repository of [
-  'communities', 'articles', 'communityEvents', 'permissions', 'event', 'onchain', 'calls',
+  'communities', 'articles', 'communityEvents', 'event', 'onchain', 'calls',
   'files', 'newsletter', 'users',
 ]) {
   jest.doMock(`../repositories/${repository}`, () => ({ __esModule: true, default: {} }));
 }
+jest.doMock('../repositories/messages', () => ({ __esModule: true, default: messageHelper }));
+jest.doMock('../repositories/permissions', () => ({ __esModule: true, default: permissionHelper }));
 
 import { emptyChannelMemberList, emptyMemberList } from '../common/memberLists';
 import { convertUuidToBinary } from '../util/memberListHelpers';
@@ -50,7 +56,11 @@ beforeAll(() => {
   require('../api/community');
 });
 
-beforeEach(() => axiosPost.mockReset());
+beforeEach(() => {
+  axiosPost.mockReset();
+  messageHelper.isChannelInActiveCommunity.mockReset().mockResolvedValue(true);
+  permissionHelper.hasPermissions.mockReset().mockResolvedValue(true);
+});
 
 describe('/getMemberList', () => {
   const data = { communityId: COMMUNITY, offset: 0, limit: 10 };

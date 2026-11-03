@@ -17,7 +17,8 @@
 > `idx_messages_channelId_createdAt_live` and the idempotent message insert against commit
 > 30ce83e, 2026-11-02; the `createMessage` channel lock and `createdAt` rule against commits
 > 959064f and 1963d4f, 2026-11-02; the `notifications` unread index, the `chats` GIN
-> index and their lock note against commit 312b5e7, 2026-11-02
+> index and their lock note against commit 312b5e7, 2026-11-02; why the sync sequence and not an
+> `updatedAt` cursor (chat-sync close-out) against commit 3567377, 2026-11-03
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -543,6 +544,14 @@ index-only scans.
 Per-channel, commit-ordered change sequence for messages (chat-sync catch-up,
 `Message/getChanges`; migration `1793635200000-chatSyncSeq`):
 
+- Why a sequence and not an `updatedAt` cursor: commit order is not timestamp order
+  (the timestamp is taken when the statement runs, lock waits before the commit are
+  unbounded), so a time cursor needs an overlap window, `(updatedAt, id)` paging and
+  dedupe and can still miss a late commit. The trigger-set sequence is exact without a
+  clock, covers soft deletes (they are updates) and also covers writes by API processes of
+  the previous build during a deploy. The column is nullable without backfill so the
+  migration stays cheap on a large `messages` table (a row gets its seq on its next
+  write).
 - `channel_sync_state("channelId" uuid PK, "seq" bigint NOT NULL)` holds the last
   sequence assigned in a channel. A channel without a row has seq 0. GRANT `SELECT,
   INSERT, UPDATE` to `writer`, `SELECT` to `reader`. Entity

@@ -11,7 +11,7 @@ import { expectVisibility, openTab, showTab } from '../lib/tabs.ts';
 import { assert, sleep } from '../lib/ui.ts';
 
 /**
- * E8 (docs/todo/ROADMAP_chat-sync.md, Acceptance), independent parts:
+ * E8 (e2e/README.md "The chat-sync flows"), independent parts:
  *  - split view: B has the channel open in two windows side by side (both
  *    visible); A posts; both show it live, without any interaction;
  *  - frozen tab: B's tab is hidden behind another tab and frozen (CDP

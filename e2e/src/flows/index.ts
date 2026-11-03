@@ -40,9 +40,9 @@ export const flows: Flow[] = [
 
 /**
  * Named groups for --flow (a group name stands for its flows):
- * `chat-sync` is the acceptance set E1–E5, E7, E8 of
- * docs/todo/ROADMAP_chat-sync.md (E6 needs message persistence, which that
- * package does not ship).
+ * `chat-sync` is the acceptance set E1–E5, E7, E8 of the chat-sync package
+ * (e2e/README.md "The chat-sync flows"; E6, offline display, needs message
+ * persistence, which is not built — docs/todo/TODO.md).
  */
 export const flowGroups: Record<string, string[]> = {
   'chat-sync': [csCallChat, csUnreadTabs, csReconnect, csMultiTab, csNotifications, csLoginTime, csSplitFrozen].map(flow => flow.id),

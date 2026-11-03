@@ -10,7 +10,7 @@ import { assertConnected, pageNow, waitMessagesShown } from '../lib/live.ts';
 import { sleep, until } from '../lib/ui.ts';
 
 /**
- * E3 (docs/todo/ROADMAP_chat-sync.md, Acceptance): reconnect. B has the
+ * E3 (e2e/README.md "The chat-sync flows"): reconnect. B has the
  * channel open and goes offline; meanwhile A posts three messages and
  * edits an older one. Back online, B's open list shows all of it in order —
  * the edit included — without scrolling or a reload, and a message A posts

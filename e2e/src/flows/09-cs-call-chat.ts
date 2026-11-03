@@ -18,7 +18,7 @@ const MESSAGE_READ = /\/api\/v2\/Message\/(loadMessages|getChanges)\b/;
 const MESSAGE_READ_PATTERNS = ['*/api/v2/Message/loadMessages*', '*/api/v2/Message/getChanges*'];
 
 /**
- * E1 (docs/todo/ROADMAP_chat-sync.md, Acceptance): the first message of a
+ * E1 (e2e/README.md "The chat-sync flows"): the first message of a
  * call chat reaches a member who opens the call while it is posted.
  *
  * Two variants, each with a member of its own and a fresh call (the first

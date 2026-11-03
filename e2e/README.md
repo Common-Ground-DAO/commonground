@@ -142,9 +142,11 @@ guards report that wherever it happens.
 
 ### The chat-sync flows
 
-`cs-*` are the acceptance scenarios E1–E5, E7, E8 of
-`docs/todo/ROADMAP_chat-sync.md` (E6 needs message persistence, which that
-package does not ship). They are black-box: they act through the UI and
+`cs-*` are the acceptance scenarios E1–E5, E7, E8 of the chat-sync package
+(messages and read state in memory + server, independent tabs with
+catch-up: docs/frontend "Chat stores", docs/realtime "Tab Coordination").
+E6, offline display, needs message persistence, which is not built (open
+item in `docs/todo/TODO.md`). They are black-box: they act through the UI and
 read the DOM, the network, CDP and the app's own API routes — never the
 app's data-layer objects — so they stay valid while that layer is
 replaced. They were written before the rewrite and are red where the code

@@ -10,7 +10,7 @@ import { expectVisibility, openTab, showTab } from '../lib/tabs.ts';
 import { assert } from '../lib/ui.ts';
 
 /**
- * E4 (docs/todo/ROADMAP_chat-sync.md, Acceptance): two tabs of B in the
+ * E4 (e2e/README.md "The chat-sync flows"): two tabs of B in the
  * same channel, one in front. A posts; B switches tabs; B writes from the
  * second tab; both tabs are reloaded. Every tab, whenever it is in front,
  * shows every message (its own tab's and the other tab's included), in

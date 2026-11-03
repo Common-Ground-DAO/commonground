@@ -491,7 +491,8 @@ async function getOrCreateRoom({
     }
     // Same rule as the `join` request: only users who may join the call get a
     // peer in its room.
-    if (peerId !== callState.callCreator && !(await callHelper.hasPermissionToJoinCall(peerId, roomId))) {
+    // (the call creator included, unless banned from the community)
+    if (!(await callHelper.hasPermissionToJoinCall(peerId, roomId))) {
         throw new Error(errors.server.NOT_ALLOWED);
     }
     const { callCreator, slots: callSlots, stageSlots, audioOnly, highQuality, callType } = callState;

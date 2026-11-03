@@ -1039,8 +1039,8 @@ class CallHelper {
   /**
    * Whether `userId` may moderate the call `callId`: `CALL_MODERATE` on the
    * call through one of the user's claimed, live roles of the call's
-   * community, or `WEBRTC_MODERATE` on such a role, and the user is not banned
-   * from the community. (The call creator is handled by the call server.)
+   * community, or `WEBRTC_MODERATE` on such a role, or being the call's
+   * creator; and in every case no active ban in the call's community.
    */
   public async hasPermissionToModerateCall(
     userId: string,
@@ -1053,7 +1053,8 @@ class CallHelper {
         WHERE c."id" = $1
           AND NOT ${userBannedSql('$2', 'c."communityId"', '$5')}
           AND (
-            ${callPermissionOfUserSql('$2', 'c', 'ARRAY[$3]', '', '', false)}
+            c."callCreator" = $2
+            OR ${callPermissionOfUserSql('$2', 'c', 'ARRAY[$3]', '', '', false)}
             OR ${claimedCommunityPermissionSql('$2', 'c."communityId"', '$4')}
           )
       ) AS "hasPermission"
@@ -1064,11 +1065,11 @@ class CallHelper {
   /**
    * Whether the (logged-in) user `userId` may join the room of the call
    * `callId`: the call has not ended, its community is not deleted, the user
-   * is not banned from that community, and `CALL_JOIN` is granted to one of
-   * the user's claimed, live roles of the call's community or to that
-   * community's predefined Public role. A call open to the Public role can be
-   * joined by everyone who may see it through that role, members and
-   * non-members alike.
+   * is not banned from that community, and the user created the call or
+   * `CALL_JOIN` is granted to one of the user's claimed, live roles of the
+   * call's community or to that community's predefined Public role. A call
+   * open to the Public role can be joined by everyone who may see it through
+   * that role, members and non-members alike.
    */
   public async hasPermissionToJoinCall(
     userId: string,
@@ -1084,7 +1085,10 @@ class CallHelper {
         WHERE c."id" = $1
           AND c."endedAt" IS NULL
           AND NOT ${userBannedSql('$2', 'c."communityId"', '$6')}
-          AND ${callPermissionOfUserSql('$2', 'c', 'ARRAY[$3]', '$4', '$5')}
+          AND (
+            c."callCreator" = $2
+            OR ${callPermissionOfUserSql('$2', 'c', 'ARRAY[$3]', '$4', '$5')}
+          )
       ) AS "hasPermission"
     `, [callId, userId, CallPermission.CALL_JOIN, RoleType.PREDEFINED, PredefinedRole.Public, UserBlockState.BANNED]);
     return result.rows[0].hasPermission as boolean;

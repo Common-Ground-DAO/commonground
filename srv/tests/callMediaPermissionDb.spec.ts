@@ -33,7 +33,7 @@ jest.mock('../util/postgres', () => ({
   default: { query: (...args: any[]) => (mockPoolTarget as any).query(...args) },
 }));
 
-import callHelper from '../repositories/calls';
+import callHelper, { MEMBER_PERMISSIONS, MODERATOR_PERMISSIONS } from '../repositories/calls';
 import { MediasoupCallJoinGrants1793635300000 as GrantsMigration } from '../migrations/1793635300000-mediasoupCallJoinGrants';
 import { CallPermission, CommunityPermission } from '../common/enums';
 import { MediaSendPermission } from '../mediasoup/mediaPermissions';
@@ -50,6 +50,8 @@ const CALL_CUSTOM = id(0x202);    // a custom role titled "Public": everything
 const CALL_FOREIGN = id(0x203);   // the other community's roles: everything
 const CALL_ENDED = id(0x204);     // as CALL, ended
 const CALL_DELCOM = id(0x205);    // Member of the deleted community: everything
+const CALL_BANNED_CREATOR = id(0x206); // created by BANNED_SPEAKER; Admin only
+const CALL_PRESETS = id(0x207);  // the server's presets and the web client's "full" preset (creator: CREATOR)
 const UNKNOWN_CALL = id(0x2ff);
 // roles
 const R_ADMIN = id(0x300);
@@ -63,6 +65,9 @@ const R_OTHER_PUBLIC = id(0x307);
 const R_OTHER_MEMBER = id(0x308);
 const R_OTHER_WEBRTC_MOD = id(0x309);
 const R_DELCOM_MEMBER = id(0x30a);
+const R_PRESET_MEMBER = id(0x30b);   // MEMBER_PERMISSIONS (a call without custom permissions)
+const R_PRESET_MOD = id(0x30c);      // MODERATOR_PERMISSIONS
+const R_CLIENT_FULL = id(0x30d);     // the web client's "full" preset
 // users
 const CREATOR = id(0x400);        // created the calls, claimed Member
 const MEMBER = id(0x401);         // claimed Member
@@ -74,6 +79,11 @@ const BANNED_SPEAKER = id(0x406); // banned, still holds Member + Speaker
 const OTHER_MOD = id(0x407);      // WEBRTC_MODERATE and Member in the other community only
 const UNCLAIMED = id(0x408);      // Speaker, not claimed
 const BAN_OVER = id(0x409);       // claimed Speaker, a ban that has run out
+const PRESET_MEMBER = id(0x40a);  // claimed R_PRESET_MEMBER
+const PRESET_MOD = id(0x40b);     // claimed R_PRESET_MOD
+const CLIENT_FULL = id(0x40c);    // claimed R_CLIENT_FULL
+// what the call modal's "full" access grants a role (src/context/CallProvider.tsx, startCall)
+const CLIENT_FULL_PRESET = ['CALL_EXISTS', 'CALL_JOIN', 'AUDIO_SEND', 'VIDEO_SEND', 'CHANNEL_READ', 'CHANNEL_WRITE', 'SHARE_SCREEN'];
 
 const AUDIO = CallPermission.AUDIO_SEND;
 const VIDEO = CallPermission.VIDEO_SEND;
@@ -130,6 +140,7 @@ describeDb('call media and moderation permissions on PostgreSQL', () => {
     for (const [callId, communityId, ended] of calls) {
       await q(`INSERT INTO calls VALUES ($1, $2, $3, $4)`, [callId, communityId, ended ? new Date() : null, CREATOR]);
     }
+    await q(`INSERT INTO calls VALUES ($1, $2, NULL, $3), ($4, $2, NULL, $5)`, [CALL_BANNED_CREATOR, COMMUNITY, BANNED_SPEAKER, CALL_PRESETS, CREATOR]);
     const roles: [string, string, string, string, string][] = [
       [R_ADMIN, COMMUNITY, 'Admin', 'PREDEFINED', '{}'],
       [R_MEMBER, COMMUNITY, 'Member', 'PREDEFINED', '{}'],
@@ -142,6 +153,9 @@ describeDb('call media and moderation permissions on PostgreSQL', () => {
       [R_OTHER_MEMBER, OTHER_COMMUNITY, 'Member', 'PREDEFINED', '{}'],
       [R_OTHER_WEBRTC_MOD, OTHER_COMMUNITY, 'Call mods', 'CUSTOM_MANUAL_ASSIGN', '{WEBRTC_MODERATE}'],
       [R_DELCOM_MEMBER, DELETED_COMMUNITY, 'Member', 'PREDEFINED', '{}'],
+      [R_PRESET_MEMBER, COMMUNITY, 'Preset member', 'CUSTOM_MANUAL_ASSIGN', '{}'],
+      [R_PRESET_MOD, COMMUNITY, 'Preset mod', 'CUSTOM_MANUAL_ASSIGN', '{}'],
+      [R_CLIENT_FULL, COMMUNITY, 'Client full', 'CUSTOM_MANUAL_ASSIGN', '{}'],
     ];
     for (const [roleId, communityId, title, type, permissions] of roles) {
       await q(`INSERT INTO roles VALUES ($1, $2, $3, $4, NULL, $5)`, [roleId, communityId, title, type, permissions]);
@@ -156,6 +170,9 @@ describeDb('call media and moderation permissions on PostgreSQL', () => {
       [R_OTHER_WEBRTC_MOD, OTHER_MOD, true], [R_OTHER_MEMBER, OTHER_MOD, true],
       [R_SPEAKER, UNCLAIMED, false],
       [R_SPEAKER, BAN_OVER, true],
+      [R_PRESET_MEMBER, PRESET_MEMBER, true],
+      [R_PRESET_MOD, PRESET_MOD, true],
+      [R_CLIENT_FULL, CLIENT_FULL, true],
     ];
     for (const [roleId, userId, claimed] of claims) {
       await q(`INSERT INTO roles_users_users VALUES ($1, $2, $3)`, [roleId, userId, claimed]);
@@ -180,6 +197,10 @@ describeDb('call media and moderation permissions on PostgreSQL', () => {
       [CALL_FOREIGN, R_OTHER_MEMBER, ADMIN],
       [CALL_ENDED, R_SPEAKER, FULL],
       [CALL_DELCOM, R_DELCOM_MEMBER, FULL],
+      [CALL_BANNED_CREATOR, R_ADMIN, ADMIN],
+      [CALL_PRESETS, R_PRESET_MEMBER, `{${MEMBER_PERMISSIONS.join(',')}}`],
+      [CALL_PRESETS, R_PRESET_MOD, `{${MODERATOR_PERMISSIONS.join(',')}}`],
+      [CALL_PRESETS, R_CLIENT_FULL, `{${CLIENT_FULL_PRESET.join(',')}}`],
     ];
     for (const [callId, roleId, perms] of permissions) {
       await q(`INSERT INTO callpermissions VALUES ($1, $2, $3)`, [callId, roleId, perms]);
@@ -254,6 +275,20 @@ describeDb('call media and moderation permissions on PostgreSQL', () => {
       }
     });
 
+    it('the server\'s presets and the web client\'s "full" preset allow every kind', async () => {
+      for (const kind of KINDS) {
+        expect(await maySend(PRESET_MEMBER, CALL_PRESETS, kind)).toBe(true);
+        expect(await maySend(PRESET_MOD, CALL_PRESETS, kind)).toBe(true);
+        expect(await maySend(CLIENT_FULL, CALL_PRESETS, kind)).toBe(true);
+      }
+    });
+
+    it('a banned call creator sends nothing', async () => {
+      for (const kind of KINDS) {
+        expect(await maySend(BANNED_SPEAKER, CALL_BANNED_CREATOR, kind)).toBe(false);
+      }
+    });
+
     it('on a broadcast stage the roles are not asked', async () => {
       expect(await maySend(VISITOR, CALL, VIDEO, true)).toBe(true);
       expect(await maySend(MEMBER, CALL, SHARE, true)).toBe(true);
@@ -281,6 +316,12 @@ describeDb('call media and moderation permissions on PostgreSQL', () => {
       expect(await mayModerate(OTHER_MOD, CALL_FOREIGN)).toBe(false);
       expect(await mayModerate(VISITOR, CALL_CUSTOM)).toBe(false);
       expect(await mayModerate(VISITOR, CALL_PUBLIC)).toBe(false);
+    });
+
+    it('the call creator moderates without a role on the call, unless banned', async () => {
+      expect(await mayModerate(CREATOR, CALL)).toBe(true);
+      expect(await mayModerate(CREATOR, CALL_FOREIGN)).toBe(true);
+      expect(await mayModerate(BANNED_SPEAKER, CALL_BANNED_CREATOR)).toBe(false);
     });
 
     it('a banned user does not moderate', async () => {

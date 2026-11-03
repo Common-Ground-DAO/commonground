@@ -1305,12 +1305,11 @@ export default class Room extends EventEmitter {
         }
     }
 
+    /** The call creator included (`hasPermissionToModerateCall`), unless banned. */
     private async hasModeratePermissions(peerId: string) {
-        if (peerId !== this._callCreator) {
-            const hasPermission = await callHelper.hasPermissionToModerateCall(peerId, this._roomId);
-            if (!hasPermission) {
-                throw new Error(errors.server.NOT_ALLOWED);
-            }
+        const hasPermission = await callHelper.hasPermissionToModerateCall(peerId, this._roomId);
+        if (!hasPermission) {
+            throw new Error(errors.server.NOT_ALLOWED);
         }
     }
 
@@ -1328,12 +1327,11 @@ export default class Room extends EventEmitter {
         }
     }
 
+    /** The call creator included (`hasPermissionToJoinCall`), unless banned. */
     private async hasJoinPermissions(peerId: string) {
-        if (peerId !== this._callCreator) {
-            const hasPermission = await callHelper.hasPermissionToJoinCall(peerId, this._roomId);
-            if (!hasPermission) {
-                throw new Error(errors.server.NOT_ALLOWED);
-            }
+        const hasPermission = await callHelper.hasPermissionToJoinCall(peerId, this._roomId);
+        if (!hasPermission) {
+            throw new Error(errors.server.NOT_ALLOWED);
         }
     }
 

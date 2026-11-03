@@ -46,7 +46,8 @@ export default function ArticleManagement(props: Props) {
             rolePermissions.push({
                 permissions: ['ARTICLE_PREVIEW', 'ARTICLE_READ'],
                 roleId: publicRole.id,
-                roleTitle: publicRole.title
+                roleTitle: publicRole.title,
+                roleType: publicRole.type,
             });
         }
         return {

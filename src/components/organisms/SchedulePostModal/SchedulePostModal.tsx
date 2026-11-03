@@ -48,7 +48,7 @@ const SchedulePostModal: React.FC<Props> = (props) => {
     const memberRole = roles.find(r => isPredefinedRolePermission(r, PredefinedRole.Member));
     if (publicRole?.permissions.includes('ARTICLE_READ') || memberRole?.permissions.includes('ARTICLE_READ')) {
       const fullMemberRole = commContext.roles.find(role => isPredefinedRole(role, PredefinedRole.Member));
-      if (fullMemberRole) return [{ roleId: fullMemberRole.id, roleTitle: PredefinedRole.Member }];
+      if (fullMemberRole) return [{ roleId: fullMemberRole.id, roleTitle: PredefinedRole.Member, roleType: fullMemberRole.type }];
     }
 
     return roles.filter(r => r.permissions.includes('ARTICLE_READ'));

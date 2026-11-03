@@ -25,6 +25,7 @@ export function permissionTypeToChannelPermissions(
     return {
       roleId: roleId,
       roleTitle: role?.title || '',
+      roleType: role?.type,
       permissions: newPermissions
     }
   });

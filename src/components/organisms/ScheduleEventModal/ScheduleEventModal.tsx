@@ -20,7 +20,7 @@ import { isUploadTemporarilyRefused, notifyIfImageRejected } from 'moderation/im
 import errors from 'common/errors';
 import ToggleInputField from 'components/molecules/inputs/ToggleInputField/ToggleInputField';
 import RolePermissionToggle, { PermissionType } from 'components/molecules/RolePermissionToggle/RolePermissionToggle';
-import { PredefinedRole } from 'common/enums';
+import { PredefinedRole, RoleType } from 'common/enums';
 import { useOwnUser } from 'context/OwnDataProvider';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import { convertContentToPlainText } from 'common/converters';
@@ -78,6 +78,7 @@ function permissionTypeToEventPermissions(
     return {
       roleId: roleId,
       roleTitle: role?.title || '',
+      roleType: role?.type,
       permissions: newPermissions
     }
   });
@@ -138,11 +139,13 @@ const ScheduleEventModal: React.FC<Props> = (props) => {
       {
         roleId: roles.find(role => isPredefinedRole(role, PredefinedRole.Public))?.id,
         roleTitle: PredefinedRole.Public,
+        roleType: RoleType.PREDEFINED,
         permissions: ['EVENT_PREVIEW']
       },
       {
         roleId: roles.find(role => isPredefinedRole(role, PredefinedRole.Member))?.id,
         roleTitle: PredefinedRole.Member,
+        roleType: RoleType.PREDEFINED,
         permissions: ['EVENT_PREVIEW', 'EVENT_ATTEND']
       },
     ] as Models.Community.Event['rolePermissions'];

@@ -13,7 +13,7 @@ import CloseIcon from 'components/atoms/icons/16/Close-1.svg?react';
 import RolePermissionToggle, { PermissionType } from "components/molecules/RolePermissionToggle/RolePermissionToggle";
 
 import { useLoadedCommunityContext } from "context/CommunityProvider";
-import { PredefinedRole } from "common/enums";
+import { PredefinedRole, RoleType } from "common/enums";
 import { permissionTypeToChannelPermissions } from "./EditChannelForm.helpers";
 import { useNavigationContext } from "components/SuspenseRouter/SuspenseRouter";
 import { useSnackbarContext } from "context/SnackbarContext";
@@ -81,11 +81,13 @@ export default function EditChannelForm(props: Props) {
       {
         roleId: roles.find(role => isPredefinedRole(role, PredefinedRole.Public))?.id,
         roleTitle: PredefinedRole.Public,
+        roleType: RoleType.PREDEFINED,
         permissions: ['CHANNEL_EXISTS', 'CHANNEL_READ']
       },
       {
         roleId: roles.find(role => isPredefinedRole(role, PredefinedRole.Member))?.id,
         roleTitle: PredefinedRole.Member,
+        roleType: RoleType.PREDEFINED,
         permissions: ['CHANNEL_EXISTS', 'CHANNEL_READ', 'CHANNEL_WRITE']
       },
     ] as Models.Community.CommunityChannelPermission[];

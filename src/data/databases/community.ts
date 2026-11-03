@@ -819,6 +819,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
         channelData.rolePermissions.push({
           roleId: adminRole.id,
           roleTitle: adminRole.title,
+          roleType: adminRole.type,
           permissions: ["CHANNEL_EXISTS", "CHANNEL_MODERATE", "CHANNEL_READ", "CHANNEL_WRITE"],
         });
       }
@@ -1082,7 +1083,8 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
                     channel.rolePermissions.some((newPermisson, i) => {
                       const existingPermission = oldChannel?.rolePermissions.find(rp => (
                         rp.roleId === newPermisson.roleId &&
-                        rp.roleTitle === newPermisson.roleTitle
+                        rp.roleTitle === newPermisson.roleTitle &&
+                        rp.roleType === newPermisson.roleType
                       ));
                       return (
                         !existingPermission ||

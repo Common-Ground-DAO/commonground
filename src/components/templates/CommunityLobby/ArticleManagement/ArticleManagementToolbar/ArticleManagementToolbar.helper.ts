@@ -45,6 +45,7 @@ export function permissionTypeToArticlePermissions(
     return {
       roleId: roleId,
       roleTitle: role?.title || '',
+      roleType: role?.type,
       permissions: newPermissions
     }
   });

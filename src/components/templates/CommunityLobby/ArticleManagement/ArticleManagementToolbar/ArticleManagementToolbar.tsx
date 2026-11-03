@@ -193,6 +193,7 @@ const VisibilityDropdown: React.FC<VisibilityDropdownProps> = ({ permissions, se
             result.push({
                 roleId: publicRole.id,
                 roleTitle: publicRole.title,
+                roleType: publicRole.type,
                 permissions: ['ARTICLE_PREVIEW', 'ARTICLE_READ']
             });
         }

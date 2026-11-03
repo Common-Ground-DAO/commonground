@@ -27,6 +27,11 @@ const fake = vi.hoisted(() => ({
   io: undefined as FakeIo | undefined,
   loginManager: {} as Record<string, any>,
   serviceWorkerManager: {} as Record<string, any>,
+  cleanups: [] as { known: string[] }[],
+  dbTracker: {
+    knownDatabaseNames: () => ['commonGroundDB_chunked_databases', 'commonGroundDB_users'],
+    forgetDatabase: (_name: string) => undefined,
+  },
 }));
 vi.mock('socket.io-client', () => ({
   io: (...args: Parameters<FakeIo['io']>) => fake.io!.io(...args),
@@ -37,7 +42,15 @@ vi.mock('data/util/device', () => ({
 vi.mock('data/api/user', () => ({ default: { ensureSession: async () => undefined } }));
 vi.mock('data/appstate/login', () => ({ default: fake.loginManager }));
 vi.mock('data/appstate/serviceWorker', () => ({ default: fake.serviceWorkerManager }));
-vi.mock('data/databases/dbTracker', () => ({ default: { deleteOldIndexedDbs: async () => undefined } }));
+vi.mock('data/databases/dbTracker', () => ({ default: fake.dbTracker }));
+vi.mock('data/databases/obsoleteDatabases', () => ({
+  OBSOLETE_DATABASE_CLEANUP_DELAY_MS: 10_000,
+  deleteObsoleteDatabases: async (deps: { knownNames: () => string[] }) => {
+    fake.cleanups.push({ known: deps.knownNames() });
+    // never settles: nothing may wait for it
+    return new Promise(() => undefined);
+  },
+}));
 
 /** Opens a tab; its first connect is accepted once the handlers are in place (unless `accept: false`). */
 async function openTab(deviceId?: string, options: { accept?: boolean } = {}) {
@@ -172,6 +185,23 @@ describe('connectionManager', () => {
     expect(fake.serviceWorkerManager.update).toHaveBeenCalledWith(true);
     expect(listener).toHaveBeenCalledWith(true);
     expect(tab.connectionManager.updateAvailable).toBe(true);
+    expect(tab.connectionManager.webSocketState).toBe('connected');
+  });
+
+  it('deletes the obsolete IndexedDB databases once, after the startup delay, without waiting for it', async () => {
+    useDataLayerFakeTimers();
+    fake.cleanups.length = 0;
+    const tab = await openTab('dev-1');
+    await settle();
+    expect(tab.appEvents).toEqual(['cliConnectionEstablished']);
+    expect(fake.cleanups).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settle();
+    expect(fake.cleanups).toEqual([{ known: ['commonGroundDB_chunked_databases', 'commonGroundDB_users'] }]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await settle();
+    expect(fake.cleanups).toHaveLength(1);
+    // the tab is unaffected while the cleanup hangs
     expect(tab.connectionManager.webSocketState).toBe('connected');
   });
 });

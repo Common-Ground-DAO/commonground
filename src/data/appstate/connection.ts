@@ -4,6 +4,7 @@
 
 import webSocketManager from "./webSocket";
 import type { LiveKind } from "./transport";
+import { OBSOLETE_DATABASE_CLEANUP_DELAY_MS } from "../databases/obsoleteDatabases";
 
 type WebSocketStateListener = (state: Common.WebSocketState) => void;
 type ServiceWorkerStateListener = (state: Common.ServiceWorkerState) => void;
@@ -49,7 +50,7 @@ export class ConnectionManager {
   private _serviceWorkerNavigateListeners = new Set<(url: string) => void>();
   private _clientEventHandlers: Map<Events.ClientEvent["type"], Set<any>> = new Map();
   private _autoLoginTriggered = false;
-  private _cleanUpIndexedDbsPromise: Promise<void> | null = null;
+  private _cleanUpIndexedDbsScheduled = false;
   private _refreshTimer: ReturnType<typeof setTimeout> | undefined;
   /** a `restored` happened while the page was hidden: refresh once it is visible */
   private _refreshPending = false;
@@ -265,25 +266,23 @@ export class ConnectionManager {
     }
   }
 
-  // indexedDb cleanup: once per page, in every tab (deleting a database is idempotent)
+  /**
+   * Deletes the IndexedDB databases of removed client caches
+   * (obsoleteDatabases.ts): once per page, in every tab (deleting is
+   * idempotent), after a delay, fire-and-forget. Nothing waits for it and it
+   * never throws.
+   */
   private cleanUpIndexedDbs(): void {
-    if (!this._cleanUpIndexedDbsPromise) {
-      this._cleanUpIndexedDbsPromise = new Promise((resolve, reject) => {
-        setTimeout(async () => {
-          console.log("SPAWNING DB CLEANUP JOB...");
-          try {
-            const dbTracker = (await import('../databases/dbTracker')).default;
-            await dbTracker.deleteOldIndexedDbs();
-            resolve();
-          }
-          catch (e) {
-            console.error("Error during indexedDb cleanup", e);
-            reject(e);
-          }
-        }, 10_000);
-      });
-      this._cleanUpIndexedDbsPromise.catch(() => undefined);
-    }
+    if (this._cleanUpIndexedDbsScheduled) return;
+    this._cleanUpIndexedDbsScheduled = true;
+    setTimeout(() => {
+      Promise.all([import('../databases/obsoleteDatabases'), import('../databases/dbTracker')])
+        .then(([{ deleteObsoleteDatabases }, { default: dbTracker }]) => deleteObsoleteDatabases({
+          knownNames: () => dbTracker.knownDatabaseNames(),
+          forget: name => dbTracker.forgetDatabase(name),
+        }))
+        .catch(e => console.warn("Obsolete IndexedDB cleanup could not start", e));
+    }, OBSOLETE_DATABASE_CLEANUP_DELAY_MS);
   }
 
   /* LISTENER MANAGEMENT */

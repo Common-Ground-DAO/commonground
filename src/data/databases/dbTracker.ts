@@ -6,7 +6,6 @@ import config from "common/config";
 import { isAppVersionNewer } from "data/util/appversion";
 
 const identifier = "CG_KNOWN_INDEXEDDBS";
-export const chunkedDatabaseName = `${config.IDB_PREFIX}_chunked_databases`;
 
 type DbInfo = {
     createdInAppVersion: string;
@@ -41,8 +40,8 @@ class DbTracker {
                         const ownDbInfo = this.existingDatabases[oldName] as DbInfo | undefined;
                         const newDbInfo = newValue[oldName] as DbInfo | undefined;
                         if (newDbInfo === undefined) {
-                            // oldName was deleted (not happening yet)
-                            console.warn("dbInfo is gone from new localstorage object, this should not happen for now");
+                            // another tab deleted it (forgetDatabase)
+                            delete this.existingDatabases[oldName];
                         }
                         else {
                             if (newDbInfo.createdInAppVersion !== ownDbInfo?.createdInAppVersion) {
@@ -122,43 +121,16 @@ class DbTracker {
         }
     }
 
-    public async deleteOldIndexedDbs(): Promise<void> {
-        const namesToDeleteSet =  new Set<string>();
-        const handleDbName = (dbName: string) => {
-            if (dbName.startsWith(`${config.IDB_PREFIX}_chunked_`) && dbName !== chunkedDatabaseName) {
-                namesToDeleteSet.add(dbName);
-            }
-        };
-        for (const dbName in this.existingDatabases) {
-            handleDbName(dbName);
-        }
-        if (!!window.indexedDB && !!window.indexedDB.databases) {
-            try {
-                const databases = await window.indexedDB.databases();
-                for (const database of databases) {
-                    if (!!database.name) {
-                        handleDbName(database.name);
-                    }
-                }
-            }
-            catch (e) {
-                console.error("Could not retrieve indexedDB databases for cleanup: ", e);
-            }
-        }
-        const deleteNames = Array.from(namesToDeleteSet);
-        if (deleteNames.length > 0) {
-            for (const dbName of deleteNames) {
-                try {
-                    await window.indexedDB.deleteDatabase(dbName);
-                    delete this.existingDatabases[dbName];
-                    console.log(`Deleted old indexedDB: ${dbName}`);
-                    localStorage.setItem(identifier, JSON.stringify(this.existingDatabases));
-                }
-                catch (e) {
-                    console.error(`Could not delete old indexedDB ${dbName}: `, e);
-                }
-            }
-        }
+    /** Names of the databases this browser registered (incl. ones that may no longer exist). */
+    public knownDatabaseNames(): string[] {
+        return Object.keys(this.existingDatabases);
+    }
+
+    /** Drops a deleted database from the registry (see obsoleteDatabases.ts). */
+    public forgetDatabase(dbName: string) {
+        if (!(dbName in this.existingDatabases)) return;
+        delete this.existingDatabases[dbName];
+        localStorage.setItem(identifier, JSON.stringify(this.existingDatabases));
     }
 }
 

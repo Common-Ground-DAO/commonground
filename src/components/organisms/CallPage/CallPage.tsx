@@ -5,7 +5,7 @@
 import './CallPage.css';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCallContext } from 'context/CallProvider';
-import data from 'data';
+import { chat } from 'data/chat/runtime';
 import { useNavigate, useParams } from 'react-router';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
@@ -53,7 +53,8 @@ const CallPage: React.FC = () => {
   const currentCall = useMemo(() => {
     const call = calls.find(c => c.id === urlCallId);
     if (!!call) {
-      data.channelManager.registerAccessForChannel({
+      // registered during render, before the call chat's window opens
+      chat.channels.registerAccessForChannel({
         callId: call.id,
         channelId: call.channelId,
       });
@@ -96,22 +97,28 @@ const CallPage: React.FC = () => {
     isFullscreen ? 'full-screen' : ''
   ].join(' ').trim();
 
-  const renderChatOrAudience = useCallback(() => {
-    if (isMobile && currentCall?.callType === 'broadcast' && !showChat) {
+  // the call object is replaced on every calls update: depend on what the chat
+  // uses, and keep the element, so the call chat does not re-render with it
+  const currentCallId = currentCall?.id;
+  const currentCallChannelId = currentCall?.channelId;
+  const currentCallType = currentCall?.callType;
+  const chatOrAudience = useMemo(() => {
+    if (isMobile && currentCallType === 'broadcast' && !showChat) {
       return <Scrollable innerClassName='flex flex-col gap-4 p-4'>
         <AudienceList />
       </Scrollable>;
     }
 
     return <div className='call-chat'>
-      <MessageViewInner
-        channelId={currentCall?.channelId || ''}
+      {/* no window without a call: its channel and access are unknown */}
+      {!!currentCallId && !!currentCallChannelId && <MessageViewInner
+        channelId={currentCallChannelId}
         hideInput={urlCallId !== callId}
         onMobileFocus={setMobileFocused}
         callMode
-      />
+      />}
     </div>;
-  }, [isMobile, currentCall?.callType, currentCall?.channelId, showChat, urlCallId, callId]);
+  }, [isMobile, currentCallId, currentCallChannelId, currentCallType, showChat, urlCallId, callId]);
 
   const onJoinCall = useCallback((currentCall: Models.Calls.Call) => {
     if(currentCall.callMembers >= currentCall.slots){
@@ -164,7 +171,7 @@ const CallPage: React.FC = () => {
             standalone
           />
         </div>}
-        {renderChatOrAudience()}
+        {chatOrAudience}
         {isMobile && <ReactionPicker
           showPicker={showReactionPicker}
           closePicker={() => setShowReactionPicker(false)}

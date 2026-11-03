@@ -40,7 +40,7 @@ import { ArrowsOutSimple, Globe, Headphones, Link, MapPin, SignIn, SignOut } fro
 import SimpleLink from 'components/atoms/SimpleLink/SimpleLink';
 import { useCommunityListView } from 'context/CommunityListViewProvider';
 import MessageViewInner from 'views/MessageViewInner/MessageViewInner';
-import channelDatabaseManager from 'data/databases/channel';
+import { chat } from 'data/chat/runtime';
 import Jdenticon from 'components/atoms/Jdenticon/Jdenticon';
 import UserTooltip from 'components/organisms/UserTooltip/UserTooltip';
 import { getDisplayName } from '../../util';
@@ -212,7 +212,7 @@ const Event: React.FC<Props> = (props) => {
       communityApi.getCall({ id: event.callId, communityId: event.communityId })
       .then(data => {
         if (mounted) {
-          channelDatabaseManager.registerAccessForChannel({
+          chat.channels.registerAccessForChannel({
             channelId: data.channelId,
             communityId: data.communityId,
             callId: data.id,

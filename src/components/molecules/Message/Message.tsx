@@ -358,10 +358,12 @@ export default function Message(props: Props) {
   // `message` keeps its object identity while unchanged (chat-sync windows),
   // so depending on it re-renders exactly on edits, reactions and sendStatus.
   // `data-timestamp` is on every item, pending sends included: the list
-  // anchors its scroll position by it.
+  // anchors its scroll position by it. `data-send-status` is present only
+  // while a send or edit is in flight or failed (the `sendStatus` value), so
+  // an item without it shows what the server stored.
   const messageContent = useMemo(() => {
     return (
-      <div className="message-item-content" ref={messageRef} data-timestamp={message.createdAt.toISOString()}>
+      <div className="message-item-content" ref={messageRef} data-timestamp={message.createdAt.toISOString()} data-send-status={message.sendStatus}>
         <div className="message-item-message">
           <MessageBodyRenderer
             message={message}

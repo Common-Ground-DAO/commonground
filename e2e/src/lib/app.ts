@@ -162,17 +162,25 @@ export async function sendMessage(page: Page, text: string) {
   return waitMessageConfirmed(page, text);
 }
 
+/**
+ * A `.message-item` that contains this shows what the server stored: every
+ * item carries `data-timestamp`, pending sends included, but
+ * `data-send-status` (`sending`, `error-send`, `error-update`) only while a
+ * send or edit is in flight or failed.
+ */
+export const CONFIRMED_MESSAGE_CONTENT = '.message-item-content[data-timestamp]:not([data-send-status])';
+
 /** the message with this text is shown and confirmed by the server; returns its element id */
 export async function waitMessageConfirmed(page: Page, text: string, timeout = 20_000): Promise<string> {
-  const handle = await page.waitForFunction((needle: string) => {
+  const handle = await page.waitForFunction((needle: string, confirmed: string) => {
     for (const item of Array.from(document.querySelectorAll<HTMLElement>('.message-item'))) {
       const body = item.querySelector<HTMLElement>('.message-item-message');
-      if (body?.innerText.includes(needle) && item.querySelector('.message-item-content[data-timestamp]')) {
+      if (body?.innerText.includes(needle) && item.querySelector(confirmed)) {
         return item.id || 'unknown';
       }
     }
     return null;
-  }, { timeout, polling: 100 }, text);
+  }, { timeout, polling: 100 }, text, CONFIRMED_MESSAGE_CONTENT);
   return (await handle.jsonValue()) as string;
 }
 
@@ -186,7 +194,8 @@ export async function openChannel(t: FlowContext, page: Page, channelPath: strin
  * Edits the own message containing `text` in the open channel: the hover
  * tooltip's edit button, then `suffix` appended in the composer (it is
  * prefilled with the message) and sent. Resolves when the sender's list
- * shows the edited text.
+ * shows the edited text confirmed by the server (`CONFIRMED_MESSAGE_CONTENT`:
+ * an edit in flight shows the new text too).
  */
 export async function editMessage(page: Page, text: string, suffix: string) {
   const id = await waitMessageConfirmed(page, text, 10_000);
@@ -212,8 +221,9 @@ export async function editMessage(page: Page, text: string, suffix: string) {
   await page.keyboard.press('End');
   await page.keyboard.type(suffix, { delay: 3 });
   await page.keyboard.press('Enter');
-  await page.waitForFunction((msgId: string, edited: string) => {
+  await page.waitForFunction((msgId: string, edited: string, confirmed: string) => {
     const el = document.getElementById(msgId);
-    return !!el && !el.classList.contains('editing') && !!(el.querySelector('.message-item-message') as HTMLElement | null)?.innerText.includes(edited);
-  }, { timeout: 10_000 }, id, `${text}${suffix}`);
+    return !!el && !el.classList.contains('editing') && !!el.querySelector(confirmed) &&
+      !!(el.querySelector('.message-item-message') as HTMLElement | null)?.innerText.includes(edited);
+  }, { timeout: 10_000 }, id, `${text}${suffix}`, CONFIRMED_MESSAGE_CONTENT);
 }

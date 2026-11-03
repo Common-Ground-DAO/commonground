@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import type { Page } from 'puppeteer';
-import { connectionState, EDITOR } from './app.ts';
+import { CONFIRMED_MESSAGE_CONTENT, connectionState, EDITOR } from './app.ts';
 import { trackWebSockets } from './cdp.ts';
 import type { ExpectedFailure } from './harness.ts';
 import { assert, describe, sleep, until } from './ui.ts';
@@ -106,12 +106,12 @@ export type ShownMessage = {
 /**
  * The messages a list shows, in visual order (top to bottom): every
  * `.message-item` under `scope` (default: the page), with its text, whether
- * the server confirmed it (it has a timestamp), the "edited" marker and
+ * the server confirmed it (`CONFIRMED_MESSAGE_CONTENT`), the "edited" marker and
  * whether it is in view (inside its nearest scrolling ancestor's box and the
  * window).
  */
 export async function shownMessages(page: Page, scope = 'body'): Promise<ShownMessage[]> {
-  return within(page.evaluate((sel: string) => {
+  return within(page.evaluate((sel: string, confirmedContent: string) => {
     const root = document.querySelector(sel);
     if (!root) {
       return [];
@@ -133,14 +133,14 @@ export async function shownMessages(page: Page, scope = 'body'): Promise<ShownMe
         const bottom = Math.min(box.bottom, window.innerHeight);
         return {
           text: (item.querySelector<HTMLElement>('.message-item-message')?.innerText ?? '').trim(),
-          confirmed: !!item.querySelector('.message-item-content[data-timestamp]'),
+          confirmed: !!item.querySelector(confirmedContent),
           top: Math.round(rect.top),
           edited: !!item.querySelector('.message-item-date-container.edited'),
           inView: rect.height > 0 && rect.bottom > top + 1 && rect.top < bottom - 1,
         };
       })
       .sort((a, b) => a.top - b.top);
-  }, scope), EVAL_TIMEOUT_MS, 'the message list');
+  }, scope, CONFIRMED_MESSAGE_CONTENT), EVAL_TIMEOUT_MS, 'the message list');
 }
 
 /**

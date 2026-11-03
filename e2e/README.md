@@ -162,8 +162,10 @@ together with `lib/app.ts`/`lib/live.ts`): the connection indicator
 `#cg-connection-indicator` with the class `cg-connection-indicator-<state>`
 (`hidden`, `connecting`, `connected`, `disconnected`, `offline`, …); the
 stored user under the `localStorage` key `CG_CURRENT_USER` (readiness and
-login tracking); `.message-item` / `.message-item-message` /
-`.message-item-content[data-timestamp]` for messages,
+login tracking); `.message-item` / `.message-item-message` for messages, confirmed by the
+server when the item's `.message-item-content` has `data-timestamp` and no
+`data-send-status` (present while a send or edit is in flight or failed —
+`data-timestamp` alone is on pending sends too),
 `.text-channel-item-info[title].item-unread` for the unread dot and
 `.notification-count` in the main menu for the badge.
 

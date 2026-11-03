@@ -42,7 +42,9 @@
 > article-room routes, message echo, call-chat delivery) and the test list against commit
 > ce09d8a, 2026-11-02; the review fixes (`logoutDeviceSockets`, per-socket article limit,
 > `emitMessageEvents` never rejects) against commit 1b09f87 and the test list (with
-> `callDeliveryTargetsDb`) against commit 7f39d24, 2026-11-02.
+> `callDeliveryTargetsDb`) against commit 7f39d24, 2026-11-02; the community check of the
+> message access scope, `/getMemberList`, `/getUserCommunityRoleIds` and the memberlist
+> routes against commit 8e88b9a, 2026-11-03.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -257,7 +259,7 @@ with an `async` function must use `asyncHandler` as well.
 `asyncRequestHandler(handler, onError)` in `srv/util/asyncHandler.ts`, which
 also wraps `registerPostRoute`'s own handler (so an error raised while
 answering — e.g. a handler that already sent its own response — is caught) and
-the `memberlist` process' routes (`/getMemberListWindow`,
+the `memberlist` process' routes (`/getMemberListWindow`, `/getMemberListPreview`,
 `/getChannelMemberListWindow`, `/getUserCommunityRoleIds`: 500
 `{ error: 'memberlist_request_failed' }`, which the calling `Community` route
 answers with its generic error). Errors these wrappers, the gated-file routes,
@@ -326,10 +328,10 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/joinCommunity` -- Join a community
 - `/leaveCommunity` -- Leave a community
 - `/setUserBlockState` -- Ban/unban users
-- `/getMemberList` -- Get community members
+- `/getMemberList` -- Get community members: the full list for members, a short preview (first members by name, ids only) for others while the community is not deleted
 - `/getChannelMemberList` -- Get channel members
 - `/getMemberNewsletterCount` -- Count newsletter subscribers
-- `/getUserCommunityRoleIds` -- Get roles for a user in a community
+- `/getUserCommunityRoleIds` -- Get roles for a user in a community: role ids for the user themself or for community members (requires a session)
 - `/createCommunity` -- Create new community
 - `/updateCommunity` -- Update community settings
 
@@ -507,7 +509,7 @@ Every message write returns the row's `syncSeq` (set by the database trigger, se
 
 The sender's own `cliMessageEvent` of `/createMessage`, `/createModerationMessage` and `/editMessage` skips only the sending socket when the request names it, otherwise the whole device (bots: always the device). Call-chat events also reach the call's present members and, for Public calls, the community room ([docs/realtime](../realtime/README.md#call-flow)).
 
-Every route that takes an access object (`communityId`, `chatId`, `callId`, or `articleId` with `articleCommunityId`/`articleUserId`, each together with `channelId`) runs `_checkAccessOrThrow`, which first checks that `channelId` is the channel of the named community, chat, call or article (`messageHelper.isChannelInAccessScope`) and then evaluates the permissions for that scope. An article access must name the article's community or user. Deleted community channels, chats and articles do not match; a user article that is not published yet only matches for its author. Message edits and reaction removal additionally filter on `access.channelId` in SQL.
+Every route that takes an access object (`communityId`, `chatId`, `callId`, or `articleId` with `articleCommunityId`/`articleUserId`, each together with `channelId`) runs `_checkAccessOrThrow`, which first checks that `channelId` is the channel of the named community, chat, call or article (`messageHelper.isChannelInAccessScope`) and then evaluates the permissions for that scope. An article access must name the article's community or user. Deleted community channels, the channels of a deleted community, deleted chats and deleted articles do not match; a user article that is not published yet only matches for its author. Message edits and reaction removal additionally filter on `access.channelId` in SQL.
 
 A subset of message routes is also reachable over the Bot API v1 surface (see below). At module load, `messages.ts` allowlists `POST /BotV1/messages/{loadMessages, messagesById, loadUpdates, createMessage, setReaction, unsetReaction}` for bot bearer principals. When a request carries a `botPrincipal`, the handler resolves the acting user from the bot instead of the session, requires an exact `{communityId, channelId}` access target, enforces the per-token bot rate limits, and verifies the bot's active membership/policy for that community before proceeding.
 

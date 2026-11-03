@@ -15,7 +15,14 @@ const axiosPost = jest.fn();
 // `/getChannelMemberList` checks channel access before asking memberlist;
 // these cases always pass it (channelMemberListAccess.spec.ts covers the check)
 const messageHelper = { isChannelInActiveCommunity: jest.fn() };
-const permissionHelper = { hasPermissions: jest.fn() };
+// `/getMemberList` answers members in full and others a preview; the full
+// cases use a member, the preview cases a visitor (memberListAccess.spec.ts
+// covers who gets what)
+const permissionHelper = {
+  hasPermissions: jest.fn(),
+  isMemberOfActiveCommunity: jest.fn(),
+  isActiveCommunity: jest.fn(),
+};
 
 jest.mock('../api/util', () => ({
   registerPostRoute: (_router: unknown, path: string, _validator: unknown, handler: any) => {
@@ -60,7 +67,11 @@ beforeEach(() => {
   axiosPost.mockReset();
   messageHelper.isChannelInActiveCommunity.mockReset().mockResolvedValue(true);
   permissionHelper.hasPermissions.mockReset().mockResolvedValue(true);
+  permissionHelper.isMemberOfActiveCommunity.mockReset().mockResolvedValue(true);
+  permissionHelper.isActiveCommunity.mockReset().mockResolvedValue(true);
 });
+
+const member = () => ({ session: { user: { id: USER } } });
 
 describe('/getMemberList', () => {
   const data = { communityId: COMMUNITY, offset: 0, limit: 10 };
@@ -68,7 +79,15 @@ describe('/getMemberList', () => {
   it('answers an empty member list when the service answers without one', async () => {
     for (const body of ['', null, undefined]) {
       axiosPost.mockResolvedValueOnce({ status: 200, data: body });
-      await expect(handlers['/getMemberList']({ session: {} }, {}, data)).resolves.toEqual(emptyMemberList());
+      await expect(handlers['/getMemberList'](member(), {}, data)).resolves.toEqual(emptyMemberList());
+    }
+  });
+
+  it('answers an empty preview when the service answers without one', async () => {
+    for (const body of ['', null, undefined]) {
+      axiosPost.mockResolvedValueOnce({ status: 200, data: body });
+      await expect(handlers['/getMemberList']({ session: {} }, {}, { ...data, limit: 6 })).resolves.toEqual(emptyMemberList());
+      expect(axiosPost.mock.calls[axiosPost.mock.calls.length - 1][0]).toBe('http://memberlist:4000/getMemberListPreview');
     }
   });
 
@@ -77,7 +96,7 @@ describe('/getMemberList', () => {
       status: 200,
       data: { ...emptyMemberList(), totalCount: 1, resultCount: 1, roles: [[convertUuidToBinary(ROLE), 1]], online: [[convertUuidToBinary(USER), [convertUuidToBinary(ROLE)]]] },
     });
-    await expect(handlers['/getMemberList']({ session: {} }, {}, data)).resolves.toEqual({
+    await expect(handlers['/getMemberList'](member(), {}, data)).resolves.toEqual({
       ...emptyMemberList(), totalCount: 1, resultCount: 1, roles: [[ROLE, 1]], online: [[USER, [ROLE]]],
     });
   });

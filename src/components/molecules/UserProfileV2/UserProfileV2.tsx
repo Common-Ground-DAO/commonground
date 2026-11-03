@@ -40,6 +40,7 @@ import { useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 import { useSafeCommunityContext } from 'context/CommunityProvider';
 import communityApi from 'data/api/community';
+import { mayLoadUserCommunityRoleIds, shouldWarnAboutRoleIdsError } from 'util/userCommunityRoleIds';
 import { PredefinedRole } from 'common/enums';
 import TagInputField, { tagStringToPredefinedTag } from '../inputs/TagInputField/TagInputField';
 import Tag, { TagIcon } from 'components/atoms/Tag/Tag';
@@ -379,8 +380,10 @@ const UserProfileV2: React.FC<Props> = (props) => {
     return result;
   }, [attemptConnectTwitter, buttonDisabled, onConnectUniversalProfileClick, setCurrentPage, setIsOpen, user.accounts]);
 
+  const isCommunityMember = commContext.state === 'loaded' && commContext.ownRoles.length > 0;
   const roleIds = useAsyncMemo(async () => {
     if (!communityId) return;
+    if (!mayLoadUserCommunityRoleIds({ ownUserId: ownUser?.id, userId: user.id, isCommunityMember })) return;
 
     try {
       return await communityApi.getUserCommunityRoleIds({
@@ -388,9 +391,11 @@ const UserProfileV2: React.FC<Props> = (props) => {
         communityId: communityId
       });
     } catch (e) {
-      showSnackbar({ type: 'warning', text: 'Could not load user roles' });
+      if (shouldWarnAboutRoleIdsError(e)) {
+        showSnackbar({ type: 'warning', text: 'Could not load user roles' });
+      }
     }
-  }, [user.id, communityId]);
+  }, [user.id, communityId, ownUser?.id, isCommunityMember]);
 
   const { roles, isAdmin } = useMemo(() => {
     if (commContext.state !== 'loaded') return {

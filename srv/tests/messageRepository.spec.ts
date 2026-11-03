@@ -214,6 +214,17 @@ describe('messageHelper.isChannelInAccessScope', () => {
     }
   });
 
+  it('requires the community of a community channel to be live', async () => {
+    poolQuery.mockResolvedValueOnce({ rows: [] });
+    await expect(messageHelper.isChannelInAccessScope({ communityId: SCOPE, channelId: CHANNEL } as any)).resolves.toBe(false);
+    const normalized = normalize(poolQuery.mock.calls[0][0]);
+    expect(normalized).toContain('FROM communities_channels cc INNER JOIN communities c ON c."id" = cc."communityId"');
+    expect(normalized).toContain('WHERE cc."communityId" = $1 AND cc."channelId" = $2');
+    // a leading space, so that `cc."deletedAt"` does not count for `c."deletedAt"`
+    expect(normalized).toContain(' cc."deletedAt" IS NULL');
+    expect(normalized).toContain(' c."deletedAt" IS NULL');
+  });
+
   it('counts an unpublished user article only for its author', async () => {
     poolQuery.mockResolvedValueOnce({ rows: [] });
     await messageHelper.isChannelInAccessScope({ articleId: SCOPE, articleUserId: USER, channelId: CHANNEL } as any, MESSAGE);

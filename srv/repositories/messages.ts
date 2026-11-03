@@ -646,6 +646,19 @@ async function _unsetReaction(
   return;
 }
 
+/**
+ * `$2` is a live channel of the live community `$1` (neither the channel
+ * link nor the community deleted).
+ */
+const LIVE_COMMUNITY_CHANNEL_QUERY = `
+  SELECT 1 FROM communities_channels cc
+  INNER JOIN communities c
+    ON c."id" = cc."communityId"
+  WHERE cc."communityId" = $1 AND cc."channelId" = $2
+    AND cc."deletedAt" IS NULL
+    AND c."deletedAt" IS NULL
+`;
+
 class MessageHelper {
   private async ensureAttachmentMetadata(data: {
     id: string;
@@ -751,7 +764,7 @@ class MessageHelper {
   /**
    * Whether `access.channelId` is the channel of the community, chat, call
    * or article named in the same access object. Deleted channels, chats and
-   * articles do not count. A user article that is not published yet only
+   * articles, and the channels of a deleted community, do not count. A user article that is not published yet only
    * counts for its author (`userId`).
    */
   public async isChannelInAccessScope(
@@ -761,11 +774,7 @@ class MessageHelper {
     let query: string;
     let params: (string | null)[];
     if ('communityId' in access) {
-      query = `
-        SELECT 1 FROM communities_channels
-        WHERE "communityId" = $1 AND "channelId" = $2
-          AND "deletedAt" IS NULL
-      `;
+      query = LIVE_COMMUNITY_CHANNEL_QUERY;
       params = [access.communityId, access.channelId];
     }
     else if ('chatId' in access) {
@@ -814,19 +823,11 @@ class MessageHelper {
   }
 
   /**
-   * The community branch of `isChannelInAccessScope`, additionally requiring
-   * the community itself not to be deleted: whether `channelId` is a live
-   * channel of the live community `communityId`.
+   * The community branch of `isChannelInAccessScope`: whether `channelId` is
+   * a live channel of the live community `communityId`.
    */
   public async isChannelInActiveCommunity(communityId: string, channelId: string): Promise<boolean> {
-    const result = await pool.query(`
-      SELECT 1 FROM communities_channels cc
-      INNER JOIN communities c
-        ON c."id" = cc."communityId"
-      WHERE cc."communityId" = $1 AND cc."channelId" = $2
-        AND cc."deletedAt" IS NULL
-        AND c."deletedAt" IS NULL
-    `, [communityId, channelId]);
+    const result = await pool.query(LIVE_COMMUNITY_CHANNEL_QUERY, [communityId, channelId]);
     return result.rows.length > 0;
   }
 

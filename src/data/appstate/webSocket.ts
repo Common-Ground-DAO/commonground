@@ -602,6 +602,32 @@ export class WebSocketManager implements Transport {
   }
 
   /**
+   * The device this connection's socket login was acked for (null:
+   * anonymous, or a login still waiting for its ack). A device-addressed
+   * server event (`cliSignedOut`) that arrives now refers to it. During a
+   * pending login it is unknown which device such an event meant (a late one
+   * for the previous device is possible): null, so it is not acted on — a
+   * device that is really gone shows up at its next HTTP device login
+   * (NOT_FOUND).
+   */
+  public get socketDeviceId(): string | null {
+    return this._socketDeviceId;
+  }
+
+  /**
+   * The server signed `deviceId` out (its session and device key are gone):
+   * no socket login with it any more — neither on the reconnect after the
+   * server's disconnect nor on a return of the tab. The socket stays (or
+   * comes back) connected as anonymous; the rest of the logout is the login
+   * manager's business. A no-op when the socket already wants another device.
+   */
+  public deviceSignedOut(deviceId: string) {
+    if (this._deviceId === deviceId) {
+      this.logout();
+    }
+  }
+
+  /**
    * Brings the current connection's login in line with `_deviceId`, one step
    * at a time (the server runs socket handlers concurrently, so logins never
    * overlap: a later call waits for the running one).
@@ -680,6 +706,12 @@ export class WebSocketManager implements Transport {
         this._securityStepLogin = `${epoch}:${desired}`;
         securityStepState.set(true);
         throw new SocketLoginError('SECURITY_STEP_REQUIRED');
+      }
+      if ((this._deviceId ?? null) !== desired) {
+        // the device was dropped or switched while its login ran (e.g. it was
+        // signed out): the answer is moot, sync to the current one
+        debugLog('Socket login of a device no longer wanted failed (ERROR)');
+        continue;
       }
       console.error('Socket login failed (ERROR)');
       this.scheduleLoginRetry('login');

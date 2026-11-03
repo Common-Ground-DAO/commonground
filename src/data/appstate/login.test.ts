@@ -750,6 +750,129 @@ describe('logout and login in other tabs', () => {
     expect(fake.server.logoutCalls).toBe(1);
   });
 
+  it('after cliSignedOut no socket login with the revoked device happens during the re-check (reconnect, returns, refresh)', async () => {
+    const env = setup();
+    const tab = await loggedInTab();
+    const { default: notice } = await import('data/auth/signedOut');
+    notice.dismiss();
+    const errors = vi.spyOn(console, 'error');
+    try {
+      // the password was changed on another device: session and device key are gone
+      fake.server.sessionUserId = null;
+      fake.server.devices.delete('dev-1');
+      tab.socket.loginResult = 'ERROR';
+      const socketLogins = tab.socket.sentOf('login').length;
+      const httpLogins = fake.server.loginCalls;
+      // cliSignedOut, then the server's disconnect (one publisher, in this order)
+      fake.clientEventHandlers.get('cliSignedOut')!();
+      tab.socket.drop('io server disconnect');
+      await settle();
+      // every reconnect trigger of the window, and a refresh after the restored live
+      env.hide();
+      env.show();
+      env.pageshow(true);
+      env.goOffline();
+      env.goOnline();
+      env.freeze();
+      env.resume();
+      await tab.loginManager.refreshAfterReconnect();
+      await settle();
+      expect(tab.loginManager.state).toBe('loggedin'); // still re-checking
+      expect(tab.socket.connected).toBe(true);
+      expect(tab.ws.live).toBe(true); // anonymous
+      expect(socketLoggedInAs(tab.socket)).toBeNull();
+      expect(tab.socket.sentOf('login')).toHaveLength(socketLogins);
+      expect(fake.server.loginCalls).toBe(httpLogins);
+
+      await until(() => tab.loginManager.state === 'anonymous');
+      await settle();
+      expect(notice.shown).toBe(true);
+      expect(fake.server.logoutCalls).toBe(1);
+      expect(tab.socket.sentOf('login')).toHaveLength(socketLogins);
+      expect(errors.mock.calls.filter(call => String(call[0]).includes('Socket login failed'))).toEqual([]);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it('a logout in another tab: the reconnect after cliSignedOut does no socket login with the device', async () => {
+    setup();
+    const a = await loggedInTab();
+    const b = await secondTab();
+    const socketLogins = b.socket.sentOf('login').length;
+    fake.server.onLogout = () => {
+      fake.server.devices.delete('dev-1');
+      b.socket.loginResult = 'ERROR';
+      b.onSignedOut();
+      // the server disconnects B's socket; it reconnects at once
+      b.socket.drop('io server disconnect');
+    };
+    await a.loginManager.logout();
+    await until(() => b.loginManager.state === 'anonymous');
+    await settle();
+    expect(b.socket.connected).toBe(true);
+    expect(b.socket.sentOf('login')).toHaveLength(socketLogins);
+    expect(b.notice.shown).toBe(false);
+    expect(fake.server.logoutCalls).toBe(1);
+  });
+
+  /** tab logged in as u1/dev-1 that then switched to u2/dev-2 (logout, login) */
+  async function switchedTab(holdSocketLogin: boolean) {
+    const tab = await loggedInTab();
+    const { default: notice } = await import('data/auth/signedOut');
+    await tab.loginManager.logout();
+    await settle();
+    notice.dismiss();
+    if (holdSocketLogin) {
+      tab.socket.handle('login', undefined); // the ack waits for respond()
+    }
+    storeUser('u2', 'dev-2');
+    await tab.loginManager.login({ deviceId: 'dev-2' });
+    await settle();
+    expect(tab.loginManager.currentUser).toEqual({ userId: 'u2', deviceId: 'dev-2' });
+    return { ...tab, notice, logoutCalls: fake.server.logoutCalls };
+  }
+
+  async function pastReCheck() {
+    const { SIGNED_OUT_RECHECK_MS } = await import('data/appstate/login');
+    await new Promise(resolve => setTimeout(resolve, SIGNED_OUT_RECHECK_MS + 200));
+    await settle();
+  }
+
+  it('a late sign-out of the previous device (an old login\'s NOT_FOUND) does not sign out the new session', async () => {
+    setup();
+    const tab = await switchedTab(false);
+    expect(socketLoggedInAs(tab.socket)).toBe('dev-2');
+    fake.server.devices.delete('dev-1');
+    await (tab.loginManager as unknown as { signedOutElsewhere(deviceId: string): Promise<void> }).signedOutElsewhere('dev-1');
+    await pastReCheck();
+    expect(tab.loginManager.state).toBe('loggedin');
+    expect(tab.loginManager.currentUser).toEqual({ userId: 'u2', deviceId: 'dev-2' });
+    expect(socketLoggedInAs(tab.socket)).toBe('dev-2');
+    expect(fake.server.logoutCalls).toBe(tab.logoutCalls);
+    expect(tab.notice.shown).toBe(false);
+  });
+
+  it('a cliSignedOut while the socket login of the new device waits for its ack is not acted on', async () => {
+    setup();
+    const tab = await switchedTab(true);
+    expect(tab.ws.socketDeviceId).toBeNull();
+    // a late one for dev-1 (the server had not processed the socket logout yet)
+    fake.clientEventHandlers.get('cliSignedOut')!();
+    tab.socket.respond('login', 'OK');
+    await pastReCheck();
+    expect(tab.loginManager.state).toBe('loggedin');
+    expect(tab.ws.socketDeviceId).toBe('dev-2');
+    expect(fake.server.logoutCalls).toBe(tab.logoutCalls);
+    expect(tab.notice.shown).toBe(false);
+    // a cliSignedOut once the socket is logged in as dev-2 does sign it out
+    fake.server.sessionUserId = null;
+    fake.server.devices.delete('dev-2');
+    fake.clientEventHandlers.get('cliSignedOut')!();
+    await until(() => tab.loginManager.state === 'anonymous');
+    expect(tab.notice.shown).toBe(true);
+  });
+
   it('a leftover logout marker of a vanished tab: after the follow wait it is a sign-out from elsewhere (notice)', async () => {
     useDataLayerFakeTimers();
     setup();

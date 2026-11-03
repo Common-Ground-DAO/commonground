@@ -24,7 +24,8 @@
 > Coordination after the chat-sync removal (why independent tabs, catch-up after a
 > (re)connect, logout across tabs, the compat markers; no `tabState`/`lastDisconnect` any
 > more) against commit 1e6a0d4, 2026-11-03; the end of the socket login (`finishSocketLogin`) against
-> commit 043641d, 2026-11-03; the logout marker across tabs against commit 9d00729, 2026-11-03
+> commit 043641d, 2026-11-03; the logout marker across tabs against commit 9d00729, 2026-11-03; the
+> anonymous reconnect after `cliSignedOut` against commit 1b9948c, 2026-11-03
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -282,7 +283,7 @@ Bot presence is tracked separately from human online status, because a bot may h
 
 `eventHelper.disconnectBotTokenSockets(tokenId)` (`srv/repositories/event.ts`) calls `io.in(botToken:{tokenId}).disconnectSockets(true)` across all instances via the Redis adapter. It is invoked when a token is revoked (`botTokenHelper`), and when a bot is uninstalled or banned (`botHelper`), so live sockets for an invalidated token are torn down immediately rather than lingering until their next request.
 
-Browser sockets of devices that were signed out from elsewhere (another device's "Sign out other devices", or a replaced password, email or removed sign-in method, [auth-identity §2](../auth-identity/README.md#signing-out-other-devices)) are handled the same way: `eventHelper.signOutDeviceSockets(deviceIds)` emits `cliSignedOut` to their `device:{deviceId}` rooms and then calls `disconnectSockets(false)` on them, through the same publisher in this order. A logout in one tab does the same for the device's other sockets (`logoutDeviceSockets`, see [Socket-scoped targeting](#socket-scoped-targeting)). The client signs out locally on the event; a socket that reconnects cannot log in again, its device key is gone. The socket `login` verifies the key with the same lookup as the HTTP device login, which rejects a key below the account's session generation, and after joining its rooms checks once more that its key is still valid (one DB read) and disconnects if it is not — a key that became invalid between the check and the joining.
+Browser sockets of devices that were signed out from elsewhere (another device's "Sign out other devices", or a replaced password, email or removed sign-in method, [auth-identity §2](../auth-identity/README.md#signing-out-other-devices)) are handled the same way: `eventHelper.signOutDeviceSockets(deviceIds)` emits `cliSignedOut` to their `device:{deviceId}` rooms and then calls `disconnectSockets(false)` on them, through the same publisher in this order. A logout in one tab does the same for the device's other sockets (`logoutDeviceSockets`, see [Socket-scoped targeting](#socket-scoped-targeting)). On the event the client drops the device from its socket at once (`webSocketManager.deviceSignedOut`), so the reconnect after the disconnect is anonymous, and signs out locally; a socket login with that device would fail anyway, its key is gone. The socket `login` verifies the key with the same lookup as the HTTP device login, which rejects a key below the account's session generation, and after joining its rooms checks once more that its key is still valid (one DB read) and disconnects if it is not — a key that became invalid between the check and the joining.
 
 ---
 

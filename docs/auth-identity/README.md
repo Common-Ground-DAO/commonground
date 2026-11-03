@@ -17,7 +17,8 @@
 > and the signed-out re-check against commit 9d00729, 2026-11-03; the logout's
 > sign-out of the device's other sockets against commit ce09d8a, 2026-11-02; the header-less
 > logout disconnect and the own-logout guard against commits 1b09f87 and f97ef1b, 2026-11-02; the post-login setup
-> (no notification database) against commit 1e6a0d4, 2026-11-03
+> (no notification database) against commit 1e6a0d4, 2026-11-03; the socket's immediate drop of
+> a signed-out device against commit 1b9948c, 2026-11-03
 
 # Authentication & Identity
 
@@ -1167,7 +1168,8 @@ The client login lifecycle is owned by `LoginManager` (`src/data/appstate/login.
   [§2](#signing-out-other-devices)) or a `NOT_FOUND` for the device at the automatic login makes
   `LoginManager.signedOutElsewhere()` sign out locally (`logout()`: local databases, device key,
   current user) and raise `signedOutNotice` (`src/data/auth/signedOut.ts`); `SignedOutNotice`
-  shows "You were signed out" with "Sign in" / "Not now". Every tab gets `cliSignedOut`; it
+  shows "You were signed out" with "Sign in" / "Not now". Every tab gets `cliSignedOut`; its
+  socket drops the device at once (it reconnects anonymously, never with the revoked key), and it
   re-checks for 1 s and decides under the login lock, so normally one tab calls `User/logout`
   and the others follow it (all show the notice; a second `User/logout` is harmless). Signing
   in again, also in another tab, dismisses the notice. A logout in another tab of the same browser (which

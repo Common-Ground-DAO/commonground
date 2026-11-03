@@ -333,6 +333,22 @@ that stack — confirm and delete:
   Coordination" and docs/frontend §8 with them. The client's 404 fallbacks for
   `getChanges`/`getSyncState` (docs/frontend "Chat stores", "Old server") only matter
   during a deploy against an older backend and may go at the same time.
+- [ ] **Message attachments request Giphy for every attachment list** (2026-11-03, seen
+  by the e2e flow `images`) — `MessageAttachments.tsx` calls `gf.gifs(giphyIds)` also
+  when the list has no Giphy attachment and when no `GIPHY_API_KEY` is configured
+  (`src/util/giphy.ts` then uses the key `'disabled'`). Giphy answers 401 and the
+  rejected promise shows up as uncaught `@giphy/js-fetch-api: Unauthorized` page errors. Only fetch when
+  there are Giphy ids and Giphy is enabled.
+- [ ] **The article editor logs errors for communities without newsletters**
+  (2026-11-03, seen by the e2e flow `article-plugin`) — `GenericArticleManagement.tsx`
+  calls `Community/getLatestArticleSentAsNewsletterDate` for every community it edits an
+  article in; the server answers `NOT_ALLOWED` for a community that is not on the
+  newsletter whitelist (`srv/api/community.ts`), so every such editor load produces a
+  failed API request (the client swallows the error). Ask only when the community can
+  send newsletters (e.g. a flag in the community data), or answer "not available"
+  without an error. Same flow: `EditField.tsx` calls `getRangeAt(0)` in the media-button
+  positioning timeout without checking `rangeCount`, which throws `IndexSizeError` when
+  the selection is empty.
 
 ## Optional / nice-to-have
 

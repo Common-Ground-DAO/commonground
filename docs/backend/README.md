@@ -1280,7 +1280,9 @@ Note: the Staking routes carry no validators (they take no meaningful request bo
 (OpenAPI 3.1) is generated from the compiled validators by
 `sdk/tools/generate-openapi.mjs`, run inside the backend image
 (`sdk/tools/generate-openapi.sh`, i.e. `yarn openapi` in `sdk/`) — request
-bodies come from `describe()` output; responses carry the standard envelope
+bodies come from `describe()` output, and a body is marked `required` only when
+the validator rejects `{}` (what `registerPostRoute` validates for a request
+without a body); responses carry the standard envelope
 with an open `data` schema, since response types are TypeScript-only. The
 output is deterministic, and `generate-openapi.sh --check` (`yarn
 openapi:check`) is the drift guard: **a validator change must be committed

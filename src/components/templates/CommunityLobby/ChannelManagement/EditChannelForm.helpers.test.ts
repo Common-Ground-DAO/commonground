@@ -6,9 +6,10 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { channelHasCustomPermissions, permissionTypeToChannelPermissions } from './EditChannelForm.helpers';
 
 const roles = [
-  { id: 'r-public', title: 'Public' },
-  { id: 'r-member', title: 'Member' },
-  { id: 'r-admin', title: 'Admin' },
+  { id: 'r-public', title: 'Public', type: 'PREDEFINED' },
+  { id: 'r-member', title: 'Member', type: 'PREDEFINED' },
+  { id: 'r-admin', title: 'Admin', type: 'PREDEFINED' },
+  { id: 'r-custom-public', title: 'Public', type: 'CUSTOM_MANUAL_ASSIGN' },
 ] as unknown as Models.Community.Role[];
 
 const defaults = [
@@ -52,7 +53,17 @@ describe('permissionTypeToChannelPermissions', () => {
   it('returns the custom permissions and drops "none"', () => {
     const result = permissionTypeToChannelPermissions(roles, { 'r-public': 'none', 'r-member': 'moderate' }, defaults);
     expect(result).toEqual([
-      { roleId: 'r-member', roleTitle: 'Member', permissions: ['CHANNEL_EXISTS', 'CHANNEL_READ', 'CHANNEL_WRITE', 'CHANNEL_MODERATE'] },
+      { roleId: 'r-member', roleTitle: 'Member', roleType: 'PREDEFINED', permissions: ['CHANNEL_EXISTS', 'CHANNEL_READ', 'CHANNEL_WRITE', 'CHANNEL_MODERATE'] },
     ]);
+  });
+
+  it('gives each entry the role\'s type, so a custom role with a predefined title is not taken for it', () => {
+    const result = permissionTypeToChannelPermissions(roles, { 'r-public': 'none', 'r-custom-public': 'read', 'r-member': 'full' }, defaults);
+    expect(result).toEqual([
+      { roleId: 'r-custom-public', roleTitle: 'Public', roleType: 'CUSTOM_MANUAL_ASSIGN', permissions: ['CHANNEL_EXISTS', 'CHANNEL_READ'] },
+      { roleId: 'r-member', roleTitle: 'Member', roleType: 'PREDEFINED', permissions: ['CHANNEL_EXISTS', 'CHANNEL_READ', 'CHANNEL_WRITE'] },
+    ]);
+    // the predefined Public role has no entry: the list differs from the presets
+    expect(channelHasCustomPermissions(result)).toBe(true);
   });
 });

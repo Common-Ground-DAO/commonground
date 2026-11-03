@@ -117,8 +117,8 @@ describe('snapshot query', () => {
     expect(sql).toContain('ON c."id" = mr."communityId" AND c."deletedAt" IS NULL');
   });
 
-  it('adds the Public role of those communities', () => {
-    expect(sql).toContain(`WHERE r."title" = 'Public' AND r."deletedAt" IS NULL`);
+  it('adds the predefined Public role of those communities', () => {
+    expect(sql).toContain(`WHERE r."title" = 'Public' AND r."type" = 'PREDEFINED' AND r."deletedAt" IS NULL`);
   });
 
   it('requires CHANNEL_EXISTS and CHANNEL_READ over the reading roles', () => {

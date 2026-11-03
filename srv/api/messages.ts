@@ -4,7 +4,7 @@
 
 import express from "express";
 import errors from "../common/errors";
-import { ArticlePermission, CallPermission, ChannelPermission, CommunityPermission, PredefinedRole } from "../common/enums";
+import { ArticlePermission, CallPermission, ChannelPermission, CommunityPermission, PredefinedRole, RoleType } from "../common/enums";
 import chatHelper from "../repositories/chats";
 import communityHelper from "../repositories/communities";
 import eventHelper from "../repositories/event";
@@ -271,7 +271,7 @@ async function emitMessageEventsToReaders(events: Events.Message.Message[], acce
       d.permissions.includes("CHANNEL_EXISTS") &&
       d.permissions.includes("CHANNEL_READ")
     ));
-    const publicRole = notifyRoles.find(d => d.roleTitle === PredefinedRole.Public);
+    const publicRole = notifyRoles.find(d => d.roleType === RoleType.PREDEFINED && d.roleTitle === PredefinedRole.Public);
     for (const event of events) {
       const scopedEvent: Events.Message.Message = {
         ...event,
@@ -309,7 +309,7 @@ async function emitMessageEventsToReaders(events: Events.Message.Message[], acce
       d.permissions.includes("CALL_EXISTS") &&
       d.permissions.includes("CHANNEL_READ")
     ));
-    const publicRole = notifyRoles.find(d => d.roleTitle === PredefinedRole.Public);
+    const publicRole = notifyRoles.find(d => d.roleType === RoleType.PREDEFINED && d.roleTitle === PredefinedRole.Public);
     for (const event of events) {
       eventHelper.emit(event, {
         roleIds: notifyRoles.map(d => d.roleId),

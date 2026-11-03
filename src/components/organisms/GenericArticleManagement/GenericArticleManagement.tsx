@@ -32,6 +32,7 @@ import { XMarkIcon } from "@heroicons/react/20/solid";
 import { PredefinedRole } from "common/enums";
 import config from "common/config";
 import communityApi from "data/api/community";
+import { isPredefinedRolePermission } from "util/predefinedRoles";
 
 const MIN_SCROLL_UP_DELTA = 20;
 const MIN_SCROLL_DOWN_DELTA = 100;
@@ -177,8 +178,8 @@ const GenericArticleManagement: React.FC<Props> = (props) => {
       return [];
     }
 
-    const publicRole = articleRoles.find(r => r.roleTitle === PredefinedRole.Public);
-    const memberRole = articleRoles.find(r => r.roleTitle === PredefinedRole.Member);
+    const publicRole = articleRoles.find(r => isPredefinedRolePermission(r, PredefinedRole.Public));
+    const memberRole = articleRoles.find(r => isPredefinedRolePermission(r, PredefinedRole.Member));
     if (publicRole?.permissions.includes('ARTICLE_READ') || memberRole?.permissions.includes('ARTICLE_READ')) {
       if (memberRole) return [PredefinedRole.Member];
     }

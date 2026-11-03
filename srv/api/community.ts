@@ -424,7 +424,7 @@ registerPostRoute<
     const result = await communityHelper.createCommunity(data, user.id);
 
     const roleIds = result.roles.filter(r => {
-      return (
+      return r.type === RoleType.PREDEFINED && (
         r.title === PredefinedRole.Admin ||
         r.title === PredefinedRole.Member
       )
@@ -1574,6 +1574,8 @@ registerPostRoute<
     if (data.duration > 8 * 60) {
       throw new Error(errors.server.EVENT_TOO_LONG);
     }
+    // every role id, before the event's call is created
+    await communityEventHelper.checkEventRolePermissions(data.communityId, data.rolePermissions);
 
     if (data.type !== "reminder") {
       const communityCallTier = await communityHelper.getCommunityPremiumTier(data.communityId);
@@ -1628,6 +1630,8 @@ registerPostRoute<
     if (new Date(data.scheduleDate).getTime() < new Date().getTime()) {
       throw new Error(errors.server.EVENT_SCHEDULE_IN_THE_PAST);
     }
+    // every role id, before the event or its call is changed
+    await communityEventHelper.checkEventRolePermissions(eventData.communityId, data.rolePermissions);
 
     // // Can't go for something that would delete a call
     // if (eventData.type !== 'external' && data.type === 'external') {

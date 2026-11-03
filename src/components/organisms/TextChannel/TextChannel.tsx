@@ -38,6 +38,7 @@ import { getDisplayName } from '../../../util';
 import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal';
 import Button from 'components/atoms/Button/Button';
 import BotBadge from 'components/atoms/BotBadge/BotBadge';
+import { isPredefinedRolePermission } from "util/predefinedRoles";
 
 type Props = {
   community: Models.Community.DetailView;
@@ -63,7 +64,7 @@ export default function TextChannel(props: Props) {
 
   const membersCanWrite = useMemo(() => {
     if (!channel) return false;
-    const memberPermission = channel.rolePermissions.find(permission => permission.roleTitle === PredefinedRole.Member);
+    const memberPermission = channel.rolePermissions.find(permission => isPredefinedRolePermission(permission, PredefinedRole.Member));
     return memberPermission?.permissions.includes('CHANNEL_WRITE');
   }, [channel]);
 

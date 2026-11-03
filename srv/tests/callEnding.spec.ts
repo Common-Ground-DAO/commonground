@@ -143,7 +143,7 @@ describe('callHelper.updateCallPermissions', () => {
   it('builds one row per given role', async () => {
     const ROLE = '00000000-0000-4000-8000-0000000000f1';
     const ADMIN = '00000000-0000-4000-8000-0000000000f2';
-    poolQuery.mockResolvedValue({ rows: [{ id: ADMIN }] });
+    poolQuery.mockResolvedValue({ rows: communityRoles(ADMIN, ROLE) });
     clientQuery.mockResolvedValue({ rows: [] });
     await callHelper.updateCallPermissions(CALL, COMMUNITY, [
       { roleId: ROLE, permissions: ['CALL_EXISTS' as any] },
@@ -154,4 +154,83 @@ describe('callHelper.updateCallPermissions', () => {
     // the admin role gets moderator permissions in its own row, not twice
     expect(insert).not.toContain(`'${ADMIN}'::uuid`);
   });
+
+  it('reads the live roles of the call\'s community', async () => {
+    const ADMIN = '00000000-0000-4000-8000-0000000000f2';
+    poolQuery.mockResolvedValue({ rows: communityRoles(ADMIN) });
+    clientQuery.mockResolvedValue({ rows: [] });
+    await callHelper.updateCallPermissions(CALL, COMMUNITY, [{ roleId: ADMIN, permissions: ['CALL_EXISTS' as any] }]);
+    const [sql, params] = poolQuery.mock.calls[0];
+    expect(normalize(sql)).toContain('FROM roles WHERE "communityId" = $1 AND "deletedAt" IS NULL');
+    expect(params).toEqual([COMMUNITY]);
+    // only the admin role given: no dangling row separator
+    expect(normalize(clientQuery.mock.calls[2][0])).not.toMatch(/\)\s*,\s*\)/);
+  });
+
+  it('refuses a role of another community, or a deleted or unknown one, and writes nothing', async () => {
+    const ADMIN = '00000000-0000-4000-8000-0000000000f2';
+    const FOREIGN = '00000000-0000-4000-8000-0000000000f3';
+    poolQuery.mockResolvedValue({ rows: communityRoles(ADMIN) });
+    await expect(callHelper.updateCallPermissions(CALL, COMMUNITY, [
+      { roleId: FOREIGN, permissions: ['CALL_EXISTS' as any] },
+    ])).rejects.toThrow('NOT_ALLOWED');
+    expect(clientQuery).not.toHaveBeenCalled();
+  });
 });
+
+describe('callHelper.createCall and updateCall: role ids', () => {
+  const ADMIN = '00000000-0000-4000-8000-0000000000f2';
+  const ROLE = '00000000-0000-4000-8000-0000000000f1';
+  const FOREIGN = '00000000-0000-4000-8000-0000000000f3';
+  const request = (roleId: string) => ({
+    communityId: COMMUNITY,
+    title: 'call',
+    description: null,
+    rolePermissions: [{ roleId, permissions: ['CALL_EXISTS', 'CALL_JOIN'] as any[] }],
+    callType: 'default' as const,
+    callCreator: '00000000-0000-4000-8000-0000000000a1',
+    slots: 10,
+    stageSlots: 5,
+    audioOnly: false,
+    hd: false,
+  });
+
+  it('createCall refuses a role id that is not a live role of the community, before anything is written', async () => {
+    poolQuery.mockImplementation(async (sql: string) => {
+      if (normalize(sql).includes('SELECT "id", "type", "title" FROM roles')) {
+        return { rows: communityRoles(ADMIN, ROLE) };
+      }
+      return { rows: [] };
+    });
+    await expect(callHelper.createCall(request(FOREIGN), new Date().toISOString())).rejects.toThrow('NOT_ALLOWED');
+    expect(poolQuery.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO calls'))).toBe(false);
+  });
+
+  it('updateCall refuses it as well, before anything is written', async () => {
+    poolQuery.mockResolvedValue({ rows: communityRoles(ADMIN, ROLE) });
+    await expect(callHelper.updateCall({ ...request(FOREIGN), id: CALL } as any, new Date().toISOString())).rejects.toThrow('NOT_ALLOWED');
+    expect(poolQuery.mock.calls.some(([sql]) => String(sql).includes('UPDATE calls'))).toBe(false);
+  });
+
+  it('updateCall stores a role of the community, looking up the predefined roles of that community', async () => {
+    poolQuery.mockImplementation(async (sql: string) => {
+      if (normalize(sql).includes('SELECT "id", "type", "title" FROM roles')) {
+        return { rows: communityRoles(ADMIN, ROLE) };
+      }
+      return { rows: [{ id: CALL }] };
+    });
+    await callHelper.updateCall({ ...request(ROLE), id: CALL } as any, new Date().toISOString());
+    const [sql, params] = poolQuery.mock.calls[1];
+    expect(normalize(sql)).toContain(`'${ROLE}'::uuid`);
+    // member_role and admin_role are looked up in the call's community ($9), not by the call id ($1)
+    expect(normalize(sql)).not.toContain('WHERE "communityId" = $1');
+    expect(params[8]).toBe(COMMUNITY);
+  });
+});
+
+function communityRoles(adminId: string, ...customIds: string[]) {
+  return [
+    { id: adminId, type: 'PREDEFINED', title: 'Admin' },
+    ...customIds.map(id => ({ id, type: 'CUSTOM_MANUAL_ASSIGN', title: 'Custom' })),
+  ];
+}

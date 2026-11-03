@@ -23,6 +23,7 @@ import { PredefinedRole } from 'common/enums';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import { useExternalModalContext } from 'context/ExternalModalProvider';
 import { useEmailConfirmationContext } from 'context/EmailConfirmationProvider';
+import { isPredefinedRolePermission } from "util/predefinedRoles";
 
 type Props = {
   onUpdateEvent: (eventId: string, eventChanges: Partial<Models.Community.Event>) => void;
@@ -36,7 +37,7 @@ type Props = {
 
 export function calculateEventPermissions(community: Models.Community.DetailView, event: Models.Community.Event): CalculatedPermission {
   const { rolePermissions } = event;
-  const publicPermission = rolePermissions.find(permission => permission.roleTitle === PredefinedRole.Public);
+  const publicPermission = rolePermissions.find(permission => isPredefinedRolePermission(permission, PredefinedRole.Public));
   const publicCanAttend = publicPermission?.permissions.find(permission => permission === 'EVENT_ATTEND');
   if (publicCanAttend) return null;
 
@@ -45,7 +46,7 @@ export function calculateEventPermissions(community: Models.Community.DetailView
     return null;
   }
 
-  const memberPermission = rolePermissions.find(permission => permission.roleTitle === PredefinedRole.Member);
+  const memberPermission = rolePermissions.find(permission => isPredefinedRolePermission(permission, PredefinedRole.Member));
   const memberCanAttend = memberPermission?.permissions.find(permission => permission === 'EVENT_ATTEND');
   // Also ask for community join if not part of the community
   if (!community || memberCanAttend) return {

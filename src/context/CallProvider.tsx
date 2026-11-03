@@ -17,12 +17,19 @@ import data from "data";
 import errors from "common/errors";
 import dayjs from "dayjs";
 import { RoomClient } from "../util/RoomClient";
+import { RefusedMediaKind } from "../util/mediaRefusal";
 import { PermissionType } from "components/molecules/RolePermissionToggle/RolePermissionToggle";
 import { CallPermission, CallType } from "common/enums";
 import { getDisplayNameString } from "../util";
 import { useSnackbarContext } from "./SnackbarContext";
 import communityApi from "data/api/community";
 import webSocketManager from "data/appstate/webSocket";
+
+const mediaRefusedText: Record<RefusedMediaKind, string> = {
+  audio: "You are not allowed to speak in this call.",
+  video: "You are not allowed to turn on your camera in this call.",
+  share: "You are not allowed to share your screen in this call.",
+};
 
 type CallProviderState = CallState & {
   roomClient: RoomClient | null;
@@ -114,6 +121,8 @@ export function CallProvider(props: React.PropsWithChildren<{}>) {
   const startingCall = useRef<boolean>(false);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const snackbar = useSnackbarContext();
+  const snackbarRef = useRef(snackbar);
+  snackbarRef.current = snackbar;
   const [wakeLockActive, setWakeLockActive] = useState(false);
   const roomClient = useRef<RoomClient | null>(null);
 
@@ -213,6 +222,12 @@ export function CallProvider(props: React.PropsWithChildren<{}>) {
           callCreator: callData.callCreator,
           onNewPeer,
           onPeerLeft,
+          onMediaRefused: (kind) => {
+            snackbarRef.current.showSnackbar({
+              text: mediaRefusedText[kind],
+              type: "warning",
+            });
+          },
           audioOnly: callData.audioOnly,
           highQuality: callData.highQuality,
         });
@@ -370,7 +385,11 @@ export function CallProvider(props: React.PropsWithChildren<{}>) {
     } else {
       try {
         await roomClient.current?.enableMic();
-        await roomClient?.current?.unmuteMic();
+        // enableMic reports its own failures (a refused mic included); only
+        // unmute a mic that is there, so a refusal is not retried at once
+        if (roomClient.current?.isMicEnabled()) {
+          await roomClient.current.unmuteMic();
+        }
       } catch (error) {
         snackbar.showSnackbar({
           text: "Please allow microphone access in your browser settings.",

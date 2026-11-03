@@ -24,7 +24,7 @@ import channelDatabaseManager from "data/databases/channel";
 import { isAppVersionNewer } from "data/util/appversion";
 import dbTracker, { DbStatusObject } from "./dbTracker";
 import config from "common/config";
-import { PredefinedRole, RoleType } from "common/enums";
+import { PredefinedRole } from "common/enums";
 import serviceWorkerManager from "data/appstate/serviceWorker";
 import { isEqual } from "lodash";
 import { isoTime, mergeReadState, sameReadState } from "data/chat/mergeReadState";
@@ -38,6 +38,7 @@ import {
   serverLastReadAfter,
   type StoredChannel,
 } from "./readStateRows";
+import { isPredefinedRole } from "util/predefinedRoles";
 
 const TAG_FREQUENCY_VALIDFOR = 120000;
 const MEMBER_LIST_VALIDFOR = 60000;
@@ -810,7 +811,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
     await communityApi.updateChannel({ ...channelData, communityId, channelId });
     if (!!channelData.rolePermissions) {
       const roles = await this.db.roles.where('communityId').equals(communityId).toArray();
-      const adminRole = roles.find(r => r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Admin);
+      const adminRole = roles.find(r => isPredefinedRole(r, PredefinedRole.Admin));
       if (!adminRole) {
         console.warn("No admin role found for community", communityId);
       }
@@ -818,6 +819,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
         channelData.rolePermissions.push({
           roleId: adminRole.id,
           roleTitle: adminRole.title,
+          roleType: adminRole.type,
           permissions: ["CHANNEL_EXISTS", "CHANNEL_MODERATE", "CHANNEL_READ", "CHANNEL_WRITE"],
         });
       }
@@ -1081,7 +1083,8 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
                     channel.rolePermissions.some((newPermisson, i) => {
                       const existingPermission = oldChannel?.rolePermissions.find(rp => (
                         rp.roleId === newPermisson.roleId &&
-                        rp.roleTitle === newPermisson.roleTitle
+                        rp.roleTitle === newPermisson.roleTitle &&
+                        rp.roleType === newPermisson.roleType
                       ));
                       return (
                         !existingPermission ||

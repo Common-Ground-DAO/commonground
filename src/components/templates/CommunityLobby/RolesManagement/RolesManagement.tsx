@@ -10,7 +10,7 @@ import RoleEditor from './RoleEditor';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';
 import data from 'data';
 import SpinnerIcon from '../../../atoms/icons/16/Spinner.svg?react';
-import { PredefinedRole } from 'common/enums';
+import { PredefinedRole, RoleType } from 'common/enums';
 import _ from 'lodash';
 import SaveRoleWarningModal from './SaveRoleWarningModal';
 import { useNavigate } from 'react-router';
@@ -21,6 +21,7 @@ import { getUrl } from 'common/util';
 import FloatingSaveOptions from '../FloatingSaveOptions/FloatingSaveOptions';
 import ManagementHeader2 from 'components/molecules/ManagementHeader2/ManagementHeader2';
 import SimpleLink from 'components/atoms/SimpleLink/SimpleLink';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 const learnMoreLink = 'https://app.cg/c/commonground/article/token-gate-anything-on-common-ground-with-roles-uYEXWA5RV3QdjpaQPcKQ7N/';
 
@@ -63,10 +64,10 @@ const RolesManagement: React.FC<Props> = (props) => {
   }
 
   const lockEditing = useMemo(() => {
-    if (currentRole?.title === PredefinedRole.Admin) return 'fullLock';
-    else if (defaultRoles.includes(currentRole?.title as PredefinedRole)) return 'allowMember';
+    if (currentRole && isPredefinedRole(currentRole, PredefinedRole.Admin)) return 'fullLock';
+    else if (currentRole?.type === RoleType.PREDEFINED && defaultRoles.includes(currentRole.title as PredefinedRole)) return 'allowMember';
     else return undefined;
-  }, [currentRole?.title]);
+  }, [currentRole?.title, currentRole?.type]);
 
   const onCreateRole = useCallback(async () => {
     setIsCreating(true);
@@ -102,7 +103,7 @@ const RolesManagement: React.FC<Props> = (props) => {
     };
 
     // Add permissions if not editing admin
-    if (currentRole.title !== PredefinedRole.Admin) {
+    if (!isPredefinedRole(currentRole, PredefinedRole.Admin)) {
       request.permissions = currentRole.permissions;
     }
 

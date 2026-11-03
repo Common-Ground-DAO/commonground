@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { PredefinedRole } from 'common/enums';
+import { PredefinedRole, RoleType } from 'common/enums';
 import Button from '../../../../components/atoms/Button/Button';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';
 import React, { useCallback, useMemo } from 'react'
@@ -16,6 +16,7 @@ import { useManagementContentModalContext } from 'components/organisms/Managemen
 import SettingsButton from 'components/molecules/SettingsButton/SettingsButton';
 import RolePhoto from 'components/molecules/RolePhoto/RolePhoto';
 import { useCommunityPremiumTier } from 'hooks/usePremiumTier';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 type Props = {
   selectedId: string;
@@ -37,12 +38,12 @@ const RolesManagementList: React.FC<Props> = (props) => {
 
   const [adminRole, guestRole, memberRole] = useMemo(() => {
     return [
-      roles.find(role => role.title === PredefinedRole.Admin),
-      roles.find(role => role.title === PredefinedRole.Public),
-      roles.find(role => role.title === PredefinedRole.Member)
+      roles.find(role => isPredefinedRole(role, PredefinedRole.Admin)),
+      roles.find(role => isPredefinedRole(role, PredefinedRole.Public)),
+      roles.find(role => isPredefinedRole(role, PredefinedRole.Member))
     ]
   }, [roles]);
-  const customRoles = roles.filter(role => ![PredefinedRole.Admin, PredefinedRole.Member, PredefinedRole.Public].includes(role.title as PredefinedRole));
+  const customRoles = roles.filter(role => role.type !== RoleType.PREDEFINED);
   const assignableRoles = customRoles.filter(role => !role.assignmentRules?.type);
   const claimableRoles = customRoles.filter(role => !!role.assignmentRules?.type);
 

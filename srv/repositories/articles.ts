@@ -157,6 +157,7 @@ async function _getCommunityArticleList(
             SELECT JSON_BUILD_OBJECT(
               'roleId', r2."id",
               'roleTitle', r2."title",
+              'roleType', r2."type",
               'permissions', carp2."permissions"
             ) AS "item"
             FROM communities_articles_roles_permissions carp2
@@ -401,6 +402,7 @@ async function _getCommunityArticleDetailView(
             SELECT JSON_BUILD_OBJECT(
               'roleId', r2."id",
               'roleTitle', r2."title",
+              'roleType', r2."type",
               'permissions', carp2."permissions"
             ) AS "item"
             FROM communities_articles_roles_permissions carp2
@@ -452,7 +454,7 @@ async function _getCommunityArticleDetailView(
         ${!!userId
           ? format('ruu."userId" = %L::UUID OR', userId)
           : ''}
-        r."title" = ${format("%L", PredefinedRole.Public)}
+        (r."title" = ${format("%L", PredefinedRole.Public)} AND r."type" = ${format("%L", RoleType.PREDEFINED)})
       )
       AND ca."deletedAt" IS NULL
       AND ca."communityId" = $1
@@ -555,7 +557,7 @@ async function _createCommunityArticle(
     const row: { updatedAt: string, articleId: string; channelId: string; published: string | null; } = result.rows[0];
     const communityRoles = await communityHelper.getCommunityRoles(communityArticle.communityId, db);
     const existingRoleIds = new Set(communityRoles.map(r => r.id));
-    const adminId = communityRoles.filter(r => r.title === PredefinedRole.Admin)[0].id;
+    const adminId = communityRoles.filter(r => r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Admin)[0].id;
     // check if all roleIds really belong to this community
     for (const rolePermission of communityArticle.rolePermissions) {
       if (!existingRoleIds.has(rolePermission.roleId) || rolePermission.roleId === adminId) {
@@ -566,6 +568,7 @@ async function _createCommunityArticle(
       {
         roleId: adminId,
         roleTitle: PredefinedRole.Admin,
+        roleType: RoleType.PREDEFINED,
         permissions: rolePermissionPresets.Article.Visible
       },
       ...communityArticle.rolePermissions.filter(rp => rp.roleId !== adminId),
@@ -669,7 +672,7 @@ async function _updateCommunityArticle(
   if (communityArticle.rolePermissions !== undefined && communityArticle.rolePermissions.length > 0) {
     const communityRoles = await communityHelper.getCommunityRoles(communityArticle.communityId, db);
     const existingRoleIds = new Set(communityRoles.map(r => r.id));
-    const adminId = communityRoles.filter(r => r.title === PredefinedRole.Admin)[0].id;
+    const adminId = communityRoles.filter(r => r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Admin)[0].id;
     // check if all roleIds really belong to this community
     for (const rolePermission of communityArticle.rolePermissions) {
       if (!existingRoleIds.has(rolePermission.roleId) || rolePermission.roleId === adminId) {

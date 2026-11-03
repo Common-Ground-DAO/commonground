@@ -4,6 +4,7 @@
 
 import { PredefinedRole } from "common/enums";
 import { PermissionType } from "components/molecules/RolePermissionToggle/RolePermissionToggle";
+import { isPredefinedRolePermission } from "util/predefinedRoles";
 
 function toPermissionType(permissions: Common.ArticlePermission[]): PermissionType {
   if (permissions.includes('ARTICLE_READ')) return 'full';
@@ -14,7 +15,7 @@ function toPermissionType(permissions: Common.ArticlePermission[]): PermissionTy
 export function articlePermissionsToPermissionType(articlePermissions: Models.Community.CommunityArticlePermission[]): Record<string, PermissionType> {
   return articlePermissions.reduce((acc, permission) => {
     // Don't convert admin, we won't modify it and won't send it either
-    if (permission.roleTitle === PredefinedRole.Admin) return acc;
+    if (isPredefinedRolePermission(permission, PredefinedRole.Admin)) return acc;
 
     return {
       ...acc,
@@ -24,7 +25,7 @@ export function articlePermissionsToPermissionType(articlePermissions: Models.Co
 }
 
 export function checkIsPrivateArticle(articlePermissions: Models.Community.CommunityArticlePermission[]) {
-  const publicCanRead = articlePermissions.find(permission => permission.roleTitle === PredefinedRole.Public)?.permissions.includes('ARTICLE_READ');
+  const publicCanRead = articlePermissions.find(permission => isPredefinedRolePermission(permission, PredefinedRole.Public))?.permissions.includes('ARTICLE_READ');
 
   return !publicCanRead
 }
@@ -44,6 +45,7 @@ export function permissionTypeToArticlePermissions(
     return {
       roleId: roleId,
       roleTitle: role?.title || '',
+      roleType: role?.type,
       permissions: newPermissions
     }
   });

@@ -91,6 +91,7 @@ async function _getEventCTE(
           SELECT JSON_BUILD_OBJECT(
             'roleId', r."id",
             'roleTitle', r."title",
+            'roleType', r."type",
             'permissions', cep."permissions"
           ) AS "item"
           FROM "communities_events_permissions" cep
@@ -201,7 +202,42 @@ async function _getEventCTE(
   }[];
 }
 
+/**
+ * The role permissions to store for an event of `communityId`, without the
+ * Admin role. Every role id must be a live role of that community; otherwise
+ * the request is refused with NOT_ALLOWED.
+ */
+async function getCheckedEventRolePermissions<T extends { roleId: string }>(communityId: string, rolePermissions: T[]): Promise<T[]> {
+  const rolesResult = await pool.query(`
+    SELECT "id", "type", "title"
+    FROM roles
+    WHERE "communityId" = $1
+      AND "deletedAt" IS NULL
+  `, [communityId]);
+  const roles = rolesResult.rows as { id: string; type: RoleType; title: string }[];
+  const adminRole = roles.find(r => r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Admin);
+  if (!adminRole) {
+    throw new Error(errors.server.UNKNOWN);
+  }
+  const communityRoleIds = new Set(roles.map(r => r.id));
+  for (const rolePermission of rolePermissions) {
+    if (!communityRoleIds.has(rolePermission.roleId)) {
+      throw new Error(errors.server.NOT_ALLOWED);
+    }
+  }
+  return rolePermissions.filter(p => p.roleId !== adminRole.id);
+}
+
 class CommunityEventHelper {
+  /**
+   * Refuses (NOT_ALLOWED) event role permissions that name anything but
+   * live roles of `communityId`. The event routes run it on the full list
+   * before they write anything (the event's call included).
+   */
+  public async checkEventRolePermissions(communityId: string, rolePermissions: API.Community.createCommunityEvent.Request['rolePermissions']): Promise<void> {
+    await getCheckedEventRolePermissions(communityId, rolePermissions);
+  }
+
   public async getCommunityEvents(communityId: string, userId: string): Promise<API.Community.getEventList.Response> {
     return _getEventCTE(pool, {
       where: 'ce."communityId" = $1',
@@ -248,27 +284,15 @@ class CommunityEventHelper {
         ARRAY[${format("%L", MEMBER_PERMISSIONS)}]::"public"."communities_events_permissions_permissions_enum"[]
       )`;
     } else if (data.rolePermissions.length > 0) {
-      const adminRoleQuery = await pool.query(`
-        SELECT id
-        FROM roles
-        WHERE "communityId" = $1
-          AND "type" = ${format("%L", RoleType.PREDEFINED)}
-          AND "title" = ${format("%L", PredefinedRole.Admin)}
-      `, [data.communityId]);
-
-      const adminRole = adminRoleQuery.rows[0] as {
-        id: string;
-      };
-      if (!adminRole) {
-        throw new Error(errors.server.UNKNOWN);
+      data.rolePermissions = await getCheckedEventRolePermissions(data.communityId, data.rolePermissions);
+      if (data.rolePermissions.length > 0) {
+        roleInsert = `,` + data.rolePermissions.map(role =>
+          format(`(
+            (SELECT id FROM insert_event),
+            %L::uuid,
+            ARRAY[${format("%L", role.permissions)}]::"public"."communities_events_permissions_permissions_enum"[])
+          `, role.roleId)).join(",");
       }
-      data.rolePermissions = data.rolePermissions.filter(p => p.roleId !== adminRole.id);
-      roleInsert = `,` + data.rolePermissions.map(role =>
-        format(`(
-          (SELECT id FROM insert_event),
-          %L::uuid, 
-          ARRAY[${format("%L", role.permissions)}]::"public"."communities_events_permissions_permissions_enum"[])
-        `, role.roleId)).join(",");
     }
 
     const result = await pool.query(`
@@ -372,6 +396,7 @@ class CommunityEventHelper {
         (SELECT array_to_json(array_agg(json_build_object(
           'roleId', "roleId",
           'roleTitle', (SELECT "title" FROM roles r WHERE r."id" = "roleId"),
+          'roleType', (SELECT "type" FROM roles r WHERE r."id" = "roleId"),
           'permissions', "permissions"
         ))) FROM permission_insert) AS "rolePermissions",
         (SELECT array_agg("userId") FROM communities_events_participants WHERE "eventId" = ie.id) AS "participantIds",
@@ -632,6 +657,7 @@ class CommunityEventHelper {
         (SELECT array_to_json(array_agg(json_build_object(
           'roleId', "roleId",
           'roleTitle', (SELECT "title" FROM roles r WHERE r."id" = "roleId"),
+          'roleType', (SELECT "type" FROM roles r WHERE r."id" = "roleId"),
           'permissions', "permissions"
         ))) FROM permission_insert) AS "rolePermissions",
         (SELECT array_agg("userId") FROM communities_events_participants WHERE "eventId" = ue.id) AS "participantIds",
@@ -903,27 +929,15 @@ class CommunityEventHelper {
         ARRAY[${format("%L", MEMBER_PERMISSIONS)}]::"public"."communities_events_permissions_permissions_enum"[]
       )`;
     } else if (rolePermissions.length > 0) {
-      const adminRoleQuery = await pool.query(`
-        SELECT id
-        FROM roles
-        WHERE "communityId" = $1
-          AND "type" = ${format("%L", RoleType.PREDEFINED)}
-          AND "title" = ${format("%L", PredefinedRole.Admin)}
-      `, [communityId]);
-
-      const adminRole = adminRoleQuery.rows[0] as {
-        id: string;
-      };
-      if (!adminRole) {
-        throw new Error(errors.server.UNKNOWN);
+      rolePermissions = await getCheckedEventRolePermissions(communityId, rolePermissions);
+      if (rolePermissions.length > 0) {
+        roleInsert = `,` + rolePermissions.map(role =>
+          format(`(
+            (SELECT id FROM update_event),
+            %L::uuid,
+            ARRAY[${format("%L", role.permissions)}]::"public"."communities_events_permissions_permissions_enum"[])
+          `, role.roleId)).join(",");
       }
-      rolePermissions = rolePermissions.filter(p => p.roleId !== adminRole.id);
-      roleInsert = `,` + rolePermissions.map(role =>
-        format(`(
-          (SELECT id FROM update_event),
-          %L::uuid, 
-          ARRAY[${format("%L", role.permissions)}]::"public"."communities_events_permissions_permissions_enum"[])
-        `, role.roleId)).join(",");
     }
     return roleInsert;
   }

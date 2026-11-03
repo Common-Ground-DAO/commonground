@@ -10,6 +10,7 @@ import { parseIdOrUrl } from "../util";
 import contractApi from "data/api/contract";
 import uniqueDb from "data/databases/unique";
 import { useOwnCommunities } from "./OwnDataProvider";
+import { isPredefinedRole } from "util/predefinedRoles";
 
 type CommunityState = {
   state: 'loaded';
@@ -246,7 +247,7 @@ export function CommunityProvider(props: React.PropsWithChildren) {
     if (allLoaded && !!__roles && !!community?.myRoleIds) {
       const result = new Set<Common.CommunityPermission>();
       for (const role of __roles) {
-        if (community.myRoleIds.includes(role.id) || role.title === PredefinedRole.Public) {
+        if (community.myRoleIds.includes(role.id) || isPredefinedRole(role, PredefinedRole.Public)) {
           for (const perm of role.permissions) {
             result.add(perm);
           }

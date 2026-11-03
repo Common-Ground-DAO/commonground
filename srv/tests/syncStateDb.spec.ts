@@ -73,6 +73,7 @@ const R_FOREIGN_PUBLIC = id(0x204);
 const R_UNCLAIMED = id(0x205);
 const R_DELROLE = id(0x206);
 const R_OTHER_ONLY = id(0x207); // a role in C_MEMBER I do not hold
+const R_CUSTOM_PUBLIC = id(0x208); // a custom role in C_MEMBER titled "Public", nobody holds it
 
 // channels in C_MEMBER
 const CH_READ = id(0x300);          // Member: EXISTS + READ, lastRead set
@@ -84,6 +85,7 @@ const CH_DELETED = id(0x305);       // deleted channel
 const CH_OTHER_ROLE = id(0x306);    // only a role I do not hold
 const CH_NO_LASTREAD = id(0x307);   // readable, no lastRead
 const CH_MANY = id(0x308);          // more unread than the cap
+const CH_CUSTOM_PUBLIC = id(0x309); // only the custom "Public" role: EXISTS + READ
 // channels elsewhere
 const CH_IN_DELETED_C = id(0x310);
 const CH_FOREIGN = id(0x311);
@@ -144,7 +146,7 @@ describeDb('getSyncState and notification read state on PostgreSQL', () => {
     // migrations (owned by the migrating superuser; writer has table rights)
     await q(`CREATE TYPE ccrp_permissions_enum AS ENUM ('CHANNEL_EXISTS', 'CHANNEL_READ', 'CHANNEL_WRITE', 'CHANNEL_MODERATE')`);
     await q(`CREATE TABLE communities ("id" uuid PRIMARY KEY, "deletedAt" timestamptz)`);
-    await q(`CREATE TABLE roles ("id" uuid PRIMARY KEY, "communityId" uuid NOT NULL, "title" varchar(64) NOT NULL, "deletedAt" timestamptz)`);
+    await q(`CREATE TABLE roles ("id" uuid PRIMARY KEY, "communityId" uuid NOT NULL, "title" varchar(64) NOT NULL, "deletedAt" timestamptz, "type" text NOT NULL DEFAULT 'PREDEFINED')`);
     await q(`CREATE TABLE roles_users_users ("roleId" uuid NOT NULL, "userId" uuid NOT NULL, "claimed" boolean NOT NULL DEFAULT false, PRIMARY KEY ("userId", "roleId"))`);
     await q(`CREATE TABLE communities_channels ("channelId" uuid NOT NULL, "communityId" uuid NOT NULL, "deletedAt" timestamptz, PRIMARY KEY ("channelId", "communityId"))`);
     await q(`CREATE TABLE communities_channels_roles_permissions ("communityId" uuid NOT NULL, "channelId" uuid NOT NULL, "roleId" uuid NOT NULL, "permissions" ccrp_permissions_enum[] NOT NULL, PRIMARY KEY ("communityId", "channelId", "roleId"))`);
@@ -184,6 +186,7 @@ describeDb('getSyncState and notification read state on PostgreSQL', () => {
       ($4, $9, 'Member', NULL), ($5, $10, 'Public', NULL), ($6, $11, 'Member', NULL), ($12, $13, 'Member', now())`,
       [R_MEMBER, R_PUBLIC, R_EXTRA, R_DELETED_C, R_FOREIGN_PUBLIC, R_UNCLAIMED, R_OTHER_ONLY,
         C_MEMBER, C_DELETED, C_FOREIGN, C_UNCLAIMED, R_DELROLE, C_DELROLE]);
+    await q(`INSERT INTO roles VALUES ($1, $2, 'Public', NULL, 'CUSTOM_MANUAL_ASSIGN')`, [R_CUSTOM_PUBLIC, C_MEMBER]);
     await q(`INSERT INTO roles_users_users VALUES
       ($1, $6, true), ($2, $6, true), ($3, $6, true), ($4, $6, false), ($5, $6, true), ($7, $8, true)`,
       [R_MEMBER, R_EXTRA, R_DELETED_C, R_UNCLAIMED, R_DELROLE, ME, R_OTHER_ONLY, OTHER]);
@@ -194,6 +197,7 @@ describeDb('getSyncState and notification read state on PostgreSQL', () => {
       [CH_OTHER_ROLE, C_MEMBER, false], [CH_NO_LASTREAD, C_MEMBER, false], [CH_MANY, C_MEMBER, false],
       [CH_IN_DELETED_C, C_DELETED, false], [CH_FOREIGN, C_FOREIGN, false], [CH_UNCLAIMED, C_UNCLAIMED, false],
       [CH_DELROLE, C_DELROLE, false],
+      [CH_CUSTOM_PUBLIC, C_MEMBER, false],
     ];
     for (const [channelId, communityId, deleted] of channels) {
       await q(`INSERT INTO communities_channels VALUES ($1, $2, $3)`, [channelId, communityId, deleted ? T0 : null]);
@@ -215,6 +219,7 @@ describeDb('getSyncState and notification read state on PostgreSQL', () => {
       [C_FOREIGN, CH_FOREIGN, R_FOREIGN_PUBLIC, readable],
       [C_UNCLAIMED, CH_UNCLAIMED, R_UNCLAIMED, readable],
       [C_DELROLE, CH_DELROLE, R_DELROLE, readable],
+      [C_MEMBER, CH_CUSTOM_PUBLIC, R_CUSTOM_PUBLIC, readable],
     ];
     for (const [communityId, channelId, roleId, perms] of permissions) {
       await q(`INSERT INTO communities_channels_roles_permissions VALUES ($1, $2, $3, $4)`, [communityId, channelId, roleId, perms]);

@@ -11,13 +11,14 @@ import Button from 'components/atoms/Button/Button';
 import { channelPermissionsToPermissionType } from 'components/templates/CommunityLobby/ChannelManagement/EditChannelForm';
 import RolePermissionUnit from 'components/atoms/RolePermissionUnit/RolePermissionUnit';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';
-import { PredefinedRole } from 'common/enums';
+import { PredefinedRole, RoleType } from 'common/enums';
 import AnimatedContainerVertical from 'components/atoms/AnimatedContainerVertical/AnimatedContainerVertical';
 import AnimatedTabPage from 'components/atoms/AnimatedTabPage/AnimatedTabPage';
 import AnimatedTabPageContainer from 'components/atoms/AnimatedTabPage/AnimatedTabPageContainer';
 import { PermissionType } from '../RolePermissionToggle/RolePermissionToggle';
 import UserSettingsButton from '../UserSettingsButton/UserSettingsButton';
 import CheckboxBase from 'components/atoms/CheckboxBase/CheckboxBase';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 type Props = {
   channel: Models.Community.Channel;
@@ -37,7 +38,7 @@ const PinnedChatOptionsModal: React.FC<Props> = (props) => {
   const [notifyType, _setNotifyType] = useState<Models.Community.ChannelNotifyType>(channel.notifyType || 'while_pinned');
   const { ownRoles } = useLoadedCommunityContext();
   const channelPermissions = useMemo(() => channelPermissionsToPermissionType(channel.rolePermissions), [channel.rolePermissions]);
-  const isAdmin = !!ownRoles.find(role => role.title === PredefinedRole.Admin);
+  const isAdmin = !!ownRoles.find(role => isPredefinedRole(role, PredefinedRole.Admin));
 
   const setPinType = useCallback(async (value: Models.Community.ChannelPinType) => {
     data.community.setChannelPinState({
@@ -168,9 +169,9 @@ export const OptionsPermissionView: React.FC<OptionsPermissionViewProps> = (prop
   const { roles } = useLoadedCommunityContext();
   const { permissions, isAdmin, goToAdminPanel } = props;
 
-  const publicRole = roles.find(role => role.title === PredefinedRole.Public);
-  const memberRole = roles.find(role => role.title === PredefinedRole.Member);
-  const filteredRoles = roles.filter(role => ![PredefinedRole.Public, PredefinedRole.Member, PredefinedRole.Admin].includes(role.title as any));
+  const publicRole = roles.find(role => isPredefinedRole(role, PredefinedRole.Public));
+  const memberRole = roles.find(role => isPredefinedRole(role, PredefinedRole.Member));
+  const filteredRoles = roles.filter(role => role.type !== RoleType.PREDEFINED);
 
   return <>
     <div className='flex flex-col w-full'>
@@ -188,8 +189,8 @@ export const OptionsPermissionView: React.FC<OptionsPermissionViewProps> = (prop
         if (!role) return null;
 
         let title = role.title;
-        if (title === PredefinedRole.Public) title = 'Guests';
-        else if (title === PredefinedRole.Member) title = 'Members';
+        if (isPredefinedRole(role, PredefinedRole.Public)) title = 'Guests';
+        else if (isPredefinedRole(role, PredefinedRole.Member)) title = 'Members';
 
         return <div className='flex items-center justify-between gap-5 py-1' key={roleId}>
           <span className='cg-text-lg-500 cg-text-main'>{role?.title}</span>

@@ -11,6 +11,7 @@ import errors from '../common/errors';
 import callHelper from '../repositories/calls';
 import { CallType } from '../common/enums';
 import { EventEmitter } from 'events';
+import { authorizeProduce } from './mediaPermissions';
 
 const logger = new Logger('Room');
 /**
@@ -706,20 +707,18 @@ export default class Room extends EventEmitter {
                     let { appData } = produceData;
                     const transport = peer.data.transports.get(transportId);
 
-                    // Enforce audio-only server-side. The client also hides the
-                    // camera UI, but a modified client must not be able to
-                    // publish video into a call every participant believes is
-                    // audio-only.
-                    if (this._audioOnly && kind === 'video') {
-                        throw new Error('this call is audio-only');
-                    }
-
-                    if (this._callType === CallType.BROADCAST) {
-                        // check whether the peer is broadcaster
-                        if (!this._broadCasters.get(peer.id)) {
-                            throw new Error(errors.server.BROADCASTERS_LIMIT_EXCEEDED);
-                        }
-                    }
+                    // audio-only, the broadcast stage, then the peer's call
+                    // permission for the kind (mediaPermissions.ts)
+                    await authorizeProduce(
+                        {
+                            callType: this._callType,
+                            audioOnly: this._audioOnly,
+                            isBroadcaster: !!this._broadCasters.get(peer.id),
+                        },
+                        kind,
+                        appData,
+                        (permission, onStage) => callHelper.hasPermissionToSendMedia(peer.id, this._roomId, permission, onStage),
+                    );
 
                     if (!transport)
                         throw new Error(`transport with id "${transportId}" not found`);
@@ -1302,21 +1301,19 @@ export default class Room extends EventEmitter {
         }
     }
 
+    /** The call creator included (`hasPermissionToModerateCall`), unless banned. */
     private async hasModeratePermissions(peerId: string) {
-        if (peerId !== this._callCreator) {
-            const hasPermission = await callHelper.hasPermissionToModerateCall(peerId, this._roomId);
-            if (!hasPermission) {
-                throw new Error(errors.server.NOT_ALLOWED);
-            }
+        const hasPermission = await callHelper.hasPermissionToModerateCall(peerId, this._roomId);
+        if (!hasPermission) {
+            throw new Error(errors.server.NOT_ALLOWED);
         }
     }
 
+    /** The call creator included (`hasPermissionToJoinCall`), unless banned. */
     private async hasJoinPermissions(peerId: string) {
-        if (peerId !== this._callCreator) {
-            const hasPermission = await callHelper.hasPermissionToJoinCall(peerId, this._roomId);
-            if (!hasPermission) {
-                throw new Error(errors.server.NOT_ALLOWED);
-            }
+        const hasPermission = await callHelper.hasPermissionToJoinCall(peerId, this._roomId);
+        if (!hasPermission) {
+            throw new Error(errors.server.NOT_ALLOWED);
         }
     }
 

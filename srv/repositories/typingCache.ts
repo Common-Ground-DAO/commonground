@@ -44,6 +44,7 @@ const chatUsersCache = new Map<string, CacheEntry<string[]>>();
 const accessScopeCache = new Map<string, CacheEntry<boolean>>();
 
 const PUBLIC_ROLE_TITLE = 'Public';
+const PREDEFINED_ROLE_TYPE = 'PREDEFINED';
 
 async function loadChannelPerms(communityId: string, channelId: string): Promise<ChannelTypingPerms> {
   const rows = await communityHelper.getCommunityChannelRolePermissions(communityId, channelId);
@@ -55,7 +56,7 @@ async function loadChannelPerms(communityId: string, channelId: string): Promise
     const canWrite = row.permissions.includes('CHANNEL_EXISTS') && row.permissions.includes('CHANNEL_WRITE');
     if (canRead) {
       readerRoleIds.push(row.roleId);
-      if (row.roleTitle === PUBLIC_ROLE_TITLE) {
+      if (row.roleType === PREDEFINED_ROLE_TYPE && row.roleTitle === PUBLIC_ROLE_TITLE) {
         isPublic = true;
       }
     }

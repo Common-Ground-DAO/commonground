@@ -695,6 +695,34 @@ function processChangeEvents() {
         if (displayName !== userData.displayName) {
           userData.displayName = displayName;
           userData.displayNameLower = displayName.toLocaleLowerCase();
+          // the lists are sorted by name: rebuild the user's communities and
+          // the channels they are listed in
+          const renamedUserCommunityIds = new Set<string>();
+          for (const roleId of userData.roleIds) {
+            const communityId = communityIdByRoleId.get(roleId);
+            if (communityId) {
+              renamedUserCommunityIds.add(communityId);
+            }
+          }
+          for (const communityId of renamedUserCommunityIds) {
+            if (memberIdsByCommunityId.has(communityId)) {
+              updatedCommunityMemberLists.add(communityId);
+            }
+            const memberIdsByChannelId = memberIdsByCommunityIdByChannelId.get(communityId);
+            if (!memberIdsByChannelId) {
+              continue;
+            }
+            for (const [channelId, memberIds] of memberIdsByChannelId) {
+              if (memberIds._all.has(event.userId)) {
+                let updatedChannelMemberLists = updatedMemberLists.get(communityId);
+                if (!updatedChannelMemberLists) {
+                  updatedChannelMemberLists = new Set();
+                  updatedMemberLists.set(communityId, updatedChannelMemberLists);
+                }
+                updatedChannelMemberLists.add(channelId);
+              }
+            }
+          }
         }
       }
       else {
@@ -1161,12 +1189,13 @@ function getMemberListWindow(options: {
 function getMemberListPreview(options: {
   communityId: string;
   limit: number;
-}): Models.Community.MemberList | undefined {
+}): Models.Community.MemberList {
   const { communityId, limit } = options;
   const memberList = memberListByCommunityId.get(communityId);
   if (!memberList) {
+    // a community created a moment ago is only known after the next batch
     console.trace("ERROR (SKIP): Member list not found for communityId:", convertBinaryToUuid(communityId));
-    return undefined;
+    return emptyMemberList();
   }
   return {
     totalCount: memberList.count,
@@ -1417,6 +1446,7 @@ export const memberListForTests = {
   queueEvent: (event: PgNotifyEvent) => { changeEvents.push(event); },
   processChangeEvents,
   getMemberListWindow,
+  getMemberListPreview,
   getChannelMemberListWindow,
   hasChannelMemberList: (communityId: string, channelId: string) =>
     memberListByCommunityIdByChannelId.get(communityId)?.has(channelId) === true,

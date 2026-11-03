@@ -420,13 +420,15 @@ flows (outside `07-call.ts`) can start before.
   if P0/P3 measurements (time to first message after reload, offline use)
   justify it: single writer, LRU of K channels, whole-store wipe on logout,
   cache-schema constant.
-- [ ] **P5 — Removal and docs.** Delete `chunkedDatabase.ts`,
+- [x] **P5 — Removal and docs.** Delete `chunkedDatabase.ts`,
   `chunkedDatabase.helpers.ts`, `itemList.ts`, the chunk parts of `channel.ts`,
   the unused legacy `src/data/databases/messages.ts`; delete the old IndexedDB
   stores on startup; update `docs/frontend` and `docs/realtime` (+ status lines).
 
 ### Slice log (merged into `feature/chat-sync`)
 
+- [x] removal — chunked cache, ItemList, legacy lists/`messages.ts` and tab-state shims deleted (one-release SW/auth compat kept), obsolete IndexedDB cleanup on startup, read-state sync only when live, docs folded into `docs/frontend` + `docs/realtime` — merge `49f684c`
+- [x] develop merged (member list route spec) — `53b2063`
 - [x] srv-presence — presence grace period (30 s), cluster-wide batched offline
   check, change-only events, stale job emits offline — merge `6c9b07a`
 - [x] wiring — chat runtime (`src/data/chat/runtime.ts`), `channel.ts` façade + legacy list adapter, login hook-up — merge `1f2ed28`

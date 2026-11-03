@@ -24,7 +24,7 @@ import channelDatabaseManager from "data/databases/channel";
 import { isAppVersionNewer } from "data/util/appversion";
 import dbTracker, { DbStatusObject } from "./dbTracker";
 import config from "common/config";
-import { PredefinedRole, RoleType } from "common/enums";
+import { PredefinedRole } from "common/enums";
 import serviceWorkerManager from "data/appstate/serviceWorker";
 import { isEqual } from "lodash";
 import { isoTime, mergeReadState, sameReadState } from "data/chat/mergeReadState";
@@ -811,7 +811,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
     await communityApi.updateChannel({ ...channelData, communityId, channelId });
     if (!!channelData.rolePermissions) {
       const roles = await this.db.roles.where('communityId').equals(communityId).toArray();
-      const adminRole = roles.find(r => r.type === RoleType.PREDEFINED && isPredefinedRole(r, PredefinedRole.Admin));
+      const adminRole = roles.find(r => isPredefinedRole(r, PredefinedRole.Admin));
       if (!adminRole) {
         console.warn("No admin role found for community", communityId);
       }

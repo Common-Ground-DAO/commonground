@@ -62,7 +62,7 @@ const PluginCardDetails: React.FC<Props> = (props) => {
     const adminCommunities: Models.Community.DetailView[] = [];
     for (const community of myCommunities) {
       const roles = await communityDatabase.getRoles(community.id);
-      if (roles.some(role => community.myRoleIds.includes(role.id) && isPredefinedRole(role, PredefinedRole.Admin) && role.type === 'PREDEFINED')) {
+      if (roles.some(role => community.myRoleIds.includes(role.id) && isPredefinedRole(role, PredefinedRole.Admin))) {
         adminCommunities.push(community);
       };
     }

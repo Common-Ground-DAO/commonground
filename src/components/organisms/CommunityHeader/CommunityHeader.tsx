@@ -24,7 +24,7 @@ import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
 import NotAllowedIcon from '../../../components/atoms/icons/16/NotAllowed.svg?react';
 import ChevronDownIcon from '../../../components/atoms/icons/16/ChevronDown.svg?react';
 import SparkIcon from '../../../components/atoms/icons/misc/spark.svg?react';
-import { PredefinedRole, RoleType } from "common/enums";
+import { PredefinedRole } from "common/enums";
 import { getUrl } from 'common/util';
 
 import './CommunityHeader.css';
@@ -182,7 +182,7 @@ const CommunityHeader: React.FC<Props> = ({ onHeaderClick, banned, collapsed }) 
       if (communityPermissions.has('COMMUNITY_MANAGE_INFO')) {
         menuItems.push(<ManagementContentModalMenuItem leftElement={<HouseSimple weight="duotone" className="w-5 h-5"/>} key="General" text="General" url="manage-community" />);
       }
-      if (ownRoles.some(role => isPredefinedRole(role, PredefinedRole.Admin) && role.type === RoleType.PREDEFINED)) {
+      if (ownRoles.some(role => isPredefinedRole(role, PredefinedRole.Admin))) {
         menuItems.push(<ManagementContentModalMenuItem key="Premium" leftElement={<SparkIcon className="w-5 h-5" />} text="Premium" url="premium-management" />);
       }
       if (communityPermissions.has('COMMUNITY_MANAGE_ROLES')) {
@@ -209,7 +209,7 @@ const CommunityHeader: React.FC<Props> = ({ onHeaderClick, banned, collapsed }) 
       if (communityPermissions.has('COMMUNITY_MANAGE_ROLES')) {
         menuItems.push(<ManagementContentModalMenuItem key="Bots" leftElement={<Robot weight="duotone" className="w-5 h-5"/>} text="Bots" url="bot-management" />);
       }
-      if (ownRoles.some(role => isPredefinedRole(role, PredefinedRole.Admin) && role.type === RoleType.PREDEFINED)) {
+      if (ownRoles.some(role => isPredefinedRole(role, PredefinedRole.Admin))) {
         menuItems.push(<ManagementContentModalMenuItem key="Plugins" leftElement={<Plug weight="duotone" className="w-5 h-5" />} text="Plugins" url="plugins" />);
       }
       return menuItems;

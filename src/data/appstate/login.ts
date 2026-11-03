@@ -10,7 +10,7 @@ import chatDatabase from "data/databases/chats";
 import webSocketManager from "./webSocket";
 import notificationDatabase from "data/databases/notification";
 import errors from "common/errors";
-import messageDatabase from "data/databases/messages";
+import { clearChat, setupChatAfterLogin } from "data/chat/runtime";
 import channelDatabaseManager from "data/databases/channel";
 import { UserProfileTypeEnum } from "common/enums";
 import getSiweMessage from "util/siwe";
@@ -468,6 +468,7 @@ class LoginManager {
       securityStepState.setUser(null);
       webSocketManager.logout();
       channelDatabaseManager.userId = undefined;
+      clearChat();
       notificationDatabase.unreadCount = 0;
       this.state = "anonymous";
     })().finally(() => {
@@ -528,6 +529,7 @@ class LoginManager {
         uniqueDb.uniques.get("OwnData") as Promise<Unique.OwnData | undefined>,
         notificationsApi.getUnreadCount(undefined),
       ]);
+      setupChatAfterLogin(Number(unreadCount));
       if (!!ownData) {
         await notificationDatabase.setupAfterLogin(Number(unreadCount), ownData.data);
       }
@@ -854,11 +856,13 @@ class LoginManager {
             if (outcome.kind === 'superseded') {
               // this tab's device is not the stored one any more
               this._currentUser = null;
+              // either way this account's in-memory chat data goes
+              channelDatabaseManager.userId = undefined;
+              clearChat();
               if (!this.readStoredUser()) {
                 // another tab logged out
                 securityStepState.setUser(null);
                 webSocketManager.logout();
-                channelDatabaseManager.userId = undefined;
                 this.state = "anonymous";
               }
               // else another tab logged in: autoLogin follows the stored user
@@ -1001,6 +1005,7 @@ class LoginManager {
     const serviceWorkerManager = (await import("./serviceWorker")).default;
     if (this._windowReloadTriggered === false) {
       channelDatabaseManager.userId = data.ownData.id;
+      setupChatAfterLogin(data.unreadNotificationCount);
       // an account in the security step gets no realtime connection and no
       // push subscription until it finished the step (the page reloads then)
       const restricted = data.securityStepRequired === true;

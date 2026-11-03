@@ -37,7 +37,7 @@ class ChatDatabase extends AbstractDatabase<{
     (async () => {
       // initialize
       try {
-        // the send guard starts at what the server is known to hold
+        // the in-memory read state starts from the stored rows
         this.registerChatLastRead(await this.db.chats.toArray());
       } catch (e) {
         console.error(`Error initializing channel access for chat channels`, e);
@@ -238,9 +238,10 @@ class ChatDatabase extends AbstractDatabase<{
   }
 
   /**
-   * Seeds channel.ts's in-memory send guard with what the server is known to
-   * hold (`serverLastRead`), not the merged local lastRead, so a local mark
-   * that never reached the server is sent again.
+   * Registers the DMs' access (with what the server is known to hold,
+   * `serverLastRead`) and hands their merged read state to the in-memory
+   * read-state store (data.channelManager.applyStoredReadState), so a
+   * snapshot is merged into the rows once and mirrored in memory.
    */
   private registerChatLastRead(chats: StoredChat[]) {
     for (const chat of chats) {
@@ -249,6 +250,7 @@ class ChatDatabase extends AbstractDatabase<{
         chatId: chat.id,
       }, chat.serverLastRead ? { lastRead: chat.serverLastRead } : undefined);
     }
+    channelDatabaseManager.applyStoredReadState(chats.map(chatRowReadState));
   }
 
   public async clear() {

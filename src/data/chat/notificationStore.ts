@@ -286,7 +286,8 @@ class NotificationStoreImpl implements NotificationStore {
   // ----- resync ------------------------------------------------------------
 
   private scheduleResync(): void {
-    if (this.disposed) return;
+    // anonymous (also the `user` live after a logout): nothing to fetch
+    if (this.disposed || !this.deps.events.userId) return;
     this.resyncTimer.start(NOTIFICATION_RESYNC_DEBOUNCE_MS, () => {
       this.fetchCount().catch(noop);
       if (this.loaded && this.windows.size > 0) this.refreshNewest().catch(noop);

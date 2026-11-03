@@ -120,9 +120,18 @@ export interface ChatEventSource {
   readonly visible: boolean;
   onVisibilityChange(listener: (visible: boolean) => void): Unsubscribe;
 
-  /** Logged-in user of this tab; `undefined` while anonymous or logging in. */
+  /**
+   * Logged-in user of this tab; `undefined` while anonymous or logging in.
+   * When it becomes defined while `live`, the source also fires
+   * `onLive('user')` (the socket went live before the login settled).
+   */
   readonly userId: string | undefined;
   onUserChange(listener: (userId: string | undefined) => void): Unsubscribe;
+  /**
+   * The tab's account, known before the login settles (stored user); used
+   * only to classify a message as own. Falls back to `userId` when absent.
+   */
+  readonly accountId?: string | undefined;
 }
 
 /** Time source; tests pass a fake. */
@@ -390,6 +399,8 @@ export interface ChannelStore {
     channelId: string,
     messageId: string,
     onChange: (message: Models.Message.Message | undefined) => void,
+    /** optional: a failed fetch for this watcher's message (retried on the next live signal) */
+    onError?: (error: unknown) => void,
   ): Unsubscribe;
 
   /**
@@ -416,7 +427,7 @@ export interface ChannelStore {
 
   /** drop everything of a channel (left community, closed chat); was deleteChannelDatabase */
   forgetChannel(channelId: string): void;
-  /** logout: drop all channels, windows get an empty reset */
+  /** logout: drop all channels, windows get an empty reset, watchers `undefined` (then refetched) */
   clear(): void;
   /** tests / teardown: unsubscribe from the event source and stop timers */
   dispose(): void;
@@ -572,6 +583,13 @@ export interface ReadStateStore {
   subscribe(listener: (state: ChannelReadState) => void): Unsubscribe;
   /** merge one input (in memory and via persistence); returns the merged state */
   apply(input: ReadStateInput): ChannelReadState;
+  /**
+   * Mirror a state that is already persisted (a merged community/chat row)
+   * into memory: like a seq'd snapshot when it carries a seq (its `counted`
+   * seqs kept, so duplicates are not counted twice), else like a seq-less
+   * one. Memory only; never counts as server-acknowledged for sending.
+   */
+  applyStored(state: ChannelReadState): ChannelReadState;
   /** one marker per mounted message window */
   createMarker(channelId: string): ReadMarker;
   /** logout */

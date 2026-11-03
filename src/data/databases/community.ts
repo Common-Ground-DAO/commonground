@@ -108,7 +108,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
           this.db.channels.toArray(),
           this.db.calls.toArray(),
         ]);
-        // the send guard starts at what the server is known to hold
+        // the in-memory read state starts from the stored rows
         this.registerChannelLastRead(channels);
         for (const call of calls) {
           channelDatabaseManager.registerAccessForChannel({
@@ -859,11 +859,10 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
   }
 
   /**
-   * Seeds channel.ts's in-memory send guard with what the server is known to
-   * hold (`serverLastRead`), not the merged local lastRead: a local mark
-   * that never reached the server (tab closed before the debounced call, or
-   * the call failed) is then sent again when the channel is viewed. Rows
-   * without the field leave the guard unset (the first mark is sent).
+   * Registers the channels' access (with what the server is known to hold,
+   * `serverLastRead`) and hands their merged read state to the in-memory
+   * read-state store (data.channelManager.applyStoredReadState), so a
+   * snapshot is merged into the rows once and mirrored in memory.
    */
   private registerChannelLastRead(rows: StoredChannel[]) {
     for (const row of rows) {
@@ -872,6 +871,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
         communityId: row.communityId,
       }, row.serverLastRead ? { lastRead: row.serverLastRead } : undefined);
     }
+    channelDatabaseManager.applyStoredReadState(rows.map(channelRowReadState));
   }
 
   public async setChannelPinState(data: API.Community.setChannelPinState.Request) {

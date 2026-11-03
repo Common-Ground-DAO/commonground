@@ -9,6 +9,7 @@
  */
 
 import {
+  COUNTED_SEQS_MAX,
   MARK_READ_THROTTLE_MS,
   type ChannelReadState,
   type ReadMarker,
@@ -18,7 +19,7 @@ import {
   type ReadStateStoreDeps,
   type Unsubscribe,
 } from './types';
-import { isoTime, mergeReadState, sameReadState } from './mergeReadState';
+import { isoTime, mergeReadState, sameReadState, UNREAD_CAP } from './mergeReadState';
 import { isHttpNotFound, isValidationError, Timer } from './util';
 
 /** coalesces onLive/onResume bursts into one getSyncState */
@@ -70,6 +71,11 @@ class MarkerImpl implements ReadMarker {
 
 const noop = () => undefined;
 
+/** community channels and DMs have read state; call chats and article comments do not */
+export function hasReadState(access: API.Messages.MessageAccess | undefined): boolean {
+  return !!access && ('communityId' in access || 'chatId' in access) && !('callId' in access) && !('articleId' in access);
+}
+
 class ReadStateStoreImpl implements ReadStateStore {
   private readonly states = new Map<string, ChannelReadState>();
   /**
@@ -104,7 +110,11 @@ class ReadStateStoreImpl implements ReadStateStore {
       events.onLive(() => this.scheduleSync()),
       events.onResume(() => this.scheduleSync()),
       events.onVisibilityChange(() => this.evaluateAll()),
-      events.onUserChange(() => this.evaluateAll()),
+      events.onUserChange(userId => {
+        this.evaluateAll();
+        // logged in (also when the socket went live before that): catch up
+        if (userId) this.scheduleSync();
+      }),
     );
   }
 
@@ -121,6 +131,44 @@ class ReadStateStoreImpl implements ReadStateStore {
 
   apply(input: ReadStateInput): ChannelReadState {
     return this.applyInput(input, 'external');
+  }
+
+  applyStored(state: ChannelReadState): ChannelReadState {
+    const before = this.states.get(state.channelId);
+    const storedCounted = state.counted.filter(c => c > state.seq);
+    let merged: ChannelReadState;
+    if (state.seq > 0) {
+      // the row's count without its counted seqs is the count valid at its seq
+      const base = Math.max(0, state.unread - storedCounted.length);
+      merged = mergeReadState(before, {
+        kind: 'snapshot',
+        channelId: state.channelId,
+        lastRead: state.lastRead,
+        unread: base,
+        syncSeq: state.seq,
+        lastMessageDate: state.lastMessageDate,
+      });
+      const taken = state.seq >= (before?.seq ?? 0) && isoTime(state.lastRead) >= isoTime(before?.lastRead ?? null);
+      if (taken && merged.counted.length + storedCounted.length > 0) {
+        const counted = [...new Set([...merged.counted, ...storedCounted])].sort((a, b) => a - b).slice(-COUNTED_SEQS_MAX);
+        merged = { ...merged, counted, unread: Math.min(UNREAD_CAP, base + counted.length) };
+        if (isoTime(merged.lastRead) >= isoTime(merged.lastMessageDate)) merged = { ...merged, unread: 0, counted: [] };
+      }
+    } else {
+      merged = mergeReadState(before, {
+        kind: 'snapshot',
+        channelId: state.channelId,
+        lastRead: state.lastRead,
+        unread: state.unread,
+        lastMessageDate: state.lastMessageDate,
+      });
+    }
+    // memory only, and not acknowledged: the row may hold local marks
+    if (!sameReadState(before, merged)) {
+      this.states.set(state.channelId, merged);
+      for (const l of [...this.listeners]) l(merged);
+    }
+    return merged;
   }
 
   /**
@@ -150,10 +198,11 @@ class ReadStateStoreImpl implements ReadStateStore {
 
   /** a channel with read state (community channel or DM) */
   private tracked(channelId: string, hint?: { communityId?: string; chatId?: string }): boolean {
-    if (this.states.has(channelId)) return true;
-    if (hint && (hint.communityId || hint.chatId)) return true;
     const access = this.deps.getAccess(channelId);
-    return !!access && ('communityId' in access || 'chatId' in access);
+    // call chats and article comments have no read state (a call access may carry a communityId)
+    if (access) return hasReadState(access);
+    if (this.states.has(channelId)) return true;
+    return !!hint && !!(hint.communityId || hint.chatId);
   }
 
   private onLastReadEvent(event: Events.Channel.LastRead): void {
@@ -174,7 +223,8 @@ class ReadStateStoreImpl implements ReadStateStore {
       channelId: data.channelId,
       messageId: data.id,
       createdAt: data.createdAt,
-      own: data.creatorId === this.deps.events.userId,
+      // by account: own posts of other tabs/devices may arrive before the login settled
+      own: data.creatorId === (this.deps.events.accountId ?? this.deps.events.userId),
     };
     if (typeof data.syncSeq === 'number') input.syncSeq = data.syncSeq;
     this.applyInput(input, 'ack');

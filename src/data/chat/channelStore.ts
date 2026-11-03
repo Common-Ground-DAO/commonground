@@ -114,6 +114,7 @@ type BufferedItem = { event: Events.Message.Message } | { own: Message };
 
 type Watcher = {
   onChange: (message: Message | undefined) => void;
+  onError?: (error: unknown) => void;
   last: Message | undefined | typeof UNSET;
 };
 
@@ -489,7 +490,15 @@ class ChannelStoreImpl implements ChannelStore {
     }
     for (const [id, set] of ch.watchers) {
       fresh.watchers.set(id, set);
-      if (refetchWatched) fresh.watchFetchDue.add(id);
+      if (refetchWatched) {
+        fresh.watchFetchDue.add(id);
+        // logout: nothing of the old session stays shown if the refetch fails
+        for (const watcher of [...set]) {
+          if (watcher.last === undefined) continue;
+          watcher.last = undefined;
+          watcher.onChange(undefined);
+        }
+      }
     }
     const hints: NotifyHints = new Map();
     for (const w of fresh.windows) hints.set(w, { kind: 'reset', cause: 'resync' });
@@ -1333,9 +1342,14 @@ class ChannelStoreImpl implements ChannelStore {
 
   // ----- watchers ----------------------------------------------------------
 
-  watchMessage(channelId: string, messageId: string, onChange: (message: Message | undefined) => void): Unsubscribe {
+  watchMessage(
+    channelId: string,
+    messageId: string,
+    onChange: (message: Message | undefined) => void,
+    onError?: (error: unknown) => void,
+  ): Unsubscribe {
     const ch = this.getOrCreate(channelId);
-    const watcher: Watcher = { onChange, last: UNSET };
+    const watcher: Watcher = { onChange, onError, last: UNSET };
     let set = ch.watchers.get(messageId);
     if (!set) {
       set = new Set();
@@ -1406,8 +1420,13 @@ class ChannelStoreImpl implements ChannelStore {
           }
         }
         this.notify(ch);
-      } catch {
-        // retried on the next live signal
+      } catch (e) {
+        // retried on the next live signal; watchers that asked are told
+        if (ch.alive && !this.disposed) {
+          for (const id of ids) {
+            for (const watcher of [...(ch.watchers.get(id) ?? [])]) watcher.onError?.(e);
+          }
+        }
       } finally {
         for (const id of ids) ch.watchFetching.delete(id);
       }

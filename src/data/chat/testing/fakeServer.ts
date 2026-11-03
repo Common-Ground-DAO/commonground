@@ -82,6 +82,8 @@ export class FakeChatServer implements ChatApi, NotificationApi, ChatEventSource
   live = true;
   visible = true;
   userId: string | undefined = ME;
+  /** the tab's account while the login settles (undefined: same as userId) */
+  accountId: string | undefined = undefined;
   private messageListeners = new Set<(e: Events.Message.Message) => void>();
   private lastReadListeners = new Set<(e: Events.Channel.LastRead) => void>();
   private notificationListeners = new Set<(e: Events.Notification.Notification) => void>();

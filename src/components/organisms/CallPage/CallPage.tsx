@@ -97,8 +97,13 @@ const CallPage: React.FC = () => {
     isFullscreen ? 'full-screen' : ''
   ].join(' ').trim();
 
-  const renderChatOrAudience = useCallback(() => {
-    if (isMobile && currentCall?.callType === 'broadcast' && !showChat) {
+  // the call object is replaced on every calls update: depend on what the chat
+  // uses, and keep the element, so the call chat does not re-render with it
+  const currentCallId = currentCall?.id;
+  const currentCallChannelId = currentCall?.channelId;
+  const currentCallType = currentCall?.callType;
+  const chatOrAudience = useMemo(() => {
+    if (isMobile && currentCallType === 'broadcast' && !showChat) {
       return <Scrollable innerClassName='flex flex-col gap-4 p-4'>
         <AudienceList />
       </Scrollable>;
@@ -106,14 +111,14 @@ const CallPage: React.FC = () => {
 
     return <div className='call-chat'>
       {/* no window without a call: its channel and access are unknown */}
-      {!!currentCall && <MessageViewInner
-        channelId={currentCall.channelId}
+      {!!currentCallId && !!currentCallChannelId && <MessageViewInner
+        channelId={currentCallChannelId}
         hideInput={urlCallId !== callId}
         onMobileFocus={setMobileFocused}
         callMode
       />}
     </div>;
-  }, [isMobile, currentCall, showChat, urlCallId, callId]);
+  }, [isMobile, currentCallId, currentCallChannelId, currentCallType, showChat, urlCallId, callId]);
 
   const onJoinCall = useCallback((currentCall: Models.Calls.Call) => {
     if(currentCall.callMembers >= currentCall.slots){
@@ -166,7 +171,7 @@ const CallPage: React.FC = () => {
             standalone
           />
         </div>}
-        {renderChatOrAudience()}
+        {chatOrAudience}
         {isMobile && <ReactionPicker
           showPicker={showReactionPicker}
           closePicker={() => setShowReactionPicker(false)}

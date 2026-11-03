@@ -26,7 +26,7 @@ import { ScrollableHandle } from '../../molecules/Scrollable/Scrollable';
 import { chat } from 'data/chat/runtime';
 import { WINDOW_ERROR, type ChannelWindow } from 'data/chat/types';
 import { useChannelReadMarking } from 'hooks/useChannelReadMarking';
-import { consumesIntent, scrollActionForChange, type ResetIntent, type ScrollAction } from './scrollAnchoring';
+import { consumesIntent, leavesBottom, scrollActionForChange, type ResetIntent, type ScrollAction } from './scrollAnchoring';
 
 type Props = {
   channelName?: string;
@@ -300,6 +300,12 @@ export default function GenericMessageList(props: Props) {
       });
       if (consumesIntent(change)) resetIntentRef.current = null;
       applyScrollAction(action);
+      if (leavesBottom(change, action)) {
+        // items may have arrived below the viewport: not read until the list
+        // reports the bottom again (like jumps)
+        atBottomRef.current = false;
+        setAtBottom(false);
+      }
       const next: WindowView = { window: w, state };
       viewRef.current = next;
       // logout: the store empties the window and the runtime re-inits it

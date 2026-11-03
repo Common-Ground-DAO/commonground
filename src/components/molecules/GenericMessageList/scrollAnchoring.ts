@@ -104,3 +104,23 @@ export function scrollActionForChange(input: ScrollActionInput): ScrollAction {
       return atBottom ? { type: 'none' } : { type: 'lock', lock: BY_DATE };
   }
 }
+
+function scrollsToBottom(action: ScrollAction): boolean {
+  return action.type === 'scrollToBottom' || (action.type === 'lock' && action.lock.type === 'scrollToBottom');
+}
+
+/**
+ * Whether the list has to stop reporting "at the bottom" for this change
+ * until the Scrollable reports its position again (after the render).
+ *
+ * A page appended below (`append-page`, also the one that re-attaches the
+ * window to the latest messages) or a reset that does not scroll to the
+ * bottom (keeps the reading position by date, or goes to an element) can add
+ * items at or below the end while the viewport stays where it was. Reporting
+ * the old `atBottom` together with the new state would mark items read the
+ * user has not seen; the next position report restores the real level.
+ */
+export function leavesBottom(change: WindowChange, action: ScrollAction): boolean {
+  if (action.type === 'none' || scrollsToBottom(action)) return false;
+  return change.kind === 'append-page' || change.kind === 'reset';
+}

@@ -10,15 +10,20 @@ import { createChannelStore } from 'data/chat/channelStore';
 import { FakeChatServer, textBody } from 'data/chat/testing/fakeServer';
 import { systemClock } from 'data/chat/util';
 import type { ChannelWindow, WindowChange } from 'data/chat/types';
+import { readMarkingInput } from 'hooks/useChannelReadMarking';
 import {
   MESSAGE_TIMESTAMP_CLASS,
   consumesIntent,
+  leavesBottom,
   sameItemSequence,
   scrollActionForChange,
   type ResetIntent,
   type ScrollAction,
   type ScrollActionInput,
 } from './scrollAnchoring';
+
+// useChannelReadMarking imports the runtime; only its pure helpers are used here
+vi.mock('data/chat/runtime', () => ({ chat: {} }));
 
 const item = (id: string) => ({ id, createdAt: new Date(0), updatedAt: new Date(0) });
 const A = [item('a'), item('b')];
@@ -103,6 +108,24 @@ describe('scrollActionForChange', () => {
       .toEqual({ type: 'scrollToElement', elementId: 'b' });
   });
 
+  it('leaves the bottom when items can arrive below the viewport without scrolling to them', () => {
+    const element: ScrollAction = { type: 'lock', lock: { type: 'scrollToElementId', elementId: 'c' } };
+    expect(leavesBottom({ kind: 'append-page', count: 1 }, BY_DATE)).toBe(true);
+    expect(leavesBottom({ kind: 'reset', cause: 'resync' }, BY_DATE)).toBe(true);
+    expect(leavesBottom({ kind: 'reset', cause: 'jump' }, element)).toBe(true);
+    expect(leavesBottom({ kind: 'reset', cause: 'jump' }, { type: 'scrollToElement', elementId: 'c' })).toBe(true);
+    // scrolled to the bottom: the new items are shown
+    expect(leavesBottom({ kind: 'reset', cause: 'resync' }, TO_BOTTOM)).toBe(false);
+    expect(leavesBottom({ kind: 'reset', cause: 'latest' }, { type: 'scrollToBottom' })).toBe(false);
+    expect(leavesBottom({ kind: 'append-live', count: 1, own: false }, TO_BOTTOM)).toBe(false);
+    // nothing added at or below the end
+    expect(leavesBottom({ kind: 'append-page', count: 0 }, { type: 'none' })).toBe(false);
+    expect(leavesBottom({ kind: 'prepend', count: 1 }, BY_DATE)).toBe(false);
+    expect(leavesBottom({ kind: 'trim', from: 'start', count: 1 }, BY_DATE)).toBe(false);
+    expect(leavesBottom({ kind: 'update' }, BY_DATE)).toBe(false);
+    expect(leavesBottom({ kind: 'append-live', count: 1, own: false }, { type: 'none' })).toBe(false);
+  });
+
   it('sameItemSequence compares ids in order', () => {
     expect(sameItemSequence(A, [item('a'), item('b')])).toBe(true);
     expect(sameItemSequence(A, [item('b'), item('a')])).toBe(false);
@@ -134,20 +157,28 @@ describe('scroll anchoring against real window changes', () => {
     return { server, store };
   }
 
-  /** the list's listener: decides with the state before the change, like GenericMessageList */
-  function record(w: ChannelWindow, view: { atBottom: boolean; intent: ResetIntent | null }) {
+  /**
+   * the list's listener: decides with the state before the change, like
+   * GenericMessageList, and records whether the render of that change would
+   * mark the channel read (the level the read-marking hook reports)
+   */
+  function record(w: ChannelWindow, view: { atBottom: boolean; intent: ResetIntent | null }, marks: boolean[] = []) {
     const actions: ScrollAction[] = [];
     let prev = w.state;
     w.subscribe((state, change) => {
-      actions.push(scrollActionForChange({
+      const action = scrollActionForChange({
         change,
         prevItems: prev.items,
         nextItems: state.items,
         intent: view.intent,
         atBottom: view.atBottom,
         wasAtLatest: prev.withEndOfList,
-      }));
+      });
+      actions.push(action);
       if (consumesIntent(change)) view.intent = null;
+      if (leavesBottom(change, action)) view.atBottom = false;
+      const input = readMarkingInput(state, view.atBottom);
+      marks.push(input.atLatest && input.atBottom && !!input.newest);
       prev = state;
     });
     return actions;
@@ -200,6 +231,38 @@ describe('scroll anchoring against real window changes', () => {
     await w.jumpToLatest();
     expect(actions.at(-1)).toEqual(TO_BOTTOM);
     expect(w.state.withEndOfList).toBe(true);
+    store.dispose();
+  });
+
+  it('paging down until the window re-attaches to latest does not mark read before the list reports the bottom', async () => {
+    const { server, store } = setup(120);
+    const w = store.openWindow(C);
+    const view = { atBottom: true, intent: { type: 'bottom' } as ResetIntent | null };
+    const marks: boolean[] = [];
+    const actions = record(w, view, marks);
+    await w.init({ type: 'recent' });
+    expect(marks.at(-1)).toBe(true);
+
+    const target = server.rows(C)[40];
+    view.intent = { type: 'element', elementId: target.id };
+    await w.init({ type: 'atItemId', itemId: target.id });
+    expect(w.state.withEndOfList).toBe(false);
+
+    // the user pages down; every page is loaded while the list sits at the bottom
+    const pagingFrom = marks.length;
+    for (let i = 0; i < 6 && !w.state.withEndOfList; i++) {
+      view.atBottom = true;
+      await w.loadNewer(30);
+      await settle();
+    }
+    expect(w.state.withEndOfList).toBe(true);
+    expect(w.state.items.at(-1)!.id).toBe(server.rows(C).at(-1)!.id);
+    // the re-attaching page keeps the viewport (lock by date) ...
+    expect(actions.at(-1)).toEqual(BY_DATE);
+    // ... so neither it nor any earlier page marks the channel read
+    expect(marks.length).toBeGreaterThan(pagingFrom);
+    expect(marks.slice(pagingFrom)).not.toContain(true);
+    expect(view.atBottom).toBe(false);
     store.dispose();
   });
 });

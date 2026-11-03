@@ -18,14 +18,28 @@ import { MigrationInterface, QueryRunner } from "typeorm";
 //    and every other row of a live role of the community, stay.
 // 2. communities_events_permissions: the same against
 //    communities_events."communityId".
-// 3. Role assignments of users with an active ban (user_community_state:
+// 3. communities_channels_roles_permissions and
+//    communities_articles_roles_permissions: rows whose role is not a live
+//    role of the row's "communityId". Channel and article writes check the
+//    role ids against the community and a role's deletion removes its rows,
+//    so these are rows from before those checks, if any.
+// 4. Role assignments of users with an active ban (user_community_state:
 //    "blockState" = 'BANNED' and "blockStateUntil" NULL or in the future, the
 //    rule of `_isBanned`): what the ban's membership removal
 //    (`_removeCommunityMembership` and the bot reconciliation after it) does
 //    in the database, for every such user and community:
 //    - all of the user's roles_users_users rows of the community's roles
 //      (claimed or not, predefined or custom, live or deleted);
-//    - the community leaves users."communityOrder";
+//    - the community leaves users."communityOrder". The trigger
+//      `community_order_validation` (AFTER UPDATE on users) refuses an
+//      order that does not hold exactly the user's claimed Member
+//      communities, and an order can be out of step with the roles already
+//      (that very trigger failing made the old ban's leave give up). So
+//      the new order is built to match: the old order without the removed
+//      communities, without duplicates and without communities the user
+//      holds no claimed Member role of, then the claimed Member communities
+//      missing from it (ordered by id). Only orders that contain a removed
+//      community are written;
 //    - the user's user_channel_settings rows of the community go;
 //    - user_community_state."userLeftCommunity" = now();
 //    - communities."memberCount" goes down by one per user who held the
@@ -44,17 +58,31 @@ import { MigrationInterface, QueryRunner } from "typeorm";
 // Each step logs how many rows it changed. A second run changes nothing.
 // Custom roles are not renamed.
 //
-// Cost: steps 1 and 2 are one pass over their table each (anti join with
-// calls/communities_events and roles); step 3 starts from the banned rows of
+// Cost: steps 1 to 3 are one pass over their table each (anti join with
+// calls/communities_events and roles, or with roles); step 4 starts from the banned rows of
 // user_community_state and reaches roles_users_users through roles
 // ("communityId" index) and the primary key ("userId", "roleId"). The
 // statements take ROW EXCLUSIVE locks (plain writes go on) and row locks on
 // what they change; every lock request waits at most LOCK_TIMEOUT, as in
 // 1793635200000-chatSyncSeq, and a timeout rolls the whole migration run
-// back so it can simply be repeated. Measured on the migrated schema with
-// 2.2M roles_users_users rows, 1.8M user_community_state rows (15k active
-// bans), 604k callpermissions and 155k communities_events_permissions rows:
-// 0.25 s, 0.06 s and 2.0 s; the second run 1 s, removing nothing.
+// back so it can simply be repeated.
+//
+// Concurrent membership changes (a leave, a ban, a join after an unban while
+// the deploy runs): they delete or insert the same roles_users_users rows
+// and wait for this migration's row locks, so each removal is counted once —
+// a leave that finds the rows gone changes neither the order nor the member
+// count (its updates depend on the rows it deleted), and the member count
+// update here works on the latest committed count. The membership advisory
+// lock (`_lockMembership`) is not taken: one lock per banned pair, held to
+// the end of the migration run, could exhaust the shared lock table on a
+// large ban list, and the row locks already order these writers.
+//
+// Measured on the migrated schema with all triggers, 2.3M roles_users_users
+// rows, 1.9M user_community_state rows (15k active bans, 1.8k of the banned
+// users with an order out of step), 604k callpermissions, 155k
+// communities_events_permissions, 126k channel and 251k article permission
+// rows: 0.26 s, 0.06 s, 0.05 s and 2.5 s; the second run 1 s, removing
+// nothing.
 
 /** how long one lock request of this migration may wait */
 const LOCK_TIMEOUT = '5s';
@@ -103,8 +131,35 @@ const DELETE_EVENT_PERMISSIONS = `
     SELECT count(*)::int AS "count" FROM removed
 `;
 
+/** step 3: channel and article permission rows outside the live roles of their community */
+const DELETE_CHANNEL_ARTICLE_PERMISSIONS = `
+    WITH channels_removed AS (
+        DELETE FROM "communities_channels_roles_permissions" ccrp
+        WHERE NOT EXISTS (
+            SELECT 1 FROM "roles" r
+            WHERE r."id" = ccrp."roleId"
+              AND r."communityId" = ccrp."communityId"
+              AND r."deletedAt" IS NULL
+        )
+        RETURNING 1
+    ),
+    articles_removed AS (
+        DELETE FROM "communities_articles_roles_permissions" carp
+        WHERE NOT EXISTS (
+            SELECT 1 FROM "roles" r
+            WHERE r."id" = carp."roleId"
+              AND r."communityId" = carp."communityId"
+              AND r."deletedAt" IS NULL
+        )
+        RETURNING 1
+    )
+    SELECT
+        (SELECT count(*)::int FROM channels_removed) AS "channels",
+        (SELECT count(*)::int FROM articles_removed) AS "articles"
+`;
+
 /**
- * step 3: the memberships of users with an active ban, and of their
+ * step 4: the memberships of users with an active ban, and of their
  * user-owned bots, in the community of the ban
  */
 const REMOVE_BANNED_MEMBERSHIPS = `
@@ -156,15 +211,42 @@ const REMOVE_BANNED_MEMBERSHIPS = `
     order_update AS (
         UPDATE "users" u
         SET "communityOrder" = ARRAY(
-            SELECT o.id
-            FROM unnest(u."communityOrder") WITH ORDINALITY AS o(id, n)
-            WHERE o.id <> ALL (p."communityIds")
-            ORDER BY o.n
+            SELECT k.id
+            FROM (
+                -- kept: first position of each remaining Member community
+                SELECT o.id, min(o.n) AS pos
+                FROM unnest(u."communityOrder") WITH ORDINALITY AS o(id, n)
+                WHERE o.id = ANY (p."memberOf")
+                GROUP BY o.id
+                UNION ALL
+                -- missing: remaining Member communities not in the order
+                SELECT x.id, NULL::bigint
+                FROM unnest(p."memberOf") AS x(id)
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM unnest(u."communityOrder") AS e(id) WHERE e.id = x.id
+                )
+            ) k
+            ORDER BY k.pos NULLS LAST, k.id
         )
         FROM (
-            SELECT "userId", array_agg("communityId") AS "communityIds"
-            FROM removed
-            GROUP BY "userId"
+            SELECT g."userId", g."communityIds",
+                -- the claimed Member communities left after this statement,
+                -- as community_order_validation reads them
+                ARRAY(
+                    SELECT DISTINCT r."communityId"
+                    FROM "roles_users_users" ruu
+                    INNER JOIN "roles" r ON r."id" = ruu."roleId"
+                    WHERE ruu."userId" = g."userId"
+                      AND ruu."claimed" = TRUE
+                      AND r."title" = 'Member'
+                      AND r."type" = 'PREDEFINED'
+                      AND r."communityId" <> ALL (g."communityIds")
+                ) AS "memberOf"
+            FROM (
+                SELECT "userId", array_agg("communityId") AS "communityIds"
+                FROM removed
+                GROUP BY "userId"
+            ) g
         ) p
         WHERE u."id" = p."userId"
           AND u."communityOrder" && p."communityIds"
@@ -219,6 +301,8 @@ export class PermissionDataCleanup1793635400000 implements MigrationInterface {
             console.log(`PermissionDataCleanup: removed ${calls.count} callpermissions rows of roles outside the call's community or deleted roles`);
             const [events] = await queryRunner.query(DELETE_EVENT_PERMISSIONS);
             console.log(`PermissionDataCleanup: removed ${events.count} communities_events_permissions rows of roles outside the event's community or deleted roles`);
+            const [channelsArticles] = await queryRunner.query(DELETE_CHANNEL_ARTICLE_PERMISSIONS);
+            console.log(`PermissionDataCleanup: removed ${channelsArticles.channels} communities_channels_roles_permissions and ${channelsArticles.articles} communities_articles_roles_permissions rows of roles outside the row's community or deleted roles`);
             const [bans] = await queryRunner.query(REMOVE_BANNED_MEMBERSHIPS);
             console.log(
                 `PermissionDataCleanup: removed ${bans.roleAssignments} role assignments of banned users`

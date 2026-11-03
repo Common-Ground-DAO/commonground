@@ -64,7 +64,7 @@ const RolesManagement: React.FC<Props> = (props) => {
   }
 
   const lockEditing = useMemo(() => {
-    if (currentRole?.title === PredefinedRole.Admin) return 'fullLock';
+    if (currentRole && isPredefinedRole(currentRole, PredefinedRole.Admin)) return 'fullLock';
     else if (currentRole?.type === RoleType.PREDEFINED && defaultRoles.includes(currentRole.title as PredefinedRole)) return 'allowMember';
     else return undefined;
   }, [currentRole?.title, currentRole?.type]);

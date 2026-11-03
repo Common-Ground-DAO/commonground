@@ -424,7 +424,7 @@ registerPostRoute<
     const result = await communityHelper.createCommunity(data, user.id);
 
     const roleIds = result.roles.filter(r => {
-      return (
+      return r.type === RoleType.PREDEFINED && (
         r.title === PredefinedRole.Admin ||
         r.title === PredefinedRole.Member
       )

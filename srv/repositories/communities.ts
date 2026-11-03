@@ -1262,7 +1262,7 @@ async function _removeUserFromRoles(
     WITH role_data AS (
       SELECT "id" FROM roles
       WHERE "communityId" = $1
-        AND "title" <> ${format('%L', PredefinedRole.Member)}
+        AND NOT ("type" = ${format('%L', RoleType.PREDEFINED)} AND "title" = ${format('%L', PredefinedRole.Member)})
         AND "id" = ANY(ARRAY[${roleIds.map(s => format('%L::UUID', s)).join(',')}])
     )
     DELETE FROM roles_users_users
@@ -1389,6 +1389,25 @@ async function _isBanned(db: Pool | PoolClient, userId: string, communityId: str
       AND ("blockStateUntil" > NOW() OR "blockStateUntil" IS NULL)
   `, [userId, communityId]);
   return result.rows.length > 0;
+}
+
+/**
+ * A channel role permission list with each role's stored title and type
+ * (for events), whatever the request said about them.
+ */
+function _withStoredRoles(
+  rolePermissions: Models.Community.CommunityChannelPermission[],
+  roles: { id: string; title: string; type: RoleType }[],
+): Models.Community.CommunityChannelPermission[] {
+  return rolePermissions.map(rp => {
+    const role = roles.find(r => r.id === rp.roleId);
+    return {
+      roleId: rp.roleId,
+      roleTitle: role?.title ?? rp.roleTitle,
+      roleType: role?.type,
+      permissions: rp.permissions,
+    };
+  });
 }
 
 async function _getCommunityRoles(
@@ -2029,6 +2048,7 @@ class CommunityHelper {
                 agg.push({
                   roleId: role.id,
                   roleTitle: role.title,
+                  roleType: role.type,
                   permissions
                 })
               }
@@ -2042,7 +2062,7 @@ class CommunityHelper {
         userId,
         communityId,
         roleIds: roles
-          .filter(r => r.title === PredefinedRole.Admin || r.title === PredefinedRole.Member)
+          .filter(r => r.type === RoleType.PREDEFINED && (r.title === PredefinedRole.Admin || r.title === PredefinedRole.Member))
           .map(r => r.id)
       });
       const communityOrderResult = await client.query(`
@@ -2140,7 +2160,7 @@ class CommunityHelper {
       });
       await eventHelper.userJoinRooms(userId, {
         roleIds: roles
-          .filter(r => r.title === PredefinedRole.Admin || r.title === PredefinedRole.Member)
+          .filter(r => r.type === RoleType.PREDEFINED && (r.title === PredefinedRole.Admin || r.title === PredefinedRole.Member))
           .map(r => r.id),
         communityIds: [communityId],
       });
@@ -2252,6 +2272,7 @@ class CommunityHelper {
         {
           roleId: adminId,
           roleTitle: PredefinedRole.Admin,
+          roleType: RoleType.PREDEFINED,
           permissions: rolePermissionPresets.Channel.Admin
         },
         ...data.rolePermissions,
@@ -2285,6 +2306,13 @@ class CommunityHelper {
       data: {
         ...data,
         ...result,
+        // as stored, with each role's title and type
+        rolePermissions: roleData.map(r => ({
+          roleId: r.id,
+          roleTitle: r.title,
+          roleType: r.type,
+          permissions: r.permissions,
+        })),
         lastRead: new Date().toISOString(),
         lastMessageDate: null,
         pinType: null,
@@ -2324,6 +2352,7 @@ class CommunityHelper {
       data.rolePermissions.push({
         roleId: adminRole.id,
         roleTitle: PredefinedRole.Admin,
+        roleType: RoleType.PREDEFINED,
         permissions: rolePermissionPresets.Channel.Admin,
       });
     }
@@ -2349,6 +2378,10 @@ class CommunityHelper {
     const deleteRoleIds = new Set<string>();
 
     let extra: Partial<Models.Community.Channel> | undefined;
+    // the events carry each role's stored title and type, not the request's
+    if (!!data.rolePermissions) {
+      extra = { rolePermissions: _withStoredRoles(data.rolePermissions, communityRoles) };
+    }
     if (!data.rolePermissions) {
       oldPermissions.forEach(p => {
         if (p.permissions.includes(ChannelPermission.CHANNEL_EXISTS)) {
@@ -2460,7 +2493,7 @@ class CommunityHelper {
         data: {
           ...channel,
           lastRead: new Date().toISOString(),
-          rolePermissions: data.rolePermissions,
+          rolePermissions: _withStoredRoles(data.rolePermissions, communityRoles),
           pinType: null,
           notifyType: null,
           pinnedUntil: null,

@@ -557,7 +557,7 @@ async function _createCommunityArticle(
     const row: { updatedAt: string, articleId: string; channelId: string; published: string | null; } = result.rows[0];
     const communityRoles = await communityHelper.getCommunityRoles(communityArticle.communityId, db);
     const existingRoleIds = new Set(communityRoles.map(r => r.id));
-    const adminId = communityRoles.filter(r => r.title === PredefinedRole.Admin)[0].id;
+    const adminId = communityRoles.filter(r => r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Admin)[0].id;
     // check if all roleIds really belong to this community
     for (const rolePermission of communityArticle.rolePermissions) {
       if (!existingRoleIds.has(rolePermission.roleId) || rolePermission.roleId === adminId) {
@@ -568,6 +568,7 @@ async function _createCommunityArticle(
       {
         roleId: adminId,
         roleTitle: PredefinedRole.Admin,
+        roleType: RoleType.PREDEFINED,
         permissions: rolePermissionPresets.Article.Visible
       },
       ...communityArticle.rolePermissions.filter(rp => rp.roleId !== adminId),
@@ -671,7 +672,7 @@ async function _updateCommunityArticle(
   if (communityArticle.rolePermissions !== undefined && communityArticle.rolePermissions.length > 0) {
     const communityRoles = await communityHelper.getCommunityRoles(communityArticle.communityId, db);
     const existingRoleIds = new Set(communityRoles.map(r => r.id));
-    const adminId = communityRoles.filter(r => r.title === PredefinedRole.Admin)[0].id;
+    const adminId = communityRoles.filter(r => r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Admin)[0].id;
     // check if all roleIds really belong to this community
     for (const rolePermission of communityArticle.rolePermissions) {
       if (!existingRoleIds.has(rolePermission.roleId) || rolePermission.roleId === adminId) {

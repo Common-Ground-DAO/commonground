@@ -43,7 +43,8 @@
 > chat-sync removal (database table, `dbTracker` and the obsolete-database cleanup, "Chat
 > runtime and `data.channelManager`", "Chat stores", ConnectionManager,
 > §8) against commit 1e6a0d4, 2026-11-03; why memory + server and the open
-> persistence item ("Chat stores", chat-sync close-out) against commit 3567377, 2026-11-03
+> persistence item ("Chat stores", chat-sync close-out) against commit 3567377, 2026-11-03; `Message`'s
+> `data-send-status` against commit dea7c6a, 2026-11-03
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -118,7 +119,7 @@ Composed of atoms; represent small, functional UI units.
 
 | Component | Purpose |
 |---|---|
-| `Message` | Single chat message display (text, attachments, reactions). Its `MessageTooltip` sub-component hosts the per-message actions incl. the **Report** action. Re-renders on every change of the message object (edits, reactions, `sendStatus`); a pending own send is faded and offers no tooltip actions or swipe-to-reply while `sendStatus` is `sending` / `error-send`, a failed send or edit shows Retry and Discard / Undo edit (`retrySend` / `discardPending` of the channel store). Every item carries `data-timestamp` (scroll anchoring). |
+| `Message` | Single chat message display (text, attachments, reactions). Its `MessageTooltip` sub-component hosts the per-message actions incl. the **Report** action. Re-renders on every change of the message object (edits, reactions, `sendStatus`); a pending own send is faded and offers no tooltip actions or swipe-to-reply while `sendStatus` is `sending` / `error-send`, a failed send or edit shows Retry and Discard / Undo edit (`retrySend` / `discardPending` of the channel store). Every item carries `data-timestamp` (scroll anchoring); `data-send-status` (the `sendStatus` value) is set only while a send or edit is in flight or failed, so an item without it shows the stored server version (the e2e suite relies on it). |
 | `MesssageBodyRenderer` | Renders message/article body content into React elements. Note the triple-`s` directory name. See §6 for the markdown pipeline. Exports `MessageBodyRenderer`, `AllContentRenderer`, and (in `MarkdownContent.tsx`) `MarkdownContent` + `toMarkdownSource`. |
 | `CommentMessage` | Article/post comment display |
 | `CommentList` | List of comments: one chat-sync window (`chat.channels.openWindow`), newest first, "load more" via `loadOlder`; failed comments offer Retry/Discard. `ArticleCommentSection` joins the article event room while the transport is live and again on every `onLive`; the room is ref-counted per access (`articleEventRooms.ts`), so it is left only when the last section of that article unmounts. |

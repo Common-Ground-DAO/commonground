@@ -25,7 +25,8 @@
 > (re)connect, logout across tabs, the compat markers; no `tabState`/`lastDisconnect` any
 > more) against commit 1e6a0d4, 2026-11-03; the end of the socket login (`finishSocketLogin`) against
 > commit 043641d, 2026-11-03; the logout marker across tabs against commit 9d00729, 2026-11-03; the
-> anonymous reconnect after `cliSignedOut` against commit 1b9948c, 2026-11-03
+> anonymous reconnect after `cliSignedOut` against commit 1b9948c, 2026-11-03; who may join a call's
+> room (`hasPermissionToJoinCall`, Public role) against commits 2484880 and eebc3cf, 2026-11-03
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -380,7 +381,7 @@ A PostgreSQL keepalive query (`SELECT 1`) runs every 60 seconds on the LISTEN co
 
 ### Ended Call Protection
 
-`getOrCreateRoom` reads `callHelper.getCallState(roomId)` once, before any Room is created, and rejects the connection if the call does not exist, `endedAt` is set, or the user is neither the call creator nor allowed to join (`callHelper.hasPermissionToJoinCall`, the same rule as the `join` request); the same row provides the room parameters (call type, creator, slots, stage slots, audio-only, high quality). This prevents joining calls that have already ended in the database. If the connection that caused a Room's creation is gone before it is attached, the Room is closed again (`closeIfEmpty`). Room creation and joining are serialized per `roomId` (one `AwaitQueue` per room).
+`getOrCreateRoom` reads `callHelper.getCallState(roomId)` once, before any Room is created, and rejects the connection if the call does not exist, `endedAt` is set, or the user is neither the call creator nor allowed to join (`callHelper.hasPermissionToJoinCall`, the same rule as the `join` request: the call has not ended, its community is not deleted, and `CALL_JOIN` on the call is granted to one of the user's claimed roles or to the predefined Public role of the call's community — a call open to the Public role can be joined by every logged-in user who sees it through that role, members or not, except users banned from the community); the same row provides the room parameters (call type, creator, slots, stage slots, audio-only, high quality). This prevents joining calls that have already ended in the database. If the connection that caused a Room's creation is gone before it is attached, the Room is closed again (`closeIfEmpty`). Room creation and joining are serialized per `roomId` (one `AwaitQueue` per room).
 
 ---
 

@@ -4,7 +4,7 @@
 
 import format from "pg-format";
 import config from "../common/config";
-import { CallPermission, CallType, CommunityPermission, CommunityPremiumFeatureName, PredefinedRole, RoleType } from "../common/enums";
+import { CallPermission, CallType, CommunityPermission, CommunityPremiumFeatureName, PredefinedRole, RoleType, UserBlockState } from "../common/enums";
 import errors from "../common/errors";
 import pool from "../util/postgres";
 
@@ -998,24 +998,66 @@ class CallHelper {
     return result.rows[0].hasPermission as boolean;
   }
 
+  /**
+   * Whether the (logged-in) user `userId` may join the room of the call
+   * `callId`: the call has not ended, its community is not deleted, and
+   * `CALL_JOIN` is granted to one of the user's claimed, live roles or to the
+   * predefined Public role of the call's community. A call open to the
+   * Public role can be joined by everyone who may see it through that role,
+   * members and non-members alike, except users banned from the community.
+   */
   public async hasPermissionToJoinCall(
     userId: string,
     callId: string,
   ) {
-    const query = `
-    SELECT COUNT(*) > 0 AS "hasPermission"
-    FROM roles_users_users ruu
-    INNER JOIN roles r
-      ON ruu."roleId" = r."id"
-      AND r."deletedAt" IS NULL
-    INNER JOIN callpermissions cp
-      ON cp."roleId" = r."id"
-      AND cp."callId" = ${format("%L::uuid", callId)}
-      AND cp."permissions" @> ${format('ARRAY[%L]::"public"."callpermissions_permissions_enum"[]', [CallPermission.CALL_JOIN,])}
-    WHERE ruu."userId" = ${format("%L::uuid", userId)}
-      AND ruu."claimed" = TRUE
-    `;
-    const result = await pool.query(query);
+    const result = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM calls c
+        INNER JOIN communities co
+          ON  co."id" = c."communityId"
+          AND co."deletedAt" IS NULL
+        WHERE c."id" = $1
+          AND c."endedAt" IS NULL
+          AND (
+            EXISTS (
+              SELECT 1
+              FROM callpermissions cp
+              INNER JOIN roles r
+                ON  r."id" = cp."roleId"
+                AND r."deletedAt" IS NULL
+              INNER JOIN roles_users_users ruu
+                ON  ruu."roleId" = r."id"
+                AND ruu."userId" = $2
+                AND ruu."claimed" = TRUE
+              WHERE cp."callId" = c."id"
+                AND cp."permissions" @> ARRAY[$3]::"public"."callpermissions_permissions_enum"[]
+            )
+            OR (
+              EXISTS (
+                SELECT 1
+                FROM callpermissions cp
+                INNER JOIN roles r
+                  ON  r."id" = cp."roleId"
+                  AND r."deletedAt" IS NULL
+                  AND r."communityId" = c."communityId"
+                  AND r."type" = $4
+                  AND r."title" = $5
+                WHERE cp."callId" = c."id"
+                  AND cp."permissions" @> ARRAY[$3]::"public"."callpermissions_permissions_enum"[]
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM user_community_state ucs
+                WHERE ucs."userId" = $2
+                  AND ucs."communityId" = c."communityId"
+                  AND ucs."blockState" = $6
+                  AND (ucs."blockStateUntil" > now() OR ucs."blockStateUntil" IS NULL)
+              )
+            )
+          )
+      ) AS "hasPermission"
+    `, [callId, userId, CallPermission.CALL_JOIN, RoleType.PREDEFINED, PredefinedRole.Public, UserBlockState.BANNED]);
     return result.rows[0].hasPermission as boolean;
   }
 

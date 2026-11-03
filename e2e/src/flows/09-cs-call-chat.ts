@@ -22,14 +22,6 @@ const FULL_CALL_ACCESS = ['CALL_EXISTS', 'CALL_JOIN', 'AUDIO_SEND', 'VIDEO_SEND'
 type Variant = 'plain' | 'skew' | 'public';
 
 /**
- * The call server refuses a member whose access to the call comes from the
- * Public role alone (`hasPermissionToJoinCall` counts claimed roles only;
- * docs/todo/TODO.md). Expected in the public variant until fixed: this flow
- * checks the call chat, which works on the Public role.
- */
-const PUBLIC_ROLE_JOIN_REFUSED = /_joinRoom\(\) failed[\s\S]*NOT_ALLOWED/;
-
-/**
  * E1 (e2e/README.md "The chat-sync flows"): the first message of a
  * call chat reaches a member who opens the call while it is posted.
  *
@@ -44,11 +36,12 @@ const PUBLIC_ROLE_JOIN_REFUSED = /_joinRoom\(\) failed[\s\S]*NOT_ALLOWED/;
  *   public  the call grants access to the Public role only (started with
  *           custom role permissions, as "Limit Access" in the call modal
  *           does, through the app's startCall route): B — a member — reaches
- *           the call and its chat through the Public role alone. A call
- *           started without custom permissions grants the Member role, so
- *           the other variants never take this path.
+ *           the call, its chat and its room through the Public role alone.
+ *           A call started without custom permissions grants the Member
+ *           role, so the other variants never take this path.
  * B must see the message without a reload and keep seeing it once the
- * (late) first page is applied; a second message arrives live.
+ * (late) first page is applied; a second message arrives live; B has joined
+ * the call's room (the owner's peer card is shown).
  */
 export const csCallChat: Flow = {
   id: 'cs-call-chat',
@@ -182,34 +175,33 @@ export const csCallChat: Flow = {
         await waitMessagesShown(member.page, [first, second], { scope: '.call-chat', timeout: 10_000, inOrder: true, who: `${name} member` });
         await assertConnected(member.page, `${name} member`, { sinceMs: 0 });
       });
+
+      await t.step(`${name}: member has joined the call room (sees the owner's peer card)`, async () => {
+        // peer cards of the room (PreviewCards' cards lack `cursor-pointer`):
+        // the member's own and the owner's, which only the room's `join`
+        // answer brings
+        const cards = await until(`${name} member: two peer cards of the room`, async () => {
+          const n = await member.page.$$eval('.call-peer-card.cursor-pointer', els => els.length);
+          return n >= 2 ? n : null;
+        }, 30_000);
+        t.metric(`roomPeerCards.${name}`, cards);
+        await member.page.waitForSelector('.video-call-footer', { visible: true, timeout: 10_000 });
+      });
     };
 
     for (const [name, member] of [['plain', plainMember], ['skew', skewMember], ['public', publicMember]] as const) {
-      const run = async () => {
-        await variant(name, member).catch((e: unknown) => {
-          failed.push(`${name}: ${(e as Error).message.split('\n')[0]}`);
-        });
-        await t.step(`${name}: owner and member leave the call`, async () => {
-          for (const page of [member.page, owner.page]) {
-            const leave = await page.$('button.btnFinal.call-actions-button-size');
-            await leave?.click();
-          }
-          await navigate(t, owner.page, community.path);
-          await navigate(t, member.page, community.path);
-          await sleep(1_000);
-        }).catch(() => undefined);
-      };
-      if (name === 'public') {
-        await t.expectFailures([{
-          session: member.name,
-          kinds: ['console-error'],
-          text: PUBLIC_ROLE_JOIN_REFUSED,
-          reason: 'joining a call through the Public role alone is refused (docs/todo/TODO.md)',
-        }], run);
-      }
-      else {
-        await run();
-      }
+      await variant(name, member).catch((e: unknown) => {
+        failed.push(`${name}: ${(e as Error).message.split('\n')[0]}`);
+      });
+      await t.step(`${name}: owner and member leave the call`, async () => {
+        for (const page of [member.page, owner.page]) {
+          const leave = await page.$('button.btnFinal.call-actions-button-size');
+          await leave?.click();
+        }
+        await navigate(t, owner.page, community.path);
+        await navigate(t, member.page, community.path);
+        await sleep(1_000);
+      }).catch(() => undefined);
     }
 
     t.metric('failedVariants', failed);

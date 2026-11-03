@@ -300,15 +300,6 @@ that stack — confirm and delete:
     throws unhandled `NOT_FOUND` (`getCommunityDetailView`) and `VALIDATION`
     (`getArticleList`); a deep link to a non-existent profile article
     (`/u/<id>/article/<bad>/`) logs "Article uri invalid" and never leaves the loading screen.
-- [ ] **A call open to the Public role cannot be joined through it** (2026-11-03, found by
-  the public variant of the e2e flow `cs-call-chat`) — a call started with custom role
-  permissions that grant only the Public role is listed for a member and its chat works
-  (the call permission checks add the Public role), but the call server refuses the
-  member's room join with `NOT_ALLOWED`: `callHelper.hasPermissionToJoinCall`
-  (`srv/repositories/calls.ts`, used by `getOrCreateRoom` in `srv/mediasoup.ts`) counts
-  only the user's claimed roles. Add the Public role there like
-  `activeMembersWithPermissionsSql` does; the flow expects the refused join until then
-  (`PUBLIC_ROLE_JOIN_REFUSED`), so drop that expectation with the fix.
 - [ ] **A sole broadcaster's dropped or replaced connection ends the broadcast** (2026-11-02,
   G13 review) — the peer `close` handler in `srv/mediasoup/room.ts` closes the room as soon
   as no broadcaster is left, and `handleProtooConnection` closes a peer's previous

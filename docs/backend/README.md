@@ -45,8 +45,7 @@
 > `callDeliveryTargetsDb`) against commit 7f39d24, 2026-11-02; the community check of the
 > message access scope, `/getMemberList`, `/getUserCommunityRoleIds` and the memberlist
 > routes against commit 8e88b9a, 2026-11-03; the `/getChanges` cursor note (no epoch), the
-> single `/Message` mount and the test list against branch `chat-sync/final-srv` (base
-> f7a6043), 2026-11-03.
+> single `/Message` mount and the test list against commit 330fe2f, 2026-11-03.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -839,7 +838,7 @@ All entities use TypeORM decorators and live in `srv/entities/`. The database is
 - `userIds` (UUID array) -- participants
 - `adminIds` (UUID array)
 - `channelId` (UUID, unique) -- associated channel for messages
-- GIN index `idx_chats_userIds_gin` on `userIds` for the membership test (`"userIds" @> ARRAY[user]`), added by `1793660400000-syncStateIndexes`
+- GIN index `idx_chats_userIds_gin` on `userIds` for the membership test (`"userIds" @> ARRAY[user]`), added by `1793635100000-syncStateIndexes`
 
 ### Notification Domain
 
@@ -854,7 +853,7 @@ All entities use TypeORM decorators and live in `srv/entities/`. The database is
 - `message` (varchar 256)
 - `isRead` (boolean, default false)
 - `data` (jsonb, nullable) -- extra notification data
-- Partial index `idx_notifications_userId_unread` on `userId` where `read = FALSE` for the unread count, added by `1793660400000-syncStateIndexes`
+- Partial index `idx_notifications_userId_unread` on `userId` where `read = FALSE` for the unread count, added by `1793635100000-syncStateIndexes`
 
 ### Content Domain
 

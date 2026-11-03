@@ -18,7 +18,7 @@
  * Schema: the tables the statements touch as before the chat-sync
  * migrations, then the real migrations `1793635200000-chatSyncSeq`
  * (`channel_sync_state`, `messages."syncSeq"`, the trigger, the live unread
- * index) and `1793660400000-syncStateIndexes` (up / down / up). Sequences
+ * index) and `1793635100000-syncStateIndexes` (up / down / up). Sequences
  * therefore come from the trigger.
  *
  * The repositories run as the api's role `writer`: getSyncState on a pool
@@ -47,7 +47,7 @@ jest.mock('../util/postgres', () => ({
 jest.mock('../repositories/files', () => ({ __esModule: true, default: {} }));
 
 import { ChatSyncSeq1793635200000 as ChatSyncSeqMigration } from '../migrations/1793635200000-chatSyncSeq';
-import { SyncStateIndexes1793660400000 as IndexMigration } from '../migrations/1793660400000-syncStateIndexes';
+import { SyncStateIndexes1793635100000 as IndexMigration } from '../migrations/1793635100000-syncStateIndexes';
 import syncStateHelper from '../repositories/syncState';
 import { UNREAD_CAP } from '../repositories/messages';
 import notificationHelper from '../repositories/notifications';

@@ -18,6 +18,7 @@ import ReplyIcon from "../../atoms/icons/20/Reply.svg?react";
 import { chat } from 'data/chat/runtime';
 import ReplyContentRenderer from '../Message/ReplyContentRenderer/ReplyContentRenderer';
 import MessageAttachments from '../Message/MessageAttachments/MessageAttachments';
+import SendStatusNotice from '../SendStatusNotice/SendStatusNotice';
 import { useSidebarDataDisplayContext } from 'context/SidebarDataDisplayProvider';
 import { useReportModalContext } from 'context/ReportModalProvider';
 import { ReportType } from 'common/enums';
@@ -145,11 +146,14 @@ const CommentMessage: React.FC<Props> = (props) => {
           setImageModalOpen={() => { }}
         />}
     </div>
-    {message.sendStatus === 'error-send' && <div className='flex items-center gap-2 cg-text-md-400 cg-text-warning' role='alert'>
-      <span>Comment not posted</span>
-      {!!onRetrySend && <Button role='textual' text='Retry' onClick={() => onRetrySend(message.id)} />}
-      {!!onDiscardPending && <Button role='textual' text='Discard' onClick={() => onDiscardPending(message.id)} />}
-    </div>}
+    {message.sendStatus === 'error-send' && <SendStatusNotice
+      kind='comment'
+      messageId={message.id}
+      content={message.body.content}
+      sendStatus='error-send'
+      onRetry={onRetrySend && (() => onRetrySend(message.id))}
+      onDiscard={onDiscardPending && (() => onDiscardPending(message.id))}
+    />}
   </div>;
 }
 

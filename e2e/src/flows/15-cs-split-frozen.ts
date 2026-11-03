@@ -18,7 +18,7 @@ import { assert, sleep } from '../lib/ui.ts';
  *    Page.setWebLifecycleState, what Chrome does to hidden tabs on Android:
  *    no script runs, the socket is closed); A posts two messages and edits
  *    one; the tab is resumed and brought to the front: it reconnects and
- *    catches up — the edit included;
+ *    catches up — the edit included, with its "edited" marker;
  *  - cold service worker: the service worker is stopped (the guards'
  *    worker sessions detached first) and the tab reloaded, twice: a plain
  *    reload (the worker controls the load and starts cold) and a hard
@@ -103,7 +103,7 @@ export const csSplitFrozen: Flow = {
         });
       }, 3_000);
       await t.step('frozen tab: it catches up — new messages and the edit, in order', async () => {
-        await waitMessagesShown(member.page, all, { timeout: 15_000, inOrder: true, who: 'resumed tab' });
+        await waitMessagesShown(member.page, all, { timeout: 15_000, inOrder: true, edited: [all[0]], who: 'resumed tab' });
       });
     });
 

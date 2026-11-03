@@ -19,8 +19,8 @@
 > 959064f and 1963d4f, 2026-11-02; the `notifications` unread index, the `chats` GIN
 > index and their lock note against commit 312b5e7, 2026-11-02; why the sync sequence and not an
 > `updatedAt` cursor (chat-sync close-out) against commit 3567377, 2026-11-03; the lock order
-> and `lock_timeout` of `1793635200000-chatSyncSeq` and `1793660400000-syncStateIndexes`
-> against branch `chat-sync/final-srv` (base f7a6043), 2026-11-03
+> and `lock_timeout` of `1793635200000-chatSyncSeq` and `1793635100000-syncStateIndexes`
+> against commit 330fe2f, 2026-11-03
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -609,8 +609,8 @@ Per-channel, commit-ordered change sequence for messages (chat-sync catch-up,
   "syncSeq"` (`ACCESS EXCLUSIVE`: reads wait too), then what needs the column (the `syncSeq`
   index — one sequential scan — and the triggers). From the `ALTER TABLE` on, reads of
   `messages` wait through the rest of the run, including later migrations of the same deploy
-  (`1793660400000-syncStateIndexes` builds two more indexes). Every lock request of the
-  migration (and of `1793660400000-syncStateIndexes`) waits at most 5 s (`lock_timeout`, set
+  (`1793635100000-syncStateIndexes`, which builds two more indexes, runs before it). Every lock request of the
+  migration (and of `1793635100000-syncStateIndexes`) waits at most 5 s (`lock_timeout`, set
   transaction-locally and restored afterwards) instead of queueing behind a long open
   transaction with every later request on the table queued behind it. A timeout fails the
   statement (`canceling statement due to lock timeout`, SQLSTATE `55P03`), the whole run
@@ -627,7 +627,7 @@ Direct message conversations. Currently supports 1:1 chats with provision for gr
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | `uuid` PK | Auto-generated |
-| `userIds` | `uuid[]` | Participants, indexed (btree). Also GIN index `idx_chats_userIds_gin` (added by `1793660400000-syncStateIndexes`, declared on the entity with `synchronize: false`) for the membership test `"userIds" @> ARRAY[user]` of `getChats` and `Message/getSyncState`, which the btree cannot serve. Built with a plain `CREATE INDEX` (see the note on `idx_notifications_userId_unread`) |
+| `userIds` | `uuid[]` | Participants, indexed (btree). Also GIN index `idx_chats_userIds_gin` (added by `1793635100000-syncStateIndexes`, declared on the entity with `synchronize: false`) for the membership test `"userIds" @> ARRAY[user]` of `getChats` and `Message/getSyncState`, which the btree cannot serve. Built with a plain `CREATE INDEX` (see the note on `idx_notifications_userId_unread`) |
 | `adminIds` | `uuid[]` | Admins of the chat |
 | `channelId` | `uuid` | FK -> `channels.id`, unique. OneToOne |
 | `createdAt/updatedAt/deletedAt` | `timestamptz(3)` | Standard timestamps |
@@ -997,7 +997,7 @@ User notifications.
 |--------|------|-------|
 | `id` | `uuid` PK | Auto-generated |
 | `type` | `enum(NotificationType)` | MENTION, REPLY, DM, APPROVAL, etc. |
-| `userId` | `uuid` | FK -> `users.id` (CASCADE), indexed. Recipient. Also partial index `idx_notifications_userId_unread` over the unread notifications (`"read" = FALSE`, added by `1793660400000-syncStateIndexes`, declared on the entity with `synchronize: false`) for the unread count. The migration builds both of its indexes with a plain `CREATE INDEX`, whose `SHARE` lock makes writes to `notifications` and `chats` wait (reads go on) until the whole migration run commits; `CREATE INDEX CONCURRENTLY` cannot run inside a transaction, and the migration runner uses transaction mode `all` (one transaction for the whole run). Each lock request waits at most 5 s (`lock_timeout`), as in [`1793635200000-chatSyncSeq`](#message-sync-sequence). The build time on the production data is measured in the cg.box dress rehearsal |
+| `userId` | `uuid` | FK -> `users.id` (CASCADE), indexed. Recipient. Also partial index `idx_notifications_userId_unread` over the unread notifications (`"read" = FALSE`, added by `1793635100000-syncStateIndexes`, declared on the entity with `synchronize: false`) for the unread count. The migration builds both of its indexes with a plain `CREATE INDEX`, whose `SHARE` lock makes writes to `notifications` and `chats` wait (reads go on) until the whole migration run commits; `CREATE INDEX CONCURRENTLY` cannot run inside a transaction, and the migration runner uses transaction mode `all` (one transaction for the whole run). Each lock request waits at most 5 s (`lock_timeout`), as in [`1793635200000-chatSyncSeq`](#message-sync-sequence). The build time on the production data is measured in the cg.box dress rehearsal |
 | `subjectUserId` | `uuid` | Nullable, indexed. Who triggered it |
 | `subjectCommunityId` | `uuid` | Nullable, indexed |
 | `subjectArticleId` | `uuid` | Nullable, FK -> `articles.id`, indexed |

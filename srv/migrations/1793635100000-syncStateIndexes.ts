@@ -25,10 +25,10 @@ import { MigrationInterface, QueryRunner } from "typeorm";
 // Both are built with a plain CREATE INDEX (CREATE INDEX CONCURRENTLY cannot
 // run inside a transaction, and the migration runner uses transaction mode
 // "all"). Its SHARE lock makes writes to notifications and chats wait, reads
-// go on, until the whole migration run commits. When this migration runs in
-// one run with 1793635200000-chatSyncSeq, that one holds ACCESS EXCLUSIVE on
-// `messages`, so reads of messages wait through these builds as well. Each
-// lock request waits at most LOCK_TIMEOUT; on a timeout the run rolls back,
+// go on, until the whole migration run commits. It runs before
+// 1793635200000-chatSyncSeq, so in a run with both, these builds happen before
+// that one's ACCESS EXCLUSIVE lock on `messages` (reads of messages are not
+// held up by them). Each lock request waits at most LOCK_TIMEOUT; on a timeout the run rolls back,
 // migrateDb exits 1 and the run can be repeated (see
 // 1793635200000-chatSyncSeq). The build time on the production data is
 // measured in the dress rehearsal.
@@ -46,8 +46,8 @@ async function withLockTimeout(queryRunner: QueryRunner, work: () => Promise<voi
     await queryRunner.query(`SELECT set_config('lock_timeout', $1, true)`, [previous]);
 }
 
-export class SyncStateIndexes1793660400000 implements MigrationInterface {
-    name = 'SyncStateIndexes1793660400000'
+export class SyncStateIndexes1793635100000 implements MigrationInterface {
+    name = 'SyncStateIndexes1793635100000'
 
     public async up(queryRunner: QueryRunner): Promise<void> {
         await withLockTimeout(queryRunner, async () => {

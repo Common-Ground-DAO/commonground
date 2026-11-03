@@ -13,8 +13,8 @@ import { sleep, until } from '../lib/ui.ts';
  * E3 (e2e/README.md "The chat-sync flows"): reconnect. B has the
  * channel open and goes offline; meanwhile A posts three messages and
  * edits an older one. Back online, B's open list shows all of it in order —
- * the edit included — without scrolling or a reload, and a message A posts
- * after the reconnect arrives live as well.
+ * the edit included, with its "edited" marker — without scrolling or a
+ * reload, and a message A posts after the reconnect arrives live as well.
  */
 export const csReconnect: Flow = {
   id: 'cs-reconnect',
@@ -60,7 +60,7 @@ export const csReconnect: Flow = {
     }, 3_000);
 
     await t.step('member sees all of it, in order, without scrolling or a reload', async () => {
-      await waitMessagesShown(member.page, [`${older}${suffix}`, ...posted], { inOrder: true, timeout: 20_000, who: 'member' });
+      await waitMessagesShown(member.page, [`${older}${suffix}`, ...posted], { inOrder: true, edited: [`${older}${suffix}`], timeout: 20_000, who: 'member' });
     });
 
     await t.step('a message after the reconnect arrives live', async () => {

@@ -47,7 +47,8 @@ import { MigrationInterface, QueryRunner } from "typeorm";
 // queueing (with every later request on the table queued behind it). On a
 // timeout the statement fails ("canceling statement due to lock timeout",
 // SQLSTATE 55P03), the whole migration run rolls back, migrateDb exits 1 and
-// the run can simply be repeated (compose: `restart: on-failure:3`). The same
+// the run can simply be repeated (selfhost compose: `restart: on-failure:3`;
+// dev compose: `restart_policy.max_attempts: 2`). The same
 // holds when PostgreSQL resolves a deadlock by aborting the migration —
 // possible in step 2 with a transaction that read `messages` and then waits
 // for its own write (whichever of the two detects the deadlock is aborted).

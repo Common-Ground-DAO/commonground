@@ -4,7 +4,7 @@
 
 import type { HTTPResponse } from 'puppeteer';
 import type { Flow } from '../lib/harness.ts';
-import { OPT_IN_RELOAD_MODES, RELOAD_MODES, type ReloadMode } from '../lib/config.ts';
+import { RELOAD_MODES, type ReloadMode } from '../lib/config.ts';
 import { signUp } from '../lib/account.ts';
 import { closeUserMenu, connectionState, createChannel, createCommunity, EDITOR, navigate, openChannel, openUserMenu, waitAppReady, waitMessageConfirmed } from '../lib/app.ts';
 import { assert, sleep, until } from '../lib/ui.ts';
@@ -51,10 +51,9 @@ import { coldServiceWorkerReload, swControlled } from '../lib/cdp.ts';
  *              ignoreCache, which bypasses the worker: an uncontrolled page
  *              with a cold worker). The indicator must show "connected"
  *              within 12 s of the load — "hidden" (never connected since
- *              the load) counts as a failure in this mode. Only when
- *              --reload-modes names it.
+ *              the load) counts as a failure in this mode.
  * --reload-modes picks a subset; the default rotates through all available
- * (session-expired needs E2E_REDIS_URL) except force-reload-cold-sw.
+ * (session-expired needs E2E_REDIS_URL).
  * The report has per-iteration results, the failure rate per mode, and as
  * diagnostics every Set-Cookie of the session cookie that arrived after the
  * device login had set a new session id ("cookie regressions").
@@ -252,7 +251,7 @@ export const reload: Flow = {
 
     const reloads = ['reload', 'hard-reload-bypass-sw', 'navigate'] as const;
     // --reload-modes and E2E_REDIS_URL are validated by parseArgs
-    const modes = (t.config.reloadModes.length ? t.config.reloadModes : RELOAD_MODES.filter(m => !OPT_IN_RELOAD_MODES.includes(m)))
+    const modes = (t.config.reloadModes.length ? t.config.reloadModes : [...RELOAD_MODES])
       .filter(m => m !== 'session-expired' || !!t.config.redisUrl);
     t.note(`reload modes: ${modes.join(', ')}`);
     /** makes the server forget (session-expired) or the browser drop (cookie-cleared) the session */

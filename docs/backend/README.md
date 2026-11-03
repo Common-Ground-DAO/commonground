@@ -32,7 +32,7 @@
 > 2026-11-01; `callUpdateEmitter.ts` (call-ending sweeps, events), `/setChannelLastRead`
 > and the test list against commit 591e6cf, 2026-11-02; the community check of
 > the message access scope, `/getMemberList`, `/getUserCommunityRoleIds` and the
-> memberlist routes against commit 88f742f, 2026-11-03.
+> memberlist routes against commit 8e88b9a, 2026-11-03.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -316,7 +316,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/joinCommunity` -- Join a community
 - `/leaveCommunity` -- Leave a community
 - `/setUserBlockState` -- Ban/unban users
-- `/getMemberList` -- Get community members: the full list for members, a short preview (first members by name, ids only) for others
+- `/getMemberList` -- Get community members: the full list for members, a short preview (first members by name, ids only) for others while the community is not deleted
 - `/getChannelMemberList` -- Get channel members
 - `/getMemberNewsletterCount` -- Count newsletter subscribers
 - `/getUserCommunityRoleIds` -- Get roles for a user in a community: role ids for the user themself or for community members (requires a session)

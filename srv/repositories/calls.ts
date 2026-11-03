@@ -1023,6 +1023,7 @@ class CallHelper {
       INNER JOIN roles r
         ON  cp."roleId" = r."id"
         AND r."deletedAt" IS NULL
+        AND r."communityId" = c."communityId"
       INNER JOIN roles_users_users ruu
         ON  ruu."roleId" = r."id"
         AND ruu."claimed" = TRUE
@@ -1339,6 +1340,7 @@ class CallHelper {
       INNER JOIN "roles" r
         ON cp."roleId" = r."id"
         AND r."deletedAt" IS NULL
+        AND r."communityId" = cl."communityId"
       LEFT JOIN LATERAL (
         SELECT "communityId", "activeUntil"
         FROM communities_premium

@@ -130,7 +130,7 @@ function buildCommunityArm(userId: string | undefined, data: API.Feed.getPostLis
     FROM communities_articles ca
     INNER JOIN communities_articles_roles_permissions carp
       ON ca."communityId" = carp."communityId" AND ca."articleId" = carp."articleId"
-    INNER JOIN roles r ON carp."roleId" = r."id" AND r."deletedAt" IS NULL
+    INNER JOIN roles r ON carp."roleId" = r."id" AND r."deletedAt" IS NULL AND r."communityId" = ca."communityId"
     INNER JOIN articles a ON carp."articleId" = a."id"
     ${needsPremium ? `LEFT JOIN LATERAL (
       SELECT "activeUntil"

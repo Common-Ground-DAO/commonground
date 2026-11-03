@@ -96,6 +96,8 @@ async function _getCommunityArticleSocialPreviewData(
         AND ca."articleId" = carp."articleId"
     INNER JOIN roles r
       ON carp."roleId" = r."id"
+      AND r."deletedAt" IS NULL
+      AND r."communityId" = ca."communityId"
     INNER JOIN articles a
       ON carp."articleId" = a."id"
     INNER JOIN communities c
@@ -164,6 +166,7 @@ async function _getCommunityArticleList(
             INNER JOIN roles r2
                 ON r2."id" = carp2."roleId"
                 AND r2."deletedAt" IS NULL
+                AND r2."communityId" = carp2."communityId"
             WHERE ca."communityId" = carp2."communityId"
               AND ca."articleId" = carp2."articleId"
           ) sub
@@ -198,6 +201,7 @@ async function _getCommunityArticleList(
     INNER JOIN roles r
       ON carp."roleId" = r."id"
       AND r."deletedAt" IS NULL
+      AND r."communityId" = ca."communityId"
     INNER JOIN articles a
       ON carp."articleId" = a."id"
     INNER JOIN communities c
@@ -314,6 +318,8 @@ async function _getCommunityArticleListForEmails(
         AND ca."articleId" = carp."articleId"
     INNER JOIN roles r
       ON carp."roleId" = r."id"
+      AND r."deletedAt" IS NULL
+      AND r."communityId" = ca."communityId"
     INNER JOIN articles a
       ON carp."articleId" = a."id"
     INNER JOIN communities c
@@ -409,6 +415,7 @@ async function _getCommunityArticleDetailView(
             INNER JOIN roles r2
                 ON r2."id" = carp2."roleId"
                 AND r2."deletedAt" IS NULL
+                AND r2."communityId" = carp2."communityId"
             WHERE ca."communityId" = carp2."communityId"
               AND ca."articleId" = carp2."articleId"
           ) sub
@@ -444,6 +451,7 @@ async function _getCommunityArticleDetailView(
     INNER JOIN roles r
       ON carp."roleId" = r."id"
       AND r."deletedAt" IS NULL
+      AND r."communityId" = ca."communityId"
     INNER JOIN articles a
       ON carp."articleId" = a."id"
     ${!!userId

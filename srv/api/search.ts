@@ -153,7 +153,7 @@ class SearchHelper {
                 ), '[]'::json)
                 FROM communities_articles_roles_permissions carp2
                 INNER JOIN roles r2
-                  ON r2."id" = carp2."roleId" AND r2."deletedAt" IS NULL
+                  ON r2."id" = carp2."roleId" AND r2."deletedAt" IS NULL AND r2."communityId" = carp2."communityId"
                 WHERE carp2."communityId" = ca."communityId" AND carp2."articleId" = ca."articleId"
               )
             )
@@ -176,7 +176,7 @@ class SearchHelper {
       LEFT JOIN communities_articles_roles_permissions carp
         ON ca."communityId" = carp."communityId" AND ca."articleId" = carp."articleId"
       LEFT JOIN roles r
-        ON r."id" = carp."roleId" AND r."deletedAt" IS NULL
+        ON r."id" = carp."roleId" AND r."deletedAt" IS NULL AND r."communityId" = ca."communityId"
       ${!!userId ? `LEFT JOIN roles_users_users ruu
         ON r."id" = ruu."roleId" AND ruu."claimed" = TRUE` : ''}
       LEFT JOIN users_articles ua

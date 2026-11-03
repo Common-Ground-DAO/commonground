@@ -429,6 +429,10 @@ flows (outside `07-call.ts`) can start before.
 
 - [x] srv-presence — presence grace period (30 s), cluster-wide batched offline
   check, change-only events, stale job emits offline — merge `6c9b07a`
+- [x] wiring — chat runtime (`src/data/chat/runtime.ts`), `channel.ts` façade + legacy list adapter, login hook-up — merge `1f2ed28`
+- [x] notifications-ui — notification façade, badge, browser — merge `420be6d`
+- [x] list-ui — message/comment lists on chat windows, level-triggered read marking, retry/discard UI, ref-counted article rooms — merge `5709314`
+- [x] develop merged (develop-guards, member-list-access) — `4e863c6`
 - [x] srv-targeting — `x-cg-socket-id` echo exclusion and article rooms per socket (ownership via `deviceSocket:` room), call-chat delivery to present members/Public, logout disconnects the device's sockets — merge `66de1c3`
 - [x] e2e — acceptance flows E1–E5, E7, E8 (`--flow chat-sync`), same-user multi-tab harness, CDP helpers, `force-reload-cold-sw` mode; baseline in the coordinator notes — merge `6e0e9af`
 - [x] srv-state — `getSyncState`, notification read/count fixes (emit only on change, counts as int, `unreadCountAt`), sync-state indexes, real-PG test target locked to `CG_TEST_PG_*` — merge `60e2580`

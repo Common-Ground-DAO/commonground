@@ -51,7 +51,8 @@
 > commits dac9eaf, 9385d52, b3fa87b, 24922f5 and 7814781, 2026-11-03; the role title rule on
 > update, the event role check before any write, the join/ban membership lock and the
 > `roleType` of role permission lists against commits 0e4c794, d6354ef, 3bd44c0, 138c630, 3082f2a and 8bb443a,
-> 2026-11-03.
+> 2026-11-03; the role rule of the listings and the homepage calls and the test list against commits
+> 60ea3f1 and 5f50cc0, 2026-11-03.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -1182,6 +1183,11 @@ The `db: Pool | PoolClient` parameter pattern enables functions to work both sta
   channel, article, call or event. A custom role with the title "Public" is an ordinary role. Block
   states (ban, chat mute) are checked by the write routes themselves (e.g. `/createMessage`), not
   here, so reading through the Public role stays open to everyone
+- The listings follow the same rule (events, articles, feed, newsletter history, search, the
+  homepage calls): a role counts only as a live role of the item's community, the user's claimed
+  roles through a join on `roles_users_users` that names the user (a primary-key lookup), everyone
+  else through the predefined Public role. The Member role's permissions count for members only, so
+  the homepage shows a call to non-members only when the Public role may see it
 
 **`srv/repositories/files.ts`** -- `fileHelper`
 - S3 storage operations (upload, download, signed URLs)
@@ -1712,9 +1718,15 @@ with wave M2 (see below).
   and new-call member/Public targets; own database `cg_call_delivery_test`),
   `callJoinPermissionDb` and `callMediaPermissionDb` (who may join, send media
   into and moderate a call, as the call server's role `mediasoup`; own databases
-  `cg_call_join_test`, `cg_call_media_test`) and `permissionPublicRoleDb` (role
+  `cg_call_join_test`, `cg_call_media_test`), `permissionPublicRoleDb` (role
   resolution of `permissionHelper`: the predefined Public role and the owning
-  community; own database `cg_permission_public_test`).
+  community; own database `cg_permission_public_test`), `communityEventListDb`
+  (event list and attend check by live roles of the event's community; own database
+  `cg_event_list_test`), `callHomepageListDb` (homepage calls by claimed roles or the
+  Public role; own database `cg_call_homepage_test`, migrated schema) and
+  `permissionDataCleanupDb` (the migration `1793635400000-permissionDataCleanup` on the
+  migrated schema with all triggers; own database `cg_permission_cleanup_test`). The
+  migrated-schema specs run the migration chain first (`tests/helpers/migratedDb.ts`).
   They connect only to
   `CG_TEST_PG_HOST`:`CG_TEST_PG_PORT` (`tests/helpers/testPg.ts`), also for
   the `util/postgres` pools `securityStepDb` loads (it sets `DB_HOST`/`DB_PORT`

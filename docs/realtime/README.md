@@ -25,7 +25,7 @@
 > (re)connect, logout across tabs, the compat markers; no `tabState`/`lastDisconnect` any
 > more) against commit 1e6a0d4, 2026-11-03; the end of the socket login (`finishSocketLogin`) against
 > commit 043641d, 2026-11-03; the logout marker across tabs against commit 9d00729, 2026-11-03;
-> who may join a call's room (`hasPermissionToJoinCall`, Public role) against commit 2484880, 2026-11-03
+> who may join a call's room (`hasPermissionToJoinCall`, Public role) against commits 2484880 and eebc3cf, 2026-11-03
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 

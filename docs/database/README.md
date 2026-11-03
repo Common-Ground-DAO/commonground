@@ -20,7 +20,8 @@
 > index and their lock note against commit 312b5e7, 2026-11-02; why the sync sequence and not an
 > `updatedAt` cursor (chat-sync close-out) against commit 3567377, 2026-11-03; the lock order
 > and `lock_timeout` of `1793635200000-chatSyncSeq` and `1793635100000-syncStateIndexes`
-> against commit 330fe2f, 2026-11-03
+> against commit 330fe2f, 2026-11-03; the `mediasoup` role's column grants on `communities` and
+> `user_community_state` against commit eebc3cf, 2026-11-03
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -1537,7 +1538,7 @@ Four login roles exist in every cluster:
 | `postgres` | the image entrypoint (`POSTGRES_PASSWORD` = `PG_SU_PASSWORD`) | superuser, owns every object | `migrate-db`, `cg-builder` (migration tooling) |
 | `writer` | `docker/db/init.sh` (`PG_WRITER_PASSWORD`) | `ALL PRIVILEGES` on every table except `logging` (`INSERT` only) and `channel_sync_state` (`SELECT, INSERT, UPDATE`, written by the `messages` triggers under the writing role); `USAGE, SELECT` on `migrations_id_seq` | api, wsapi, memberlist, job-runner, onchain |
 | `reader` | `docker/db/init.sh` (`PG_READER_PASSWORD`) | `SELECT` on every table except `logging` (`INSERT` only); `USAGE, SELECT` on `migrations_id_seq` | no service today |
-| `mediasoup` | `docker/db/init.sh` (`PG_MEDIASOUP_PASSWORD`); migration `1689160339881-addMediasoupRole` creates it only if it is missing (`PG_MEDIASOUP_PASSWORD` empty at initialization) | `SELECT` on seven tables, `INSERT`/`UPDATE` on `calls`, `callmembers`, `callservers` (`1689160339881`, `1689184137878`, `1689258457796`, `1690444603969`) | mediasoup |
+| `mediasoup` | `docker/db/init.sh` (`PG_MEDIASOUP_PASSWORD`); migration `1689160339881-addMediasoupRole` creates it only if it is missing (`PG_MEDIASOUP_PASSWORD` empty at initialization) | `SELECT` on seven tables, `INSERT`/`UPDATE` on `calls`, `callmembers`, `callservers` (`1689160339881`, `1689184137878`, `1689258457796`, `1690444603969`); column-level `SELECT` on `communities` (`id`, `deletedAt`) and `user_community_state` (`userId`, `communityId`, `blockState`, `blockStateUntil`) for the call join check (`1793635300000-mediasoupCallJoinGrants`) | mediasoup |
 
 `init.sh` runs only when the official image initializes an empty data directory.
 It creates the `cryptogram` database and the three application roles but grants

@@ -44,7 +44,6 @@ vi.mock('data/appstate/login', () => ({ default: fake.loginManager }));
 vi.mock('data/appstate/serviceWorker', () => ({ default: fake.serviceWorkerManager }));
 vi.mock('data/databases/dbTracker', () => ({ default: fake.dbTracker }));
 vi.mock('data/databases/obsoleteDatabases', () => ({
-  OBSOLETE_DATABASE_CLEANUP_DELAY_MS: 10_000,
   deleteObsoleteDatabases: async (deps: { knownNames: () => string[] }) => {
     fake.cleanups.push({ known: deps.knownNames() });
     // never settles: nothing may wait for it

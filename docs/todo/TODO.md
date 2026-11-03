@@ -270,8 +270,6 @@ that stack — confirm and delete:
   Most visible: **F-11**, a freshly created community bot gets no role and cannot
   post (pinned by `r6-bot`; the test flips once fixed).
 - [ ] **Dead-code candidates found during the dependency waves** (2026-08-04):
-  `MessageDatabase.getMessages()` / `getLatestMessages()` in
-  `src/data/databases/messages.ts` (no callers — superseded by `chunkedDatabase`?),
   `src/hooks/useUserAgent.ts` (no callers), and `src/reportWebVitals.ts` (called only
   in dev, without a handler — inert). Verify and delete.
 - [ ] **`htmlToImage()` does not await `page.setViewport()`** (`srv/api/util.ts`,

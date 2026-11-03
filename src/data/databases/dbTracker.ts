@@ -4,6 +4,7 @@
 
 import config from "common/config";
 import { isAppVersionNewer } from "data/util/appversion";
+import { isObsoleteDatabase } from "./obsoleteDatabases";
 
 const identifier = "CG_KNOWN_INDEXEDDBS";
 
@@ -40,8 +41,14 @@ class DbTracker {
                         const ownDbInfo = this.existingDatabases[oldName] as DbInfo | undefined;
                         const newDbInfo = newValue[oldName] as DbInfo | undefined;
                         if (newDbInfo === undefined) {
-                            // another tab deleted it (forgetDatabase)
-                            delete this.existingDatabases[oldName];
+                            if (isObsoleteDatabase(oldName)) {
+                                // another tab deleted it (forgetDatabase, obsoleteDatabases.ts)
+                                delete this.existingDatabases[oldName];
+                            }
+                            else {
+                                // a live database: keep it (another tab's write may have raced a registerDatabase)
+                                console.warn("dbInfo is gone from new localstorage object, this should not happen for now");
+                            }
                         }
                         else {
                             if (newDbInfo.createdInAppVersion !== ownDbInfo?.createdInAppVersion) {

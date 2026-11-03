@@ -4,7 +4,6 @@
 
 import webSocketManager from "./webSocket";
 import type { LiveKind } from "./transport";
-import { OBSOLETE_DATABASE_CLEANUP_DELAY_MS } from "../databases/obsoleteDatabases";
 
 type WebSocketStateListener = (state: Common.WebSocketState) => void;
 type ServiceWorkerStateListener = (state: Common.ServiceWorkerState) => void;
@@ -22,6 +21,13 @@ type ErrorListener = (o: {origin: string, error: unknown}) => void;
  */
 export const REFRESH_AFTER_RESTORE_DEBOUNCE_MIN_MS = 1_000;
 export const REFRESH_AFTER_RESTORE_DEBOUNCE_MAX_MS = 3_000;
+
+/**
+ * Delay of the obsolete-IndexedDB cleanup (../databases/obsoleteDatabases.ts,
+ * loaded only then): the page's own work comes first and pages of an older
+ * build have had time to reload.
+ */
+export const OBSOLETE_DATABASE_CLEANUP_DELAY_MS = 10_000;
 
 const loginManagerP = (async () => {
   return (await import('./login')).default;

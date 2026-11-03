@@ -10,7 +10,8 @@
  * memory + server only now (data/chat); there is nothing to migrate.
  *
  * Fire-and-forget: connectionManager runs it once per page,
- * OBSOLETE_DATABASE_CLEANUP_DELAY_MS after startup; nothing waits for it. Deleting is idempotent, so every tab
+ * OBSOLETE_DATABASE_CLEANUP_DELAY_MS (connection.ts) after startup; nothing
+ * waits for it. Deleting is idempotent, so every tab
  * may run it. A delete that is `blocked` (an old page still has the database
  * open) is not waited for: the browser finishes it once that page closes it.
  */
@@ -24,8 +25,6 @@ export const OBSOLETE_DATABASE_NAMES: readonly string[] = [
 ];
 /** every database of the chunked cache, of any build */
 export const OBSOLETE_DATABASE_PREFIX = `${config.IDB_PREFIX}_chunked_`;
-/** after startup, so the page's own work comes first and old pages had time to reload */
-export const OBSOLETE_DATABASE_CLEANUP_DELAY_MS = 10_000;
 /** a request that reports nothing in this time is left to the browser */
 export const OBSOLETE_DATABASE_DELETE_TIMEOUT_MS = 10_000;
 

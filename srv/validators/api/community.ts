@@ -87,10 +87,11 @@ const callsCommunityEventPermissionsValidator = createCommunityEventRolePermissi
   Object.values(CommunityEventPermission)
 );
 
+// The titles of the predefined roles (Admin, Member, Public) are reserved:
+// a custom role cannot take one, in any letter case.
+const reservedRoleTitles = new Set(Object.values(PredefinedRole).map(title => title.toLowerCase()));
 const roleTitleValidator = Joi.string().trim().custom((value, helpers) => {
-  if (
-    PredefinedRole.Admin.toLowerCase() === value.toLowerCase()
-  ) {
+  if (reservedRoleTitles.has(value.toLowerCase())) {
     return helpers.error("any.invalid");
   }
   return value;

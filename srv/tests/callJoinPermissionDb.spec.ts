@@ -70,6 +70,7 @@ const UNCLAIMED = id(0x403);  // Member, not claimed
 const BANNED = id(0x404);     // banned (no roles left), ban without end
 const BAN_OVER = id(0x405);   // a ban that has run out
 const MUTED = id(0x406);      // chat-muted, no roles
+const BAN_TIMED = id(0x407);  // banned until tomorrow, no roles
 
 describeDb('call join permission on PostgreSQL', () => {
   let server: Pool;
@@ -143,8 +144,8 @@ describeDb('call join permission on PostgreSQL', () => {
     }
     await q(`INSERT INTO roles_users_users VALUES ($1, $4, true), ($2, $5, true), ($3, $5, true), ($2, $6, false)`,
       [R_ADMIN, R_MEMBER, R_DELCOM_MEMBER, ADMIN, MEMBER, UNCLAIMED]);
-    await q(`INSERT INTO user_community_state ("userId", "communityId", "blockState", "blockStateUntil") VALUES ($1, $4, 'BANNED', NULL), ($2, $4, 'BANNED', now() - interval '1 day'), ($3, $4, 'CHAT_MUTED', NULL)`,
-      [BANNED, BAN_OVER, MUTED, COMMUNITY]);
+    await q(`INSERT INTO user_community_state ("userId", "communityId", "blockState", "blockStateUntil") VALUES ($1, $4, 'BANNED', NULL), ($2, $4, 'BANNED', now() - interval '1 day'), ($3, $4, 'CHAT_MUTED', NULL), ($5, $4, 'BANNED', now() + interval '1 day')`,
+      [BANNED, BAN_OVER, MUTED, COMMUNITY, BAN_TIMED]);
     // a ban elsewhere does not matter
     await q(`INSERT INTO user_community_state ("userId", "communityId", "blockState", "blockStateUntil") VALUES ($1, $2, 'BANNED', NULL)`, [VISITOR, OTHER_COMMUNITY]);
 
@@ -192,8 +193,9 @@ describeDb('call join permission on PostgreSQL', () => {
       expect(await mayJoin(ADMIN, CALL_PUBLIC)).toBe(true);
     });
 
-    it('a user banned from the community does not; a ban that ran out or a chat mute does not stop it', async () => {
+    it('a user banned from the community does not (without end or until later); a ban that ran out or a chat mute does not stop it', async () => {
       expect(await mayJoin(BANNED, CALL_PUBLIC)).toBe(false);
+      expect(await mayJoin(BAN_TIMED, CALL_PUBLIC)).toBe(false);
       expect(await mayJoin(BAN_OVER, CALL_PUBLIC)).toBe(true);
       expect(await mayJoin(MUTED, CALL_PUBLIC)).toBe(true);
     });

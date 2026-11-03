@@ -228,6 +228,15 @@ async function getCheckedEventRolePermissions<T extends { roleId: string }>(comm
 }
 
 class CommunityEventHelper {
+  /**
+   * Refuses (NOT_ALLOWED) event role permissions that name anything but
+   * live roles of `communityId`. The event routes run it on the full list
+   * before they write anything (the event's call included).
+   */
+  public async checkEventRolePermissions(communityId: string, rolePermissions: API.Community.createCommunityEvent.Request['rolePermissions']): Promise<void> {
+    await getCheckedEventRolePermissions(communityId, rolePermissions);
+  }
+
   public async getCommunityEvents(communityId: string, userId: string): Promise<API.Community.getEventList.Response> {
     return _getEventCTE(pool, {
       where: 'ce."communityId" = $1',

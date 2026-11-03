@@ -374,7 +374,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 **Calls (voice/video):**
 - `/getCall`, `/startCall`, `/startScheduledCall`
 - `/getCurrentCalls`, `/getCallParticipantEvents`
-- The role permissions of `/startCall` and of the event routes (`/createCommunityEvent`, `/updateCommunityEvent`, which create or update the event's call) may name only live roles of the community; any other role id is refused (`NOT_ALLOWED`) before anything is written. Media, join and moderation rights inside the call are checked by the call server ([docs/realtime](../realtime/README.md#producers))
+- The role permissions of `/startCall` and of the event routes (`/createCommunityEvent`, `/updateCommunityEvent`, which create or update the event's call) may name only live roles of the community; any other role id is refused (`NOT_ALLOWED`) before anything is written (the event routes check the full list first, `communityEventHelper.checkEventRolePermissions`). Media, join and moderation rights inside the call are checked by the call server ([docs/realtime](../realtime/README.md#producers))
 
 **Tags:**
 - `/getTagFrequencyData`

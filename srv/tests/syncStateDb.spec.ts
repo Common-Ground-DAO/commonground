@@ -118,7 +118,8 @@ describeDb('getSyncState and notification read state on PostgreSQL', () => {
   }
 
   let server: Pool;
-  const runner = { query: (sql: string, params?: unknown[]) => q(sql, params) } as any;
+  // like TypeORM's QueryRunner.query: the rows
+  const runner = { query: async (sql: string, params?: unknown[]) => (await q(sql, params)).rows } as any;
   const writerPool = (readOnly: boolean) => new Pool({
     host: HOST, port: PORT, user: 'writer', password: WRITER_PASSWORD, database: DATABASE,
     ...(readOnly ? { options: '-c default_transaction_read_only=on' } : {}),

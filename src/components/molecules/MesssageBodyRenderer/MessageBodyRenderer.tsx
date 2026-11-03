@@ -445,11 +445,20 @@ const SendStatusNotice = (props: {
   onDiscard?: () => void;
 }) => {
   const { sendStatus, onRetry, onDiscard } = props;
+  // the message item toggles its tooltip on click (mobile): keep the action's click
+  const retry = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    onRetry?.();
+  };
+  const discard = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    onDiscard?.();
+  };
   return (
     <div className="message-send-status" role="alert">
       <span>{sendStatus === 'error-send' ? 'Message not sent' : 'Edit not saved'}</span>
-      {!!onRetry && <button type="button" className="message-send-status-action" onClick={onRetry}>Retry</button>}
-      {!!onDiscard && <button type="button" className="message-send-status-action" onClick={onDiscard}>
+      {!!onRetry && <button type="button" className="message-send-status-action" onClick={retry}>Retry</button>}
+      {!!onDiscard && <button type="button" className="message-send-status-action" onClick={discard}>
         {sendStatus === 'error-send' ? 'Discard' : 'Undo edit'}
       </button>}
     </div>

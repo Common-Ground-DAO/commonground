@@ -1274,6 +1274,73 @@ async function _removeUserFromRoles(
   }
 }
 
+type MembershipRemoval = {
+  memberCount: number;
+  deletedRolesIds: string[];
+  communityOrder: string[];
+  updatedAt: string;
+};
+
+/**
+ * Removes the user's membership of the community in one statement: all of
+ * the user's roles of it, the community from the user's order, the channel
+ * settings, and one from the member count. Null when the user holds no role
+ * of the community (nothing changes then).
+ */
+async function _removeCommunityMembership(
+  db: Pool | PoolClient,
+  userId: string,
+  communityId: string,
+): Promise<MembershipRemoval | null> {
+  const result = await db.query(`
+      WITH delete_roles AS (
+        DELETE FROM roles_users_users
+        WHERE "userId" = $1
+          AND "roleId" = ANY(
+            SELECT "id" FROM roles
+            WHERE "communityId" = $2
+          )
+        RETURNING "roleId"
+      ),
+      user_update AS (
+        UPDATE users u
+        SET "communityOrder" =
+          CASE
+            WHEN u."communityOrder" @> ARRAY[$2::UUID]
+            THEN array_remove(u."communityOrder", $2::UUID)
+            ELSE u."communityOrder"
+          END
+        WHERE u.id = $1
+          AND EXISTS (SELECT 1 FROM delete_roles)
+        RETURNING "communityOrder"
+      ),
+      channel_setting_delete AS (
+        DELETE FROM user_channel_settings
+        WHERE "userId" = $1
+          AND "communityId" = $2
+      ),
+      user_community_state_update AS (
+        UPDATE user_community_state
+        SET "userLeftCommunity" = now()
+        WHERE "userId" = $1
+          AND "communityId" = $2
+      )
+      UPDATE communities
+      SET "memberCount" = "memberCount" - 1, "updatedAt" = now()
+      WHERE id = $2 AND EXISTS (SELECT 1 FROM delete_roles)
+      RETURNING "memberCount", (
+        SELECT array_to_json(array_agg("roleId"))
+        FROM delete_roles
+      ) AS "deletedRolesIds",
+      (SELECT "communityOrder" FROM user_update),
+      "updatedAt"
+    `, [userId, communityId]);
+  if (result.rows.length !== 1) {
+    return null;
+  }
+  return result.rows[0] as MembershipRemoval;
+}
+
 async function _getCommunityRoles(
   db: Pool | PoolClient,
   communityId: string,
@@ -1635,60 +1702,22 @@ class CommunityHelper {
   }
 
   public async leaveCommunity(userId: string, communityId: string): Promise<Models.Community.DetailViewFromApi> {
-    const result = await pool.query(`
-      WITH delete_roles AS (
-        DELETE FROM roles_users_users
-        WHERE "userId" = $1
-          AND "roleId" = ANY(
-            SELECT "id" FROM roles
-            WHERE "communityId" = $2
-          )
-        RETURNING "roleId"
-      ),
-      user_update AS (
-        UPDATE users u
-        SET "communityOrder" =
-          CASE
-            WHEN u."communityOrder" @> ARRAY[$2::UUID]
-            THEN array_remove(u."communityOrder", $2::UUID)
-            ELSE u."communityOrder"
-          END
-        WHERE u.id = $1
-          AND EXISTS (SELECT 1 FROM delete_roles)
-        RETURNING "communityOrder"
-      ),
-      channel_setting_delete AS (
-        DELETE FROM user_channel_settings
-        WHERE "userId" = $1
-          AND "communityId" = $2
-      ),
-      user_community_state_update AS (
-        UPDATE user_community_state
-        SET "userLeftCommunity" = now()
-        WHERE "userId" = $1
-          AND "communityId" = $2
-      )
-      UPDATE communities
-      SET "memberCount" = "memberCount" - 1, "updatedAt" = now()
-      WHERE id = $2 AND EXISTS (SELECT 1 FROM delete_roles)
-      RETURNING "memberCount", (
-        SELECT array_to_json(array_agg("roleId"))
-        FROM delete_roles
-      ) AS "deletedRolesIds",
-      (SELECT "communityOrder" FROM user_update),
-      "updatedAt"
-    `, [userId, communityId]);
-    if (result.rows.length !== 1) {
+    const leaveResult = await _removeCommunityMembership(pool, userId, communityId);
+    if (!leaveResult) {
       throw new Error(errors.server.NOT_ALLOWED);
     }
-    const leaveResult: {
-      memberCount: number;
-      deletedRolesIds: string[];
-      communityOrder: string[]
-    } = result.rows[0];
+    return this.afterMembershipRemoved(userId, communityId, leaveResult);
+  }
+
+  /**
+   * What follows a removed membership (`_removeCommunityMembership`): the
+   * user's sockets leave the community and role rooms, the community and the
+   * user hear about it, and the user's bots are reconciled.
+   */
+  private async afterMembershipRemoved(userId: string, communityId: string, leaveResult: MembershipRemoval): Promise<Models.Community.DetailViewFromApi> {
     const data = await this.getCommunityDetailView({ id: communityId }, userId);
     eventHelper.userLeaveRooms(userId, {
-      roleIds: result.rows[0].deletedRolesIds,
+      roleIds: leaveResult.deletedRolesIds,
       communityIds: [communityId],
     });
     eventHelper.emit({
@@ -1696,8 +1725,8 @@ class CommunityHelper {
       action: "update",
       data: {
         id: communityId,
-        memberCount: result.rows[0].memberCount,
-        updatedAt: result.rows[0].updatedAt,
+        memberCount: leaveResult.memberCount,
+        updatedAt: leaveResult.updatedAt,
       },
     }, {
       communityIds: [communityId]
@@ -1767,23 +1796,40 @@ class CommunityHelper {
       `, [data.userId, data.communityId]);
     }
     else {
-      if (data.blockState === UserBlockState.BANNED) {
+      // A ban ends the membership: the roles go and the block state is
+      // stored in one transaction, so a failure leaves neither half behind
+      // and fails the request. The events and room changes follow after.
+      let removedMembership: MembershipRemoval | null = null;
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        if (data.blockState === UserBlockState.BANNED) {
+          removedMembership = await _removeCommunityMembership(client, data.userId, data.communityId);
+        }
+        await client.query(`
+          INSERT INTO user_community_state ("userId", "communityId", "blockState", "blockStateUntil", "blockStateUpdatedAt")
+          VALUES ($1, $2, $3, $4, now())
+          ON CONFLICT ("userId", "communityId")
+          DO UPDATE SET
+            "blockState" = EXCLUDED."blockState",
+            "blockStateUntil" = EXCLUDED."blockStateUntil",
+            "blockStateUpdatedAt" = now()
+        `, [data.userId, data.communityId, data.blockState, data.until]);
+        await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK");
+        throw e;
+      } finally {
+        client.release();
+      }
+      if (removedMembership) {
         try {
-          await this.leaveCommunity(data.userId, data.communityId);
+          await this.afterMembershipRemoved(data.userId, data.communityId, removedMembership);
         }
         catch (e) {
-          console.error("Could not make user leave community as of ban", e);
+          console.error("Could not send the membership updates of a ban", e);
         }
       }
-      await pool.query(`
-        INSERT INTO user_community_state ("userId", "communityId", "blockState", "blockStateUntil", "blockStateUpdatedAt")
-        VALUES ($1, $2, $3, $4, now())
-        ON CONFLICT ("userId", "communityId")
-        DO UPDATE SET
-          "blockState" = EXCLUDED."blockState",
-          "blockStateUntil" = EXCLUDED."blockStateUntil",
-          "blockStateUpdatedAt" = now()
-      `, [data.userId, data.communityId, data.blockState, data.until]);
     }
   }
 

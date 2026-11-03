@@ -7,7 +7,7 @@ import { PoolClient, QueryResult } from 'pg';
 import { fakeHealthcheck } from './healthcheck';
 import express from 'express';
 import { ChannelPermission, PredefinedRole, RoleType } from './common/enums';
-import { convertUuidToBinary, convertBinaryToUuid } from './util/memberListHelpers';
+import { convertUuidToBinary, convertBinaryToUuid, mergeSortedMemberIds } from './util/memberListHelpers';
 import { asyncRequestHandler } from './util/asyncHandler';
 import { describeErrorForLog } from './util/errorLog';
 import { decideChannelEvent, MAX_CHANNEL_EVENT_DEFERRALS } from './util/memberListChannelEvents';
@@ -45,6 +45,8 @@ type CommunityMemberListArr = {
   _all: string[];
   online: string[];
   offline: string[];
+  /** all members by display name (ties by id), whatever their presence */
+  byName: string[];
 }
 
 type ChannelMemberSet = {
@@ -85,10 +87,11 @@ const memberListByCommunityId = new Map<string, CommunityMemberListArr>();
 const memberIdsByCommunityIdByChannelId = new Map<string, Map<string, ChannelMemberSet>>();
 const memberListByCommunityIdByChannelId = new Map<string, Map<string, ChannelMemberListArr>>();
 
+/** by display name, ties by id: a total order, so merging sorted lists is exact */
 function memberIdSortHelper(a: string, b: string) {
   const displayNameA = userDataByUserId.get(a)?.displayName || '';
   const displayNameB = userDataByUserId.get(b)?.displayName || '';
-  return displayNameA.localeCompare(displayNameB);
+  return displayNameA.localeCompare(displayNameB) || (a < b ? -1 : a > b ? 1 : 0);
 }
 
 function getDisplayName(options: {
@@ -393,8 +396,10 @@ async function initFromDb() {
         _all: [],
         online: Array.from(communityMemberSet.online).sort(memberIdSortHelper),
         offline: Array.from(communityMemberSet.offline).sort(memberIdSortHelper),
+        byName: [],
       };
       communityMemberList._all = communityMemberList.online.concat(communityMemberList.offline);
+      communityMemberList.byName = mergeSortedMemberIds(communityMemberList.online, communityMemberList.offline, memberIdSortHelper);
       memberListByCommunityId.set(communityId, communityMemberList);
     }
   }
@@ -636,14 +641,18 @@ function processChangeEvents() {
               console.trace("Member set not found for communityId:", convertBinaryToUuid(communityId));
               continue;
             }
-            updatedCommunityMemberLists.add(communityId);
-            if (event.onlineStatus === 'offline') {
-              memberSet.online.delete(event.userId);
-              memberSet.offline.add(event.userId);
-            }
-            else {
-              memberSet.online.add(event.userId);
-              memberSet.offline.delete(event.userId);
+            // only members are in the community's lists; a user with other
+            // roles of the community only changes its channel lists
+            if (memberSet._all.has(event.userId)) {
+              updatedCommunityMemberLists.add(communityId);
+              if (event.onlineStatus === 'offline') {
+                memberSet.online.delete(event.userId);
+                memberSet.offline.add(event.userId);
+              }
+              else {
+                memberSet.online.add(event.userId);
+                memberSet.offline.delete(event.userId);
+              }
             }
 
             const rolePermissionsByChannelId = rolePermissionsByCommunityIdByChannelId.get(communityId);
@@ -690,6 +699,34 @@ function processChangeEvents() {
         if (displayName !== userData.displayName) {
           userData.displayName = displayName;
           userData.displayNameLower = displayName.toLocaleLowerCase();
+          // the lists are sorted by name: rebuild the user's communities and
+          // the channels they are listed in
+          const renamedUserCommunityIds = new Set<string>();
+          for (const roleId of userData.roleIds) {
+            const communityId = communityIdByRoleId.get(roleId);
+            if (communityId) {
+              renamedUserCommunityIds.add(communityId);
+            }
+          }
+          for (const communityId of renamedUserCommunityIds) {
+            if (memberIdsByCommunityId.has(communityId)) {
+              updatedCommunityMemberLists.add(communityId);
+            }
+            const memberIdsByChannelId = memberIdsByCommunityIdByChannelId.get(communityId);
+            if (!memberIdsByChannelId) {
+              continue;
+            }
+            for (const [channelId, memberIds] of memberIdsByChannelId) {
+              if (memberIds._all.has(event.userId)) {
+                let updatedChannelMemberLists = updatedMemberLists.get(communityId);
+                if (!updatedChannelMemberLists) {
+                  updatedChannelMemberLists = new Set();
+                  updatedMemberLists.set(communityId, updatedChannelMemberLists);
+                }
+                updatedChannelMemberLists.add(channelId);
+              }
+            }
+          }
         }
       }
       else {
@@ -719,7 +756,7 @@ function processChangeEvents() {
         continue;
       }
       const roleData = roleDataByCommunityId.get(communityId)?.get(event.roleId);
-      if (roleData?.roleType === RoleType.PREDEFINED || roleData?.title === PredefinedRole.Member) {
+      if (roleData?.roleType === RoleType.PREDEFINED && roleData?.title === PredefinedRole.Member) {
         // update general member set
         const memberSet = memberIdsByCommunityId.get(communityId);
         if (!memberSet) {
@@ -803,6 +840,7 @@ function processChangeEvents() {
               _all: [],
               online: [],
               offline: [],
+              byName: [],
             };
             memberListByCommunityId.set(event.communityId, memberList);
           }
@@ -990,6 +1028,7 @@ function processChangeEvents() {
         _all: [],
         online: [],
         offline: [],
+        byName: [],
       };
       memberListByCommunityId.set(communityId, memberList);
     }
@@ -997,6 +1036,7 @@ function processChangeEvents() {
     memberList.online = Array.from(memberSet.online).sort(memberIdSortHelper);
     memberList.offline = Array.from(memberSet.offline).sort(memberIdSortHelper);
     memberList._all = memberList.online.concat(memberList.offline);
+    memberList.byName = mergeSortedMemberIds(memberList.online, memberList.offline, memberIdSortHelper);
   }
   for (const [communityId, updatedChannelIds] of updatedMemberLists) {
     let memberListByChannelId = memberListByCommunityIdByChannelId.get(communityId);
@@ -1143,6 +1183,31 @@ function getMemberListWindow(options: {
   }
   
   return memberListWindow;
+}
+
+/**
+ * The first `limit` members of a community by display name (ties by id),
+ * independent of presence: the counts and the member ids, without roles, the
+ * presence split (all ids are in `offline`) or the per-role counts.
+ */
+function getMemberListPreview(options: {
+  communityId: string;
+  limit: number;
+}): Models.Community.MemberList {
+  const { communityId, limit } = options;
+  const memberList = memberListByCommunityId.get(communityId);
+  if (!memberList) {
+    // a community created a moment ago is only known after the next batch
+    console.trace("ERROR (SKIP): Member list not found for communityId:", convertBinaryToUuid(communityId));
+    return emptyMemberList();
+  }
+  return {
+    totalCount: memberList.count,
+    resultCount: memberList.count,
+    roles: [],
+    online: [],
+    offline: memberList.byName.slice(0, Math.max(0, limit)).map(userId => [userId, []]),
+  };
 }
 
 function getChannelMemberListWindow(options: {
@@ -1328,6 +1393,12 @@ app.post('/getMemberListWindow', express.json(), asyncRequestHandler(async (req,
   res.json(memberList);
 }, requestFailed));
 
+app.post('/getMemberListPreview', express.json(), asyncRequestHandler(async (req, res) => {
+  const { communityId, limit } = req.body as { communityId: string; limit: number };
+  await ready;
+  res.json(getMemberListPreview({ communityId, limit }));
+}, requestFailed));
+
 app.post('/getChannelMemberListWindow', express.json(), asyncRequestHandler(async (req, res) => {
   const { communityId, channelId, offset, limit, search, startsWithSearch } = req.body as API.Community.getChannelMemberList.Request;
   await ready;
@@ -1379,6 +1450,7 @@ export const memberListForTests = {
   queueEvent: (event: PgNotifyEvent) => { changeEvents.push(event); },
   processChangeEvents,
   getMemberListWindow,
+  getMemberListPreview,
   getChannelMemberListWindow,
   hasChannelMemberList: (communityId: string, channelId: string) =>
     memberListByCommunityIdByChannelId.get(communityId)?.has(channelId) === true,

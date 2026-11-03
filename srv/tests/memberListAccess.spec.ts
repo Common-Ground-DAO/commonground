@@ -12,7 +12,8 @@
  *   limit <= 6, no search, no role filter) and gets a preview: counts and
  *   member ids, without roles, presence split or per-role counts, from the
  *   service's preview (the first members by name, independent of presence;
- *   see memberlistService.spec.ts), in the service's order.
+ *   see memberlistService.spec.ts), in the service's order, and only while
+ *   the community is not deleted.
  * - getUserCommunityRoleIds: needs a session; the caller is the user
  *   themself or a member of the community.
  *
@@ -27,6 +28,7 @@ const permissionHelper = {
   hasPermissionsOrThrow: jest.fn(),
   hasTrustOrThrow: jest.fn(),
   isMemberOfActiveCommunity: jest.fn(),
+  isActiveCommunity: jest.fn(),
 };
 const axios = { post: jest.fn() };
 
@@ -107,6 +109,7 @@ const previewAnswer = {
 beforeEach(() => {
   jest.clearAllMocks();
   permissionHelper.isMemberOfActiveCommunity.mockResolvedValue(false);
+  permissionHelper.isActiveCommunity.mockResolvedValue(true);
 });
 
 describe('/getMemberList', () => {
@@ -171,6 +174,27 @@ describe('/getMemberList', () => {
       ['a role filter', { offset: 0, limit: 6, roleId: ROLE }],
     ])('refuses %s', async (_label, data) => {
       await expect(getMemberList(asUser(ME), data)).rejects.toThrow('NOT_ALLOWED');
+      expect(axios.post).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('for a deleted community', () => {
+    beforeEach(() => {
+      permissionHelper.isActiveCommunity.mockResolvedValue(false);
+    });
+
+    it.each([
+      ['a signed-in non-member', asUser(ME)],
+      ['a visitor', anonymous()],
+    ])('refuses the preview to %s', async (_label, req) => {
+      await expect(getMemberList(req, { offset: 0, limit: 6 })).rejects.toThrow('NOT_ALLOWED');
+      expect(permissionHelper.isActiveCommunity).toHaveBeenCalledWith(COMMUNITY);
+      expect(axios.post).not.toHaveBeenCalled();
+    });
+
+    it('refuses a former member the full list as well (membership needs a live community)', async () => {
+      // isMemberOfActiveCommunity is false for a deleted community
+      await expect(getMemberList(asUser(ME), { offset: 0, limit: 80 })).rejects.toThrow('NOT_ALLOWED');
       expect(axios.post).not.toHaveBeenCalled();
     });
   });

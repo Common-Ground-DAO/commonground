@@ -306,6 +306,17 @@ class PermissionHelper {
     return result.rows.length > 0;
   }
 
+  /** Whether the community `communityId` exists and is not deleted. */
+  public async isActiveCommunity(communityId: string): Promise<boolean> {
+    const result = await pool.query(`
+      SELECT 1
+      FROM communities c
+      WHERE c."id" = $1
+        AND c."deletedAt" IS NULL
+    `, [communityId]);
+    return result.rows.length > 0;
+  }
+
   public async hasTrustOrThrow(options: { userId: string, trust: string }): Promise<void> {
     const query = `
       SELECT id

@@ -45,3 +45,19 @@ describe('permissionHelper.isMemberOfActiveCommunity', () => {
     await expect(permissionHelper.isMemberOfActiveCommunity(USER, COMMUNITY)).resolves.toBe(false);
   });
 });
+
+describe('permissionHelper.isActiveCommunity', () => {
+  it('requires the community not to be deleted', async () => {
+    poolQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+    await expect(permissionHelper.isActiveCommunity(COMMUNITY)).resolves.toBe(true);
+    const [sql, params] = poolQuery.mock.calls[0];
+    const normalized = normalize(sql);
+    expect(normalized).toContain('FROM communities c WHERE c."id" = $1 AND c."deletedAt" IS NULL');
+    expect(params).toEqual([COMMUNITY]);
+  });
+
+  it('is false for a deleted or unknown community', async () => {
+    poolQuery.mockResolvedValueOnce({ rows: [] });
+    await expect(permissionHelper.isActiveCommunity(COMMUNITY)).resolves.toBe(false);
+  });
+});

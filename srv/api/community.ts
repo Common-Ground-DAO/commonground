@@ -235,6 +235,11 @@ API.Community.getMemberList.Response
       throw new Error(!user ? errors.server.LOGIN_REQUIRED : errors.server.NOT_ALLOWED);
     }
     if (!isMember) {
+      // the preview, too, only while the community exists (a member of a
+      // deleted community is no member, see isMemberOfActiveCommunity)
+      if (!(await permissionHelper.isActiveCommunity(data.communityId))) {
+        throw new Error(errors.server.NOT_ALLOWED);
+      }
       const preview = await axios.post<API.Community.getMemberList.Response>(
         'http://memberlist:4000/getMemberListPreview',
         JSON.stringify({
@@ -247,7 +252,9 @@ API.Community.getMemberList.Response
           }
         },
       );
-      return toMemberListPreview(convertBinaryMemberListToUuid(preview.data), data.limit);
+      // memberlist answers an empty list for a community it does not know yet;
+      // an empty body (an older service) becomes one, too
+      return toMemberListPreview(convertBinaryMemberListToUuid(memberListOrEmpty(preview.data)), data.limit);
     }
     const memberList = await axios.post<API.Community.getMemberList.Response>(
       'http://memberlist:4000/getMemberListWindow',

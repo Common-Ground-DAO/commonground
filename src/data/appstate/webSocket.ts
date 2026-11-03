@@ -602,6 +602,19 @@ export class WebSocketManager implements Transport {
   }
 
   /**
+   * The server signed `deviceId` out (its session and device key are gone):
+   * no socket login with it any more — neither on the reconnect after the
+   * server's disconnect nor on a return of the tab. The socket stays (or
+   * comes back) connected as anonymous; the rest of the logout is the login
+   * manager's business. A no-op when the socket already wants another device.
+   */
+  public deviceSignedOut(deviceId: string) {
+    if (this._deviceId === deviceId) {
+      this.logout();
+    }
+  }
+
+  /**
    * Brings the current connection's login in line with `_deviceId`, one step
    * at a time (the server runs socket handlers concurrently, so logins never
    * overlap: a later call waits for the running one).
@@ -680,6 +693,12 @@ export class WebSocketManager implements Transport {
         this._securityStepLogin = `${epoch}:${desired}`;
         securityStepState.set(true);
         throw new SocketLoginError('SECURITY_STEP_REQUIRED');
+      }
+      if ((this._deviceId ?? null) !== desired) {
+        // the device was dropped or switched while its login ran (e.g. it was
+        // signed out): the answer is moot, sync to the current one
+        debugLog('Socket login of a device no longer wanted failed (ERROR)');
+        continue;
       }
       console.error('Socket login failed (ERROR)');
       this.scheduleLoginRetry('login');

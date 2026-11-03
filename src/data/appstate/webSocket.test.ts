@@ -266,6 +266,60 @@ describe('live = connected and socket login acked', () => {
   });
 });
 
+describe('device signed out', () => {
+  it('drops the device: the reconnect after the server disconnect stays anonymous', async () => {
+    useDataLayerFakeTimers();
+    const tab = await openTab({ deviceId: 'dev-1' });
+    await settle(tab);
+    tab.socket.loginResult = 'ERROR'; // the key is gone on the server
+    tab.ws.deviceSignedOut('dev-1');
+    tab.socket.drop('io server disconnect');
+    await settle(tab);
+    tab.env.hide();
+    tab.env.show();
+    tab.env.goOnline();
+    await vi.advanceTimersByTimeAsync(SOCKET_LOGIN_RETRY_MS[2] * 2);
+    await settle(tab);
+    expect(tab.socket.loginCount).toBe(1);
+    expect(tab.socket.connected).toBe(true);
+    expect(tab.ws.live).toBe(true);
+  });
+
+  it('a no-op for another device', async () => {
+    useDataLayerFakeTimers();
+    const tab = await openTab({ deviceId: 'dev-2' });
+    await settle(tab);
+    tab.ws.deviceSignedOut('dev-1');
+    tab.socket.drop('transport close');
+    tab.socket.accept();
+    await settle(tab);
+    expect(tab.socket.loginCount).toBe(2);
+    expect(tab.socket.sentOf('login')[1].args[0]).toMatchObject({ deviceId: 'dev-2' });
+  });
+
+  it('an ERROR answer for a device dropped while its login ran is no error and not retried', async () => {
+    useDataLayerFakeTimers();
+    const tab = await openTab({ deviceId: 'dev-1' });
+    await flushMicrotasks();
+    tab.socket.handle('login', undefined); // the ack waits for respond()
+    await settle(tab);
+    expect(tab.socket.sentOf('login')).toHaveLength(1);
+    const errors = vi.spyOn(console, 'error');
+    try {
+      tab.ws.deviceSignedOut('dev-1');
+      tab.socket.respond('login', 'ERROR');
+      await settle(tab);
+      await vi.advanceTimersByTimeAsync(SOCKET_LOGIN_RETRY_MS[0] * 2);
+      await settle(tab);
+      expect(errors).not.toHaveBeenCalled();
+      expect(tab.socket.sentOf('login')).toHaveLength(1);
+      expect(tab.ws.live).toBe(true); // anonymous
+    } finally {
+      errors.mockRestore();
+    }
+  });
+});
+
 describe('reconnect', () => {
   it('a reconnect does the socket login only and fires restored', async () => {
     useDataLayerFakeTimers();

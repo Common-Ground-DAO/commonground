@@ -26,7 +26,7 @@ beforeEach(() => {
 });
 
 describe('permissionHelper.isMemberOfActiveCommunity', () => {
-  it('requires a claimed live role of the live community', async () => {
+  it('requires a claimed live role of the live community, other than Public', async () => {
     poolQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
     await expect(permissionHelper.isMemberOfActiveCommunity(USER, COMMUNITY)).resolves.toBe(true);
     const [sql, params] = poolQuery.mock.calls[0];
@@ -34,8 +34,9 @@ describe('permissionHelper.isMemberOfActiveCommunity', () => {
     expect(normalized).toContain('FROM roles_users_users ruu INNER JOIN roles r ON r."id" = ruu."roleId" INNER JOIN communities c ON c."id" = r."communityId"');
     expect(normalized).toContain('WHERE ruu."userId" = $1 AND r."communityId" = $2');
     expect(normalized).toContain('ruu.claimed = TRUE');
-    expect(normalized).toContain('r."deletedAt" IS NULL');
-    expect(normalized).toContain('c."deletedAt" IS NULL');
+    expect(normalized).toContain(' r."deletedAt" IS NULL');
+    expect(normalized).toContain(`AND NOT (r."type" = 'PREDEFINED' AND r."title" = 'Public')`);
+    expect(normalized).toContain(' c."deletedAt" IS NULL');
     expect(params).toEqual([USER, COMMUNITY]);
   });
 

@@ -283,7 +283,9 @@ class PermissionHelper {
 
   /**
    * Whether `userId` is a member of the community `communityId`: holds at
-   * least one claimed, live role of it, and the community is not deleted.
+   * least one claimed, live role of it other than the predefined Public role
+   * (which stands for everyone, visitors included), and the community is not
+   * deleted.
    */
   public async isMemberOfActiveCommunity(userId: string, communityId: string): Promise<boolean> {
     const result = await pool.query(`
@@ -297,6 +299,7 @@ class PermissionHelper {
         AND r."communityId" = $2
         AND ruu.claimed = TRUE
         AND r."deletedAt" IS NULL
+        AND NOT (r."type" = ${format('%L', RoleType.PREDEFINED)} AND r."title" = ${format('%L', PredefinedRole.Public)})
         AND c."deletedAt" IS NULL
       LIMIT 1
     `, [userId, communityId]);

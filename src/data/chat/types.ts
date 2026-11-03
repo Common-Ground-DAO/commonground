@@ -59,7 +59,8 @@ export const COUNTED_SEQS_MAX = 50;
  * - SUPERSEDED: a later `init` (or `destroy`) on the same window replaced
  *   this one; callers ignore it (no snackbar).
  * - NO_ACCESS: the channel's access (community/chat/call/article) did not
- *   become known within ACCESS_WAIT_MS; a later `init` may succeed.
+ *   become known within ACCESS_WAIT_MS; the store re-inits the window by
+ *   itself once the access is registered (the usual `reset`).
  */
 export const WINDOW_ERROR = {
   NOT_FOUND: 'NOT_FOUND',

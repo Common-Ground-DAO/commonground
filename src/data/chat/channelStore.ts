@@ -308,7 +308,9 @@ class WindowImpl implements ChannelWindow {
     if (this.destroyed) throw superseded();
     const gen = this.supersede();
     this.lastInit = options;
-    return this.store.initWindow(this, options, gen);
+    const p = this.store.initWindow(this, options, gen);
+    p.catch(e => this.store.retryWhenAccessKnown(this, gen, options, e));
+    return p;
   }
 
   loadOlder(count: number = PAGE_SIZE): Promise<void> {
@@ -339,7 +341,9 @@ class WindowImpl implements ChannelWindow {
   async jumpToLatest(): Promise<void> {
     if (this.destroyed) return;
     const gen = this.supersede();
-    await this.store.jumpToLatest(this, gen);
+    const p = this.store.jumpToLatest(this, gen);
+    p.catch(e => this.store.retryWhenAccessKnown(this, gen, { type: 'recent' }, e));
+    await p;
   }
 
   destroy(): void {
@@ -366,6 +370,8 @@ class ChannelStoreImpl implements ChannelStore {
   private readonly channels = new Map<string, ChannelData>();
   private readonly access = new Map<string, Access>();
   private readonly accessWaiters = new Map<string, Set<{ resolve: (a: Access) => void; reject: (e: Error) => void }>>();
+  /** windows whose init/jump ended in NO_ACCESS: re-initialised once the access is registered */
+  private readonly noAccessWindows = new Map<string, Map<WindowImpl, { gen: number; options: Models.ItemList.ItemListInitOptions }>>();
   /** `getChanges` answered 404 in this page load: use loadMessages-based reconcile */
   private fallback = false;
   private useCounter = 0;
@@ -392,6 +398,30 @@ class ChannelStoreImpl implements ChannelStore {
       this.accessWaiters.delete(access.channelId);
       for (const w of waiters) w.resolve(access);
     }
+    const failed = this.noAccessWindows.get(access.channelId);
+    if (failed) {
+      this.noAccessWindows.delete(access.channelId);
+      for (const [w, { gen, options }] of failed) {
+        // not if destroyed or initialised anew meanwhile; the init emits the usual reset
+        if (!w.destroyed && w.gen === gen) w.init(options).catch(noop);
+      }
+    }
+  }
+
+  /** a window op that gave up waiting for the access runs again once it is known */
+  retryWhenAccessKnown(w: WindowImpl, gen: number, options: Models.ItemList.ItemListInitOptions, e: unknown): void {
+    if (!(e instanceof Error) || e.message !== WINDOW_ERROR.NO_ACCESS || this.disposed) return;
+    if (w.destroyed || w.gen !== gen) return;
+    if (this.access.has(w.channelId)) {
+      w.init(options).catch(noop);
+      return;
+    }
+    let set = this.noAccessWindows.get(w.channelId);
+    if (!set) {
+      set = new Map();
+      this.noAccessWindows.set(w.channelId, set);
+    }
+    set.set(w, { gen, options });
   }
 
   getAccessForChannel(channelId: string): Access | undefined {
@@ -539,6 +569,7 @@ class ChannelStoreImpl implements ChannelStore {
     const err = new Error('ChannelStore disposed');
     for (const set of this.accessWaiters.values()) for (const w of set) w.reject(err);
     this.accessWaiters.clear();
+    this.noAccessWindows.clear();
   }
 
   // ----- notify ------------------------------------------------------------

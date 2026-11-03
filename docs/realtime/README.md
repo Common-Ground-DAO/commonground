@@ -355,7 +355,7 @@ In broadcast mode, only peers in the `_broadcasters` map are allowed to produce.
 call, video is refused.
 
 **Media permissions.** Before it creates the Producer, the room checks the call permission of the
-media kind (`hasSendMediaPermissions` → `callHelper.hasPermissionToSendMedia`, `srv/mediasoup/room.ts`,
+media kind (`authorizeProduce` → `callHelper.hasPermissionToSendMedia`, `srv/mediasoup/room.ts`,
 `srv/mediasoup/mediaPermissions.ts`): `AUDIO_SEND` for audio, `SHARE_SCREEN` for video the client
 marks as a screen share (`appData.share`, as `RoomClient.enableShare` sends it), `VIDEO_SEND` for
 other video. The roles are resolved as for joining (`hasPermissionToJoinCall`, see Ended Call
@@ -730,7 +730,7 @@ enum CallType {
 1. **Start call:** Frontend calls `data.community.startCall()` API, which creates a `Call` row and assigns a call server.
 2. **Join call:** Frontend creates a `RoomClient` with the call server URL, which opens a protoo WebSocket to the call server.
 3. **Room creation:** On the call server, if no Room exists for the callId, one is created (with a MediaSoup Router).
-4. **Permission checks:** `hasJoinPermissions`, `hasModeratePermissions` and `hasSendMediaPermissions` (on `produce`, see Producers) verify role-based permissions via the `callpermissions` table, for roles of the call's community only. Moderation (`callHelper.hasPermissionToModerateCall`) needs `CALL_MODERATE` on the call through a claimed role, or a claimed role with `WEBRTC_MODERATE`, both of the call's community, or being the call's creator, and in every case no active ban in that community (a banned creator can neither join nor moderate). `startCall` (and the event routes that create or update a call) accept only role ids of live roles of the call's community (`NOT_ALLOWED` otherwise).
+4. **Permission checks:** `hasJoinPermissions`, `hasModeratePermissions` and `authorizeProduce` (on `produce`, see Producers) verify role-based permissions via the `callpermissions` table, for roles of the call's community only. Moderation (`callHelper.hasPermissionToModerateCall`) needs `CALL_MODERATE` on the call through a claimed role, or a claimed role with `WEBRTC_MODERATE`, both of the call's community, or being the call's creator, and in every case no active ban in that community (a banned creator can neither join nor moderate). `startCall` (and the event routes that create or update a call) accept only role ids of live roles of the call's community (`NOT_ALLOWED` otherwise).
 5. **Member tracking:** On join, `callHelper.insertCallMember` creates a `CallMembership` row. On leave, `callHelper.callMemberLeave` soft-deletes it. `previewUserIds` is updated on join/leave.
 6. **End call:** When the last peer leaves, `callHelper.softEndCall` is called. For forced end, `callHelper.endCallForEveryone` is called.
 7. **Server cleanup:** On SIGTERM, and on start, `callHelper.resetCallServer` ends the calls of this call server (matched by its URL), event calls included. A failure at start is logged and does not keep the call server from registering its call update listener. An ended event call can be started again (`startScheduledCall` resets `endedAt`).

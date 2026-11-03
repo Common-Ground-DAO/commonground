@@ -1341,6 +1341,54 @@ async function _removeCommunityMembership(
   return result.rows[0] as MembershipRemoval;
 }
 
+/**
+ * Runs `fn` in a transaction on a client of its own. On failure the
+ * transaction is rolled back and the original error is thrown; a client
+ * whose ROLLBACK fails is discarded instead of going back to the pool.
+ */
+async function _inTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  let broken: Error | undefined;
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      console.error("ROLLBACK failed", rollbackError);
+      broken = rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError));
+    }
+    throw e;
+  } finally {
+    client.release(broken);
+  }
+}
+
+/**
+ * Takes the transaction-scoped lock on the membership of `userId` in
+ * `communityId`. Joining and banning take it before they read or change the
+ * membership, so they run one after the other.
+ */
+async function _lockMembership(db: PoolClient, userId: string, communityId: string) {
+  await db.query(`SELECT pg_advisory_xact_lock(hashtextextended('membership:' || $1::text || ':' || $2::text, 0))`, [communityId, userId]);
+}
+
+/** Whether `userId` has an active ban (no end, or an end in the future) in `communityId`. */
+async function _isBanned(db: Pool | PoolClient, userId: string, communityId: string): Promise<boolean> {
+  const result = await db.query(`
+    SELECT 1
+    FROM user_community_state
+    WHERE "userId" = $1
+      AND "communityId" = $2
+      AND "blockState" = ${format('%L', UserBlockState.BANNED)}
+      AND ("blockStateUntil" > NOW() OR "blockStateUntil" IS NULL)
+  `, [userId, communityId]);
+  return result.rows.length > 0;
+}
+
 async function _getCommunityRoles(
   db: Pool | PoolClient,
   communityId: string,
@@ -1613,9 +1661,15 @@ class CommunityHelper {
   }
 
   private async joinCommunity(userId: string, communityId: string, questionnaireAnswers?: Models.Community.QuestionnaireAnswer[]): Promise<Models.Community.DetailViewFromApi> {
-    const blockState = await this.getUserBlockState(userId, communityId);
-    if (blockState !== 'BANNED') {
-      const result = await pool.query(`
+    // the ban check and the role insert hold the user's membership lock, as
+    // a ban does (setUserBlockState): a join and a ban of the same user and
+    // community run one after the other
+    const result = await _inTransaction(async client => {
+      await _lockMembership(client, userId, communityId);
+      if (await _isBanned(client, userId, communityId)) {
+        throw new Error(errors.server.NOT_ALLOWED);
+      }
+      return client.query(`
         WITH member_role AS (
           SELECT r."id" FROM roles r
           WHERE r."communityId" = $2::UUID
@@ -1653,52 +1707,50 @@ class CommunityHelper {
         WHERE id = $2::UUID AND EXISTS (SELECT 1 FROM role_insert)
         RETURNING "memberCount", (SELECT "communityOrder" FROM user_update), "updatedAt"
       `, [userId, communityId]);
-      if (result.rows.length !== 1) {
-        throw new Error(errors.server.NOT_ALLOWED);
-      }
-      const data = await this.getCommunityDetailView({ id: communityId }, userId);
-      const memberRoleId = data.roles.find(r => r.title === PredefinedRole.Member)?.id;
-      if (!memberRoleId) {
-        throw new Error("Member Role not found, this is - theoretically - impossible. If this happened, a member role was either not created or deleted, which should not happen.");
-      }
-      eventHelper.emit({
-        type: "cliCommunityEvent",
-        action: "update",
-        data: {
-          id: communityId,
-          memberCount: result.rows[0].memberCount,
-          updatedAt: result.rows[0].updatedAt,
-        },
-      }, {
-        communityIds: [communityId],
-      });
-      eventHelper.emit({
-        type: "cliMembershipEvent",
-        action: "join",
-        data: {
-          communityId: communityId,
-          userId: userId,
-          roleIds: [memberRoleId],
-        },
-      }, {
-        communityIds: [communityId],
-      });
-      eventHelper.emit({
-        type: "cliUserOwnData",
-        data: {
-          communityOrder: result.rows[0].communityOrder,
-        },
-      }, {
-        userIds: [userId]
-      });
-      eventHelper.userJoinRooms(userId, {
-        roleIds: [memberRoleId],
-        communityIds: [communityId],
-      });
-      return data;
+    });
+    if (result.rows.length !== 1) {
+      throw new Error(errors.server.NOT_ALLOWED);
     }
-
-    throw new Error(errors.server.NOT_ALLOWED);
+    const data = await this.getCommunityDetailView({ id: communityId }, userId);
+    const memberRoleId = data.roles.find(r => r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Member)?.id;
+    if (!memberRoleId) {
+      throw new Error("Member Role not found, this is - theoretically - impossible. If this happened, a member role was either not created or deleted, which should not happen.");
+    }
+    eventHelper.emit({
+      type: "cliCommunityEvent",
+      action: "update",
+      data: {
+        id: communityId,
+        memberCount: result.rows[0].memberCount,
+        updatedAt: result.rows[0].updatedAt,
+      },
+    }, {
+      communityIds: [communityId],
+    });
+    eventHelper.emit({
+      type: "cliMembershipEvent",
+      action: "join",
+      data: {
+        communityId: communityId,
+        userId: userId,
+        roleIds: [memberRoleId],
+      },
+    }, {
+      communityIds: [communityId],
+    });
+    eventHelper.emit({
+      type: "cliUserOwnData",
+      data: {
+        communityOrder: result.rows[0].communityOrder,
+      },
+    }, {
+      userIds: [userId]
+    });
+    eventHelper.userJoinRooms(userId, {
+      roleIds: [memberRoleId],
+      communityIds: [communityId],
+    });
+    return data;
   }
 
   public async leaveCommunity(userId: string, communityId: string): Promise<Models.Community.DetailViewFromApi> {
@@ -1799,13 +1851,14 @@ class CommunityHelper {
       // A ban ends the membership: the roles go and the block state is
       // stored in one transaction, so a failure leaves neither half behind
       // and fails the request. The events and room changes follow after.
-      let removedMembership: MembershipRemoval | null = null;
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-        if (data.blockState === UserBlockState.BANNED) {
-          removedMembership = await _removeCommunityMembership(client, data.userId, data.communityId);
-        }
+      // It holds the user's membership lock, as joining does
+      // (joinCommunity), so a join running at the same time comes after it
+      // and sees the ban.
+      const removedMembership = await _inTransaction(async client => {
+        await _lockMembership(client, data.userId, data.communityId);
+        const removed = data.blockState === UserBlockState.BANNED
+          ? await _removeCommunityMembership(client, data.userId, data.communityId)
+          : null;
         await client.query(`
           INSERT INTO user_community_state ("userId", "communityId", "blockState", "blockStateUntil", "blockStateUpdatedAt")
           VALUES ($1, $2, $3, $4, now())
@@ -1815,13 +1868,8 @@ class CommunityHelper {
             "blockStateUntil" = EXCLUDED."blockStateUntil",
             "blockStateUpdatedAt" = now()
         `, [data.userId, data.communityId, data.blockState, data.until]);
-        await client.query("COMMIT");
-      } catch (e) {
-        await client.query("ROLLBACK");
-        throw e;
-      } finally {
-        client.release();
-      }
+        return removed;
+      });
       if (removedMembership) {
         try {
           await this.afterMembershipRemoved(data.userId, data.communityId, removedMembership);

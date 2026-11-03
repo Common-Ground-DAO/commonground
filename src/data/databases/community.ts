@@ -98,29 +98,41 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
       else {
         this.__ready.resolve = resolve;
       }
-    }).then(async () => {
-      // initialize
-      try {
-        const [
-          channels,
-          calls,
-        ] = await Dexie.Promise.all([
-          this.db.channels.toArray(),
-          this.db.calls.toArray(),
-        ]);
-        // the in-memory read state starts from the stored rows
-        this.registerChannelLastRead(channels);
-        for (const call of calls) {
-          channelDatabaseManager.registerAccessForChannel({
-            callId: call.id,
-            channelId: call.channelId,
-            communityId: call.communityId,
-          });
-        }
-      } catch (e) {
-        console.error(`Error initializing channel access for community channels`, e);
+    }).then(() => this.loadStoredChannels());
+  }
+
+  /**
+   * Registers the stored channels' and calls' access and read state in this
+   * tab's chat stores: on page load, and when the tab takes over the login
+   * of another tab (which wrote the rows; a logout before cleared the stores).
+   */
+  public async registerStoredChannels(): Promise<void> {
+    // after a version upgrade's table clear
+    await this.__ready.promise;
+    await this.loadStoredChannels();
+  }
+
+  private async loadStoredChannels(): Promise<void> {
+    try {
+      const [
+        channels,
+        calls,
+      ] = await Dexie.Promise.all([
+        this.db.channels.toArray(),
+        this.db.calls.toArray(),
+      ]);
+      // the in-memory read state starts from the stored rows
+      this.registerChannelLastRead(channels);
+      for (const call of calls) {
+        channelDatabaseManager.registerAccessForChannel({
+          callId: call.id,
+          channelId: call.channelId,
+          communityId: call.communityId,
+        });
       }
-    });
+    } catch (e) {
+      console.error(`Error initializing channel access for community channels`, e);
+    }
   }
 
   protected setUpDb(info: IdbSetupInfo): void {
@@ -175,7 +187,11 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
             console.log("CommunityDatabase: Clear community tables: No action required.");
           }
         },
-      ).then(() => {
+      ).catch(e => {
+        // the database stays usable with the old rows (snapshots replace
+        // them); waiting for ever would block every reader
+        console.error("CommunityDatabase: clearing the tables after an upgrade failed", e);
+      }).then(() => {
         this.__ready.resolve?.();
       });
     }

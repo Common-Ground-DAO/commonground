@@ -258,6 +258,11 @@ class ReadStateStoreImpl implements ReadStateStore {
             if (generation !== this.generation) continue;
             this.serverSupportsSync = true;
             for (const c of resp.channels) {
+              // a tab that took another tab's login over may not know it yet
+              if (this.deps.registerAccess && !this.deps.getAccess(c.channelId)) {
+                if (c.chatId) this.deps.registerAccess({ channelId: c.channelId, chatId: c.chatId });
+                else if (c.communityId) this.deps.registerAccess({ channelId: c.channelId, communityId: c.communityId });
+              }
               this.applyInput({
                 kind: 'snapshot',
                 channelId: c.channelId,

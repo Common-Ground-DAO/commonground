@@ -10,6 +10,7 @@ import { createChannelStore, RESYNC_DEBOUNCE_MS } from './channelStore';
 import { FakeChatServer, ME, textBody, textOf } from './testing/fakeServer';
 import { systemClock } from './util';
 import {
+  ACCESS_WAIT_MS,
   CHANNEL_LRU_SIZE,
   GAP_RESYNC_DEBOUNCE_MS,
   LATEST_SEGMENT_MAX,
@@ -126,6 +127,54 @@ describe('ChannelStore: init and snapshots', () => {
     store.registerAccessForChannel(access);
     await settle();
     await expect(p).resolves.toBe(3);
+  });
+
+  it('init gives up with NO_ACCESS when the access stays unknown; a later init succeeds', async () => {
+    installFakeTimers();
+    const server = new FakeChatServer();
+    const access = server.addChannel(C, { chatId: 'chat-1' });
+    server.seed(C, 2);
+    const store = createChannelStore({ api: server, events: server, clock: systemClock, newId: () => 'x' });
+    const w = store.openWindow(C);
+    const p = w.init({ type: 'recent' });
+    const outcome = p.then(() => 'resolved', (e: Error) => e.message);
+    await vi.advanceTimersByTimeAsync(ACCESS_WAIT_MS - 1);
+    await settle();
+    expect(server.calls).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await outcome).toBe(WINDOW_ERROR.NO_ACCESS);
+    store.registerAccessForChannel(access);
+    await expect(w.init({ type: 'recent' })).resolves.toBe(2);
+  });
+
+  it('a window that ended in NO_ACCESS re-inits by itself once the access is registered', async () => {
+    installFakeTimers();
+    const server = new FakeChatServer();
+    const access = server.addChannel(C, { chatId: 'chat-1' });
+    server.seed(C, 2);
+    const store = createChannelStore({ api: server, events: server, clock: systemClock, newId: () => 'x' });
+    const w = store.openWindow(C);
+    const changes = watch(w);
+    const failed = w.init({ type: 'recent' }).then(() => 'resolved', (e: Error) => e.message);
+    await vi.advanceTimersByTimeAsync(ACCESS_WAIT_MS);
+    expect(await failed).toBe(WINDOW_ERROR.NO_ACCESS);
+    expect(w.state.ready).toBe(false);
+    // e.g. getSyncState registered it later
+    store.registerAccessForChannel(access);
+    await settle();
+    expect(w.state.ready).toBe(true);
+    expect(w.state.items).toHaveLength(2);
+    expect(changes.at(-1)).toEqual({ kind: 'reset', cause: 'init' });
+    // a destroyed window is left alone
+    const gone = store.openWindow('ch-2');
+    const goneInit = gone.init({ type: 'recent' }).catch(() => undefined);
+    await vi.advanceTimersByTimeAsync(ACCESS_WAIT_MS);
+    await goneInit;
+    gone.destroy();
+    const calls = server.calls.length;
+    store.registerAccessForChannel(server.addChannel('ch-2'));
+    await settle();
+    expect(server.calls.length).toBe(calls);
   });
 });
 

@@ -11,6 +11,7 @@
  */
 
 import {
+  ACCESS_WAIT_MS,
   CHANNEL_LRU_SIZE,
   GAP_RESYNC_DEBOUNCE_MS,
   GET_CHANGES_LIMIT,
@@ -307,7 +308,9 @@ class WindowImpl implements ChannelWindow {
     if (this.destroyed) throw superseded();
     const gen = this.supersede();
     this.lastInit = options;
-    return this.store.initWindow(this, options, gen);
+    const p = this.store.initWindow(this, options, gen);
+    p.catch(e => this.store.retryWhenAccessKnown(this, gen, options, e));
+    return p;
   }
 
   loadOlder(count: number = PAGE_SIZE): Promise<void> {
@@ -338,7 +341,9 @@ class WindowImpl implements ChannelWindow {
   async jumpToLatest(): Promise<void> {
     if (this.destroyed) return;
     const gen = this.supersede();
-    await this.store.jumpToLatest(this, gen);
+    const p = this.store.jumpToLatest(this, gen);
+    p.catch(e => this.store.retryWhenAccessKnown(this, gen, { type: 'recent' }, e));
+    await p;
   }
 
   destroy(): void {
@@ -365,6 +370,8 @@ class ChannelStoreImpl implements ChannelStore {
   private readonly channels = new Map<string, ChannelData>();
   private readonly access = new Map<string, Access>();
   private readonly accessWaiters = new Map<string, Set<{ resolve: (a: Access) => void; reject: (e: Error) => void }>>();
+  /** windows whose init/jump ended in NO_ACCESS: re-initialised once the access is registered */
+  private readonly noAccessWindows = new Map<string, Map<WindowImpl, { gen: number; options: Models.ItemList.ItemListInitOptions }>>();
   /** `getChanges` answered 404 in this page load: use loadMessages-based reconcile */
   private fallback = false;
   private useCounter = 0;
@@ -391,13 +398,42 @@ class ChannelStoreImpl implements ChannelStore {
       this.accessWaiters.delete(access.channelId);
       for (const w of waiters) w.resolve(access);
     }
+    const failed = this.noAccessWindows.get(access.channelId);
+    if (failed) {
+      this.noAccessWindows.delete(access.channelId);
+      for (const [w, { gen, options }] of failed) {
+        // not if destroyed or initialised anew meanwhile; the init emits the usual reset
+        if (!w.destroyed && w.gen === gen) w.init(options).catch(noop);
+      }
+    }
+  }
+
+  /** a window op that gave up waiting for the access runs again once it is known */
+  retryWhenAccessKnown(w: WindowImpl, gen: number, options: Models.ItemList.ItemListInitOptions, e: unknown): void {
+    if (!(e instanceof Error) || e.message !== WINDOW_ERROR.NO_ACCESS || this.disposed) return;
+    if (w.destroyed || w.gen !== gen) return;
+    if (this.access.has(w.channelId)) {
+      w.init(options).catch(noop);
+      return;
+    }
+    let set = this.noAccessWindows.get(w.channelId);
+    if (!set) {
+      set = new Map();
+      this.noAccessWindows.set(w.channelId, set);
+    }
+    set.set(w, { gen, options });
   }
 
   getAccessForChannel(channelId: string): Access | undefined {
     return this.access.get(channelId);
   }
 
-  private waitAccess(channelId: string): Promise<Access> {
+  /**
+   * The channel's access once registered. `bounded` (window operations):
+   * rejects with WINDOW_ERROR.NO_ACCESS after ACCESS_WAIT_MS instead of
+   * leaving the window loading for good.
+   */
+  private waitAccess(channelId: string, bounded = false): Promise<Access> {
     const known = this.access.get(channelId);
     if (known) return Promise.resolve(known);
     if (this.disposed) return Promise.reject(new Error('ChannelStore disposed'));
@@ -407,7 +443,24 @@ class ChannelStoreImpl implements ChannelStore {
         set = new Set();
         this.accessWaiters.set(channelId, set);
       }
-      set.add({ resolve, reject });
+      const timer = bounded ? new Timer(this.deps.clock) : undefined;
+      const waiter = {
+        resolve: (access: Access) => {
+          timer?.clear();
+          resolve(access);
+        },
+        reject: (e: Error) => {
+          timer?.clear();
+          reject(e);
+        },
+      };
+      set.add(waiter);
+      timer?.start(ACCESS_WAIT_MS, () => {
+        const waiters = this.accessWaiters.get(channelId);
+        waiters?.delete(waiter);
+        if (waiters?.size === 0) this.accessWaiters.delete(channelId);
+        reject(new Error(WINDOW_ERROR.NO_ACCESS));
+      });
     });
   }
 
@@ -516,6 +569,7 @@ class ChannelStoreImpl implements ChannelStore {
     const err = new Error('ChannelStore disposed');
     for (const set of this.accessWaiters.values()) for (const w of set) w.reject(err);
     this.accessWaiters.clear();
+    this.noAccessWindows.clear();
   }
 
   // ----- notify ------------------------------------------------------------
@@ -1106,7 +1160,7 @@ class ChannelStoreImpl implements ChannelStore {
     const ch = w.ch;
     ch.lastUsed = ++this.useCounter;
     const count = Math.max(PAGE_SIZE, options.minimumItemCount ?? 0);
-    await w.guard(gen, this.waitAccess(ch.id));
+    await w.guard(gen, this.waitAccess(ch.id, true));
     if (options.type === 'recent') {
       if (!ch.latest) await w.guard(gen, this.sync(ch, { join: true }));
       else this.sync(ch, { join: true }).catch(noop);
@@ -1155,7 +1209,7 @@ class ChannelStoreImpl implements ChannelStore {
     const ch = w.ch;
     const count = target.count ?? PAGE_SIZE;
     const half = Math.max(1, Math.floor(count / 2));
-    const access = await w.guard(gen, this.waitAccess(ch.id));
+    const access = await w.guard(gen, this.waitAccess(ch.id, true));
     if ('itemId' in target && ch.tombstones.has(target.itemId)) throw notFound();
     const latestReady = ch.latest ? Promise.resolve() : this.sync(ch, { join: true });
     latestReady.catch(noop);
@@ -1329,7 +1383,7 @@ class ChannelStoreImpl implements ChannelStore {
   }
 
   async jumpToLatest(w: WindowImpl, gen: number): Promise<void> {
-    await w.guard(gen, this.waitAccess(w.ch.id));
+    await w.guard(gen, this.waitAccess(w.ch.id, true));
     if (!w.ch.latest) await w.guard(gen, this.sync(w.ch, { join: true }));
     const latest = w.ch.latest;
     if (!latest) return;

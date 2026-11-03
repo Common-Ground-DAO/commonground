@@ -20,7 +20,7 @@ import signedOutNotice from "data/auth/signedOut";
 import { getAuthMode } from "data/auth/authMode";
 import { type AuthenticationResponseJSON } from "@simplewebauthn/browser";
 import notificationsApi from "data/api/notifications";
-import { broadcastLoggedIn, broadcastLoggedOut, onAuthBroadcast, withLoginLock } from "./authBroadcast";
+import { authTabId, broadcastLoggedIn, broadcastLoggedOut, onAuthBroadcast, withLoginLock } from "./authBroadcast";
 import type { AuthBroadcastMessage } from "./transport";
 
 type CurrentUser = {
@@ -46,6 +46,30 @@ const CURRENT_USER_KEY = 'CG_CURRENT_USER';
  * once on the next visibility/online check.
  */
 export const DEVICE_LOGIN_RETRY_MS = [5_000, 15_000, 60_000] as const;
+/**
+ * Set by a tab while it logs a user out (from before `User/logout` until it
+ * is done): the server's `cliSignedOut` for the device's other sockets
+ * reaches the other tabs before that tab cleared CG_CURRENT_USER.
+ */
+const LOGOUT_MARKER_KEY = 'CG_LOGOUT_IN_PROGRESS';
+type LogoutMarker = {
+  userId: string;
+  tabId: string;
+  at: number;
+  /** that tab logs out because the device was signed out from elsewhere */
+  elsewhere?: true;
+};
+/** an older marker is a leftover (a tab closed in the middle of its logout) */
+const LOGOUT_MARKER_MAX_AGE_MS = 30_000;
+/**
+ * A sign-out without a visible logout of another tab: how long a tab waits
+ * for one (an older page does not set the marker) before it treats it as a
+ * sign-out from elsewhere.
+ */
+export const SIGNED_OUT_RECHECK_MS = 1_000;
+/** how long a tab follows another tab's running logout before it logs out itself */
+export const OTHER_TAB_LOGOUT_WAIT_MS = 10_000;
+const SIGNED_OUT_POLL_MS = 100;
 /** deviceLoginRequest: the hold cap took the lock before the next step */
 const LOCK_LOST = 'LOCK_LOST' as const;
 
@@ -139,6 +163,12 @@ class LoginManager {
     return this._currentUser;
   }
   private setCurrentUser(data: CurrentUser | null) {
+    if (data) {
+      // logged in: no logout of this browser runs any more, and "You were
+      // signed out — Sign in" is over
+      this.removeLogoutMarker();
+      signedOutNotice.dismiss();
+    }
     this._currentUser = data;
     securityStepState.setUser(data?.userId ?? null);
     localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(data));
@@ -163,7 +193,8 @@ class LoginManager {
   private __autoLoginPromise: Promise<void> | undefined;
   public async autoLogin(): Promise<void> {
     if (!this.__autoLoginPromise) {
-      this.__autoLoginPromise = (async () => {
+      // resolves `true` when this tab is to follow the stored user afterwards
+      const run = (async (): Promise<boolean> => {
         let result: API.User.login.Response | undefined;
         let triedLogin = false;
 
@@ -176,7 +207,7 @@ class LoginManager {
           else {
             this.state = "anonymous";
           }
-          return;
+          return false;
         }
 
         if (!this.currentUser) {
@@ -206,11 +237,9 @@ class LoginManager {
             const outcome = await this._login({ deviceId: this.currentUser.deviceId }, true);
             if (outcome === 'taken-over') {
               // another tab had just logged in: its session serves this tab
-              // too; or the stored user changed meanwhile: follow it
-              if (!this._currentUser) {
-                await this.followStoredUser();
-              }
-              return;
+              // too; or the stored user changed meanwhile: follow it — once
+              // this run is over, since following may log in again
+              return !this._currentUser;
             }
             result = outcome;
           } catch (e) {
@@ -219,7 +248,7 @@ class LoginManager {
                 // the device key is gone: this device was signed out from
                 // elsewhere (the sign-out on this device clears it locally)
                 await this.signedOutElsewhere();
-                return;
+                return false;
               }
             }
             if (this.needsDeviceLoginRetry()) {
@@ -265,9 +294,13 @@ class LoginManager {
             this.state = "anonymous";
           }
         }
+        return false;
       })().finally(() => {
         delete this.__autoLoginPromise;
       });
+      // not inside the run: adoptLoginOfOtherTab may start a new autoLogin,
+      // which must not wait for this one
+      this.__autoLoginPromise = run.then(follow => (follow ? this.followStoredUser() : undefined));
     }
     await this.__autoLoginPromise;
   }
@@ -324,6 +357,12 @@ class LoginManager {
   public async loginRequiredErrorHandler(): Promise<void> {
     if (!this.__loginRequiredLoginPromise) {
       this.__loginRequiredLoginPromise = (async () => {
+        if (this.logoutPromise || this.__signedOutPromise) {
+          // expected while logging out or following another tab's logout:
+          // the session is gone before the current user (e.g. the windows
+          // the logout re-inits)
+          return;
+        }
         if (!this.currentUser) {
           if (this.state === "loggingin") {
             console.log("The last request requested a LOGIN_REQUIRED resource before login completion");
@@ -339,6 +378,10 @@ class LoginManager {
           return;
         }
         const userId = this.currentUser.userId;
+        if (this.otherTabsLogoutMarker(userId)) {
+          // another tab is logging this user out: no device login over it
+          return;
+        }
         const sessionIsOurs = await withLoginLock(async () => {
           try {
             const status = await userApi.checkLoginStatus();
@@ -347,7 +390,7 @@ class LoginManager {
             return false;
           }
         });
-        if (!sessionIsOurs && this.currentUser?.userId === userId) {
+        if (!sessionIsOurs && this.currentUser?.userId === userId && !this.logoutPromise) {
           await this.autoLogin();
         }
       })().finally(() => {
@@ -386,35 +429,142 @@ class LoginManager {
 
   /**
    * This device was signed out on the server (cliSignedOut, or its device
-   * key is gone): sign out here too and tell the person why.
+   * key is gone): sign out here too and tell the person why. The server
+   * signs out all sockets of the device before the `User/logout` of one of
+   * its tabs returns, so the other tabs get this before that tab is done: a
+   * tab that sees another tab's logout of this user (LOGOUT_MARKER_KEY, or
+   * CG_CURRENT_USER changed) follows it, without a second `User/logout` and
+   * without a notice (unless that tab was signed out from elsewhere too).
+   * Without either, the decision waits SIGNED_OUT_RECHECK_MS and is taken
+   * under the login lock, so of several tabs signed out from elsewhere
+   * normally only the first one calls `User/logout` and the others follow it
+   * (localStorage is only eventually consistent across processes; a second
+   * `User/logout` is harmless, it hits a session that is gone). A tab that
+   * follows another tab's logout for OTHER_TAB_LOGOUT_WAIT_MS without that
+   * tab finishing (closed or reloaded after it wrote its marker) treats it as
+   * a sign-out from elsewhere.
    */
-  private async signedOutElsewhere() {
-    if (!this.currentUser) {
-      return;
+  private signedOutElsewhere(): Promise<void> {
+    if (!this.__signedOutPromise) {
+      this.__signedOutPromise = this.runSignedOutElsewhere().finally(() => {
+        delete this.__signedOutPromise;
+      });
     }
+    return this.__signedOutPromise;
+  }
+  private __signedOutPromise: Promise<void> | undefined;
+  private _loggedOutInOtherTabAt = 0;
+
+  private async runSignedOutElsewhere() {
+    const userId = this._currentUser?.userId;
+    const deviceId = this._currentUser?.deviceId;
     // this tab is logging out already: the server's sign-out of the device's
     // sockets can reach this tab's socket too (when it could not tell the
     // requesting socket apart), and it is no sign-out from elsewhere
-    if (this.logoutPromise) {
+    if (!userId || this.logoutPromise) {
       return;
     }
-    // a logout in another tab of this browser deletes this device's key as
-    // well: no notice for that
-    const stored = this.readStoredUser();
-    if (stored?.userId !== this.currentUser.userId) {
-      // another tab of this browser has signed out already (every tab gets
-      // cliSignedOut): follow it instead of a second User/logout
-      await this.dropLoginOfOtherTab();
-      return;
+    const storedIsOurs = () => {
+      const stored = this.readStoredUser();
+      return stored?.userId === userId && stored.deviceId === deviceId;
+    };
+    // dropped or logging out meanwhile (another tab's broadcast, this tab's logout)
+    const handled = () => !this._currentUser || this._currentUser.userId !== userId || !!this.logoutPromise;
+    const startedAt = Date.now();
+    let otherTabSignedOutElsewhere = false;
+    const seeMarker = () => {
+      const marker = this.otherTabsLogoutMarker(userId);
+      otherTabSignedOutElsewhere ||= !!marker?.elsewhere;
+      return marker;
+    };
+    // followed another tab's logout: the notice if that tab was signed out from elsewhere
+    const followed = () => {
+      seeMarker();
+      if (otherTabSignedOutElsewhere) {
+        signedOutNotice.show();
+      }
+    };
+    for (;;) {
+      if (handled()) {
+        followed();
+        return;
+      }
+      if (!storedIsOurs()) {
+        // another tab of this browser has signed out already: follow it
+        await this.dropLoginOfOtherTab();
+        followed();
+        return;
+      }
+      const marker = seeMarker();
+      const waited = Date.now() - startedAt;
+      // a tab that never finishes its logout (closed, frozen) is not waited for
+      if (waited >= (marker ? OTHER_TAB_LOGOUT_WAIT_MS : SIGNED_OUT_RECHECK_MS)) {
+        const logOut = await withLoginLock(async () => {
+          if (handled() || !storedIsOurs()) return false;
+          if (seeMarker() && Date.now() - startedAt < OTHER_TAB_LOGOUT_WAIT_MS) return false;
+          // the other tabs see it before they get the lock. A logout of
+          // another tab that did not finish in time is a leftover marker (that
+          // tab closed or reloaded): this is a sign-out from elsewhere too.
+          this._logoutSignedOutElsewhere = true;
+          this.writeLogoutMarker(userId, true);
+          return true;
+        });
+        if (!logOut) {
+          // another tab decided first: follow it
+          continue;
+        }
+        if (Date.now() - this._loggedOutInOtherTabAt >= 30_000) {
+          signedOutNotice.show();
+        }
+        await this.logout();
+        return;
+      }
+      await new Promise<void>(resolve => setTimeout(resolve, SIGNED_OUT_POLL_MS));
     }
-    const ownLogout = Date.now() - this._loggedOutInOtherTabAt < 30_000;
-    if (!ownLogout) {
-      signedOutNotice.show();
-    }
-    await this.logout();
   }
-  private _loggedOutInOtherTabAt = 0;
 
+  private readLogoutMarker(): LogoutMarker | null {
+    try {
+      const marker: LogoutMarker | null = JSON.parse(localStorage.getItem(LOGOUT_MARKER_KEY) || 'null');
+      return marker && Math.abs(Date.now() - marker.at) < LOGOUT_MARKER_MAX_AGE_MS ? marker : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** another tab of this browser is logging `userId` out right now */
+  private otherTabsLogoutMarker(userId: string): LogoutMarker | null {
+    const marker = this.readLogoutMarker();
+    return marker && marker.userId === userId && marker.tabId !== authTabId ? marker : null;
+  }
+
+  /** `elsewhere`: this tab logs out because the device was signed out from elsewhere */
+  private writeLogoutMarker(userId: string, elsewhere = false) {
+    try {
+      const marker: LogoutMarker = { userId, tabId: authTabId, at: Date.now() };
+      if (elsewhere) marker.elsewhere = true;
+      localStorage.setItem(LOGOUT_MARKER_KEY, JSON.stringify(marker));
+    } catch (e) {
+      console.error("Error writing the logout marker", e);
+    }
+  }
+
+  private removeOwnLogoutMarker() {
+    if (this.readLogoutMarker()?.tabId === authTabId) {
+      this.removeLogoutMarker();
+    }
+  }
+
+  private removeLogoutMarker() {
+    try {
+      localStorage.removeItem(LOGOUT_MARKER_KEY);
+    } catch {
+      // nothing to clean up
+    }
+  }
+
+  /** the next logout is one because the device was signed out from elsewhere */
+  private _logoutSignedOutElsewhere = false;
   private logoutPromise: Promise<void> | undefined;
   public async logout() {
     if (!this.logoutPromise) {
@@ -423,6 +573,13 @@ class LoginManager {
         stepUpManager.clear();
         securityStepState.set(false);
         const userId = this.currentUser?.userId ?? null;
+        const elsewhere = this._logoutSignedOutElsewhere;
+        this._logoutSignedOutElsewhere = false;
+        if (userId) {
+          // before the server call: its sign-out of this device's sockets
+          // reaches the other tabs before this logout is done
+          this.writeLogoutMarker(userId, elsewhere);
+        }
         try {
           // not in the middle of another tab's login or snapshot refresh
           await withLoginLock(() => userApi.logout());
@@ -437,6 +594,11 @@ class LoginManager {
           broadcastLoggedOut(userId);
         } catch (e) {
           console.log("Error in logout", e);
+        }
+        if (!elsewhere) {
+          // a sign-out from elsewhere stays marked (LOGOUT_MARKER_MAX_AGE_MS):
+          // the tabs that follow it later show the notice too
+          this.removeOwnLogoutMarker();
         }
         resolve();
         delete this.logoutPromise;
@@ -516,12 +678,22 @@ class LoginManager {
   private async takeOverSession(stored: CurrentUser): Promise<void> {
     const { userId } = stored;
     this._currentUser = stored;
+    // signed in again (in another tab): the signed-out notice is over here too
+    signedOutNotice.dismiss();
     securityStepState.setUser(userId);
     stepUpManager.clear();
     channelDatabaseManager.userId = userId;
     if (!securityStepState.required) {
       webSocketManager.login(stored.deviceId).catch(e => debugLog("socket login", e));
     }
+    // the access of the DMs and channels (and their read state) from the rows
+    // the other tab wrote: this tab's stores were cleared or never had them.
+    // Rows written after this read come in with the read-state catch-up. Not
+    // awaited: windows wait for an access themselves, the login does not.
+    Promise.all([
+      chatDatabase.registerStoredChats(),
+      communityDatabase.registerStoredChannels(),
+    ]).catch(e => console.error("Error registering the stored channels after a login in another tab", e));
     try {
       const [ownData, unreadCount] = await Promise.all([
         uniqueDb.uniques.get("OwnData") as Promise<Unique.OwnData | undefined>,

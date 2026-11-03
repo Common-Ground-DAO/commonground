@@ -98,6 +98,34 @@ describe('ReadStateStore: merges', () => {
     expect(store.get(C)).toMatchObject({ unread: 0 });
   });
 
+  it('getSyncState registers the access of channels and DMs that have none yet (a login taken over from another tab)', async () => {
+    installFakeTimers({ now: new Date('2026-11-02T12:00:00Z') });
+    const server = new FakeChatServer();
+    const known = server.addChannel(C);
+    server.addChannel('dm-ch', { chatId: 'chat-1' });
+    server.addChannel('other-ch', { communityId: 'community-2' });
+    server.seed('dm-ch', 2);
+    const access = new Map<string, API.Messages.MessageAccess>([[C, known]]);
+    const registered: API.Messages.MessageAccess[] = [];
+    const store = createReadStateStore({
+      api: server,
+      events: server,
+      clock: systemClock,
+      getAccess: id => access.get(id),
+      registerAccess: a => {
+        registered.push(a);
+        access.set(a.channelId, a);
+      },
+    });
+    await live(server);
+    expect(registered).toEqual([
+      { channelId: 'dm-ch', chatId: 'chat-1' },
+      { channelId: 'other-ch', communityId: 'community-2' },
+    ]);
+    // the snapshot of the newly known DM is applied as well
+    expect(store.get('dm-ch')).toMatchObject({ unread: 2 });
+  });
+
   it('old server: no getSyncState again after a 404', async () => {
     const { server } = setup({ oldServer: true });
     await live(server);

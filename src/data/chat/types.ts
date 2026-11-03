@@ -42,6 +42,11 @@ export const GET_CHANGES_LIMIT = 200;
 export const GAP_RESYNC_DEBOUNCE_MS = 1_500;
 /** A send without answer after this shows "error-send"; a late success still resolves it. */
 export const SEND_TIMEOUT_MS = 20_000;
+/**
+ * A window operation (init, jump) on a channel whose access is still not
+ * registered after this rejects with WINDOW_ERROR.NO_ACCESS.
+ */
+export const ACCESS_WAIT_MS = 30_000;
 /** Trailing throttle of setChannelLastRead after the first, immediate call. */
 export const MARK_READ_THROTTLE_MS = 1_000;
 /** ChannelReadState.counted keeps at most this many (the highest) seqs. */
@@ -53,10 +58,14 @@ export const COUNTED_SEQS_MAX = 50;
  *   does not exist, is deleted or not readable.
  * - SUPERSEDED: a later `init` (or `destroy`) on the same window replaced
  *   this one; callers ignore it (no snackbar).
+ * - NO_ACCESS: the channel's access (community/chat/call/article) did not
+ *   become known within ACCESS_WAIT_MS; the store re-inits the window by
+ *   itself once the access is registered (the usual `reset`).
  */
 export const WINDOW_ERROR = {
   NOT_FOUND: 'NOT_FOUND',
   SUPERSEDED: 'WINDOW_INIT_SUPERSEDED',
+  NO_ACCESS: 'CHANNEL_ACCESS_UNKNOWN',
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -163,6 +172,11 @@ export type ReadStateStoreDeps = {
   clock: ChatClock;
   /** registered access of a channel (ChannelStore.getAccessForChannel) */
   getAccess(channelId: string): API.Messages.MessageAccess | undefined;
+  /**
+   * registers the access of a channel getSyncState reported (its
+   * `communityId`/`chatId`) that has none yet (ChannelStore.registerAccessForChannel)
+   */
+  registerAccess?(access: API.Messages.MessageAccess): void;
   /** shared persistence (community/chat Dexie DBs); optional in tests */
   persistence?: ReadStatePersistence;
 };

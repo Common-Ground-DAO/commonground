@@ -34,15 +34,21 @@ class ChatDatabase extends AbstractDatabase<{
   constructor() {
     super('chat');
 
-    (async () => {
-      // initialize
-      try {
-        // the in-memory read state starts from the stored rows
-        this.registerChatLastRead(await this.db.chats.toArray());
-      } catch (e) {
-        console.error(`Error initializing channel access for chat channels`, e);
-      }
-    })();
+    // initialize: the in-memory read state starts from the stored rows
+    this.registerStoredChats();
+  }
+
+  /**
+   * Registers the stored DMs' access and read state in this tab's chat
+   * stores: on page load, and when the tab takes over the login of another
+   * tab (which wrote the rows; a logout before cleared the stores).
+   */
+  public async registerStoredChats(): Promise<void> {
+    try {
+      this.registerChatLastRead(await this.db.chats.toArray());
+    } catch (e) {
+      console.error(`Error initializing channel access for chat channels`, e);
+    }
   }
 
   protected setUpDb(info: IdbSetupInfo): void {

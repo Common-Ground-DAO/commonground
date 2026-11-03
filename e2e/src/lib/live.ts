@@ -149,10 +149,12 @@ export async function shownMessages(page: Page, scope = 'body'): Promise<ShownMe
  * to bottom. No scrolling, no reload: what the list shows by itself; unless
  * `inView` is false, the lowest of them must also be in view (inside the
  * list's scroll container), so a list that does not follow new messages to
- * the bottom fails.
+ * the bottom fails. Each of `edited` (texts of `texts`) must also carry the
+ * "edited" marker.
  */
-export async function waitMessagesShown(page: Page, texts: string[], options: { scope?: string; timeout?: number; inOrder?: boolean; inView?: boolean; who?: string } = {}) {
-  const { scope = 'body', timeout = 15_000, inOrder = false, inView = true, who = 'page' } = options;
+export async function waitMessagesShown(page: Page, texts: string[], options: { scope?: string; timeout?: number; inOrder?: boolean; inView?: boolean; edited?: string[]; who?: string } = {}) {
+  const { scope = 'body', timeout = 15_000, inOrder = false, inView = true, edited = [], who = 'page' } = options;
+  const unmarked = (shown: ShownMessage[]) => edited.filter(text => !shown.some(m => m.confirmed && m.text.includes(text) && m.edited));
   let last: ShownMessage[] = [];
   try {
     return await until(`${who}: ${texts.length} message(s) shown`, async () => {
@@ -167,6 +169,9 @@ export async function waitMessagesShown(page: Page, texts: string[], options: { 
       if (inView && !last[Math.max(...positions)].inView) {
         return null;
       }
+      if (unmarked(last).length > 0) {
+        return null;
+      }
       return last;
     }, timeout, 200);
   }
@@ -178,7 +183,9 @@ export async function waitMessagesShown(page: Page, texts: string[], options: { 
       ? `${missing.length} of ${texts.length} message(s) not shown: ${missing.map(m => JSON.stringify(m.slice(0, 60))).join(', ')}`
       : inOrder && positions.some((p, i) => i > 0 && p < positions[i - 1])
         ? 'the messages are shown out of order'
-        : `the newest one is in the list but not in view (the list did not scroll to it): ${JSON.stringify(lowest?.text.slice(0, 60))}`;
+        : lowest && inView && !lowest.inView ? `the newest one is in the list but not in view (the list did not scroll to it): ${JSON.stringify(lowest?.text.slice(0, 60))}`
+          : unmarked(last).length ? `without the "edited" marker: ${unmarked(last).map(m => JSON.stringify(m.slice(0, 60))).join(', ')}`
+            : 'the list did not answer';
     throw new Error(`${who}: after ${timeout / 1000} s ${reason}` +
       ` — the list shows ${last.length} message(s): ${last.slice(-8).map(m => JSON.stringify(m.text.slice(0, 40))).join(', ')}`);
   }

@@ -3,13 +3,13 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 /*
- * chat-sync transport contract (roadmap docs/todo/ROADMAP_chat-sync.md,
- * decision [1] "independent tabs + catch-up" and [8] "migration").
+ * chat-sync transport contract: independent tabs + catch-up (docs/realtime
+ * "Tab Coordination", docs/frontend §8).
  *
  * Types and constants only: nothing here runs or is wired. It fixes what the
- * transport slice (webSocket.ts, connection.ts, login.ts, baseConnector.ts,
- * connection UI, CallProvider hold), the service-worker slice and the data
- * layer (src/data/chat) agree on.
+ * transport (webSocket.ts, connection.ts, login.ts, baseConnector.ts,
+ * connection UI, CallProvider hold), the service worker and the data layer
+ * (src/data/chat) agree on.
  *
  * Model in one paragraph: every tab owns its socket, its login state and its
  * in-memory data. No tab roles, no relay, no service-worker referee. Visible

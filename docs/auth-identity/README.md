@@ -15,7 +15,8 @@
 > login state, login lock, cross-tab broadcast, `checkLoginStatus`, LOGIN_REQUIRED handling and
 > the signed-out path across tabs (§10) against commit 964f6b3, 2026-11-02; the logout's
 > sign-out of the device's other sockets against commit ce09d8a, 2026-11-02; the header-less
-> logout disconnect and the own-logout guard against commits 1b09f87 and f97ef1b, 2026-11-02
+> logout disconnect and the own-logout guard against commits 1b09f87 and f97ef1b, 2026-11-02; the post-login setup
+> (no notification database) against commit 1e6a0d4, 2026-11-03
 
 # Authentication & Identity
 
@@ -1170,8 +1171,8 @@ The client login lifecycle is owned by `LoginManager` (`src/data/appstate/login.
   `User/logout`, and the other tabs follow the `cg:auth` broadcast. A logout in another tab of the
   same browser (which deletes this device's key too) shows no notice: the tab knows it from the
   broadcast or the stored current user.
-- **Post-login setup** (`setupAfterLogin`): seeds the local Dexie databases (user, communities, chats,
-  notifications), starts the socket login (not awaited: the transport reports when the tab is live),
+- **Post-login setup** (`setupAfterLogin`): seeds the local Dexie databases (user, communities,
+  chats), hands the notification count to the in-memory chat stores (`setupChatAfterLogin`), starts the socket login (not awaited: the transport reports when the tab is live),
   and registers the push subscription.
 
 **Account-security step and transfer links (client).** Login responses set

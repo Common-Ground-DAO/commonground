@@ -13,7 +13,7 @@ Common Ground is a full-stack TypeScript application:
 - **Staking**: CgStaking contract + event indexing + Spark accrual
 - **Smart Contracts**: Solidity (Hardhat; Foundry for staking)
 - **Infrastructure**: Docker Compose stack (Caddy, PostgreSQL, Valkey, SeaweedFS/S3); single-server selfhost profile
-- **PWA**: installable, push notifications, multi-tab coordination via service worker
+- **PWA**: installable, push notifications; every tab independent (own socket, server catch-up), no service-worker tab coordination
 
 ## Repository Structure
 

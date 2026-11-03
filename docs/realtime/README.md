@@ -20,7 +20,10 @@
 > socket-scoped targeting (`deviceSocket:` room, echo exclusion, article rooms, logout),
 > call chat / `cliCallEvent new` delivery against commit ce09d8a, 2026-11-02; the logout
 > without a header, per-socket article limit, second socket login, the never-rejecting message
-> emit and the deploy-mix notes against commits 1b09f87 and f97ef1b, 2026-11-02
+> emit and the deploy-mix notes against commits 1b09f87 and f97ef1b, 2026-11-02; Tab
+> Coordination after the chat-sync removal (why independent tabs, catch-up after a
+> (re)connect, logout across tabs, the compat markers; no `tabState`/`lastDisconnect` any
+> more) against commit 1e6a0d4, 2026-11-03
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -235,7 +238,7 @@ Human presence is one column per user (`users.onlineStatus` + `onlineStatusUpdat
 
 ### Tab Coordination
 
-Every browser tab owns its own Socket.IO connection and login state (`src/data/appstate/webSocket.ts`); there are no tab roles and the page does not talk to the service worker about sockets. A visible tab is always connected, a hidden tab closes its socket after 5 minutes unless it is in a call. Each tab's socket logs in with the device key, so one user has one socket per open, non-idle tab. See [Frontend Real-time → Tab Coordination](#tab-coordination-1).
+Every browser tab owns its own Socket.IO connection and login state (`src/data/appstate/webSocket.ts`); there are no tab roles and the page does not talk to the service worker about sockets. A visible tab is always connected, a hidden tab closes its socket after 5 minutes unless it is in a call. Each tab's socket logs in with the device key, so one user has one socket per open, non-idle tab (browsers allow 200–255 connections per host; each socket login costs the server a handful of queries). A tab that missed events catches up over HTTP (`Message/getSyncState`, `Message/getChanges`, see [Message and read-state events](#message-and-read-state-events-chat-sync-fields)); presence counts users, not sockets, and its grace period keeps reconnecting tabs from flapping the status. See [Frontend Real-time → Tab Coordination](#tab-coordination-1).
 
 ---
 
@@ -497,7 +500,16 @@ The `WebSocketManager` singleton manages the Socket.IO connection:
 
 ### Tab Coordination
 
-Every tab owns its Socket.IO connection, its login state and its in-memory data (chat-sync design [1], `docs/todo/ROADMAP_chat-sync.md`). The page never opens `BroadcastChannel('CG_WEBSOCKET_STATE')`; `webSocketManager.tabState` / `connectionManager.tabState` are kept only as a compatibility value and are always `active`.
+Every tab owns its Socket.IO connection, its login state and its in-memory data (messages, read state, notifications: `src/data/chat/`, [docs/frontend §3 "Chat stores"](../frontend/README.md#chat-stores-srcdatachat)). There is no leader tab, no relay of events between tabs and no shared message cache; the page never opens `BroadcastChannel('CG_WEBSOCKET_STATE')`.
+
+**Why independent tabs.** Before, the service worker assigned one "active" tab that owned the socket and the others mirrored it, with a chunked message cache in IndexedDB shared over BroadcastChannel. Browser behaviour makes any such hand-off fragile: Chrome closes every WebSocket of a page it freezes (not only on bfcache), Chrome for Android freezes hidden tabs after about a minute, iOS suspends a backgrounded tab almost at once (Firefox does not freeze); a frozen tab keeps its Web Locks, so a lock alone is no safe leader election; SharedWorker is not available on every supported browser (Safari 16, Chrome for Android); and Socket.IO connection-state recovery does not work with the classic Redis adapter in use and covers neither reloads nor new tabs. Every model ends in "socket gone → reconnect → catch up", so the client relies on that alone: background tabs only have to be correct once they are visible again. The only cross-tab mechanisms left are the login lock and the auth broadcast below.
+
+**Catch-up after a (re)connect (`src/data/chat/`):**
+
+- "Live" means socket logged in and rooms joined: `onLive` (and the app events `cliConnectionEstablished` / `cliConnectionRestored`) fire only after the socket `login` ack, because events emitted between `connect` and the room join are lost on the server.
+- Triggers (each store debounces them into one round): `onLive` — first login ack of the page (`established`), after a lost or policy-closed connection (`restored`), a user change on the same connection (`user`, also when the login settles after the socket went live) — and `onResume` while the socket stayed live (`visible` after ≥ 30 s hidden, `pageshow` from bfcache, `resume`, `online`).
+- On each round: `Message/getSyncState` (read state of every readable channel and DM plus the notification count), `Message/getChanges` for every open message window from its `"1:<seq>"` cursor, and the notification count/open list. Live events arriving meanwhile are applied too; the stores merge by `syncSeq`, so order and duplicates do not matter. A live event that leaves a `syncSeq` gap open for 1.5 s triggers a `getChanges` of that channel.
+- Community, chat and own-user data are refreshed by the device `User/login` snapshot after a `restored` live (below); their Dexie writers are monotonic. A reconnect never runs a full HTTP device login.
 
 **Hidden-tab policy (`webSocket.ts`):**
 
@@ -505,18 +517,19 @@ Every tab owns its Socket.IO connection, its login state and its in-memory data 
 - A hidden tab closes its socket (`socket.disconnect()`, no auto-reconnect) after `HIDDEN_DISCONNECT_AFTER_MS` (5 min) unless a `SocketHold` is active. `CallProvider` holds the socket while the tab is in a call; after the last release of a hidden tab the 5 minutes start from the release. Inside the 5 minutes socket.io's own reconnection stays on.
 - `freeze` and `pagehide` close the socket at once, holds or not (`pagehide` replaces `beforeunload`; nothing is written to localStorage per event or on unload).
 - After such a policy close the tab reconnects only on `visibilitychange` to visible, `pageshow` (persisted), `resume` or `online` while visible — never on a timer while hidden.
-- `connectionManager.lastDisconnect` (read only by the old chunked message cache) starts at the page load and moves to "last event, at most 30 s before the disconnect" on every disconnect.
+
 
 **Login across tabs (`login.ts`, `authBroadcast.ts`):**
 
 - The HTTP device login runs once per page load in every tab (on the first socket connect). Each HTTP login holds the Web Lock `cg:login` for its whole exchange — for a device login: `User/getSignableSecret`, signature and `User/login`, because the server keeps one signable secret per session and the tabs share the session cookie. A tab that had to wait for the lock re-checks `User/checkLoginStatus` and takes the session over if it belongs to the stored user (another tab has just logged in). After 10 s (`LOGIN_LOCK_HOLD_MAX_MS`) the lock is released for the other tabs, but the holder keeps waiting for its own request; it only starts no further step (signature, request) without the lock — it queues again once. A device login answered `INVALID_SECRET` (a late secret request of another tab replaced the secret) is repeated once under the lock with a fresh secret. Inside the lock a tab compares the stored current user with the device it is about to log in and follows the stored user if they differ. A page device login that fails with anything but `NOT_FOUND` is retried with a backoff (5/15/60 s, ±50 %) and on the next visibility/online check (never sooner than 5 s after the failure); `User/logout` also runs under the lock. A waiting tab logs in without the lock after 15 s (a frozen tab keeps its locks). After a `restored` live a visible tab re-runs the device `User/login` for its snapshot (own communities, chats, own data, unread count) under the same lock, debounced by a random 1–3 s; a hidden tab does so when it becomes visible.
-- A logout or login is broadcast on `BroadcastChannel('cg:auth')`; the `storage` event on `CG_CURRENT_USER` is the fallback. On a logout every other tab emits socket `logout` and drops its login state (no second `User/logout`); on a login an anonymous tab takes over the session after `User/checkLoginStatus`; a login of another user is handled as a logout first. For one release a logout also posts `'anonymous'` on `CG_LOGIN_STATE` for still-open older pages.
+- A logout or login is broadcast on `BroadcastChannel('cg:auth')`; the `storage` event on `CG_CURRENT_USER` is the fallback. On a logout every other tab emits socket `logout` and drops its login state (no second `User/logout`); on a login an anonymous tab takes over the session after `User/checkLoginStatus`; a login of another user is handled as a logout first. For one release a logout also posts `'anonymous'` on `CG_LOGIN_STATE` for still-open older pages (`authBroadcast.ts`, marked `COMPAT — remove one release after chat-sync`).
+- On the server, `User/logout` disconnects the device's other sockets and sends them `cliSignedOut` first (see [Socket-scoped targeting](#socket-scoped-targeting)); a tab of the same browser that has seen the logout broadcast within the last 30 s follows it without the "signed out on another device" notice. A disconnected tab reconnects anonymously.
 
-**Service worker (`src/service-worker.ts`, compat answer in `src/serviceWorkerLegacyTabs.ts`):**
+**Service worker (`src/service-worker.ts`, compat answer in `src/serviceWorkerLegacyTabs.ts`):** precache, Web Push, `notificationclick`, the update/`reload` flow and `CHANNEL_VISITED` (a page that opens a channel closes that channel's push notifications) are its only jobs. For one release it keeps a compat answer for pages of the previous build (marked `COMPAT — remove one release after chat-sync`, together with the `Legacy*` types in `src/data/appstate/transport.ts`):
 
 - Every `TabToWorker` with `tabState: 'unknown'` gets exactly `{ type: 'WorkerToTab', tabId, tabState: 'active' }` back: no socket state is relayed, so the tab does not mirror stale values. Every other message on the channel (heartbeats, `tabClosed`) is ignored; there is no tab registry, no promotion and no ban list.
 - Only the activated worker answers (its own `self.serviceWorker.state`; where that is missing, once its `activate` handler ran or when it started up already active after a browser restart); a new worker that is installed but still waiting stays silent next to the worker of the previous build.
-- New pages never open this channel (see above). Purpose: pages of the previous build that are still open after an update without having reloaded on the `reload` message `activate` posts to every client connect instead of waiting for a role forever. The answer is removed one release after chat-sync (`TODO(chat-sync compat)`); the chat-sync transport gives every tab its own socket and stops using the channel.
+- New pages never open this channel (see above). Purpose: pages of the previous build that are still open after an update without having reloaded on the `reload` message `activate` posts to every client connect instead of waiting for a role forever. The answer is removed one release after chat-sync; new pages give every tab its own socket and never use the channel.
 - Several old pages answered "active" settle on one active tab through their own collision tie-break (visible tab wins, else the higher `tabId`). When the active tab closes, a passive tab takes over once it becomes visible (visibility handoff); nobody promotes a hidden passive tab.
 - Accepted regression: for old pages that never reload, nothing promotes a passive tab any more, so when the active old tab closes, the passive one shows "Disconnected" until its visibility changes. Its reach is tiny, because old pages reload at most 1.5 s after `activate`.
 - `STOP_TAB_HANDLING` messages of old pages are ignored.

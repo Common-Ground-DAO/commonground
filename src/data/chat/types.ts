@@ -3,9 +3,9 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 /*
- * chat-sync data-layer contract (roadmap docs/todo/ROADMAP_chat-sync.md,
- * decisions [2] catch-up, [4] messages, [5] read state, [6] notifications).
- * Summary for implementers: ./README.md.
+ * chat-sync data-layer contract: catch-up, messages, read state,
+ * notifications. Overview: docs/frontend §3 "Chat stores"; summary of the
+ * rules: ./README.md.
  *
  * Types and constants only. The store cores are pure TypeScript with injected
  * dependencies (ChatApi, NotificationApi, ChatEventSource, ChatClock), so
@@ -276,8 +276,8 @@ export interface ChannelWindow<T extends Models.ItemList.Item = Models.Message.M
 export type NewMessage = Pick<Models.Message.Message, 'channelId' | 'body' | 'attachments' | 'parentMessageId'>;
 
 /**
- * In-memory message store of one tab; replaces ChannelDatabaseManager and
- * keeps the name `data.channelManager` (façade).
+ * In-memory message store of one tab, exposed under the name
+ * `data.channelManager` too (façade, data/databases/channel.ts).
  *
  * DATA PER CHANNEL: a contiguous "latest" segment (ends at "now", at most
  * LATEST_SEGMENT_MAX server messages, live-updated), detached segments

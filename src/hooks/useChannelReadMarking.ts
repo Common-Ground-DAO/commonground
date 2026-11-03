@@ -3,8 +3,8 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 /*
- * Level-triggered read marking of one mounted message list (chat-sync, roadmap
- * docs/todo/ROADMAP_chat-sync.md "Read state" [5]).
+ * Level-triggered read marking of one mounted message list (chat-sync read
+ * state, docs/frontend §3 "Chat stores").
  *
  * The list reports its level inputs — the window is at the latest segment,
  * the list is scrolled to the bottom, the newest server item — on every

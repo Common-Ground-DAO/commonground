@@ -40,6 +40,7 @@ import dayjs from "dayjs";
 import userHelper from "./users";
 import emailHelper from "./emails";
 import botHelper from "./bots";
+import { isReservedRoleTitle } from "../util/roleTitles";
 
 /* Community Retrieval */
 
@@ -2593,6 +2594,22 @@ class CommunityHelper {
     let result: Awaited<ReturnType<typeof _updateRole>>;
     await client.query("BEGIN");
     try {
+      // a reserved title (Admin, Member, Public) only as the role's own,
+      // unchanged title: a custom role that carries one from before stays
+      // editable, but no role takes one anew
+      if (data.title !== undefined && isReservedRoleTitle(data.title)) {
+        const current = await client.query<{ title: string }>(`
+          SELECT "title"
+          FROM roles
+          WHERE "id" = $1
+            AND "communityId" = $2
+            AND "deletedAt" IS NULL
+        `, [data.id, data.communityId]);
+        if (current.rows[0]?.title.trim() !== data.title) {
+          throw new Error(errors.server.INVALID_REQUEST);
+        }
+      }
+
       // check potential community token
       const { assignmentRules } = data;
       if (!!assignmentRules && assignmentRules.type === "token") {

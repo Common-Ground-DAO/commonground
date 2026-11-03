@@ -347,7 +347,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/setChannelPinState` -- Pin/unpin channels
 
 **Roles:**
-- `/createRole`, `/updateRole`, `/deleteRole` -- the titles of the predefined roles (Admin, Member, Public) are reserved: a custom role cannot take one, in any letter case
+- `/createRole`, `/updateRole`, `/deleteRole` -- the titles of the predefined roles (Admin, Member, Public) are reserved, in any letter case (`srv/util/roleTitles.ts`): `/createRole` refuses them (validator); `/updateRole` lets a custom role keep the reserved title it already carries and refuses a change to one (`INVALID_REQUEST`, checked against the stored role in `communityHelper.updateRole`)
 - `/checkCommunityRoleClaimability` -- Check if user can claim a token-gated role
 - `/claimRole` -- Claim a token-gated role
 - `/addUserToRoles`, `/removeUserFromRoles`

@@ -7,7 +7,6 @@ import {
   CommunityPermission,
   ChannelPermission,
   ArticlePermission,
-  PredefinedRole,
   RoleType,
   CallPermission,
   UserBlockState,
@@ -18,6 +17,7 @@ import {
   CommunityApprovalState,
 } from "../../common/enums";
 import common from "../common";
+import { isReservedRoleTitle } from "../../util/roleTitles";
 import baseArticleApi, { articleCursorPairing } from "./basearticle";
 
 const title = Joi.string().max(255);
@@ -88,14 +88,16 @@ const callsCommunityEventPermissionsValidator = createCommunityEventRolePermissi
 );
 
 // The titles of the predefined roles (Admin, Member, Public) are reserved:
-// a custom role cannot take one, in any letter case.
-const reservedRoleTitles = new Set(Object.values(PredefinedRole).map(title => title.toLowerCase()));
-const roleTitleValidator = Joi.string().trim().custom((value, helpers) => {
-  if (reservedRoleTitles.has(value.toLowerCase())) {
+// a new role cannot take one, in any letter case. On update a role may keep
+// the reserved title it already carries; communityHelper.updateRole refuses
+// a change to a reserved title, since that needs the stored role.
+const newRoleTitleValidator = Joi.string().trim().custom((value, helpers) => {
+  if (isReservedRoleTitle(value)) {
     return helpers.error("any.invalid");
   }
   return value;
 });
+const roleTitleValidator = Joi.string().trim();
 
 const allowedRoleTypes = new Set(Object.values(RoleType).filter(v => v !== RoleType.PREDEFINED));
 const roleTypeValidator = Joi.string().custom((value, helpers) => {
@@ -263,7 +265,7 @@ const communityApi = {
 
   createRole: Joi.object<API.Community.createRole.Request>({
     communityId: common.Uuid.required(),
-    title: roleTitleValidator.required(),
+    title: newRoleTitleValidator.required(),
     type: roleTypeValidator.required(),
     assignmentRules: assignmentRulesValidator.required(),
     permissions: communityRolePermissionsValidator.required(),

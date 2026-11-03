@@ -261,7 +261,10 @@ export type ChatRuntimeImpl = ChatRuntime & {
   applyStoredReadState(states: ChannelReadState[]): void;
   /** login: the login response's notification count */
   setupAfterLogin(unreadNotificationCount: number | string): void;
-  /** logout: clear all three stores, then re-init the channel windows that were initialised */
+  /**
+   * logout: clear all three stores, then re-init the channel windows that
+   * were initialised (DM windows only once a user is logged in again)
+   */
   clear(): void;
   dispose(): void;
 };
@@ -282,9 +285,11 @@ const noop = () => undefined;
 /**
  * Tracks the windows the UI opened, so a logout can re-init them (the
  * store's `clear` leaves them with an empty reset and supersedes their init).
+ * The windows `reinit` defers are re-initialised by `resumeDeferred`.
  */
 function trackWindows(store: ChannelStore) {
   const initialised = new Set<ChannelWindow>();
+  const deferred = new Set<ChannelWindow>();
   const tracked: ChannelStore = {
     registerAccessForChannel: access => store.registerAccessForChannel(access),
     getAccessForChannel: channelId => store.getAccessForChannel(channelId),
@@ -294,10 +299,12 @@ function trackWindows(store: ChannelStore) {
       const destroy = w.destroy.bind(w);
       w.init = options => {
         initialised.add(w);
+        deferred.delete(w);
         return init(options);
       };
       w.destroy = () => {
         initialised.delete(w);
+        deferred.delete(w);
         destroy();
       };
       return w;
@@ -316,13 +323,25 @@ function trackWindows(store: ChannelStore) {
   };
   return {
     store: tracked,
-    reinit() {
+    /** `defer`: windows to re-init only on `resumeDeferred` */
+    reinit(defer: (w: ChannelWindow) => boolean) {
       for (const w of [...initialised]) {
         if (w.state.isDestroyed) {
           initialised.delete(w);
           continue;
         }
+        if (defer(w)) {
+          deferred.add(w);
+          continue;
+        }
         w.init({ type: 'recent' }).catch(noop);
+      }
+    },
+    resumeDeferred() {
+      const windows = [...deferred];
+      deferred.clear();
+      for (const w of windows) {
+        if (!w.state.isDestroyed) w.init({ type: 'recent' }).catch(noop);
       }
     },
   };
@@ -367,12 +386,18 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntimeImpl {
     },
   });
   const windows = trackWindows(rawChannels);
+  // DM windows cleared by a logout load again once a user is logged in (not
+  // while the session is gone: their requests need a login)
+  const unsubResume = events.onUserChange(userId => {
+    if (userId) windows.resumeDeferred();
+  });
 
   const readState: ReadStateStore = createReadStateStore({
     api: deps.chatApi,
     events,
     clock,
     getAccess: accessOf,
+    registerAccess: access => rawChannels.registerAccessForChannel(access),
     persistence,
   });
   const notifications = createNotificationStore({ api: deps.notificationApi, events, clock });
@@ -402,10 +427,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntimeImpl {
       rawChannels.clear();
       readState.clear();
       notifications.clear();
-      windows.reinit();
+      windows.reinit(w => !events.userId && isDm(accessOf(w.channelId)));
     },
     dispose() {
       unsubDm();
+      unsubResume();
       rawChannels.dispose();
       readState.dispose();
       notifications.dispose();

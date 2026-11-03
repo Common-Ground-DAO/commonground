@@ -11,6 +11,7 @@
  */
 
 import {
+  ACCESS_WAIT_MS,
   CHANNEL_LRU_SIZE,
   GAP_RESYNC_DEBOUNCE_MS,
   GET_CHANGES_LIMIT,
@@ -397,7 +398,12 @@ class ChannelStoreImpl implements ChannelStore {
     return this.access.get(channelId);
   }
 
-  private waitAccess(channelId: string): Promise<Access> {
+  /**
+   * The channel's access once registered. `bounded` (window operations):
+   * rejects with WINDOW_ERROR.NO_ACCESS after ACCESS_WAIT_MS instead of
+   * leaving the window loading for good.
+   */
+  private waitAccess(channelId: string, bounded = false): Promise<Access> {
     const known = this.access.get(channelId);
     if (known) return Promise.resolve(known);
     if (this.disposed) return Promise.reject(new Error('ChannelStore disposed'));
@@ -407,7 +413,24 @@ class ChannelStoreImpl implements ChannelStore {
         set = new Set();
         this.accessWaiters.set(channelId, set);
       }
-      set.add({ resolve, reject });
+      const timer = bounded ? new Timer(this.deps.clock) : undefined;
+      const waiter = {
+        resolve: (access: Access) => {
+          timer?.clear();
+          resolve(access);
+        },
+        reject: (e: Error) => {
+          timer?.clear();
+          reject(e);
+        },
+      };
+      set.add(waiter);
+      timer?.start(ACCESS_WAIT_MS, () => {
+        const waiters = this.accessWaiters.get(channelId);
+        waiters?.delete(waiter);
+        if (waiters?.size === 0) this.accessWaiters.delete(channelId);
+        reject(new Error(WINDOW_ERROR.NO_ACCESS));
+      });
     });
   }
 
@@ -1106,7 +1129,7 @@ class ChannelStoreImpl implements ChannelStore {
     const ch = w.ch;
     ch.lastUsed = ++this.useCounter;
     const count = Math.max(PAGE_SIZE, options.minimumItemCount ?? 0);
-    await w.guard(gen, this.waitAccess(ch.id));
+    await w.guard(gen, this.waitAccess(ch.id, true));
     if (options.type === 'recent') {
       if (!ch.latest) await w.guard(gen, this.sync(ch, { join: true }));
       else this.sync(ch, { join: true }).catch(noop);
@@ -1155,7 +1178,7 @@ class ChannelStoreImpl implements ChannelStore {
     const ch = w.ch;
     const count = target.count ?? PAGE_SIZE;
     const half = Math.max(1, Math.floor(count / 2));
-    const access = await w.guard(gen, this.waitAccess(ch.id));
+    const access = await w.guard(gen, this.waitAccess(ch.id, true));
     if ('itemId' in target && ch.tombstones.has(target.itemId)) throw notFound();
     const latestReady = ch.latest ? Promise.resolve() : this.sync(ch, { join: true });
     latestReady.catch(noop);
@@ -1329,7 +1352,7 @@ class ChannelStoreImpl implements ChannelStore {
   }
 
   async jumpToLatest(w: WindowImpl, gen: number): Promise<void> {
-    await w.guard(gen, this.waitAccess(w.ch.id));
+    await w.guard(gen, this.waitAccess(w.ch.id, true));
     if (!w.ch.latest) await w.guard(gen, this.sync(w.ch, { join: true }));
     const latest = w.ch.latest;
     if (!latest) return;

@@ -532,6 +532,36 @@ describe('createChatRuntime', () => {
     rt.dispose();
   });
 
+  it('a logout re-inits DM windows only once a user is logged in again (their requests need a login)', async () => {
+    const { rt, server } = await runtimeSetup();
+    const DM_CH = 'dm-ch';
+    rt.channels.registerAccessForChannel(server.addChannel(DM_CH, { chatId: 'chat-1' }));
+    server.seed(C, 1);
+    server.seed(DM_CH, 2);
+    const community = rt.channels.openWindow(C);
+    const dm = rt.channels.openWindow(DM_CH);
+    await community.init({ type: 'recent' });
+    await dm.init({ type: 'recent' });
+    const dmLoads = () => [...server.callsOf('getChanges'), ...server.callsOf('loadMessages')]
+      .filter(c => (c as { access: API.Messages.MessageAccess }).access.channelId === DM_CH).length;
+    const before = dmLoads();
+    // the logout: login state no longer `loggedin`, then the stores are cleared
+    server.setUser(undefined);
+    rt.clear();
+    await settle();
+    expect(dm.state.items).toHaveLength(0);
+    expect(dmLoads()).toBe(before);
+    // the community channel (public reading) loads again at once
+    expect(community.state.items).toHaveLength(1);
+    server.setUser(ME);
+    await settle();
+    expect(dmLoads()).toBe(before + 1);
+    expect(dm.state.items).toHaveLength(2);
+    community.destroy();
+    dm.destroy();
+    rt.dispose();
+  });
+
   it('a destroyed window is not re-initialised', async () => {
     const { rt, server } = await runtimeSetup();
     server.seed(C, 1);

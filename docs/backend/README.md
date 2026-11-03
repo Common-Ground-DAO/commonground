@@ -31,7 +31,8 @@
 > TypeORM 1.x (wave M2: `srv/util/datasource.ts`, §8) against commit 8dcbb42,
 > 2026-11-01; `callUpdateEmitter.ts` (call-ending sweeps, events), `/setChannelLastRead`
 > and the test list against commit 591e6cf, 2026-11-02; the community check of
-> the message access scope against the chat-sync/member-access-2 branch, 2026-11-02.
+> the message access scope, `/getMemberList`, `/getUserCommunityRoleIds` and the
+> memberlist routes against commit 88f742f, 2026-11-03.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -246,7 +247,7 @@ with an `async` function must use `asyncHandler` as well.
 `asyncRequestHandler(handler, onError)` in `srv/util/asyncHandler.ts`, which
 also wraps `registerPostRoute`'s own handler (so an error raised while
 answering — e.g. a handler that already sent its own response — is caught) and
-the `memberlist` process' routes (`/getMemberListWindow`,
+the `memberlist` process' routes (`/getMemberListWindow`, `/getMemberListPreview`,
 `/getChannelMemberListWindow`, `/getUserCommunityRoleIds`: 500
 `{ error: 'memberlist_request_failed' }`, which the calling `Community` route
 answers with its generic error). Errors these wrappers, the gated-file routes,
@@ -315,10 +316,10 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/joinCommunity` -- Join a community
 - `/leaveCommunity` -- Leave a community
 - `/setUserBlockState` -- Ban/unban users
-- `/getMemberList` -- Get community members
+- `/getMemberList` -- Get community members: the full list for members, a short preview (first members by name, ids only) for others
 - `/getChannelMemberList` -- Get channel members
 - `/getMemberNewsletterCount` -- Count newsletter subscribers
-- `/getUserCommunityRoleIds` -- Get roles for a user in a community
+- `/getUserCommunityRoleIds` -- Get roles for a user in a community: role ids for the user themself or for community members (requires a session)
 - `/createCommunity` -- Create new community
 - `/updateCommunity` -- Update community settings
 

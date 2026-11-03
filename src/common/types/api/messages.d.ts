@@ -168,7 +168,11 @@ declare global {
              * channel syncSeq up to which the client has applied every change
              * (its contiguous high-water mark). Clients build it themselves
              * (`` `1:${seenSeq}` ``); the server validates
-             * `^1:\d{1,18}$`.
+             * `^1:\d{1,18}$`. It carries no epoch: a database restore is
+             * noticed only while the cursor is ahead of the restored channel
+             * seq (answered with a reset); once new writes have passed the
+             * cursor again it is taken at face value, and the changes between
+             * the restored seq and the cursor are not delivered.
              */
             type SyncCursor = `1:${number}`;
 
@@ -204,8 +208,8 @@ declare global {
                     syncSeq: number;
                     /**
                      * `true` when `cursor` was `null`, malformed, from another
-                     * format version, ahead of the channel's seq (e.g. after a
-                     * database restore) or too far behind (more than 500
+                     * format version, ahead of the channel's seq (see
+                     * SyncCursor on restores) or too far behind (more than 500
                      * changes):
                      * `messages` is then the latest page of the channel (up to
                      * 30, newest first, like `loadMessages` DESC),

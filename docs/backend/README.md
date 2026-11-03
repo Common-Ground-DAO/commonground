@@ -44,7 +44,9 @@
 > `emitMessageEvents` never rejects) against commit 1b09f87 and the test list (with
 > `callDeliveryTargetsDb`) against commit 7f39d24, 2026-11-02; the community check of the
 > message access scope, `/getMemberList`, `/getUserCommunityRoleIds` and the memberlist
-> routes against commit 8e88b9a, 2026-11-03.
+> routes against commit 8e88b9a, 2026-11-03; the `/getChanges` cursor note (no epoch), the
+> single `/Message` mount and the test list against branch `chat-sync/final-srv` (base
+> f7a6043), 2026-11-03.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -499,7 +501,7 @@ on the user row).
 - `/loadMessages` -- Load messages with pagination
 - `/messagesById` -- Load specific messages by ID
 - `/loadUpdates` -- Load message updates since a timestamp
-- `/getChanges` -- chat-sync catch-up of one channel (`{access, cursor: "1:<seq>" | null, limit?: 1..200 (default 200)}`, contract `API.Messages.getChanges` in `src/common/types/api/messages.d.ts`). Read access as for `/loadMessages` (anonymous visitors for public channels); session users only, not on the bot allowlist. A cursor in the `1:<seq>` format that is at most 500 changes behind and not ahead of the channel's sequence returns every changed row with `syncSeq > cursor` in `syncSeq` order (`LIMIT limit + 1` for `hasMore`); deleted rows become `deletedIds`, the rest `messages`. The answer's `syncSeq`/`cursor` is the last returned seq when `hasMore`, else the channel's seq. `null`, any other format, a cursor ahead (e.g. after a database restore) or more than 500 behind answer `reset: true` with the latest 30 messages (newest first; rows not written since the migration carry `syncSeq: 0`). The channel's seq and the rows are read in one statement (one snapshot), see [docs/database](../database/README.md#message-sync-sequence).
+- `/getChanges` -- chat-sync catch-up of one channel (`{access, cursor: "1:<seq>" | null, limit?: 1..200 (default 200)}`, contract `API.Messages.getChanges` in `src/common/types/api/messages.d.ts`). Read access as for `/loadMessages` (anonymous visitors for public channels); session users only, not on the bot allowlist. A cursor in the `1:<seq>` format that is at most 500 changes behind and not ahead of the channel's sequence returns every changed row with `syncSeq > cursor` in `syncSeq` order (`LIMIT limit + 1` for `hasMore`); deleted rows become `deletedIds`, the rest `messages`. The answer's `syncSeq`/`cursor` is the last returned seq when `hasMore`, else the channel's seq. `null`, any other format, a cursor ahead of the channel's seq or more than 500 behind answer `reset: true` with the latest 30 messages (newest first; rows not written since the migration carry `syncSeq: 0`). The channel's seq and the rows are read in one statement (one snapshot), see [docs/database](../database/README.md#message-sync-sequence). The cursor carries no epoch: a database restore (or any other reset of a channel's `channel_sync_state` row) is noticed only while the client's cursor is still ahead of the restored seq. Once new writes have taken the channel's seq past the cursor again, the cursor is taken at face value: the client misses the changes between the restored seq and its cursor and keeps messages the restore removed, until its next reset. Clients build the cursor themselves (`1:${seenSeq}` in `src/data/chat/channelStore.ts`), so an epoch would need a new cursor format on both sides.
 - `/setReaction`, `/unsetReaction` -- Message reactions
 - `/setChannelLastRead` -- Mark channel as read. Needs read access to the channel (same check as `/loadMessages`, login required). The stored `lastRead` only moves forward (`GREATEST` of the stored and the posted value), so a tab posting an older read time does not bring unread state back; a posted time in the future is clamped to the server's `now()`; an optional `messageId` of a message in `access.channelId` makes the server use that message's `createdAt` instead (an id from elsewhere falls back to `lastRead`). Response `{lastRead, unread, syncSeq}`: the stored value, the other users' not deleted messages after it (capped at 999) and the channel's sequence, from the same statement. The `cliChannelLastRead` event to the user's sockets carries the same fields plus `communityId` or `chatId`. Every other write of `channelreadstate` (own new message, first-time initialisation in the community and chat lists) uses the same rule.
 
@@ -515,7 +517,7 @@ A subset of message routes is also reachable over the Bot API v1 surface (see be
 
 ### `srv/api/syncState.ts` -- Read-State Snapshot
 
-Mounted at `/Message` after the message router (`srv/api.ts`, same `securityStep` middleware), so the route is `/Message/getSyncState`.
+Mounted at `/Message` after the message router, in the same `app.use` behind one `securityStep` (`srv/api.ts`; a request runs the step once), so the route is `/Message/getSyncState`.
 
 - `/getSyncState` -- `{ channelIds? }` (at most 500 unique UUIDs; Joi validator in `srv/validators/api/syncState.ts`) → `{ serverTime, notificationUnreadCount, channels }`. Session users only: not on the bot allowlist, and a bot principal is refused in the handler. One statement (`syncStateHelper.getChannelStates`, `srv/repositories/syncState.ts`) returns one entry per community channel the user can read and per chat the user is a member of, each with `channelId`, `communityId` or `chatId`, `syncSeq`, `lastMessageDate`, `lastRead` and `unread`:
   - community channels: in the communities where the user holds a claimed, not deleted role (the communities `getOwnCommunities` lists; deleted communities and channels excluded), the channels for which the user's claimed roles plus the community's `Public` role together grant `CHANNEL_EXISTS` and `CHANNEL_READ` -- the same rule as the message read check. Public channels of communities the user is not a member of are not listed;
@@ -1680,11 +1682,13 @@ with wave M2 (see below).
   `messageSyncRepository`, `messageSyncRoutes`, `notificationRoutes`, `syncState`,
   `socketTargeting` (the `x-cg-socket-id` helpers and `eventHelper` against a
   model of the adapter's rooms), `socketTargetingRoutes` (exclusion sites,
-  article rooms, call delivery targets) and `callDeliveryTargets` (the passkey
+  article rooms, call delivery targets), `socketLogin` (the end of the socket login
+  when the socket went away meanwhile) and `callDeliveryTargets` (the passkey
   tests drive a software authenticator, `tests/helpers/softAuthenticator.ts`). Against a
   throwaway PostgreSQL, opt-in via `CG_TEST_PG_HOST` (skipped otherwise):
   `securityStepDb` (resets the database `cryptogram`), `chatSyncSeqDb` (the
-  message sync sequence: migration, trigger under the `writer` role, commit
+  message sync sequence: migration — each step in one transaction, its lock order and
+  `lock_timeout` —, trigger under the `writer` role, commit
   order of concurrent writers, and the message repository on the real
   schema; it creates and drops its own database `cg_chat_sync_test`),
   `syncStateDb` (getSyncState and the notification read-state writes; own

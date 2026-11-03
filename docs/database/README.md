@@ -557,7 +557,10 @@ Per-channel, commit-ordered change sequence for messages (chat-sync catch-up,
 - `channel_sync_state("channelId" uuid PK, "seq" bigint NOT NULL)` holds the last
   sequence assigned in a channel. A channel without a row has seq 0. GRANT `SELECT,
   INSERT, UPDATE` to `writer`, `SELECT` to `reader`. Entity
-  `srv/entities/channel-sync-state.ts`.
+  `srv/entities/channel-sync-state.ts`. The sequence has no epoch, and neither has the
+  `getChanges` cursor: after a database restore the sequence continues from the restored
+  value, which clients notice only while their cursor is ahead of it (see `/getChanges` in
+  [docs/backend](../backend/README.md)).
 - Function `messages_set_sync_seq()` (plpgsql, `SECURITY INVOKER`, table name
   schema-qualified) upserts the channel's row (`INSERT … VALUES (NEW."channelId", 1) ON
   CONFLICT DO UPDATE SET seq = seq + 1`) and stores the new value in `NEW."syncSeq"`.

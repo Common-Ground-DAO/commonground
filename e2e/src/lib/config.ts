@@ -7,12 +7,6 @@
 /** the reload flow's modes (src/flows/03-reload.ts) */
 export const RELOAD_MODES = ['natural', 'reordered', 'interrupted', 'cookie-cleared', 'session-expired', 'force-reload-cold-sw'] as const;
 export type ReloadMode = typeof RELOAD_MODES[number];
-/**
- * modes only run when --reload-modes names them: after a cold service-worker
- * reload the following page loads of the same page can hang on today's code,
- * which would take the other modes' iterations down with it
- */
-export const OPT_IN_RELOAD_MODES: readonly ReloadMode[] = ['force-reload-cold-sw'];
 
 export type Config = {
   /** the instance under test, e.g. https://cg-e2e.test (no trailing slash) */
@@ -60,8 +54,7 @@ const USAGE = `Usage: node src/main.ts --url <https://instance> [options]
   --out <dir>             output directory (default: ./results/<timestamp>)
   --reload-iterations <n> iterations of the reload flow (default 20)
   --reload-modes <m,...>  reload modes to rotate through: ${RELOAD_MODES.join(', ')}
-                          (default: all available except force-reload-cold-sw, which runs only
-                          when named; session-expired needs E2E_REDIS_URL)
+                          (default: all available; session-expired needs E2E_REDIS_URL)
   --screenshots           screenshot after every step, not only on failure
   --flow-timeout <s>      per-flow timeout in seconds (default 240)
   --resolve <host>=<ip>   resolve a host name to a fixed address in Chrome; repeatable

@@ -39,15 +39,17 @@ function isMemberListPreviewRequest(data: API.Community.getMemberList.Request): 
 }
 
 /**
- * The preview of a member list: the counts and the first `limit` member ids,
- * without their roles, the presence split or the per-role counts.
+ * The preview of a member list as the memberlist service selects it (the
+ * first members by name, independent of presence), kept to its shape: the
+ * counts and at most `limit` member ids in the service's order, without
+ * their roles, the presence split or the per-role counts.
  */
 function toMemberListPreview(memberList: Models.Community.MemberList, limit: number): Models.Community.MemberList {
   return {
     totalCount: memberList.totalCount,
     resultCount: memberList.resultCount,
     online: [],
-    offline: memberList.online.concat(memberList.offline)
+    offline: memberList.offline
       .slice(0, Math.min(limit, MEMBER_LIST_PREVIEW_LIMIT))
       .map(([userId]) => [userId, []]),
     roles: [],
@@ -226,11 +228,26 @@ API.Community.getMemberList.Response
   async (request, response, data) => {
     // members of the community get the full list (windows, search, role
     // filter, presence, roles); everyone else only a short preview of the
-    // first members, without roles or presence
+    // first members by name, without roles or presence
     const { user } = request.session;
     const isMember = !!user && await permissionHelper.isMemberOfActiveCommunity(user.id, data.communityId);
     if (!isMember && !isMemberListPreviewRequest(data)) {
       throw new Error(!user ? errors.server.LOGIN_REQUIRED : errors.server.NOT_ALLOWED);
+    }
+    if (!isMember) {
+      const preview = await axios.post<API.Community.getMemberList.Response>(
+        'http://memberlist:4000/getMemberListPreview',
+        JSON.stringify({
+          communityId: convertUuidToBinary(data.communityId),
+          limit: Math.min(data.limit, MEMBER_LIST_PREVIEW_LIMIT),
+        }),
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        },
+      );
+      return toMemberListPreview(convertBinaryMemberListToUuid(preview.data), data.limit);
     }
     const memberList = await axios.post<API.Community.getMemberList.Response>(
       'http://memberlist:4000/getMemberListWindow',
@@ -247,8 +264,7 @@ API.Community.getMemberList.Response
     );
 
     // memberlist answered an empty body for a community it does not know yet
-    const result = convertBinaryMemberListToUuid(memberListOrEmpty(memberList.data));
-    return isMember ? result : toMemberListPreview(result, data.limit);
+    return convertBinaryMemberListToUuid(memberListOrEmpty(memberList.data));
   }
 );
 

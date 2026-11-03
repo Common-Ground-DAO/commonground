@@ -7,7 +7,7 @@ import { PoolClient, QueryResult } from 'pg';
 import { fakeHealthcheck } from './healthcheck';
 import express from 'express';
 import { ChannelPermission, PredefinedRole, RoleType } from './common/enums';
-import { convertUuidToBinary, convertBinaryToUuid } from './util/memberListHelpers';
+import { convertUuidToBinary, convertBinaryToUuid, mergeSortedMemberIds } from './util/memberListHelpers';
 import { asyncRequestHandler } from './util/asyncHandler';
 import { describeErrorForLog } from './util/errorLog';
 import { decideChannelEvent, MAX_CHANNEL_EVENT_DEFERRALS } from './util/memberListChannelEvents';
@@ -45,6 +45,8 @@ type CommunityMemberListArr = {
   _all: string[];
   online: string[];
   offline: string[];
+  /** all members by display name (ties by id), whatever their presence */
+  byName: string[];
 }
 
 type ChannelMemberSet = {
@@ -85,10 +87,11 @@ const memberListByCommunityId = new Map<string, CommunityMemberListArr>();
 const memberIdsByCommunityIdByChannelId = new Map<string, Map<string, ChannelMemberSet>>();
 const memberListByCommunityIdByChannelId = new Map<string, Map<string, ChannelMemberListArr>>();
 
+/** by display name, ties by id: a total order, so merging sorted lists is exact */
 function memberIdSortHelper(a: string, b: string) {
   const displayNameA = userDataByUserId.get(a)?.displayName || '';
   const displayNameB = userDataByUserId.get(b)?.displayName || '';
-  return displayNameA.localeCompare(displayNameB);
+  return displayNameA.localeCompare(displayNameB) || (a < b ? -1 : a > b ? 1 : 0);
 }
 
 function getDisplayName(options: {
@@ -393,8 +396,10 @@ async function initFromDb() {
         _all: [],
         online: Array.from(communityMemberSet.online).sort(memberIdSortHelper),
         offline: Array.from(communityMemberSet.offline).sort(memberIdSortHelper),
+        byName: [],
       };
       communityMemberList._all = communityMemberList.online.concat(communityMemberList.offline);
+      communityMemberList.byName = mergeSortedMemberIds(communityMemberList.online, communityMemberList.offline, memberIdSortHelper);
       memberListByCommunityId.set(communityId, communityMemberList);
     }
   }
@@ -803,6 +808,7 @@ function processChangeEvents() {
               _all: [],
               online: [],
               offline: [],
+              byName: [],
             };
             memberListByCommunityId.set(event.communityId, memberList);
           }
@@ -990,6 +996,7 @@ function processChangeEvents() {
         _all: [],
         online: [],
         offline: [],
+        byName: [],
       };
       memberListByCommunityId.set(communityId, memberList);
     }
@@ -997,6 +1004,7 @@ function processChangeEvents() {
     memberList.online = Array.from(memberSet.online).sort(memberIdSortHelper);
     memberList.offline = Array.from(memberSet.offline).sort(memberIdSortHelper);
     memberList._all = memberList.online.concat(memberList.offline);
+    memberList.byName = mergeSortedMemberIds(memberList.online, memberList.offline, memberIdSortHelper);
   }
   for (const [communityId, updatedChannelIds] of updatedMemberLists) {
     let memberListByChannelId = memberListByCommunityIdByChannelId.get(communityId);
@@ -1143,6 +1151,30 @@ function getMemberListWindow(options: {
   }
   
   return memberListWindow;
+}
+
+/**
+ * The first `limit` members of a community by display name (ties by id),
+ * independent of presence: the counts and the member ids, without roles, the
+ * presence split (all ids are in `offline`) or the per-role counts.
+ */
+function getMemberListPreview(options: {
+  communityId: string;
+  limit: number;
+}): Models.Community.MemberList | undefined {
+  const { communityId, limit } = options;
+  const memberList = memberListByCommunityId.get(communityId);
+  if (!memberList) {
+    console.trace("ERROR (SKIP): Member list not found for communityId:", convertBinaryToUuid(communityId));
+    return undefined;
+  }
+  return {
+    totalCount: memberList.count,
+    resultCount: memberList.count,
+    roles: [],
+    online: [],
+    offline: memberList.byName.slice(0, Math.max(0, limit)).map(userId => [userId, []]),
+  };
 }
 
 function getChannelMemberListWindow(options: {
@@ -1326,6 +1358,12 @@ app.post('/getMemberListWindow', express.json(), asyncRequestHandler(async (req,
     roleId,
   });
   res.json(memberList);
+}, requestFailed));
+
+app.post('/getMemberListPreview', express.json(), asyncRequestHandler(async (req, res) => {
+  const { communityId, limit } = req.body as { communityId: string; limit: number };
+  await ready;
+  res.json(getMemberListPreview({ communityId, limit }));
 }, requestFailed));
 
 app.post('/getChannelMemberListWindow', express.json(), asyncRequestHandler(async (req, res) => {

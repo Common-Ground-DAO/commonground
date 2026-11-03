@@ -190,15 +190,7 @@ declare namespace Common {
   type WebSocketState =
     "disconnected" |
     "connecting" |
-    "connected" |
-    "version-update";
-
-  type TabState =
-    'unknown' |
-    'active' |
-    'active-throttled' |
-    'passive' |
-    'passive-throttled';
+    "connected";
 
   type LoginState =
     "pending" |

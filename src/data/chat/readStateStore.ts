@@ -112,8 +112,9 @@ class ReadStateStoreImpl implements ReadStateStore {
       events.onVisibilityChange(() => this.evaluateAll()),
       events.onUserChange(userId => {
         this.evaluateAll();
-        // logged in (also when the socket went live before that): catch up
-        if (userId) this.scheduleSync();
+        // logged in on a live socket: catch up (debounced together with the
+        // source's onLive('user')); while not live, the next onLive does it
+        if (userId && this.deps.events.live) this.scheduleSync();
       }),
     );
   }

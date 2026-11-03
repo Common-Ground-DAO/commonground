@@ -541,7 +541,7 @@ describe('request socket id', () => {
 });
 
 describe('no tab roles', () => {
-  it('never opens CG_WEBSOCKET_STATE and reports tabState active', async () => {
+  it('never opens CG_WEBSOCKET_STATE', async () => {
     useDataLayerFakeTimers();
     const opened: string[] = [];
     const tab = await openTab({ start: false });
@@ -565,7 +565,6 @@ describe('no tab roles', () => {
 
     expect(opened).not.toContain('CG_WEBSOCKET_STATE');
     expect(received).toEqual([]);
-    expect(tab.ws.tabState).toBe('active');
     legacy.close();
   });
 });

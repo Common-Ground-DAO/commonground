@@ -282,28 +282,6 @@ export default function CommentList(props: Props) {
 
   return (
     <div className={`flex flex-col gap-2 comment-list`}>
-      {/* {(!!itemList) && <ScrollingMessageList
-        itemList={itemList}
-        Renderer={RendererExtended}
-        replyClick={(id, sender, body) => {
-          replyClick(id, sender, body);
-          editFieldRef.current?.focus();
-        }}
-        editClick={editClickHandler}
-        messageToEdit={messageToEdit}
-        lastFocusedIdRef={lastFocusedIdRef}
-        identifierKey={`scrollingmessagelist-${channelId}`}
-        onScroll={onListScroll}
-        channelId={channelId}
-        loadingNextRef={loadingNextRef}
-        loadingPreviousRef={loadingPreviousRef}
-        initializingItemListRef={initializingItemListRef}
-        messages={messages}
-        setMessages={setMessages}
-        canReply={!writingForbiddenMessage}
-        scrollHelper={scrollHelper}
-        scrollHelperRef={scrollHelperRef}
-      />} */}
       {!hideInput && <div className='edit-container-container'>
         {editContainer}
       </div>}

@@ -39,7 +39,10 @@
 > `data.notification`, `NotificationProvider` and `NotificationsBrowser` (unread count,
 > list, marking read) against commit f9f6327, 2026-11-02; the message/comment lists on
 > chat-sync windows (`GenericMessageList`, `CommentList`, `Message`, `ArticleCommentSection`,
-> `useChannelReadMarking`) against commit caf7b67, 2026-11-03
+> `useChannelReadMarking`) against commit caf7b67, 2026-11-03; the data layer after the
+> chat-sync removal (database table, `dbTracker` and the obsolete-database cleanup, "Chat
+> runtime and `data.channelManager`", "Chat stores", ConnectionManager,
+> §8) against commit 1e6a0d4, 2026-11-03
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -538,9 +541,7 @@ const data = {
 |---|---|---|---|
 | `CommunityDatabase` | `community.ts` | `communities`, `areas`, `channels`, `roles`, `calls`, `communityListViews`, `communityMembers`, `status` | Stores community detail views, areas, channels, roles, calls, and member data. Handles retrieval by ID and URL. Manages staleness checks (120s TTL). |
 | `UserDatabase` | `user.ts` | `userData`, `status` | Stores user profile data. Batch-retrieves missing user data by ID. |
-| `MessageDatabase` | `messages.ts` | `messages`, `chunks` | Legacy, unused: nothing imports it any more (not `data/index.ts`, not `login.ts`), so its IndexedDB is not opened. The file is deleted with the chunked cache. |
 | `channelManager` (`data.channelManager`) | `channel.ts` | none (memory) | Façade over the tab's chat stores, see "Chat runtime and `data.channelManager`" below. |
-| `ChunkedItemDatabase` | `channel/chunkedDatabase.ts` | `items`, `chunks`, `status` | Legacy chunked list database. Channel messages no longer use it (they are in memory, `chat.channels`); deleted with the chunked cache. |
 | `ChatsDatabase` | `chats.ts` | Chat conversations and last messages. |
 | `data.notification` | `notification.ts` | none (no Dexie) | Thin façade over the tab's `NotificationStore` (`chat.notifications`, `src/data/chat/notificationStore.ts`): memory + server only. The unread count is always a number and comes from the server only (login value, `unreadCount` of `cliNotificationEvent`, `getUnreadCount` after a resync or a mark-read), `subscribeUnreadCount` is multi-subscriber; `openList()` gives an item window (`init`, `loadOlder`, `destroy`) on one list kept in memory while no window is open (live events still apply; after a resync without an open window the next `init` reloads the newest page); `markAsRead` is a no-op for read or in-flight items; `setupAfterLogin(count)` is synchronous; `clear()` on logout. |
 | `SignedUrlsDatabase` | `signedUrls.ts` | Cache for signed asset URLs. |
@@ -548,7 +549,11 @@ const data = {
 
 #### dbTracker (`src/data/databases/dbTracker.ts`)
 
-Tracks all registered IndexedDB databases, their creation time, and app version. Provides `deleteOldIndexedDbs()` for cleanup of stale databases (runs 10s after the tab becomes active).
+Tracks all registered IndexedDB databases, their creation time, and app version, in `localStorage` (`CG_KNOWN_INDEXEDDBS`, synced between tabs by the `storage` event). `knownDatabaseNames()` lists them; `forgetDatabase(name)` drops a deleted one.
+
+#### Obsolete databases (`src/data/databases/obsoleteDatabases.ts`)
+
+Messages and notifications are not stored in IndexedDB (memory + server, see "Chat stores"). The databases of the removed client caches are deleted on startup: `commonGroundDB_chunked_databases` (the chunked message/notification cache), every other `commonGroundDB_chunked_*` (per-name databases of older builds) and `commonGroundDB_messages` (an older message cache). `connectionManager` runs `deleteObsoleteDatabases()` once per page, 10 s after startup (`OBSOLETE_DATABASE_CLEANUP_DELAY_MS`), in every tab (deleting is idempotent), fire-and-forget: names come from the fixed list, `dbTracker` and `indexedDB.databases()` where supported; the call never rejects and only logs failures; a `blocked` delete (a page of an older build still has the database open) is not waited for — the browser finishes it once that page closes the database; a request that reports nothing within 10 s is left to the browser. Deleted names are dropped from `dbTracker`. No data is migrated: the server is the source of truth.
 
 #### Writers of the shared entity databases
 
@@ -562,12 +567,27 @@ The `communities`, `chat` and `users` databases are shared by all tabs of an ori
 
 #### Chat runtime and `data.channelManager`
 
-`src/data/chat/runtime.ts` builds the tab's three chat-sync stores once (contract `src/data/chat/types.ts`): `chat.channels` (`ChannelStore`: messages in memory, ref-counted windows, sends/edits with `sendStatus`), `chat.readState` (`ReadStateStore`: read state plus level-triggered marking, persisted through `readStatePersistence.ts`) and `chat.notifications` (`NotificationStore`). Their `chat.events` (`ChatEventSource`) is made of the `cliMessageEvent`/`cliChannelLastRead`/`cliNotificationEvent` handlers (`connectionManager.registerClientEventHandler`), `webSocketManager` `live`/`onLive`/`onResume`, `connectionManager` visibility, and the account `login.ts` sets via `data.channelManager.userId`, which counts as the stores' user only while the login state is `loggedin` (own messages are classified by the account, also while the login settles). The runtime starts when `channel.ts` loads, before the socket connects. The socket usually goes live before the login settles (page load, interactive login); stores do not catch up without a user, so when the user becomes known while the socket is live the event source fires `onLive('user')` and the read-state store schedules its `getSyncState` on that user change as well. Notification counts are not fetched without a user.
+`src/data/chat/runtime.ts` builds the tab's three chat-sync stores once (contract `src/data/chat/types.ts`): `chat.channels` (`ChannelStore`: messages in memory, ref-counted windows, sends/edits with `sendStatus`), `chat.readState` (`ReadStateStore`: read state plus level-triggered marking, persisted through `readStatePersistence.ts`) and `chat.notifications` (`NotificationStore`). Their `chat.events` (`ChatEventSource`) is made of the `cliMessageEvent`/`cliChannelLastRead`/`cliNotificationEvent` handlers (`connectionManager.registerClientEventHandler`), `webSocketManager` `live`/`onLive`/`onResume`, `connectionManager` visibility, and the account `login.ts` sets via `data.channelManager.userId`, which counts as the stores' user only while the login state is `loggedin` (own messages are classified by the account, also while the login settles). The runtime starts when `channel.ts` loads, before the socket connects. The socket usually goes live before the login settles (page load, interactive login); stores do not catch up without a user, so when the user becomes known while the socket is live the event source fires `onLive('user')` (the read-state store's own user-change trigger is debounced into the same `getSyncState`; while the socket is not live it waits for the next `onLive`, so each login costs one `getSyncState`). Notification counts are not fetched without a user.
 
 - **Login hook-up** (`login.ts`): `setupChatAfterLogin(count)` with the login response's notification count (also for a login adopted from another tab); `clearChat()` on a logout in another tab; the tab's own logout clears through `data.channelManager.clear()`. Clearing empties all three stores, reports `undefined` to message watchers (then refetches them) and re-inits the channel windows that had been initialised (`init({ type: 'recent' })`); channel access stays registered. A login superseded by another tab's login or logout also clears.
 - **DMs**: a received or own DM message is written to the chat row by `chatDatabase.newMessageReceived` (read state plus `lastMessage`, one transaction); the store's persistence skips message inputs of DMs, so each input reaches the row once. Article comments and call chats have no read state.
 - **Edits** are sent without image metadata (`imageData`/`largeImageData`), as the message validators accept only the ids; the shown overlay keeps it.
-- **`data.channelManager`** passes through to the stores: `registerAccessForChannel`, `getAccessForChannel`, `openWindow`, `watchMessage`, `createMarker`, `createMessage` (resolves once the pending item is shown, never rejects), `retrySend`, `discardPending`, `editMessage`, `deleteMessage`, `setReaction`, `unsetReaction`, `deleteChannelDatabase` (= `forgetChannel`), `clear`. The `@deprecated` members keep the list components of before chat-sync working until they use windows: `getMountedChannelDatabase` (old `ItemList` interface over a window, `channelLegacyList.ts`, any number per channel), `getMessageById` (over `watchMessage`; resolves with `item: undefined` if the first fetch fails), `setChannelLastRead` (through one read-state marker per legacy list, so a mark reported while hidden is sent once visible), a superseded legacy `init` resolving with 0, and no-op `loadItems`/`loadUpdates`/`loadItemWithNeighbours`.
+- **`data.channelManager`** passes through to the stores: `registerAccessForChannel`, `getAccessForChannel`, `openWindow`, `watchMessage`, `createMarker`, `createMessage` (resolves once the pending item is shown, never rejects), `retrySend`, `discardPending`, `editMessage`, `deleteMessage`, `setReaction`, `unsetReaction`, `deleteChannelDatabase` (= `forgetChannel`), `clear`. The list components use the stores directly (`chat.channels.openWindow`, `chat.channels.watchMessage`, `chat.readState.createMarker`).
+
+#### Chat stores (`src/data/chat/`)
+
+Contract and normative rules: the doc comments in `src/data/chat/types.ts` (summary in `src/data/chat/README.md`); transport contract `src/data/appstate/transport.ts`. The store cores are pure TypeScript with injected API, event source and clock, unit-tested in vitest against a scripted fake server (`src/data/chat/testing/fakeServer.ts`). The server is the source of truth for messages, read state and unread counts; everything in the stores is per tab and may be dropped at any time.
+
+- **Messages (`ChannelStore`).** Per channel: a contiguous "latest" segment (at most `LATEST_SEGMENT_MAX` = 200 server messages, live-updated), detached segments created by jumps (merged when they meet the latest one), pending sends, edit overlays, tombstones, and a loose map for reply parents and pinned messages (`watchMessage` works without a window). A channel stays in memory while it has an open window, a watcher or a pending/failed send; at most `CHANNEL_LRU_SIZE` = 20 others are cached (LRU). Memory only — after a reload the history needs a round trip. (A latest-N snapshot per channel in IndexedDB would be a pure add-on — one writer per transaction, LRU, whole-store wipe on logout, a cache-schema constant — and is not built.)
+- **Windows** are ref-counted, any number per channel, and keep the `Models.ItemList.ItemListState` shape. Listeners get `(state, change)` synchronously, `change.kind` ∈ `reset` (cause `init`/`jump`/`latest`/`resync`) | `prepend` | `append-page` | `append-live` | `update` | `trim`, so the list sets its scroll lock before rendering.
+- **Version rule** (every source: pages, `getChanges`, live events, HTTP responses): a full message replaces the stored one when its `syncSeq` is `>=`, a partial update applies only when `>`; a version with `syncSeq` beats one without unless the one without has a strictly newer `updatedAt`; tombstones are terminal. A page (`loadMessages`, `messagesById`) is authoritative only for its own range and never removes items, so a snapshot cannot delete a newer live message.
+- **Sending:** the pending item is inserted synchronously before the API call (`sendStatus: 'sending'`); failure or 20 s without answer → `error-send`, shown with Retry/Discard; a retry reuses the client UUID (the server's `createMessage` is idempotent on it). An edit is an overlay until its response is applied; success clears `sendStatus`, failure → `error-update`.
+- **Read state (`ReadStateStore`)** for community channels and DMs (call chats and article comments have none): every input goes through `mergeReadState` — `lastRead` and `lastMessageDate` are max-merged, a snapshot's `unread` is taken only if its `lastRead` is at least the local one, and an unread count for a channel without an open window starts from the `getSyncState` snapshot at seq S and counts a live `new` event (not own, newer than `lastRead`) only if its `syncSeq` is above S (counted seqs are kept, so several tabs applying the same event count it once). Marking read is level-triggered: while a window is at the latest segment, scrolled to the bottom, the document visible and the user logged in, the store marks up to the `createdAt` of the newest server message received (`useChannelReadMarking` → `createMarker(...).update({atLatest, atBottom, newest})`); re-evaluated on every change of these inputs, deferred until login, retried with a backoff (2/5/15/60 s), the first call immediate then a 1 s trailing throttle. It is the only sender of `setChannelLastRead`.
+- **Notifications (`NotificationStore`):** memory + server; the first page when the list opens and again on resync while it is open; live `new`/`update`/`delete`/`allread` applied idempotently. The unread count comes from the server only (login response, `unreadCount` of each event, `getUnreadCount({ withTime: true })` on resync and after marking; the newest `unreadCountAt` wins); there is no client-side `++`/`--`.
+- **Catch-up.** On `onLive` (socket login ack after a connect or reconnect, or a user change on a live socket) and `onResume` (the socket stayed live but the tab was away: visible again after ≥ 30 s hidden, `pageshow` from bfcache, `resume`, `online`), each store resyncs, debounced (50 ms): the read-state store calls `getSyncState` (all readable channels and DMs, plus the notification count), the channel store calls `getChanges` from each open window's cursor (`"1:<seenSeq>"`, the contiguous applied high-water mark of `syncSeq`s; following `hasMore`), the notification store refetches its count and open list. Live events that arrive meanwhile are applied too. A cached channel without a window catches up when a window opens again. A live event whose `syncSeq` leaves a gap that is still open after 1.5 s triggers a `getChanges` for that channel (some seq bumps have no event, so false gaps are possible and cheap). A null or too-old cursor gets `reset: true` with the latest page: the latest segment is replaced, keeping local items with a higher `syncSeq` and pending sends; windows whose slice is off the new segment re-init (`reset`, cause `resync`). Catch-up never plays sounds or shows alerts.
+- **Entity data** (communities, chats, own user) has no sync cursor: after a `restored` live the login manager refreshes its snapshot (§4 ConnectionManager), and the Dexie writers are monotonic (see "Writers of the shared entity databases").
+- **Old server** (a short window during a deploy): a 404 on `getChanges` falls back to a `loadMessages` reconcile, a 404 on `getSyncState` to the login/`getOwnCommunities`/`getChats` snapshots, for the rest of the page load; `setChannelLastRead`'s optional `messageId` is sent only once the server has shown chat-sync support and dropped after a validation error.
+- **Logout:** `chat.channels.clear()`, `chat.readState.clear()` and `chat.notifications.clear()` (via `clearChat()`), then initialised windows re-init.
 
 #### Reactivity
 
@@ -621,13 +641,12 @@ These are singleton classes that manage non-UI application state. They are NOT R
 #### ConnectionManager (`connection.ts`)
 
 The central state coordinator. Manages:
-- **WebSocket state**: `disconnected` | `connecting` | `connected` (`connected` only while the tab is live: socket logged in, rooms joined; the type still lists `version-update`, which is never set)
+- **WebSocket state**: `disconnected` | `connecting` | `connected` (`connected` only while the tab is live: socket logged in, rooms joined; a newer build on the server is `updateAvailable`, not a socket state)
 - **Update available**: `updateAvailable` (+ `updateAvailableChange` listener) — a newer build is deployed
 - **Login state**: `pending` | `anonymous` | `loggingin` | `loggedin` | `loggingout`
 - **Service worker state**: `pending` | `none` | `installing` | `installed` | `update-available` | etc.
 - **Visibility state**: mirrors `document.visibilityState`
 - **Online state**: `online` | `offline`
-- **Tab state**: compatibility value only, always `active` (`tabStateChange` never fires)
 
 Provides a typed listener system (`addListener` / `removeListener`) and a client event handler system (`registerClientEventHandler` / `unregisterClientEventHandler`) for real-time server events.
 
@@ -637,7 +656,7 @@ Key behaviors:
 - On `updateAvailable`: triggers the service worker update.
 - On `disconnected`: emits `cliConnectionLost`.
 - On becoming visible or online: `loginManager.checkLoginStatus()`.
-- Runs IndexedDB cleanup 10 s after the page load (in every tab; deleting old databases is idempotent).
+- Deletes the IndexedDB databases of removed caches 10 s after the page load, fire-and-forget (in every tab; see "Obsolete databases" in §3).
 
 #### WebSocketManager (`webSocket.ts`)
 
@@ -1075,15 +1094,17 @@ Layout components wrap the route content and provide the navigation menu. On com
 
 ## 8. Multi-Tab Architecture
 
-Every tab is independent (chat-sync design [1]): it owns its WebSocket connection, its login state and its in-memory data. There are no tab roles and no referee; the page never opens `BroadcastChannel('CG_WEBSOCKET_STATE')`.
+Every tab is independent: it owns its WebSocket connection, its login state and its in-memory data. There are no tab roles, no leader tab and no referee; the page never opens `BroadcastChannel('CG_WEBSOCKET_STATE')`, and the service worker takes no part. Correctness does not depend on cross-tab coordination: a background tab only has to be correct once it is visible again, and every tab catches up from the server after a (re)connect (§3 "Chat stores", [docs/realtime → Tab Coordination](../realtime/README.md#tab-coordination-1) for the reasons behind this model).
 
-1. **WebSocket (one per tab).** Every tab connects its own socket (`WebSocketManager`, §4). Visible tabs — also several side by side — are always connected; a hidden tab closes its socket after 5 minutes unless it is in a call, and on `freeze`/`pagehide` at once; it reconnects when it comes back. The cost is one socket per open, non-idle tab. The service worker no longer referees; for one release it only answers role requests of old pages with `active` (`src/serviceWorkerLegacyTabs.ts`, `TODO(chat-sync compat)`), see [docs/realtime → Tab Coordination](../realtime/README.md#tab-coordination-1).
+1. **WebSocket (one per tab).** Every tab connects its own socket (`WebSocketManager`, §4). Visible tabs — also several side by side — are always connected; a hidden tab closes its socket after 5 minutes unless it is in a call, and on `freeze`/`pagehide` at once; it reconnects when it comes back. The cost is one socket per open, non-idle tab. For one release the service worker still answers role requests of pages of the previous build with `active` (`src/serviceWorkerLegacyTabs.ts`, marked `COMPAT — remove one release after chat-sync`), see [docs/realtime → Tab Coordination](../realtime/README.md#tab-coordination-1).
 
 2. **Login.** Each tab tracks its own login state. HTTP logins (for a device login: secret, signature and request) run one at a time across tabs under the Web Lock `cg:login`; logins and logouts are broadcast on `BroadcastChannel('cg:auth')` with the `CG_CURRENT_USER` storage event as fallback, and every tab follows them itself (§4, LoginManager). A `LOGIN_REQUIRED` is handled in the tab that got it.
 
-3. **Channel data.** Messages are held in memory per tab (`chat.channels`, §3 "Chat runtime"); tabs do not coordinate them, each catches up on `onLive`/`onResume`. Read state is shared through the community/chat rows (`mergeReadState`, idempotent across tabs).
+3. **Channel data.** Messages and notifications are held in memory per tab (`chat.channels`, `chat.notifications`, §3 "Chat stores"); tabs do not exchange them, each catches up on `onLive`/`onResume`. Since the server sends a message created in one tab to the sender's other tabs too (only the sending socket is excluded, [docs/realtime → Socket-scoped targeting](../realtime/README.md#socket-scoped-targeting)), they see it live. Read state is shared through the community/chat rows (`mergeReadState`, idempotent across tabs) and from the server (`cliChannelLastRead`, `getSyncState`).
 
-4. **localStorage.** Used for cross-tab state sync (`StorageEvent` listener) for the current user and various preferences.
+4. **Alerts.** No tab plays sounds or shows desktop notifications for messages; desktop notifications come only from Web Push in the service worker, and the only sounds are call sounds in the tab that is in the call. So "exactly one tab alerts" needs no election. A later feature with in-tab alerts would need one (e.g. a Web Lock, keeping in mind that a frozen tab keeps its locks).
+
+5. **localStorage.** Used for cross-tab state sync (`StorageEvent` listener) for the current user and various preferences.
 
 ---
 

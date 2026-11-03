@@ -8,23 +8,18 @@
  * (ChannelStore); read state in `chat.readState` (ReadStateStore, the only
  * sender of setChannelLastRead) plus the community/chat rows it persists to.
  *
- * New code uses the store API directly or through the façade's pass-throughs
- * (`openWindow`, `watchMessage`, `createMarker`, `createMessage`, `retrySend`,
- * `discardPending`, `editMessage`, `deleteMessage`, `setReaction`, ...). The
- * members marked @deprecated keep the list components of before chat-sync
- * working until they are moved to windows; they go with them.
+ * Callers use the store API directly (`chat.channels`, `chat.readState`) or
+ * the façade's pass-throughs (`openWindow`, `watchMessage`, `createMarker`,
+ * `createMessage`, `retrySend`, `discardPending`, `editMessage`,
+ * `deleteMessage`, `setReaction`, ...).
  */
 
 import { applyStoredReadState, chat, clearChat, getChatAccountUser, setChatAccountUser, startChatRuntime } from 'data/chat/runtime';
 import type { ChannelReadState, ChannelWindow, NewMessage, ReadMarker, Unsubscribe } from 'data/chat/types';
-import { LegacyItemList } from './channelLegacyList';
 
 type Message = Models.Message.Message;
 
 class ChannelManager {
-  /** @deprecated interim: legacy lists per channel (for setChannelLastRead) */
-  private readonly legacyLists = new Map<string, Set<LegacyItemList>>();
-
   /**
    * The account of this tab, set by login.ts (`undefined` after logout).
    * The stores see it as ChatEventSource.userId while the login state is
@@ -146,103 +141,6 @@ class ChannelManager {
   /** logout: clears messages, read state and notifications of this tab; open windows re-init */
   public async clear(): Promise<void> {
     clearChat();
-  }
-
-  // ----- @deprecated: callers of before chat-sync ------------------------------
-
-  /**
-   * @deprecated use `watchMessage`. Resolves with the message once it is
-   * known (from memory, else fetched), or with `item: undefined` when the
-   * first fetch fails (the watch stays and retries on the next live signal);
-   * later changes go to `onchange`.
-   */
-  public getMessageById(
-    channelId: string,
-    id: string,
-    onchange: (item: Message | undefined) => void,
-  ): Promise<{ item?: Message; unsubscribe: () => void }> {
-    return new Promise(resolve => {
-      let first = true;
-      let unsubscribe: Unsubscribe = () => undefined;
-      let unsubscribed = false;
-      const result = {
-        item: undefined as Message | undefined,
-        unsubscribe: () => {
-          unsubscribed = true;
-          unsubscribe();
-        },
-      };
-      unsubscribe = chat.channels.watchMessage(channelId, id, message => {
-        if (first) {
-          first = false;
-          result.item = message;
-          resolve(result);
-        } else if (!unsubscribed) {
-          onchange(message);
-        }
-      }, () => {
-        // the caller gets its unsubscribe even if the message cannot be fetched now
-        if (!first) return;
-        first = false;
-        resolve(result);
-      });
-      if (unsubscribed) unsubscribe();
-    });
-  }
-
-  /**
-   * @deprecated the list marks through `createMarker(channelId).update(...)`.
-   * Marks up to the shown message with this createdAt (the newest shown one
-   * at or before it) through each legacy list's marker in the read-state
-   * store (kept per list, so a hidden tab's mark is sent once visible).
-   */
-  public setChannelLastRead(channelId: string, lastRead: Date) {
-    for (const list of this.legacyLists.get(channelId) ?? []) list.markUpTo(lastRead);
-  }
-
-  /** @deprecated windows load by themselves */
-  public async loadItems(_options: { channelId: string, order?: "ASC" | "DESC", createdBefore?: Date, createdAfter?: Date }): Promise<void> {
-    // nothing to do
-  }
-
-  /** @deprecated windows reconcile by themselves */
-  public async loadUpdates(_options: { channelId: string, itemRangeUpdateJobs: Models.ItemList.ItemRangeUpdateJob[] }): Promise<void> {
-    // nothing to do
-  }
-
-  /** @deprecated `init({ type: 'atItemId' })` fetches the item and its neighbours itself */
-  public async loadItemWithNeighbours(_options: { channelId: string, itemId: string }): Promise<void> {
-    // nothing to do
-  }
-
-  /**
-   * @deprecated use `openWindow`. A handle whose `createItemList` opens a
-   * window (old ItemList interface); `onUnmount` destroys the lists it
-   * created. Any number of handles per channel.
-   */
-  public getMountedChannelDatabase(channelId: string) {
-    const lists = new Set<LegacyItemList>();
-    const database = {
-      createItemList: (_scheduleItemRangeUpdate?: (job: Models.ItemList.ItemRangeUpdateJob) => void): Models.ItemList.ItemList<Message> => {
-        const list = new LegacyItemList(chat.channels.openWindow(channelId), l => {
-          lists.delete(l);
-          const set = this.legacyLists.get(channelId);
-          set?.delete(l);
-          if (set?.size === 0) this.legacyLists.delete(channelId);
-        }, () => chat.readState.createMarker(channelId));
-        lists.add(list);
-        let set = this.legacyLists.get(channelId);
-        if (!set) this.legacyLists.set(channelId, (set = new Set()));
-        set.add(list);
-        return list;
-      },
-    };
-    return {
-      database,
-      onUnmount: () => {
-        for (const list of [...lists]) list.destroy(false);
-      },
-    };
   }
 }
 

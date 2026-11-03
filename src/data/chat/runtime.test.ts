@@ -664,9 +664,63 @@ describe('chat (app runtime)', () => {
     app.onLive.emit('established');
     await vi.advanceTimersByTimeAsync(1_000);
     await settle();
-    // the user change itself schedules one sync too (robust either way); not more than two
-    expect(server.callsOf('getSyncState').length).toBeGreaterThanOrEqual(1);
-    expect(server.callsOf('getSyncState').length).toBeLessThanOrEqual(2);
+    // the user change while not live does not sync by itself: exactly one call
+    expect(server.callsOf('getSyncState')).toHaveLength(1);
+  });
+
+  it('interactive login: socket login started (not live) before loggedin, ack after: one catch-up', async () => {
+    const { mod, server } = await appSetup();
+    mod.startChatRuntime();
+    app.onLive.emit('established'); // anonymous
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    setLoginState('loggingin');
+    mod.setChatAccountUser(ME);
+    app.live = false; // webSocketManager.login during setupAfterLogin
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    setLoginState('loggedin');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    expect(server.callsOf('getSyncState')).toHaveLength(0);
+    app.live = true;
+    app.onLive.emit('user'); // socket login acked
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    expect(server.callsOf('getSyncState')).toHaveLength(1);
+  });
+
+  it('user switch A -> B through a logout: one catch-up per user', async () => {
+    const { mod, server } = await appSetup();
+    mod.startChatRuntime();
+    mod.setChatAccountUser(ME);
+    setLoginState('loggedin');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    expect(server.callsOf('getSyncState')).toHaveLength(1);
+    // the other tab logged out: drop this tab's login, socket logout
+    setLoginState('loggingout');
+    mod.setChatAccountUser(undefined);
+    mod.clearChat();
+    setLoginState('anonymous');
+    app.live = false;
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    app.live = true;
+    app.onLive.emit('user');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    // then user B takes over the session: loggedin before the socket login ack
+    mod.setChatAccountUser(OTHER_USER);
+    app.live = false;
+    setLoginState('loggedin');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    app.live = true;
+    app.onLive.emit('user');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    expect(server.callsOf('getSyncState')).toHaveLength(2);
   });
 
   it('own messages during the login are classified by the account', async () => {

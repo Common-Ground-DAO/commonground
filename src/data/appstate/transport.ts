@@ -3,13 +3,13 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 /*
- * chat-sync transport contract (roadmap docs/todo/ROADMAP_chat-sync.md,
- * decision [1] "independent tabs + catch-up" and [8] "migration").
+ * chat-sync transport contract: independent tabs + catch-up (docs/realtime
+ * "Tab Coordination", docs/frontend §8).
  *
  * Types and constants only: nothing here runs or is wired. It fixes what the
- * transport slice (webSocket.ts, connection.ts, login.ts, baseConnector.ts,
- * connection UI, CallProvider hold), the service-worker slice and the data
- * layer (src/data/chat) agree on.
+ * transport (webSocket.ts, connection.ts, login.ts, baseConnector.ts,
+ * connection UI, CallProvider hold), the service worker and the data layer
+ * (src/data/chat) agree on.
  *
  * Model in one paragraph: every tab owns its socket, its login state and its
  * in-memory data. No tab roles, no relay, no service-worker referee. Visible
@@ -83,8 +83,8 @@ export const RESUME_MIN_HIDDEN_MS = 30_000;
  * `cliConnectionRestored` exactly at the `established` / `restored`
  * transitions (no longer on the raw socket `connect`; `user` has no app
  * event), and `Common.WebSocketState` reports `connected` only
- * while live. `version-update` stops being a socket state (see
- * Transport.updateAvailable).
+ * while live. A newer build on the server is reported by
+ * Transport.updateAvailable, not as a socket state.
  */
 export type LiveKind = 'established' | 'restored' | 'user';
 
@@ -226,11 +226,13 @@ export type AuthBroadcastMessage = {
  * on logout a new page additionally posts the plain string `'anonymous'` on
  * it, which still-open old pages handle as "another tab logged out" (their
  * existing behaviour). Nothing else is posted there.
+ * COMPAT — remove one release after chat-sync.
  */
 export const LEGACY_LOGIN_STATE_CHANNEL = 'CG_LOGIN_STATE';
 
 // ---------------------------------------------------------------------------
-// Service-worker compatibility with old pages (one release)
+// Service-worker compatibility with old pages
+// COMPAT — remove one release after chat-sync (with src/serviceWorkerLegacyTabs.ts)
 // ---------------------------------------------------------------------------
 
 /**

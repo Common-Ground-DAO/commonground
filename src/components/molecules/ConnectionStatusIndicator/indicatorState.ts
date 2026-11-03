@@ -31,7 +31,7 @@ export function indicatorStateFor(input: IndicatorInput): IndicatorState {
   if (webSocketState === "connected") return "connected";
   if (securityStepRequired) return "hidden";
   if (webSocketState === "connecting") return "connecting";
-  // "disconnected" (and the unused legacy "version-update")
+  // "disconnected"
   if (initialGrace && !everConnected) {
     // the first connection is still being set up
     return "hidden";

@@ -1,8 +1,9 @@
-# src/data/chat — chat-sync contract (for implementers)
+# src/data/chat — chat stores (messages, read state, notifications)
 
-Working note for the chat-sync slices, not user documentation. Plan and
-decisions: `docs/todo/ROADMAP_chat-sync.md` ("Design", [1]–[11]). The doc
-comments in the files below are normative; this is the summary.
+Per-tab, in-memory stores over the server's catch-up API. Overview and how
+they fit into the app: `docs/frontend/README.md` §3 "Chat stores"; tab and
+socket model: `docs/realtime/README.md` "Tab Coordination". The doc comments
+in the files below are normative; this is the summary.
 
 ## Files of the contract
 
@@ -42,31 +43,22 @@ comments in the files below are normative; this is the summary.
    visible + logged in).
 8. **Notification count** from the server only, newest `unreadCountAt` wins.
 
-## Who implements what
-
-| Contract piece | Slice |
-|---|---|
-| store factories + `mergeReadState` (pure, `src/data/chat/*.ts`), connector methods `getChanges`/`getSyncState` (`data/api/messages.ts`) and `getUnreadCount({ withTime })` | store-core |
-| event source/API adapters, `data.channelManager` façade, `onOwnMessage` -> read state | messages-ui |
-| `ReadStatePersistence` (Dexie, one transaction) | entity-dbs |
-| `Transport`, auth broadcast, `cg:login`, socket-id header, article-room re-join | transport |
-| compat answer on `CG_WEBSOCKET_STATE` | sw |
-| endpoints, `syncSeq`, event fields, `getSyncState` null-lastRead semantics | srv-sync, srv-state |
-
-Handoff for messages-ui: the contracts slice changed `src/data/databases/channel.ts`
-(`setChannelLastRead`: `.then(() => resolve())`) only to compile against the new
-response type; the rewrite replaces it.
-
 Deploy window (new client, old server): a 404 on `getChanges`/`getSyncState` ->
 fall back to `loadMessages` + old snapshots for the page load; omit `messageId`
 until one succeeded (retry without it on a validation error).
 
-## Implementation files (store-core)
+## Implementation files
 
 - `index.ts` — factories, `mergeReadState`, `systemClock`; compile-time check
   that `messageApi`/`notificationsApi` satisfy `ChatApi`/`NotificationApi`.
 - `channelStore.ts` (+ `messageVersion.ts`: wire conversion, version rule),
   `readStateStore.ts`, `notificationStore.ts`, `mergeReadState.ts`, `util.ts`.
+- `runtime.ts` — the tab's one runtime (`chat.channels`, `chat.readState`,
+  `chat.notifications`, `chat.events`) with the real connectors, the
+  ChatEventSource and the entity-db persistence; login hook-up
+  (`setupChatAfterLogin`, `clearChat`). Façades: `data.channelManager`
+  (`data/databases/channel.ts`), `data.notification`
+  (`data/databases/notification.ts`).
 - `testing/fakeServer.ts` — scripted fake server (ChatApi + NotificationApi +
   ChatEventSource) for the unit tests: seqs, tombstones, held/failed
   responses, events delivered late/duplicated/out of order, old-server mode.

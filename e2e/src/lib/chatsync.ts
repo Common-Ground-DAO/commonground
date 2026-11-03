@@ -9,7 +9,7 @@ import { prepareLivePage } from './live.ts';
 
 /**
  * The common setup of the chat-sync flows (src/flows/09-…15-cs-*.ts,
- * docs/todo/ROADMAP_chat-sync.md "Acceptance"): an owner A with a community
+ * e2e/README.md "The chat-sync flows"): an owner A with a community
  * and its channels, a member B who joined it. Both pages are prepared for
  * the live checks (connection indicator log, WebSocket list) before their
  * first load; `beforeMemberLoad` runs on B's page before B's first load

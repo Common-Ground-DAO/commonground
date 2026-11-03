@@ -142,9 +142,11 @@ guards report that wherever it happens.
 
 ### The chat-sync flows
 
-`cs-*` are the acceptance scenarios E1–E5, E7, E8 of
-`docs/todo/ROADMAP_chat-sync.md` (E6 needs message persistence, which that
-package does not ship). They are black-box: they act through the UI and
+`cs-*` are the acceptance scenarios E1–E5, E7, E8 of the chat-sync package
+(messages and read state in memory + server, independent tabs with
+catch-up: docs/frontend "Chat stores", docs/realtime "Tab Coordination").
+E6, offline display, needs message persistence, which is not built (open
+item in `docs/todo/TODO.md`). They are black-box: they act through the UI and
 read the DOM, the network, CDP and the app's own API routes — never the
 app's data-layer objects — so they stay valid while that layer is
 replaced. They were written before the rewrite and are red where the code
@@ -162,8 +164,10 @@ together with `lib/app.ts`/`lib/live.ts`): the connection indicator
 `#cg-connection-indicator` with the class `cg-connection-indicator-<state>`
 (`hidden`, `connecting`, `connected`, `disconnected`, `offline`, …); the
 stored user under the `localStorage` key `CG_CURRENT_USER` (readiness and
-login tracking); `.message-item` / `.message-item-message` /
-`.message-item-content[data-timestamp]` for messages,
+login tracking); `.message-item` / `.message-item-message` for messages, confirmed by the
+server when the item's `.message-item-content` has `data-timestamp` and no
+`data-send-status` (present while a send or edit is in flight or failed —
+`data-timestamp` alone is on pending sends too),
 `.text-channel-item-info[title].item-unread` for the unread dot and
 `.notification-count` in the main menu for the badge.
 

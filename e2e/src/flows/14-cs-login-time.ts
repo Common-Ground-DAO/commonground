@@ -38,7 +38,7 @@ const median = (values: number[]) => {
 };
 
 /**
- * E7 (docs/todo/ROADMAP_chat-sync.md, Acceptance): login time. A user in a
+ * E7 (e2e/README.md "The chat-sync flows"): login time. A user in a
  * channel with history reloads the page; per load the flow measures when
  * the device login answered OK, when the connection indicator showed
  * "connected" (together: logged in and live), and when the channel's first

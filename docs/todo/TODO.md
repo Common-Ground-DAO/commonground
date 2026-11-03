@@ -323,8 +323,44 @@ that stack — confirm and delete:
   counts stay stale until the community is refreshed); ended calls are not affected
   (their `delete` does not depend on this state). Reload a server's open calls from the
   database when it (re)appears and drop its entries when it goes.
+- [ ] **Remove the chat-sync compat paths one release after chat-sync** (2026-11-03,
+  chat-sync close-out) — kept for pages of the previous build that stay open across
+  the update: the service worker's `WorkerToTab` `active` answer to old pages
+  (`src/serviceWorkerLegacyTabs.ts`, the two COMPAT blocks in `src/service-worker.ts`,
+  the `Legacy*` types in `src/data/appstate/transport.ts`) and the `'anonymous'` post
+  on `CG_LOGIN_STATE` at logout (`src/data/appstate/authBroadcast.ts`). All are marked
+  `COMPAT — remove one release after chat-sync`; update docs/realtime "Tab
+  Coordination" and docs/frontend §8 with them. The client's 404 fallbacks for
+  `getChanges`/`getSyncState` (docs/frontend "Chat stores", "Old server") only matter
+  during a deploy against an older backend and may go at the same time.
+- [ ] **Message attachments request Giphy for every attachment list** (2026-11-03, seen
+  by the e2e flow `images`) — `MessageAttachments.tsx` calls `gf.gifs(giphyIds)` also
+  when the list has no Giphy attachment and when no `GIPHY_API_KEY` is configured
+  (`src/util/giphy.ts` then uses the key `'disabled'`). Giphy answers 401 and the
+  rejected promise shows up as uncaught `@giphy/js-fetch-api: Unauthorized` page errors. Only fetch when
+  there are Giphy ids and Giphy is enabled.
+- [ ] **The article editor logs errors for communities without newsletters**
+  (2026-11-03, seen by the e2e flow `article-plugin`) — `GenericArticleManagement.tsx`
+  calls `Community/getLatestArticleSentAsNewsletterDate` for every community it edits an
+  article in; the server answers `NOT_ALLOWED` for a community that is not on the
+  newsletter whitelist (`srv/api/community.ts`), so every such editor load produces a
+  failed API request (the client swallows the error). Ask only when the community can
+  send newsletters (e.g. a flag in the community data), or answer "not available"
+  without an error. Same flow: `EditField.tsx` calls `getRangeAt(0)` in the media-button
+  positioning timeout without checking `rangeCount`, which throws `IndexSizeError` when
+  the selection is empty.
 
 ## Optional / nice-to-have
+
+- [ ] **Chat-sync P4: persist the latest messages per channel** (2026-11-03, left
+  open when the chat-sync package closed) — messages and notifications are memory
+  only (docs/frontend "Chat stores"), so after a reload a channel's history needs a
+  round trip and nothing is shown offline. Decide on the numbers of the e2e flow
+  `cs-login-time` (time to the first and to all messages after a reload) and on
+  whether offline display is wanted. If built: a pure add-on to `ChannelStore` — a
+  latest-N snapshot per channel in IndexedDB, one writer per transaction, LRU of K
+  channels, whole-store wipe on logout, a cache-schema constant; the server stays the
+  source of truth. The e2e scenario E6 (offline display) belongs to it.
 
 - [ ] **Dev-stack service toggles** — the `calls`/`blockchain` compose profiles exist only
   in the selfhost profile; the dev stack starts `mediasoup` and `onchain` unconditionally.

@@ -13,7 +13,7 @@ import { assert, sleep, until } from '../lib/ui.ts';
 const HOLD_MS = 3_000;
 
 /**
- * E5 (docs/todo/ROADMAP_chat-sync.md, Acceptance): the notifications badge.
+ * E5 (e2e/README.md "The chat-sync flows"): the notifications badge.
  * A mentions B twice: the badge goes up by one per mention, exactly once.
  * B opens one of the two notifications: the badge goes down by one, once
  * (not to zero). After a reload the badge equals the server's count

@@ -268,7 +268,9 @@ and a browser pass on the test VM:
   gone (P7). The gateway gets its own session secret, session-store prefix and
   Socket.IO adapter key (a cookie from one origin must not work on the other);
   singleton processes (`job-runner`, `onchain`, `memberlist`) run only for
-  cg.box; one env-driven CORS/origin allowlist; the login methods it exposes
+  cg.box; one env-driven CORS/origin allowlist (if it names request headers, it
+  must allow `x-cg-socket-id`, which the client sends on every API request —
+  docs/realtime "Socket-scoped targeting"); the login methods it exposes
   are hardened before it goes live (S1 tracks which). Acceptance: the gateway
   runs with `CG_LEGACY_CGID=true` on **every** backend process, and legacy mode
   keeps the full previous sign-up/login surface — so the server-side allowlist
@@ -392,8 +394,9 @@ and a browser pass on the test VM:
   can move backwards; call role setup builds invalid SQL when no role
   permissions are passed; a scheduled call's duration is added as milliseconds.
   The client message cache and the tab/socket hand-off are replaced in a
-  separate package (`docs/todo/ROADMAP_chat-sync.md` on branch
-  `feature/chat-sync`); G6 waits for it, since both touch the service worker.
+  separate package (chat-sync, branch `feature/chat-sync`; the result is
+  described in docs/frontend "Chat stores" and docs/realtime "Tab
+  Coordination"); G6 waits for it, since both touch the service worker.
   (done 2026-11-02: calls on a gone call server are ended by a periodic
   sweep, event calls included, and every end reaches clients; an ended event
   call can be started again; the last-read time only moves forward and never

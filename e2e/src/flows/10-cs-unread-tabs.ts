@@ -14,7 +14,7 @@ const READ = 'read-here';
 const OTHER = 'elsewhere';
 
 /**
- * E2 (docs/todo/ROADMAP_chat-sync.md, Acceptance): unread across tabs.
+ * E2 (e2e/README.md "The chat-sync flows"): unread across tabs.
  * B has two tabs; tab 2 is in the background. A posts in a channel B is not
  * in: tab 1 shows the unread dot. B reads the channel in tab 1, reloads: the
  * dot stays cleared — in tab 1 and, once in front, in tab 2, also after

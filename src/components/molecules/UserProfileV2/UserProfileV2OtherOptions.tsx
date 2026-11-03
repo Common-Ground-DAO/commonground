@@ -20,6 +20,7 @@ import { useUserSettingsContext } from 'context/UserSettingsProvider';
 import { useCopiedToClipboardContext } from 'context/CopiedToClipboardDialogContext';
 import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 type Props = {
   user: Omit<Models.User.Data, 'isFollowed' | 'isFollower'>;
@@ -315,14 +316,14 @@ const UserProfileRoles: React.FC<{
   return <>
     {commContext.roles.map(role => {
       const hasRole = userRoleIds.includes(role.id) || false;
-      const canModify = !role.assignmentRules && role.title !== PredefinedRole.Public && role.title !== PredefinedRole.Member;
+      const canModify = !role.assignmentRules && !isPredefinedRole(role, PredefinedRole.Public) && !isPredefinedRole(role, PredefinedRole.Member);
 
       return <ListItem
         key={role.id}
         title={role.title}
         onClick={async () => {
           if (canModify) {
-            if (role.title === PredefinedRole.Admin) {
+            if (isPredefinedRole(role, PredefinedRole.Admin)) {
               onModifyAdminRole(role.id, !hasRole);
               return;
             }

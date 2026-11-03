@@ -30,6 +30,7 @@ import { linkRegexGenerator } from 'common/validators';
 import CallConfigurationToggle, { IConfig } from '../StartCallModal/CallConfigurationToggle/CallConfigurationToggle';
 import { useCommunityPremiumTier } from 'hooks/usePremiumTier';
 import config from 'common/config';
+import { isPredefinedRole, isPredefinedRolePermission } from "util/predefinedRoles";
 
 const onlyLinkRegex = linkRegexGenerator();
 
@@ -51,7 +52,7 @@ export function toPermissionType(permissions: Common.CommunityEventPermission[])
 export function eventPermissionsToPermissionType(eventPermissions: Models.Community.Event['rolePermissions']): Record<string, PermissionType> {
   return eventPermissions.reduce((acc, permission) => {
     // Don't convert admin, we won't modify it and won't send it either
-    if (permission.roleTitle === PredefinedRole.Admin) return acc;
+    if (isPredefinedRolePermission(permission, PredefinedRole.Admin)) return acc;
 
     return {
       ...acc,
@@ -135,12 +136,12 @@ const ScheduleEventModal: React.FC<Props> = (props) => {
   const defaultPermission = useMemo(() => {
     return [
       {
-        roleId: roles.find(role => role.title === PredefinedRole.Public)?.id,
+        roleId: roles.find(role => isPredefinedRole(role, PredefinedRole.Public))?.id,
         roleTitle: PredefinedRole.Public,
         permissions: ['EVENT_PREVIEW']
       },
       {
-        roleId: roles.find(role => role.title === PredefinedRole.Member)?.id,
+        roleId: roles.find(role => isPredefinedRole(role, PredefinedRole.Member))?.id,
         roleTitle: PredefinedRole.Member,
         permissions: ['EVENT_PREVIEW', 'EVENT_ATTEND']
       },

@@ -39,6 +39,8 @@ const createRolePermissionsValidator = (
 ) => Joi.array().items(
   Joi.object({
     roleTitle: Joi.string().required(),
+    // lists read from the server carry it; ignored, the role is named by roleId
+    roleType: Joi.string().valid(...Object.values(RoleType)).optional(),
     roleId: common.Uuid.required(),
     permissions: Joi.array().items(
       Joi.string().valid(...allowedPermissions)
@@ -62,6 +64,8 @@ const createCommunityEventRolePermissionsValidator = (
 ) => Joi.array().items(
   Joi.object({
     roleTitle: Joi.string().required(),
+    // lists read from the server carry it; ignored, the role is named by roleId
+    roleType: Joi.string().valid(...Object.values(RoleType)).optional(),
     roleId: common.Uuid.required(),
     permissions: Joi.array().items(
       Joi.string().valid(...allowedPermissions)

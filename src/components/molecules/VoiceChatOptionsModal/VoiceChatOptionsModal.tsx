@@ -10,6 +10,7 @@ import { OptionsPermissionView } from '../PinnedChatOptionsModal/PinnedChatOptio
 import { useLiveQuery } from 'dexie-react-hooks';
 import data from 'data';
 import { PermissionType } from '../RolePermissionToggle/RolePermissionToggle';
+import { isPredefinedRolePermission } from "util/predefinedRoles";
 
 type Props = {
   callId: string;
@@ -26,7 +27,7 @@ export function callPermissionsToPermissionType(
 ): Record<string, PermissionType> {
   return callPermissions.reduce((acc, permission) => {
     // Don't convert admin, we won't modify it and won't send it either
-    // if (permission.roleTitle === PredefinedRole.Admin) return acc;
+    // if (isPredefinedRolePermission(permission, PredefinedRole.Admin)) return acc;
     // TODO: Do not convert admin if necessary
 
     return {

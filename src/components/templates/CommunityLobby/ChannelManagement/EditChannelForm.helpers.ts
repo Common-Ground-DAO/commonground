@@ -4,6 +4,8 @@
 
 import type { PermissionType } from "components/molecules/RolePermissionToggle/RolePermissionToggle";
 import { rolePermissionPresets } from "common/presets";
+import { PredefinedRole } from "common/enums";
+import { isPredefinedRolePermission } from "util/predefinedRoles";
 
 export function permissionTypeToChannelPermissions(
   roles: readonly Models.Community.Role[],
@@ -45,7 +47,7 @@ export function permissionTypeToChannelPermissions(
 export function channelHasCustomPermissions(channelPermissions: Models.Community.CommunityChannelPermission[]) {
   for (const key of Object.keys(rolePermissionPresets.Channel) as (keyof typeof rolePermissionPresets["Channel"])[]) {
     const preset = new Set(rolePermissionPresets.Channel[key]) as Set<Common.ChannelPermission>;
-    const p = channelPermissions.find(cp => cp.roleTitle === key);
+    const p = channelPermissions.find(cp => isPredefinedRolePermission(cp, key as PredefinedRole));
     if (!!p) {
       if (preset.size !== p.permissions.length || p.permissions.some(perm => !preset.has(perm))) {
         return true;

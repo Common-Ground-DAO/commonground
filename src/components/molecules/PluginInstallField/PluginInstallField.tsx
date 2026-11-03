@@ -15,6 +15,7 @@ import { useOwnCommunities } from 'context/OwnDataProvider';
 import communityDatabase from 'data/databases/community';
 import { useAsyncMemo } from 'hooks/useAsyncMemo';
 import { useSnackbarContext } from 'context/SnackbarContext';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 type Props = {
   plugin: Pick<Models.Plugin.Plugin, 'pluginId' | 'ownerCommunityId'>;
@@ -31,7 +32,7 @@ const PluginInstallField: React.FC<Props> = (props) => {
     const adminCommunities: Models.Community.DetailView[] = [];
     for (const community of myCommunities) {
       const roles = await communityDatabase.getRoles(community.id);
-      if (roles.some(role => community.myRoleIds.includes(role.id) && role.title === PredefinedRole.Admin && role.type === 'PREDEFINED')) {
+      if (roles.some(role => community.myRoleIds.includes(role.id) && isPredefinedRole(role, PredefinedRole.Admin) && role.type === 'PREDEFINED')) {
         adminCommunities.push(community);
       };
     }

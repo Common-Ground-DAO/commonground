@@ -38,6 +38,7 @@ import {
   serverLastReadAfter,
   type StoredChannel,
 } from "./readStateRows";
+import { isPredefinedRole } from "util/predefinedRoles";
 
 const TAG_FREQUENCY_VALIDFOR = 120000;
 const MEMBER_LIST_VALIDFOR = 60000;
@@ -810,7 +811,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
     await communityApi.updateChannel({ ...channelData, communityId, channelId });
     if (!!channelData.rolePermissions) {
       const roles = await this.db.roles.where('communityId').equals(communityId).toArray();
-      const adminRole = roles.find(r => r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Admin);
+      const adminRole = roles.find(r => r.type === RoleType.PREDEFINED && isPredefinedRole(r, PredefinedRole.Admin));
       if (!adminRole) {
         console.warn("No admin role found for community", communityId);
       }

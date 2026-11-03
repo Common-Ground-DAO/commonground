@@ -23,6 +23,7 @@ import UserTag from 'components/atoms/UserTag/UserTag';
 import { useMultipleUserData } from 'context/UserDataProvider';
 import ScreenAwareDropdown from 'components/atoms/ScreenAwareDropdown/ScreenAwareDropdown';
 import ListItem from 'components/atoms/ListItem/ListItem';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 const NewslettersManagement = () => {
   const { isMobile } = useWindowSizeContext();
@@ -36,7 +37,7 @@ const NewslettersManagement = () => {
     if (!config.EMAIL_ENABLED) {
       return undefined;
     }
-    const memberRole = roles.find(r => r.title === PredefinedRole.Member);
+    const memberRole = roles.find(r => isPredefinedRole(r, PredefinedRole.Member));
 
     if (memberRole) {
       return communityApi.getMemberNewsletterCount({

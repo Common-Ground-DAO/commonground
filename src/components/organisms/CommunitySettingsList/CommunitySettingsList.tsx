@@ -11,6 +11,7 @@ import { getUrl } from 'common/util';
 import { ShareListItem } from "components/atoms/ShareButton/ShareButton";
 
 import './CommunitySettingsList.css';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 export type CommunitySettingsListItem = 'community' | 'areas' | 'members' | 'roles' | 'upgrades' | 'token' | 'onboarding' | 'plugins' | 'bots' | 'ban-management';
 
@@ -39,7 +40,7 @@ export default function CommunitySettingsList(props: Props) {
       {/* {communityPermissions.has('COMMUNITY_MANAGE_ARTICLES') && 
         <DropdownItem title="Content" description="Manage content, visibility, in bulk!" disabled />
       }
-      {Array.from(ownRolesById.values()).some(role => role.title === PredefinedRole.Admin) && // only for admins
+      {Array.from(ownRolesById.values()).some(role => isPredefinedRole(role, PredefinedRole.Admin)) && // only for admins
         <DropdownItem title="Analytics" description="Track community and content performance" disabled />
       } */}
       <ShareListItem

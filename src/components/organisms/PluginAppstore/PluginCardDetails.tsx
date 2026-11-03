@@ -24,6 +24,7 @@ import { useSnackbarContext } from 'context/SnackbarContext';
 import { useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 type Props = {
   isOpen: boolean;
@@ -61,7 +62,7 @@ const PluginCardDetails: React.FC<Props> = (props) => {
     const adminCommunities: Models.Community.DetailView[] = [];
     for (const community of myCommunities) {
       const roles = await communityDatabase.getRoles(community.id);
-      if (roles.some(role => community.myRoleIds.includes(role.id) && role.title === PredefinedRole.Admin && role.type === 'PREDEFINED')) {
+      if (roles.some(role => community.myRoleIds.includes(role.id) && isPredefinedRole(role, PredefinedRole.Admin) && role.type === 'PREDEFINED')) {
         adminCommunities.push(community);
       };
     }

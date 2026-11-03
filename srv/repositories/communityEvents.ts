@@ -91,6 +91,7 @@ async function _getEventCTE(
           SELECT JSON_BUILD_OBJECT(
             'roleId', r."id",
             'roleTitle', r."title",
+            'roleType', r."type",
             'permissions', cep."permissions"
           ) AS "item"
           FROM "communities_events_permissions" cep
@@ -395,6 +396,7 @@ class CommunityEventHelper {
         (SELECT array_to_json(array_agg(json_build_object(
           'roleId', "roleId",
           'roleTitle', (SELECT "title" FROM roles r WHERE r."id" = "roleId"),
+          'roleType', (SELECT "type" FROM roles r WHERE r."id" = "roleId"),
           'permissions', "permissions"
         ))) FROM permission_insert) AS "rolePermissions",
         (SELECT array_agg("userId") FROM communities_events_participants WHERE "eventId" = ie.id) AS "participantIds",
@@ -655,6 +657,7 @@ class CommunityEventHelper {
         (SELECT array_to_json(array_agg(json_build_object(
           'roleId', "roleId",
           'roleTitle', (SELECT "title" FROM roles r WHERE r."id" = "roleId"),
+          'roleType', (SELECT "type" FROM roles r WHERE r."id" = "roleId"),
           'permissions', "permissions"
         ))) FROM permission_insert) AS "rolePermissions",
         (SELECT array_agg("userId") FROM communities_events_participants WHERE "eventId" = ue.id) AS "participantIds",

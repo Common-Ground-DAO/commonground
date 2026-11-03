@@ -281,6 +281,7 @@ async function _getCommunityDetailView<Ext>(
               SELECT JSON_BUILD_OBJECT(
                 'roleId', r2."id",
                 'roleTitle', r2."title",
+                'roleType', r2."type",
                 'permissions', ccrp."permissions"
               ) AS "item"
               FROM "communities_channels_roles_permissions" ccrp
@@ -1170,7 +1171,7 @@ async function _updateRole(
     SET ${setArray.join(',')}, "updatedAt" = NOW()
     WHERE "communityId" = $1 AND "id" = $2 AND "deletedAt" IS NULL
     ${_noPredefined ? format('AND "type" <> %L', RoleType.PREDEFINED) : ''}
-    ${_noAdmin ? format('AND "title" <> %L', PredefinedRole.Admin) : ''}
+    ${_noAdmin ? format('AND NOT ("type" = %L AND "title" = %L)', RoleType.PREDEFINED, PredefinedRole.Admin) : ''}
     RETURNING "updatedAt"
   `;
   const result = await db.query(query, params);

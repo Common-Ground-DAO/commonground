@@ -28,6 +28,7 @@ import { Clock, IdentificationBadge, Trash } from "@phosphor-icons/react";
 import { useSnackbarContext } from "context/SnackbarContext";
 import { ItemArticleType } from "components/organisms/GenericArticleManagement/GenericArticleManagement";
 import { ChevronLeftIcon } from "@heroicons/react/20/solid";
+import { isPredefinedRole } from "util/predefinedRoles";
 
 type ArticleData = Omit<Models.BaseArticle.DetailView, "articleId" | "creatorId">;
 
@@ -186,7 +187,7 @@ const VisibilityDropdown: React.FC<VisibilityDropdownProps> = ({ permissions, se
     const { roles, ownRoles } = commContext.state === 'loaded' ? commContext : { roles: [], ownRoles: [] };
 
     const defaultPermission = useMemo(() => {
-        const publicRole = roles.find(role => role.title === PredefinedRole.Public);
+        const publicRole = roles.find(role => isPredefinedRole(role, PredefinedRole.Public));
         const result: Models.Community.CommunityArticlePermission[] = [];
         if (publicRole) {
             result.push({
@@ -231,7 +232,7 @@ const VisibilityDropdown: React.FC<VisibilityDropdownProps> = ({ permissions, se
     }, [isMobile, isPrivate]);
 
     const visibleRoles = useMemo(() => {
-        if (ownRoles.some(role => role.title === PredefinedRole.Admin)) return roles;
+        if (ownRoles.some(role => isPredefinedRole(role, PredefinedRole.Admin))) return roles;
         return ownRoles;
     }, [ownRoles, roles]);
 
@@ -250,7 +251,7 @@ const VisibilityDropdown: React.FC<VisibilityDropdownProps> = ({ permissions, se
                     setIsPrivate(value);
 
                     if (!value) {
-                        const publicRole = roles.find(role => role.title === PredefinedRole.Public);
+                        const publicRole = roles.find(role => isPredefinedRole(role, PredefinedRole.Public));
                         if (publicRole) {
                             setAndApplyRolesPermissions({
                                 [publicRole.id]: 'full'

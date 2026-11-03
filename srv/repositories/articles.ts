@@ -157,6 +157,7 @@ async function _getCommunityArticleList(
             SELECT JSON_BUILD_OBJECT(
               'roleId', r2."id",
               'roleTitle', r2."title",
+              'roleType', r2."type",
               'permissions', carp2."permissions"
             ) AS "item"
             FROM communities_articles_roles_permissions carp2
@@ -401,6 +402,7 @@ async function _getCommunityArticleDetailView(
             SELECT JSON_BUILD_OBJECT(
               'roleId', r2."id",
               'roleTitle', r2."title",
+              'roleType', r2."type",
               'permissions', carp2."permissions"
             ) AS "item"
             FROM communities_articles_roles_permissions carp2

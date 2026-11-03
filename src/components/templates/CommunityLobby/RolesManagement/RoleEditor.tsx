@@ -12,6 +12,7 @@ import RolePhoto from 'components/molecules/RolePhoto/RolePhoto';
 import { useContractData, useLoadedCommunityContext } from 'context/CommunityProvider';
 import { StarIcon } from '@heroicons/react/20/solid';
 import { PredefinedRole } from 'common/enums';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 type Props = {
   currentRole: Models.Community.Role;
@@ -94,7 +95,7 @@ const RoleEditor: React.FC<Props> = (props) => {
   const { currentRole, setCurrentRole, onDeleteRole, lockEditing } = props;
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
-  const isAdmin = currentRole.title === PredefinedRole.Admin;
+  const isAdmin = isPredefinedRole(currentRole, PredefinedRole.Admin);
 
   const contractIds = useMemo(() => {
     return community.tokens.map(token => token.contractId);

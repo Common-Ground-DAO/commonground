@@ -19,6 +19,7 @@ import { useNavigationContext } from "components/SuspenseRouter/SuspenseRouter";
 import { useSnackbarContext } from "context/SnackbarContext";
 import FloatingSaveOptions from "../FloatingSaveOptions/FloatingSaveOptions";
 import errors from "common/errors";
+import { isPredefinedRole, isPredefinedRolePermission } from "util/predefinedRoles";
 
 type Props = {
   communityId: string;
@@ -39,7 +40,7 @@ export function toPermissionType(permissions: Common.ChannelPermission[]): Permi
 export function channelPermissionsToPermissionType(channelPermissions: Models.Community.CommunityChannelPermission[]): Record<string, PermissionType> {
   return channelPermissions.reduce((acc, permission) => {
     // Don't convert admin, we won't modify it and won't send it either
-    if (permission.roleTitle === PredefinedRole.Admin) return acc;
+    if (isPredefinedRolePermission(permission, PredefinedRole.Admin)) return acc;
 
     return {
       ...acc,
@@ -78,12 +79,12 @@ export default function EditChannelForm(props: Props) {
   const defaultPermission = useMemo(() => {
     return [
       {
-        roleId: roles.find(role => role.title === PredefinedRole.Public)?.id,
+        roleId: roles.find(role => isPredefinedRole(role, PredefinedRole.Public))?.id,
         roleTitle: PredefinedRole.Public,
         permissions: ['CHANNEL_EXISTS', 'CHANNEL_READ']
       },
       {
-        roleId: roles.find(role => role.title === PredefinedRole.Member)?.id,
+        roleId: roles.find(role => isPredefinedRole(role, PredefinedRole.Member))?.id,
         roleTitle: PredefinedRole.Member,
         permissions: ['CHANNEL_EXISTS', 'CHANNEL_READ', 'CHANNEL_WRITE']
       },

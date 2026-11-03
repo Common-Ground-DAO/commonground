@@ -15,6 +15,7 @@ import { useOwnUser, useOwnWallets } from 'context/OwnDataProvider';
 import RoleIcon from '../../atoms/icons/20/Role.svg?react';
 import { PredefinedRole } from 'common/enums';
 import { useUserSettingsContext } from 'context/UserSettingsProvider';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 const RoleAssignmentList = () => {
   const { community, ownRoles } = useLoadedCommunityContext();
@@ -57,7 +58,7 @@ const RoleAssignmentList = () => {
       else if (availableFilter === 'locked') return role.assignmentRules?.type === 'token' && !roleClaimability[role.id];
       else return role.assignmentRules?.type === 'free' || role.assignmentRules?.type === 'token';
     });
-    const privateRoles = remainingRoles.filter(role => role.assignmentRules === null && role.title !== PredefinedRole.Public);
+    const privateRoles = remainingRoles.filter(role => role.assignmentRules === null && !isPredefinedRole(role, PredefinedRole.Public));
     return {allAvailableRoles, availableRoles, privateRoles};
   }, [availableFilter, ownRoles, roleClaimability, roles]);
 

@@ -128,6 +128,13 @@ describe('updateRole', () => {
     expect(wroteRole()).toBe(false);
   });
 
+  it('a permission change spares only the predefined Admin role, not a custom role with its title', async () => {
+    storedTitle('Admin');
+    await update('Admin');
+    const write = clientQuery.mock.calls.find(([sql]) => String(sql).includes('UPDATE roles'))!;
+    expect(normalize(write[0])).toContain(`AND NOT ("type" = 'PREDEFINED' AND "title" = 'Admin')`);
+  });
+
   it('does not read the stored role for an ordinary title', async () => {
     storedTitle('Moderators');
     await update('Speakers');
@@ -137,5 +144,27 @@ describe('updateRole', () => {
 
   it('without a title (a predefined role\'s permissions) still passes the validator', () => {
     expect(validators.API.Community.updateRole.validate({ id: ROLE, communityId: COMMUNITY, permissions: [] }).error).toBeUndefined();
+  });
+});
+
+describe('role permission lists', () => {
+  const channel = (entry: Record<string, unknown>) => ({
+    communityId: COMMUNITY,
+    areaId: ROLE,
+    title: 'channel',
+    order: 1,
+    description: null,
+    emoji: '🙂',
+    url: null,
+    rolePermissions: [{ roleId: ROLE, roleTitle: 'Public', permissions: ['CHANNEL_EXISTS'], ...entry }],
+  });
+
+  it('accept the roleType the server sends with them (a client may send a list back as read)', () => {
+    expect(validators.API.Community.createChannel.validate(channel({ roleType: 'PREDEFINED' })).error).toBeUndefined();
+    expect(validators.API.Community.createChannel.validate(channel({})).error).toBeUndefined();
+  });
+
+  it('refuse an unknown roleType', () => {
+    expect(validators.API.Community.createChannel.validate(channel({ roleType: 'SOMETHING' })).error).toBeDefined();
   });
 });

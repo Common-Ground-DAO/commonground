@@ -26,6 +26,7 @@ import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal
 import JoinCommunityButton from 'components/atoms/JoinCommunityButton/JoinCommunityButton';
 import ReactionPicker from './ReactionPicker/ReactionPicker';
 import { useSnackbarContext } from 'context/SnackbarContext';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 dayjs.extend(relativeTime);
 const short = createTranslator();
@@ -46,7 +47,7 @@ const CallPage: React.FC = () => {
   const { showSnackbar } = useSnackbarContext();
 
   const isCommunityMember = useMemo(() => {
-    return ownRoles.some(role => role.title === PredefinedRole.Member);
+    return ownRoles.some(role => isPredefinedRole(role, PredefinedRole.Member));
   }, [ownRoles]);
   const [showJoinCommunityModal, setShowJoinCommunityModal] = useState(!isCommunityMember);
 

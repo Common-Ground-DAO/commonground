@@ -36,7 +36,8 @@
 > ServiceWorkerManager, §8, §9 entry points) against commit 79187d2, 2026-11-02;
 > "Writers of the shared entity databases" (§ Dexie) against commit 212bbce, 2026-11-02;
 > the message/comment lists on chat-sync windows (`GenericMessageList`, `CommentList`,
-> `Message`, `useChannelReadMarking`) against commit 65db935, 2026-11-02
+> `Message`, `ArticleCommentSection`, `useChannelReadMarking`) against commit caf7b67
+> (chat-sync/list-ui), 2026-11-03
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -111,7 +112,7 @@ Composed of atoms; represent small, functional UI units.
 
 | Component | Purpose |
 |---|---|
-| `Message` | Single chat message display (text, attachments, reactions). Its `MessageTooltip` sub-component hosts the per-message actions incl. the **Report** action. Re-renders on every change of the message object (edits, reactions, `sendStatus`); a pending own send is faded, a failed send or edit shows Retry and Discard / Undo edit (`retrySend` / `discardPending` of the channel store). Every item carries `data-timestamp` (scroll anchoring). |
+| `Message` | Single chat message display (text, attachments, reactions). Its `MessageTooltip` sub-component hosts the per-message actions incl. the **Report** action. Re-renders on every change of the message object (edits, reactions, `sendStatus`); a pending own send is faded and offers no tooltip actions or swipe-to-reply while `sendStatus` is `sending` / `error-send`, a failed send or edit shows Retry and Discard / Undo edit (`retrySend` / `discardPending` of the channel store). Every item carries `data-timestamp` (scroll anchoring). |
 | `MesssageBodyRenderer` | Renders message/article body content into React elements. Note the triple-`s` directory name. See §6 for the markdown pipeline. Exports `MessageBodyRenderer`, `AllContentRenderer`, and (in `MarkdownContent.tsx`) `MarkdownContent` + `toMarkdownSource`. |
 | `CommentMessage` | Article/post comment display |
 | `CommentList` | List of comments: one chat-sync window (`chat.channels.openWindow`), newest first, "load more" via `loadOlder`; failed comments offer Retry/Discard. `ArticleCommentSection` joins the article event room while the transport is live and again on every `onLive`; the room is ref-counted per access (`articleEventRooms.ts`), so it is left only when the last section of that article unmounts. |

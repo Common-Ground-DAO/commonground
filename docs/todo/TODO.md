@@ -293,7 +293,6 @@ that stack — confirm and delete:
     answers `NOT_ALLOWED` for the community owner;
   - the call chat sometimes sends `loadMessages` with `{callId, channelId, communityId}`, which
     fails the access validator (`VALIDATION`);
-  - the "edited" marker never shows for the other user;
   - `/files/` serves images as `application/octet-stream`;
   - `createCommunity` logs "Creating initial article failed … articleId null" when the template
     article does not exist;
@@ -301,6 +300,15 @@ that stack — confirm and delete:
     throws unhandled `NOT_FOUND` (`getCommunityDetailView`) and `VALIDATION`
     (`getArticleList`); a deep link to a non-existent profile article
     (`/u/<id>/article/<bad>/`) logs "Article uri invalid" and never leaves the loading screen.
+- [ ] **A call open to the Public role cannot be joined through it** (2026-11-03, found by
+  the public variant of the e2e flow `cs-call-chat`) — a call started with custom role
+  permissions that grant only the Public role is listed for a member and its chat works
+  (the call permission checks add the Public role), but the call server refuses the
+  member's room join with `NOT_ALLOWED`: `callHelper.hasPermissionToJoinCall`
+  (`srv/repositories/calls.ts`, used by `getOrCreateRoom` in `srv/mediasoup.ts`) counts
+  only the user's claimed roles. Add the Public role there like
+  `activeMembersWithPermissionsSql` does; the flow expects the refused join until then
+  (`PUBLIC_ROLE_JOIN_REFUSED`), so drop that expectation with the fix.
 - [ ] **A sole broadcaster's dropped or replaced connection ends the broadcast** (2026-11-02,
   G13 review) — the peer `close` handler in `srv/mediasoup/room.ts` closes the room as soon
   as no broadcaster is left, and `handleProtooConnection` closes a peer's previous
@@ -349,6 +357,13 @@ that stack — confirm and delete:
   without an error. Same flow: `EditField.tsx` calls `getRangeAt(0)` in the media-button
   positioning timeout without checking `rangeCount`, which throws `IndexSizeError` when
   the selection is empty.
+- [ ] **e2e: a hidden tab's socket close after 5 minutes and its catch-up** (2026-11-03,
+  final chat-sync review) — covered by unit tests only (`src/data/appstate/webSocket.test.ts`,
+  `HIDDEN_DISCONNECT_AFTER_MS` in `transport.ts`). The `cs-*` flows freeze tabs
+  (E8) but never keep one hidden for 5 minutes. A flow needs either an opt-in run that
+  waits it out (posts and an edit while the tab's socket is closed, then the tab brought
+  to the front catches up, like E8's frozen part) or a way for the disposable instance's
+  build to shorten the timeout.
 
 ## Optional / nice-to-have
 

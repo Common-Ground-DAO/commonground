@@ -192,9 +192,13 @@ describe('/getMemberList', () => {
       expect(axios.post).not.toHaveBeenCalled();
     });
 
-    it('refuses a former member the full list as well (membership needs a live community)', async () => {
+    it.each([
+      ['a former member (membership needs a live community)', asUser(ME)],
+      ['a visitor, without asking to log in', anonymous()],
+    ])('refuses the full list to %s', async (_label, req) => {
       // isMemberOfActiveCommunity is false for a deleted community
-      await expect(getMemberList(asUser(ME), { offset: 0, limit: 80 })).rejects.toThrow('NOT_ALLOWED');
+      await expect(getMemberList(req, { offset: 0, limit: 80 })).rejects.toThrow('NOT_ALLOWED');
+      expect(permissionHelper.isActiveCommunity).toHaveBeenCalledWith(COMMUNITY);
       expect(axios.post).not.toHaveBeenCalled();
     });
   });

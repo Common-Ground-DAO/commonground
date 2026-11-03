@@ -231,14 +231,15 @@ API.Community.getMemberList.Response
     // first members by name, without roles or presence
     const { user } = request.session;
     const isMember = !!user && await permissionHelper.isMemberOfActiveCommunity(user.id, data.communityId);
-    if (!isMember && !isMemberListPreviewRequest(data)) {
-      throw new Error(!user ? errors.server.LOGIN_REQUIRED : errors.server.NOT_ALLOWED);
-    }
     if (!isMember) {
-      // the preview, too, only while the community exists (a member of a
-      // deleted community is no member, see isMemberOfActiveCommunity)
+      // nothing at all for a deleted community, whoever asks (a member of a
+      // deleted community is no member, see isMemberOfActiveCommunity), the
+      // same answer as /getChannelMemberList; logging in would not help
       if (!(await permissionHelper.isActiveCommunity(data.communityId))) {
         throw new Error(errors.server.NOT_ALLOWED);
+      }
+      if (!isMemberListPreviewRequest(data)) {
+        throw new Error(!user ? errors.server.LOGIN_REQUIRED : errors.server.NOT_ALLOWED);
       }
       const preview = await axios.post<API.Community.getMemberList.Response>(
         'http://memberlist:4000/getMemberListPreview',
@@ -252,8 +253,11 @@ API.Community.getMemberList.Response
           }
         },
       );
-      // memberlist answers an empty list for a community it does not know yet;
-      // an empty body (an older service) becomes one, too
+      // memberlist answers an empty list for a community it does not know yet
+      // (memberListOrEmpty guards against an empty body all the same). A
+      // memberlist without this route answers 404, i.e. the generic error;
+      // compose restarts api and memberlist together, and falling back to the
+      // window would bring back a presence-dependent preview
       return toMemberListPreview(convertBinaryMemberListToUuid(memberListOrEmpty(preview.data)), data.limit);
     }
     const memberList = await axios.post<API.Community.getMemberList.Response>(

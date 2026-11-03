@@ -35,7 +35,9 @@
 > the service worker's part in multi-tab coordination (§4 WebSocketManager and
 > ServiceWorkerManager, §8, §9 entry points) against commit 79187d2, 2026-11-02;
 > "Writers of the shared entity databases" (§ Dexie) against commit 212bbce, 2026-11-02;
-> `signedOutElsewhere()` during the own logout against commit f97ef1b, 2026-11-02
+> `signedOutElsewhere()` during the own logout against commit f97ef1b, 2026-11-02;
+> `data.notification`, `NotificationProvider` and `NotificationsBrowser` (unread count,
+> list, marking read) against commit f9f6327, 2026-11-02
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -362,7 +364,7 @@ Views are full pages composed of templates/organisms. They live in `src/views/` 
 
 | View | Route | Purpose |
 |---|---|---|
-| `NotificationsBrowser` | `/notifications/`, `/notifications/:notificationShortUuid/` | Notification list (optionally focused on one notification) |
+| `NotificationsBrowser` | `/notifications/`, `/notifications/:notificationShortUuid/` | Notification list (optionally focused on one notification): one `data.notification.openList()` window, first page once `loginState` is `loggedin`, older pages via `loadOlder`; one `markAsRead` per click or selection (the selection marks an id once; a click on an unread item always marks, so it retries after a failure); a "Mark all read" button (`markAllAsRead`) while the count is > 0; spinner until the first page is there, then the empty state |
 
 ### Auth and Verification
 
@@ -447,7 +449,7 @@ The `Inner()` stack (outer → inner) is, in order: `IsolationModeProvider`, `Wa
 |---|---|
 | `CallProvider` | Voice/video call state. Manages `RoomClient` (MediaSoup wrapper), call reducer state (peers, consumers, producers), join/leave/mute actions. |
 | `CallDevicesProvider` | Audio/video device selection for calls. |
-| `NotificationProvider` | Notification state and unread counts. |
+| `NotificationProvider` | Push subscription / PWA state and the unread notification count (subscribed via `data.notification.subscribeUnreadCount`, always a number). |
 
 #### UI State Providers
 
@@ -521,7 +523,7 @@ All databases are aggregated in `src/data/index.ts`:
 ```typescript
 const data = {
   community: communityDB,    // CommunityDatabase
-  notification: notificationDB, // NotificationDatabase
+  notification: notificationDB, // façade over chat.notifications (NotificationStore)
   user: userDB,               // UserDatabase
   signedUrls: signedUrlsDB,   // SignedUrlsDatabase
   chats: chatsDB,             // ChatsDatabase
@@ -537,7 +539,7 @@ const data = {
 | `channelManager` (`data.channelManager`) | `channel.ts` | none (memory) | Façade over the tab's chat stores, see "Chat runtime and `data.channelManager`" below. |
 | `ChunkedItemDatabase` | `channel/chunkedDatabase.ts` | `items`, `chunks`, `status` | Legacy chunked list database. Channel messages no longer use it (they are in memory, `chat.channels`); deleted with the chunked cache. |
 | `ChatsDatabase` | `chats.ts` | Chat conversations and last messages. |
-| `NotificationDatabase` | `notification.ts` | Notification storage and unread counts. |
+| `data.notification` | `notification.ts` | none (no Dexie) | Thin façade over the tab's `NotificationStore` (`chat.notifications`, `src/data/chat/notificationStore.ts`): memory + server only. The unread count is always a number and comes from the server only (login value, `unreadCount` of `cliNotificationEvent`, `getUnreadCount` after a resync or a mark-read), `subscribeUnreadCount` is multi-subscriber; `openList()` gives an item window (`init`, `loadOlder`, `destroy`) on one list kept in memory while no window is open (live events still apply; after a resync without an open window the next `init` reloads the newest page); `markAsRead` is a no-op for read or in-flight items; `setupAfterLogin(count)` is synchronous; `clear()` on logout. |
 | `SignedUrlsDatabase` | `signedUrls.ts` | Cache for signed asset URLs. |
 | `UniqueDatabase` | `unique.ts` | Key-value store for singleton data (`OwnData`, `CommunityDetailViewUpdateTimestamps`, etc.). |
 

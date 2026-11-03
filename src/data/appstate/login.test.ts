@@ -53,6 +53,10 @@ const fake = vi.hoisted(() => {
     snapshots: [] as { db: string; options?: { requestStartedAt?: number } }[],
     /** client event handlers (connectionManager) of the tab opened last */
     clientEventHandlers: new Map<string, (...args: unknown[]) => void>(),
+    /** every count passed to setupChatAfterLogin (the notification count) */
+    notificationCounts: [] as unknown[],
+    /** when set, Notification/getUnreadCount answers only once resolved */
+    unreadCountGate: undefined as Deferred<void> | undefined,
   };
 });
 
@@ -157,12 +161,19 @@ vi.mock('data/databases/channel', () => ({ default: { userId: undefined, clear: 
 const chatHooks = vi.hoisted(() => ({ calls: [] as string[] }));
 vi.mock('data/chat/runtime', () => ({
   clearChat: () => { chatHooks.calls.push('clear'); },
-  setupChatAfterLogin: (count: number | string) => { chatHooks.calls.push(`setup:${count}`); },
+  setupChatAfterLogin: (count: number | string) => { chatHooks.calls.push(`setup:${count}`); fake.notificationCounts.push(count); },
 }));
 vi.mock('data/databases/unique', () => ({
   default: { uniques: { get: async (key: string) => (key === 'OwnData' ? { key, data: { id: 'u1' } } : undefined) } },
 }));
-vi.mock('data/api/notifications', () => ({ default: { getUnreadCount: async () => '2' } }));
+vi.mock('data/api/notifications', () => ({
+  default: {
+    getUnreadCount: async () => {
+      await fake.unreadCountGate?.promise;
+      return '2';
+    },
+  },
+}));
 vi.mock('data/api/community', () => ({ default: { getCommunityDetailView: async () => ({}) } }));
 vi.mock('data/api/chat', () => ({ default: { getChats: async () => [] } }));
 vi.mock('util/siwe', () => ({ default: () => '' }));
@@ -193,6 +204,8 @@ afterEach(() => {
 
 function resetServer() {
   fake.snapshots.length = 0;
+  fake.notificationCounts.length = 0;
+  fake.unreadCountGate = undefined;
   Object.assign(fake.server, {
     secret: undefined,
     secretCounter: 0,
@@ -550,6 +563,46 @@ describe('logout and login in other tabs', () => {
     expect(tab.loginManager.state).toBe('loggedin');
     expect(tab.loginManager.currentUser?.userId).toBe('u1');
     expect(socketLoggedInAs(tab.socket)).toBe('dev-1');
+    channel.close();
+  });
+
+  it('a logout during the adoption does not set the adopted notification count', async () => {
+    setup();
+    const tab = await openTab();
+    await tab.loginManager.autoLogin();
+    await settle();
+    fake.unreadCountGate = deferred();
+
+    fake.server.sessionUserId = 'u1';
+    storeUser('u1', 'dev-1');
+    const channel = new BroadcastChannel(AUTH_BROADCAST_CHANNEL);
+    channel.postMessage({ v: 1, type: 'logged-in', tabId: 'other-tab', userId: 'u1' } satisfies AuthBroadcastMessage);
+    await settle();
+    // the other tab logs out again while getUnreadCount is still pending
+    fake.server.sessionUserId = null;
+    localStorage.removeItem(CURRENT_USER_KEY);
+    channel.postMessage({ v: 1, type: 'logged-out', tabId: 'other-tab', userId: 'u1' } satisfies AuthBroadcastMessage);
+    await settle();
+    fake.unreadCountGate.resolve();
+    await settle();
+
+    expect(tab.loginManager.state).toBe('anonymous');
+    expect(fake.notificationCounts).toEqual([]);
+    channel.close();
+  });
+
+  it('a login in another tab passes the server count to the notifications', async () => {
+    setup();
+    const tab = await openTab();
+    await tab.loginManager.autoLogin();
+    await settle();
+    fake.server.sessionUserId = 'u1';
+    storeUser('u1', 'dev-1');
+    const channel = new BroadcastChannel(AUTH_BROADCAST_CHANNEL);
+    channel.postMessage({ v: 1, type: 'logged-in', tabId: 'other-tab', userId: 'u1' } satisfies AuthBroadcastMessage);
+    await settle();
+    expect(tab.loginManager.state).toBe('loggedin');
+    expect(fake.notificationCounts).toEqual([2]);
     channel.close();
   });
 

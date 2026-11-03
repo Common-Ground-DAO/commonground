@@ -148,6 +148,13 @@ class NotificationStoreImpl implements NotificationStore {
   /** loaded notifications, ascending */
   private items: Notification[] = [];
   private loaded = false;
+  /**
+   * a resync happened while no window was open: the loaded list may lack what
+   * was missed meanwhile, so the next `init` reloads the newest page
+   */
+  private stale = false;
+  /** ids deleted by live events while a stale reload is in flight */
+  private reloadDeleted: Set<string> | null = null;
   private startsAtBeginning = false;
   private loading: Promise<void> | null = null;
   private olderLoading: Promise<void> | null = null;
@@ -254,6 +261,7 @@ class NotificationStoreImpl implements NotificationStore {
         const before = this.items.length;
         this.items = this.items.filter(n => !ids.has(n.id));
         change = this.items.length !== before;
+        if (this.reloadDeleted) for (const id of ids) this.reloadDeleted.add(id);
         break;
       }
       case 'allread': {
@@ -290,7 +298,9 @@ class NotificationStoreImpl implements NotificationStore {
     if (this.disposed || !this.deps.events.userId) return;
     this.resyncTimer.start(NOTIFICATION_RESYNC_DEBOUNCE_MS, () => {
       this.fetchCount().catch(noop);
-      if (this.loaded && this.windows.size > 0) this.refreshNewest().catch(noop);
+      if (!this.loaded) return;
+      if (this.windows.size > 0) this.refreshNewest().catch(noop);
+      else this.stale = true;
     });
   }
 
@@ -332,19 +342,43 @@ class NotificationStoreImpl implements NotificationStore {
   }
 
   private ensureLoaded(): Promise<void> {
-    if (this.loaded) return Promise.resolve();
+    if (this.loaded && !this.stale) return Promise.resolve();
     if (!this.loading) {
       const generation = this.generation;
+      const reload = this.loaded;
+      // items present at the start of a reload are replaced by the page;
+      // the ones live events add or change meanwhile are kept if they lie
+      // within the page's range (an older one would hide the gap below the
+      // page from loadOlder), and ids deleted meanwhile stay deleted
+      const before = new Set(this.items);
+      const deleted = reload ? new Set<string>() : null;
+      this.reloadDeleted = deleted;
+      const done = () => {
+        if (this.reloadDeleted === deleted) this.reloadDeleted = null;
+      };
       this.loading = this.deps.api.loadNotifications({ order: 'DESC' }).then(
-        page => {
+        raw => {
           this.loading = null;
+          done();
           if (generation !== this.generation) return;
-          for (const n of page.map(fromApi)) this.upsert(n);
+          const page = raw.map(fromApi).sort(compare);
+          let during: Notification[] = [];
+          if (reload) {
+            const oldest = page[0];
+            during = this.items.filter(n => !before.has(n)
+              && (page.length < PAGE_SIZE || n.createdAt.getTime() >= oldest.createdAt.getTime()));
+            this.items = [];
+            this.stale = false;
+          }
+          for (const n of page) if (!deleted?.has(n.id)) this.upsert(n);
+          for (const n of during) this.upsert(n);
           this.startsAtBeginning = page.length < PAGE_SIZE;
           this.loaded = true;
+          if (reload) this.notify();
         },
         e => {
           this.loading = null;
+          done();
           throw e;
         },
       );
@@ -570,6 +604,8 @@ class NotificationStoreImpl implements NotificationStore {
     this.generation++;
     this.items = [];
     this.loaded = false;
+    this.stale = false;
+    this.reloadDeleted = null;
     this.loading = null;
     this.olderLoading = null;
     this.startsAtBeginning = false;

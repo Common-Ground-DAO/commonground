@@ -162,16 +162,9 @@ export const NotificationProvider = React.memo((props: React.PropsWithChildren) 
   }, [navigate]);
   
   useEffect(() => {
-    if (unreadCount !== data.notification.unreadCount) {
-      setUnreadCount(data.notification.unreadCount);
-    }
-    data.notification.onunreadcountchange = (value) => {
-      setUnreadCount(value);
-    }
-    return () => {
-      data.notification.onunreadcountchange = () => undefined;
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // the count may have changed between the first render and this subscription
+    setUnreadCount(data.notification.unreadCount);
+    return data.notification.subscribeUnreadCount(setUnreadCount);
   }, []);
 
   useEffect(() => {

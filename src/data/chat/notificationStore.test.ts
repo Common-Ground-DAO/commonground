@@ -275,3 +275,158 @@ describe('NotificationStore: list', () => {
     expect(store.unreadCount).toBe(10);
   });
 });
+
+describe('NotificationStore: list reopened after a resync without an open window', () => {
+  async function reopen(store: ReturnType<typeof setup>['store']) {
+    const w = store.openList();
+    const p = w.init({ type: 'recent' });
+    await settle();
+    await p;
+    return w;
+  }
+
+  it('a reopened list contains a notification missed during the gap', async () => {
+    const { server, store } = setup();
+    server.addNotification({ text: 'a' }, { deliver: false });
+    let w = await reopen(store);
+    w.destroy(); // the user leaves /notifications
+    server.goOffline();
+    server.addNotification({ text: 'missed' }, { deliver: false });
+    server.goLive();
+    await vi.advanceTimersByTimeAsync(NOTIFICATION_RESYNC_DEBOUNCE_MS);
+    await settle();
+    expect(store.unreadCount).toBe(2);
+    expect(server.callsOf('loadNotifications')).toHaveLength(1); // no fetch while closed
+    w = await reopen(store);
+    expect(w.state.items.map(n => n.text)).toEqual(['a', 'missed']);
+    expect(server.callsOf('loadNotifications')).toHaveLength(2);
+    w.destroy();
+  });
+
+  it('read flags changed elsewhere during the gap are fresh after reopening; a deleted one is gone', async () => {
+    const { server, store } = setup();
+    const a = server.addNotification({ text: 'a' }, { deliver: false }) as { data: { id: string } };
+    const b = server.addNotification({ text: 'b' }, { deliver: false }) as { data: { id: string } };
+    let w = await reopen(store);
+    w.destroy();
+    server.goOffline();
+    server.readNotificationElsewhere(a.data.id, { deliver: false });
+    server.deleteNotifications([b.data.id], { deliver: false });
+    server.resume('visible');
+    await vi.advanceTimersByTimeAsync(NOTIFICATION_RESYNC_DEBOUNCE_MS);
+    await settle();
+    w = await reopen(store);
+    expect(w.state.items.map(n => [n.text, n.read])).toEqual([['a', true]]);
+    w.destroy();
+  });
+
+  it('without a resync the reopened list is served from memory (no refetch)', async () => {
+    const { server, store } = setup();
+    server.addNotification({ text: 'a' }, { deliver: false });
+    let w = await reopen(store);
+    w.destroy();
+    server.addNotification({ text: 'live' }); // delivered: applied while closed
+    w = await reopen(store);
+    expect(w.state.items.map(n => n.text)).toEqual(['a', 'live']);
+    expect(server.callsOf('loadNotifications')).toHaveLength(1);
+    w.destroy();
+  });
+
+  it('a live notification arriving during the reload is kept', async () => {
+    const { server, store } = setup();
+    server.addNotification({ text: 'a' }, { deliver: false });
+    let w = await reopen(store);
+    w.destroy();
+    server.goLive();
+    await vi.advanceTimersByTimeAsync(NOTIFICATION_RESYNC_DEBOUNCE_MS);
+    await settle();
+    server.hold('loadNotifications');
+    w = store.openList();
+    const p = w.init({ type: 'recent' });
+    await settle();
+    server.addNotification({ text: 'during' }); // the held page was computed without it
+    server.release('loadNotifications');
+    await settle();
+    await p;
+    expect(w.state.items.map(n => n.text)).toEqual(['a', 'during']);
+    w.destroy();
+  });
+
+  async function staleAfterGap(server: FakeChatServer) {
+    server.goOffline();
+    server.goLive();
+    await vi.advanceTimersByTimeAsync(NOTIFICATION_RESYNC_DEBOUNCE_MS);
+    await settle();
+  }
+
+  it('an update of an item older than the reloaded page leaves no gap for loadOlder', async () => {
+    const { server, store } = setup();
+    const ids: string[] = [];
+    for (let i = 0; i < 45; i++) {
+      const ev = server.addNotification({ text: 'n' + i }, { deliver: false }) as { data: { id: string } };
+      ids.push(ev.data.id);
+      await vi.advanceTimersByTimeAsync(1000);
+    }
+    let w = await reopen(store);
+    const p0 = w.loadOlder(30);
+    await settle();
+    await p0;
+    expect(w.state.items).toHaveLength(45);
+    w.destroy();
+    await staleAfterGap(server);
+    server.hold('loadNotifications');
+    w = store.openList();
+    const p = w.init({ type: 'recent' });
+    await settle();
+    server.readNotificationElsewhere(ids[0]); // delivered while the page is in flight
+    server.release('loadNotifications');
+    await settle();
+    await p;
+    for (let i = 0; i < 5; i++) {
+      const q = w.loadOlder(30);
+      await settle();
+      await q;
+    }
+    expect(w.state.items.map(n => n.text)).toEqual(Array.from({ length: 45 }, (_, i) => 'n' + i));
+    expect(w.state.items[0].read).toBe(true);
+    w.destroy();
+  });
+
+  it('a delete during the reload stays deleted (the page computed earlier does not bring it back)', async () => {
+    const { server, store } = setup();
+    const a = server.addNotification({ text: 'a' }, { deliver: false }) as { data: { id: string } };
+    server.addNotification({ text: 'b' }, { deliver: false });
+    let w = await reopen(store);
+    w.destroy();
+    await staleAfterGap(server);
+    server.hold('loadNotifications');
+    w = store.openList();
+    const p = w.init({ type: 'recent' });
+    await settle();
+    server.deleteNotifications([a.data.id]); // delivered while the page is in flight
+    server.release('loadNotifications');
+    await settle();
+    await p;
+    expect(w.state.items.map(n => n.text)).toEqual(['b']);
+    w.destroy();
+  });
+
+  it('no duplicate when the in-flight page already contains the live item', async () => {
+    const { server, store } = setup();
+    server.addNotification({ text: 'a' }, { deliver: false });
+    let w = await reopen(store);
+    w.destroy();
+    await staleAfterGap(server);
+    const ev = server.addNotification({ text: 'live' }, { deliver: false });
+    server.hold('loadNotifications');
+    w = store.openList();
+    const p = w.init({ type: 'recent' });
+    await settle();
+    server.deliverNotification(ev);
+    server.release('loadNotifications');
+    await settle();
+    await p;
+    expect(w.state.items.map(n => n.text)).toEqual(['a', 'live']);
+    w.destroy();
+  });
+});

@@ -8,7 +8,6 @@ import userDatabase from "data/databases/user";
 import communityDatabase from "data/databases/community";
 import chatDatabase from "data/databases/chats";
 import webSocketManager from "./webSocket";
-import notificationDatabase from "data/databases/notification";
 import errors from "common/errors";
 import { clearChat, setupChatAfterLogin } from "data/chat/runtime";
 import channelDatabaseManager from "data/databases/channel";
@@ -469,7 +468,6 @@ class LoginManager {
       webSocketManager.logout();
       channelDatabaseManager.userId = undefined;
       clearChat();
-      notificationDatabase.unreadCount = 0;
       this.state = "anonymous";
     })().finally(() => {
       delete this.logoutPromise;
@@ -529,9 +527,9 @@ class LoginManager {
         uniqueDb.uniques.get("OwnData") as Promise<Unique.OwnData | undefined>,
         notificationsApi.getUnreadCount(undefined),
       ]);
-      setupChatAfterLogin(Number(unreadCount));
-      if (!!ownData) {
-        await notificationDatabase.setupAfterLogin(Number(unreadCount), ownData.data);
+      // a logout or user switch during the awaits must not get this count
+      if (!!ownData && this._currentUser === stored) {
+        setupChatAfterLogin(Number(unreadCount));
       }
     } catch (e) {
       console.error("Error setting up notifications after a login in another tab", e);
@@ -1026,10 +1024,6 @@ class LoginManager {
         // transport reports `live` itself)
         restricted ? Promise.resolve() : (webSocketManager.login(data.deviceId).catch(e => debugLog("socket login", e)), Promise.resolve()),
         restricted ? Promise.resolve() : serviceWorkerManager.setupAfterLogin(data.webPushSubscription),
-        notificationDatabase.setupAfterLogin(data.unreadNotificationCount, data.ownData).catch(async (e) => {
-          await notificationDatabase.clear();
-          return notificationDatabase.setupAfterLogin(data.unreadNotificationCount, data.ownData);
-        }),
       ]);
       this._waitBeforeWindowReload = promise;
       try {
@@ -1048,7 +1042,6 @@ class LoginManager {
         communityDatabase.clear(),
         chatDatabase.clear(),
         channelDatabaseManager.clear(),
-        notificationDatabase.clear(),
       ]);
       this._waitBeforeWindowReload = promise;
       try {

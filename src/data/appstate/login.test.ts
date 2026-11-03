@@ -44,6 +44,11 @@ const fake = vi.hoisted(() => {
     preLoginGate: undefined as Deferred<void> | undefined,
     /** when set, the next User/login fails with this error (before the secret check) */
     failNextLogin: undefined as string | undefined,
+    /**
+     * called by User/logout before it answers, like the server's
+     * cliSignedOut to the device's other sockets (srv/api/user.ts)
+     */
+    onLogout: undefined as (() => void) | undefined,
   };
   return {
     io: undefined as FakeIo | undefined,
@@ -57,6 +62,8 @@ const fake = vi.hoisted(() => {
     notificationCounts: [] as unknown[],
     /** when set, Notification/getUnreadCount answers only once resolved */
     unreadCountGate: undefined as Deferred<void> | undefined,
+    /** stored rows registered in the chat stores (registerStoredChats/registerStoredChannels) */
+    storedRowsRegistered: [] as string[],
   };
 });
 
@@ -128,6 +135,8 @@ vi.mock('data/api/user', () => ({
     logout: async () => {
       fake.server.logoutCalls++;
       fake.server.sessionUserId = null;
+      fake.server.onLogout?.();
+      await new Promise<void>(resolve => setImmediate(resolve));
     },
   },
 }));
@@ -152,6 +161,8 @@ const stubDb = (db?: string) => ({
     if (db) fake.snapshots.push({ db, options });
   },
   clear: async () => undefined,
+  registerStoredChats: async () => { fake.storedRowsRegistered.push(`${db}`); },
+  registerStoredChannels: async () => { fake.storedRowsRegistered.push(`${db}`); },
 });
 vi.mock('data/databases/user', () => ({ default: stubDb() }));
 vi.mock('data/databases/community', () => ({ default: stubDb('community') }));
@@ -206,6 +217,7 @@ function resetServer() {
   fake.snapshots.length = 0;
   fake.notificationCounts.length = 0;
   fake.unreadCountGate = undefined;
+  fake.storedRowsRegistered.length = 0;
   Object.assign(fake.server, {
     secret: undefined,
     secretCounter: 0,
@@ -214,6 +226,7 @@ function resetServer() {
     secretGate: undefined,
     preLoginGate: undefined,
     failNextLogin: undefined,
+    onLogout: undefined,
     sessionUserId: null,
     loginCalls: 0,
     logoutCalls: 0,
@@ -437,6 +450,24 @@ describe('login lock', () => {
     expect(socketLoggedInAs(tab.socket)).toBe('dev-2');
   });
 
+  it('(c) with a failed session check, following the changed stored user logs in (no wait for its own autoLogin)', async () => {
+    setup();
+    storeUser('u1', 'dev-1');
+    const tab = await openTab();
+    // another tab logged in interactively as u2 (its storage event is late);
+    // this tab's status check does not see that session
+    storeUser('u2', 'dev-2');
+    fake.server.sessionUserId = null;
+    const outcome = await Promise.race([
+      tab.loginManager.autoLogin().then(() => 'resolved', () => 'rejected'),
+      new Promise(resolve => setTimeout(() => resolve('hung'), 2_000)),
+    ]);
+    expect(outcome).toBe('resolved');
+    expect(tab.loginManager.state).toBe('loggedin');
+    expect(tab.loginManager.currentUser?.userId).toBe('u2');
+    expect(fake.server.loginCalls).toBe(1); // dev-2's own device login
+  });
+
   it('a failed device login (not NOT_FOUND) is retried with a backoff', async () => {
     useDataLayerFakeTimers();
     setup();
@@ -558,6 +589,8 @@ describe('logout and login in other tabs', () => {
     await settle();
 
     expect(fake.server.loginCalls).toBe(0);
+    // DM and channel access (and read state) from the rows the other tab wrote
+    expect(fake.storedRowsRegistered.sort()).toEqual(['chats', 'community']);
     // the adopted login takes the server's notification count
     expect(chatHooks.calls).toEqual(['setup:2']);
     expect(tab.loginManager.state).toBe('loggedin');
@@ -637,6 +670,86 @@ describe('logout and login in other tabs', () => {
     channel.close();
   });
 
+  /** tab B logged in next to `a`, with its notice and its cliSignedOut handler */
+  async function secondTab() {
+    const b = await openTab();
+    await b.loginManager.autoLogin();
+    await settle();
+    expect(b.loginManager.state).toBe('loggedin');
+    const { default: notice } = await import('data/auth/signedOut');
+    notice.dismiss();
+    const onSignedOut = fake.clientEventHandlers.get('cliSignedOut')!;
+    expect(onSignedOut).toBeDefined();
+    return { ...b, notice, onSignedOut };
+  }
+
+  it('a logout in one tab: the server\'s cliSignedOut reaches the other tab first — no notice there, one User/logout', async () => {
+    setup();
+    const a = await loggedInTab();
+    const b = await secondTab();
+    fake.server.onLogout = () => b.onSignedOut();
+    await a.loginManager.logout();
+    await until(() => b.loginManager.state === 'anonymous');
+    // past B's next re-check of the sign-out
+    await new Promise(resolve => setTimeout(resolve, 150));
+    await settle();
+    expect(b.notice.shown).toBe(false);
+    expect(fake.server.logoutCalls).toBe(1);
+    expect(b.loginManager.currentUser).toBeNull();
+    expect(localStorage.getItem('CG_LOGOUT_IN_PROGRESS')).toBeNull();
+  });
+
+  it('the same without the broadcast (no BroadcastChannel in the other tab): it follows CG_CURRENT_USER', async () => {
+    setup();
+    const a = await loggedInTab();
+    const Real = globalThis.BroadcastChannel;
+    (globalThis as { BroadcastChannel?: unknown }).BroadcastChannel = undefined;
+    let b: Awaited<ReturnType<typeof secondTab>>;
+    try {
+      b = await secondTab();
+    } finally {
+      globalThis.BroadcastChannel = Real;
+    }
+    fake.server.onLogout = () => b.onSignedOut();
+    await a.loginManager.logout();
+    await until(() => b.loginManager.state === 'anonymous');
+    await new Promise(resolve => setTimeout(resolve, 150));
+    expect(b.notice.shown).toBe(false);
+    expect(fake.server.logoutCalls).toBe(1);
+  });
+
+  it('a sign-out from elsewhere: every tab shows the notice, one User/logout', async () => {
+    setup();
+    const a = await loggedInTab();
+    const { default: noticeA } = await import('data/auth/signedOut');
+    noticeA.dismiss();
+    const onSignedOutA = fake.clientEventHandlers.get('cliSignedOut')!;
+    const b = await secondTab();
+    // another device signed this one out: session and device key are gone
+    fake.server.sessionUserId = null;
+    fake.server.devices.delete('dev-1');
+    onSignedOutA();
+    b.onSignedOut();
+    await until(() => a.loginManager.state === 'anonymous' && b.loginManager.state === 'anonymous');
+    // the tab that follows the other one shows it on its next re-check
+    await until(() => noticeA.shown && b.notice.shown);
+    expect(fake.server.logoutCalls).toBe(1);
+  });
+
+  it('a sign-out from elsewhere in a single tab shows the notice once the re-check found no logout of another tab', async () => {
+    setup();
+    const tab = await loggedInTab();
+    const { default: notice } = await import('data/auth/signedOut');
+    notice.dismiss();
+    fake.server.sessionUserId = null;
+    fake.clientEventHandlers.get('cliSignedOut')!();
+    await settle();
+    expect(notice.shown).toBe(false); // still re-checking
+    await until(() => tab.loginManager.state === 'anonymous');
+    expect(notice.shown).toBe(true);
+    expect(fake.server.logoutCalls).toBe(1);
+  });
+
   it('a cliSignedOut while the tab logs out itself shows no "signed out elsewhere" notice', async () => {
     setup();
     const tab = await loggedInTab();
@@ -662,6 +775,25 @@ describe('LOGIN_REQUIRED', () => {
     const tab = await loggedInTab();
     await expect(tab.loginManager.loginRequiredErrorHandler()).resolves.toBeUndefined();
     expect(fake.server.loginCalls).toBe(1);
+  });
+
+  it('a LOGIN_REQUIRED during the own logout (windows the clear re-inits) does not log in again', async () => {
+    setup();
+    const tab = await loggedInTab();
+    const { default: channelDb } = await import('data/databases/channel');
+    let handled: Promise<void> | undefined;
+    (channelDb as unknown as { clear: () => Promise<void> }).clear = async () => {
+      // the re-initialised window's request answered LOGIN_REQUIRED (the session is gone)
+      handled = tab.loginManager.loginRequiredErrorHandler();
+      await handled;
+    };
+    await tab.loginManager.logout();
+    expect(handled).toBeDefined();
+    await handled;
+    await settle();
+    expect(fake.server.loginCalls).toBe(1);
+    expect(tab.loginManager.state).toBe('anonymous');
+    expect(tab.loginManager.currentUser).toBeNull();
   });
 
   it('logs in with the device key when the session is gone, in any tab', async () => {

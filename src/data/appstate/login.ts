@@ -458,6 +458,15 @@ class LoginManager {
   private async runSignedOutElsewhere() {
     const userId = this._currentUser?.userId;
     const deviceId = this._currentUser?.deviceId;
+    // In every case (another tab's logout of this device, a password change
+    // or a sign-out from another device) the device's session and key are
+    // gone on the server: the socket drops the device at once, before the
+    // server's disconnect makes it reconnect — no socket login with the
+    // revoked key. The re-check below only decides notice vs. silent follow
+    // and which tab calls `User/logout`.
+    if (deviceId) {
+      webSocketManager.deviceSignedOut(deviceId);
+    }
     // this tab is logging out already: the server's sign-out of the device's
     // sockets can reach this tab's socket too (when it could not tell the
     // requesting socket apart), and it is no sign-out from elsewhere
@@ -858,8 +867,9 @@ class LoginManager {
   public async refreshAfterReconnect(): Promise<void> {
     if (
       this.state !== "loggedin" || !this.currentUser || this._windowReloadTriggered ||
-      this._loginRunning || this.logoutPromise
+      this._loginRunning || this.logoutPromise || this.__signedOutPromise
     ) {
+      // signing out (the device key may be gone): no device login
       return;
     }
     const { userId, deviceId } = this.currentUser;
@@ -873,7 +883,7 @@ class LoginManager {
         if (!!status && status.userId !== null && status.userId !== userId) {
           return 'other-user' as const;
         }
-        if (this.state !== "loggedin" || this.currentUser?.userId !== userId) {
+        if (this.state !== "loggedin" || this.currentUser?.userId !== userId || this.__signedOutPromise) {
           return undefined;
         }
         const request = await this.deviceLoginRequest(deviceId, signal);

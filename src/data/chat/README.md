@@ -56,7 +56,9 @@ until one succeeded (retry without it on a validation error).
 - `runtime.ts` — the tab's one runtime (`chat.channels`, `chat.readState`,
   `chat.notifications`, `chat.events`) with the real connectors, the
   ChatEventSource and the entity-db persistence; login hook-up
-  (`setupChatAfterLogin`, `clearChat`). Façades: `data.channelManager`
+  (`setupChatAfterLogin`, `clearChat`: DM windows re-init only at the next
+  login). Access comes from the entity databases and from `getSyncState`; a
+  window op waits at most `ACCESS_WAIT_MS` for it (`WINDOW_ERROR.NO_ACCESS`). Façades: `data.channelManager`
   (`data/databases/channel.ts`), `data.notification`
   (`data/databases/notification.ts`).
 - `testing/fakeServer.ts` — scripted fake server (ChatApi + NotificationApi +

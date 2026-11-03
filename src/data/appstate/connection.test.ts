@@ -4,7 +4,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { installBrowserEnv } from 'test/env';
-import { createFakeIo, NO_ACK, type FakeIo } from 'test/fakeSocket';
+import { createFakeIo, type FakeIo } from 'test/fakeSocket';
 import { importAsNewTab } from 'test/modules';
 import { useDataLayerFakeTimers } from 'test/timers';
 import { flushMicrotasks } from 'test/deferred';
@@ -17,8 +17,8 @@ const REFRESH_MAX_MS = 3_000;
  * connectionManager on top of the transport: the old app events fire on
  * live (after the socket-login ack), the HTTP device login runs once per
  * page load (reconnects only log the socket in), a restored live refreshes
- * the community/chat data, the version flag triggers the service-worker
- * update, and the shims (tabState, lastDisconnect) keep working.
+ * the community/chat data, and the version flag triggers the service-worker
+ * update.
  */
 
 // stable objects: a mocked module may be served from the mock cache across
@@ -173,20 +173,5 @@ describe('connectionManager', () => {
     expect(listener).toHaveBeenCalledWith(true);
     expect(tab.connectionManager.updateAvailable).toBe(true);
     expect(tab.connectionManager.webSocketState).toBe('connected');
-  });
-
-  it('shims: tabState is always active, lastDisconnect moves on every disconnect', async () => {
-    useDataLayerFakeTimers();
-    const tab = await openTab('dev-1');
-    await settle();
-    expect(tab.connectionManager.tabState).toBe('active');
-    const before = tab.connectionManager.lastDisconnect.getTime();
-    await vi.advanceTimersByTimeAsync(60_000);
-    tab.socket.handle('login', () => NO_ACK);
-    tab.socket.drop('transport close');
-    const after = tab.connectionManager.lastDisconnect.getTime();
-    // the last event before the gap, at most 30 s before the disconnect
-    expect(after).toBeGreaterThan(before);
-    expect(after).toBe(Date.now() - 30_000);
   });
 });

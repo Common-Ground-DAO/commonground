@@ -33,32 +33,6 @@ export type ServiceWorkerMessage = {
   channelId: string;
 };
 
-/**
- * @deprecated The worker no longer assigns tab roles. Type-only leftovers of
- * the former referee's wire format, kept because `data/appstate/webSocket.ts`
- * still imports them until the chat-sync transport slice drops its tab roles.
- * TODO(chat-sync): delete once nothing imports them (the wire format of old
- * pages lives on as `Legacy*` in data/appstate/transport.ts).
- */
-export type TabToWorkerMessage = {
-  type: 'TabToWorker';
-  tabId: string;
-  tabState: Common.TabState | 'tabClosed';
-  visible?: boolean;
-  socketState?: Common.WebSocketState;
-  lastEventTime?: number;
-  lastDisconnect?: number;
-};
-/** @deprecated see TabToWorkerMessage */
-export type WorkerToTabMessage = {
-  type: 'WorkerToTab';
-  tabId: string;
-  tabState: Common.TabState;
-  socketState?: Common.WebSocketState;
-  lastEventTime?: number;
-  lastDisconnect?: number;
-};
-
 const svgIconDataUrl = "data:image/svg+xml," + encodeURIComponent(`<?xml version="1.0" encoding="UTF-8"?>
   <svg width="40" height="40" fill="none" version="1.1" viewBox="0 0 40 30" xmlns="http://www.w3.org/2000/svg">
   <rect y="-5" width="40" height="40" rx="4" ry="4" fill="#404bbb"/>
@@ -143,7 +117,7 @@ precacheController.addToCacheList(preloadData);
 const precacheRoute = new PrecacheRoute(precacheController);
 registerRoute(precacheRoute);
 
-// TODO(chat-sync compat): remove with installLegacyTabCompat below.
+// COMPAT — remove one release after chat-sync, with installLegacyTabCompat below.
 // Created at startup on purpose (see createActiveWorkerCheck).
 const activeWorkerCheck = createActiveWorkerCheck(self);
 
@@ -237,7 +211,8 @@ registerRoute(
 // This allows the web app to trigger skipWaiting via
 // registration.waiting.postMessage({type: 'SKIP_WAITING'})
 // Pages from before chat-sync may also post { type: 'STOP_TAB_HANDLING' }
-// (it switched off the former tab-role referee); it is ignored.
+// (it switched off the former tab-role referee); it is ignored. CHANNEL_VISITED
+// is not compat: new pages send it too.
 self.addEventListener('message', (event: Omit<ExtendableMessageEvent, 'data'> & {data: ServiceWorkerMessage}) => {
   if (event.data) {
     if (event.data.type === 'SKIP_WAITING') {
@@ -256,8 +231,8 @@ self.addEventListener('message', (event: Omit<ExtendableMessageEvent, 'data'> & 
   }
 });
 
-// TODO(chat-sync compat): remove one release after chat-sync ships, together
-// with src/serviceWorkerLegacyTabs.ts. Answers role requests of still-open
+// COMPAT — remove one release after chat-sync, together with
+// src/serviceWorkerLegacyTabs.ts. Answers role requests of still-open
 // pages from before chat-sync with "active"; tab roles are gone otherwise.
 // Only the active worker answers: a new worker that is installed but waiting
 // must not answer next to the old build's worker, which still assigns roles.

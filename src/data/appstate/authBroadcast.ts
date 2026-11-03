@@ -156,8 +156,8 @@ export function broadcastLoggedIn(userId: string) {
 /** Tells the other tabs (new and, for one release, old pages) that this tab logged out. */
 export function broadcastLoggedOut(userId: string | null) {
   authChannel()?.postMessage({ v: 1, type: 'logged-out', tabId: authTabId, userId } satisfies AuthBroadcastMessage);
-  // old pages (before chat-sync) handle this as "another tab logged out";
-  // new pages never listen on that channel. Remove in the release after chat-sync.
+  // COMPAT — remove one release after chat-sync: old pages (before chat-sync)
+  // handle this as "another tab logged out"; new pages never listen on that channel.
   const legacy = openChannel(LEGACY_LOGIN_STATE_CHANNEL);
   if (legacy) {
     legacy.postMessage('anonymous');

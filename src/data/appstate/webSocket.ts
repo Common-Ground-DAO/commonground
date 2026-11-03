@@ -142,16 +142,9 @@ export class WebSocketManager implements Transport {
   private _resumeListeners = new Set<(reason: ResumeReason) => void>();
   private _updateAvailableListeners = new Set<() => void>();
   private _socketConnectedListeners = new Set<() => void>();
-  private _disconnectedListeners = new Set<(lastEventTime: number) => void>();
 
   /** legacy CG ID popup requests this tab's socket watches (re-sent on reconnect) */
   private cgIdRequestIds = new Set<string>();
-
-  /**
-   * @deprecated compatibility shim for the page-side service-worker code
-   * before chat-sync; has no effect. Remove with the last caller.
-   */
-  public sendStateBroadcastUpdates = true;
 
   constructor() {
     setRequestSocketIdProvider(() => this.getRequestSocketId());
@@ -256,11 +249,6 @@ export class WebSocketManager implements Transport {
     return subscribe(this._socketConnectedListeners, listener);
   }
 
-  /** Every socket `disconnect`, with the time up to which events are known to have arrived. */
-  public onDisconnected(listener: (lastEventTime: number) => void): Unsubscribe {
-    return subscribe(this._disconnectedListeners, listener);
-  }
-
   // --------------------------------------------------------- state & callbacks
 
   get lastEventTime() {
@@ -288,23 +276,6 @@ export class WebSocketManager implements Transport {
   }
   set clientEventHandler(handler: ((name: string, event: any) => void) | undefined) {
     this._clientEventHandler = handler;
-  }
-
-  /**
-   * @deprecated compatibility shim: there are no tab roles any more, every
-   * tab handles its own socket. Always `'active'`. Remove with the last
-   * reader (channel.ts, wave 2).
-   */
-  get tabState(): Common.TabState {
-    return 'active';
-  }
-
-  /**
-   * @deprecated compatibility shim for the page-side service-worker code
-   * before chat-sync; does nothing. Remove with the last caller.
-   */
-  public reRegister() {
-    // no tab ids to renegotiate
   }
 
   private computeState(): Common.WebSocketState {
@@ -535,7 +506,6 @@ export class WebSocketManager implements Transport {
       }
       // the server-side ping timeout is 15 s: events after (now - 30 s) may be lost
       this._lastEventTime = Math.max(this._lastEventTime, Date.now() - DISCONNECT_SAFETY_MS);
-      emitAll(this._disconnectedListeners, this._lastEventTime);
 
       if (reason === "io server disconnect") {
         // socket.io does not reconnect by itself here (reconnecting first

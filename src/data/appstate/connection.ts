@@ -11,7 +11,6 @@ type ServiceWorkerProgressListener = (progress: number | null) => void;
 type LoginStateListener = (state: Common.LoginState) => void;
 type VisibilityStateListener = (state: Common.VisibilityState) => void;
 type OnlineStateListener = (state: Common.OnlineState) => void;
-type TabStateListener = (tabState: Common.TabState) => void;
 type UpdateAvailableListener = (updateAvailable: boolean) => void;
 type ErrorListener = (o: {origin: string, error: unknown}) => void;
 
@@ -32,14 +31,6 @@ const serviceWorkerManagerP = (async () => {
 })();
 
 export class ConnectionManager {
-  /**
-   * @deprecated compatibility shim for the chunked message cache (removed in
-   * wave 3): chunks updated before this time are re-validated. Starts at the
-   * page load (another tab's cache writes are not trusted blindly) and
-   * moves to "last event before the gap" on every socket disconnect.
-   */
-  private _lastDisconnect = new Date(webSocketManager.lastEventTime);
-
   private _serviceWorkerState: Common.ServiceWorkerState = "pending";
   private _serviceWorkerProgress: number | null = null;
   private _webSocketState: Common.WebSocketState = webSocketManager.state;
@@ -53,7 +44,6 @@ export class ConnectionManager {
   private _loginStateListeners = new Set<LoginStateListener>();
   private _visibilityStateListeners = new Set<VisibilityStateListener>();
   private _onlineStateListeners = new Set<OnlineStateListener>();
-  private _tabStateListeners = new Set<TabStateListener>();
   private _updateAvailableListeners = new Set<UpdateAvailableListener>();
   private _errorListeners = new Set<ErrorListener>();
   private _serviceWorkerNavigateListeners = new Set<(url: string) => void>();
@@ -69,9 +59,6 @@ export class ConnectionManager {
     webSocketManager.onError = this.onError.bind(this, "WebSocketManager");
     webSocketManager.clientEventHandler = this.eventHandler.bind(this);
     webSocketManager.onLive(this.onLive.bind(this));
-    webSocketManager.onDisconnected((lastEventTime) => {
-      this._lastDisconnect = new Date(lastEventTime);
-    });
     webSocketManager.onUpdateAvailable(() => {
       serviceWorkerManagerP.then(serviceWorkerManager => {
         serviceWorkerManager.update(true);
@@ -118,23 +105,6 @@ export class ConnectionManager {
   }
 
   /* GETTERS & SETTERS */
-
-  /** @deprecated see `_lastDisconnect` */
-  get lastDisconnect(): Date {
-    return this._lastDisconnect;
-  }
-  set lastDisconnect(value: Date) {
-    this._lastDisconnect = value;
-  }
-
-  /**
-   * @deprecated compatibility shim: every tab owns its socket, there are no
-   * tab roles. Always `'active'`; `tabStateChange` listeners never fire.
-   * Remove with the last reader (channel.ts, wave 2).
-   */
-  get tabState(): Common.TabState {
-    return 'active';
-  }
 
   /** A newer build is deployed (see Transport.updateAvailable). */
   get updateAvailable(): boolean {
@@ -352,8 +322,6 @@ export class ConnectionManager {
   public addListener(type: "loginStateChange", fn: LoginStateListener): void;
   public addListener(type: "visibilityStateChange", fn: VisibilityStateListener): void;
   public addListener(type: "onlineStateChange", fn: OnlineStateListener): void;
-  /** @deprecated never fires (no tab roles) */
-  public addListener(type: "tabStateChange", fn: TabStateListener): void;
   public addListener(type: "updateAvailableChange", fn: UpdateAvailableListener): void;
   public addListener(type: "error", fn: ErrorListener): void;
   public addListener(type: "serviceWorkerNavigate", fn: (url: string) => void): void;
@@ -370,8 +338,6 @@ export class ConnectionManager {
       this._visibilityStateListeners.add(fn);
     } else if (type === "onlineStateChange") {
       this._onlineStateListeners.add(fn);
-    } else if (type === "tabStateChange") {
-      this._tabStateListeners.add(fn);
     } else if (type === "updateAvailableChange") {
       this._updateAvailableListeners.add(fn);
     } else if (type === "error") {
@@ -387,8 +353,6 @@ export class ConnectionManager {
   public removeListener(type: "loginStateChange", fn: LoginStateListener): void;
   public removeListener(type: "visibilityStateChange", fn: VisibilityStateListener): void;
   public removeListener(type: "onlineStateChange", fn: OnlineStateListener): void;
-  /** @deprecated never fires (no tab roles) */
-  public removeListener(type: "tabStateChange", fn: TabStateListener): void;
   public removeListener(type: "updateAvailableChange", fn: UpdateAvailableListener): void;
   public removeListener(type: "error", fn: ErrorListener): void;
   public removeListener(type: "serviceWorkerNavigate", fn: (url: string) => void): void;
@@ -405,8 +369,6 @@ export class ConnectionManager {
       this._visibilityStateListeners.delete(fn);
     } else if (type === "onlineStateChange") {
       this._onlineStateListeners.delete(fn);
-    } else if (type === "tabStateChange") {
-      this._tabStateListeners.delete(fn);
     } else if (type === "updateAvailableChange") {
       this._updateAvailableListeners.delete(fn);
     } else if (type === "error") {

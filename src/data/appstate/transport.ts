@@ -83,8 +83,8 @@ export const RESUME_MIN_HIDDEN_MS = 30_000;
  * `cliConnectionRestored` exactly at the `established` / `restored`
  * transitions (no longer on the raw socket `connect`; `user` has no app
  * event), and `Common.WebSocketState` reports `connected` only
- * while live. `version-update` stops being a socket state (see
- * Transport.updateAvailable).
+ * while live. A newer build on the server is reported by
+ * Transport.updateAvailable, not as a socket state.
  */
 export type LiveKind = 'established' | 'restored' | 'user';
 
@@ -226,11 +226,13 @@ export type AuthBroadcastMessage = {
  * on logout a new page additionally posts the plain string `'anonymous'` on
  * it, which still-open old pages handle as "another tab logged out" (their
  * existing behaviour). Nothing else is posted there.
+ * COMPAT — remove one release after chat-sync.
  */
 export const LEGACY_LOGIN_STATE_CHANNEL = 'CG_LOGIN_STATE';
 
 // ---------------------------------------------------------------------------
-// Service-worker compatibility with old pages (one release)
+// Service-worker compatibility with old pages
+// COMPAT — remove one release after chat-sync (with src/serviceWorkerLegacyTabs.ts)
 // ---------------------------------------------------------------------------
 
 /**

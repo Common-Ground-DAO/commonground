@@ -3,9 +3,9 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 /*
- * TODO(chat-sync compat): remove one release after chat-sync ships (together
- * with its call in src/service-worker.ts and the Legacy* types in
- * src/data/appstate/transport.ts).
+ * COMPAT — remove one release after chat-sync (together with its call in
+ * src/service-worker.ts and the Legacy* types in
+ * src/data/appstate/transport.ts). Deploy compatibility with old open tabs.
  *
  * Pages from before chat-sync ask the service worker for a tab role on the
  * LEGACY_WEBSOCKET_STATE_CHANNEL BroadcastChannel and stay disconnected until

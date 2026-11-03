@@ -71,7 +71,7 @@ class DbTracker {
                             }
                         }
                     }
-                    let saveRequired = Object.keys(this.existingDatabases).some(name => !updatedDbNames.has(name));
+                    const saveRequired = Object.keys(this.existingDatabases).some(name => !updatedDbNames.has(name));
                     if (saveRequired) {
                         localStorage.setItem(identifier, JSON.stringify(this.existingDatabases)); 
                     }

@@ -133,8 +133,9 @@ describe('messageHelper.isChannelInAccessScope', () => {
     const normalized = normalize(poolQuery.mock.calls[0][0]);
     expect(normalized).toContain('FROM communities_channels cc INNER JOIN communities c ON c."id" = cc."communityId"');
     expect(normalized).toContain('WHERE cc."communityId" = $1 AND cc."channelId" = $2');
-    expect(normalized).toContain('cc."deletedAt" IS NULL');
-    expect(normalized).toContain('c."deletedAt" IS NULL');
+    // a leading space, so that `cc."deletedAt"` does not count for `c."deletedAt"`
+    expect(normalized).toContain(' cc."deletedAt" IS NULL');
+    expect(normalized).toContain(' c."deletedAt" IS NULL');
   });
 
   it('counts an unpublished user article only for its author', async () => {

@@ -7,12 +7,14 @@
  * the call server before it creates a peer and on `join`) against a real,
  * throwaway PostgreSQL (skipped unless CG_TEST_PG_HOST is set). The test
  * creates and drops its own database `cg_call_join_test` and the
- * cluster-wide role `writer` if missing — never point it at a server with
+ * cluster-wide role `mediasoup` if missing — never point it at a server with
  * data. Host and port come only from CG_TEST_PG_HOST / CG_TEST_PG_PORT
  * (tests/helpers/testPg.ts).
  *
- * Schema: the columns the statement touches. It runs as the api's role
- * `writer` on a read-only session.
+ * Schema: the columns the statement touches. It runs as the call server's
+ * role `mediasoup` on a read-only session, with the table rights the
+ * addMediasoup* / addCallPermissions migrations give it plus the
+ * MediasoupCallJoinGrants migration (run here, up/down/up).
  */
 
 import { Pool } from 'pg';
@@ -21,7 +23,7 @@ import { TEST_PG_HOST, TEST_PG_PORT, TEST_PG_PASSWORD, describeDb } from './help
 const HOST = TEST_PG_HOST;
 const PORT = TEST_PG_PORT;
 const PASSWORD = TEST_PG_PASSWORD;
-const WRITER_PASSWORD = 'writer-test';
+const MEDIASOUP_PASSWORD = 'mediasoup-test';
 const DATABASE = 'cg_call_join_test';
 
 let mockPoolTarget: Pool | undefined;
@@ -31,6 +33,7 @@ jest.mock('../util/postgres', () => ({
 }));
 
 import callHelper from '../repositories/calls';
+import { MediasoupCallJoinGrants1793635300000 as GrantsMigration } from '../migrations/1793635300000-mediasoupCallJoinGrants';
 import { CallPermission } from '../common/enums';
 
 const id = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
@@ -71,39 +74,45 @@ const MUTED = id(0x406);      // chat-muted, no roles
 describeDb('call join permission on PostgreSQL', () => {
   let server: Pool;
   let admin: Pool;
-  let writer: Pool;
+  let callServer: Pool;
   const q = (sql: string, params?: unknown[]) => admin.query(sql, params);
 
   beforeAll(async () => {
     server = new Pool({ host: HOST, port: PORT, user: 'postgres', password: PASSWORD, database: 'postgres', max: 2 });
     await server.query(`DROP DATABASE IF EXISTS ${DATABASE} WITH (FORCE)`);
     await server.query(`CREATE DATABASE ${DATABASE}`);
-    await server.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'writer') THEN CREATE ROLE writer; END IF; END $$`);
-    await server.query(`ALTER ROLE writer LOGIN PASSWORD '${WRITER_PASSWORD}'`);
+    await server.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mediasoup') THEN CREATE ROLE mediasoup; END IF; END $$`);
+    await server.query(`ALTER ROLE mediasoup LOGIN PASSWORD '${MEDIASOUP_PASSWORD}'`);
     admin = new Pool({ host: HOST, port: PORT, user: 'postgres', password: PASSWORD, database: DATABASE });
 
     const permissionValues = Object.values(CallPermission).map(p => `'${p}'`).join(', ');
     await q(`CREATE TYPE "public"."callpermissions_permissions_enum" AS ENUM (${permissionValues})`);
     await q(`CREATE TYPE "public"."roles_type_enum" AS ENUM ('PREDEFINED', 'CUSTOM_MANUAL_ASSIGN', 'CUSTOM_AUTO_ASSIGN')`);
     await q(`CREATE TYPE "public"."user_community_state_blockstate_enum" AS ENUM ('CHAT_MUTED', 'BANNED')`);
-    await q(`CREATE TABLE communities ("id" uuid PRIMARY KEY, "deletedAt" timestamptz)`);
+    await q(`CREATE TABLE communities ("id" uuid PRIMARY KEY, "deletedAt" timestamptz, "title" varchar(64))`);
     await q(`CREATE TABLE calls ("id" uuid PRIMARY KEY, "communityId" uuid NOT NULL, "endedAt" timestamptz)`);
     await q(`CREATE TABLE roles ("id" uuid PRIMARY KEY, "communityId" uuid NOT NULL, "title" varchar(64) NOT NULL, "type" "public"."roles_type_enum" NOT NULL, "deletedAt" timestamptz)`);
     await q(`CREATE TABLE roles_users_users ("roleId" uuid NOT NULL, "userId" uuid NOT NULL, "claimed" boolean NOT NULL DEFAULT false, PRIMARY KEY ("userId", "roleId"))`);
     await q(`CREATE TABLE callpermissions ("callId" uuid NOT NULL, "roleId" uuid NOT NULL, "permissions" "public"."callpermissions_permissions_enum"[] NOT NULL, PRIMARY KEY ("callId", "roleId"))`);
-    await q(`CREATE TABLE user_community_state ("userId" uuid NOT NULL, "communityId" uuid NOT NULL, "blockState" "public"."user_community_state_blockstate_enum", "blockStateUntil" timestamptz, PRIMARY KEY ("userId", "communityId"))`);
-    await q(`GRANT SELECT ON ALL TABLES IN SCHEMA public TO writer`);
+    await q(`CREATE TABLE user_community_state ("userId" uuid NOT NULL, "communityId" uuid NOT NULL, "blockState" "public"."user_community_state_blockstate_enum", "blockStateUntil" timestamptz, "notifyMentions" boolean NOT NULL DEFAULT true, PRIMARY KEY ("userId", "communityId"))`);
+    // what the call server's role had before (addMediasoup* and addCallPermissions migrations)
+    await q(`GRANT SELECT ON calls, callpermissions, roles, roles_users_users TO mediasoup`);
+    const runner = { query: (sql: string, params?: unknown[]) => q(sql, params) } as any;
+    const migration = new GrantsMigration();
+    await migration.up(runner);
+    await migration.down(runner);
+    await migration.up(runner);
 
-    writer = new Pool({
-      host: HOST, port: PORT, user: 'writer', password: WRITER_PASSWORD, database: DATABASE,
+    callServer = new Pool({
+      host: HOST, port: PORT, user: 'mediasoup', password: MEDIASOUP_PASSWORD, database: DATABASE,
       options: '-c default_transaction_read_only=on',
     });
-    for (const pool of [server, admin, writer]) {
+    for (const pool of [server, admin, callServer]) {
       pool.on('error', () => undefined);
     }
-    mockPoolTarget = writer;
+    mockPoolTarget = callServer;
 
-    await q(`INSERT INTO communities VALUES ($1, NULL), ($2, NULL), ($3, now())`, [COMMUNITY, OTHER_COMMUNITY, DELETED_COMMUNITY]);
+    await q(`INSERT INTO communities ("id", "deletedAt") VALUES ($1, NULL), ($2, NULL), ($3, now())`, [COMMUNITY, OTHER_COMMUNITY, DELETED_COMMUNITY]);
     const calls: [string, string, boolean][] = [
       [CALL_PUBLIC, COMMUNITY, false],
       [CALL_MEMBER, COMMUNITY, false],
@@ -134,10 +143,10 @@ describeDb('call join permission on PostgreSQL', () => {
     }
     await q(`INSERT INTO roles_users_users VALUES ($1, $4, true), ($2, $5, true), ($3, $5, true), ($2, $6, false)`,
       [R_ADMIN, R_MEMBER, R_DELCOM_MEMBER, ADMIN, MEMBER, UNCLAIMED]);
-    await q(`INSERT INTO user_community_state VALUES ($1, $4, 'BANNED', NULL), ($2, $4, 'BANNED', now() - interval '1 day'), ($3, $4, 'CHAT_MUTED', NULL)`,
+    await q(`INSERT INTO user_community_state ("userId", "communityId", "blockState", "blockStateUntil") VALUES ($1, $4, 'BANNED', NULL), ($2, $4, 'BANNED', now() - interval '1 day'), ($3, $4, 'CHAT_MUTED', NULL)`,
       [BANNED, BAN_OVER, MUTED, COMMUNITY]);
     // a ban elsewhere does not matter
-    await q(`INSERT INTO user_community_state VALUES ($1, $2, 'BANNED', NULL)`, [VISITOR, OTHER_COMMUNITY]);
+    await q(`INSERT INTO user_community_state ("userId", "communityId", "blockState", "blockStateUntil") VALUES ($1, $2, 'BANNED', NULL)`, [VISITOR, OTHER_COMMUNITY]);
 
     const JOIN = '{CALL_EXISTS,CALL_JOIN,CHANNEL_READ,CHANNEL_WRITE,AUDIO_SEND,VIDEO_SEND,SHARE_SCREEN}';
     const MODERATE = '{CALL_EXISTS,CALL_JOIN,CHANNEL_READ,CHANNEL_WRITE,AUDIO_SEND,VIDEO_SEND,SHARE_SCREEN,CALL_MODERATE,PIN_FOR_EVERYONE,END_CALL_FOR_EVERYONE}';
@@ -161,7 +170,7 @@ describeDb('call join permission on PostgreSQL', () => {
   }, 60000);
 
   afterAll(async () => {
-    await writer?.end();
+    await callServer?.end();
     await admin?.end();
     await server?.query(`DROP DATABASE IF EXISTS ${DATABASE} WITH (FORCE)`);
     await server?.end();
@@ -210,6 +219,11 @@ describeDb('call join permission on PostgreSQL', () => {
       expect(await mayJoin(UNCLAIMED, CALL_MEMBER)).toBe(false);
       expect(await mayJoin(BANNED, CALL_MEMBER)).toBe(false);
     });
+  });
+
+  it('the call server\'s role reads only the granted columns of communities and user_community_state', async () => {
+    await expect(callServer.query(`SELECT "title" FROM communities`)).rejects.toThrow(/permission denied/);
+    await expect(callServer.query(`SELECT "notifyMentions" FROM user_community_state`)).rejects.toThrow(/permission denied/);
   });
 
   describe('calls that are gone', () => {

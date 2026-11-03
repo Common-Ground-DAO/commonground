@@ -48,7 +48,10 @@
 > single `/Message` mount and the test list against commit 330fe2f, 2026-11-03; the call and event
 > role ids, `/setUserBlockState` (ban transaction), the reserved role titles, the role resolution
 > of `permissionHelper` (predefined Public role, owning community) and the test list against
-> commits dac9eaf, 9385d52, b3fa87b, 24922f5 and 7814781, 2026-11-03.
+> commits dac9eaf, 9385d52, b3fa87b, 24922f5 and 7814781, 2026-11-03; the role title rule on
+> update, the event role check before any write, the join/ban membership lock and the
+> `roleType` of role permission lists against commits 0e4c794, d6354ef, 3bd44c0 and 138c630,
+> 2026-11-03.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -329,7 +332,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/getCommunityList` -- List communities for the current user
 - `/getCommunitiesById` -- Get communities by IDs
 - `/getCommunityDetailView` -- Full community detail view
-- `/joinCommunity` -- Join a community
+- `/joinCommunity` -- Join a community. The ban check and the Member role insert run in one transaction under the same membership lock (advisory lock on community + user) that a ban takes, so a join and a ban of the same user run one after the other
 - `/leaveCommunity` -- Leave a community
 - `/setUserBlockState` -- Ban/unban users. A ban removes the user's roles of the community and stores the block state in one transaction (if either fails, nothing is kept and the request fails); the leave events and room changes follow after the commit
 - `/getMemberList` -- Get community members: the full list for members, a short preview (first members by name, ids only) for others while the community is not deleted
@@ -348,6 +351,7 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 
 **Roles:**
 - `/createRole`, `/updateRole`, `/deleteRole` -- the titles of the predefined roles (Admin, Member, Public) are reserved, in any letter case (`srv/util/roleTitles.ts`): `/createRole` refuses them (validator); `/updateRole` lets a custom role keep the reserved title it already carries and refuses a change to one (`INVALID_REQUEST`, checked against the stored role in `communityHelper.updateRole`)
+- Role permission lists of channels, articles and events (`rolePermissions`, as read from the server) carry `roleType` next to `roleTitle`, so clients tell a predefined role from a custom role with the same title (`src/util/predefinedRoles.ts`); the write validators accept the field and ignore it (the role is named by `roleId`)
 - `/checkCommunityRoleClaimability` -- Check if user can claim a token-gated role
 - `/claimRole` -- Claim a token-gated role
 - `/addUserToRoles`, `/removeUserFromRoles`
@@ -1694,7 +1698,7 @@ with wave M2 (see below).
   model of the adapter's rooms), `socketTargetingRoutes` (exclusion sites,
   article rooms, call delivery targets), `socketLogin` (the end of the socket login
   when the socket went away meanwhile), `callDeliveryTargets`, `callMediaKind` (the
-  permission a `produce` needs), `communityBan` (the ban transaction) and
+  permission a `produce` needs and the order of the produce checks), `communityBan` (the ban transaction and the membership lock of joining and banning), `communityEventRoles` (the event role check before any write) and
   `roleTitleValidator` (the reserved role titles) (the passkey
   tests drive a software authenticator, `tests/helpers/softAuthenticator.ts`). Against a
   throwaway PostgreSQL, opt-in via `CG_TEST_PG_HOST` (skipped otherwise):

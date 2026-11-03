@@ -1168,8 +1168,9 @@ The client login lifecycle is owned by `LoginManager` (`src/data/appstate/login.
   `LoginManager.signedOutElsewhere()` sign out locally (`logout()`: local databases, device key,
   current user) and raise `signedOutNotice` (`src/data/auth/signedOut.ts`); `SignedOutNotice`
   shows "You were signed out" with "Sign in" / "Not now". Every tab gets `cliSignedOut`; it
-  re-checks for 1 s and decides under the login lock, so one tab calls `User/logout` and the
-  others follow it (all show the notice). A logout in another tab of the same browser (which
+  re-checks for 1 s and decides under the login lock, so normally one tab calls `User/logout`
+  and the others follow it (all show the notice; a second `User/logout` is harmless). Signing
+  in again, also in another tab, dismisses the notice. A logout in another tab of the same browser (which
   deletes this device's key too, and whose `cliSignedOut` reaches the other tabs before that tab
   is done) shows no notice: the logging-out tab writes `CG_LOGOUT_IN_PROGRESS` before its
   `User/logout`, and a tab that sees it, the changed stored current user or the broadcast follows

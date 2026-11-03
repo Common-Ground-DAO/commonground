@@ -355,7 +355,7 @@ class CallHelper {
       ), member_role AS (
         SELECT id
         FROM roles
-        WHERE "communityId" = $1
+        WHERE "communityId" = $9
           AND "type" = ${format("%L", RoleType.PREDEFINED)}
           AND "title" = ${format("%L", PredefinedRole.Member)}
       ), admin_role AS (
@@ -395,6 +395,33 @@ class CallHelper {
     }
   }
 
+  /**
+   * The role permissions to store for a call of `communityId`, without the
+   * Admin role (it always gets MODERATOR_PERMISSIONS). Every role id must be
+   * a live role of that community; otherwise the request is refused with
+   * NOT_ALLOWED.
+   */
+  private async getCheckedRolePermissions(communityId: string, rolePermissions: { roleId: string; permissions: Common.CallPermission[] }[]) {
+    const rolesResult = await pool.query(`
+      SELECT "id", "type", "title"
+      FROM roles
+      WHERE "communityId" = $1
+        AND "deletedAt" IS NULL
+    `, [communityId]);
+    const roles = rolesResult.rows as { id: string; type: RoleType; title: string }[];
+    const adminRole = roles.find(r => r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Admin);
+    if (!adminRole) {
+      throw new Error(errors.server.UNKNOWN);
+    }
+    const communityRoleIds = new Set(roles.map(r => r.id));
+    for (const rolePermission of rolePermissions) {
+      if (!communityRoleIds.has(rolePermission.roleId)) {
+        throw new Error(errors.server.NOT_ALLOWED);
+      }
+    }
+    return rolePermissions.filter(p => p.roleId !== adminRole.id);
+  }
+
   private async getRoles(communityId: string, rolePermissions?: { roleId: string; permissions: Common.CallPermission[] }[]) {
     let roleInsert: string = ``;
     if (rolePermissions === undefined) {
@@ -404,26 +431,14 @@ class CallHelper {
         ARRAY[${format("%L", MEMBER_PERMISSIONS)}]::"public"."callpermissions_permissions_enum"[]
       )`;
     } else if (rolePermissions.length > 0) {
-      const adminRoleQuery = await pool.query(`
-        SELECT id
-        FROM roles
-        WHERE "communityId" = $1
-          AND "type" = ${format("%L", RoleType.PREDEFINED)}
-          AND "title" = ${format("%L", PredefinedRole.Admin)}
-      `, [communityId]);
-
-      const adminRole = adminRoleQuery.rows[0] as {
-        id: string;
-      };
-      if (!adminRole) {
-        throw new Error(errors.server.UNKNOWN);
+      rolePermissions = await this.getCheckedRolePermissions(communityId, rolePermissions);
+      if (rolePermissions.length > 0) {
+        roleInsert = `,` + rolePermissions.map(role => format(`(
+            (SELECT id FROM insert_call),
+            %L::uuid,
+            ARRAY[${format("%L", role.permissions)}]::"public"."callpermissions_permissions_enum"[])
+          `, role.roleId)).join(",");
       }
-      rolePermissions = rolePermissions.filter(p => p.roleId !== adminRole.id);
-      roleInsert = `,` + rolePermissions.map(role => format(`(
-          (SELECT id FROM insert_call),
-          %L::uuid, 
-          ARRAY[${format("%L", role.permissions)}]::"public"."callpermissions_permissions_enum"[])
-        `, role.roleId)).join(",");
     }
     return roleInsert;
   }
@@ -437,26 +452,14 @@ class CallHelper {
         ARRAY[${format("%L", MEMBER_PERMISSIONS)}]::"public"."callpermissions_permissions_enum"[]
       )`;
     } else if (rolePermissions.length > 0) {
-      const adminRoleQuery = await pool.query(`
-        SELECT id
-        FROM roles
-        WHERE "communityId" = $1
-          AND "type" = ${format("%L", RoleType.PREDEFINED)}
-          AND "title" = ${format("%L", PredefinedRole.Admin)}
-      `, [communityId]);
-
-      const adminRole = adminRoleQuery.rows[0] as {
-        id: string;
-      };
-      if (!adminRole) {
-        throw new Error(errors.server.UNKNOWN);
+      rolePermissions = await this.getCheckedRolePermissions(communityId, rolePermissions);
+      if (rolePermissions.length > 0) {
+        roleInsert = `,` + rolePermissions.map(role => format(`(
+            ${format("%L::UUID", callId)},
+            %L::uuid,
+            ARRAY[${format("%L", role.permissions)}]::"public"."callpermissions_permissions_enum"[])
+          `, role.roleId)).join(",");
       }
-      rolePermissions = rolePermissions.filter(p => p.roleId !== adminRole.id);
-      roleInsert = `,` + rolePermissions.map(role => format(`(
-          ${format("%L::UUID", callId)},
-          %L::uuid, 
-          ARRAY[${format("%L", role.permissions)}]::"public"."callpermissions_permissions_enum"[])
-        `, role.roleId)).join(",");
     }
     return roleInsert;
   }

@@ -356,9 +356,10 @@ class NotificationStoreImpl implements NotificationStore {
       const done = () => {
         if (this.reloadDeleted === deleted) this.reloadDeleted = null;
       };
-      this.loading = this.deps.api.loadNotifications({ order: 'DESC' }).then(
+      // a clear (logout) meanwhile may have started a newer load: only ours is reset
+      const loading: Promise<void> = this.deps.api.loadNotifications({ order: 'DESC' }).then(
         raw => {
-          this.loading = null;
+          if (this.loading === loading) this.loading = null;
           done();
           if (generation !== this.generation) return;
           const page = raw.map(fromApi).sort(compare);
@@ -377,11 +378,12 @@ class NotificationStoreImpl implements NotificationStore {
           if (reload) this.notify();
         },
         e => {
-          this.loading = null;
+          if (this.loading === loading) this.loading = null;
           done();
           throw e;
         },
       );
+      this.loading = loading;
     }
     return this.loading;
   }
@@ -476,18 +478,19 @@ class NotificationStoreImpl implements NotificationStore {
       const oldest = this.items[0];
       const request: API.Notification.loadNotifications.Request = { order: 'DESC' };
       if (oldest) request.createdBefore = oldest.createdAt.toISOString();
-      this.olderLoading = this.deps.api.loadNotifications(request).then(
+      const olderLoading: Promise<void> = this.deps.api.loadNotifications(request).then(
         page => {
-          this.olderLoading = null;
+          if (this.olderLoading === olderLoading) this.olderLoading = null;
           if (generation !== this.generation) return;
           for (const n of page.map(fromApi)) this.upsert(n);
           if (page.length < PAGE_SIZE) this.startsAtBeginning = true;
         },
         e => {
-          this.olderLoading = null;
+          if (this.olderLoading === olderLoading) this.olderLoading = null;
           throw e;
         },
       );
+      this.olderLoading = olderLoading;
     }
     return this.olderLoading;
   }

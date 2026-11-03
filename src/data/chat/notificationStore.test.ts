@@ -226,6 +226,34 @@ describe('NotificationStore: list', () => {
     expect(w.state.items).toEqual([]);
   });
 
+  it('a load from before clear() answering late does not let the next init load a second time', async () => {
+    const { server, store } = setup();
+    server.addNotification({ text: 'a' }, { deliver: false });
+    server.hold('loadNotifications', 2);
+    const stale = store.openList();
+    const staleInit = stale.init({ type: 'recent' }).catch(() => undefined);
+    await settle();
+    store.clear(); // logout (and the next login) while the first page is in flight
+    const w1 = store.openList();
+    const p1 = w1.init({ type: 'recent' });
+    await settle();
+    expect(server.callsOf('loadNotifications')).toHaveLength(2);
+    server.release('loadNotifications', 1); // the stale answer
+    await settle();
+    const w2 = store.openList();
+    const p2 = w2.init({ type: 'recent' });
+    await settle();
+    // w2 joins the running load
+    expect(server.callsOf('loadNotifications')).toHaveLength(2);
+    server.release('loadNotifications');
+    await settle();
+    await Promise.all([p1, p2, staleInit]);
+    expect(w2.state.items.map(n => n.text)).toEqual(['a']);
+    stale.destroy();
+    w1.destroy();
+    w2.destroy();
+  });
+
   it('a failed markAsRead does not revert a read confirmed by the server meanwhile', async () => {
     const { server, store } = setup();
     const ev = server.addNotification({}, { deliver: false });

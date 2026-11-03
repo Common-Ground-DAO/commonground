@@ -10,6 +10,14 @@ import { chat } from 'data/chat/runtime';
 import CommentList from 'components/molecules/CommentList/CommentList';
 import data from 'data';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { createArticleRoomRegistry } from './articleEventRooms';
+
+/** the tab's article event rooms (one socket, so one registry) */
+const articleEventRooms = createArticleRoomRegistry({
+  transport: webSocketManager,
+  join: access => messageApi.joinArticleEventRoom({ access }),
+  leave: access => messageApi.leaveArticleEventRoom({ access }),
+});
 
 type Props = {
   articleId: string;
@@ -69,36 +77,11 @@ const ArticleCommentSection: React.FC<Props> = (props) => {
     return null;
   }, [articleCommunityId, community, ownCommunities]);
 
-  // Event room of the article comments: per socket on the server, so it is
-  // joined while live and joined again on every live transition (new socket,
-  // or the socket's user changed); left on unmount.
+  // Event room of the article comments, held while this section is mounted
+  // (ref-counted: several sections of one article share the socket's room)
   useEffect(() => {
     if (!userId || !access) return;
-    let mounted = true;
-    let joined = false;
-    const leave = () => {
-      joined = false;
-      if (!webSocketManager.live) return; // the socket that joined is gone
-      messageApi.leaveArticleEventRoom({ access }).catch(() => {
-        console.error('Failed to leave article event room');
-      });
-    };
-    const join = () => {
-      if (!webSocketManager.live) return;
-      messageApi.joinArticleEventRoom({ access }).then(() => {
-        joined = true;
-        if (!mounted) leave();
-      }).catch(() => {
-        console.error('Failed to join article event room');
-      });
-    };
-    join();
-    const unsubscribe = webSocketManager.onLive(join);
-    return () => {
-      mounted = false;
-      unsubscribe();
-      if (joined) leave();
-    };
+    return articleEventRooms.acquire(access);
   }, [userId, access]);
 
   const createMessage = useCallback(async (

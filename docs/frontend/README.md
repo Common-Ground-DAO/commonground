@@ -114,7 +114,7 @@ Composed of atoms; represent small, functional UI units.
 | `Message` | Single chat message display (text, attachments, reactions). Its `MessageTooltip` sub-component hosts the per-message actions incl. the **Report** action. Re-renders on every change of the message object (edits, reactions, `sendStatus`); a pending own send is faded, a failed send or edit shows Retry and Discard / Undo edit (`retrySend` / `discardPending` of the channel store). Every item carries `data-timestamp` (scroll anchoring). |
 | `MesssageBodyRenderer` | Renders message/article body content into React elements. Note the triple-`s` directory name. See §6 for the markdown pipeline. Exports `MessageBodyRenderer`, `AllContentRenderer`, and (in `MarkdownContent.tsx`) `MarkdownContent` + `toMarkdownSource`. |
 | `CommentMessage` | Article/post comment display |
-| `CommentList` | List of comments: one chat-sync window (`chat.channels.openWindow`), newest first, "load more" via `loadOlder`; failed comments offer Retry/Discard. `ArticleCommentSection` joins the article event room while the transport is live and again on every `onLive`. |
+| `CommentList` | List of comments: one chat-sync window (`chat.channels.openWindow`), newest first, "load more" via `loadOlder`; failed comments offer Retry/Discard. `ArticleCommentSection` joins the article event room while the transport is live and again on every `onLive`; the room is ref-counted per access (`articleEventRooms.ts`), so it is left only when the last section of that article unmounts. |
 | `Dialog` | Confirmation/action dialog |
 | `Dropdown` | Dropdown menu |
 | `EmojiPickerTooltip` | Emoji picker in a tooltip popover |

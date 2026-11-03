@@ -20,6 +20,7 @@ import MiniLoginBanner from '../LoginBanner/MiniLoginBanner';
 import LinkPreviewLoader from '../LinkPreview/LinkPreviewLoader';
 import YoutubeIframe from 'components/atoms/YoutubeIframe/YoutubeIframe';
 import MarkdownContent, { toMarkdownSource } from './MarkdownContent';
+import SendStatusNotice from '../SendStatusNotice/SendStatusNotice';
 
 type RenderableElement = Models.BaseArticle.ContentElementV2 | Models.Message.BodyContentV1 | Common.Content.ModerationSpecial;
 
@@ -435,36 +436,6 @@ export function AllContentRenderer(props: {
   return <>{resultContent}</>;
 }
 
-/**
- * Outcome of a failed own send or edit (chat-sync `sendStatus`), with the
- * actions the store offers: retry (same id), discard the send / revert the edit.
- */
-const SendStatusNotice = (props: {
-  sendStatus: 'error-send' | 'error-update';
-  onRetry?: () => void;
-  onDiscard?: () => void;
-}) => {
-  const { sendStatus, onRetry, onDiscard } = props;
-  // the message item toggles its tooltip on click (mobile): keep the action's click
-  const retry = (event: React.MouseEvent) => {
-    event.stopPropagation();
-    onRetry?.();
-  };
-  const discard = (event: React.MouseEvent) => {
-    event.stopPropagation();
-    onDiscard?.();
-  };
-  return (
-    <div className="message-send-status" role="alert">
-      <span>{sendStatus === 'error-send' ? 'Message not sent' : 'Edit not saved'}</span>
-      {!!onRetry && <button type="button" className="message-send-status-action" onClick={retry}>Retry</button>}
-      {!!onDiscard && <button type="button" className="message-send-status-action" onClick={discard}>
-        {sendStatus === 'error-send' ? 'Discard' : 'Undo edit'}
-      </button>}
-    </div>
-  );
-};
-
 const MessageBodyRenderer = (props: {
   message: Models.Message.Message,
   truncate?: boolean,
@@ -491,6 +462,8 @@ const MessageBodyRenderer = (props: {
         hideTimestamp={hideTimestamp}
       />
       {(message.sendStatus === "error-send" || message.sendStatus === "error-update") && <SendStatusNotice
+        messageId={message.id}
+        content={message.body.content}
         sendStatus={message.sendStatus}
         onRetry={onRetry}
         onDiscard={onDiscard}

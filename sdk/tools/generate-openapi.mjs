@@ -205,6 +205,17 @@ function buildPaths() {
       continue;
     }
     const methods = API[domain];
+    // registerPostRoute validates a request without a JSON body as `{}`
+    // (srv/api/util.ts), so a body is required exactly when `{}` fails.
+    // A schema with external rules cannot be validated synchronously:
+    // counted as requiring one.
+    const requiresBody = (validator) => {
+      try {
+        return validator.validate({}).error !== undefined;
+      } catch {
+        return true;
+      }
+    };
     for (const method of Object.keys(methods).sort()) {
       const validator = methods[method];
       if (!validator || typeof validator.describe !== "function") continue;
@@ -216,7 +227,7 @@ function buildPaths() {
           tags: [domain],
           summary: `${prefix}/${method}`,
           requestBody: {
-            required: true,
+            required: requiresBody(validator),
             content: { "application/json": { schema: requestSchema } },
           },
           responses: {

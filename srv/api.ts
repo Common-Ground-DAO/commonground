@@ -47,8 +47,8 @@ const securityStep = securityStepMiddleware(emailEnabled);
 app.use('/Chat', securityStep, chatRouter);
 app.use('/Community', securityStep, communityRouter);
 app.use('/File', securityStep, fileRouter);
-app.use('/Message', securityStep, messageRouter);
-app.use('/Message', securityStep, syncStateRouter);
+// one mount, so the security step runs once for /Message/getSyncState too
+app.use('/Message', securityStep, messageRouter, syncStateRouter);
 app.use('/User', securityStep, userRouter);
 app.use('/Contract', securityStep, contractRouter);
 app.use('/Notification', securityStep, notificationRouter);

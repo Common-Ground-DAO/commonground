@@ -32,6 +32,7 @@ import botTokenHelper from './repositories/botTokens';
 import botHelper from './repositories/bots';
 import * as typingCache from './repositories/typingCache';
 import { PresenceTracker, type ClusterProbe } from './util/presence';
+import { finishSocketLogin } from './util/socketLogin';
 import { deviceSocketRoomKey } from './util/requestSocket';
 
 import cookieParser from 'cookie-parser';
@@ -647,32 +648,14 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
           roleIds: ids.roleIds,
           communityIds: ids.communityIds,
         });
-        // the key may have become invalid (the account signed out its other
-        // devices: srv/util/signOutOtherDevices.ts) after it was verified
-        // above and before the rooms were joined — after the disconnect that
-        // sign-out sent: leave again
-        if (!(await deviceHelper.isLiveDevice(data.deviceId))) {
-          callback("ERROR");
-          socket.disconnect(false);
-          return;
-        }
-        // the socket went away while the login was in flight; its disconnect
-        // handler may have run before the user id was set, so release the
-        // presence here (the rooms are already left: a disconnected socket
-        // cannot join)
-        if (!socket.connected) {
-          for (const roomId of Array.from(socket.rooms)) {
-            if (roomId !== socket.id) {
-              socket.leave(roomId);
-            }
-          }
-          presence.socketGone(userId);
-          return;
-        }
-        await presence.userLoggedIn(userId);
-        // Only acknowledge success once identity, room membership, and presence
-        // are fully established.
-        callback("OK");
+        // a device key revoked meanwhile, a socket gone meanwhile: see
+        // finishSocketLogin
+        const { deviceId } = data;
+        await finishSocketLogin(socket, userId, {
+          isLiveDevice: () => deviceHelper.isLiveDevice(deviceId),
+          presence,
+          ack: callback,
+        });
       } catch (e) {
         console.error("Error during login", e);
         callback("ERROR");

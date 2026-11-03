@@ -15,7 +15,10 @@
  * Host and port come only from CG_TEST_PG_HOST / CG_TEST_PG_PORT
  * (tests/helpers/testPg.ts).
  *
- * - the migration up / down / up, with its GRANTs;
+ * - the migration up / down / up, with its GRANTs, each step in one
+ *   transaction like migrateDb; its lock order (reads go on while the
+ *   createdAt_live index is built) and its lock_timeout (a blocked ALTER
+ *   fails fast, the step rolls back completely and can be repeated);
  * - the trigger under the api's role `writer`: inserts, real and no-op
  *   updates, soft deletes (tombstones);
  * - commit order: concurrent writers of one channel are serialised, and
@@ -54,7 +57,36 @@ describeDb('message sync sequence on PostgreSQL', () => {
   let admin: Pool;
   let writer: Pool;
   const q = (sql: string, params?: unknown[]) => admin.query(sql, params);
-  const runner = { query: (sql: string, params?: unknown[]) => q(sql, params) } as any;
+  /**
+   * One migration step in one transaction on one connection, like
+   * migrateDb (TypeORM, transaction mode "all"); `query` returns the rows,
+   * like TypeORM's QueryRunner. `beforeQuery` sees each statement first.
+   */
+  async function migrate(
+    step: 'up' | 'down',
+    options: { beforeQuery?: (sql: string, client: PoolClient) => Promise<void>; inside?: (client: PoolClient) => Promise<void> } = {},
+  ) {
+    const client = await admin.connect();
+    try {
+      await client.query('BEGIN');
+      const runner = {
+        query: async (sql: string, params?: unknown[]) => {
+          await options.beforeQuery?.(sql, client);
+          return (await client.query(sql, params)).rows;
+        },
+      } as any;
+      await new Migration()[step](runner);
+      await options.inside?.(client);
+      await client.query('COMMIT');
+    }
+    catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    }
+    finally {
+      client.release();
+    }
+  }
 
   let me: string;
   let other: string;
@@ -125,14 +157,13 @@ describeDb('message sync sequence on PostgreSQL', () => {
     await q(`INSERT INTO user_accounts ("userId", type, "displayName") VALUES ($1, 'cg', 'Me')`, [me]);
     await q(`UPDATE users SET "displayAccount" = 'cg' WHERE id = $1`, [me]);
 
-    const migration = new Migration();
-    await migration.up(runner);
-    await migration.down(runner);
+    await migrate('up');
+    await migrate('down');
     // a message from before the migration
     const channelId = await newChannel();
     const inserted = await q(`INSERT INTO messages ("creatorId", "channelId", body, "createdAt") VALUES ($1, $2, '{"version":"1","content":[]}', $3) RETURNING id`, [other, channelId, nextCreatedAt()]);
     preMigrationMessage = { id: inserted.rows[0].id, channelId };
-    await migration.up(runner);
+    await migrate('up');
 
     writer = new Pool({ host: HOST, port: PORT, user: 'writer', password: WRITER_PASSWORD, database: DATABASE, max: 30 });
     mockWriterPool = writer;
@@ -172,23 +203,71 @@ describeDb('message sync sequence on PostgreSQL', () => {
     expect(fn.prosecdef).toBe(false);
   });
 
+  const leftovers = async () => (await q(`SELECT
+    to_regclass('public.channel_sync_state') AS "table",
+    to_regclass('public."idx_messages_channelId_syncSeq"') AS "index",
+    to_regclass('public."idx_messages_channelId_createdAt_live"') AS "liveIndex",
+    (SELECT count(*)::int FROM pg_proc WHERE proname = 'messages_set_sync_seq') AS "function",
+    (SELECT count(*)::int FROM pg_trigger WHERE tgrelid = 'messages'::regclass AND NOT tgisinternal) AS "triggers",
+    (SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'messages' AND column_name = 'syncSeq') AS "column"`)).rows[0];
+  const nothingLeft = { table: null, index: null, liveIndex: null, function: 0, triggers: 0, column: 0 };
+
   it('down removes everything up created', async () => {
-    const migration = new Migration();
-    await migration.down(runner);
+    await migrate('down');
     try {
-      const left = (await q(`SELECT
-        to_regclass('public.channel_sync_state') AS "table",
-        to_regclass('public."idx_messages_channelId_syncSeq"') AS "index",
-        to_regclass('public."idx_messages_channelId_createdAt_live"') AS "liveIndex",
-        (SELECT count(*)::int FROM pg_proc WHERE proname = 'messages_set_sync_seq') AS "function",
-        (SELECT count(*)::int FROM pg_trigger WHERE tgrelid = 'messages'::regclass AND NOT tgisinternal) AS "triggers",
-        (SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'messages' AND column_name = 'syncSeq') AS "column"`)).rows[0];
-      expect(left).toEqual({ table: null, index: null, liveIndex: null, function: 0, triggers: 0, column: 0 });
+      expect(await leftovers()).toEqual(nothingLeft);
     }
     finally {
-      await migration.up(runner);
+      await migrate('up');
     }
   });
+
+  it('up: reads of messages go on during the createdAt_live build, writes wait; lock_timeout is restored', async () => {
+    await migrate('down');
+    const probe = await admin.connect();
+    try {
+      await probe.query(`SET lock_timeout = '300ms'`);
+      const seen: Record<string, unknown> = {};
+      await migrate('up', {
+        beforeQuery: async (sql) => {
+          if (!sql.includes('ALTER TABLE "messages" ADD')) return;
+          // the createdAt_live index is built, the column not yet added
+          seen.read = (await probe.query(`SELECT count(*)::int AS n FROM messages`)).rows[0].n;
+          seen.write = await probe.query(`UPDATE messages SET reactions = reactions WHERE false`).then(() => 'done', (e) => e.code);
+        },
+        inside: async (client) => {
+          seen.lockTimeout = (await client.query(`SHOW lock_timeout`)).rows[0].lock_timeout;
+        },
+      });
+      expect(seen).toEqual({ read: expect.any(Number), write: '55P03', lockTimeout: '0' });
+    }
+    finally {
+      probe.release();
+      if ((await leftovers()).table === null) await migrate('up');
+    }
+  });
+
+  it('up fails fast on a lock it cannot get, rolls back completely and can be repeated', async () => {
+    await migrate('down');
+    const blocker = await admin.connect();
+    try {
+      // an open transaction that has read messages: the ALTER TABLE cannot get its lock
+      await blocker.query('BEGIN');
+      await blocker.query(`SELECT count(*) FROM messages`);
+      const started = Date.now();
+      await expect(migrate('up')).rejects.toMatchObject({ code: '55P03' });
+      const waited = Date.now() - started;
+      expect(waited).toBeGreaterThanOrEqual(4500);
+      expect(waited).toBeLessThan(15000);
+      expect(await leftovers()).toEqual(nothingLeft);
+    }
+    finally {
+      await blocker.query('ROLLBACK');
+      blocker.release();
+    }
+    await migrate('up');
+    expect((await leftovers()).triggers).toBe(2);
+  }, 30000);
 
   it('rows from before the migration have no seq until their next write', async () => {
     expect(await seqOf(preMigrationMessage.id)).toBeNull();

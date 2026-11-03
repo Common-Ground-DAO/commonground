@@ -68,9 +68,11 @@ declare namespace Models {
        * (set by the database on every insert and update, deletes included).
        * A higher value is a newer version of the message. chat-sync servers
        * send it on loadMessages, messagesById, getChanges, the createMessage
-       * response and all message events. Absent on older servers, on rows
-       * not written since the migration (until their next write) and on
-       * pending (unsent) items.
+       * response and all message events. Absent on older servers and on
+       * pending (unsent) items. Rows not written since the migration have
+       * none until their next write: absent in loadMessages, messagesById
+       * and loadUpdates, `0` (older than every change) in a getChanges reset
+       * page, whose messages always carry a number.
        */
       syncSeq?: number;
     };

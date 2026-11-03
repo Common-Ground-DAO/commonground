@@ -8,7 +8,7 @@ import { instanceInfo, signUp } from '../lib/account.ts';
 import { EDITOR, joinCommunity, navigate, sendMessage } from '../lib/app.ts';
 import { clockSkew, holdResponses, setClockOffset, type HeldResponses } from '../lib/cdp.ts';
 import { ownerAndMember } from '../lib/chatsync.ts';
-import { assertConnected, assertMessageStays, prepareLivePage, waitMessagesShown } from '../lib/live.ts';
+import { apiCall, assertConnected, assertMessageStays, prepareLivePage, waitMessagesShown } from '../lib/live.ts';
 import { assert, clickText, fill, sleep, until } from '../lib/ui.ts';
 
 const CLOCK_OFFSET_MS = 2_000;
@@ -16,28 +16,46 @@ const LOAD_DELAY_MS = 2_500;
 /** the reads a message list loads its window with: the old client's page route and the chat-sync catch-up */
 const MESSAGE_READ = /\/api\/v2\/Message\/(loadMessages|getChanges)\b/;
 const MESSAGE_READ_PATTERNS = ['*/api/v2/Message/loadMessages*', '*/api/v2/Message/getChanges*'];
+/** what the call modal's "full" access grants a role ("Limit Access") */
+const FULL_CALL_ACCESS = ['CALL_EXISTS', 'CALL_JOIN', 'AUDIO_SEND', 'VIDEO_SEND', 'CHANNEL_READ', 'CHANNEL_WRITE', 'SHARE_SCREEN'];
+
+type Variant = 'plain' | 'skew' | 'public';
+
+/**
+ * The call server refuses a member whose access to the call comes from the
+ * Public role alone (`hasPermissionToJoinCall` counts claimed roles only;
+ * docs/todo/TODO.md). Expected in the public variant until fixed: this flow
+ * checks the call chat, which works on the Public role.
+ */
+const PUBLIC_ROLE_JOIN_REFUSED = /_joinRoom\(\) failed[\s\S]*NOT_ALLOWED/;
 
 /**
  * E1 (e2e/README.md "The chat-sync flows"): the first message of a
  * call chat reaches a member who opens the call while it is posted.
  *
- * Two variants, each with a member of its own and a fresh call (the first
+ * Three variants, each with a member of its own and a fresh call (the first
  * message must land in an empty chat):
- *   plain  no clock skew, no added latency — a red here is not caused by
- *          the conditions below
- *   skew   B's clock runs 2 s ahead of the server and B's message reads
- *          (loadMessages / getChanges) arrive 2.5 s late: the call chat's
- *          first page — computed by the server before A's message existed,
- *          so empty — reaches B after the message came in live
+ *   plain   no clock skew, no added latency — a red here is not caused by
+ *           the conditions below
+ *   skew    B's clock runs 2 s ahead of the server and B's message reads
+ *           (loadMessages / getChanges) arrive 2.5 s late: the call chat's
+ *           first page — computed by the server before A's message existed,
+ *           so empty — reaches B after the message came in live
+ *   public  the call grants access to the Public role only (started with
+ *           custom role permissions, as "Limit Access" in the call modal
+ *           does, through the app's startCall route): B — a member — reaches
+ *           the call and its chat through the Public role alone. A call
+ *           started without custom permissions grants the Member role, so
+ *           the other variants never take this path.
  * B must see the message without a reload and keep seeing it once the
  * (late) first page is applied; a second message arrives live.
  */
 export const csCallChat: Flow = {
   id: 'cs-call-chat',
-  title: 'E1 call chat: the first message reaches a member who opens the call meanwhile (plain; clock +2 s and late reads)',
-  timeoutMs: config => Math.max(config.flowTimeoutMs, 360_000),
+  title: 'E1 call chat: the first message reaches a member who opens the call meanwhile (plain; clock +2 s and late reads; Public-role-only call)',
+  timeoutMs: config => Math.max(config.flowTimeoutMs, 480_000),
   async run(t) {
-    const { owner, member: plainMember, community } = await ownerAndMember(t, { owner: 'caller', member: 'joiner' });
+    const { owner, ownerAccount, member: plainMember, community } = await ownerAndMember(t, { owner: 'caller', member: 'joiner' });
     if ((await instanceInfo(owner.page)).features?.calls === false) {
       t.skip('calls are disabled on this instance (features.calls = false)');
     }
@@ -51,11 +69,61 @@ export const csCallChat: Flow = {
       t.metric('skewMemberClockSkewMs', skew);
       assert(Math.abs(skew - CLOCK_OFFSET_MS) < 500, `the member's clock is off by ${skew} ms, expected about ${CLOCK_OFFSET_MS}`);
     });
+    const publicMember = await t.session('publicjoiner');
+    await prepareLivePage(publicMember.page);
+    await t.step('setup: a third member joins (for the Public-role-only call)', async () => {
+      await signUp(t, publicMember, 'password', 'publicjoiner');
+      await joinCommunity(t, publicMember.page, community);
+    });
+
+    /** opens a listed call of the community page (the call item with `title`); resolves with the time of the click */
+    const openListedCall = async (page: Session['page'], title: string) => {
+      const item = await page.waitForFunction((needle: string) => Array.from(document.querySelectorAll<HTMLElement>('.call-item')).find(el => el.innerText.includes(needle)) ?? null, { timeout: 20_000 }, title);
+      const clickedAt = Date.now();
+      await (item as JSHandle<Element>).evaluate(el => (el as HTMLElement).click());
+      await page.waitForFunction(() => /\/call\/[^/]+\/?$/.test(window.location.pathname), { timeout: 20_000 });
+      return clickedAt;
+    };
+
+    /**
+     * a call whose only role permission is the Public role's (besides the
+     * Admin role the server always adds); the owner joins it at once, like
+     * the call modal does — a call nobody joined is ended after 10 s
+     * (`END_CALL_AFTER_EMPTY_PERIOD`)
+     */
+    const startPublicOnlyCall = async (title: string) => {
+      await navigate(t, owner.page, community.path);
+      const url = community.path.split('/').filter(Boolean).pop()!;
+      const detail = await apiCall<{ id: string; roles: { id: string; title: string; type: string }[] }>(owner.page, 'Community/getCommunityDetailView', { url });
+      const publicRole = detail.roles.find(r => r.title === 'Public' && r.type === 'PREDEFINED');
+      assert(publicRole, 'the community has no predefined Public role');
+      assert(ownerAccount.userId, 'the owner\'s user id is unknown');
+      await apiCall(owner.page, 'Community/startCall', {
+        communityId: detail.id,
+        title,
+        description: null,
+        rolePermissions: [{ roleId: publicRole.id, permissions: FULL_CALL_ACCESS }],
+        callType: 'default',
+        callCreator: ownerAccount.userId,
+        slots: 10,
+        stageSlots: 5,
+        audioOnly: false,
+        hd: false,
+      });
+      // the new call reaches the open community page live (the Admin role's room)
+      await openListedCall(owner.page, title);
+      await clickText(owner.page, /^(Join call|Join now)$/, { selector: 'button', timeout: 8_000 });
+      await owner.page.waitForSelector(`.call-chat ${EDITOR}`, { visible: true, timeout: 30_000 });
+    };
 
     const failed: string[] = [];
-    const variant = async (name: 'plain' | 'skew', member: Session) => {
+    const variant = async (name: Variant, member: Session) => {
       const title = `e2e call ${name}`;
-      await t.step(`${name}: owner starts a call (its chat is open)`, async () => {
+      await t.step(`${name}: owner starts a call${name === 'public' ? ' for the Public role only' : ''} (its chat is open)`, async () => {
+        if (name === 'public') {
+          await startPublicOnlyCall(title);
+          return;
+        }
         await navigate(t, owner.page, community.path);
         await clickText(owner.page, 'Start Call');
         await fill(owner.page, 'input[placeholder="e.g. Daily Standup"]', title);
@@ -80,10 +148,7 @@ export const csCallChat: Flow = {
           };
           member.page.on('request', onRequest);
           try {
-            const item = await member.page.waitForFunction((needle: string) => Array.from(document.querySelectorAll<HTMLElement>('.call-item')).find(el => el.innerText.includes(needle)) ?? null, { timeout: 20_000 }, title);
-            const clickedAt = Date.now();
-            await (item as JSHandle<Element>).evaluate(el => (el as HTMLElement).click());
-            await member.page.waitForFunction(() => /\/call\/[^/]+\/?$/.test(window.location.pathname), { timeout: 20_000 });
+            const clickedAt = await openListedCall(member.page, title);
             // the call chat asks for its first page
             await until('the call chat to load its messages', async () => reads.some(at => at >= clickedAt), 15_000, 50);
           }
@@ -119,24 +184,37 @@ export const csCallChat: Flow = {
       });
     };
 
-    for (const [name, member] of [['plain', plainMember], ['skew', skewMember]] as const) {
-      await variant(name, member).catch((e: unknown) => {
-        failed.push(`${name}: ${(e as Error).message.split('\n')[0]}`);
-      });
-      await t.step(`${name}: owner and member leave the call`, async () => {
-        for (const page of [member.page, owner.page]) {
-          const leave = await page.$('button.btnFinal.call-actions-button-size');
-          await leave?.click();
-        }
-        await navigate(t, owner.page, community.path);
-        await navigate(t, member.page, community.path);
-        await sleep(1_000);
-      }).catch(() => undefined);
+    for (const [name, member] of [['plain', plainMember], ['skew', skewMember], ['public', publicMember]] as const) {
+      const run = async () => {
+        await variant(name, member).catch((e: unknown) => {
+          failed.push(`${name}: ${(e as Error).message.split('\n')[0]}`);
+        });
+        await t.step(`${name}: owner and member leave the call`, async () => {
+          for (const page of [member.page, owner.page]) {
+            const leave = await page.$('button.btnFinal.call-actions-button-size');
+            await leave?.click();
+          }
+          await navigate(t, owner.page, community.path);
+          await navigate(t, member.page, community.path);
+          await sleep(1_000);
+        }).catch(() => undefined);
+      };
+      if (name === 'public') {
+        await t.expectFailures([{
+          session: member.name,
+          kinds: ['console-error'],
+          text: PUBLIC_ROLE_JOIN_REFUSED,
+          reason: 'joining a call through the Public role alone is refused (docs/todo/TODO.md)',
+        }], run);
+      }
+      else {
+        await run();
+      }
     }
 
     t.metric('failedVariants', failed);
-    await t.step('both variants passed', async () => {
-      assert(failed.length === 0, `${failed.length} of 2 variant(s) failed — ${failed.join(' | ')}`);
+    await t.step('all variants passed', async () => {
+      assert(failed.length === 0, `${failed.length} of 3 variant(s) failed — ${failed.join(' | ')}`);
     });
   },
 };

@@ -602,6 +602,19 @@ export class WebSocketManager implements Transport {
   }
 
   /**
+   * The device this connection's socket login was acked for (null:
+   * anonymous, or a login still waiting for its ack). A device-addressed
+   * server event (`cliSignedOut`) that arrives now refers to it. During a
+   * pending login it is unknown which device such an event meant (a late one
+   * for the previous device is possible): null, so it is not acted on — a
+   * device that is really gone shows up at its next HTTP device login
+   * (NOT_FOUND).
+   */
+  public get socketDeviceId(): string | null {
+    return this._socketDeviceId;
+  }
+
+  /**
    * The server signed `deviceId` out (its session and device key are gone):
    * no socket login with it any more — neither on the reconnect after the
    * server's disconnect nor on a return of the tab. The socket stays (or

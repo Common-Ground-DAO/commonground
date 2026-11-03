@@ -123,7 +123,12 @@ class LoginManager {
     // key are gone on the server already
     import("./connection").then(({ default: connectionManager }) => {
       connectionManager.registerClientEventHandler("cliSignedOut", () => {
-        this.signedOutElsewhere().catch(e => console.error("Error signing out", e));
+        // the event names no device: it is the one the socket is logged in
+        // as right now (it may be an older one than the current user's)
+        const deviceId = webSocketManager.socketDeviceId;
+        if (deviceId) {
+          this.signedOutElsewhere(deviceId).catch(e => console.error("Error signing out", e));
+        }
       });
     });
     if (!!this._currentUser) {
@@ -232,9 +237,10 @@ class LoginManager {
         }
 
         if (this.currentUser) {
+          const { deviceId } = this.currentUser;
           try {
             triedLogin = true;
-            const outcome = await this._login({ deviceId: this.currentUser.deviceId }, true);
+            const outcome = await this._login({ deviceId }, true);
             if (outcome === 'taken-over') {
               // another tab had just logged in: its session serves this tab
               // too; or the stored user changed meanwhile: follow it — once
@@ -247,7 +253,7 @@ class LoginManager {
               if (e.message === errors.server.NOT_FOUND) {
                 // the device key is gone: this device was signed out from
                 // elsewhere (the sign-out on this device clears it locally)
-                await this.signedOutElsewhere();
+                await this.signedOutElsewhere(deviceId);
                 return false;
               }
             }
@@ -443,8 +449,19 @@ class LoginManager {
    * follows another tab's logout for OTHER_TAB_LOGOUT_WAIT_MS without that
    * tab finishing (closed or reloaded after it wrote its marker) treats it as
    * a sign-out from elsewhere.
+   *
+   * `deviceId` is the device the sign-out refers to. A late one (an old
+   * login's NOT_FOUND, a `cliSignedOut` for the socket's previous device)
+   * that is no longer this tab's device is ignored: it must not sign out the
+   * session of the user or device this tab has switched to since.
    */
-  private signedOutElsewhere(): Promise<void> {
+  private signedOutElsewhere(deviceId: string): Promise<void> {
+    // a revoked device never logs the socket in again (a no-op unless the
+    // socket still wants it)
+    webSocketManager.deviceSignedOut(deviceId);
+    if (this._currentUser?.deviceId !== deviceId) {
+      return Promise.resolve();
+    }
     if (!this.__signedOutPromise) {
       this.__signedOutPromise = this.runSignedOutElsewhere().finally(() => {
         delete this.__signedOutPromise;
@@ -460,13 +477,10 @@ class LoginManager {
     const deviceId = this._currentUser?.deviceId;
     // In every case (another tab's logout of this device, a password change
     // or a sign-out from another device) the device's session and key are
-    // gone on the server: the socket drops the device at once, before the
-    // server's disconnect makes it reconnect — no socket login with the
-    // revoked key. The re-check below only decides notice vs. silent follow
-    // and which tab calls `User/logout`.
-    if (deviceId) {
-      webSocketManager.deviceSignedOut(deviceId);
-    }
+    // gone on the server: the socket dropped the device at once (in
+    // signedOutElsewhere), before the server's disconnect makes it reconnect
+    // — no socket login with the revoked key. The re-check below only
+    // decides notice vs. silent follow and which tab calls `User/logout`.
     // this tab is logging out already: the server's sign-out of the device's
     // sockets can reach this tab's socket too (when it could not tell the
     // requesting socket apart), and it is no sign-out from elsewhere
@@ -892,7 +906,7 @@ class LoginManager {
       });
     } catch (e) {
       if (e instanceof Error && e.message === errors.server.NOT_FOUND) {
-        await this.signedOutElsewhere();
+        await this.signedOutElsewhere(deviceId);
         return;
       }
       console.error("Error refreshing data after reconnect", e);
@@ -1161,7 +1175,7 @@ class LoginManager {
           ) {
             // device has been deleted from the server: signed out from
             // elsewhere
-            this.signedOutElsewhere().catch((e) => {
+            this.signedOutElsewhere(options.deviceId).catch((e) => {
               console.log(e);
             });
           } else {

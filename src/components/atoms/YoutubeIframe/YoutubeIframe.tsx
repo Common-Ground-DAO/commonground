@@ -55,7 +55,7 @@ export default function YoutubeIframe({ embedId, divClassName }: YoutubeIframePr
                     <YoutubeLogo weight="duotone" className="w-6 h-6" /> YouTube
                 </div>
                 <div className="text-sm text-center mb-4">
-                    To view this video, app.cg needs to switch embedding mode. Click below to switch mode and reload.
+                    To view this video, {window.location.host} needs to switch embedding mode. Click below to switch mode and reload.
                 </div>
                 <Button
                     role="primary"

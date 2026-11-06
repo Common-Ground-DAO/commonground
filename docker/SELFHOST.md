@@ -12,7 +12,10 @@ public DNS, see [Local test instance](#local-test-instance-no-public-dns).
 
 ## Prerequisites
 
-- A Linux server with Docker + Docker Compose v2, ports **80, 443, 4443
+- A Linux server with Docker and the Compose plugin (`docker compose`, v2 or
+  later — the old standalone `docker-compose` v1 is not supported: it ignores
+  the compose profiles, so calls, blockchain and mail would silently not
+  start), ports **80, 443, 4443
   (tcp)** and **40000–40099 (udp and tcp)** reachable from the internet (the
   last two only if you run voice/video calls — see
   [Optional services](#optional-services-calls-blockchain)). Run the scripts
@@ -48,6 +51,10 @@ public DNS, see [Local test instance](#local-test-instance-no-public-dns).
 
 ## Setup
 
+On a fresh, dedicated Ubuntu/Debian server, harden it first (key-only SSH,
+firewall, security updates — see [Server hardening](#server-hardening)):
+`sudo ./selfhost/harden.sh --dry-run` shows what it would change.
+
 ```bash
 git clone https://github.com/Common-Ground-DAO/commonground.git
 cd commonground/docker
@@ -62,8 +69,11 @@ cd commonground/docker
 ./selfhost/selfhost.sh up
 ```
 
-Caddy obtains Let's Encrypt certificates automatically on first start. After
-DNS propagates, the app is live at `https://chat.example.org`. Then set up
+`init.sh` detects the server's public IPv4 address (and its IPv6 address, if
+any) and tells you which DNS record to create: an **A record** — no AAAA record
+for now, see [IPv6](#ipv6). Caddy obtains Let's Encrypt certificates
+automatically on first start. After DNS propagates, the app is live at
+`https://chat.example.org`. Then set up
 backups with an off-server copy — see [Backup and restore](#backup-and-restore).
 
 Operating:
@@ -77,6 +87,17 @@ Operating:
 ./selfhost/selfhost.sh mail-dns     # DNS records for the built-in mail relay
 ./selfhost/selfhost.sh backup run   # back up now (set up: "Backup and restore")
 ```
+
+**During `update` (and `up` after a build) the app is briefly offline:** the
+backend containers are replaced, and the new ones start only after the
+database migrations have finished — usually seconds, longer when a release
+migrates large tables. If a migration fails, the new containers are not
+started and the instance stays down; `up`/`update` say so and point to
+`./selfhost/selfhost.sh logs migrate-db`. The database is left as it was
+(pending migrations run in one transaction), so you can fix the cause and run
+`up` again, or go back to the previous version (`git checkout <previous
+commit>`, then `build` and `up`). Take a backup before updating
+(`./selfhost/selfhost.sh backup run`).
 
 ## Local test instance (no public DNS)
 
@@ -497,6 +518,32 @@ Postgres loads `docker/db/postgresql.conf`, sized for the same 16 GB machine
 setting is commented there). Raise `shared_buffers` and
 `effective_cache_size` for larger instances, lower them for smaller ones.
 
+**Memory limits.** Every container has a memory limit, so one runaway service
+cannot take the whole server (and the frontend build next to it) down. The
+defaults (`docker/docker-compose.selfhost.yml`) fit a 16 GB server and are
+generous against what an instance uses (the whole stack stayed under 1.4 GB
+during the end-to-end suite); override one in `.env.selfhost` with
+`CG_MEM_LIMIT_<SERVICE>`, e.g. `CG_MEM_LIMIT_API=3g` or
+`CG_MEM_LIMIT_MEMBERLIST=6g`, then `./selfhost/selfhost.sh up`. A Node service
+sizes its heap from its limit (about half of it), so a service that runs out
+of heap (`JavaScript heap out of memory` in its log) needs a higher limit, not
+`NODE_OPTIONS`; the job-runner's worker threads have their own heap cap
+(`JOB_WORKER_MAX_OLD_SPACE_MB`, default 384). Keep `CG_MEM_LIMIT_REDIS` at
+least twice `REDIS_MAXMEMORY` (snapshots fork; `up` warns otherwise). Caddy and
+SeaweedFS (Go) get `GOMEMLIMIT` at about 85% of their limit — `selfhost.sh`
+adjusts it when you change `CG_MEM_LIMIT_CADDY` or `CG_MEM_LIMIT_SEAWEED`. `./selfhost/selfhost.sh stats` shows each container's usage
+next to its limit. The numbers and their reasons:
+`docs/deployment/README.md`, "Memory limits".
+
+**Container logs** rotate: each container keeps at most five files of 20 MB
+(`CG_LOG_MAX_FILE`, `CG_LOG_MAX_SIZE` in `.env.selfhost`), older ones
+compressed. `./selfhost/selfhost.sh logs` reads them as before.
+
+**Health.** `./selfhost/selfhost.sh ps` shows each backend container as
+`healthy` or `unhealthy`: healthy means its database, Valkey (where it uses
+it) and its own listener answer. Which check failed:
+`docker inspect -f '{{json .State.Health}}' cg-selfhost-api-1`.
+
 > **If logins stop sticking** (users are logged out right after logging in,
 > the API logs `OOM command not allowed`): the Valkey state instance is full,
 > most likely of sessions — the backend stores a session for every API request
@@ -514,6 +561,19 @@ setting is commented there). Raise `shared_buffers` and
 > restart does not help: the snapshot brings the sessions back. Afterwards
 > raise `REDIS_MAXMEMORY` or block the source of the requests. Details:
 > `docs/infrastructure/README.md` (Valkey section).
+
+> **Upgrading to the release without a tracked build ID** (2026-11-02): the
+> build ID is a build-time value now (`build/build-id.txt`). Builds before it
+> left `src/common/random_build_id.ts` modified in the checkout. That file is
+> unchanged in this release and no longer read, so the modified copy does not
+> stop this `update` — but it would stop the `git pull` of the later release
+> that deletes the file. Reset it once, any time:
+>
+> ```bash
+> git checkout -- src/common/random_build_id.ts
+> ```
+>
+> From then on a build leaves the checkout unmodified.
 
 > **Upgrading from a release that ran Redis 6.2** (before 2026-10-31): the
 > `redis` service now runs **Valkey** (a drop-in, Redis-compatible server), and
@@ -1256,6 +1316,61 @@ Older instances backed up by hand (`pg_dump` plus a snapshot of the stopped
 [PostgreSQL 18](#postgresql-18) for the dump); from now on use the commands
 above.
 
+## IPv6
+
+The stack runs on IPv4 inside Docker. Docker does accept IPv6 connections on
+the published ports, but hands them to the containers through its proxy, from
+one internal address — so with an **AAAA record** every IPv6 visitor would
+look like the same client to the app, and the per-address limits (sign-ups,
+login attempts) would be shared by all of them. Until the stack runs IPv6
+natively, publish an **A record only** (and remove an AAAA record your hoster
+may have created). `init.sh` records the server's IPv6 address as
+`CG_PUBLIC_IPV6` in `.env.selfhost` (pass it, or `-` for none, as the fifth
+argument); nothing uses it yet.
+
+`CG_PUBLIC_IP` must be the server's **IPv4** address: calls announce it to the
+browsers and listen on IPv4 only (`up` warns otherwise). Callers on IPv6-only
+networks depend on their provider translating to IPv4 (usual on mobile
+networks). The mail relay
+sends over IPv4 only, so SPF and PTR are needed for the IPv4 address alone.
+
+## Server hardening
+
+`docker/selfhost/harden.sh` sets up a dedicated Ubuntu or Debian server for
+the instance. Run it once after the first login, and again whenever you like —
+it changes only what is not in place yet:
+
+```bash
+sudo ./selfhost/harden.sh --dry-run    # every change it would make, nothing changed
+sudo ./selfhost/harden.sh              # apply
+```
+
+- **SSH:** password login off; root login limited to keys if it was fully
+  open. It refuses this step unless the account you log in with
+  (`--ssh-user <name>`; by default it finds it itself, also after
+  `sudo su -`) has a working SSH key in its `authorized_keys` **and** has
+  logged in with a key before (`--no-login-check` if your logs no longer go
+  back that far) — so it never locks you out. Afterwards keep your session
+  open and try a new login in a second terminal.
+- **Firewall (ufw):** incoming connections only to SSH and the ports in the
+  table below, for IPv4 and IPv6. It only touches the firewall when it is
+  sure which port SSH runs on (configuration, listening socket and your
+  session agree); otherwise it says why and leaves the firewall alone.
+  **Docker-published ports bypass ufw** — the compose files publish exactly
+  these ports and nothing else; the script lists any other port a container
+  publishes (bind such a port to `127.0.0.1`, or don't publish it).
+- **Security updates:** `unattended-upgrades`, daily, the distribution's
+  security updates, as soon as they are published. Docker, containerd and
+  runc are excluded (updating them restarts every container — do it by hand);
+  kernel updates wait for your reboot — the script says when one is pending.
+- **Logs:** the system journal is capped (1 GB, four weeks); container logs
+  rotate on their own (see [Resource tuning](#resource-tuning)).
+- **Kernel settings:** reserves the media ports 40000–40099 (see below) and
+  sets `vm.overcommit_memory = 1` for Valkey's snapshots.
+
+`--skip ssh|firewall|upgrades|logs|sysctl` leaves a part out. Details:
+`docs/deployment/README.md`, "Server hardening".
+
 ## Firewall summary
 
 | Port | Protocol | Purpose |
@@ -1271,12 +1386,17 @@ outgoing connection happens to hold one of these ports when `mediasoup`
 starts, Docker cannot publish it and the container fails to start (seen on a
 test instance on 2026-10-31; afterwards it kept restarting without a network
 until recreated with `./selfhost/selfhost.sh compose up -d --force-recreate
---no-deps mediasoup`). Reserve the range on the host once:
+--no-deps mediasoup`). Reserve the range on the host once — `harden.sh` does it (see
+[Server hardening](#server-hardening)), or by hand:
 
 ```bash
 echo 'net.ipv4.ip_local_reserved_ports = 40000-40099' | sudo tee /etc/sysctl.d/60-cg-mediasoup.conf
 sudo sysctl --system
 ```
+
+These are the only ports the compose files publish. Ports Docker publishes
+are reachable regardless of ufw, so do not publish anything else on a public
+interface.
 
 Outbound: the built-in mail relay (`CG_ENABLE_MAIL=true`) connects to port
 25 of the recipients' mail servers. Nothing listens for mail on this server.

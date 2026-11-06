@@ -14,7 +14,8 @@ import {
 } from './onchain/index';
 import express from 'express';
 import { OnchainPriority } from './onchain/scheduler';
-import { fakeHealthcheck } from './healthcheck';
+import { listenerProbe, postgresProbe, startHealthcheck } from './healthcheck';
+import { valkeyProbe } from './redis/healthProbe';
 import pool from './util/postgres';
 import format from 'pg-format';
 import { isValidSignature, getUniversalProfileData } from './onchain/lukso';
@@ -255,7 +256,9 @@ app.listen(4000);
   }
 })();
 
-fakeHealthcheck();
+// healthy: the database and the Valkey state instance answer, and the HTTP
+// listener the api calls accepts connections
+startHealthcheck([postgresProbe(pool), valkeyProbe(), listenerProbe(4000)]);
 
 // Deliberately no imageFilter.warmUp() here, unlike srv/api.ts. This process
 // stores images too (LSP3 avatar ingests in onchain/generic.ts), but those

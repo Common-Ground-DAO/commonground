@@ -18,7 +18,9 @@ import cgIdRouter from './api/cgid';
 import passkeyRouter from './api/passkeys';
 import { isLegacyCgidMode, validatePasskeyConfigAtStartup } from './util/passkeyConfig';
 import accountsRouter from './api/accounts';
-import { fakeHealthcheck } from './healthcheck';
+import { listenerProbe, postgresProbe, startHealthcheck } from './healthcheck';
+import { valkeyProbe } from './redis/healthProbe';
+import pool from './util/postgres';
 import imageFilter from './moderation/imageFilter';
 import pluginRouter from './api/plugins';
 import searchRouter from './api/search';
@@ -88,7 +90,9 @@ const shutdown = async (code = 0) => {
   process.exit(code);
 }
 
-fakeHealthcheck();
+// healthy: the database and the Valkey state instance (sessions) answer, and
+// the HTTP listener (util/express.ts) accepts connections
+startHealthcheck([postgresProbe(pool), valkeyProbe(), listenerProbe(4000)]);
 
 // Fire-and-forget: reports a broken NSFW model in the startup log rather than
 // letting it surface as failing uploads later (it never rejects, and every

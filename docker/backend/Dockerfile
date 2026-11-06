@@ -61,4 +61,11 @@ RUN sed -i 's/yarnPath: .*//g' /dist/.yarnrc.yml && \
     rm -rf /dist/node_modules/onnxruntime-node/bin/napi-v6/darwin \
            /dist/node_modules/onnxruntime-node/bin/napi-v6/win32 \
            /dist/node_modules/onnxruntime-web
-HEALTHCHECK --interval=20s --timeout=3s CMD bash /dist/healthcheck/healthcheck.sh
+# The build ID of the frontend built together with this image (vite/buildId.ts,
+# src/common/buildId.ts); the pipelines pass the one they built with.
+ARG CG_BUILD_ID=
+ENV CG_BUILD_ID=${CG_BUILD_ID}
+# healthy while the process's own report is "ok" and fresh (srv/healthcheck.ts,
+# srv/healthcheck/healthcheck.sh); the start period covers the time until the
+# first report (no --start-interval: older engines' builders reject it)
+HEALTHCHECK --interval=20s --timeout=5s --start-period=1m CMD bash /dist/healthcheck/healthcheck.sh

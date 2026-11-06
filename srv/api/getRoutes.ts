@@ -72,11 +72,23 @@ const translator = createTranslator();
 
 const escapeHtml = (str: string | null | undefined) => (str || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as any)[m]);
 
+// og:site_name names this instance by its host — the shell carries none, since
+// the static index.html is the same on every instance
+function siteName(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '';
+  }
+}
+
 function makeIndexHtml(title: string, description: string, type: 'article' | 'profile' | 'website', url: string, imageUrl: string): string {
   title = title || 'Common Ground';
+  const site = siteName(url);
   return [
     _tpl.substring(0, insertPos),
     `<meta name="description" content="${escapeHtml(description)}" />`,
+    ...(site ? [`<meta property="og:site_name" content="${escapeHtml(site)}" />`] : []),
     `<meta property="og:title" content="${escapeHtml(title)}" />`,
     `<meta property="og:description" content="${escapeHtml(description)}" />`,
     `<meta property="og:type" content="${escapeHtml(type)}" />`,

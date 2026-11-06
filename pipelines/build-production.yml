@@ -89,9 +89,11 @@ jobs:
     displayName: Generate random buildId
     inputs:
       script: |
+        # a pipeline variable, so the following steps see it as the
+        # environment variable CG_BUILD_ID: the frontend build embeds it
+        # (vite/buildId.ts) and the backend image gets it as a build arg
         buildId=$(dd if=/dev/random bs=1 count=10 | base64)
-        sed -i 's#^const buildId =.*$#const buildId = "'$buildId'";#' src/common/random_build_id.ts
-        sed -i 's#^const buildId =.*$#const buildId = "'$buildId'";#' docker/backend/dist/common/random_build_id.ts
+        echo "##vso[task.setvariable variable=CG_BUILD_ID]$buildId"
 
   - task: CmdLine@2
     displayName: Run yarn build
@@ -139,6 +141,7 @@ jobs:
       command: build
       containerRegistry: 'commonground prod registry'
       Dockerfile: docker/backend/Dockerfile
+      arguments: '--build-arg CG_BUILD_ID=$(CG_BUILD_ID)'
       repository: 'backend'
       tags: |
         0.1

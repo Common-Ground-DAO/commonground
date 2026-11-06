@@ -118,6 +118,12 @@ function checkFile(file, { expectSocialMeta, allowedInlineHashes }) {
   const stripped = html.replace(STRIP_OG, '').replace(STRIP_TWITTER, '');
   const ogLeft = (stripped.match(/property="og:(title|description|type|image)"/g) ?? []).length;
   const twLeft = (stripped.match(/name="(twitter:title|twitter:description|twitter:image|description)"/g) ?? []).length;
+  // the backend adds og:site_name (the instance's host) to the pages it
+  // renders from the app shell; a static one there would name one instance on
+  // every other (the CG ID shell's "CG ID" is not a host and stays)
+  if (file === 'index.html') {
+    check('no og:site_name in the app shell', !/property="og:site_name"/.test(html));
+  }
   if (expectSocialMeta) {
     const ogBefore = (html.match(/property="og:(title|description|type|image)"/g) ?? []).length;
     check('default og meta present to strip', ogBefore === 4, `found ${ogBefore}`);

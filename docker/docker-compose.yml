@@ -105,9 +105,15 @@ services:
       - DEPLOYMENT=${DEPLOYMENT}
       - BASE_URL=${BASE_URL}
       - LOCAL_CERTIFICATE_IP=${LOCAL_CERTIFICATE_IP}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
     depends_on:
-      - db
-      - redis
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
     networks:
       - cryptogram
     command: ["node", "/dist/wsapi.js"]
@@ -167,6 +173,10 @@ services:
         max_attempts: 2
         window: 60s
     command: node /dist/migrateDb.js
+    # a one-shot run: the image's health check (the report of a long-running
+    # process, srv/healthcheck.ts) does not apply
+    healthcheck:
+      disable: true
     stop_grace_period: 1m
 
   api:
@@ -220,12 +230,21 @@ services:
       - BOT_ACTIVE_TOKEN_LIMIT=${BOT_ACTIVE_TOKEN_LIMIT:-10}
       - BOT_API_RATE_LIMIT_PER_MINUTE=${BOT_API_RATE_LIMIT_PER_MINUTE:-120}
       - BOT_MESSAGE_RATE_LIMIT_PER_MINUTE=${BOT_MESSAGE_RATE_LIMIT_PER_MINUTE:-30}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
     depends_on:
-      - db
-      - redis
-      - redis-cache
-      - seaweed
-      - memberlist
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+      redis-cache:
+        condition: service_started
+      seaweed:
+        condition: service_started
+      memberlist:
+        condition: service_started
     networks:
       - cryptogram
     volumes:
@@ -246,8 +265,13 @@ services:
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - DEPLOYMENT=${DEPLOYMENT}
       - BASE_URL=${BASE_URL}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
     depends_on:
-      - db
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
     networks:
       - cryptogram
     command: ["node", "/dist/memberlist.js"]
@@ -281,10 +305,17 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - EMAIL_FROM=${EMAIL_FROM:-}
       - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
     depends_on:
-      - db
-      - redis
-      - seaweed
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+      seaweed:
+        condition: service_started
     networks:
       - cryptogram
     command: ["node", "/dist/jobs.js"]
@@ -369,9 +400,15 @@ services:
       - IMAGE_MODERATION_ENABLED=${IMAGE_MODERATION_ENABLED:-true}
       - IMAGE_MODERATION_THRESHOLD=${IMAGE_MODERATION_THRESHOLD:-}
       - IMAGE_MODERATION_MODEL_PATH=${IMAGE_MODERATION_MODEL_PATH:-}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
     depends_on:
-      - db
-      - redis
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
     networks:
       - cryptogram
     command: ["node", "/dist/onchain.js"]

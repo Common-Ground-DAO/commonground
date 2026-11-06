@@ -23,7 +23,7 @@ import urlConfig from '../util/urls';
 import config from '../../common/config';
 
 import { io, type Socket } from 'socket.io-client';
-import buildId from 'common/random_build_id';
+import buildId from 'common/buildId';
 
 import userApi from 'data/api/user';
 import securityStepState from 'data/auth/securityStep';

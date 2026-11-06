@@ -1,8 +1,16 @@
 FROM commonground/backend_stage_0
 COPY ./dist /dist
 WORKDIR /dist
-HEALTHCHECK --interval=15s --timeout=3s CMD bash /dist/healthcheck/healthcheck.sh
+# healthy while the process's own report is "ok" and fresh
+# (srv/healthcheck.ts, srv/healthcheck/healthcheck.sh); the start period covers
+# a first boot, where the database initializes before the processes can reach it
+HEALTHCHECK --interval=15s --timeout=5s --start-period=1m --start-interval=5s CMD bash /dist/healthcheck/healthcheck.sh
 RUN sed -i 's/yarnPath: .*//g' /dist/.yarnrc.yml && \
     corepack enable && \
     yarn tsc
 RUN rm /dist/.yarnrc.yml
+# The build ID of the frontend built together with this image (vite/buildId.ts,
+# src/common/buildId.ts): the build scripts pass the content of
+# build/build-id.txt. Last, so a new ID does not invalidate the layers above.
+ARG CG_BUILD_ID=
+ENV CG_BUILD_ID=${CG_BUILD_ID}

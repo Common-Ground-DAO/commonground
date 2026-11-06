@@ -24,6 +24,16 @@ function checkError {
 }
 
 printf "\n---\n--- Building frontend and caddy image\n---\n"
+# Keep the build ID of the deployed frontend (read before caddy/dist is
+# cleared): the running backend was built with it, and a new ID would make
+# every client see a version mismatch until the next update_backend. Clients
+# pick the new frontend up through the service worker's own update check.
+# Without a deployed ID the build draws a new one (vite/buildId.ts).
+buildId=""
+if [ -f caddy/dist/build-id.txt ]
+then
+  buildId="$(cat caddy/dist/build-id.txt)"
+fi
 mkdir -p caddy/dist && rm -rf caddy/dist/* && \
 cd ../docker && \
 docker_compose build cg-builder
@@ -31,9 +41,7 @@ checkError
 
 
 docker_compose run --rm cg-builder yarn install --immutable && \
-buildId=$(dd if=/dev/random bs=1 count=10 status=none | base64) && \
-sed -i 's#^const buildId =.*$#const buildId = "'$buildId'";#' ../src/common/random_build_id.ts && \
-docker_compose run --rm -e NODE_OPTIONS="--max-old-space-size=4096" -e DEPLOYMENT=prod cg-builder \
+docker_compose run --rm -e NODE_OPTIONS="--max-old-space-size=4096" -e DEPLOYMENT=prod -e CG_BUILD_ID="$buildId" cg-builder \
   bash -c "yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite" && \
 rsync -a ../build/* caddy/dist/ && \
 docker_compose up -d --no-deps --build caddy

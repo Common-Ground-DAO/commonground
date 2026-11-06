@@ -15,7 +15,7 @@ import { clone } from "./mediasoup/utils";
 import { TransportListenInfo } from 'mediasoup/types';
 import Room from "./mediasoup/room";
 import * as types from "mediasoup/types";
-import { fakeHealthcheck } from './mediasoup/mediasoupHealthcheck';
+import { listenerProbe, postgresProbe, startHealthcheck } from './healthcheck';
 import callHelper from './repositories/calls';
 import { exec } from 'child_process';
 import config from './common/config';
@@ -157,7 +157,21 @@ setInterval(async () => {
         await runWebServer();
         await runProtooWebSocketServer();
         await runMediasoupWorkers();
-        fakeHealthcheck();
+        // healthy: the database (call server heartbeat) answers, the
+        // signalling listener accepts connections and every worker runs
+        startHealthcheck([
+            postgresProbe(pool),
+            listenerProbe(httpsConf.listenPort),
+            {
+                name: 'mediasoup workers',
+                check: async () => {
+                    const closed = mediasoupWorkers.filter(worker => worker.closed).length;
+                    if (mediasoupWorkers.length === 0 || closed > 0) {
+                        throw new Error(`${closed} of ${mediasoupWorkers.length} closed`);
+                    }
+                },
+            },
+        ]);
         await updateServerStatus();
 
         // clear database state (calls left over from this server's previous

@@ -4,11 +4,15 @@
 #   - generates docker/s3_config/s3.selfhost.json (matching S3 secret)
 #   - generates a self-signed cert for the internal caddy->mediasoup hop
 #
-# Usage: ./init.sh [--tls-internal] <domain> <acme-email> [id-domain] [public-ip]
+# Usage: ./init.sh [--tls-internal] <domain> <acme-email> [id-domain] [public-ip] [public-ipv6]
 #   e.g.: ./init.sh chat.example.org admin@example.org
 #
 #   id-domain       only for the legacy CG ID gateway (CG_LEGACY_CGID=true);
 #                   leave it out, or pass "-" when a public IP follows
+#   public-ip       the server's public IPv4 address (detected when left out)
+#   public-ipv6     its public IPv6 address, "-" for none (detected when left
+#                   out, except with --tls-internal); recorded as
+#                   CG_PUBLIC_IPV6 — see SELFHOST.md, "IPv6"
 #
 #   --tls-internal  local/LAN test instance without public DNS: Caddy issues
 #                   all certificates from its own local CA instead of Let's
@@ -22,7 +26,7 @@ set -euo pipefail
 cd "${0%/*}/.."   # docker/
 
 usage() {
-  echo "Usage: $0 [--tls-internal] <domain> <acme-email> [id-domain] [public-ip]"
+  echo "Usage: $0 [--tls-internal] <domain> <acme-email> [id-domain] [public-ip] [public-ipv6]"
   echo "  e.g. $0 chat.example.org admin@example.org"
   echo "       $0 --tls-internal cg.test - - 192.168.122.44   (local test instance)"
   exit 1
@@ -57,6 +61,15 @@ if [ "$CG_ID_DOMAIN" = "-" ]; then
   CG_ID_DOMAIN=""
 fi
 CG_PUBLIC_IP="${4:-}"
+# "-" = this server has no public IPv6 address (skips the detection)
+CG_PUBLIC_IPV6="${5:-}"
+IPV6_GIVEN=false
+if [ -n "$CG_PUBLIC_IPV6" ]; then
+  IPV6_GIVEN=true
+fi
+if [ "$CG_PUBLIC_IPV6" = "-" ]; then
+  CG_PUBLIC_IPV6=""
+fi
 
 if [ -z "$CG_DOMAIN" ]; then
   usage
@@ -77,6 +90,15 @@ elif [ -z "$CG_ACME_EMAIL" ] || [ "$CG_ACME_EMAIL" = "-" ]; then
   usage
 fi
 
+is_ipv4() {
+  [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]
+}
+# loose on purpose (any hex/colon form, no zone index); the point is to tell
+# an IPv6 address from an IPv4 address or a host name
+is_ipv6() {
+  [[ "$1" == *:* ]] && [[ "$1" =~ ^[0-9A-Fa-f:.]+$ ]]
+}
+
 if [ -z "$CG_PUBLIC_IP" ]; then
   echo "Detecting public IP..."
   CG_PUBLIC_IP=$(curl -4 -fsS --max-time 10 https://api.ipify.org || true)
@@ -85,6 +107,29 @@ if [ -z "$CG_PUBLIC_IP" ]; then
     exit 1
   fi
   echo "Public IP: $CG_PUBLIC_IP"
+fi
+# mediasoup announces this address to callers and listens on IPv4 only
+if ! is_ipv4 "$CG_PUBLIC_IP"; then
+  echo "The public IP '$CG_PUBLIC_IP' is not an IPv4 address. Pass the IPv4 address as the 4th"
+  echo "argument and an IPv6 address, if any, as the 5th."
+  usage
+fi
+
+# The IPv6 address is recorded, not used by the stack: its Docker network is
+# IPv4-only (SELFHOST.md, "IPv6"). Detected only for a public instance — a LAN
+# test machine would report the router's prefix, not something browsers reach.
+if [ "$IPV6_GIVEN" = false ] && [ "$CG_TLS_MODE" != "internal" ]; then
+  echo "Detecting public IPv6 address..."
+  CG_PUBLIC_IPV6=$(curl -6 -fsS --max-time 10 https://api6.ipify.org 2>/dev/null || true)
+  if [ -n "$CG_PUBLIC_IPV6" ]; then
+    echo "Public IPv6: $CG_PUBLIC_IPV6"
+  else
+    echo "No public IPv6 address detected."
+  fi
+fi
+if [ -n "$CG_PUBLIC_IPV6" ] && ! is_ipv6 "$CG_PUBLIC_IPV6"; then
+  echo "The public IPv6 address '$CG_PUBLIC_IPV6' is not an IPv6 address."
+  usage
 fi
 
 rand() { openssl rand -hex "$1"; }
@@ -116,8 +161,13 @@ CG_ID_DOMAIN=${CG_ID_DOMAIN}
 CG_TLS_MODE=${CG_TLS_MODE}
 CG_ACME_EMAIL=${CG_ACME_EMAIL}
 # address WebRTC media (calls) is announced at — must be reachable by every
-# caller: the server's public IP, or its LAN IP for a local test instance
+# caller: the server's public IPv4 address, or its LAN IP for a local test
+# instance (mediasoup listens on IPv4 only)
 CG_PUBLIC_IP=${CG_PUBLIC_IP}
+# the server's public IPv6 address, if it has one (empty = none). Recorded
+# only: the stack's Docker network is IPv4-only, so do not publish an AAAA
+# record for CG_DOMAIN before reading SELFHOST.md, "IPv6"
+CG_PUBLIC_IPV6=${CG_PUBLIC_IPV6}
 
 PG_SU_PASSWORD=$(rand 24)
 PG_WRITER_PASSWORD=$(rand 24)
@@ -135,6 +185,16 @@ REDIS_MAXMEMORY=1024mb
 REDIS_CACHE_MAXMEMORY=256mb
 SEAWEED_VOLUME_LIMIT_MB=1024
 MEDIASOUP_DISABLE_LIBURING=true
+# memory limit per container, CG_MEM_LIMIT_<SERVICE> (defaults and reasons in
+# docker-compose.selfhost.yml / SELFHOST.md, "Resource tuning"); a Node
+# service gets about half of it as heap. Keep REDIS at >= 2 x REDIS_MAXMEMORY.
+#CG_MEM_LIMIT_API=2g
+#CG_MEM_LIMIT_MEMBERLIST=4g
+#CG_MEM_LIMIT_DB=4g
+#CG_MEM_LIMIT_REDIS=2g
+# container logs: at most CG_LOG_MAX_FILE files of CG_LOG_MAX_SIZE each
+#CG_LOG_MAX_FILE=5
+#CG_LOG_MAX_SIZE=20m
 # uid/gid the frontend builder container runs as, so files it writes into the
 # checkout keep their owner (0/0 when init.sh ran as root — that works too)
 BUILDER_UID=$(id -u)
@@ -392,10 +452,13 @@ if [ "$CG_TLS_MODE" = "internal" ]; then
   echo "     (/etc/hosts or local DNS), and after the first start trust Caddy's root"
   echo "     certificate there — see SELFHOST.md, \"Local test instance\""
 else
-  echo "  1. Point DNS A/AAAA records for ${CG_DOMAIN} to ${CG_PUBLIC_IP}"
+  echo "  1. Point a DNS A record for ${CG_DOMAIN} to ${CG_PUBLIC_IP}. No AAAA record for now"
+  echo "     (the stack is IPv4-only behind Docker's proxy — SELFHOST.md, \"IPv6\")"
 fi
 echo "  2. Open ports 80, 443 (tcp+udp) in your firewall, plus 4443 (tcp) and 40000-40099"
-echo "     (udp+tcp) for calls (CG_ENABLE_CALLS)"
+echo "     (udp+tcp) for calls (CG_ENABLE_CALLS). On a dedicated Ubuntu/Debian server,"
+echo "     sudo ./selfhost/harden.sh --dry-run shows the firewall, SSH and system settings"
+echo "     it would apply (SELFHOST.md, \"Server hardening\")"
 echo "  3. Run: ./selfhost/selfhost.sh build"
 echo "  4. Run: ./selfhost/selfhost.sh up"
 if grep -q '^CG_ENABLE_MAIL=true' .env.selfhost; then

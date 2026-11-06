@@ -4,7 +4,7 @@
 
 import pool from './util/postgres';
 import { PoolClient, QueryResult } from 'pg';
-import { fakeHealthcheck } from './healthcheck';
+import { listenerProbe, postgresProbe, startHealthcheck } from './healthcheck';
 import express from 'express';
 import { ChannelPermission, PredefinedRole, RoleType } from './common/enums';
 import { convertUuidToBinary, convertBinaryToUuid, mergeSortedMemberIds } from './util/memberListHelpers';
@@ -1432,7 +1432,10 @@ const shutdown = async (code = 0) => {
 if (isMain) {
   app.listen(4000);
 
-  fakeHealthcheck();
+  // healthy: the database answers and the HTTP listener accepts connections
+  // (memberlist does not use Valkey); only as the entry point, like the
+  // listener — tests import this module
+  startHealthcheck([postgresProbe(pool), listenerProbe(4000)]);
 
   process.on("SIGTERM", () => shutdown());
   process.on("unhandledRejection", (reason, promise) => {

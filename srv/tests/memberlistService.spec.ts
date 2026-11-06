@@ -21,7 +21,7 @@ jest.mock('../util/postgres', () => ({
   __esModule: true,
   default: { connect: jest.fn(), query: jest.fn() },
 }));
-jest.mock('../healthcheck', () => ({ fakeHealthcheck: jest.fn() }));
+jest.mock('../healthcheck', () => ({ startHealthcheck: jest.fn(), postgresProbe: jest.fn(), listenerProbe: jest.fn() }));
 
 import { memberListForTests as ml } from '../memberlist';
 import { emptyMemberList } from '../common/memberLists';

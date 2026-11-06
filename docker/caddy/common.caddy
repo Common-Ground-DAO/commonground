@@ -270,6 +270,14 @@
 
 		import cg_instance_config
 
+		# the build ID of the deployed frontend (vite/buildId.ts), for
+		# operators (curl); changes with every deploy, so never cached
+		handle /build-id.txt {
+			root * /srv
+			header Cache-Control "no-cache"
+			file_server
+		}
+
 		# robots.txt carries a Sitemap line rendered for the requesting host
 		handle /robots.txt {
 			root * /srv

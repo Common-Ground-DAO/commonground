@@ -2,6 +2,8 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import { instanceKeyPrefix } from './gateway';
+
 /**
  * Session generations (docs/auth-identity §2, "Signing out other devices").
  *
@@ -41,9 +43,6 @@ export type SessionGenerations = {
 /** how long the name of the session that signed the others out is kept */
 export const KEEP_SESSION_TTL_MS = 13 * 60 * 60 * 1000;
 
-const genKey = (userId: string) => `sess-gen:${userId}`;
-const keepKey = (userId: string) => `sess-keep:${userId}`;
-const COPIED_KEY = 'sess-gen-copied';
 
 // SET the generation (and the kept session) only if it is greater than the
 // stored one
@@ -65,7 +64,16 @@ type GenerationClient = {
 };
 
 /** the copies on the sessions' Valkey instance */
-export function redisSessionGenerations(client: GenerationClient): SessionGenerations {
+/**
+ * The copies on the sessions' Valkey instance: `sess-gen:<userId>`,
+ * `sess-keep:<userId>` and `sess-gen-copied`, with the instance's key prefix
+ * (`gateway:` on a gateway, which keeps its own copies with its own
+ * reconciler)
+ */
+export function redisSessionGenerations(client: GenerationClient, prefix: string = instanceKeyPrefix()): SessionGenerations {
+  const genKey = (userId: string) => `${prefix}sess-gen:${userId}`;
+  const keepKey = (userId: string) => `${prefix}sess-keep:${userId}`;
+  const COPIED_KEY = `${prefix}sess-gen-copied`;
   return {
     read: async (userId) => {
       const [gen, keepSid] = await client.mGet([genKey(userId), keepKey(userId)]);

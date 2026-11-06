@@ -4,6 +4,7 @@
 
 import webSocketManager from "./webSocket";
 import type { LiveKind } from "./transport";
+import { isGatewayInstance } from "common/gateway";
 
 type WebSocketStateListener = (state: Common.WebSocketState) => void;
 type ServiceWorkerStateListener = (state: Common.ServiceWorkerState) => void;
@@ -279,6 +280,9 @@ export class ConnectionManager {
    * never throws.
    */
   private cleanUpIndexedDbs(): void {
+    // a gateway (docs/auth-identity §12) leaves the databases an old page of
+    // the app stored on its origin as they are, obsolete ones included
+    if (isGatewayInstance()) return;
     if (this._cleanUpIndexedDbsScheduled) return;
     this._cleanUpIndexedDbsScheduled = true;
     setTimeout(() => {

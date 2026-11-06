@@ -12,6 +12,11 @@ import { asyncRequestHandler } from './util/asyncHandler';
 import { describeErrorForLog } from './util/errorLog';
 import { decideChannelEvent, MAX_CHANNEL_EVENT_DEFERRALS } from './util/memberListChannelEvents';
 import { emptyChannelMemberList, emptyMemberList } from './common/memberLists';
+import { refuseInGatewayMode } from './util/gateway';
+
+// runs once, for the main instance only: never as part of a gateway
+// (srv/util/gateway.ts)
+refuseInGatewayMode('memberlist');
 
 type PgNotifyEvent = Events.PgNotify.UserDataChange | Events.PgNotify.UserRoleChange | Events.PgNotify.CommunityRoleChange | Events.PgNotify.ChannelRolePermissionChange;
 

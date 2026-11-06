@@ -18,6 +18,7 @@ import { csMultiTab } from './12-cs-multi-tab.ts';
 import { csNotifications } from './13-cs-notifications.ts';
 import { csLoginTime } from './14-cs-login-time.ts';
 import { csSplitFrozen } from './15-cs-split-frozen.ts';
+import { gateway } from './16-gateway.ts';
 
 /** every flow, in run order (each is independent; --flow picks a subset) */
 export const flows: Flow[] = [
@@ -36,6 +37,7 @@ export const flows: Flow[] = [
   csNotifications,
   csLoginTime,
   csSplitFrozen,
+  gateway,
 ];
 
 /**

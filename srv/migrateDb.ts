@@ -4,6 +4,11 @@
 
 import { Migration } from "typeorm"
 import { getDataSource } from './util/datasource';
+import { refuseInGatewayMode } from './util/gateway';
+
+// runs once, for the main instance only: never as part of a gateway
+// (srv/util/gateway.ts)
+refuseInGatewayMode('migrate-db');
 
 (async () => {
   try {

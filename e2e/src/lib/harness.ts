@@ -204,6 +204,8 @@ export class FlowContext {
   readonly flowId: string;
   readonly outDir: string;
   readonly origin: string;
+  /** the instance's origin, plus the gateway's (--gateway-url): the guards watch both */
+  readonly ownOrigins: string[];
   readonly result: FlowResult;
   readonly sessions: Session[] = [];
   currentStep = '(setup)';
@@ -223,6 +225,7 @@ export class FlowContext {
     this.flowId = flow.id;
     this.outDir = outDir;
     this.origin = new URL(config.baseUrl).origin;
+    this.ownOrigins = [this.origin, ...(config.gatewayUrl ? [new URL(config.gatewayUrl).origin] : [])];
     this.result = {
       id: flow.id,
       title: flow.title,
@@ -240,6 +243,11 @@ export class FlowContext {
 
   url(path = '/') {
     return `${this.config.baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+  }
+
+  /** a URL on the instance or its gateway (--gateway-url) */
+  isOwnUrl(url: string) {
+    return this.ownOrigins.some(origin => url === origin || url.startsWith(`${origin}/`));
   }
 
   /** a name that is unique per run: 3-30 chars of [a-z0-9_], as display names allow */
@@ -285,7 +293,9 @@ export class FlowContext {
     // the backend's per-address limits see (e2e/Caddyfile.e2e); a real
     // instance ignores it
     const clientIp = `10.${randomBytes(1)[0]}.${randomBytes(1)[0]}.${1 + (randomBytes(1)[0] % 254)}`;
-    await page.setCookie({ name: 'cg_e2e_client', value: clientIp, url: this.origin, secure: true, sameSite: 'Strict' });
+    for (const origin of this.ownOrigins) {
+      await page.setCookie({ name: 'cg_e2e_client', value: clientIp, url: origin, secure: true, sameSite: 'Strict' });
+    }
     context.on('targetcreated', (target: Target) => this.onTarget(target, session));
     if (options.authenticator) {
       await session.cdp.send('WebAuthn.enable', { enableUI: false });
@@ -412,7 +422,7 @@ export class FlowContext {
     });
     page.on('response', async response => {
       const url = response.url();
-      if (!url.startsWith(this.origin)) {
+      if (!this.isOwnUrl(url)) {
         return;
       }
       if (response.status() >= 500) {
@@ -445,14 +455,14 @@ export class FlowContext {
     });
     page.on('request', request => {
       const url = request.url();
-      if (url.startsWith(this.origin) && new URL(url).pathname.split('/').some(segment => segment === 'undefined' || segment === 'null')) {
+      if (this.isOwnUrl(url) && new URL(url).pathname.split('/').some(segment => segment === 'undefined' || segment === 'null')) {
         this.record('undefined-url', `${request.resourceType()} request ${request.method()} ${url}`, sessionName, url);
       }
     });
     page.on('requestfailed', request => {
       const url = request.url();
       const failure = request.failure()?.errorText ?? '';
-      if (!url.startsWith(this.origin) || failure === 'net::ERR_ABORTED') {
+      if (!this.isOwnUrl(url) || failure === 'net::ERR_ABORTED') {
         return;
       }
       this.record('request-failed', `${failure} ${request.method()} ${url}`, sessionName, url);

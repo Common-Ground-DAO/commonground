@@ -203,4 +203,33 @@ describe('connectionManager', () => {
     // the tab is unaffected while the cleanup hangs
     expect(tab.connectionManager.webSocketState).toBe('connected');
   });
+
+  it('a gateway deletes no database, obsolete ones included (docs/auth-identity §12)', async () => {
+    useDataLayerFakeTimers();
+    fake.cleanups.length = 0;
+    fake.io = createFakeIo({ autoAccept: false });
+    installBrowserEnv({ url: 'https://app.test/' });
+    Object.assign(fake.loginManager, {
+      state: 'pending',
+      onStateChange: undefined,
+      onError: undefined,
+      autoLogin: vi.fn(async () => undefined),
+      checkLoginStatus: vi.fn(async () => undefined),
+    });
+    Object.assign(fake.serviceWorkerManager, { state: 'none', update: vi.fn(), finishSwInstallation: vi.fn() });
+    const g = globalThis as { __CG_INSTANCE__?: unknown };
+    g.__CG_INSTANCE__ = { deployment: 'prod', appUrl: 'https://app.test', gatewayTargetUrl: 'https://new.test' };
+    try {
+      await importAsNewTab(() => import('data/appstate/connection'));
+      await settle();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await settle();
+      expect(fake.cleanups).toEqual([]);
+      // and no data socket either (webSocket.ts)
+      expect(fake.io.sockets).toHaveLength(0);
+    }
+    finally {
+      delete g.__CG_INSTANCE__;
+    }
+  });
 });

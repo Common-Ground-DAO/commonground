@@ -2,7 +2,6 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import config from './common/config';
 import serverconfig from './serverconfig';
 import {
   randomString,
@@ -15,12 +14,12 @@ import {
   cgIdRequestRoomKey,
   articleRoomKey,
   botTokenRoomKey,
-  dockerSecret,
 } from './util';
-import cors from "cors";
 import { Server, type Socket } from "socket.io";
 import { BOT_PROTOCOL_VERSION } from "./common/botProtocol";
 import { createAdapter } from "@socket.io/redis-adapter";
+import { installSocketRequestChecks, socketAdapterKey, socketServerOriginOptions } from "./util/socketServer";
+import { requireSessionSecret } from "./util/sessionSecret";
 import deviceHelper from "./repositories/device";
 import { isSecurityStepRequiredForRealtime } from "./util/securityStep";
 import validators from './validators';
@@ -41,7 +40,8 @@ import cookieParser from 'cookie-parser';
 // and cookie-parser each bundle their own copy). Re-add it before reviving.
 // import signature from 'cookie-signature';
 import cookie from 'cookie';
-const secret = dockerSecret('redis_secret') || process.env.REDIS_SECRET as string;
+// a missing session secret stops the process at startup
+const secret = requireSessionSecret();
 
 /** the session id of a validly signed session cookie, else undefined */
 function decodeSessionId(cookieHeader: string): string | undefined {
@@ -98,40 +98,9 @@ const BOT_PRESENCE_SCRIPT = `
   return total
 `;
 
-const allowedOrigins = [ process.env.BASE_URL ];
-if (config.DEPLOYMENT === 'dev') {
-  allowedOrigins.push('http://localhost:3000');
-  allowedOrigins.push('https://localhost:3000');
-  allowedOrigins.push('http://localhost:8000');
-  allowedOrigins.push('https://localhost:8001');
-  allowedOrigins.push('http://app.cg.local:3000');
-  allowedOrigins.push('https://app.cg.local:3000');
-  allowedOrigins.push('http://app.cg.local:8000');
-  allowedOrigins.push('https://app.cg.local:8001');
-  allowedOrigins.push('https://bs-local.com:3000');
-  allowedOrigins.push('https://bs-local.com:8001');
-  if (!!process.env.LOCAL_CERTIFICATE_IP) {
-    allowedOrigins.push(`http://${process.env.LOCAL_CERTIFICATE_IP}:3000`);
-    allowedOrigins.push(`https://${process.env.LOCAL_CERTIFICATE_IP}:3000`);
-    allowedOrigins.push(`http://${process.env.LOCAL_CERTIFICATE_IP}:8000`);
-    allowedOrigins.push(`https://${process.env.LOCAL_CERTIFICATE_IP}:8001`);
-  }
-}
-const corsOptions: cors.CorsOptions = {
-  origin: function (origin, callback) {
-    // allow requests with no origin 
-    // (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) === -1) {
-      var msg = 'The CORS policy for this site does not ' +
-        'allow access from the specified Origin.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
-  credentials: true,
-  preflightContinue: false,
-};
+// one origin list for the api and the wsapi, checked for every handshake,
+// polling request and WebSocket upgrade (srv/util/socketServer.ts)
+const { cors: corsOptions, allowRequest } = socketServerOriginOptions();
 
 const io = new Server<
   API.Server.ServerToClientEvents,
@@ -141,6 +110,7 @@ const io = new Server<
 >({
   transports: ["polling", "websocket"],
   cors: corsOptions,
+  allowRequest,
   path: "/api/ws/",
   pingInterval: 15000,
   pingTimeout: 15000,
@@ -400,6 +370,10 @@ function flushTypingStops(socket: AppSocket) {
   typingLastEmit.get(socket)?.clear();
 }
 
+// origin checks of every engine request; in gateway mode no token handshakes
+// and only the gateway's events (srv/util/gateway.ts) — before anything else
+installSocketRequestChecks(io);
+
 io.use(async (socket, next) => {
   const token = socket.handshake.auth?.token;
   if (token === undefined) {
@@ -442,7 +416,8 @@ redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
   io.adapter(createAdapter(
     redisManager.getClient('socketIOPub'),
     redisManager.getClient('socketIOSub'),
-    { key: 'v2:' }
+    // the gateway's own channels (srv/util/gateway.ts)
+    { key: socketAdapterKey() }
   ));
 
   // presence probe from another wsapi process: answer with the users that

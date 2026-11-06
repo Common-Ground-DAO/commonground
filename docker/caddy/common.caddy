@@ -359,6 +359,179 @@
 	}
 }
 
+# The legacy CG ID mini-app on its own site (passkeys on a separate origin):
+# the shell loads only its own assets; the app's origin is needed for images
+# (img-src) and its API calls (connect-src).
+#   args[0]  the app's domain (where the mini-app's API calls go)
+(cg_cgid_site) {
+	import cg_hsts_on site
+	request_body {
+		max_size 16MiB
+	}
+	encode zstd gzip
+	import cg_common_headers
+	import cg_access_log
+	handle_errors {
+		import cg_common_headers
+		import cg_hsts_on errors
+		header >Cache-Control "no-store"
+		respond "" {err.status_code}
+	}
+	header >Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' https://{args[0]}; connect-src 'self' https://{args[0]}:* wss://{args[0]}:*; script-src-elem 'self'; style-src 'self' 'unsafe-inline'; manifest-src 'self'"
+	route {
+		@dotsegments vars_regexp {path} (^|/)\.\.?(/|$)
+		handle @dotsegments {
+			respond 400
+		}
+		handle /index.html {
+			respond 403
+		}
+		import cg_instance_config
+		handle / {
+			root * /srv
+			header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+			rewrite * /index_cgid.html
+			file_server
+		}
+		handle {
+			root * /srv
+			header Cache-Control "private, must-revalidate, proxy-revalidate, max-age=0"
+			file_server
+		}
+	}
+}
+
+# The gateway's site (docs/auth-identity §12; Caddyfile.selfhost, site of
+# CG_GATEWAY_DOMAIN): the same web app, which shows only sign-in and the move
+# to the main instance, in front of the gateway's own backend (gateway-api,
+# gateway-wsapi). Narrower than cg_app: only the API routers the gateway
+# serves are routed (the gateway api refuses everything else anyway, its
+# allowlist is the authority), no media, no Bot API, no page routes but the
+# X sign-in callbacks — every other path, old deep links included, gets the
+# web app's shell, which takes the path along to the new instance. The
+# including site sets `vars cg_env_prefix GATEWAY_`, so /instance-config.js is
+# rendered from the GATEWAY_CG_* variables.
+#   args[0]  connect-src sources for the own host (see cg_csp)
+#   args[1]  frame-src (see cg_csp)
+#   args[2]  HSTS: on | off (see cg_hsts_*)
+(cg_gateway_app) {
+	# sign-in requests only: no uploads
+	request_body {
+		max_size 1MiB
+	}
+	encode zstd gzip
+	import cg_common_headers
+	import cg_hsts_{args[2]} site
+	import cg_access_log
+
+	handle_errors {
+		import cg_common_headers
+		import cg_hsts_{args[2]} errors
+		header >Cache-Control "no-store"
+		respond "" {err.status_code}
+	}
+
+	route {
+		@dotsegments vars_regexp {path} (^|/)\.\.?(/|$)
+		handle @dotsegments {
+			respond 400
+		}
+
+		# the gateway serves no media and no Bot API
+		handle /files/* {
+			respond 404
+		}
+
+		@gatewayapi path_regexp ^/api/v2/(User|Instance|Twitter|Lukso|Accounts|CgId)/
+		handle @gatewayapi {
+			import cg_csp {args[0]} {args[1]}
+			header ?Cache-Control "no-cache"
+			uri strip_prefix /api/v2
+			reverse_proxy gateway-api:4000 {
+				import cg_xfp_https
+			}
+		}
+
+		handle /api/ws/* {
+			import cg_csp {args[0]} {args[1]}
+			reverse_proxy gateway-wsapi:4000 {
+				import cg_xfp_https
+			}
+		}
+
+		handle /api/* {
+			respond 404
+		}
+
+		# X sign-in: the redirect back from X and the popup's page
+		@xsignin path_regexp ^/(twitter-callback|twitter-login)/?$
+		handle @xsignin {
+			import cg_csp {args[0]} {args[1]}
+			header ?Cache-Control "no-cache"
+			reverse_proxy gateway-api:4000 {
+				import cg_xfp_https
+			}
+		}
+
+		import cg_instance_config
+
+		# not for search engines
+		handle /robots.txt {
+			header Content-Type "text/plain; charset=utf-8"
+			respond "User-agent: *
+Disallow: /
+"
+		}
+
+		@assets path_regexp ^/(fonts|icons|images|static|audio|downloads)/
+		handle @assets {
+			root * /srv
+			import cg_csp {args[0]} {args[1]}
+			@hashed {
+				path_regexp ^/static/.+\.[0-9a-f]{8}(\.chunk)?\.[A-Za-z0-9]+(\.map)?$
+				file
+			}
+			@unhashed {
+				not path_regexp ^/static/.+\.[0-9a-f]{8}(\.chunk)?\.[A-Za-z0-9]+(\.map)?$
+				file
+			}
+			header @hashed Cache-Control "public,max-age=31536000,immutable"
+			header @unhashed Cache-Control "private,max-age=86400,must-revalidate"
+			file_server
+		}
+
+		# the CG ID mini-app's shell is served on its own site only
+		handle /index_cgid.html {
+			respond 403
+		}
+
+		# the shell and the service worker: always revalidated, like on the
+		# app's site
+		@gatewayshell path_regexp ^/(index\.html|service-worker\.js)?$
+		handle @gatewayshell {
+			root * /srv
+			import cg_csp {args[0]} {args[1]}
+			header Cache-Control "no-cache"
+			try_files {path} /index.html
+			file_server
+		}
+
+		# every other path: an existing file of the build, else the shell
+		# (never cached), so an old deep link opens the gateway page
+		handle {
+			root * /srv
+			import cg_csp {args[0]} {args[1]}
+			@notshell not path /index.html
+			route {
+				try_files {path} /index.html
+				header /index.html Cache-Control "no-cache"
+				header @notshell Cache-Control "private,max-age=86400,must-revalidate"
+				file_server
+			}
+		}
+	}
+}
+
 # Call signalling (protoo over wss) for the mediasoup service. Clients only
 # ever see Caddy's certificate; the internal hop uses mediasoup's own
 # self-signed certificate, which is why it is not verified.

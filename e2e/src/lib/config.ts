@@ -17,6 +17,8 @@ export type Config = {
   spki: string[];
   /** Mailpit base URL (e.g. http://mailpit:8025); without it, flows that need a mailed code skip */
   mailpitUrl?: string;
+  /** the instance's gateway (its old domain in gateway mode), e.g. https://app.cg-e2e.test; without it the gateway flow skips */
+  gatewayUrl?: string;
   /** flow ids to run (empty = all) */
   flows: string[];
   /** where report.json and screenshots go */
@@ -49,6 +51,7 @@ const USAGE = `Usage: node src/main.ts --url <https://instance> [options]
   --ca <file>             PEM root CA of the instance's certificate (self-host "tls internal")
   --spki <hash>           extra leaf-key pin (base64 sha256 of the SPKI) to accept; repeatable
   --mailpit <url>         Mailpit API base URL, enables the mailed-code variants
+  --gateway-url <url>     the instance's gateway (old domain), enables the gateway flow
   --flow <id>[,<id>]      run only these flows or groups (repeatable; chat-sync = E1–E8);
                           --list shows the ids and groups
   --out <dir>             output directory (default: ./results/<timestamp>)
@@ -103,6 +106,7 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
       case '--ca': config.caFile = value(); break;
       case '--spki': config.spki.push(value()); break;
       case '--mailpit': config.mailpitUrl = value().replace(/\/+$/, ''); break;
+      case '--gateway-url': config.gatewayUrl = value().replace(/\/+$/, ''); break;
       case '--flow': config.flows.push(...value().split(',').map(s => s.trim()).filter(Boolean)); break;
       case '--out': config.outDir = value(); break;
       case '--reload-iterations': config.reloadIterations = positiveInt(arg, value()); break;
@@ -140,6 +144,9 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
   }
   if (config.baseUrl && !/^https?:\/\/[^/]+$/.test(config.baseUrl)) {
     throw new Error(`--url must be an origin like https://host[:port], got "${config.baseUrl}"`);
+  }
+  if (config.gatewayUrl && !/^https?:\/\/[^/]+$/.test(config.gatewayUrl)) {
+    throw new Error(`--gateway-url must be an origin like https://host[:port], got "${config.gatewayUrl}"`);
   }
   if (config.redisUrl && !/^rediss?:\/\//.test(config.redisUrl)) {
     throw new Error('E2E_REDIS_URL must be a redis:// URL');

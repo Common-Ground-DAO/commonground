@@ -38,6 +38,12 @@ async function main() {
   mkdirSync(config.outDir, { recursive: true });
 
   const { pins, details } = await spkiPinsFor(config.baseUrl, config.caFile, [4443]);
+  if (config.gatewayUrl) {
+    // the gateway's own certificate (another host on the same edge)
+    const gateway = await spkiPinsFor(config.gatewayUrl, config.caFile, []);
+    pins.push(...gateway.pins.filter(pin => !pins.includes(pin)));
+    details.push(...gateway.details);
+  }
   details.forEach(line => console.log(`tls: ${line}`));
   pins.push(...config.spki);
 

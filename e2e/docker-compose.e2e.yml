@@ -38,6 +38,9 @@ services:
       cryptogram:
         aliases:
           - ${CG_DOMAIN}
+          # the gateway's sites (E2E_GATEWAY=1)
+          - ${CG_GATEWAY_DOMAIN}
+          - ${CG_GATEWAY_ID_DOMAIN}
 
   db:
     image: ${E2E_IMAGE_PREFIX:-cg-e2e}/db
@@ -83,6 +86,13 @@ services:
     ports: !override []
 
   onchain:
+    image: ${E2E_IMAGE_PREFIX:-cg-e2e}/backend
+
+  # the gateway (profile "gateway", E2E_GATEWAY=1)
+  gateway-api:
+    image: ${E2E_IMAGE_PREFIX:-cg-e2e}/backend
+
+  gateway-wsapi:
     image: ${E2E_IMAGE_PREFIX:-cg-e2e}/backend
 
   # catches every mail of the instance; the suite reads sign-up codes from its

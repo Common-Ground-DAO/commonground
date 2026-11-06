@@ -7,6 +7,7 @@ import type express from 'express';
 import ipRateLimitHandler, { enforceLimits, keyRateLimitHandler } from './rateLimit';
 import { AUTH_LIMITS } from './authLimits';
 import { dockerSecret } from '.';
+import { configuredSessionSecret, sharedMailLimitSecret } from './sessionSecret';
 
 // Send limits for the endpoints that make the server mail an address the
 // caller chooses (docs/email-notifications, "Send limits"). Three dimensions,
@@ -28,13 +29,25 @@ const KEY_LABEL = 'cg-mail-send-limit-v1';
 let addressKey: Buffer | null | undefined;
 
 /**
- * Redis key part for a target address: an HMAC with a key derived from the
- * session secret (like the unsubscribe key), so the keys can't be matched
+ * The secret the per-address keys are derived from: the shared
+ * CG_MAIL_LIMIT_SECRET (sharedMailLimitSecret), which an instance and its
+ * gateway share so that both count the mails to one address together (docs/
+ * auth-identity §12); without it the session secret exactly as before
+ * (configuredSessionSecret), so the keys of an instance without a gateway do
+ * not change.
+ */
+export function mailLimitSecret(env: NodeJS.ProcessEnv = process.env, readDockerSecret: (name: string) => string | false | undefined = dockerSecret): string | undefined {
+  return sharedMailLimitSecret(env, readDockerSecret) ?? configuredSessionSecret(env, readDockerSecret);
+}
+
+/**
+ * Redis key part for a target address: an HMAC with a key derived from
+ * mailLimitSecret() (like the unsubscribe key), so the keys can't be matched
  * against a list of known addresses. Never stored in clear.
  */
 export function mailTargetKey(address: string): string {
   if (addressKey === undefined) {
-    const secret = dockerSecret('redis_secret') || process.env.REDIS_SECRET;
+    const secret = mailLimitSecret();
     addressKey = secret ? createHmac('sha256', secret).update(KEY_LABEL).digest() : null;
   }
   const normalized = address.trim().toLowerCase();

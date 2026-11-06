@@ -91,6 +91,11 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
   constructor() {
     super('communities');
 
+    if (!this.localData) {
+      // a gateway never opens the database: no stored channels to load
+      this.__ready = { promise: Promise.resolve() };
+      return;
+    }
     this.__ready = {} as any;
     this.__ready.promise = new Promise<void>(resolve => {
       if (this.__waitForSetup === false) {

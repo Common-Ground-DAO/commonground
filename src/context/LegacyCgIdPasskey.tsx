@@ -9,6 +9,8 @@ import urlConfig from '../data/util/urls';
 import webSocketManager from 'data/appstate/webSocket';
 import errors from 'common/errors';
 import { browserSupportsWebAuthn } from '@simplewebauthn/browser';
+import { isGatewayInstance } from 'common/gateway';
+import { watchCgIdResult } from 'views/GatewayView/cgIdResultSocket';
 
 // Legacy CG ID (gateway) instances only (docs/auth-identity §7): passkeys live
 // on the separate CG ID app, opened as a popup; its result arrives by socket
@@ -60,6 +62,9 @@ export function LegacyCgIdPasskeyProvider(props: React.PropsWithChildren<{}>) {
             const requestId = randomRequestId();
             let timeoutId: any = undefined;
             let handled = false;
+            // gateway (docs/auth-identity §12): no data socket
+            const gateway = isGatewayInstance();
+            let stopGatewayWatch: (() => void) | undefined;
 
             let resolve: (value: boolean | PromiseLike<boolean>) => void;
             let reject: (reason?: any) => void;
@@ -75,7 +80,9 @@ export function LegacyCgIdPasskeyProvider(props: React.PropsWithChildren<{}>) {
                     const y = window.screen.height / 2 - 230;
                     features = "width=600,height=460,left=" + x + ",top=" + y;
                 }
-                webSocketManager.watchCgIdRequest(requestId);
+                if (!gateway) {
+                    webSocketManager.watchCgIdRequest(requestId);
+                }
                 const win = window.open(`${urlConfig.CGID_URL}/${action}/${requestId}`, "cgPassportSignWindow", features);
                 if (win) {
                     const checkWindowClosedInterval = setInterval(() => {
@@ -124,6 +131,7 @@ export function LegacyCgIdPasskeyProvider(props: React.PropsWithChildren<{}>) {
 
             const handlingFinished = () => {
                 handled = true;
+                stopGatewayWatch?.();
                 if (timeoutId !== undefined) {
                     clearTimeout(timeoutId);
                     timeoutId = undefined;
@@ -145,8 +153,17 @@ export function LegacyCgIdPasskeyProvider(props: React.PropsWithChildren<{}>) {
                 console.error("Passkey: " + action + " timed out");
             }, timeout);
 
-            connectionManager.registerClientEventHandler("cliCgIdSignResponse", passkeyResultListener);
             window.addEventListener("message", passkeyResultPostMessageListener)
+
+            if (gateway) {
+                // a gateway has no data socket: a minimal one of its own
+                // watches this request (connected long before the person is
+                // done in the popup, which opens right away, within the click)
+                stopGatewayWatch = watchCgIdResult(requestId, (event) => passkeyResultListener(event), () => undefined);
+                executeAction();
+                return promise;
+            }
+            connectionManager.registerClientEventHandler("cliCgIdSignResponse", passkeyResultListener);
 
             if (webSocketManager.state === "connected") {
                 executeAction();

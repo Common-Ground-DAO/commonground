@@ -22,6 +22,7 @@ import { type AuthenticationResponseJSON } from "@simplewebauthn/browser";
 import notificationsApi from "data/api/notifications";
 import { authTabId, broadcastLoggedIn, broadcastLoggedOut, onAuthBroadcast, withLoginLock } from "./authBroadcast";
 import type { AuthBroadcastMessage } from "./transport";
+import { isGatewayInstance } from "common/gateway";
 
 type CurrentUser = {
   userId: string;
@@ -85,6 +86,13 @@ export type LoginOptions =
   /** legacy CG ID popup: redeems the assertion the CG ID app verified */
   { account: 'passkey-legacy' } |
   { deviceId: string };
+
+/**
+ * `_login`'s options: LoginOptions, or the wallet login of a recovery phrase
+ * an old page left in localStorage, which autoLogin runs on page load
+ * (legacy CG ID only) — a silent login, not a sign-in made in this tab.
+ */
+type InternalLoginOptions = LoginOptions | { account: 'wallet', storedRecoveryPhrase: true };
 
 class LoginManager {
   private _state: Common.LoginState = "pending";
@@ -167,6 +175,19 @@ class LoginManager {
   public get currentUser(): Readonly<CurrentUser | null> {
     return this._currentUser;
   }
+
+  /** set together with every `loggedin`: see `signedInInThisTab` */
+  private _signedInInThisTab = false;
+  /**
+   * The current login is one this tab made with a sign-in method (password,
+   * code, passkey, wallet, …; a sign-up, a transfer link) — not a silent
+   * device-key login, not the page-load login with a recovery phrase an old
+   * page left in localStorage, and not another tab's login taken over. The gateway
+   * page (docs/frontend "The gateway page") continues by itself only then.
+   */
+  public get signedInInThisTab(): boolean {
+    return this._state === "loggedin" && this._signedInInThisTab;
+  }
   private setCurrentUser(data: CurrentUser | null) {
     if (data) {
       // logged in: no logout of this browser runs any more, and "You were
@@ -207,6 +228,7 @@ class LoginManager {
           // app is offline
           if (!!this.currentUser) {
             webSocketManager.login(this.currentUser.deviceId).catch(e => debugLog("socket login", e));
+            this._signedInInThisTab = false;
             this.state = "loggedin";
           }
           else {
@@ -275,7 +297,7 @@ class LoginManager {
             triedLogin = true;
             const mnemonicResult = await this.prepareMnemonicLogin(mnemonic);
             if (mnemonicResult.readyForLogin) {
-              result = await this._login({ account: 'wallet' });
+              result = await this._login({ account: 'wallet', storedRecoveryPhrase: true });
               localStorage.removeItem(MNEMONIC_KEY);
             }
             else {
@@ -428,6 +450,7 @@ class LoginManager {
     });
     securityStepState.set(responseData.securityStepRequired === true);
     await this.setupAfterLogin(responseData);
+    this._signedInInThisTab = true;
     this.state = "loggedin";
     broadcastLoggedIn(responseData.ownData.id);
     return responseData;
@@ -706,6 +729,12 @@ class LoginManager {
     securityStepState.setUser(userId);
     stepUpManager.clear();
     channelDatabaseManager.userId = userId;
+    if (isGatewayInstance()) {
+      // a gateway keeps no local data (setupAfterLogin): the login state only
+      this._signedInInThisTab = false;
+      this.state = "loggedin";
+      return;
+    }
     if (!securityStepState.required) {
       webSocketManager.login(stored.deviceId).catch(e => debugLog("socket login", e));
     }
@@ -730,6 +759,7 @@ class LoginManager {
       console.error("Error setting up notifications after a login in another tab", e);
     }
     if (this._currentUser?.userId === userId) {
+      this._signedInInThisTab = false;
       this.state = "loggedin";
     }
   }
@@ -951,6 +981,7 @@ class LoginManager {
       stepUpManager.clear();
       securityStepState.set(responseData.securityStepRequired === true);
       await this.setupAfterLogin(responseData);
+      this._signedInInThisTab = true;
       this.state = "loggedin";
       broadcastLoggedIn(responseData.ownData.id);
       return responseData;
@@ -999,9 +1030,9 @@ class LoginManager {
    * tab has just logged in — take its session over (`'taken-over'`) instead
    * of a second login.
    */
-  private _login(options: LoginOptions): Promise<API.User.login.Response>;
-  private _login(options: LoginOptions, mayTakeOver: true): Promise<API.User.login.Response | 'taken-over'>;
-  private async _login(options: LoginOptions, mayTakeOver = false): Promise<API.User.login.Response | 'taken-over'> {
+  private _login(options: InternalLoginOptions): Promise<API.User.login.Response>;
+  private _login(options: InternalLoginOptions, mayTakeOver: true): Promise<API.User.login.Response | 'taken-over'>;
+  private async _login(options: InternalLoginOptions, mayTakeOver = false): Promise<API.User.login.Response | 'taken-over'> {
     if (!this._loginRunning || !this._loginInProgress) {
       this._loginRunning = true;
       this._loginInProgress = new Promise<API.User.login.Response | 'taken-over'>(async (resolve, reject) => {
@@ -1153,6 +1184,8 @@ class LoginManager {
               }
               securityStepState.set(responseData.securityStepRequired === true);
               await this.setupAfterLogin(responseData, requestStartedAt);
+              // a device-key login and a stored recovery phrase's are silent
+              this._signedInInThisTab = !("deviceId" in options) && !("storedRecoveryPhrase" in options);
               this.state = "loggedin";
               this._deviceLoginRetryCount = 0;
               this.clearDeviceLoginRetry();
@@ -1196,6 +1229,9 @@ class LoginManager {
 
   /** `requestStartedAt`: when the request of this snapshot started (entity-db snapshot merges) */
   private async setupAfterLogin(data: API.User.login.Response, requestStartedAt?: number) {
+    // a gateway (docs/auth-identity §12) keeps no local data: no entity
+    // snapshots, chat stores, socket login or push subscription
+    if (isGatewayInstance()) return;
     const serviceWorkerManager = (await import("./serviceWorker")).default;
     if (this._windowReloadTriggered === false) {
       channelDatabaseManager.userId = data.ownData.id;
@@ -1233,6 +1269,11 @@ class LoginManager {
   private async _clear() {
     if (this._windowReloadTriggered === false) {
       channelDatabaseManager.userId = undefined;
+      if (isGatewayInstance()) {
+        // a gateway keeps no local data (setupAfterLogin) and leaves the data
+        // an old page of the app stored on this origin as it is
+        return;
+      }
       const promise = Promise.allSettled([
         userDatabase.clear(),
         communityDatabase.clear(),

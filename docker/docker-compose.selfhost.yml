@@ -21,6 +21,12 @@
 #     switched by CG_ENABLE_MAIL (init.sh writes true; unset = off, so an
 #     older .env.selfhost does not start sending mail on its own)
 #   - rotating container logs and a memory limit for every service (below)
+#   - the gateway of a moved instance (gateway-api, gateway-wsapi) sits
+#     behind the profile "gateway", switched by CG_ENABLE_GATEWAY (default
+#     off; SELFHOST.md, "Gateway for a moved instance")
+#   - every backend process caps its PostgreSQL pool (PG_POOL_MAX); the sum
+#     over all of them, the gateway included, stays well below the server's
+#     max_connections (docker/db/postgresql.conf has the arithmetic)
 #
 # Usage: see docker/SELFHOST.md. Never run this with the dev docker/.env —
 # use docker/selfhost/init.sh to generate .env.selfhost with fresh secrets.
@@ -90,6 +96,25 @@ services:
       # Go runtime: collect harder before the memory limit (about 85% of it;
       # selfhost.sh derives it from CG_MEM_LIMIT_CADDY when that is set)
       - GOMEMLIMIT=${CG_GOMEMLIMIT_CADDY:-435MiB}
+      # the gateway's sites (CG_GATEWAY_DOMAIN, CG_GATEWAY_ID_DOMAIN);
+      # selfhost.sh sets CG_GATEWAY_EDGE=on with CG_ENABLE_GATEWAY=true. Their
+      # /instance-config.js is rendered from the GATEWAY_CG_* values: legacy
+      # CG ID passkeys, no calls, and the instance it moved to (this one)
+      - CG_GATEWAY_EDGE=${CG_GATEWAY_EDGE:-off}
+      - CG_GATEWAY_DOMAIN=${CG_GATEWAY_DOMAIN:-}
+      - CG_GATEWAY_ID_DOMAIN=${CG_GATEWAY_ID_DOMAIN:-}
+      - GATEWAY_CG_DEPLOYMENT=prod
+      - GATEWAY_CG_APP_URL=${CG_GATEWAY_DOMAIN:+https://${CG_GATEWAY_DOMAIN}}
+      - GATEWAY_CG_LEGACY_CGID=true
+      - GATEWAY_CG_CGID_URL=${CG_GATEWAY_ID_DOMAIN:+https://${CG_GATEWAY_ID_DOMAIN}/#}
+      - GATEWAY_CG_GATEWAY_TARGET_URL=https://${CG_DOMAIN}
+      - GATEWAY_CG_CAPTCHA_PROVIDER=${CAPTCHA_PROVIDER:-}
+      - GATEWAY_CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
+      - GATEWAY_CG_FEATURE_EMAIL=${SMTP_HOST:+true}
+      - GATEWAY_CG_FEATURE_TWITTER=${TWITTER_API_KEY:+true}
+      - GATEWAY_CG_ENABLE_CALLS=false
+      - GATEWAY_CG_ENABLE_IMAGE_FILTER=false
+      - GATEWAY_CG_WALLETCONNECT_PROJECT_ID=${CG_GATEWAY_WALLETCONNECT_PROJECT_ID:-${CG_WALLETCONNECT_PROJECT_ID}}
     volumes:
       - caddy-data:/data
       - caddy-config:/config
@@ -269,6 +294,7 @@ services:
       - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      - PG_POOL_MAX=${PG_POOL_MAX_WSAPI:-10}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SECRET=${REDIS_SECRET}
       - DEPLOYMENT=prod
@@ -303,8 +329,11 @@ services:
       - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      - PG_POOL_MAX=${PG_POOL_MAX_API:-20}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SECRET=${REDIS_SECRET}
+      # per-address mail limits, shared with the gateway (empty: REDIS_SECRET)
+      - CG_MAIL_LIMIT_SECRET=${CG_MAIL_LIMIT_SECRET:-}
       - DEPLOYMENT=prod
       - BASE_URL=https://${CG_DOMAIN}
       # read only with CG_LEGACY_CGID=true (the CG ID app's RP and CORS origin)
@@ -383,6 +412,7 @@ services:
       - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      - PG_POOL_MAX=${PG_POOL_MAX_MEMBERLIST:-6}
       - DEPLOYMENT=prod
       - BASE_URL=https://${CG_DOMAIN}
     # the schema must be current before any query: migrate-db has to exit 0
@@ -409,6 +439,8 @@ services:
       - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      # per worker thread (up to 9 of them, each with its own pool)
+      - PG_POOL_MAX=${PG_POOL_MAX_JOBS:-3}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SECRET=${REDIS_SECRET}
       - DEPLOYMENT=prod
@@ -464,6 +496,7 @@ services:
       - BASE_URL=https://${CG_DOMAIN}
       - DB_TYPE=mediasoup
       - PG_PASSWORD=${PG_MEDIASOUP_PASSWORD}
+      - PG_POOL_MAX=${PG_POOL_MAX_MEDIASOUP:-4}
       - DEPLOYMENT=prod
       - HTTPS_CERT_FULLCHAIN=/dist/mediasoup/certs/selfhost/server.crt
       - HTTPS_CERT_PRIVKEY=/dist/mediasoup/certs/selfhost/server.key
@@ -506,6 +539,7 @@ services:
       - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      - PG_POOL_MAX=${PG_POOL_MAX_ONCHAIN:-10}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - DEPLOYMENT=prod
       - S3_SECRET=${S3_SECRET}
@@ -589,6 +623,115 @@ services:
     stop_grace_period: 1m
     restart: unless-stopped
     mem_limit: ${CG_MEM_LIMIT_MAIL:-256m}
+    logging: *logging
+
+  # --- The gateway of a moved instance (compose profile "gateway",
+  # CG_ENABLE_GATEWAY=true; docs/auth-identity §12, SELFHOST.md "Gateway for
+  # a moved instance"). The same backend image a second time, for the old
+  # domain (CG_GATEWAY_DOMAIN, e.g. app.cg) and its CG ID app
+  # (CG_GATEWAY_ID_DOMAIN, e.g. id.app.cg), on this instance's database and
+  # Valkey (no storage credentials). It serves sign-in with the old methods and transfer
+  # links to this instance (TRANSFER_TARGET_URL), nothing else (its route
+  # and socket-event allowlists). Own session secret
+  # (CG_GATEWAY_SESSION_SECRET) and own Valkey key prefix (CG_GATEWAY=true):
+  # its sessions and cookies are worthless here and the other way round. Only
+  # api and wsapi: job-runner, onchain, memberlist, mediasoup and migrate-db
+  # run once, for this instance, and refuse to start in gateway mode. Health:
+  # the image's check, with the same probes as api and wsapi (database,
+  # Valkey, the listener on :4000).
+  gateway-api:
+    image: cryptogram/backend
+    profiles: ["gateway"]
+    environment:
+      - CG_GATEWAY=true
+      # the old passkeys (rpId = the CG ID domain) and the old sign-in surface;
+      # the gateway's allowlist decides what of it is served
+      - CG_LEGACY_CGID=true
+      - PASSKEY_RP_ID=
+      - BASE_URL=https://${CG_GATEWAY_DOMAIN:-gateway.invalid}
+      - CGID_URL=https://${CG_GATEWAY_ID_DOMAIN:-id.gateway.invalid}
+      - TRANSFER_TARGET_URL=https://${CG_DOMAIN}
+      - DB_TYPE=writer
+      - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      - PG_POOL_MAX=${PG_POOL_MAX_GATEWAY_API:-5}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_SECRET=${CG_GATEWAY_SESSION_SECRET:-}
+      # shared with the instance: one per-address budget for login-code mails
+      - CG_MAIL_LIMIT_SECRET=${CG_MAIL_LIMIT_SECRET:-}
+      - DEPLOYMENT=prod
+      # no S3_SECRET: no allowlisted route reads or writes storage (LUKSO and
+      # Farcaster refuse an unknown account before any profile image fetch)
+      # email-code sign-in sends codes like this instance does
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_SECURITY=${SMTP_SECURITY:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL_FROM=${EMAIL_FROM:-no-reply@${CG_DOMAIN}}
+      - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-}
+      - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
+      - CG_ENABLE_CALLS=false
+      # LUKSO sign-in checks the signature through the instance's onchain service
+      - CG_ENABLE_BLOCKCHAIN=${CG_ENABLE_BLOCKCHAIN:-true}
+      - IMAGE_MODERATION_ENABLED=false
+      - CAPTCHA_PROVIDER=${CAPTCHA_PROVIDER:-}
+      - ALTCHA_HMAC_KEY=${ALTCHA_HMAC_KEY:-}
+      # X sign-in: the X app must list this callback as well
+      - TWITTER_CALLBACK_URL=${CG_GATEWAY_TWITTER_CALLBACK_URL:-https://${CG_GATEWAY_DOMAIN:-gateway.invalid}/twitter-callback}
+      - TWITTER_API_KEY=${TWITTER_API_KEY}
+      - TWITTER_API_SECRET=${TWITTER_API_SECRET}
+      - CG_WALLETCONNECT_PROJECT_ID=${CG_GATEWAY_WALLETCONNECT_PROJECT_ID:-${CG_WALLETCONNECT_PROJECT_ID}}
+    # like api: only on a current schema (migrate-db exited 0)
+    depends_on:
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+    networks:
+      - cryptogram
+      - mail-relay
+    command: ["node", "/dist/api.js"]
+    stop_grace_period: 1m
+    restart: unless-stopped
+    # half of api's: sign-in routes only — no NSFW model
+    # (IMAGE_MODERATION_ENABLED=false), no social preview images
+    mem_limit: ${CG_MEM_LIMIT_GATEWAY_API:-1g}
+    logging: *logging
+
+  gateway-wsapi:
+    image: cryptogram/backend
+    profiles: ["gateway"]
+    environment:
+      - CG_GATEWAY=true
+      - CG_LEGACY_CGID=true
+      - PASSKEY_RP_ID=
+      - BASE_URL=https://${CG_GATEWAY_DOMAIN:-gateway.invalid}
+      - CGID_URL=https://${CG_GATEWAY_ID_DOMAIN:-id.gateway.invalid}
+      - DB_TYPE=writer
+      - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      # one held LISTEN connection (typing cache) plus room for queries
+      - PG_POOL_MAX=${PG_POOL_MAX_GATEWAY_WSAPI:-3}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_SECRET=${CG_GATEWAY_SESSION_SECRET:-}
+      - DEPLOYMENT=prod
+    # like wsapi: only on a current schema (migrate-db exited 0)
+    depends_on:
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+    networks:
+      - cryptogram
+    command: ["node", "/dist/wsapi.js"]
+    stop_grace_period: 1m
+    restart: unless-stopped
+    # a third of wsapi's: no logged-in sockets, only the short-lived ones
+    # that watch a CG ID popup's result
+    mem_limit: ${CG_MEM_LIMIT_GATEWAY_WSAPI:-512m}
     logging: *logging
 
   cg-builder:

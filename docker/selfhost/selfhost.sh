@@ -61,6 +61,12 @@ calls_enabled() {
   [ "${CG_ENABLE_CALLS:-true}" != "false" ]
 }
 
+# the gateway of a moved instance (SELFHOST.md, "Gateway for a moved
+# instance"): off unless asked for
+gateway_enabled() {
+  [ "${CG_ENABLE_GATEWAY:-false}" = "true" ]
+}
+
 compose_profiles() {
   local profiles=""
   if calls_enabled; then
@@ -71,6 +77,9 @@ compose_profiles() {
   fi
   if mail_enabled; then
     profiles="${profiles:+$profiles,}mail"
+  fi
+  if gateway_enabled; then
+    profiles="${profiles:+$profiles,}gateway"
   fi
   echo "$profiles"
 }
@@ -115,6 +124,9 @@ start_stack() {
   fi
   if ! mail_enabled; then
     off+=(mail)
+  fi
+  if ! gateway_enabled; then
+    off+=(gateway-api gateway-wsapi)
   fi
   if [ ${#off[@]} -gt 0 ]; then
     docker_compose rm -s -f "${off[@]}"
@@ -258,6 +270,62 @@ check_edge_config() {
   fi
 }
 
+# The gateway's settings must keep it apart from this instance: its own
+# domains and its own session secret (a shared secret would let the cookies
+# of one instance pass the other's signature check). Fails, so `up` does not
+# start a gateway that is not isolated.
+check_gateway_config() {
+  gateway_enabled || return 0
+  local problems=()
+  if [ -z "${CG_GATEWAY_DOMAIN:-}" ] || [ -z "${CG_GATEWAY_ID_DOMAIN:-}" ]; then
+    problems+=("CG_GATEWAY_DOMAIN and CG_GATEWAY_ID_DOMAIN must name the old domain and its CG ID domain (e.g. app.cg, id.app.cg)")
+  fi
+  local domain
+  for domain in "${CG_GATEWAY_DOMAIN:-}" "${CG_GATEWAY_ID_DOMAIN:-}"; do
+    if [ -n "$domain" ] && { [ "$domain" = "${CG_DOMAIN:-}" ] || [ "$domain" = "${CG_ID_DOMAIN:-}" ]; }; then
+      problems+=("the gateway's domain $domain is this instance's own")
+    fi
+  done
+  # the same domain in another spelling (case, a trailing dot), and: the
+  # gateway's session cookie (connect.sid, like this instance's) is scoped
+  # to .CG_GATEWAY_DOMAIN: under it, this instance's site would get both
+  # cookies. (CG_ID_DOMAIN is not served here with a gateway: this instance
+  # runs without CG_LEGACY_CGID. A gateway under CG_DOMAIN is fine: this
+  # instance's cookie is host-only.)
+  local gateway_domain="${CG_GATEWAY_DOMAIN:-}" own_domain="${CG_DOMAIN:-}"
+  gateway_domain="${gateway_domain,,}"
+  gateway_domain="${gateway_domain%.}"
+  own_domain="${own_domain,,}"
+  own_domain="${own_domain%.}"
+  if [ -n "$gateway_domain" ] && [ -n "$own_domain" ]; then
+    if [ "$own_domain" = "$gateway_domain" ]; then
+      # the same spelling is reported above already
+      [ "${CG_DOMAIN}" = "${CG_GATEWAY_DOMAIN}" ] || problems+=("CG_DOMAIN ${CG_DOMAIN} is the gateway's domain ${CG_GATEWAY_DOMAIN} in another spelling")
+    elif [[ "$own_domain" == *".$gateway_domain" ]]; then
+      problems+=("CG_DOMAIN $own_domain lies under the gateway's domain $gateway_domain, whose session cookie its site would receive as well")
+    fi
+  fi
+  if [ -z "${CG_GATEWAY_SESSION_SECRET:-}" ] || [ "${#CG_GATEWAY_SESSION_SECRET}" -lt 16 ]; then
+    problems+=("CG_GATEWAY_SESSION_SECRET must be set (at least 16 characters; e.g. openssl rand -hex 24)")
+  elif [ "${CG_GATEWAY_SESSION_SECRET}" = "${REDIS_SECRET:-}" ]; then
+    problems+=("CG_GATEWAY_SESSION_SECRET must differ from REDIS_SECRET")
+  fi
+  if [ "${CG_LEGACY_CGID:-false}" = "true" ]; then
+    problems+=("CG_LEGACY_CGID=true is for the gateway only: this instance (the one the gateway leads to) runs without it")
+  fi
+  if [ -z "${CG_MAIL_LIMIT_SECRET:-}" ] || [ "${#CG_MAIL_LIMIT_SECRET}" -lt 16 ]; then
+    problems+=("CG_MAIL_LIMIT_SECRET must be set (at least 16 characters; e.g. openssl rand -hex 24): the instance and the gateway count the mails to an address with it together")
+  fi
+  if [ ${#problems[@]} -gt 0 ]; then
+    echo "CG_ENABLE_GATEWAY=true, but the gateway is not set up (SELFHOST.md, \"Gateway for a moved instance\"):"
+    local problem
+    for problem in "${problems[@]}"; do
+      echo "  - $problem"
+    done
+    exit 1
+  fi
+}
+
 # up, down and update must not run while a backup or restore of this instance
 # does (backup.sh holds /run/lock/cg-backup-<project>.lock). The `compose`
 # passthrough, which backup.sh itself uses, takes no lock.
@@ -289,8 +357,13 @@ docker_compose() {
   if calls_enabled; then
     files+=(-f docker-compose.selfhost.calls.yml)
   fi
-  export CG_CGID_VHOST
+  export CG_CGID_VHOST CG_GATEWAY_EDGE
   CG_CGID_VHOST="$(cgid_vhost)"
+  if gateway_enabled; then
+    CG_GATEWAY_EDGE=on
+  else
+    CG_GATEWAY_EDGE=off
+  fi
   COMPOSE_PROFILES="$profiles" docker compose --env-file .env.selfhost "${files[@]}" "$@"
 }
 
@@ -453,6 +526,7 @@ case "${1:-}" in
     check_edge_config
     check_network_config
     check_memory_config
+    check_gateway_config
     # --remove-orphans cleans up containers of services that are no longer
     # part of the stack (e.g. after the three redis instances were merged
     # into one); start_stack also removes switched-off optional services
@@ -492,6 +566,7 @@ case "${1:-}" in
     check_edge_config
     check_network_config
     check_memory_config
+    check_gateway_config
     start_stack
     docker_compose ps
     ;;
@@ -517,6 +592,8 @@ case "${1:-}" in
     printf "  CG_ENABLE_IMAGE_FILTER=false  disable the server-side NSFW image filter\n"
     printf "  CG_ENABLE_MAIL=true         run the built-in send-only mail relay (init.sh sets it;\n"
     printf "                              false: send through an external SMTP server, SMTP_*)\n"
+    printf "  CG_ENABLE_GATEWAY=true      serve the sign-in gateway of a moved instance on\n"
+    printf "                              CG_GATEWAY_DOMAIN / CG_GATEWAY_ID_DOMAIN (SELFHOST.md)\n"
     exit 1
     ;;
 esac

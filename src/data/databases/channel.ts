@@ -16,6 +16,15 @@
 
 import { applyStoredReadState, chat, clearChat, getChatAccountUser, setChatAccountUser, startChatRuntime } from 'data/chat/runtime';
 import type { ChannelReadState, ChannelWindow, NewMessage, ReadMarker, Unsubscribe } from 'data/chat/types';
+import { isGatewayInstance } from 'common/gateway';
+
+/**
+ * A gateway (docs/auth-identity §12) runs no chat stores. The entity
+ * databases reach the stores only through this façade (stored rows on page
+ * load, snapshots, events): on a gateway it hands them nothing, so the stores
+ * are never created.
+ */
+const chatStoresEnabled = !isGatewayInstance();
 
 type Message = Models.Message.Message;
 
@@ -42,6 +51,7 @@ class ChannelManager {
    * posts); stored read state comes in through `applyStoredReadState`.
    */
   public registerAccessForChannel(access: API.Messages.MessageAccess, _data?: { lastRead: string }) {
+    if (!chatStoresEnabled) return;
     chat.channels.registerAccessForChannel(access);
   }
 
@@ -57,6 +67,7 @@ class ChannelManager {
    * the rows already hold it.
    */
   public applyStoredReadState(states: ChannelReadState[]) {
+    if (!chatStoresEnabled) return;
     applyStoredReadState(states);
   }
 
@@ -134,6 +145,7 @@ class ChannelManager {
 
   /** drop everything of a channel (left community, closed chat) */
   public deleteChannelDatabase({ channelId }: { channelId: string }): undefined {
+    if (!chatStoresEnabled) return undefined;
     chat.channels.forgetChannel(channelId);
     return undefined;
   }
@@ -146,5 +158,7 @@ class ChannelManager {
 
 const channelManager = new ChannelManager();
 // login.ts loads this before the socket starts: the stores see the first live signal
-startChatRuntime();
+if (chatStoresEnabled) {
+  startChatRuntime();
+}
 export default channelManager;

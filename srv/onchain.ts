@@ -20,6 +20,11 @@ import pool from './util/postgres';
 import format from 'pg-format';
 import { isValidSignature, getUniversalProfileData } from './onchain/lukso';
 import { PredefinedRole, RoleType } from './common/enums';
+import { refuseInGatewayMode } from './util/gateway';
+
+// runs once, for the main instance only: never as part of a gateway
+// (srv/util/gateway.ts)
+refuseInGatewayMode('onchain');
 
 const app = express();
 

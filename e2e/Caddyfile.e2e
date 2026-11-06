@@ -32,3 +32,21 @@ import /etc/caddy/common.caddy
 {$CG_DOMAIN}:4443 {
 	import cg_calls_edge
 }
+
+# the gateway's sites (E2E_GATEWAY=1; Caddyfile.selfhost, gateway_edge_on),
+# with the same per-browser client addresses
+(e2e_gateway_on) {
+	{$CG_GATEWAY_DOMAIN} {
+		@e2eclient header_regexp e2eclient Cookie cg_e2e_client=(10\.[0-9]+\.[0-9]+\.[0-9]+)
+		request_header @e2eclient X-Forwarded-For {re.e2eclient.1}
+		vars cg_env_prefix GATEWAY_
+		import cg_gateway_app "https://{$CG_GATEWAY_DOMAIN}:* wss://{$CG_GATEWAY_DOMAIN}:*" "https:" on
+	}
+	{$CG_GATEWAY_ID_DOMAIN} {
+		vars cg_env_prefix GATEWAY_
+		import cg_cgid_site {$CG_GATEWAY_DOMAIN}
+	}
+}
+(e2e_gateway_off) {
+}
+import e2e_gateway_{$CG_GATEWAY_EDGE:off}

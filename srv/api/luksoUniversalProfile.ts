@@ -11,6 +11,7 @@ import userHelper from "../repositories/users";
 import { SIGNABLE_SECRET_LENGTH } from "./user";
 import ipRateLimitHandler from "../util/rateLimit";
 import { AUTH_LIMITS } from "../util/authLimits";
+import { isGatewayMode } from "../util/gateway";
 
 const luksoUniversalProfileRouter = express.Router();
 
@@ -40,6 +41,11 @@ registerPostRoute<
         throw new Error(errors.server.INVALID_SIGNATURE);
       }
       const universalProfileValid = !(await userHelper.isUniversalProfileAlreadyLinked(data.address));
+      if (universalProfileValid && isGatewayMode()) {
+        // a gateway (srv/util/gateway.ts) signs in existing accounts only: no
+        // profile lookup, no sign-up prepared
+        throw new Error(errors.server.ACCOUNT_DOES_NOT_EXIST);
+      }
       const universalProfileExists = await onchainHelper.luksoGetUniversalProfileData(data.address);
       const readyForLogin = universalProfileExists && !universalProfileValid;
       const readyForCreation = universalProfileExists && universalProfileValid;
@@ -62,6 +68,8 @@ registerPostRoute<
       switch (e.message) {
         case errors.server.INVALID_SIGNATURE:
           throw new Error(errors.server.INVALID_SIGNATURE);
+        case errors.server.ACCOUNT_DOES_NOT_EXIST:
+          throw new Error(errors.server.ACCOUNT_DOES_NOT_EXIST);
         case errors.server.LUKSO_PROFILE_NOT_FOUND:
           throw new Error(errors.server.LUKSO_PROFILE_NOT_FOUND);
         case errors.server.LUKSO_FETCH_FAILED:

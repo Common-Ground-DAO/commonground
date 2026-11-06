@@ -163,3 +163,29 @@ describe('channelManager façade', () => {
     w.destroy();
   });
 });
+
+describe('channelManager façade on a gateway', () => {
+  it('starts no chat stores and hands them nothing (docs/auth-identity §12)', async () => {
+    const g = globalThis as { __CG_INSTANCE__?: unknown };
+    g.__CG_INSTANCE__ = { deployment: 'prod', appUrl: 'https://app.test', gatewayTargetUrl: 'https://new.test' };
+    const saved = t.rt;
+    try {
+      t.started = 0;
+      // any use of the stores fails the test
+      t.rt = new Proxy({}, { get() { throw new Error('chat stores used on a gateway'); } }) as ChatRuntimeImpl;
+      const { default: manager } = await importAsNewTab(() => import('./channel'));
+      expect(t.started).toBe(0);
+      // what the entity databases hand over: stored rows on load, snapshots, events
+      manager.registerAccessForChannel({ channelId: C, chatId: 'chat-1' }, { lastRead: '2026-11-02T10:00:00.000Z' });
+      manager.applyStoredReadState([{ channelId: C }] as never);
+      expect(manager.deleteChannelDatabase({ channelId: C })).toBeUndefined();
+      // the account user is no store (login.ts sets it on every login)
+      manager.userId = 'u1';
+      expect(t.account).toBe('u1');
+    }
+    finally {
+      delete g.__CG_INSTANCE__;
+      t.rt = saved;
+    }
+  });
+});

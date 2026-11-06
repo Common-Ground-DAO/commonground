@@ -38,6 +38,8 @@ const fake = vi.hoisted(() => {
     invalidSecrets: 0,
     /** when set, User/login never answers */
     hangLogin: false,
+    /** the account a (prepared) wallet login signs in */
+    walletUserId: undefined as string | undefined,
     /** when set, the next getSignableSecret reaches the server (writes its secret) only once resolved */
     secretGate: undefined as Deferred<void> | undefined,
     /** when set, the next User/login reaches the server (checks the secret) only once resolved */
@@ -64,6 +66,10 @@ const fake = vi.hoisted(() => {
     unreadCountGate: undefined as Deferred<void> | undefined,
     /** stored rows registered in the chat stores (registerStoredChats/registerStoredChannels) */
     storedRowsRegistered: [] as string[],
+    /** entity databases cleared (login.ts `_clear`) */
+    cleared: [] as string[],
+    /** device keys deleted from this browser (deleteDeviceKeyPair) */
+    deletedDeviceKeys: [] as string[],
   };
 });
 
@@ -87,6 +93,7 @@ vi.mock('data/api/user', () => ({
       return secret;
     },
     checkLoginStatus: async () => ({ userId: fake.server.sessionUserId }),
+    prepareWalletAction: async () => ({ readyForLogin: true }),
     login: async (request: { type: string; deviceId?: string; secret?: string }) => {
       const { server } = fake;
       if (server.hangLogin) return new Promise(() => undefined);
@@ -117,12 +124,19 @@ vi.mock('data/api/user', () => ({
           server.loginGate = undefined;
           await gate.promise;
         }
-        const userId = server.devices.get(request.deviceId ?? '');
+        // a password login: the alias is the user id, the device a new one
+        const userId = request.type === 'password'
+          ? (request as { aliasOrEmail?: string }).aliasOrEmail
+          : request.type === 'wallet'
+            ? server.walletUserId
+            : server.devices.get(request.deviceId ?? '');
         if (!userId) throw new Error('NOT_FOUND');
+        const deviceId = request.deviceId ?? `dev-${userId}-new`;
+        server.devices.set(deviceId, userId);
         server.sessionUserId = userId;
         return {
           ownData: { id: userId },
-          deviceId: request.deviceId,
+          deviceId,
           webPushSubscription: null,
           communities: [],
           chats: [],
@@ -150,21 +164,21 @@ vi.mock('data/util/device', () => {
     generateNewKeyPair: keyPair,
     getDeviceKeyPair: async (deviceId: string) => ({ deviceId, keyPair: await keyPair() }),
     saveDeviceKeyPair: async () => undefined,
-    deleteDeviceKeyPair: async () => undefined,
+    deleteDeviceKeyPair: async (deviceId: string) => { fake.deletedDeviceKeys.push(deviceId); },
     getAllDeviceKeyPairs: async () => [],
     signApiSecret: async (deviceId: string, secret: string) => ({ deviceId, secret, base64Signature: 'sig' }),
   };
 });
 
-const stubDb = (db?: string) => ({
+const stubDb = (db?: string, name = db) => ({
   setupAfterLogin: async (_data: unknown, options?: { requestStartedAt?: number }) => {
     if (db) fake.snapshots.push({ db, options });
   },
-  clear: async () => undefined,
+  clear: async () => { if (name) fake.cleared.push(name); },
   registerStoredChats: async () => { fake.storedRowsRegistered.push(`${db}`); },
   registerStoredChannels: async () => { fake.storedRowsRegistered.push(`${db}`); },
 });
-vi.mock('data/databases/user', () => ({ default: stubDb() }));
+vi.mock('data/databases/user', () => ({ default: stubDb(undefined, 'user') }));
 vi.mock('data/databases/community', () => ({ default: stubDb('community') }));
 vi.mock('data/databases/chats', () => ({ default: stubDb('chats') }));
 vi.mock('data/databases/notification', () => ({ default: { ...stubDb(), unreadCount: 0 } }));
@@ -218,11 +232,14 @@ function resetServer() {
   fake.notificationCounts.length = 0;
   fake.unreadCountGate = undefined;
   fake.storedRowsRegistered.length = 0;
+  fake.cleared.length = 0;
+  fake.deletedDeviceKeys.length = 0;
   Object.assign(fake.server, {
     secret: undefined,
     secretCounter: 0,
     invalidSecrets: 0,
     hangLogin: false,
+    walletUserId: undefined,
     secretGate: undefined,
     preLoginGate: undefined,
     failNextLogin: undefined,
@@ -235,6 +252,13 @@ function resetServer() {
     loginGate: undefined,
   });
   fake.server.devices = new Map([['dev-1', 'u1'], ['dev-2', 'u2']]);
+}
+
+/** a sign-in with a sign-in method exports the new device key (`window.crypto`) */
+function setupWithCrypto() {
+  const env = setup();
+  (window as unknown as { crypto: Crypto }).crypto = globalThis.crypto;
+  return env;
 }
 
 function storeUser(userId: string, deviceId: string) {
@@ -597,6 +621,42 @@ describe('logout and login in other tabs', () => {
     expect(tab.loginManager.currentUser?.userId).toBe('u1');
     expect(socketLoggedInAs(tab.socket)).toBe('dev-1');
     channel.close();
+  });
+
+  it('only a sign-in with a sign-in method counts as made in this tab (not a device login, not an adopted one)', async () => {
+    setupWithCrypto();
+    const a = await openTab();
+    const b = await openTab();
+    await Promise.all([a.loginManager.autoLogin(), b.loginManager.autoLogin()]);
+    await settle();
+    expect(a.loginManager.signedInInThisTab).toBe(false);
+
+    await a.loginManager.login({ aliasOrEmail: 'u1', password: 'secret' } as never);
+    await settle();
+    expect(a.loginManager.state).toBe('loggedin');
+    expect(a.loginManager.signedInInThisTab).toBe(true);
+    // the other tab took that login over
+    await until(() => b.loginManager.state === 'loggedin');
+    expect(b.loginManager.signedInInThisTab).toBe(false);
+
+    // a reload of the signed-in tab: the device key signs in
+    const c = await openTab();
+    await c.loginManager.autoLogin();
+    await settle();
+    expect(c.loginManager.state).toBe('loggedin');
+    expect(c.loginManager.signedInInThisTab).toBe(false);
+
+    await a.loginManager.logout();
+    await settle();
+    expect(a.loginManager.signedInInThisTab).toBe(false);
+  });
+
+  it('a logout clears the entity databases', async () => {
+    setup();
+    const tab = await loggedInTab();
+    await tab.loginManager.logout();
+    await settle();
+    expect(fake.cleared.sort()).toEqual(['chats', 'community', 'user']);
   });
 
   it('a logout during the adoption does not set the adopted notification count', async () => {
@@ -1050,5 +1110,119 @@ describe('no tab roles', () => {
       expect(channel.onmessage).toBeNull();
     }
     expect(opened.map(o => o.name)).toContain(AUTH_BROADCAST_CHANNEL);
+  });
+});
+
+describe('gateway instance (docs/auth-identity §12)', () => {
+  const g = globalThis as { __CG_INSTANCE__?: unknown };
+  beforeEach(() => {
+    g.__CG_INSTANCE__ = { deployment: 'prod', appUrl: 'https://app.test', gatewayTargetUrl: 'https://new.test' };
+  });
+  afterEach(() => {
+    delete g.__CG_INSTANCE__;
+  });
+
+  /** a gateway tab: login.ts + webSocket.ts started like the app does (no socket comes up) */
+  async function openGatewayTab() {
+    const { default: loginManager } = await importAsNewTab(() => import('data/appstate/login'));
+    const { default: ws } = await import('data/appstate/webSocket');
+    ws.start();
+    return { loginManager, ws };
+  }
+
+  it('the device login keeps no local data: no snapshot, no chat stores, no socket', async () => {
+    setup();
+    storeUser('u1', 'dev-1');
+    const tab = await openGatewayTab();
+    chatHooks.calls.length = 0;
+    await tab.loginManager.autoLogin();
+    await settle();
+    expect(tab.loginManager.state).toBe('loggedin');
+    expect(tab.loginManager.currentUser?.userId).toBe('u1');
+    expect(fake.server.loginCalls).toBe(1);
+    expect(fake.snapshots).toEqual([]);
+    expect(chatHooks.calls).toEqual([]);
+    expect(fake.io!.sockets).toHaveLength(0);
+    expect(tab.ws.live).toBe(false);
+  });
+
+  it('a logout deletes the device key but clears none of the databases (the old page data on this origin stays)', async () => {
+    setup();
+    storeUser('u1', 'dev-1');
+    const tab = await openGatewayTab();
+    await tab.loginManager.autoLogin();
+    await settle();
+    expect(tab.loginManager.state).toBe('loggedin');
+    await tab.loginManager.logout();
+    await settle();
+    expect(tab.loginManager.state).toBe('anonymous');
+    expect(fake.server.logoutCalls).toBe(1);
+    expect(fake.deletedDeviceKeys).toEqual(['dev-1']);
+    expect(fake.cleared).toEqual([]);
+  });
+
+  it('a device signed out elsewhere: signed out without clearing any database', async () => {
+    setup();
+    storeUser('u1', 'dev-1');
+    fake.server.devices.delete('dev-1');
+    const tab = await openGatewayTab();
+    await tab.loginManager.autoLogin();
+    await until(() => tab.loginManager.state === 'anonymous');
+    await settle();
+    expect(fake.cleared).toEqual([]);
+  });
+
+  it('only a sign-in with a sign-in method in this tab counts as one (the page continues by itself only then)', async () => {
+    setupWithCrypto();
+    const a = await openGatewayTab();
+    const b = await openGatewayTab();
+    await Promise.all([a.loginManager.autoLogin(), b.loginManager.autoLogin()]);
+    await settle();
+    await a.loginManager.login({ aliasOrEmail: 'u1', password: 'secret' } as never);
+    await until(() => b.loginManager.state === 'loggedin');
+    expect(a.loginManager.signedInInThisTab).toBe(true);
+    expect(b.loginManager.signedInInThisTab).toBe(false);
+    expect(fake.snapshots).toEqual([]);
+  });
+
+  it('a recovery phrase an old page left is a silent page-load login, not a sign-in made in this tab', async () => {
+    setupWithCrypto();
+    g.__CG_INSTANCE__ = { deployment: 'prod', appUrl: 'https://app.test', gatewayTargetUrl: 'https://new.test', cgidUrl: 'https://id.app.test/#' };
+    fake.server.walletUserId = 'u1';
+    localStorage.setItem('CRYPTOGRAM_USER_MNEMONIC', 'test test test test test test test test test test test junk');
+    const tab = await openGatewayTab();
+    await tab.loginManager.autoLogin();
+    await settle();
+    expect(tab.loginManager.state).toBe('loggedin');
+    expect(tab.loginManager.currentUser?.userId).toBe('u1');
+    expect(localStorage.getItem('CRYPTOGRAM_USER_MNEMONIC')).toBeNull();
+    expect(tab.loginManager.signedInInThisTab).toBe(false);
+  });
+
+  it('a login in another tab is adopted with the login state only', async () => {
+    setup();
+    const tab = await openGatewayTab();
+    await tab.loginManager.autoLogin();
+    await settle();
+    expect(tab.loginManager.state).toBe('anonymous');
+
+    fake.server.sessionUserId = 'u1';
+    storeUser('u1', 'dev-1');
+    const channel = new BroadcastChannel(AUTH_BROADCAST_CHANNEL);
+    chatHooks.calls.length = 0;
+    fake.unreadCountGate = deferred();
+    channel.postMessage({ v: 1, type: 'logged-in', tabId: 'other-tab', userId: 'u1' } satisfies AuthBroadcastMessage);
+    await settle();
+
+    expect(tab.loginManager.state).toBe('loggedin');
+    expect(tab.loginManager.currentUser?.userId).toBe('u1');
+    expect(fake.server.loginCalls).toBe(0);
+    // no stored rows into chat stores, no unread count request, no socket
+    expect(fake.storedRowsRegistered).toEqual([]);
+    expect(chatHooks.calls).toEqual([]);
+    expect(fake.notificationCounts).toEqual([]);
+    expect(fake.io!.sockets).toHaveLength(0);
+    fake.unreadCountGate.resolve();
+    channel.close();
   });
 });

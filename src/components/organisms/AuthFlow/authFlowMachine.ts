@@ -47,6 +47,8 @@ export type AuthFlowConfig = {
   legacy: boolean;
   /** WebAuthn usable here */
   passkeysSupported: boolean;
+  /** false: sign-in only, no way to sign up (a gateway, docs/auth-identity §12); default true */
+  signup?: boolean;
 };
 
 export type SignupData = {
@@ -186,7 +188,7 @@ export function authFlowReducer(config: AuthFlowConfig) {
         return to('login');
 
       case 'SHOW_SIGNUP':
-        return to('signup-details');
+        return config.signup === false ? state : to('signup-details');
 
       case 'USE_EMAIL_CODE':
         return config.emailEnabled ? to('login-code') : state;

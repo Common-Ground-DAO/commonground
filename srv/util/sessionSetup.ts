@@ -7,13 +7,14 @@ import cookie from 'cookie';
 import type express from 'express';
 import session from 'express-session';
 import passport from 'passport';
-import { dockerSecret } from '.';
 import config from '../common/config';
 import serverconfig from '../serverconfig';
 import urls from './urls';
 import { isLegacyCgidMode } from './passkeyConfig';
 import { SIGNUP_CAPTCHA_TTL_MS } from './signupEmail';
 import { sessionGenerationGuard } from './userSessions';
+import { requireSessionSecret } from './sessionSecret';
+import { instanceKeyPrefix } from './gateway';
 
 // Session setup of the api process (srv/util/express.ts).
 //
@@ -42,10 +43,21 @@ import { sessionGenerationGuard } from './userSessions';
 // in progress, a WebAuthn ceremony) is kept in the store for a short time only
 // (sessionStoreTtlSeconds); from login on, the full 12 hours apply.
 
-export const sessionSecret = dockerSecret('redis_secret') || process.env.REDIS_SECRET as string;
+let configuredSessionSecret: string | undefined;
+/**
+ * The secret that signs the session cookie, read once; a missing one stops
+ * the api when it builds its session middleware (srv/util/sessionSecret.ts).
+ */
+export function sessionSecret(): string {
+  return configuredSessionSecret ??= requireSessionSecret();
+}
 
-/** key prefix of the sessions in the store (connect-redis' default) */
-export const SESSION_KEY_PREFIX = 'sess:';
+/**
+ * key prefix of the sessions in the store: connect-redis' default `sess:` on
+ * the main instance, `gateway:sess:` on a gateway (srv/util/gateway.ts), so
+ * neither ever loads the other's sessions
+ */
+export const SESSION_KEY_PREFIX = `${instanceKeyPrefix()}sess:`;
 
 const SESSION_MAX_AGE_MS = 12*60*60*1000; // 12 hours
 
@@ -110,7 +122,7 @@ export function createSessionOptions(store: session.Store): session.SessionOptio
   return {
     store,
     name: serverconfig.SESSION_COOKIE_NAME,
-    secret: sessionSecret,
+    secret: sessionSecret(),
     proxy: true,
     cookie: sessionCookieOptions,
     resave: false,
@@ -133,13 +145,17 @@ type RevocationClient = {
   exists(key: string): Promise<number>;
 };
 
-/** `sess-revoked:<id>` keys next to the sessions (`sess:<id>`) */
-export function redisSessionRevocations(client: RevocationClient): SessionRevocations {
+/**
+ * `sess-revoked:<id>` keys next to the sessions (`sess:<id>`), with the
+ * instance's key prefix (`gateway:` on a gateway)
+ */
+export function redisSessionRevocations(client: RevocationClient, prefix: string = instanceKeyPrefix()): SessionRevocations {
+  const key = (sid: string) => `${prefix}sess-revoked:${sid}`;
   return {
     revoke: async (sid) => {
-      await client.set(`sess-revoked:${sid}`, '1', { PX: REVOCATION_TTL_MS });
+      await client.set(key(sid), '1', { PX: REVOCATION_TTL_MS });
     },
-    isRevoked: async (sid) => (await client.exists(`sess-revoked:${sid}`)) > 0,
+    isRevoked: async (sid) => (await client.exists(key(sid))) > 0,
   };
 }
 
@@ -361,7 +377,7 @@ export function rollLoggedInSessionCookie(request: express.Request, response: ex
     return;
   }
   current.touch();
-  const signature = crypto.createHmac('sha256', sessionSecret).update(sessionID).digest('base64').replace(/=+$/, '');
+  const signature = crypto.createHmac('sha256', sessionSecret()).update(sessionID).digest('base64').replace(/=+$/, '');
   const { expires, httpOnly, secure, domain, path, sameSite } = current.cookie;
   const line = cookie.serialize(serverconfig.SESSION_COOKIE_NAME, `s:${sessionID}.${signature}`, {
     expires: expires ?? undefined,

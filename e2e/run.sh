@@ -38,6 +38,10 @@ while [ $# -gt 0 ]; do
       "$E2E_DIR/instance.sh" ca >/dev/null
       ca="$E2E_DIR/.instance/root.crt"
       suite_args+=(--url "https://${DOMAIN}" --mailpit "http://mailpit:8025")
+      # the instance's gateway, if it runs one (E2E_GATEWAY=1 e2e/instance.sh up)
+      if grep -q '^CG_ENABLE_GATEWAY=true$' "$E2E_DIR/.instance/env"; then
+        suite_args+=(--gateway-url "https://app.${DOMAIN}")
+      fi
       # the session store, for the reload flow's session-expired mode; passed
       # through the environment (docker run -e NAME, no value on any command
       # line), so the password never shows up in a process list

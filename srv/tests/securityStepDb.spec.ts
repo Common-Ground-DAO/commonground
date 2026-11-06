@@ -63,7 +63,7 @@ describeDb('account-security step and transfer links on PostgreSQL', () => {
       process.env.DB_TYPE = role;
       process.env.PG_PASSWORD = role === 'writer' ? WRITER_PASSWORD : MEDIASOUP_PASSWORD;
     }
-    process.env.REDIS_SECRET = 'test-secret';
+    process.env.REDIS_SECRET = 'test-secret-0123456789';
     let result!: T;
     jest.isolateModules(() => {
       result = load();
@@ -404,7 +404,17 @@ describeDb('account-security step and transfer links on PostgreSQL', () => {
       const released = new Promise<void>(resolve => { release = resolve; });
       const verifiedPromise = new Promise<void>(resolve => { verified = resolve; });
       const app = mods.express();
-      app.use(mods.setup.createSessionMiddlewares(mods.setup.withSessionRevocation(store, revocations), revocations));
+      // the session secret is read when the middleware is built (util/sessionSecret.ts),
+      // after withRole restored the environment
+      const savedSecret = process.env.REDIS_SECRET;
+      process.env.REDIS_SECRET = 'test-secret-0123456789';
+      try {
+        app.use(mods.setup.createSessionMiddlewares(mods.setup.withSessionRevocation(store, revocations), revocations));
+      }
+      finally {
+        if (savedSecret === undefined) delete process.env.REDIS_SECRET;
+        else process.env.REDIS_SECRET = savedSecret;
+      }
       // User/login {type:'device'}, reduced to its steps: generation, key check, (wait), session
       app.post('/device-login', async (request, response) => {
         try {

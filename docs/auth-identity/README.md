@@ -18,7 +18,12 @@
 > sign-out of the device's other sockets against commit ce09d8a, 2026-11-02; the header-less
 > logout disconnect and the own-logout guard against commits 1b09f87 and f97ef1b, 2026-11-02; the post-login setup
 > (no notification database) against commit 1e6a0d4, 2026-11-03; the socket's immediate drop of
-> a signed-out device against commit 1b9948c, 2026-11-03
+> a signed-out device against commit 1b9948c, 2026-11-03;
+> the session secret at startup, the instance key prefix, CORS and origin checks (§2), Farcaster message
+> parsing (§5.8), the legacy CG ID surface (§7), transfer links (§11) and gateway mode (§12)
+> against commit 696102b, 2026-11-06; the session secret as configured (§2), the gateway's start-up
+> checks, storage, mail-limit secret and web app (old page data, continuation per tab) (§12)
+> against commit 696102b, 2026-11-07
 
 # Authentication & Identity
 
@@ -46,6 +51,7 @@ lifecycle) in [the bots docs](../bots/README.md).
 9. [Bot Token Authentication (separate plane)](#9-bot-token-authentication-separate-plane)
 10. [Frontend Login State Machine](#10-frontend-login-state-machine)
 11. [Transfer Links and the Account-Security Step](#11-transfer-links-and-the-account-security-step)
+12. [Gateway Mode](#12-gateway-mode)
 
 ---
 
@@ -88,10 +94,10 @@ Sessions are managed by `express-session` with a Redis-backed store, configured 
 
 | Setting | Value | Source |
 |---------|-------|--------|
-| Store | `connect-redis` 10 (`RedisStore`) on the `redis` Valkey state instance (`sess:` prefix; `noeviction`, persisted — sessions survive restarts, a full cache cannot evict them) | `srv/util/express.ts` |
+| Store | `connect-redis` 10 (`RedisStore`) on the `redis` Valkey state instance (`sess:` prefix — `gateway:sess:` on a gateway, [§12](#12-gateway-mode); `noeviction`, persisted — sessions survive restarts, a full cache cannot evict them) | `srv/util/express.ts` |
 | Store TTL | the rest of the cookie's 12 hours for a logged-in session; an hour after the last request for any other session (longer only while a sign-up in it needs its state, see below) | `sessionStoreTtlSeconds`, `srv/util/sessionSetup.ts` |
 | Cookie name | `connect.sid` in prod, `cg_<deployment>.sid` otherwise | `srv/serverconfig.ts` |
-| Secret | Docker secret `redis_secret`, else `REDIS_SECRET` env | `srv/util/sessionSetup.ts` |
+| Secret | Docker secret `redis_secret`, else `REDIS_SECRET` env, used as it is (a secret file's trailing newline included — the key the cookies were always signed with; the unsubscribe-link and mail-limit keys come from the same value, `configuredSessionSecret`); read at startup by every process that needs it (api, wsapi, job-runner), which refuses to start when it is missing, the template placeholder or shorter than 16 characters (each without surrounding whitespace) | `srv/util/sessionSecret.ts` |
 | `maxAge` | 12 hours | `srv/util/sessionSetup.ts` |
 | `httpOnly` | `true` | `srv/util/sessionSetup.ts` |
 | `secure` | `true` except when `DEPLOYMENT === 'dev'` | `srv/util/sessionSetup.ts` |
@@ -309,17 +315,23 @@ after a replaced password, the email-change notice to the previous address.
 The session cookie is **host-only**: it is sent to the instance's own host and to no other host
 under the domain. Only a process running in legacy CG ID mode (`CG_LEGACY_CGID=true`, the gateway,
 see [§7](#legacy-cg-id-gateway-only)) sets the cookie `domain` to `.<APP_HOSTNAME>`
-(`srv/util/express.ts`), so that the main app and the CG ID app (`id.<domain>`) share one session.
-`APP_HOSTNAME` is derived from `BASE_URL` (`srv/util/urls.ts`).
+(`srv/util/sessionSetup.ts`), so that the main app and the CG ID app (`id.<domain>`) share one session.
+`APP_HOSTNAME` is derived from `BASE_URL` (`srv/util/urls.ts`). A gateway's cookie (`.app.cg`)
+never reaches the main instance's host (`cg.box`), and it would be worthless there anyway: the
+gateway signs with its own secret and keeps its sessions under its own key prefix ([§12](#12-gateway-mode)).
 
 ### Middleware order
 
 `srv/util/express.ts` wires the middleware chain (`createSessionMiddlewares()` in
-`srv/util/sessionSetup.ts`). Bot-token authentication runs **first**; if a request is authenticated
-as a bot, the session / passport middlewares are skipped entirely:
+`srv/util/sessionSetup.ts`). The origin check, CORS and — on a gateway — its allowlist come first,
+so a refused request never reads or creates a session. Then bot-token authentication; if a request
+is authenticated as a bot, the session / passport middlewares are skipped entirely:
 
 ```
-botAuthenticationMiddleware      # sets request.botPrincipal if a valid Bearer token is present
+originGuard                      # 403 for a request whose Origin is not on the list (CORS below)
+  → cors
+  → gatewayApiGuard              # gateway mode only: 404 for every route off its allowlist (§12)
+  → botAuthenticationMiddleware  # sets request.botPrincipal if a valid Bearer token is present
   → logged-in cookie hook (skipped if botPrincipal; registered before the session so it runs
                                    after express-session's own Set-Cookie decision)
   → session (skipped if botPrincipal)
@@ -374,11 +386,27 @@ the logged-in user. TODO(verify): X linking end to end on the test VM.
 
 ### CORS
 
-Both the API and WebSocket servers keep their own allow-lists. Outside dev the allowed origin is
-`BASE_URL`; dev adds a set of `localhost` / `app.cg.local` / `bs-local.com` origins
-(`srv/util/express.ts`, `srv/wsapi.ts`). Only the API of a legacy CG ID process additionally allows
-the `CGID_URL` origin. Requests with **no** `Origin` header are allowed (mobile apps, curl).
-Credentials are enabled (`credentials: true`).
+The api and the wsapi share **one** origin list (`allowedOrigins()`, `srv/util/origins.ts`), derived
+from the environment: the `BASE_URL` origin; in dev also a set of `localhost` / `app.cg.local` /
+`bs-local.com` origins (and `LOCAL_CERTIFICATE_IP`); on a legacy CG ID process outside dev also the
+`CGID_URL` origin (the CG ID app calls the api from its own origin).
+
+- **api** — a request whose `Origin` header is not on the list (`null` included) is answered with
+  `403 {status:'ERROR', error:'NOT_ALLOWED'}` before anything else runs, preflights included
+  (`originGuard`) — except one-click unsubscribe (`/User/emailUnsubscribe`, `ORIGIN_FREE_ROUTES`):
+  mail providers send its RFC 8058 POST from their servers or their web mail's pages, and the signed
+  token alone authorizes it. Listed origins get CORS headers with credentials; allowed request headers are
+  `Accept`, `Content-Type`, `Authorization` and `X-Cg-Socket-Id` (`CORS_ALLOWED_HEADERS`). A request
+  without an `Origin` passes without CORS headers: browsers omit it on same-origin GETs, and the SDK,
+  bots and curl send none; the session cookie (`SameSite=Lax`) never comes along on another site's
+  requests anyway.
+- **wsapi** (`srv/util/socketServer.ts`) — every Socket.IO request is checked: the handshake by
+  `allowRequest`, and every engine request (later polling requests and the WebSocket upgrade of an
+  existing session, which `allowRequest` does not see) by an engine middleware. An `Origin` that is
+  present must be on the list (browsers always send one on a WebSocket and on cross-origin requests).
+  Requests without one pass: the web app's same-origin polling GETs and non-browser clients — bots
+  with their token, the SDK with its session cookie (`sdk/client/src/realtime/socket.ts`). A refusal
+  ends the request with HTTP 400 (403 from `allowRequest`).
 
 ---
 
@@ -693,12 +721,19 @@ registered when `TWITTER_API_KEY`/`TWITTER_API_SECRET` are configured (`srv/api/
 
 ### 5.8 Farcaster (`type: "farcaster"`)
 
-SIWE-based, verified against the on-chain Farcaster ID registry:
+SIWE-based (Sign In With Farcaster), verified against the on-chain Farcaster ID registry:
 
-1. `POST /Accounts/Farcaster/verifyLogin` (`srv/api/accounts.ts:17-129`): parses and verifies the
-   SIWE signature (`walletHelper.parseAndVerifySiweData`), requires `issuedAt` within 60 s of now and
-   the SIWE `nonce` to equal `session.signSecret`, extracts the FID from the message resources, and
-   confirms ownership by comparing against the on-chain ID-registry event for the signer address
+1. `POST /Accounts/Farcaster/verifyLogin` (`srv/api/accounts.ts`): parses the message by its
+   structure (`parseSiweMessage`, `srv/util/siweMessage.ts` — every field by its label in the order
+   EIP-4361 defines, so optional fields cannot shift another one into place; the wallet sign-in uses
+   the same parser) and verifies the signature (`walletHelper.parseAndVerifySiweData`: version 1,
+   signer = the message's address, not expired, not before its `Not Before`); requires `issuedAt`
+   within 60 s of now and the SIWE `nonce` to equal `session.signSecret`; checks the message was made
+   for this instance like a wallet sign-in message (`assertSiweForThisInstance`: its domain is the
+   host of this instance's web app and its URI is on that origin — the web app sends
+   `window.location.host` and the page URL); takes the FID from the one `farcaster://fid/<fid>`
+   resource (`farcasterIdOf`; none, two or a malformed one are refused) and confirms ownership by
+   comparing against the on-chain ID-registry event for the signer address
    (`farcasterApi('onChainIdRegistryEventByAddress', …)`). Profile data is fetched from a Farcaster
    hub for new accounts. Result is stored as `session.farcaster` with `readyForLogin`/
    `readyForCreation`.
@@ -1009,7 +1044,7 @@ endpoints, which no backend serves any more.
 Apart from the passkey surface, legacy mode keeps the **full previous sign-up and login surface**:
 `createUser` with every selector (including X, LUKSO and Farcaster), no sign-up email verification,
 the recovery-phrase wallet path, and all other routers. Restricting what a gateway process serves is
-left entirely to the gateway's server-side route allowlist (roadmap item G1); legacy mode itself
+left entirely to the gateway's server-side allowlists ([§12](#12-gateway-mode)); legacy mode itself
 does not restrict it.
 
 ### Session cookie on upgraded instances
@@ -1240,8 +1275,8 @@ generic.
   name>`, so a look-alike display name cannot fool anyone) and profile image (`previewTransferLink`
   → `{ userId, displayName, username, imageId, expiresAt }`).
 - **Legacy CG ID mode** (the gateway) mints but never redeems: preview and redemption are
-  `NOT_SUPPORTED` there. The gateway itself (route allowlist, its own session store) is roadmap
-  item G1; it exposes `User/createTransferLink` to its logged-in users and is configured with
+  `NOT_SUPPORTED` there (on a gateway they are off its allowlist as well). The gateway
+  ([§12](#12-gateway-mode)) exposes `User/createTransferLink` to its logged-in users and runs with
   `TRANSFER_TARGET_URL=https://<new instance>`.
 
 ### Account-security step
@@ -1313,6 +1348,118 @@ async route wrappers and the memberlist process) — never the error object, whi
 carries the request it sent, a database error the row's values) — and a validation error only
 with the paths of the failing fields. Sign-in paths log no request bodies, passwords, codes or
 tokens.
+
+---
+
+## 12. Gateway Mode
+
+During the move of the hosted instance (app.cg → cg.box) the old domain keeps working as a
+**gateway**: the same code a second time (`CG_GATEWAY=true`), next to the new instance on the same
+server and on the same PostgreSQL and Valkey (not the storage: no route it serves reads or writes
+files, so it gets no storage credentials). People sign in there exactly as before —
+device key, password, email code, wallet, the old CG ID passkeys (`id.app.cg`), X, LUKSO, Farcaster —
+and continue on the new instance with a one-time transfer link ([§11](#11-transfer-links-and-the-account-security-step)).
+Nothing else is served. Deployment: [docker/SELFHOST.md](../../docker/SELFHOST.md#gateway-for-a-moved-instance).
+
+`srv/util/gateway.ts`.
+
+**Configuration.** Every gateway process (api, wsapi) runs with `CG_GATEWAY=true`,
+`CG_LEGACY_CGID=true`, `BASE_URL=https://<old domain>`, `CGID_URL=https://<old CG ID domain>`; the
+api also with `TRANSFER_TARGET_URL=https://<new instance>` and the shared mail-limit secret (below).
+Missing pieces stop the process at startup (`validateGatewayConfig`), and so does a
+`TRANSFER_TARGET_URL` whose host is the gateway's own domain or lies under it: the gateway's
+session cookie (scoped to `.<old domain>`, below) would reach that instance as well, next to its own
+cookie of the same name. The singleton processes — job-runner, onchain, memberlist, the
+call server and migrate-db — run once, for the new instance; started in gateway mode they exit
+(`refuseInGatewayMode`).
+
+**The allowlists are the only boundary.** Legacy CG ID mode keeps the full old sign-up and sign-in
+surface ([§7](#legacy-cg-id-gateway-only)), so the gateway's server-side allowlists alone decide what
+it serves:
+
+- **api** (`GATEWAY_API_ALLOWLIST`, `gatewayApiGuard`) — mounted right after the origin check and
+  CORS, before the bot authentication, the session and every router. A request is served only if its
+  method and path are on the list (compared like Express routes: case-insensitive, one trailing slash
+  ignored, `HEAD` as `GET`); anything else — another spelling, encoded characters, double slashes —
+  and every request with an `Authorization` header (bot tokens are not even looked up) gets
+  `404 {status:'ERROR', error:'NOT_SUPPORTED'}` without a session being read or created. The list:
+
+  | Route | For |
+  |---|---|
+  | `POST /User/getSignableSecret`, `/User/login`, `/User/checkLoginStatus`, `/User/ensureSession`, `/User/logout`, `/User/clearLoginSession` | the session and sign-in (every `User/login` type) |
+  | `POST /User/prepareWalletAction` | wallet and recovery-phrase sign-in |
+  | `POST /User/sendOneTimePasswordForLogin` | email-code sign-in |
+  | `POST /CgId/generateAuthenticationOptions`, `/CgId/verifyAuthenticationResponse`, `/CgId/ensureSession` | the CG ID passkey assertion |
+  | `GET /Twitter/startLogin`, `GET /twitter-callback`, `GET /twitter-login`, `POST /Twitter/finishLogin` | X sign-in |
+  | `POST /Lukso/PrepareLuksoAction`, `POST /Accounts/Farcaster/verifyLogin` | LUKSO and Farcaster sign-in of existing accounts: on a gateway a profile or FID without an account is refused (`ACCOUNT_DOES_NOT_EXIST`) before any profile lookup — no image fetched or stored, no sign-up prepared. LUKSO checks signatures through the instance's `onchain` service, so the gateway api follows the instance's `CG_ENABLE_BLOCKCHAIN` |
+  | `POST /User/createTransferLink` | the link to the new instance |
+  | `GET /Instance/config` | the instance configuration |
+
+  No sign-up (`createUser`, the sign-up codes), no transfer-link preview or redemption, no data. The
+  login answer on a gateway carries the account (`ownData`) but no communities, chats, unread count
+  or push subscription. `User/clearLoginSession` creates no session when there is none.
+  A device-key session on the gateway can mint a transfer link as well; it yields a `transfer`
+  session on the new instance, which may add a sign-in method there (decision 18 of the cg.box
+  roadmap, [§11](#11-transfer-links-and-the-account-security-step)).
+- **wsapi** (`GATEWAY_SOCKET_EVENTS`, `gatewaySocketEventGuard`) — a Socket.IO middleware in front
+  of every event handler lets only `cgPing` and `watchCgIdRequest` (the CG ID popup's result) through;
+  every other event is dropped without an acknowledgement. There is no socket sign-in, so a gateway
+  socket never joins a user's, device's, role's or community's room. Token handshakes (bots) are
+  refused (`gatewayHandshakeGuard`).
+
+`srv/tests/gatewayAllowlist.spec.ts` builds the **complete route list** of the api from the code —
+every router mounted like the api does it (`srv/api/mountRouters.ts`), routes read from Express'
+router stacks, nested routers included — and sends every route through the guard: all but the
+allowlisted ones are refused, every allowlisted one exists and is reached.
+`srv/tests/gatewaySocket.spec.ts` does the same for every socket event the wsapi handles (read from
+its source and from `API.Server.ServerToClientEvents`) on a real Socket.IO server.
+`e2e/checks/gateway.sh` repeats both against a running gateway.
+
+**Isolation from the new instance.**
+
+- Own **session secret** (`REDIS_SECRET` of the gateway; the self-host profile takes
+  `CG_GATEWAY_SESSION_SECRET` and refuses to start the gateway when it equals the instance's), so a
+  cookie of one instance fails the other's signature check.
+- Own **Valkey key prefix** `gateway:` for everything per-instance (`instanceKeyPrefix()`): sessions
+  (`gateway:sess:`), revoked session ids (`gateway:sess-revoked:`), the index of each user's sessions
+  (`gateway:sess-user:`), the copies of the session generations (`gateway:sess-gen:`,
+  `gateway:sess-keep:`, `gateway:sess-gen-copied`) and the Socket.IO adapter and emitter channels
+  (`gateway:v2:`). The main instance keeps its key names. A session id of one instance is therefore
+  unknown to the other even with a valid signature, a logout or revocation on one never touches the
+  other, and each instance's sockets only receive its own events.
+- **Session generations** are still per account and live in PostgreSQL ([§2](#signing-out-other-devices)):
+  the gateway's own reconciler copies them into its prefix, so a sign-out of other devices on the
+  new instance (a replaced password, …) ends the account's gateway sessions within one reconciler
+  interval, and its gateway device keys at once (shared `devices` table).
+- Shared on purpose: the per-network and per-account limits (`ratelimit:`, the same budgets on both
+  instances), the account-security records (`security-step:`, account facts; not enforced on the
+  gateway), WebAuthn challenge markers (random).
+- The per-address mail limits are keyed by an HMAC with a key derived from `CG_MAIL_LIMIT_SECRET`
+  ([email docs](../email-notifications/README.md#send-limits)), which both instances share, so the
+  login-code mails to one address count together; a gateway api refuses to start without it (the
+  Docker secret `mail_limit_secret` counts as well — the check reads it like the mail limits do,
+  `sharedMailLimitSecret`, without surrounding whitespace).
+- Cookie scope `.app.cg` (legacy CG ID mode, shared with the CG ID app on `id.app.cg`); the new
+  instance's cookie is host-only on `cg.box`. Both are named `connect.sid`, so the new instance
+  must not lie on or under the gateway's domain (checked by the gateway api and by `selfhost.sh
+  up`); a gateway under the new instance's domain is fine.
+
+**Web app.** The instance config of a gateway carries `gatewayTargetUrl` (the new instance's origin;
+`srv/util/instanceConfig.ts`, the Caddy template renders it from `GATEWAY_CG_GATEWAY_TARGET_URL`).
+With it the app renders only `GatewayView` (`src/views/GatewayView/`), keeps no local data, leaves
+the data an old page of the app stored on that origin untouched (its databases are never opened or
+cleared; a sign-out still deletes the device key, in the browser and on the server, as on any
+instance) and opens no data socket (`isGatewayInstance()`, `src/common/gateway.ts`: the login setup — also when a
+tab takes over another tab's login —, the data socket and the chat stores stay off; the choke points
+are listed in [docs/frontend](../frontend/README.md#the-gateway-page-gatewayview)); the automatic device-key sign-in, which the data socket's connection starts
+elsewhere, is started by `GatewayView`, and the CG ID popup's result arrives over a minimal socket
+of its own (`src/views/GatewayView/cgIdResultSocket.ts`, `watchCgIdRequest`) or the popup's
+`postMessage`. Every path, old deep links included, plus the X popup's page shows "Common Ground has moved to <host>", the login form without
+sign-up (`AuthFlow allowSignup={false}`), and for a signed-in account "Continue to <host>", which
+mints a transfer link with the path the page was opened with (`nextPath`) and opens it. Right after
+a sign-in with a sign-in method in that tab it continues by itself; a tab that took over that
+sign-in from another tab, like a page that opens signed in, shows the button. On the new instance the confirmation page redeems the
+link and goes to that path, so `app.cg/<path>` ends on `cg.box/<path>`.
 
 ---
 

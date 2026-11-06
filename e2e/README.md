@@ -26,6 +26,11 @@ violation, unexpected API error or request to a URL with an `undefined` /
 ./run.sh e2e --instance --flow reload --reload-iterations 20
 ./run.sh e2e_instance down       # containers, volumes and generated files
 
+# with the gateway of a moved instance next to it (app.cg-e2e.test, id.app.cg-e2e.test)
+E2E_GATEWAY=1 e2e/instance.sh up
+e2e/run.sh --instance            # now with --gateway-url: the gateway flow runs too
+e2e/checks/gateway.sh            # server-side gateway checks (after the gateway flow)
+
 # any other instance (e.g. the cg.test VM with "tls internal")
 e2e/run.sh --url https://cg.test --ca /path/to/root.crt --add-host cg.test:192.0.2.10
 ```
@@ -51,6 +56,7 @@ Options (`e2e/run.sh --help` shows the suite's own):
 | `--spki <hash>` | accept an extra certificate key pin instead of / in addition to `--ca` |
 | `--add-host host:ip`, `--network <net>` | name resolution / docker network of the runner container |
 | `--mailpit <url>` | Mailpit API to read sign-up codes from (instances that send mail) |
+| `--gateway-url <url>` | the instance's gateway (its old domain in gateway mode); enables the `gateway` flow and puts that origin under the guards too. `--instance` passes it when the instance runs one (`E2E_GATEWAY=1`) |
 | `--flow <id>[,<id>]` | run only these flows or groups (`chat-sync` = the chat-sync acceptance flows, see below); `--list` shows the ids and groups |
 | `--reload-iterations <n>` | iterations of the reload flow (default 20) |
 | `--reload-modes <m,…>` | reload modes to rotate through (validated; default all available); `session-expired` needs `E2E_REDIS_URL` — the instance's Valkey, which `--instance` passes through the environment, never on a command line |
@@ -118,6 +124,7 @@ metrics) and screenshots of every failed step under `<out>/<flow>/`.
 | `cs-notifications` | E5: A mentions B twice: the badge goes up by one each time and holds; B opens one notification: down by one and holds; after a reload the badge equals `Notification/getUnreadCount`; a second tab of B in the background (home page) shows the same badge at every step |
 | `cs-login-time` | E7: six page loads of a user in a channel with history; per load the time to the device login's OK, to "connected", to the first and to all messages (report: `loginTimeSamples`, `loginTimeSummary`); fails above 10 s to logged-in-and-connected or to the first message |
 | `cs-split-frozen` | E8: B's channel in two windows side by side (both visible): A's posts show in both live; B's tab hidden behind another tab and frozen (`Page.setWebLifecycleState`), A posts and edits, the tab resumed: connected within 12 s and caught up (the edit with its "edited" marker); with the service worker stopped, a plain reload and a hard reload (uncontrolled page): each connected within 12 s of the reload |
+| `gateway` | only with `--gateway-url`: an account of the instance opens a deep link on the gateway ("moved to …", sign-in only, no sign-up), signs in with email + password, follows the transfer link and lands on the deep link on the instance; the two session cookies are anonymous on the other instance; back on the gateway the device key signs in silently and a second link works; a code by email signs in on the gateway as well (with `--mailpit`), while a second gateway tab of that browser takes the sign-in over without a local data setup of its own and offers "Continue to …" instead of going on by itself. The CG ID passkey popup and a wallet are not driven in the browser — `checks/gateway.sh` covers them at the API level |
 
 The other flows wait for the device login of a page load to finish before
 they act (`waitAppReady`) and navigate client-side once the app is loaded
@@ -189,6 +196,7 @@ instance's database, so run them after the suite.
 
 | script | what it checks |
 |---|---|
+| `checks/gateway.sh` | the gateway of a moved instance (`E2E_GATEWAY=1`, after the `gateway` flow, whose account it uses): the allowlist spec in the instance's backend image writes the complete route list of the deployed code, and every route of it goes to the live gateway api (refused unless allowlisted); every socket event of the deployed wsapi goes to the live gateway wsapi, token handshakes are refused; origin checks of both instances' api and wsapi (WebSocket upgrade, polling, preflight with `x-cg-socket-id`); wallet sign-in (SIWE for the gateway's domain; one for the instance's domain is refused) and the CG ID passkey assertion + `passkey-success` login with a credential it inserts for the gateway's CG ID domain; a transfer link redeemed on the instance with its deep link, once only; cookies anonymous across; Valkey keys disjoint; the singleton processes, a missing session secret, a bad `PG_POOL_MAX`, a gateway api without the shared mail-limit secret and one whose transfer target lies under its own domain stop at startup. Output: `results/gateway-<timestamp>/` (or `CHECK_OUT`) |
 | `checks/call-sweep.sh` | the jobs process's call-ending sweeps (docs/backend §6, `callUpdateEmitter.ts`): calls of a call server whose heartbeat stopped, event and scheduled calls, calls everyone left, and that each ended call is published as `cliCallEvent delete` (Valkey `PSUBSCRIBE`); calls ended at job-runner startup (restarts the job-runner); restarting an ended event call; `updateCallPermissions` without role permissions; the monotonic, clamped `setChannelLastRead`. Output: `results/call-sweep-<timestamp>/` (or `CHECK_OUT`) |
 
 ```bash

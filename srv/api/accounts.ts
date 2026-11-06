@@ -12,6 +12,9 @@ import { fetchRemoteImage } from "../util/safeFetch";
 import fileHelper from "../repositories/files";
 import ipRateLimitHandler from "../util/rateLimit";
 import { AUTH_LIMITS } from "../util/authLimits";
+import { assertSiweForThisInstance } from "../repositories/wallets";
+import { farcasterIdOf } from "../util/siweMessage";
+import { isGatewayMode } from "../util/gateway";
 
 const accountsRouter = express.Router();
 
@@ -30,6 +33,7 @@ registerPostRoute<
   validators.API.Accounts.Farcaster.verifyLogin,
   async (request, response, data) => {
     await farcasterSignatureLimiter(request, response);
+    // parsed by its structure, signature checked (srv/util/siweMessage.ts)
     const siweData = walletHelper.parseAndVerifySiweData(data);
     const issuedAt = new Date(siweData.issuedAt);
     if (Math.abs(Date.now() - issuedAt.getTime()) > 60_000) {
@@ -38,16 +42,24 @@ registerPostRoute<
     if (request.session.signSecret !== siweData.nonce) {
       throw new Error(errors.server.INVALID_SECRET);
     }
-    const lines = data.message.split('\n');
-    if (lines[10].startsWith('Resources:') && lines[11].startsWith('- farcaster://fid/')) {
-      const farcasterIdString = lines[11].substring(18).match(/^\d+$/)?.[0];
-      const farcasterId = !!farcasterIdString ? parseInt(farcasterIdString) : null;
+    // made for this instance, like a wallet sign-in message: its domain and
+    // URI name this instance's web app, so a message signed for another
+    // site is worthless here
+    assertSiweForThisInstance(siweData.headerLine, siweData.uri);
+    {
+      // exactly one farcaster://fid/<fid> resource
+      const farcasterId = farcasterIdOf(siweData);
       const userRegistry = await farcasterApi('onChainIdRegistryEventByAddress', { address: siweData.address });
-      console.log(`Farcaster login: registry fid ${userRegistry?.fid}, claimed fid ${farcasterIdString}`);
-      if (farcasterId === null || userRegistry.fid !== farcasterId) {
+      console.log(`Farcaster login: registry fid ${userRegistry?.fid}, claimed fid ${farcasterId}`);
+      if (userRegistry?.fid !== farcasterId) {
         throw new Error("Farcaster ID mismatch");
       }
       const existingAccount = await userHelper.getUserAccount("farcaster", farcasterId.toString());
+      if (!existingAccount && isGatewayMode()) {
+        // a gateway (srv/util/gateway.ts) signs in existing accounts only: no
+        // profile lookup, no image fetched or stored, no sign-up prepared
+        throw new Error(errors.server.ACCOUNT_DOES_NOT_EXIST);
+      }
 
       let username: string | undefined;
       let displayName: string | undefined;
@@ -128,9 +140,6 @@ registerPostRoute<
       delete request.session.signSecret;
 
       return fullResult;
-    }
-    else {
-      throw new Error(errors.server.INVALID_REQUEST);
     }
   }
 );

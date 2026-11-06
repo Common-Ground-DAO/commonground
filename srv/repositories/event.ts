@@ -14,6 +14,7 @@ import {
   userRoomKey,
 } from "../util";
 import redisManager from "../redis";
+import { socketIoKey } from "../util/gateway";
 import notificationHelper from "./notifications";
 import { deviceSocketRoomKey, type RequestSockets } from "../util/requestSocket";
 
@@ -49,7 +50,7 @@ class EventHelper {
   // request for the length of an outage.
   #emitter: Emitter<API.Server.ClientToServerEvents> | undefined;
   get #io() {
-    return Promise.resolve(this.#emitter ??= new Emitter<API.Server.ClientToServerEvents>(redisManager.getClient('socketIOPub'), { key: 'v2:' }));
+    return Promise.resolve(this.#emitter ??= new Emitter<API.Server.ClientToServerEvents>(redisManager.getClient('socketIOPub'), { key: socketIoKey() }));
   }
 
   public async emit(

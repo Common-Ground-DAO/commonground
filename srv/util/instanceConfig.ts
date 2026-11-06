@@ -10,6 +10,8 @@ import { CAPTCHA_PROVIDER } from "./captcha";
 import { isConfiguredSecret } from "./configuredSecret";
 import { parseMailConfig } from "./mailConfig";
 import { getProcessRpIdOrNull, isLegacyCgidMode } from "./passkeyConfig";
+import { isGatewayMode } from "./gateway";
+import { getTransferTargetOrigin } from "./transferLink";
 
 // Builds this instance's identity for the frontend (window.__CG_INSTANCE__)
 // and for GET /api/v2/Instance/config. The web app normally gets it from
@@ -39,6 +41,14 @@ export function buildInstanceConfig(): InstanceConfig {
     const rpId = getProcessRpIdOrNull();
     if (rpId) {
       instance.passkeyRpId = rpId;
+    }
+  }
+  if (isGatewayMode()) {
+    // a gateway (srv/util/gateway.ts): the web app shows only sign-in and
+    // the move to this instance
+    const target = getTransferTargetOrigin();
+    if (target) {
+      instance.gatewayTargetUrl = target;
     }
   }
   if (typeof process.env.CG_RECAPTCHA_SITE_KEY === "string") {

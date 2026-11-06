@@ -24,6 +24,7 @@ import config from '../../common/config';
 
 import { io, type Socket } from 'socket.io-client';
 import buildId from 'common/buildId';
+import { isGatewayInstance } from 'common/gateway';
 
 import userApi from 'data/api/user';
 import securityStepState from 'data/auth/securityStep';
@@ -448,6 +449,10 @@ export class WebSocketManager implements Transport {
   }
 
   private createSocket() {
+    // the one place the data socket is created: a gateway (docs/auth-identity
+    // §12) has none — no socket login, no live/resume signals, so no chat
+    // catch-up either (its CG ID popup result has a socket of its own)
+    if (isGatewayInstance()) return;
     const transports = ['websocket'];
     if (config.DEPLOYMENT !== 'dev') {
       transports.unshift('polling');

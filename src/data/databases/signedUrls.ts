@@ -23,6 +23,10 @@ class SignedUrlDatabase extends AbstractDatabase<{
 
   constructor() {
     super('signedUrl');
+    if (!this.localData) {
+      // a gateway never opens the database
+      return;
+    }
     // delete stale urls
     this.db.signedUrls.filter(entry => {
       return entry.validUntil === null || entry.validUntil <= new Date();

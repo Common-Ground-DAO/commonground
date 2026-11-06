@@ -28,6 +28,8 @@ type Props = {
   onLoggedIn: (method: LoginMethodName) => void;
   /** the account exists and is logged in; continue with the onboarding tail steps */
   onSignedUp: (info: { email: string | null }) => void;
+  /** false: sign-in only (a gateway); default true */
+  allowSignup?: boolean;
 };
 
 const AUTO_REGISTER_TIMEOUT_MS = 8_000;
@@ -61,7 +63,7 @@ function onceFlag(kind: 'autoRegister' | 'prompt', userId: string) {
  * before the account exists and then asks how the person will sign in.
  * Rendered by the onboarding modal (UserOnboarding) and the /login route.
  */
-const AuthFlow: React.FC<Props> = ({ initialMode = 'login', variant, onLoggedIn, onSignedUp }) => {
+const AuthFlow: React.FC<Props> = ({ initialMode = 'login', variant, onLoggedIn, onSignedUp, allowSignup = true }) => {
   const passkey = usePasskeyContext();
   const { showSnackbar } = useSnackbarContext();
   const authMode = getAuthMode();
@@ -69,7 +71,8 @@ const AuthFlow: React.FC<Props> = ({ initialMode = 'login', variant, onLoggedIn,
     emailEnabled: config.EMAIL_ENABLED,
     legacy: authMode.legacyCgid,
     passkeysSupported: passkey.supported,
-  }), [authMode.legacyCgid, passkey.supported]);
+    signup: allowSignup,
+  }), [authMode.legacyCgid, passkey.supported, allowSignup]);
   const reducer = useMemo(() => authFlowReducer(flowConfig), [flowConfig]);
   const [state, dispatch] = useReducer(reducer, initialMode, initialAuthFlowState);
   const [identifier, setIdentifier] = useState('');

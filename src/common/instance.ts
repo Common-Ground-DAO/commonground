@@ -24,6 +24,12 @@ export type InstanceConfig = {
   appUrl?: string;
   /** Legacy CG ID (gateway) instances only: base URL of the CG ID app, including the hash router prefix (e.g. https://id.app.cg/#). */
   cgidUrl?: string;
+  /**
+   * Gateway instances only (docs/auth-identity §12): the origin of the
+   * instance this one moved to. The web app then shows nothing but sign-in
+   * and the one-time link to that instance.
+   */
+  gatewayTargetUrl?: string;
   /** WebAuthn RP ID passkeys on this origin are bound to (absent on a legacy CG ID instance). */
   passkeyRpId?: string;
   /** reCAPTCHA v2 site key for this instance; empty disables the default key. */
@@ -79,6 +85,9 @@ export function getInstanceConfig(): InstanceConfig | undefined {
   }
   if (typeof raw.cgidUrl === 'string' && /^https?:\/\/[^/]+/i.test(raw.cgidUrl)) {
     cfg.cgidUrl = raw.cgidUrl;
+  }
+  if (typeof raw.gatewayTargetUrl === 'string' && /^https?:\/\/[^/?#\s]+$/i.test(raw.gatewayTargetUrl)) {
+    cfg.gatewayTargetUrl = raw.gatewayTargetUrl;
   }
   if (typeof raw.passkeyRpId === 'string' && /^[a-z0-9.-]{1,253}$/i.test(raw.passkeyRpId)) {
     cfg.passkeyRpId = raw.passkeyRpId.toLowerCase();

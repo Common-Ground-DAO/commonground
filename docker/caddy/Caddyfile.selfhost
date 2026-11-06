@@ -21,6 +21,12 @@
 #                    (selfhost.sh sets it when CG_LEGACY_CGID=true and
 #                    CG_ID_DOMAIN is set); off everywhere else
 #   CG_ID_DOMAIN     the CG ID mini-app's domain (only with CG_CGID_VHOST=on)
+#   CG_GATEWAY_EDGE  "on" serves the gateway (docs/auth-identity §12) next to
+#                    this instance: CG_GATEWAY_DOMAIN (the old domain, e.g.
+#                    app.cg) and CG_GATEWAY_ID_DOMAIN (its CG ID app, e.g.
+#                    id.app.cg); selfhost.sh sets it from CG_ENABLE_GATEWAY
+#   GATEWAY_CG_*     the gateway site's instance config (same names as below,
+#                    with the prefix)
 #   plus the CG_* variables of templates/instance-config.js
 
 (tls_mode_acme) {
@@ -46,53 +52,36 @@ import /etc/caddy/common.caddy
 	import cg_app "https://{$CG_DOMAIN}:* wss://{$CG_DOMAIN}:*" "https:" https {$CG_CGID_VHOST:off} on
 }
 
-# Legacy CG ID mini-app (passkeys on a separate origin): the gateway that
-# keeps old logins working during the move needs it; a normal instance —
+# Legacy CG ID mini-app (passkeys on a separate origin), when this instance
+# itself runs in legacy CG ID mode (CG_CGID_VHOST=on); a normal instance —
 # including one that has CG_ID_DOMAIN in an older .env.selfhost — does not
-# serve it at all. Its shell loads only its own assets; the main origin is
-# needed for images (img-src) and its API calls (connect-src).
+# serve it at all.
 (cgid_vhost_on) {
 	{$CG_ID_DOMAIN} {
-		import cg_hsts_on site
-		request_body {
-			max_size 16MiB
-		}
-		encode zstd gzip
-		import cg_common_headers
-		import cg_access_log
-		handle_errors {
-			import cg_common_headers
-			import cg_hsts_on errors
-			header >Cache-Control "no-store"
-			respond "" {err.status_code}
-		}
-		header >Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' https://{$CG_DOMAIN}; connect-src 'self' https://{$CG_DOMAIN}:* wss://{$CG_DOMAIN}:*; script-src-elem 'self'; style-src 'self' 'unsafe-inline'; manifest-src 'self'"
-		route {
-			@dotsegments vars_regexp {path} (^|/)\.\.?(/|$)
-			handle @dotsegments {
-				respond 400
-			}
-			handle /index.html {
-				respond 403
-			}
-			import cg_instance_config
-			handle / {
-				root * /srv
-				header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
-				rewrite * /index_cgid.html
-				file_server
-			}
-			handle {
-				root * /srv
-				header Cache-Control "private, must-revalidate, proxy-revalidate, max-age=0"
-				file_server
-			}
-		}
+		import cg_cgid_site {$CG_DOMAIN}
 	}
 }
 (cgid_vhost_off) {
 }
 import cgid_vhost_{$CG_CGID_VHOST:off}
+
+# The gateway next to this instance (CG_GATEWAY_EDGE=on, docs/auth-identity
+# §12): the old domain and its CG ID domain, served by the gateway's own
+# backend (gateway-api, gateway-wsapi; compose profile "gateway"). Its
+# /instance-config.js is rendered from the GATEWAY_CG_* variables.
+(gateway_edge_on) {
+	{$CG_GATEWAY_DOMAIN} {
+		vars cg_env_prefix GATEWAY_
+		import cg_gateway_app "https://{$CG_GATEWAY_DOMAIN}:* wss://{$CG_GATEWAY_DOMAIN}:*" "https:" on
+	}
+	{$CG_GATEWAY_ID_DOMAIN} {
+		vars cg_env_prefix GATEWAY_
+		import cg_cgid_site {$CG_GATEWAY_DOMAIN}
+	}
+}
+(gateway_edge_off) {
+}
+import gateway_edge_{$CG_GATEWAY_EDGE:off}
 
 # mediasoup call signalling (wss), only when calls are enabled
 (calls_edge_on) {

@@ -97,6 +97,7 @@ import { ReportModalProvider } from 'context/ReportModalProvider';
 import { SuspiciousImageModalProvider } from 'context/SuspiciousImageModalProvider';
 import { useSecurityStepRequired } from 'hooks/useSecurityStepRequired';
 import { showSecurityStep } from 'data/auth/securityStep';
+import { getInstanceConfig } from 'common/instance';
 
 dayjs.extend(utc);
 dayjs.extend(isToday);
@@ -132,6 +133,7 @@ const LoginView = React.lazy(() => import('views/LoginView/LoginView'));
 const TransferView = React.lazy(() => import('views/TransferView/TransferView'));
 const SecurityStepView = React.lazy(() => import('views/SecurityStepView/SecurityStepView'));
 const IsolationModeToggle = React.lazy(() => import('views/IsolationModeToggle/IsolationModeToggle'));
+const GatewayView = React.lazy(() => import('views/GatewayView/GatewayView'));
 
 const activeChains = (config.DEPLOYMENT === 'dev'
   ? [mainnet, polygon, optimism, arbitrum, gnosis, bsc, fantom, avalanche, zkSync, base, hardhat]
@@ -222,7 +224,9 @@ const farcasterConfig = {
   // For a production app, replace this with an Optimism Mainnet
   // RPC URL from a provider like Alchemy or Infura.
   rpcUrl: "https://mainnet.optimism.io",
-  domain: window.location.hostname,
+  // the SIWE domain is the authority (host with port): the server checks it
+  // against this instance's origin, like a wallet sign-in message
+  domain: window.location.host,
   siweUri: window.location.href,
   relay: 'https://relay.farcaster.xyz',
 };
@@ -382,11 +386,58 @@ function Inner() {
   );
 }
 
+/**
+ * A gateway (docs/auth-identity §12) shows nothing but sign-in and the move
+ * to the instance it moved to: only the providers the sign-in methods need
+ * (no own-data provider: a gateway keeps no local data), and every path (old
+ * deep links included) leads to the gateway page — the X sign-in popup's page
+ * aside. Its server serves nothing else either.
+ */
+function GatewayInner() {
+  const mode = useDarkModeContext();
+
+  return (
+    <WagmiProvider config={wagmiConfig}>
+    <QueryClientProvider client={queryClient}>
+    <RainbowKitProvider
+      theme={mode.isDarkMode ? darkTheme() : lightTheme()}
+      modalSize='compact'
+    >
+    <AuthKitProvider config={farcasterConfig}>
+    <WindowSizeProvider>
+    <SnackbarContextProvider>
+    <PasskeyProvider>
+    <LoginWithKeyphraseProvider>
+    <UniversalProfileProvider>
+    <TwitterLoginProvider>
+      <Routes>
+        <Route path={'twitter-login'} element={<TwitterCallbackView />} />
+        <Route path="*" element={<GatewayView />} />
+      </Routes>
+    </TwitterLoginProvider>
+    </UniversalProfileProvider>
+    </LoginWithKeyphraseProvider>
+    </PasskeyProvider>
+    </SnackbarContextProvider>
+    </WindowSizeProvider>
+    </AuthKitProvider>
+    </RainbowKitProvider>
+    </QueryClientProvider>
+    </WagmiProvider>
+  );
+}
+
 function App() {
   const { showReleaseNotes } = useConnectionContext();
 
   let content: React.JSX.Element;
-  if (showReleaseNotes === true) {
+  if (getInstanceConfig()?.gatewayTargetUrl) {
+    content = (
+      <DarkModeProvider>
+        <GatewayInner />
+      </DarkModeProvider>
+    );
+  } else if (showReleaseNotes === true) {
     content = (
       <CgUpdate view="releaseNotes" />
     );

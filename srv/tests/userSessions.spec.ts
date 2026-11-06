@@ -17,7 +17,7 @@
 
 process.env.BASE_URL = 'https://cg.box';
 process.env.DEPLOYMENT = 'prod';
-process.env.REDIS_SECRET = 'test-secret';
+process.env.REDIS_SECRET = 'test-secret-0123456789';
 delete process.env.CG_LEGACY_CGID;
 
 import express from 'express';

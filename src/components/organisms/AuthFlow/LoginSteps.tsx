@@ -300,10 +300,10 @@ export const LoginForm: React.FC<LoginProps & {
         </span>
       </div>}
 
-      <div className='auth-flow-footer cg-text-md-400 cg-text-secondary'>
+      {flowConfig.signup !== false && <div className='auth-flow-footer cg-text-md-400 cg-text-secondary'>
         <span>New here?</span>
         <Button role='textual' text='Create an account' onClick={() => dispatch({ type: 'SHOW_SIGNUP' })} />
-      </div>
+      </div>}
     </div>
   );
 };

@@ -19,6 +19,8 @@ export type InstanceConfig = {
   appUrl?: string;
   /** Legacy CG ID (gateway) instances only: base URL of the CG ID app, including the hash router prefix. */
   cgidUrl?: string;
+  /** Gateway instances only: the origin of the instance this one moved to (sign-in and transfer links only). */
+  gatewayTargetUrl?: string;
   /** WebAuthn RP ID of the passkeys on this origin (absent on a legacy CG ID instance). */
   passkeyRpId?: string;
   /** reCAPTCHA v2 site key; empty disables the default key. */

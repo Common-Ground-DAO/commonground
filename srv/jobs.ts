@@ -8,6 +8,15 @@ import path from 'path';
 import { postgresProbe, startHealthcheck } from './healthcheck';
 import { valkeyProbe } from './redis/healthProbe';
 import pool from './util/postgres';
+import { refuseInGatewayMode } from './util/gateway';
+import { requireSessionSecret } from './util/sessionSecret';
+
+// runs once, for the main instance only: never as part of a gateway
+// (srv/util/gateway.ts)
+refuseInGatewayMode('job-runner');
+// the notification mails' unsubscribe links are signed with the session
+// secret: a missing one stops the process here
+requireSessionSecret();
 
 let processIsExiting = false;
 
@@ -114,11 +123,9 @@ if (process.env.MAIL_BOUNCE_RECEIVER === 'true') {
 // healthy: the database and the Valkey state instance (the workers publish
 // their events through it) answer; the job-runner has no listener. The main
 // thread uses its pool for this probe only (the workers have their own): an
-// idle connection the database drops (a restart) is reported, not thrown —
-// without a listener the pool's `error` event would end the whole job-runner.
-pool.on('error', (error) => {
-  console.warn(`healthcheck: idle database connection lost (${error.message})`);
-});
+// idle connection the database drops (a restart) is logged, not thrown — by
+// the pool's error listeners (util/postgres.ts), without which that `error`
+// event would end the whole job-runner.
 startHealthcheck([postgresProbe(pool), valkeyProbe()]);
 
 createCronOrIntervalWorker('onlineStatusCheck', { interval: 30000 });

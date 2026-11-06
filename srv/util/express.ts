@@ -8,19 +8,18 @@ import 'express-session';
 import { RedisStore } from 'connect-redis';
 import cookieParser from 'cookie-parser';
 import redisManager from '../redis';
-import config from '../common/config';
 import serverconfig from '../serverconfig';
 import { UserV2 } from 'twitter-api-v2';
 import type { ChallengeEntry, PendingPasskey } from './passkeys';
 import type { AuthMethod } from './authSession';
-import { isLegacyCgidMode } from './passkeyConfig';
 import { botAllowlistMiddleware, botAuthenticationMiddleware } from './botPrincipal';
 import { createSessionMiddlewares, redisSessionRevocations, SESSION_KEY_PREFIX, sessionStoreTtlSeconds, withSessionRevocation } from './sessionSetup';
 import { redisUserSessionIndex, withUserSessionIndex } from './userSessions';
 import { GenerationReconciler, redisSessionGenerations } from './sessionGenerations';
 import userHelper from '../repositories/users';
 import deviceHelper from '../repositories/device';
-import { appOrigins } from './origins';
+import { allowedOrigins, createCorsOptions, originGuard } from './origins';
+import { gatewayApiGuard } from './gateway';
 
 // TYPES
 export type User = {
@@ -122,29 +121,15 @@ declare module 'express-session' {
 
 // APP SETUP
 const app = express();
-// BASE_URL itself (as given), its origin, and the dev origins in dev
-const allowedOrigins = [ process.env.BASE_URL as string, ...appOrigins() ];
-if (config.DEPLOYMENT !== 'dev' && isLegacyCgidMode() && process.env.CGID_URL) {
-  // legacy CG ID app on its own origin (gateway mode only)
-  allowedOrigins.push(new URL(process.env.CGID_URL).origin);
-}
-const corsOptions: cors.CorsOptions = {
-  origin: function(origin, callback){
-    // allow requests with no origin 
-    // (like mobile apps or curl requests)
-    if(!origin) return callback(null, true);
-    if(allowedOrigins.indexOf(origin) === -1){
-      var msg = 'The CORS policy for this site does not ' +
-                'allow access from the specified Origin.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
-  credentials: true,
-  preflightContinue: false,
-};
+// one origin list for the api and the wsapi (srv/util/origins.ts): a request
+// with another Origin is refused with 403, CORS headers only for listed ones
+const origins = allowedOrigins();
 app.set('trust proxy', true);
-app.use(cors(corsOptions));
+app.use(originGuard(origins));
+app.use(cors(createCorsOptions(origins)));
+// gateway mode (srv/util/gateway.ts): only the gateway's routes, refused
+// before the session is read or created and before any router
+app.use(gatewayApiGuard());
 // only json responses
 app.use((request, response, next) => {
   response.setHeader("Content-Type", "application/json");

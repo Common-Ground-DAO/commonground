@@ -1,7 +1,8 @@
 # Staking
 
 > Status: verified against commit 0f1d72d66, 2026-08-03; empty-value handling of
-> the env config against commit 69999fa20 (chore/env-template), 2026-10-31.
+> the env config against commit 69999fa20 (chore/env-template), 2026-10-31; the
+> router mount (`srv/api/mountRouters.ts`) against commit 696102b, 2026-11-06.
 
 CG token **staking** lets users time-lock their CG tokens on-chain for a freely
 chosen duration and earn **Spark** (the platform currency, stored as
@@ -413,7 +414,7 @@ wallet is claimed and accrues from `stakedAt`.
 
 ## API routes
 
-Mounted at `/Staking` (`srv/api.ts`), both session-authenticated POST routes
+Mounted at `/Staking` (`srv/api/mountRouters.ts`), both session-authenticated POST routes
 (`srv/api/staking.ts`). Login is required; a missing session throws
 `LOGIN_REQUIRED`.
 

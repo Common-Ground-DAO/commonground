@@ -35,7 +35,10 @@ class ChatDatabase extends AbstractDatabase<{
     super('chat');
 
     // initialize: the in-memory read state starts from the stored rows
-    this.registerStoredChats();
+    // (none on a gateway, which never opens the database)
+    if (this.localData) {
+      this.registerStoredChats();
+    }
   }
 
   /**

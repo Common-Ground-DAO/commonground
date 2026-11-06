@@ -50,7 +50,12 @@
 > `GenericMessageList`'s failed-jump level against commit c5f74d3, 2026-11-03; the socket's
 > drop of a signed-out device (`deviceSignedOut`) and the device check of a late sign-out
 > against commits 1b9948c and d386911, 2026-11-03; the predefined-role helpers (`src/util/predefinedRoles.ts`)
-> against commits 138c630 and 8bb443a, 2026-11-03
+> against commits 138c630 and 8bb443a, 2026-11-03;
+> the gateway page (`GatewayView`, `gatewayTargetUrl`, `AuthFlow allowSignup`, §10) and the Farcaster
+> SIWE domain against commit 696102b, 2026-11-06; the gateway page's untouched old page data
+> (entity databases never opened, no clearing, no obsolete-database cleanup) and its
+> continuation only after a sign-in in the same tab (`signedInInThisTab`) against commit 696102b,
+> 2026-11-07
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -1564,6 +1569,63 @@ profile image — `Jdenticon` when there is none) and asks
 so (`loginManager.logout()`) before `loginManager.redeemTransferLink(token)`. Then it goes to the
 link's `nextPath` (`safeNextPath`) or home. "This isn't me" leaves without using the link; the
 same account already signed in just continues.
+
+### The gateway page (`GatewayView`)
+
+On a gateway ([auth-identity §12](../auth-identity/README.md#12-gateway-mode)) the instance config
+carries `gatewayTargetUrl` (`isGatewayInstance()`, `src/common/gateway.ts`). The data layer then
+keeps no local data of its own, leaves the data an old page of the app stored on that origin as it
+is, and has no realtime connection, at these choke points:
+
+- **No data socket**: `WebSocketManager.createSocket` (`src/data/appstate/webSocket.ts`), the only
+  place the socket is created, returns early. Without a socket there is no socket login and no
+  `onLive`/`onResume`, so neither the chat stores' catch-up (`getSyncState`, `getChanges`, the
+  notification resync) nor the snapshot refresh after a reconnect ever runs. The transport's
+  session keepalive (`User/ensureSession`) stays.
+- **No setup after a login**: `setupAfterLogin` and the take-over of another tab's login
+  (`takeOverSession`) in `src/data/appstate/login.ts` return after the login state — no entity
+  snapshots in IndexedDB, no own wallets, no chat stores, no unread count, no socket login, no push
+  subscription.
+- **No chat stores**: `data.channelManager` (`src/data/databases/channel.ts`) neither starts the
+  chat runtime nor passes anything from the entity databases on to it, so the stores are never
+  created.
+- **Entity databases never opened**: `AbstractDatabase` (`src/data/databases/abstractDatabase.ts`;
+  community, chat, user, signed URLs) constructs its Dexie with `autoOpen: false` and does nothing
+  else — no schema, no version-upgrade clear, no entry in `CG_KNOWN_INDEXEDDBS` (`dbTracker`), no
+  socket event handlers — and the subclasses skip their start-up work (reading the stored chats,
+  channels and calls; deleting stale signed URLs) when `localData` is false. Any other access to
+  such a database fails (no tables are declared, and the database never opens by itself) instead
+  of reading, writing or deleting. `uniques` is not registered in `CG_KNOWN_INDEXEDDBS` either.
+- **No clearing**: the logout's `_clear` (also after a failed automatic sign-in or a sign-out from
+  elsewhere) clears none of these databases, and the ConnectionManager does not schedule the
+  obsolete-database cleanup (`cleanUpIndexedDbs`).
+
+What a gateway page does touch is the sign-in state, as on any instance: the device keys (read for
+the automatic sign-in, a new one stored by a sign-in, the device's key deleted by a sign-out),
+`CG_CURRENT_USER`, and — when no `CG_CURRENT_USER` names the device (a browser of an old page) —
+a read of the stored account (`uniques` `OwnData`) to find which device key to sign in with.
+`src/data/databases/gatewayLocalData.test.ts` opens the real database modules on a fake IndexedDB
+holding an old page's data and checks that a gateway page neither opens, registers nor changes it.
+
+The first socket connect normally starts the page's device login (ConnectionManager); on a gateway
+`GatewayView` starts the automatic device-key sign-in itself. The CG ID popup's result comes over a
+minimal socket of its own (`src/views/GatewayView/cgIdResultSocket.ts`, used by
+`LegacyCgIdPasskey` on a gateway) or the popup's `postMessage`. No connection indicator is mounted.
+`App` renders `GatewayInner` instead of the app: only the providers the sign-in methods need
+(wagmi/RainbowKit, Farcaster AuthKit, window size, snackbar, passkeys incl. the legacy CG ID popup,
+recovery phrase, LUKSO, X — no own-data provider) and two routes — the X popup's
+`twitter-login` page and `GatewayView` for every other path. Signed out, `GatewayView` says "Common
+Ground has moved to <host>" and shows `AuthFlow` with `allowSignup={false}` (no "Create an account";
+the flow machine ignores `SHOW_SIGNUP` with `signup: false`). After a sign-in with a sign-in method
+in this tab (`loginManager.signedInInThisTab`: password, code, passkey, wallet, … — set with the
+login state) it continues by itself; a page that opens signed in (device key) and a tab that took
+over another tab's sign-in (`takeOverSession`) show "Continue to <host>" and "Sign out". Continuing calls `User/createTransferLink` with the path the page was opened with
+(`nextPath`, `safeNextPath`; not `/` or `/login`) through its own connector
+(`src/views/GatewayView/gatewayApi.ts`, a `BaseApiConnector` for `User`) and opens the link, which
+the new instance's `TransferView` redeems.
+
+The Farcaster sign-in sends `window.location.host` as the SIWE domain (the server checks domain and
+URI against its own origin, [auth-identity §5.8](../auth-identity/README.md#58-farcaster-type-farcaster)).
 
 ### Account-security step (`SecurityStepView`, `SecurityStep`)
 

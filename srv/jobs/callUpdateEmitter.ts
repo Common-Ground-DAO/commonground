@@ -4,6 +4,7 @@
 
 import { isMainThread } from 'worker_threads';
 import pool from '../util/postgres';
+import { describeErrorForLog } from '../util/errorLog';
 import eventHelper from '../repositories/event';
 import callHelper from '../repositories/calls';
 import config from '../common/config';
@@ -351,6 +352,12 @@ function handleCallMemberChange(payload: Events.PgNotify.CallMemberChange) {
   // that no change in between is missed and every call ended from here on
   // (including the ones ended right below) reaches the clients.
   const client = await pool.connect();
+  // the database restarted or closed the LISTEN connection: the jobs process
+  // restarts this worker, which registers LISTEN again (srv/util/postgres.ts)
+  client.on("error", (e) => {
+    console.error(`callUpdateEmitter: LISTEN connection failed (${describeErrorForLog(e)}), exiting`);
+    process.exit(1);
+  });
 
   client.on("notification", (msg) => {
     if (!!msg.payload) {

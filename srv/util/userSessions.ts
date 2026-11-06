@@ -7,6 +7,7 @@ import type session from 'express-session';
 import { sessionStoreTtlSeconds } from './sessionSetup';
 import errors from '../common/errors';
 import type { SessionGenerations } from './sessionGenerations';
+import { instanceKeyPrefix } from './gateway';
 
 /**
  * Which logged-in sessions a user has (docs/auth-identity §2, "Signing out
@@ -37,7 +38,6 @@ export type UserSessionIndex = {
 /** a touch re-records a session only when its expiry moved by more than this */
 export const INDEX_REFRESH_MS = 5 * 60 * 1000;
 
-const userKey = (userId: string) => `sess-user:${userId}`;
 
 type IndexClient = {
   zAdd(key: string, members: { score: number; value: string }): Promise<unknown>;
@@ -47,8 +47,12 @@ type IndexClient = {
   pExpireAt(key: string, msTimestamp: number): Promise<unknown>;
 };
 
-/** the index on the sessions' Valkey instance */
-export function redisUserSessionIndex(client: IndexClient): UserSessionIndex {
+/**
+ * the index on the sessions' Valkey instance: `sess-user:<userId>`, with the
+ * instance's key prefix (`gateway:` on a gateway)
+ */
+export function redisUserSessionIndex(client: IndexClient, prefix: string = instanceKeyPrefix()): UserSessionIndex {
+  const userKey = (userId: string) => `${prefix}sess-user:${userId}`;
   return {
     record: async (userId, sid, expiresAt) => {
       const key = userKey(userId);

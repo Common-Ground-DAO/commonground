@@ -5,7 +5,9 @@
 #                            selfhost.sh build; needs ~4 GB RAM) and the
 #                            cg-e2e/* images from this checkout. Writes the
 #                            checkout's node_modules/ and build/.
-#   e2e/instance.sh up       start the instance (fresh secrets, fresh volumes)
+#   e2e/instance.sh up       start the instance (fresh secrets, fresh volumes);
+#                            E2E_GATEWAY=1 also starts the gateway of a moved
+#                            instance on app.<domain> / id.app.<domain>
 #   e2e/instance.sh down     stop it, delete its volumes, generated files and
 #                            the builder's yarn-cache volume
 #   e2e/instance.sh status   docker compose ps
@@ -68,8 +70,18 @@ fi
 
 export E2E_IMAGE_PREFIX="$PREFIX"
 
+# the gateway (gateway-api, gateway-wsapi, its edge sites) runs when the
+# generated env file says so (E2E_GATEWAY=1 at `up`)
+compose_profiles() {
+  if [ -f "$ENV_FILE" ] && grep -q '^CG_ENABLE_GATEWAY=true$' "$ENV_FILE"; then
+    echo "calls,gateway"
+  else
+    echo "calls"
+  fi
+}
+
 compose() {
-  COMPOSE_PROFILES="calls" docker compose \
+  COMPOSE_PROFILES="$(compose_profiles)" docker compose \
     -p "$PROJECT" \
     --env-file "$ENV_FILE" \
     -f "$DOCKER_DIR/docker-compose.selfhost.yml" \
@@ -92,6 +104,13 @@ CG_PUBLIC_IP=127.0.0.1
 PASSKEY_RP_ID=
 CG_LEGACY_CGID=false
 CG_ID_DOMAIN=
+# the gateway of a moved instance (E2E_GATEWAY=1): the old domain app.<domain>
+CG_ENABLE_GATEWAY=$([ "${E2E_GATEWAY:-0}" = 1 ] && echo true || echo false)
+CG_GATEWAY_EDGE=$([ "${E2E_GATEWAY:-0}" = 1 ] && echo on || echo off)
+CG_GATEWAY_DOMAIN=app.${DOMAIN}
+CG_GATEWAY_ID_DOMAIN=id.app.${DOMAIN}
+CG_GATEWAY_SESSION_SECRET=$(rand 24)
+CG_MAIL_LIMIT_SECRET=$(rand 24)
 PG_SU_PASSWORD=$(rand 24)
 PG_WRITER_PASSWORD=$(rand 24)
 PG_READER_PASSWORD=$(rand 24)

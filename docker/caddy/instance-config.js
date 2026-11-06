@@ -27,28 +27,37 @@ Configured via the container environment:
   CG_IMAGE_FILTER_THRESHOLD  the backend's IMAGE_MODERATION_THRESHOLD
   CG_GIPHY_API_KEY      Giphy key; empty hides the GIF picker
   CG_WALLETCONNECT_PROJECT_ID  WalletConnect Cloud project id
+  CG_GATEWAY_TARGET_URL  gateway sites only: origin of the instance it moved
+                        to (emits gatewayTargetUrl)
+
+A site that sets `vars cg_env_prefix GATEWAY_` (the gateway site of
+Caddyfile.selfhost) reads every one of these as GATEWAY_CG_* instead, so one
+Caddy can serve the instance config of the main instance and of the gateway.
 
 Values only ever enter the output through toJson (Go's JSON encoder, which
 also escapes <, > and &), never by pasting them into the script text.
 */ -}}
-{{- $appUrl := env "CG_APP_URL" -}}
+{{- /* a site can read another set of variables (the gateway's: GATEWAY_CG_*)
+       by setting `vars cg_env_prefix <prefix>` (common.caddy) */ -}}
+{{- $p := placeholder "http.vars.cg_env_prefix" -}}
+{{- $appUrl := env (print $p "CG_APP_URL") -}}
 {{- if not $appUrl -}}
 // No instance configuration: CG_APP_URL is not set for this edge.
 {{ else -}}
-{{- $c := dict "deployment" (env "CG_DEPLOYMENT" | default "prod") "appUrl" $appUrl -}}
+{{- $c := dict "deployment" (env (print $p "CG_DEPLOYMENT") | default "prod") "appUrl" $appUrl -}}
 {{- /* same rules as srv/util/instanceConfig.ts: cgidUrl only in legacy CG
        ID mode, otherwise the RP ID of the main-origin passkeys */ -}}
 {{- $passkeys := false -}}
-{{- if eq (env "CG_LEGACY_CGID") "true" -}}
-  {{- with env "CG_CGID_URL" }}{{ $_ := set $c "cgidUrl" . }}{{ end -}}
+{{- if eq (env (print $p "CG_LEGACY_CGID")) "true" -}}
+  {{- with env (print $p "CG_CGID_URL") }}{{ $_ := set $c "cgidUrl" . }}{{ end -}}
 {{- else -}}
-  {{- $rpId := env "CG_PASSKEY_RP_ID" | default (regexReplaceAll "^[a-zA-Z]+://([^/:]+).*$" $appUrl "${1}") | lower -}}
+  {{- $rpId := env (print $p "CG_PASSKEY_RP_ID") | default (regexReplaceAll "^[a-zA-Z]+://([^/:]+).*$" $appUrl "${1}") | lower -}}
   {{- if regexMatch "^[a-z0-9.-]{1,253}$" $rpId -}}
     {{- $_ := set $c "passkeyRpId" $rpId -}}
     {{- $passkeys = true -}}
   {{- end -}}
 {{- end -}}
-{{- with env "CG_ACTIVE_CHAINS" -}}
+{{- with env (print $p "CG_ACTIVE_CHAINS") -}}
   {{- $chains := list -}}
   {{- range splitList "," . -}}
     {{- $chain := trim . -}}
@@ -59,20 +68,24 @@ also escapes <, > and &), never by pasting them into the script text.
 {{- /* calls and the image filter are opt-out: only an explicit "false"
        disables them, so an instance that never sets the variable keeps them */ -}}
 {{- $_ := set $c "features" (dict
-      "email" (eq (env "CG_FEATURE_EMAIL") "true")
-      "twitterAuth" (eq (env "CG_FEATURE_TWITTER") "true")
-      "calls" (ne (env "CG_ENABLE_CALLS") "false")
-      "imageFilter" (ne (env "CG_ENABLE_IMAGE_FILTER") "false")
+      "email" (eq (env (print $p "CG_FEATURE_EMAIL")) "true")
+      "twitterAuth" (eq (env (print $p "CG_FEATURE_TWITTER")) "true")
+      "calls" (ne (env (print $p "CG_ENABLE_CALLS")) "false")
+      "imageFilter" (ne (env (print $p "CG_ENABLE_IMAGE_FILTER")) "false")
       "passkeys" $passkeys) -}}
 {{- /* a number in the JSON, so only a numeric value is passed on; out-of-range
        values are left to the frontend, which falls back to the backend's
        default */ -}}
-{{- with env "CG_IMAGE_FILTER_THRESHOLD" -}}
+{{- with env (print $p "CG_IMAGE_FILTER_THRESHOLD") -}}
   {{- if regexMatch "^[0-9]*\\.?[0-9]+$" . }}{{ $_ := set $c "imageFilterThreshold" (float64 .) }}{{ end -}}
 {{- end -}}
-{{- $_ := set $c "giphyApiKey" (env "CG_GIPHY_API_KEY") -}}
-{{- with env "CG_WALLETCONNECT_PROJECT_ID" }}{{ $_ := set $c "walletConnectProjectId" . }}{{ end -}}
-{{- $_ := set $c "recaptchaSiteKey" (env "CG_RECAPTCHA_SITE_KEY") -}}
-{{- $_ := set $c "captchaProvider" (env "CG_CAPTCHA_PROVIDER" | default "altcha") -}}
+{{- /* gateway sites only: the instance this one moved to (an http(s) origin) */ -}}
+{{- with env (print $p "CG_GATEWAY_TARGET_URL") -}}
+  {{- if regexMatch "^https?://[^/?#[:space:]]+$" . }}{{ $_ := set $c "gatewayTargetUrl" . }}{{ end -}}
+{{- end -}}
+{{- $_ := set $c "giphyApiKey" (env (print $p "CG_GIPHY_API_KEY")) -}}
+{{- with env (print $p "CG_WALLETCONNECT_PROJECT_ID") }}{{ $_ := set $c "walletConnectProjectId" . }}{{ end -}}
+{{- $_ := set $c "recaptchaSiteKey" (env (print $p "CG_RECAPTCHA_SITE_KEY")) -}}
+{{- $_ := set $c "captchaProvider" (env (print $p "CG_CAPTCHA_PROVIDER") | default "altcha") -}}
 window.__CG_INSTANCE__ = {{ toJson $c }};
 {{ end -}}

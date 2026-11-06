@@ -30,7 +30,10 @@
 > permissions on `produce`, the join and moderation checks (roles of the call's community, the
 > predefined Public role, bans), the call role ids, the server-side demotion and the client's refusal
 > warning against commits 7814781, 9385d52, dac9eaf and ae660a0, 2026-11-03;
-> the health-check connections and the call server's health check against commit 170a73b, 2026-11-03
+> the health-check connections and the call server's health check against commit 170a73b, 2026-11-03;
+> the shared origin list and request checks of the Socket.IO server, the session secret at startup, the
+> instance key prefix (adapter/emitter key, session keys) and gateway mode against commit 696102b,
+> 2026-11-06; the rooms of a gateway socket against commit 696102b, 2026-11-07
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -81,19 +84,40 @@ Browser
 The Socket.IO server is created with typed events (`API.Server.ServerToClientEvents`, `API.Server.ClientToServerEvents`, etc.):
 
 ```typescript
+const { cors: corsOptions, allowRequest } = socketServerOriginOptions();
 const io = new Server<...>({
   transports: ["polling", "websocket"],
   cors: corsOptions,
+  allowRequest,
   path: "/api/ws/",
   pingInterval: 15000,
   pingTimeout: 15000,
   perMessageDeflate: false,
 });
+installSocketRequestChecks(io);   // before every other io.use
 ```
 
-It listens on **port 4000**.
+It listens on **port 4000**. The session secret it unsigns cookies with is read at startup
+(`requireSessionSecret`, `srv/util/sessionSecret.ts`); without one the process exits.
 
-**CORS:** Allows requests from `BASE_URL` (and several localhost/dev origins when `DEPLOYMENT === 'dev'`). Requests with no `Origin` header are allowed (for mobile apps and non-browser clients).
+**Origins** (`srv/util/socketServer.ts`, the list shared with the api: `allowedOrigins()` in
+`srv/util/origins.ts`, [auth-identity §2 "CORS"](../auth-identity/README.md#cors)): the handshake is
+checked by `allowRequest`, and every engine request — later polling requests and the WebSocket
+upgrade of an existing session, which `allowRequest` does not see — by an engine middleware. An
+`Origin` header that is present must be on the list (browsers always send one on a WebSocket and on
+cross-origin requests). Requests without one pass: the web app's same-origin polling GETs and
+non-browser clients — bots with their token, the SDK with its session cookie. Refused requests end
+with HTTP 400 (403 from `allowRequest`).
+
+**Gateway mode** (`CG_GATEWAY=true`, [auth-identity §12](../auth-identity/README.md#12-gateway-mode)):
+`installSocketRequestChecks` also refuses token handshakes and puts a per-socket middleware in front
+of every event handler that lets only `cgPing` and `watchCgIdRequest` through; every other event is
+dropped without an acknowledgement, so a gateway socket never signs in. The rooms it joins are the
+ones an anonymous socket joins on any instance: its session's room (`expressSession:<sid>`, at the
+connection when it carries a session cookie of the gateway) and its CG ID request room
+(`watchCgIdRequest`). Both receive only the CG ID popup's result (`cliCgIdSignResponse`, from the
+allowlisted `CgId/verifyAuthenticationResponse`; the session room for clients that predate
+`watchCgIdRequest`) — never a user's, device's, role's or community's events.
 
 ### Connection Authentication
 
@@ -111,11 +135,11 @@ Multi-instance broadcasting is enabled via `@socket.io/redis-adapter`:
 io.adapter(createAdapter(
   redisManager.getClient('socketIOPub'),
   redisManager.getClient('socketIOSub'),
-  { key: 'v2:' }
+  { key: socketAdapterKey() }   // 'v2:', on a gateway 'gateway:v2:'
 ));
 ```
 
-This uses a dedicated publisher/subscriber connection pair on the state instance (`redis:6379`, Valkey). The key prefix `v2:` namespaces all adapter messages. Any event emitted to a room on one server instance is automatically delivered to clients connected to other instances via Redis pub/sub.
+This uses a dedicated publisher/subscriber connection pair on the state instance (`redis:6379`, Valkey). The key prefix `v2:` namespaces all adapter messages; a gateway uses `gateway:v2:` (`socketIoKey()`, `srv/util/gateway.ts`), so its sockets and the main instance's never see each other's events. Any event emitted to a room on one server instance is automatically delivered to clients connected to other instances via Redis pub/sub.
 
 ### Namespaces
 
@@ -184,7 +208,7 @@ The `EventHelper` class (`srv/repositories/event.ts`) is the primary mechanism f
 ```typescript
 class EventHelper {
   // created on first use, so importing the module opens no connection
-  get #io() { /* new Emitter(redisManager.getClient('socketIOPub'), { key: 'v2:' }) */ }
+  get #io() { /* new Emitter(redisManager.getClient('socketIOPub'), { key: socketIoKey() }) */ }
 
   async emit(event, target, except?) { ... }
   async userJoinRooms(userId, target) { ... }
@@ -848,8 +872,8 @@ The backend talks to **two Valkey instances** (Redis-protocol compatible; compos
 
 | Client type | Instance | Key prefixes | Purpose |
 |---|---|---|---|
-| `session` | state (`REDIS_URL`, default `redis://redis:6379`) | `sess:`, `sess-revoked:`, `sess-user:`, `sess-gen:`, `sess-keep:`, `sess-gen-copied` | Express session storage (connect-redis); ids of destroyed/replaced sessions (1 h, [auth-identity §2](../auth-identity/README.md#when-a-session-exists)); each user's logged-in session ids (sorted set, expires with its sessions) and the copies of the session generations (no TTL, reconciled from PostgreSQL at api start and every 30 s, `sess-gen-copied` records how far; `sess-keep:` 13 h; [auth-identity §2](../auth-identity/README.md#signing-out-other-devices)) |
-| `socketIOPub`, `socketIOSub` | state | `v2:` (pub/sub channels only, no keys) | Socket.IO adapter and emitter |
+| `session` | state (`REDIS_URL`, default `redis://redis:6379`) | `sess:`, `sess-revoked:`, `sess-user:`, `sess-gen:`, `sess-keep:`, `sess-gen-copied` (each with the prefix `gateway:` on a gateway, [auth-identity §12](../auth-identity/README.md#12-gateway-mode)) | Express session storage (connect-redis); ids of destroyed/replaced sessions (1 h, [auth-identity §2](../auth-identity/README.md#when-a-session-exists)); each user's logged-in session ids (sorted set, expires with its sessions) and the copies of the session generations (no TTL, reconciled from PostgreSQL at api start and every 30 s, `sess-gen-copied` records how far; `sess-keep:` 13 h; [auth-identity §2](../auth-identity/README.md#signing-out-other-devices)) |
+| `socketIOPub`, `socketIOSub` | state | `v2:` (`gateway:v2:` on a gateway; pub/sub channels only, no keys) | Socket.IO adapter and emitter |
 | `data` | state | `ud:`, `us:`, `online-user-addresses`, `ratelimit:`, `bot-ratelimit:`, `bot-presence:`, `captcha:`, `pluginRequest:`, `tmp:` | User online status, rate limiting, captcha key + replay guards, plugin replay keys, bot presence leases |
 | `cache` | cache (`REDIS_CACHE_URL`, default `redis://redis-cache:6379`) | `urlpreview:` | URL-preview cache |
 
@@ -893,7 +917,7 @@ The `@socket.io/redis-adapter` uses the `socketIOPub`/`socketIOSub` client pair:
 io.adapter(createAdapter(
   redisManager.getClient('socketIOPub'),
   redisManager.getClient('socketIOSub'),
-  { key: 'v2:' }
+  { key: socketAdapterKey() }
 ));
 ```
 

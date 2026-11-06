@@ -48,6 +48,9 @@ public DNS, see [Local test instance](#local-test-instance-no-public-dns).
 - For email (login codes, verification, notifications) either outbound
   **port 25** for the built-in mail relay plus a few DNS records, or an
   external SMTP server — see [Email](#email).
+- Only when this instance replaces an older one on another domain: DNS
+  records for the old domain and its CG ID domain, see
+  [Gateway for a moved instance](#gateway-for-a-moved-instance).
 
 ## Setup
 
@@ -700,6 +703,78 @@ To enable it on your instance:
 Spark accrues only for positions staked from wallets linked to a user account,
 never retroactively; the accrual job credits balances every few hours. Rate
 changes apply prospectively and never claw back credited Spark.
+
+## Gateway for a moved instance
+
+Only for an instance that takes over from an older one on **another domain**
+(the hosted move app.cg → cg.box). The old domain then points at this server
+too, and this instance serves it as a sign-in-only **gateway**: people sign in
+there exactly as before — device key, password, email code, wallet, the old
+CG ID passkeys, X, LUKSO, Farcaster — and continue here with a one-time link.
+Nothing else is served there; there is no sign-up. An old deep link
+(`<old domain>/<path>`) ends on `<this domain>/<path>` after the move.
+Details and the isolation between the two: docs/auth-identity §12.
+
+What runs: two more services from the same image, `gateway-api` and
+`gateway-wsapi` (Compose profile `gateway`), on this instance's database and
+Valkey, and two more Caddy sites with their own certificates. No second
+job-runner, onchain, memberlist or call server, and no storage credentials
+(nothing the gateway serves reads or writes files).
+
+```bash
+# .env.selfhost (init.sh writes the lines with CG_ENABLE_GATEWAY=false and a
+# fresh secret; an older file needs them added)
+CG_ENABLE_GATEWAY=true
+CG_GATEWAY_DOMAIN=app.cg          # the old domain
+CG_GATEWAY_ID_DOMAIN=id.app.cg    # its CG ID app (the old passkeys are bound to it)
+CG_GATEWAY_SESSION_SECRET=...     # openssl rand -hex 24 — never the same as REDIS_SECRET
+CG_MAIL_LIMIT_SECRET=...          # openssl rand -hex 24 — shared by this instance and the
+                                  # gateway, so both count the mails to an address together
+# optional:
+# CG_GATEWAY_TWITTER_CALLBACK_URL=https://app.cg/twitter-callback (the default)
+# CG_GATEWAY_WALLETCONNECT_PROJECT_ID=... (default: CG_WALLETCONNECT_PROJECT_ID;
+#                                          the project must allow the old origin)
+# PG_POOL_MAX_GATEWAY_API=5, PG_POOL_MAX_GATEWAY_WSAPI=3
+# CG_MEM_LIMIT_GATEWAY_API=1g, CG_MEM_LIMIT_GATEWAY_WSAPI=512m
+
+./selfhost/selfhost.sh up
+```
+
+- **DNS first**: both gateway domains must point at this server before `up`,
+  or Let's Encrypt cannot issue their certificates (with
+  `CG_TLS_MODE=internal`, add them to the hosts file of the test machines,
+  e.g. `app.test` and `id.app.test`).
+- `up` refuses to start a gateway without both domains or
+  `CG_MAIL_LIMIT_SECRET` (an `.env.selfhost` from before needs the line added;
+  the per-address mail limits start counting anew once), with this instance's
+  own domain or session secret, with `CG_DOMAIN` under the gateway's domain
+  (e.g. `new.app.cg` next to `app.cg`: the gateway's session cookie covers
+  `.app.cg` and has the same name as this instance's — the other way round,
+  a gateway under `CG_DOMAIN`, is fine), or when this instance itself runs
+  with `CG_LEGACY_CGID=true` (only the gateway does; this instance keeps
+  `CG_LEGACY_CGID=false`).
+- Mail (email-code sign-in) goes out like this instance's, from its sender
+  address; the chains and the X keys are this instance's as well. For X
+  sign-in, the X app must list the gateway's callback URL too. LUKSO sign-in
+  checks signatures through this instance's `onchain` service, so it needs
+  `CG_ENABLE_BLOCKCHAIN` on (the default).
+- Sessions of the gateway are separate from this instance's: signing in on
+  one does not sign in on the other except through the link, and the two
+  cookies never work across. A replaced password here signs the account's
+  gateway sessions out as well (within half a minute).
+- Switching it off: `CG_ENABLE_GATEWAY=false`, `up` — the gateway containers
+  are removed; point the old domains at a plain redirect afterwards. Its keys
+  in Valkey (all named `gateway:…`) stay behind — sessions expire by
+  themselves, the copies of the session generations
+  (`gateway:sess-gen:<userId>`, `gateway:sess-gen-copied`) never do, and
+  `gateway:sess-keep:<userId>` only after 13 hours. Remove them all, once the
+  gateway is off:
+
+  ```bash
+  ./selfhost/selfhost.sh compose exec redis sh -c "valkey-cli --scan --pattern 'gateway:*' | xargs -r -n 500 valkey-cli UNLINK"
+  ```
+- Database connections: the gateway adds at most 8
+  (`docker/db/postgresql.conf` has the full count).
 
 ## PostgreSQL 18
 

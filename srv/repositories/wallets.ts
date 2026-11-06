@@ -13,6 +13,7 @@ import stakingHelper from "./staking";
 import { OnchainPriority } from "../onchain/scheduler";
 import { assertWalletIsNotLastLoginMethod } from "./loginMethods";
 import { appOrigins } from "../util/origins";
+import { assertSiweMessageCurrent, parseSiweMessage } from "../util/siweMessage";
 
 const SIWE_DOMAIN_LINE = /^(\S+) wants you to sign in with your Ethereum account:$/;
 
@@ -217,40 +218,30 @@ class WalletHelper {
     }
     // the message must have been made for this instance (domain and URI):
     // a signature collected by another site is worthless here
-    assertSiweForThisInstance(siweMessage.split('\n')[0], result.uri);
+    assertSiweForThisInstance(result.headerLine, result.uri);
     return result;
   }
 
+  /**
+   * Parses a SIWE message by its structure (srv/util/siweMessage.ts) and
+   * checks that `signature` is the named address's signature of it, that it
+   * is version 1 and not expired or not yet valid. The caller checks what it
+   * is for: the nonce, and the domain and URI (assertSiweForThisInstance).
+   */
   public parseAndVerifySiweData({ message, signature } : {
     message: string;
     signature: string;
   }) {
+    const parsed = parseSiweMessage(message);
+    if (parsed.version !== '1') {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
     const signer = ethers.verifyMessage(message, signature).toLowerCase() as Common.Address;
-    const lines = message.split('\n');
-    if (lines.length < 10) {
-      throw new Error(errors.server.INVALID_REQUEST);
-    }
-    const address = lines[1].match(/^0x[0-9a-fA-F]{40}$/)?.[0]?.toLowerCase() as Common.Address | undefined;
-    const uri = lines[5].split('URI: ')[1];
-    const version = lines[6].split('Version: ')[1];
-    const chainId = lines[7].split('Chain ID: ')[1];
-    const nonce = lines[8].split('Nonce: ')[1];
-    const issuedAt = lines[9].split('Issued At: ')[1];
-
-    if (!address || !uri || !version || !chainId || !nonce || !issuedAt) {
-      throw new Error(errors.server.INVALID_REQUEST);
-    }
-    if (signer !== address) {
+    if (signer !== parsed.address) {
       throw new Error(errors.server.INVALID_SIGNATURE);
     }
-    return {
-      address,
-      uri,
-      version,
-      chainId,
-      nonce,
-      issuedAt,
-    };
+    assertSiweMessageCurrent(parsed);
+    return parsed;
   }
 
   public async prepareWalletAction(data: API.User.prepareWalletAction.Request, sessionUserId: string | null): Promise<Models.Server.Session.PreparedCredential> {

@@ -622,3 +622,31 @@ describe('no tab roles', () => {
     legacy.close();
   });
 });
+
+describe('gateway instance', () => {
+  it('opens no data socket on a gateway (docs/auth-identity §12), whatever the tab does', async () => {
+    useDataLayerFakeTimers();
+    const g = globalThis as { __CG_INSTANCE__?: unknown };
+    g.__CG_INSTANCE__ = { deployment: 'prod', appUrl: 'https://app.test', gatewayTargetUrl: 'https://new.test' };
+    try {
+      const tab = await openTab({ deviceId: 'device-1' });
+      await settle(tab);
+      tab.env.hide();
+      tab.env.show();
+      tab.env.goOffline();
+      tab.env.goOnline();
+      tab.env.enterBfcache();
+      tab.env.restoreFromBfcache();
+      await tab.ws.login('device-2');
+      await settle(tab);
+      expect(fake.io!.sockets).toHaveLength(0);
+      expect(tab.ws.state).toBe('disconnected');
+      expect(tab.ws.live).toBe(false);
+      expect(tab.lives).toEqual([]);
+      expect(tab.resumes).toEqual([]);
+    }
+    finally {
+      delete g.__CG_INSTANCE__;
+    }
+  });
+});

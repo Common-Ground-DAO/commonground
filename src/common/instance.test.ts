@@ -64,6 +64,13 @@ describe('getInstanceConfig', () => {
     expect(config).toEqual({ activeChains: ['ok'], features: {} });
   });
 
+  it('keeps a gateway target only as an http(s) origin', async () => {
+    expect((await readConfig({ gatewayTargetUrl: 'https://cg.box' }))?.gatewayTargetUrl).toBe('https://cg.box');
+    for (const value of ['https://cg.box/path', 'javascript:alert(1)', 'https://cg.box?x', '//cg.box', 42]) {
+      expect((await readConfig({ gatewayTargetUrl: value }))?.gatewayTargetUrl).toBeUndefined();
+    }
+  });
+
   it('caches: a later mutation of the global is ignored', async () => {
     vi.resetModules();
     (globalThis as Record<string, unknown>).__CG_INSTANCE__ = { deployment: 'dev' };

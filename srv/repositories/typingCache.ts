@@ -16,7 +16,9 @@
 // socket's room membership (kept current by the role-change machinery), so
 // authorization is only ever as stale as the channel→roles mapping (<= TTL).
 
+import type { Notification, PoolClient } from 'pg';
 import pool from '../util/postgres';
+import { describeErrorForLog } from '../util/errorLog';
 import communityHelper from './communities';
 import chatHelper from './chats';
 import messageHelper from './messages';
@@ -149,39 +151,85 @@ export function invalidateAllChannels(): void {
 
 let invalidationStarted = false;
 
+/** delay before the second attempt; it doubles per further attempt up to RELISTEN_MAX_DELAY_MS */
+export const RELISTEN_DELAY_MS = 2_000;
+export const RELISTEN_MAX_DELAY_MS = 30_000;
+const KEEPALIVE_MS = 60_000;
+
 // Wire event-driven busting. Called once from the socket server after redis is
-// ready; safe to call more than once. Falls back to pure TTL if the LISTEN
-// connection can't be established.
+// ready; safe to call more than once. Until LISTEN works the cache relies on
+// its TTL alone (correctness holds, staleness just rises to the TTL), so the
+// dedicated LISTEN connection is retried until it works — the socket server
+// can start before Postgres accepts connections.
+//
+// A LISTEN connection that fails later (the database restarted or closed it:
+// its `error` event, or a failing keepalive) is given up and LISTEN is set
+// up again on a new connection the same way. Every cached channel entry is
+// dropped when LISTEN works (again): entries cached while nobody listened may
+// have missed notifications. The connection's own `error` listener — from
+// right after `pool.connect()` on — is what keeps that event from ending the
+// process (the pool only listens on idle connections, srv/util/postgres.ts).
 export async function initTypingCacheInvalidation(): Promise<void> {
+  await startListening();
+}
+
+/** one LISTEN connection, set up with retries until it works */
+async function startListening(): Promise<void> {
   if (invalidationStarted) {
     return;
   }
   invalidationStarted = true;
 
-  // The socket server can start before Postgres accepts connections, so retry
-  // the dedicated LISTEN connection a few times before giving up. Falling back
-  // to TTL-only is safe (correctness holds, staleness just rises to the TTL),
-  // but event-driven busting is what keeps typing authorization fresh.
-  let client;
-  for (let attempt = 1; ; attempt++) {
+  let listening: { client: PoolClient; setupError: (error: unknown) => void; failed: { error?: unknown } } | undefined;
+  for (let attempt = 1; !listening; attempt++) {
+    let client: PoolClient | undefined;
+    // a connection that dies during the setup emits `error` besides failing
+    // the query that runs (or the next one): taken here, the query decides
+    const failed: { error?: unknown } = {};
+    const setupError = (error: unknown) => { failed.error ??= error; };
     try {
       client = await pool.connect();
+      client.on('error', setupError);
       await client.query('LISTEN channelrolepermissionchange');
       await client.query('LISTEN rolechange');
-      break;
+      listening = { client, setupError, failed };
     } catch (error) {
-      try { client?.release(); } catch { /* ignore */ }
-      client = undefined;
-      if (attempt >= 10) {
-        invalidationStarted = false;
-        console.error('typingCache: failed to start LISTEN after retries, relying on TTL only', error);
-        return;
+      if (client) {
+        // a dead connection never goes back to the pool; `setupError` stays
+        // for the `error` events a dead connection may still emit
+        try { client.release(true); } catch { /* ignore */ }
       }
-      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      console.error(`typingCache: LISTEN failed (attempt ${attempt}), trying again`, describeErrorForLog(error));
+      await new Promise((resolve) => setTimeout(resolve, relistenDelay(attempt)));
     }
   }
+  const { client, setupError, failed } = listening;
 
-  client.on('notification', (msg) => {
+  let lost = false;
+  const onLost = (error: unknown) => {
+    if (lost) {
+      return;
+    }
+    lost = true;
+    clearInterval(keepAlive);
+    client.removeListener('notification', onNotification);
+    // a dead connection never goes back to the pool
+    try { client.release(true); } catch { /* ignore */ }
+    // changes while nobody listened were not seen
+    invalidateAllChannels();
+    invalidationStarted = false;
+    console.error('typingCache: the LISTEN connection failed, listening again', describeErrorForLog(error));
+    const retry = setTimeout(() => {
+      startListening().catch((e) => console.error('typingCache: listening again failed', describeErrorForLog(e)));
+    }, RELISTEN_DELAY_MS);
+    retry.unref?.();
+  };
+  // from now on the connection's failures are a lost connection (one
+  // listener at a time)
+  client.on('error', onLost);
+  client.removeListener('error', setupError);
+
+  const onNotification = (msg: Notification) => {
     if (!msg.payload) {
       return;
     }
@@ -198,14 +246,24 @@ export async function initTypingCacheInvalidation(): Promise<void> {
     } catch (error) {
       console.error('typingCache: bad notification payload', error);
     }
-  });
+  };
+  client.on('notification', onNotification);
+  // listening (again): entries cached before may have missed notifications
+  invalidateAllChannels();
 
-  // Keep the dedicated LISTEN connection from being reaped.
+  // Keep the dedicated LISTEN connection from being reaped; a failing
+  // keepalive is a lost connection as well.
   const keepAlive = setInterval(() => {
-    client.query('SELECT 1').catch((error) => {
-      console.error('typingCache: keepalive failed', error);
-      clearInterval(keepAlive);
-      invalidationStarted = false;
-    });
-  }, 60_000);
+    client.query('SELECT 1').catch(onLost);
+  }, KEEPALIVE_MS);
+  keepAlive.unref?.();
+  if (failed.error !== undefined) {
+    // it failed right after the setup, before onLost listened
+    onLost(failed.error);
+  }
+}
+
+/** RELISTEN_DELAY_MS, doubled per further attempt, at most RELISTEN_MAX_DELAY_MS */
+function relistenDelay(attempt: number): number {
+  return Math.min(RELISTEN_DELAY_MS * 2 ** Math.max(0, attempt - 1), RELISTEN_MAX_DELAY_MS);
 }

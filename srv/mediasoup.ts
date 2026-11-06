@@ -28,6 +28,12 @@ import deviceHelper from './repositories/device';
 import { isSecurityStepRequiredForRealtime } from './util/securityStep';
 import { uuidRe } from './util';
 import { authenticateProtooTransport, connectionSourceKey, PendingConnectionLimiter } from './mediasoup/connectionGate';
+import { refuseInGatewayMode } from './util/gateway';
+import { describeErrorForLog } from './util/errorLog';
+
+// runs once, for the main instance only: never as part of a gateway
+// (srv/util/gateway.ts)
+refuseInGatewayMode('mediasoup');
 
 const rooms: Map<string, Room> = new Map();
 const mediasoupWorkers: Array<types.Worker> = [];
@@ -68,6 +74,12 @@ let pgClient: PoolClient | null = null;
 async function registerCallUpdateListener(listener: (event: Events.PgNotify.CallServerCallUpdate) => void) {
     if (!pgClient) {
         pgClient = await pool.connect();
+        // the database restarted or closed the LISTEN connection: the restart
+        // of the call server registers LISTEN again (srv/util/postgres.ts)
+        pgClient.on("error", (e) => {
+            console.error(`LISTEN connection failed (${describeErrorForLog(e)}), exiting`);
+            process.exit(1);
+        });
     }
     else {
         throw new Error("Listener already registered");

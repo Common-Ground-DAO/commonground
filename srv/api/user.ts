@@ -36,6 +36,7 @@ import { limitOneTimePasswordMail, limitSignupCodeMail, limitVerificationMail } 
 import passkeyHelper from "../repositories/passkeys";
 import { keyRateLimitHandler } from "../util/rateLimit";
 import { getMainRp, getProcessRpIdOrNull, isLegacyCgidMode } from "../util/passkeyConfig";
+import { isGatewayMode } from "../util/gateway";
 import { verifyAuthentication } from "../util/passkeys";
 import { ADD_SIGN_IN_METHOD_AUTH, endLoginSession, establishLoginSession, hasRecentAuth, recordReauthentication, requireRecentAuth, stepUpValidUntil, type AuthMethod } from "../util/authSession";
 import {
@@ -290,10 +291,14 @@ registerPostRoute<
   '/clearLoginSession',
   undefined,
   async (request, response, data) => {
-    request.session.lukso = undefined;
-    request.session.farcaster = undefined;
-    request.session.twitter = undefined;
-    request.session.passport = undefined;
+    // nothing to clear without a stored session — and nothing is created
+    if (!request.session || !hasStoredData(request.session)) {
+      return;
+    }
+    delete request.session.lukso;
+    delete request.session.farcaster;
+    delete request.session.twitter;
+    delete request.session.passport;
   }
 );
 
@@ -566,13 +571,16 @@ registerPostRoute<
     const method: AuthMethod | 'device' = data.type === 'passkey-success' ? 'passkey' : data.type;
     await establishLoginSession(request, { userId: ownData.id, deviceId, method });
 
+    // a gateway (srv/util/gateway.ts) serves sign-in and transfer links only:
+    // its login answer carries the account, not its communities or chats
+    const gateway = isGatewayMode();
     const result: API.User.login.Response = {
       ownData,
-      communities,
-      chats,
+      communities: gateway ? [] : communities,
+      chats: gateway ? [] : chats,
       deviceId,
-      webPushSubscription,
-      unreadNotificationCount,
+      webPushSubscription: gateway ? null : webPushSubscription,
+      unreadNotificationCount: gateway ? 0 : unreadNotificationCount,
       securityStepRequired: await securityStepRequiredAfterLogin(request, ownData.id),
       stepUpValidUntil: stepUpValidUntil(request),
     };

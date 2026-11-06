@@ -9,9 +9,9 @@ import { generateEventICSFile, getUrl } from '../common/util';
 import urlConfig from '../util/urls';
 import communityHelper from '../repositories/communities';
 import errors from '../common/errors';
-import { dockerSecret } from '../util';
 import { describeMailConfig, parseMailConfig, plaintextSmtpWarning } from '../util/mailConfig';
 import { createUnsubscribeToken, deriveUnsubscribeKey, type UnsubscribeTarget } from '../util/unsubscribeToken';
+import { configuredSessionSecret } from '../util/sessionSecret';
 
 // SMTP is configured through the environment (srv/util/mailConfig.ts). Email
 // delivery is optional: without SMTP_HOST the backend runs with email
@@ -63,7 +63,8 @@ function getTransporter(): Transporter {
 let unsubscribeKey: Buffer | null | undefined;
 function getUnsubscribeKey(): Buffer | null {
     if (unsubscribeKey === undefined) {
-        const secret = dockerSecret('redis_secret') || process.env.REDIS_SECRET;
+        // the session secret as the cookies use it (srv/util/sessionSecret.ts)
+        const secret = configuredSessionSecret();
         unsubscribeKey = secret ? deriveUnsubscribeKey(secret) : null;
         if (!unsubscribeKey) {
             console.warn('REDIS_SECRET is not set: notification mails are sent without one-click unsubscribe links');

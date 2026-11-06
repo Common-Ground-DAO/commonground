@@ -261,7 +261,7 @@ and a browser pass on the test VM:
 
 ### P3 — Move features (parallel to P2)
 
-- [ ] **G1 Gateway mode.** The `develop` backend + frontend started a second time
+- [x] **G1 Gateway mode.** The `develop` backend + frontend started a second time
   with `BASE_URL=https://app.cg`, `CGID_URL=https://id.app.cg` and a gateway flag,
   on the same database/Valkey/S3. Server-side **endpoint allowlist** (login
   methods incl. CGID passkey assertion, session, transfer-link creation; nothing
@@ -280,7 +280,13 @@ and a browser pass on the test VM:
   runs with `CG_LEGACY_CGID=true` on **every** backend process, and legacy mode
   keeps the full previous sign-up/login surface — so the server-side allowlist
   is the only thing standing between the gateway and that surface; test it
-  against the complete route list.
+  against the complete route list. (Done 2026-11-07, `696102b`, accepted on the
+  test VM: `CG_GATEWAY` with the selfhost profile `gateway` (`gateway-api`,
+  `gateway-wsapi`); a 20-route API allowlist and a two-event socket allowlist,
+  checked against every mounted route; own secret and `gateway:` prefix, shared
+  mail-limit secret, start-up config checks; the gateway page keeps no local
+  data and continues by itself only after a sign-in in the same tab;
+  docs/auth-identity §12, SELFHOST.md.)
 - [x] **G2 Transfer link.** One-time token: random, stored hashed with user id,
   ~10 min expiry, single use; carried in the URL fragment
   (`https://cg.box/transfer#<token>`) so it never reaches logs or `Referer`;

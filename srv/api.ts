@@ -3,82 +3,24 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import app from './util/express';
-import userRouter from './api/user';
-import communityRouter from './api/community';
-import messageRouter from './api/messages';
-import syncStateRouter from './api/syncState';
-import fileRouter from './api/files';
-import chatRouter from './api/chats';
-import contractRouter from './api/contracts';
-import notificationRouter from './api/notifications';
-import getRoutes from './api/getRoutes';
-import luksoUniversalProfileRouter from './api/luksoUniversalProfile';
-import twitterRouter from './api/twitter';
-import cgIdRouter from './api/cgid';
-import passkeyRouter from './api/passkeys';
-import { isLegacyCgidMode, validatePasskeyConfigAtStartup } from './util/passkeyConfig';
-import accountsRouter from './api/accounts';
 import { listenerProbe, postgresProbe, startHealthcheck } from './healthcheck';
 import { valkeyProbe } from './redis/healthProbe';
 import pool from './util/postgres';
 import imageFilter from './moderation/imageFilter';
-import pluginRouter from './api/plugins';
-import searchRouter from './api/search';
-import reportRouter from './api/report';
-import botRouter from './api/bots';
-import botV1Router from './api/botV1';
-import stakingRouter from './api/staking';
-import captchaRouter from './api/captcha';
-import instanceRouter from './api/instance';
-import feedRouter from './api/feed';
 import { apiErrorHandler } from './api/util';
-import { securityStepMiddleware } from './util/securityStep';
-import { emailEnabled } from './api/emails';
+import { mountApiRouters } from './api/mountRouters';
 import { validateTransferConfigAtStartup } from './util/transferLink';
+import { validateGatewayConfig } from './util/gateway';
 
 // A misconfigured transfer-link target (TRANSFER_TARGET_URL) stops the process.
 validateTransferConfigAtStartup();
+// A gateway (CG_GATEWAY=true) needs legacy CG ID mode and a transfer target;
+// what it serves is decided by its allowlist (srv/util/express.ts).
+validateGatewayConfig({ needsTransferTarget: true });
 
-// Accounts that still have to finish the account-security step (no sign-in
-// method that works here, no verified email, a password below the policy)
-// reach only the endpoints of that step: the check runs in front of every
-// API router and the gated file routes, not in front of the page routes
-// (social previews, redirects), which serve HTML (docs/auth-identity §11).
-const securityStep = securityStepMiddleware(emailEnabled);
-
-app.use('/Chat', securityStep, chatRouter);
-app.use('/Community', securityStep, communityRouter);
-app.use('/File', securityStep, fileRouter);
-// one mount, so the security step runs once for /Message/getSyncState too
-app.use('/Message', securityStep, messageRouter, syncStateRouter);
-app.use('/User', securityStep, userRouter);
-app.use('/Contract', securityStep, contractRouter);
-app.use('/Notification', securityStep, notificationRouter);
-app.use('/Twitter', securityStep, twitterRouter);
-app.use('/Lukso', securityStep, luksoUniversalProfileRouter);
-// Exactly one passkey surface per process (docs/auth-identity §7): the
-// main-origin Passkey API, or — legacy CG ID (gateway) mode — the
-// authentication-only CgId API. A bad relying-party configuration stops the
-// process here.
-validatePasskeyConfigAtStartup();
-if (isLegacyCgidMode()) {
-  app.use('/CgId', securityStep, cgIdRouter);
-}
-else {
-  app.use('/Passkey', securityStep, passkeyRouter);
-}
-app.use('/Accounts', securityStep, accountsRouter);
-app.use('/Plugins', securityStep, pluginRouter);
-app.use('/Search', securityStep, searchRouter);
-app.use('/Report', securityStep, reportRouter);
-app.use('/Bot', securityStep, botRouter);
-app.use('/BotV1', securityStep, botV1Router);
-app.use('/Staking', securityStep, stakingRouter);
-app.use('/Captcha', securityStep, captchaRouter);
-app.use('/Instance', securityStep, instanceRouter);
-app.use('/Feed', securityStep, feedRouter);
-app.use(['/gated-videos', '/gated-files'], securityStep);
-app.use('/', getRoutes);
+// every router and page route (srv/api/mountRouters.ts); the account-security
+// step runs in front of the API routers
+mountApiRouters(app);
 
 // Errors handed to next() by middleware — e.g. the session store failing while
 // the Valkey state instance is unreachable, or body-parser rejecting a

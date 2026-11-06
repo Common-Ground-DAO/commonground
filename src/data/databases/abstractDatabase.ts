@@ -5,6 +5,7 @@
 import config from "common/config";
 import { Dexie, type IndexableType, type Table } from "dexie";
 import dbTracker from "./dbTracker";
+import { isGatewayInstance } from "common/gateway";
 
 export type IdbSetupInfo = {
   idbName: string;
@@ -156,8 +157,24 @@ export default class AbstractDatabase<T extends {
   } = {} as any;
   protected debounceRetrievalPeriod = 200;
 
+  /**
+   * false on a gateway (docs/auth-identity §12): the page keeps no local
+   * data and leaves the data an old page of the app stored on this origin
+   * as it is. The database is then never opened — no schema, no upgrade, no
+   * registration, no event handlers; any access fails (no tables are
+   * declared, and the database never opens by itself) instead of reading,
+   * writing or deleting.
+   * Subclasses skip their own start-up reads when it is false.
+   */
+  protected readonly localData: boolean;
+
   constructor(dbName: string) {
     const __dbName = `${config.IDB_PREFIX}_${dbName}`;
+    this.localData = !isGatewayInstance();
+    if (!this.localData) {
+      this.db = new Dexie(__dbName, { cache: 'immutable', autoOpen: false }) as any;
+      return;
+    }
     this.db = new Dexie(__dbName, { cache: 'immutable' }) as any;
     const registrationData = dbTracker.registerDatabase(__dbName);
 

@@ -180,3 +180,18 @@ describe('AuthFlow login', () => {
     expect(state).toMatchObject({ step: 'login', error: 'nope' });
   });
 });
+
+describe('AuthFlow on a gateway (sign-in only)', () => {
+  const gatewayInstance: AuthFlowConfig = { ...legacyInstance, signup: false };
+
+  it('never leaves the login for a sign-up', () => {
+    const state = run(gatewayInstance, [{ type: 'SHOW_SIGNUP' }]);
+    expect(state.step).toBe('login');
+    expect(run(gatewayInstance, [{ type: 'USE_WALLET' }]).step).toBe('login-wallet');
+  });
+
+  it('starts at the login even when asked for the sign-up', () => {
+    // the gateway page always starts with the login; a sign-up event is ignored
+    expect(run(gatewayInstance, [{ type: 'SHOW_SIGNUP' }], initialAuthFlowState('login')).step).toBe('login');
+  });
+});

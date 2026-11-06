@@ -177,6 +177,17 @@ REDIS_PASSWORD=$(rand 24)
 REDIS_SECRET=$(rand 24)
 S3_SECRET=${S3_SECRET_GEN}
 
+# The sign-in gateway of a moved instance (SELFHOST.md, "Gateway for a moved
+# instance"): only when this instance takes over from an older one on another
+# domain, whose users sign in there as before and move over with a one-time
+# link. Off by default.
+CG_ENABLE_GATEWAY=false
+CG_GATEWAY_DOMAIN=
+CG_GATEWAY_ID_DOMAIN=
+CG_GATEWAY_SESSION_SECRET=$(rand 24)
+# keys the per-address mail limits; the instance and its gateway share it
+CG_MAIL_LIMIT_SECRET=$(rand 24)
+
 # resource tuning (defaults are sized for a 16 GB machine)
 # Valkey memory: REDIS_MAXMEMORY for the state instance (sessions, rate
 # limits, pub/sub; refuses writes when full), REDIS_CACHE_MAXMEMORY for the

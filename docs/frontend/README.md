@@ -55,7 +55,9 @@
 > SIWE domain against commit 696102b, 2026-11-06; the gateway page's untouched old page data
 > (entity databases never opened, no clearing, no obsolete-database cleanup) and its
 > continuation only after a sign-in in the same tab (`signedInInThisTab`) against commit 696102b,
-> 2026-11-07
+> 2026-11-07;
+> the scroll-down helper level of `GenericMessageList` and `Scrollable`'s position report and
+> `autoScroll` against commit a67ef53, 2026-11-07
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -161,7 +163,7 @@ Composed of atoms; represent small, functional UI units.
 | `PinnedChatOptionsModal` | Options for pinned channels |
 | `VoiceChatOptionsModal` | Options for voice channel |
 | `DirectMessageBar` | DM input bar |
-| `Scrollable` | Custom scrollbar wrapper (used extensively) |
+| `Scrollable` | Custom scrollbar wrapper (used extensively). `positionCallback` gets the content's real scroll position, read after a scroll lock is applied (a lock's target outside the scroll range is clamped by the browser), and is not called once the `Scrollable` has unmounted. With `autoScroll` (the message list), a change of the content or viewport height since the last recompute keeps a list that was at the bottom there, whichever event (ResizeObserver, mutation, scroll, mouse) runs the recompute, unless the user scrolled up in the same recompute (`shouldStickToBottom`, `scrollPosition.ts`). |
 | `ContentSlider` | Horizontal content carousel |
 | `HorizontalContentSlider` | Another horizontal slider variant |
 | `GroupSlider` | Slider for community groups |
@@ -193,7 +195,7 @@ Composed of atoms; represent small, functional UI units.
 | `SectionEnd` / `SectionEndGroups` | Section dividers |
 | `FrontPageSectionHeader` | Section header for home page |
 | `ManagementHeader` / `ManagementHeader2` | Headers for admin views |
-| `GenericMessageList` | Reusable message list container. Opens one chat-sync `ChannelWindow` per channel and inits it once its list is mounted (`recent`, or `atItemId` for a focus target; `jumpToLatest` after a send or the scroll-down helper while detached). The window listener sets the `Scrollable` lock from `WindowChange.kind` before rendering (`scrollAnchoring.ts`): older/newer pages and trims at the top lock by the visible item's `data-timestamp`, an own send or a live message while at the bottom scrolls to the bottom, a jump scrolls to its target, a catch-up reset keeps the position. A change that adds items below without scrolling to them (a page appended below, a reset that keeps the position or goes to an element) clears the list's at-bottom level until the `Scrollable` reports its position again, so new items are never marked read unseen. A jump to a message outside the window (`scrollToMessage`) clears it as well; when the jump does not apply (not found, network) the previous level is restored and a position report requested, so read marking does not pause. Read marking via `useChannelReadMarking` (no IntersectionObserver). Reply parents and pinned messages use `watchMessage` (no window needed). |
+| `GenericMessageList` | Reusable message list container. Opens one chat-sync `ChannelWindow` per channel and inits it once its list is mounted (`recent`, or `atItemId` for a focus target; `jumpToLatest` after a send or the scroll-down helper while detached). The window listener sets the `Scrollable` lock from `WindowChange.kind` before rendering (`scrollAnchoring.ts`): older/newer pages and trims at the top lock by the visible item's `data-timestamp`, an own send or a live message while at the bottom scrolls to the bottom, a jump scrolls to its target, a catch-up reset keeps the position. A change that adds items below without scrolling to them (a page appended below, a reset that keeps the position or goes to an element) clears the list's at-bottom level until the `Scrollable` reports its position again, so new items are never marked read unseen. A jump to a message outside the window (`scrollToMessage`) clears it as well; when the jump does not apply (not found, network) the previous level is restored and a position report requested, so read marking does not pause. Read marking via `useChannelReadMarking` (no IntersectionObserver). The scroll-down helper (`.scroll-helper`, in the composer area) shows while the list is more than 30 px from the bottom (`SCROLL_BOTTOM_THRESHOLD`, also the list `Scrollable`'s `topAndBottomThreshold`, so stick-to-bottom, the helper and read marking agree), the inverse of the at-bottom level; its level is kept in `scrollHelper.ts` and applied through a callback ref to every helper node that mounts, because the composer area re-mounts independently of the list (e.g. the join button replaced by the composer after joining). Reply parents and pinned messages use `watchMessage` (no window needed). |
 | `CollapsableGroup` | Collapsable section group |
 | `AreaList` | List of community areas |
 | `CallList` | List of active calls |

@@ -89,8 +89,42 @@ that stack — confirm and delete:
   holders' decision; do not publish before it is settled), keep
   `@commonground/conformance` private. Positioning it as the official bot SDK waits on
   finding F-11 (below).
+- [ ] **Links to the official instance's articles** (2026-11-02, found in G9) — the
+  frontend links to articles and channels of the `commonground` community on
+  `https://app.cg/…`: privacy policy, terms of use and help (`src/views/Home/Home.tsx`),
+  "get started" (`src/views/Home/Banner.tsx`), the feedback channel
+  (`FeedbackPage.tsx`), the support channel (`CommunityViewSidebar.tsx`), learn-more
+  articles (`HowSparkWorks.tsx`, `PremiumManagement.tsx`, `RolesManagement.tsx`,
+  `NewslettersManagement.tsx`, `PluginEditor.tsx`, `PluginAppstore.tsx` — the last also
+  three sample articles on `staging.app.cg`, `TokenSale.tsx`, `IdentitiesEditor.tsx`).
+  On cg.box, during the transition these lead to the gateway (a login screen for
+  anonymous visitors) and afterwards through a redirect. Decide: one constant for the
+  official site (switched to `https://cg.box` with the move), and whether privacy
+  policy and terms become instance settings (instance config) — a self-hosted instance
+  shows the hosted instance's policy today, although its operator is someone else.
+  Not changed: the legacy domain logic (`src/data/util/urls.ts`, `authMode.ts`,
+  `common/config.ts`, `srv/util/urls.ts`), the Matomo snippet in `src/index.tsx`
+  (runs only without an instance config), the dead Fractal link in
+  `IdentitiesEditor.tsx`, comments and tests.
+- [ ] **Native IPv6 for the self-host stack?** (2026-11-02, F7) — the stack is
+  IPv4-only; Docker's proxy hands IPv6 connections to Caddy from the bridge gateway's
+  address, so behind an AAAA record every IPv6 visitor shares one address for the
+  backend's per-address limits (measured, `docs/deployment/README.md` §3.10). Today
+  `init.sh` advises an A record only. Doing it properly: IPv6 on the `cryptogram`
+  network (Docker ≥ 27 allocates a ULA prefix and NATs published ports with the client
+  address kept), an IPv6 listen/announce address for mediasoup, `mail-dns` with
+  `ip6:` if the relay sends over IPv6, and a test on a host with public IPv6. Decide
+  whether cg.box needs it at launch.
 
 ## Cleanup candidates (small, self-contained)
+
+- [ ] **Delete `src/common/random_build_id.ts`** (2026-11-02, F7) — the build ID
+  moved to `src/common/buildId.ts` (a build-time value, docs/infrastructure §2
+  "Build ID"); the old file is kept byte-identical and unread so that checkouts
+  whose earlier builds modified it still pull cleanly. Delete it once the known
+  checkouts (the maintainer's, cg.box, the test VM) have run
+  `git checkout -- src/common/random_build_id.ts` (docker/SELFHOST.md, upgrade
+  note) — a modified copy would stop the `git pull` of the deleting release.
 
 - [ ] **Settings → email page sends `User/setPassword` several times on close**
   (2026-10-31, G4 test-VM pass) — `EmailPage`'s save-on-close effect re-runs while the

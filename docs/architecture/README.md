@@ -11,7 +11,8 @@
 > generations and signing out other devices (§3, key prefixes) against commit 23a4c1e, 2026-11-01;
 > online status management and the wsapi shutdown row against commit fc15832, 2026-11-02;
 > the memberlist's empty lists, new-channel seeding and channel-event retry (§4) against
-> commit 2e72119, 2026-11-02
+> commit 2e72119, 2026-11-02; the backend health checks (§4) against commit 170a73b,
+> 2026-11-03
 
 # Common Ground - Architecture Documentation
 
@@ -416,7 +417,7 @@ The job runner (`srv/jobs.ts`) spawns Node.js `worker_threads` in three modes:
 3. **One-shot workers** (run once ~30 s after startup, then exit; each job checks the `oneshot_jobs` table itself to guard against re-running):
    - none currently — the mechanism (`createOneshotWorker` + `oneshot_jobs`) is kept for future backfills
 
-**Healthcheck.** All backend services currently invoke `fakeHealthcheck()`, which writes `'0'` to `./healthcheck.txt` every 10 seconds unconditionally. A real connectivity-checking `startHealthcheck` exists in `srv/healthcheck.ts` but is not the active code path.
+**Healthcheck.** Every long-running backend process starts `startHealthcheck(probes)` (`srv/healthcheck.ts`): every 10 s it probes what it depends on — PostgreSQL (`SELECT 1` on its pool), the Valkey state instance (`PING`, `srv/redis/healthProbe.ts`; not in `memberlist`, which uses no Valkey), its own listener (a TCP connect to :4000, mediasoup :4443) and, in `mediasoup`, its workers — and writes `ok` or `fail` with the failed probes to `./healthcheck.txt`. The image's `HEALTHCHECK` (`srv/healthcheck/healthcheck.sh`) requires `ok` and a report at most 30 s old. Per-process table: [docs/infrastructure](../infrastructure/README.md#backend-health-checks). (Until 2026-11-02 every process wrote an unconditional `0` through `fakeHealthcheck()`.)
 
 ---
 

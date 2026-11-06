@@ -20,7 +20,11 @@
 > against commit 818d4c6, 2026-11-01; drill isolation (§3.7 drill mode, the
 > `up` row in §3.2) against commit f5f0639, 2026-11-01; the frontend build's
 > memory figures under Vite 8 (wave M3) against commit 3e8b08e, 2026-11-01; the
-> `CG_ENABLE_BLOCKCHAIN` row (§3.8) against commit a3d0b62, 2026-11-02
+> `CG_ENABLE_BLOCKCHAIN` row (§3.8) against commit a3d0b62, 2026-11-02;
+> the build ID, the Compose-plugin requirement, IPv6 detection, health checks,
+> the migration gate, memory limits and log rotation, server hardening and the
+> external-service checklist (§3.1–3.3, 3.6, 3.10–3.12, §5, §6) against commit
+> 170a73b, 2026-11-03
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -159,14 +163,19 @@ so its DNS record can go.
 
 ### 3.1 `docker/selfhost/init.sh` — one-time initialization
 
-`./selfhost/init.sh [--tls-internal] <domain> <acme-email> [id-domain] [public-ip]`.
+`./selfhost/init.sh [--tls-internal] <domain> <acme-email> [id-domain] [public-ip] [public-ipv6]`.
 Safe to re-run: existing files are never overwritten. `id-domain` is only for
 the legacy CG ID gateway — leave it out, or pass `-` when a public IP follows.
 It:
 
-1. Detects the public IP (via `api.ipify.org`) if not supplied — needed for
-   `MEDIASOUP_ANNOUNCED_IP`. A supplied IP is used as-is, so a LAN address
-   works for a local test instance. `--tls-internal` writes
+1. Detects the public IPv4 address (via `api.ipify.org`, `curl -4`) if not
+   supplied — needed for `MEDIASOUP_ANNOUNCED_IP`. A supplied IP is used
+   as-is, so a LAN address works for a local test instance; it must be an
+   IPv4 address (mediasoup listens on IPv4 only), anything else is refused.
+   The public IPv6 address is detected the same way (`api6.ipify.org`,
+   `curl -6`) unless one, or `-` for none, is passed as `public-ipv6` or
+   `--tls-internal` is given, and is recorded as `CG_PUBLIC_IPV6` — see
+   [3.10](#310-ipv6) for why the stack does not use it yet. `--tls-internal` writes
    `CG_TLS_MODE=internal` (see [3.4](#34-tls-caddy)), accepts `-` (or an empty
    string) for the unused ACME email, and requires the IP argument — detection
    would return the router's WAN address, not the one LAN browsers reach. It
@@ -202,9 +211,12 @@ offers, driving both backend chain workers and the UI chain lists.
 
 ### 3.2 `docker/selfhost/selfhost.sh` — build and operate
 
-Wraps `docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml`
-(falling back to `docker-compose` v1), plus `-f docker-compose.selfhost.calls.yml`
-when calls are enabled. It also derives `COMPOSE_PROFILES` from
+Wraps `docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml`,
+plus `-f docker-compose.selfhost.calls.yml` when calls are enabled. It needs
+the Compose plugin (`docker compose`, v2 or later) and stops with an
+explanation otherwise: the standalone `docker-compose` v1 used to be a
+fallback, but it ignores `COMPOSE_PROFILES`, so mediasoup, onchain and the
+mail relay would silently not start. It also derives `COMPOSE_PROFILES` from
 the optional-service switches (see [3.8](#38-optional-services-calls-and-blockchain)
 and [3.9](#39-email-smtp-and-the-mail-relay)), and exports `CG_CGID_VHOST`
 (`on` only with `CG_LEGACY_CGID=true` and a `CG_ID_DOMAIN`).
@@ -212,8 +224,8 @@ Commands:
 
 | Command | Action |
 |---|---|
-| `build` | builds the builder image, installs frontend deps, sets a random build id, then type-checks, lints, builds and HTML-rewrite-checks the frontend in one builder run (`yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite`, `DEPLOYMENT=prod`, `NODE_OPTIONS=--max-old-space-size=4096`), rsyncs `build/` into `caddy/dist`, builds the caddy / backend / db images, and generates `vapid_keys.json` for web push if missing |
-| `up` | on a restore drill (`CG_BACKUP_DRILL=true`) prints a `DRILL INSTANCE` banner (mail is then forced off for every command, see [3.7](#37-backup-and-restore)); warns about mail settings that can't work together (see [3.9](#39-email-smtp-and-the-mail-relay)) and about an ignored `CG_ID_DOMAIN`, then `compose up -d --remove-orphans`, stops and removes the containers of switched-off optional services (`compose rm -sf`), and `ps` |
+| `build` | builds the builder image, installs frontend deps, then type-checks, lints, builds and HTML-rewrite-checks the frontend in one builder run (`yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite`, `DEPLOYMENT=prod`, `NODE_OPTIONS=--max-old-space-size=4096`), rsyncs `build/` into `caddy/dist`, builds the caddy / backend / db images — the backend with the build ID the frontend build drew (`build/build-id.txt` → `--build-arg CG_BUILD_ID`, [docs/infrastructure](../infrastructure/README.md#build-id); the checkout stays unmodified) — and generates `vapid_keys.json` for web push if missing |
+| `up` | on a restore drill (`CG_BACKUP_DRILL=true`) prints a `DRILL INSTANCE` banner (mail is then forced off for every command, see [3.7](#37-backup-and-restore)); warns about mail settings that can't work together (see [3.9](#39-email-smtp-and-the-mail-relay)), about an ignored `CG_ID_DOMAIN` and about a `CG_PUBLIC_IP` that is empty or not IPv4, then `compose up -d --remove-orphans`, stops and removes the containers of switched-off optional services (`compose rm -sf`), and `ps` |
 | `down` | stop the stack (`--remove-orphans`) |
 | `logs [service]` | follow logs (all, or one service) |
 | `ps` | container status |
@@ -262,7 +274,7 @@ which sits on two networks of its own: `mail-relay` (`internal: true`; only
 | `redis` | `valkey/valkey:9.1-alpine` line (exact tag + digest in the compose file) | state instance: sessions, the Socket.IO adapter, rate limits, replay guards; password-protected, `noeviction`, RDB snapshots in `valkey-data`, `maxmemory ${REDIS_MAXMEMORY:-1024mb}`; no host port |
 | `redis-cache` | same image | cache instance (URL previews): password-protected, `allkeys-lru`, unpersisted, `maxmemory ${REDIS_CACHE_MAXMEMORY:-256mb}`; no host port |
 | `seaweed` | `chrislusf/seaweedfs` 4.x (exact tag + digest in the compose file) | SeaweedFS object storage — one all-in-one `weed server` (master + volume + filer + S3 gateway, aliased `s3.local`); only the S3 port 8333 is consumed by other services |
-| `migrate-db` | `cryptogram/backend` | one-shot DB migration (`migrateDb.js`); starts once `db` is healthy, `restart: on-failure:3` |
+| `migrate-db` | `cryptogram/backend` | one-shot DB migration (`migrateDb.js`); starts once `db` is healthy, `restart: on-failure:3`; the image's health check is disabled for it. Every backend service (`api`, `wsapi`, `memberlist`, `job-runner`, `onchain`, `mediasoup`) starts only after it exited 0 — see "Migrations during an update" below |
 | `api` | `cryptogram/backend` | REST API (`api.js`); the image everything else reuses |
 | `wsapi` | `cryptogram/backend` | Socket.IO / real-time server (`wsapi.js`) |
 | `memberlist` | `cryptogram/backend` | member-list worker (`memberlist.js`) |
@@ -274,7 +286,28 @@ which sits on two networks of its own: `mail-relay` (`internal: true`; only
 
 The seven runtime `cryptogram/backend` services are the same image invoked with
 different `command` entrypoints and `DB_TYPE` roles (`writer` for most,
-`mediasoup` for the media server).
+`mediasoup` for the media server). Each long-running one reports real health
+— its database, Valkey (where it uses it) and its own listener; `selfhost.sh
+ps` shows `healthy`/`unhealthy`, `docker inspect` the failing probe — see
+[docs/infrastructure](../infrastructure/README.md#backend-health-checks).
+Every service has a memory limit and rotating logs ([§5](#5-resource-footprint--tuning)).
+
+**Migrations during an update.** On `selfhost.sh up` and `update`, Compose
+first recreates every backend container whose image changed (the old ones are
+stopped then), runs `migrate-db`, and starts the new backend containers only
+once it has exited 0. **The app is unavailable while the migrations run.**
+Measured on the e2e instance (2026-11-02, a test image with a pending 25 s
+migration): the API stopped answering when `up` began and answered again 2 s
+after `migrate-db` had finished; on a fresh install every backend service
+started after `migrate-db` finished. **A failing migration** leaves the new
+backend containers created but not started, and the old ones are already
+gone — the instance stays down; the schema is unchanged, since all pending
+migrations run in one transaction. `migrate-db` is retried three times
+(`restart: on-failure:3`). Compose's own exit code did not reliably report it
+(0 in one of two runs), so `selfhost.sh` checks `migrate-db`'s outcome after
+`up` and stops with a message pointing at `selfhost.sh logs migrate-db`; fix
+the cause or go back to the previous version (`git checkout <previous
+commit>`, `selfhost.sh build`, `up`).
 
 ### 3.4 TLS (Caddy)
 
@@ -339,6 +372,15 @@ rate limiting is the backend's job.
 
 Outbound, the built-in mail relay needs **port 25** to the internet (only with
 `CG_ENABLE_MAIL=true`; nothing inbound) — see [3.9](#39-email-smtp-and-the-mail-relay).
+
+These are the only host ports the self-host compose files publish (checked
+with `docker compose config`: caddy `80`, `443` tcp+udp, `4443`; mediasoup
+`40000-40099` tcp+udp). Ports Docker publishes are opened in Docker's own
+netfilter chains, **in front of** a host firewall such as ufw, so they are
+reachable whatever ufw says — which is why nothing else may be published
+(a service that must be reachable from the host only binds to `127.0.0.1`).
+`docker/selfhost/harden.sh` ([3.11](#311-server-hardening)) sets ufw up for
+exactly this table plus SSH and lists any published port outside it.
 
 ### 3.7 Backup and restore
 
@@ -748,6 +790,95 @@ is neither loopback nor a single-label service name, or leftover
 to SMTP) — with an explicit "email is disabled" warning when `SMTP_HOST` is
 still empty (the SendGrid-over-SMTP recipe is in `docker/SELFHOST.md`).
 
+### 3.10 IPv6
+
+The stack runs IPv4-only: its Docker networks have no IPv6, and mediasoup
+listens on `0.0.0.0` and announces `CG_PUBLIC_IP`. Docker still accepts IPv6
+connections on the published ports, but forwards them through its userland
+proxy (`docker-proxy`), which connects to the container over IPv4 **from the
+bridge gateway's address**. Measured on the dev VM (Docker 29.9.2,
+2026-11-02, a listener on an IPv4-only network behind `-p [::1]:…`): the
+container saw the connection from `172.21.0.1`, the gateway. Behind an AAAA
+record, Caddy would therefore see every IPv6 visitor as one client — the
+backend's per-address limits (sign-ups, login throttles, the API rate limit)
+would be shared by all of them, and the logs would lose their addresses.
+
+Hence `init.sh` records the server's IPv6 address (`CG_PUBLIC_IPV6`) but tells
+the operator to publish an **A record only**. Calls stay on IPv4 as well;
+clients on IPv6-only networks depend on their provider's IPv4 translation
+(464XLAT, as common on mobile networks) — TODO(verify): a call from an
+IPv6-only network.
+The mail relay sends over IPv4 only, so `mail-dns` asks for no `ip6:` SPF
+entry and no IPv6 PTR record. Native IPv6 (IPv6 on the `cryptogram` network,
+so published ports are NATed with the client's real address, and an IPv6
+listen address for mediasoup) is a follow-up in `docs/todo/TODO.md`.
+
+### 3.11 Server hardening
+
+`docker/selfhost/harden.sh` is the base setup of a dedicated Ubuntu/Debian
+server (roadmap S3; the Ansible suite takes it over after the move). It is
+idempotent — a second run reports every part `[ok]` and changes nothing — and
+`--dry-run` prints each change it would make (file diffs, commands) without
+touching the system; without root a dry run reads what it can. `--skip <part>`
+leaves out `ssh`, `firewall`, `upgrades`, `logs` or `sysctl`. Exit code 1 when
+a part failed or was refused.
+
+| Part | What it does |
+|---|---|
+| `ssh` | writes `/etc/ssh/sshd_config.d/10-commonground.conf`: `PasswordAuthentication no`, `KbdInteractiveAuthentication no`, `PermitEmptyPasswords no`, and `PermitRootLogin prohibit-password` **only** when root login was fully open (effective `yes`) — a stricter value (`no`, `forced-commands-only`) stays; once written the line is kept, so a second run changes nothing. sshd uses the **first** value it reads, and the file sorts before the `50-cloud-init.conf` that cloud images ship with `PasswordAuthentication yes`. **Refused** unless the operator account — `--ssh-user`, else the login user of the session (`/proc/self/loginuid`, which survives `sudo` and `sudo su -`), else `$SUDO_USER` — has a usable key: valid, not bound to a forced command (`command="…"`), in an `AuthorizedKeysFile` as sshd resolves it for that user, with file, directory and home not writable by others or owned by someone else (StrictModes). Also refused without a past key login of that account in the journal or auth log (`Accepted publickey for <user>`, last 90 days; `--no-login-check` skips this) and when `sshd_config` does not include `sshd_config.d/*.conf`. Validated with `sshd -t` (the file is removed again if that fails), then sshd is reloaded and the effective values are read back with `sshd -T`. |
+| `firewall` | ufw. SSH first: the ports sshd's configuration names (`sshd -T` `listenaddress` lines), the ports sshd — or an active `ssh.socket` — listens on (`ss`, `systemctl show -p Listen ssh.socket`) and the server port of every SSH session (`$SSH_CONNECTION`, established sshd connections) must agree; otherwise (a changed but not yet applied configuration, a socket override, a forwarded port) the part stops **without touching ufw**. Then `80/tcp`, `443/tcp`, `443/udp`, `4443/tcp`, `40000:40099/udp`, `40000:40099/tcp`; default deny incoming / allow outgoing; enable. IPv4 and IPv6 rules: with `IPV6=no` in `/etc/default/ufw` (IPv6 unfiltered), the part stops a running ufw, switches it to `yes`, adds every rule again and enables it. Lists every port a running container publishes outside this set (Docker-published ports bypass ufw, [3.6](#36-firewall)) and warns when Docker uses its nftables firewall backend (Docker 28+; not tested together with ufw). The routed (forward) policy stays ufw's default; Docker manages its own forwarding chains. |
+| `upgrades` | installs `unattended-upgrades` and enables the daily run (`/etc/apt/apt.conf.d/20auto-upgrades`) with the distribution's default origins — security updates, installed as soon as they are published (a standing exception to the waiting periods, [UPDATE-POLICY.md](../infrastructure/UPDATE-POLICY.md#standing-exception-the-hosts-distribution-security-updates)). The container runtime is excluded (`/etc/apt/apt.conf.d/51commonground-unattended-upgrades`: `docker.io`, `docker-ce*`, the Compose and Buildx plugins, `containerd*`, `runc`) — updating it restarts every container, so it is done by hand. No automatic reboot: a pending one is reported. |
+| `logs` | journald capped at 1 GB and four weeks (`/etc/systemd/journald.conf.d/90-commonground.conf`); `logrotate` installed (it ships with both distributions' server images). Container logs rotate through the compose files ([§5](#log-rotation)). |
+| `sysctl` | `/etc/sysctl.d/90-commonground.conf`: `net.ipv4.ip_local_reserved_ports = 40000-40099` (the ephemeral port range overlaps the media ports, and a collision keeps mediasoup from starting) and `vm.overcommit_memory = 1` (the Valkey state instance forks for its snapshots); loaded at once and checked. |
+
+A file that cannot be written is reported as `[FAILED]`; `--ssh-user`
+without a name is a usage error (exit 2).
+
+Not covered: fail2ban (key-only SSH leaves nothing to brute-force), the
+hoster's own firewall, and the outbound port 25 restriction to the mail relay
+([docs/infrastructure §7](../infrastructure/README.md#7-self-hosted-single-server-deployment)).
+Tested 2026-11-02 in throwaway `ubuntu:26.04` and `debian:13` containers (own
+network namespace, a running sshd, no `--privileged`): dry runs as root and
+non-root, `--ssh-user` without a value, the refusals (no key, only a
+forced-command key, a group-writable `~/.ssh`, no key login in the auth log),
+a real run and the idempotent second run, sshd's effective settings with a
+`50-cloud-init.conf` present, `PermitRootLogin yes` (restricted, then
+unchanged) and `no` (left alone), `ListenAddress 0.0.0.0:2222` before and
+after sshd's restart (refused, then 2222 allowed), a session on a port sshd
+does not listen on (refused), an `ssh.socket` on another port (systemctl
+shim; refused), `IPV6=no` (switched, IPv6 rules added), the operator from the
+login uid in a `sudo su -` style root shell, the published-port and
+nftables-backend checks (docker shim) and the runtime blacklist as `apt-config`
+reads it. The sysctl step cannot take effect in a container (read-only
+`/proc/sys`), and reloading sshd, journald and the real `ssh.socket` need
+systemd — their test is the first run on the test VM.
+
+### 3.12 External service settings (maintainer accounts)
+
+Three integrations are bound to the hosted instance's domain in accounts the
+maintainer holds. Nothing in the code changes for the move to `cg.box`; these
+settings do:
+
+- [ ] **Twitter/X app** (developer portal): add
+  `https://cg.box/twitter-callback` as callback URL (the instance sends
+  `TWITTER_CALLBACK_URL`, which `init.sh` writes as
+  `https://<CG_DOMAIN>/twitter-callback`) and the website URL; keep the
+  `app.cg` callback while the gateway runs, if the gateway offers X login.
+  Put the keys into `.env.selfhost` (`TWITTER_API_KEY`, `TWITTER_API_SECRET`,
+  `TWITTER_OAUTH2_*`).
+- [ ] **WalletConnect Cloud** (Reown): add `https://cg.box` to the project's
+  allowed origins — or create a project for cg.box — and set
+  `CG_WALLETCONNECT_PROJECT_ID`. Without an allowed origin the
+  WalletConnect-based wallets fail to connect (injected wallets still work).
+- [ ] **Email sender domain**: `EMAIL_FROM` / `MAIL_DOMAIN` on `cg.box`; publish
+  the SPF, DKIM and DMARC records `selfhost.sh mail-dns` prints and the PTR
+  record at the hoster ([3.9](#39-email-smtp-and-the-mail-relay)); with an
+  external SMTP provider instead, verify `cg.box` as sending domain there.
+
+Also domain-bound, outside this repository: the reCAPTCHA site key's domain
+list (only with `CAPTCHA_PROVIDER=recaptcha`; the default ALTCHA needs none)
+and the Giphy key, if its dashboard restricts origins.
+
 ---
 
 ## 4. Graceful degradation of optional integrations
@@ -797,7 +928,8 @@ machine:
   never push the state instance into out-of-memory errors. Not in older
   `.env.selfhost` files; the compose default applies.
 - Host setting: `vm.overcommit_memory = 1` (sysctl) — the state instance forks
-  for its background snapshots and Valkey warns at startup without it.
+  for its background snapshots and Valkey warns at startup without it
+  (`harden.sh` sets it, [3.11](#311-server-hardening)).
 - `SEAWEED_VOLUME_LIMIT_MB=1024` — SeaweedFS volume chunk size.
 - `MEDIASOUP_DISABLE_LIBURING=true`.
 - `db` runs with `shm_size: 256m`.
@@ -812,6 +944,75 @@ sized for the same 16 GB machine: `shared_buffers=1GB`,
 `docker/SELFHOST.md` reports the stack idling at well under 2 GB, with RAM mostly
 consumed under load (calls, many users, image processing) — treat this as an
 operator observation rather than a code-verified figure.
+
+### Memory limits
+
+Every service in `docker-compose.selfhost.yml` has a `mem_limit`
+(`${CG_MEM_LIMIT_<SERVICE>:-default}`, the service name upper-cased with `_`
+for `-`), so a leak or a runaway request in one service hits its own limit —
+the kernel's OOM killer ends that container and Docker restarts it — instead
+of starving the database or the whole server. Measured on the disposable e2e
+instance (2026-11-02, F7 acceptance; the full browser suite with sign-ups,
+chat, images, a call, articles; blockchain off): `docker stats` maxima, cache
+excluded, sampled every 2 s, and the cgroup `memory.peak` (cache included):
+
+| Service | Default limit | e2e max (`docker stats`) | e2e `memory.peak` | Reasoning |
+|---|---|---|---|---|
+| `db` | `4g` | 147 MiB | 223 MiB | `shared_buffers=1GB` + up to 200 connections × `work_mem`; the page cache of the data files counts against the limit, so it also bounds how much of the database stays cached — raise it with `shared_buffers` |
+| `redis` | `2g` | 5 MiB | 10 MiB | `REDIS_MAXMEMORY` 1024 MB plus the snapshot fork (copy-on-write, up to about the data size again): a full instance must refuse writes (`noeviction`), not be killed. Keep it ≥ 2 × `REDIS_MAXMEMORY` |
+| `redis-cache` | `512m` | 4 MiB | 10 MiB | `REDIS_CACHE_MAXMEMORY` 256 MB, no snapshots |
+| `seaweed` | `1g` | 79 MiB | 79 MiB | needle index in memory grows with the number of files; `GOMEMLIMIT=870MiB` (about 85%) |
+| `caddy` | `512m` | 274 MiB | 299 MiB | includes the cache of the served frontend files (~100 MB with source maps); `GOMEMLIMIT=435MiB` (about 85%) |
+| `api` | `2g` | 294 MiB | 322 MiB | the NSFW model (onnxruntime), Chrome for social preview images (`htmlToImage`) next to Node |
+| `wsapi` | `1536m` | 58 MiB | 92 MiB | grows with open websockets |
+| `memberlist` | `4g` | 30 MiB | 31 MiB | keeps every community's member and role sets in memory — grows with the data, which the e2e instance does not have; 4 GB gives it a 2 GiB heap (Node's own cap from a 4 GB limit on; without any limit it had 4 GiB on a large host) |
+| `job-runner` | `4g` | 194 MiB | 213 MiB | one V8 isolate per worker thread, each capped at `JOB_WORKER_MAX_OLD_SPACE_MB` (default 384 MB, `srv/jobs.ts`): at most nine run at once (four permanent, five scheduled, each at most once), 9 × 384 MB = 3.4 GB, plus the main thread (orchestration and the health probe) — the sum fits the limit. Without the cap every worker sized its heap like the main thread (half the container limit) |
+| `onchain` | `1536m` | — | — | not in the e2e run (blockchain off); ethers providers per chain, the NSFW model for avatar ingests |
+| `mediasoup` | `2g` | 63 MiB | 84 MiB | one worker process per core; grows with participants (one two-person call here) |
+| `migrate-db` | `2g` | — | — | one-shot; migrations that rewrite large tables run in it (1 GiB heap) |
+| `mail` | `256m` | — | — | maddy; not in the e2e run (Mailpit there) |
+| `cg-builder` | `6g` | — | — | the frontend build: ~2.65 GiB `memory.peak` (Vite 8, see [3.2](#32-dockerselfhostselfhostsh--build-and-operate)), `--max-old-space-size=4096` |
+
+All containers together peaked at about 1.2 GB (sum of the `docker stats`
+maxima). The limits are ceilings, not reservations: their sum (about 23 GB
+for the long-running services) exceeds a 16 GB server on purpose — services do not peak
+together, and each limit only has to keep one service from taking the
+machine. What bounds the defaults from below is Node: a Node process sizes
+its heap from its cgroup limit — measured with this image (Node 26): 1 GB →
+536 MiB heap, 2 GB → 1072 MiB, 4 GB and more → 2144 MiB; without a limit it
+was 4192 MiB on the 30 GB dev VM. A Node service therefore gets about half its
+limit as heap, at least 512 MiB. The e2e data is tiny; the dress rehearsal
+with production data (roadmap P5) must check `selfhost.sh stats` against
+these limits — `memberlist`, `api` and `db` first — and raise the defaults
+where real data needs it. TODO(verify): usage with production data.
+
+The Go services (`caddy`, `seaweed`) get `GOMEMLIMIT` at about 85% of their
+limit, so their garbage collector works harder before the kernel's limit is
+reached (`CG_GOMEMLIMIT_CADDY` / `CG_GOMEMLIMIT_SEAWEED`; `selfhost.sh`
+derives them from an overridden `CG_MEM_LIMIT_CADDY` / `CG_MEM_LIMIT_SEAWEED`).
+`selfhost.sh up` warns when `CG_MEM_LIMIT_REDIS` is less than twice
+`REDIS_MAXMEMORY`.
+
+**Database connections of the health checks** (for the connection
+arithmetic of `max_connections`): each backend process's probe runs one
+`SELECT 1` at a time on that process's own pool, so it needs no connection of
+its own while the pool has an idle one, and at most one more otherwise
+(node-postgres closes idle connections after 10 s). The job-runner's main
+thread opens no other connections: its pool exists only for the probe and
+holds at most **one** connection — whatever pool size a setting for the
+job-runner (e.g. a `PG_POOL_MAX_JOBS`) gives the workers, the main thread
+counts as one.
+
+### Log rotation
+
+Every self-host service logs through Docker's `json-file` driver with
+`max-size=${CG_LOG_MAX_SIZE:-20m}`, `max-file=${CG_LOG_MAX_FILE:-5}` and
+`compress=true` (the `x-logging` anchor in `docker-compose.selfhost.yml`):
+at most about 100 MB of logs per container, the rotated files gzipped.
+`docker inspect -f '{{json .HostConfig.LogConfig}}' cg-selfhost-api-1` shows
+the setting of a running container; it applies to containers (re)created
+after the change, which `selfhost.sh up` does. The host's own logs (journald)
+are bounded by `harden.sh` ([3.11](#311-server-hardening)).
 
 ---
 
@@ -834,8 +1035,9 @@ exist under `pipelines/`, plus a shared clean-up template.
   `enableScripts: false` and `npmMinimalAgeGate: 1w` after copying it — without
   that, CI builds would run without the supply-chain controls the repo
   configures (see docs/infrastructure §2).
-- Copies `srv/` into `docker/backend/dist/`, stamps a random build id, and
-  builds the prod frontend with `PUBLIC_URL="https://staging.app.cg"` (which
+- Copies `srv/` into `docker/backend/dist/`, generates a build ID (pipeline
+  variable `CG_BUILD_ID`, embedded by the frontend build and passed to the
+  backend image build as `--build-arg`), and builds the prod frontend with `PUBLIC_URL="https://staging.app.cg"` (which
   now only keeps the default social-preview meta absolute — asset URLs are
   root-relative on every path).
 - Builds and pushes the **backend** and **nginx** images to the

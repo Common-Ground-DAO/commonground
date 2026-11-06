@@ -213,14 +213,19 @@ plus reviews. Lane B starts when F1+F2 are merged.
   devDependencies removed) of all workspaces under the age gate
   (`yarn npm audit` clean or every remaining advisory documented). Includes the
   Hardhat 2.29 bump from TODO.md ("Optional").
-- [ ] **F7 Self-host leftovers.** Build ID no longer written into the tracked
+- [x] **F7 Self-host leftovers.** Build ID no longer written into the tracked
   `src/common/random_build_id.ts`; a real healthcheck (`startHealthcheck` in
   `srv/healthcheck.ts` has no callers, every process uses `fakeHealthcheck()` —
   wire the real one up or delete it, and move `fakeHealthcheck` into its own
   module so `memberlist` stops opening Redis connections it never uses); Docker
   log rotation; per-container resource limits; IPv6 address detection; drop the `docker-compose` v1 fallback in
   `selfhost.sh` (v1 ignores `COMPOSE_PROFILES`, so `calls`/`blockchain` would
-  silently not start).
+  silently not start) (done 2026-11-06, `170a73b`: the build ID is set at
+  build time and shared by frontend and backend; real health checks of every
+  backend service's connections; backend services start only after `migrate-db`
+  completed; per-service memory limits and log rotation; `init.sh` recommends an
+  A record only, IPv6 stays a later step; the v1 fallback is gone; accepted on
+  the test VM.)
 - [x] **F8 Backup / restore.** `selfhost.sh backup|restore` (or scripts):
   Postgres custom-format dump, SeaweedFS data, encrypted secrets bundle
   (`.env.selfhost`, `vapid_keys.json`, `s3_config/`, certs), retention,
@@ -375,7 +380,9 @@ and a browser pass on the test VM:
   `index.html` (every self-hosted instance ships it in social previews — drop the
   tag or rewrite it in the instance-config injection like the other social meta);
   external service settings for cg.box: Twitter callback URL,
-  WalletConnect origin allowlist, email sender domain.
+  WalletConnect origin allowlist, email sender domain. (The code part is done
+  2026-11-06, `170a73b`: `og:site_name` and the embedding hints name the
+  instance's own host. Open: the external service settings, with the server.)
 - [x] **G10 Auth UX.** Walk every login and sign-up path on the test VM with a
   screenshot of each step and each error message; rework from the maintainer's
   notes. Limits per decision 21 (account creation per network far above 2 per
@@ -417,7 +424,10 @@ and a browser pass on the test VM:
   mediasoup port range (`net.ipv4.ip_local_reserved_ports = 40000-40099`): it
   overlaps the ephemeral port range, and a collision stops `mediasoup` from
   starting (docker/SELFHOST.md). Set `vm.overcommit_memory = 1` (Valkey
-  background saves fork).
+  background saves fork). (Script done 2026-11-06, `170a73b`:
+  `docker/selfhost/harden.sh` with `--dry-run`/`--skip`; security updates of the
+  distribution install right away, see UPDATE-POLICY.md; run on the test VM
+  without the SSH part. Open: the full run on the new server.)
 - [ ] **S4 Monitoring.** External uptime check; alerts for disk space, certificate
   expiry, container health; where alerts go.
 - [ ] **S5 DNS.** CAA record (Let's Encrypt only); lowered TTL on app.cg ahead of
@@ -439,6 +449,9 @@ and a browser pass on the test VM:
 - [ ] One real Let's Encrypt run on a publicly reachable server (the test VM only
   exercises `tls internal`), so the ACME path is proven before move day.
 - [ ] Time the import, so move-day downtime can be announced.
+  Includes the migrations that run on the old data for the first time
+  (`chatSyncSeq`, `syncStateIndexes`, `permissionDataCleanup`: indexes and data
+  changes in one transaction).
 - [ ] No mail or push reaches real users during the rehearsal; the import clears
   stored verification and one-time codes.
 - [ ] Repeat until clean; write the move-day runbook from it.

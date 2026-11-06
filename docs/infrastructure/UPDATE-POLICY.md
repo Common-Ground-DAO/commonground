@@ -10,7 +10,8 @@
 > step A) against commit 3e8b08e, 2026-11-01; react-router 7 (wave M3, step B: the
 > react-router advisories, the Renovate majors list) against commit 3e8b08e, 2026-11-01;
 > Tailwind 4 out of the Renovate majors list, which is gone with it (wave M4), against
-> commit 440c779, 2026-11-02
+> commit 440c779, 2026-11-02; the standing exception for the host's distribution
+> security updates (`harden.sh`) against commit 170a73b, 2026-11-03
 
 # Update policy: 7-day minimum release age (3 days for security fixes)
 
@@ -70,6 +71,26 @@ One row per artifact; an exception covers that version only, never later ones.
 | Date | Package / version (ecosystem) | Reason | Approved by |
 |---|---|---|---|
 | — | — | — | — |
+
+### Standing exception: the host's distribution security updates
+
+On a self-host server set up with `docker/selfhost/harden.sh`
+([docs/deployment §3.11](../deployment/README.md#311-server-hardening)),
+`unattended-upgrades` installs the distribution's **security updates** as soon
+as Ubuntu or Debian publishes them — outside the 7-day and 3-day waiting
+periods, and without a log row (maintainer decision, 2026-11-02). Reason: the
+waiting period guards against the package-registry supply chain — a
+compromised maintainer account or a malicious release on npm or Docker Hub
+that is pulled within hours —, while a distribution's security archive is
+curated, built and signed by the distribution's security team, and the
+packages fix vulnerabilities on an internet-facing host. The exception covers
+only the host's own packages from the distribution's default security
+origins (`50unattended-upgrades`); everything the project pins (images,
+npm, the apt snapshot inside the images, binary downloads) keeps the rules
+above. **Docker, containerd and runc are excluded** from the automatic
+upgrades (`harden.sh` blacklists `docker.io`, `docker-ce*`, the Compose and
+Buildx plugins, `containerd*` and `runc`): updating the container runtime
+restarts every container, so it is done by hand in a maintenance window.
 
 ### Security-fix log
 

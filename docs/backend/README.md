@@ -52,7 +52,8 @@
 > update, the event role check before any write, the join/ban membership lock and the
 > `roleType` of role permission lists against commits 0e4c794, d6354ef, 3bd44c0, 138c630, 3082f2a and 8bb443a,
 > 2026-11-03; the role rule of the listings and the homepage calls and the test list against commits
-> 60ea3f1 and 5f50cc0, 2026-11-03.
+> 60ea3f1 and 5f50cc0, 2026-11-03;
+> `og:site_name` on the social preview pages against commit 170a73b, 2026-11-03.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -277,7 +278,7 @@ answers with its generic error). Errors these wrappers, the gated-file routes,
 
 ### `srv/api/getRoutes.ts` -- Social Preview & SSR Routes
 
-An Express router that handles GET requests for social media previews (Open Graph / Twitter Cards). Uses `short-uuid` to translate between short IDs and UUIDs. For each entity type, there are two routes: one for the preview image (`/image.jpeg`) and one for the HTML page with meta tags.
+An Express router that handles GET requests for social media previews (Open Graph / Twitter Cards). Uses `short-uuid` to translate between short IDs and UUIDs. For each entity type, there are two routes: one for the preview image (`/image.jpeg`) and one for the HTML page with meta tags. The pages are the app shell (`/dist/index.html`) with its default description/og/twitter tags replaced by the item's, plus `og:site_name` set to the host of the page URL (the request's host) — the static shell carries no `og:site_name` since 2026-11-02 (it used to say `app.cg` on every instance; `yarn check:html-rewrite` keeps it out).
 
 **Routes:**
 - `GET /<URL_USER>/:userId/image.jpeg` -- User profile preview image

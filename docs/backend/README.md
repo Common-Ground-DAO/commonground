@@ -53,7 +53,12 @@
 > `roleType` of role permission lists against commits 0e4c794, d6354ef, 3bd44c0, 138c630, 3082f2a and 8bb443a,
 > 2026-11-03; the role rule of the listings and the homepage calls and the test list against commits
 > 60ea3f1 and 5f50cc0, 2026-11-03;
-> `og:site_name` on the social preview pages against commit 170a73b, 2026-11-03.
+> `og:site_name` on the social preview pages against commit 170a73b, 2026-11-03; the pool size
+> (`PG_POOL_MAX`) and its error listeners, the origin check, CORS and the gateway guard in
+> `srv/util/express.ts`, `srv/api/mountRouters.ts` (incl. the shared `/Message` mount with
+> `syncState`) and the singleton processes' gateway refusal against commit 696102b, 2026-11-06;
+> the pool's `error` listener (idle connections only) and the LISTEN holders' own listeners against
+> commit 696102b, 2026-11-07.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -526,7 +531,7 @@ A subset of message routes is also reachable over the Bot API v1 surface (see be
 
 ### `srv/api/syncState.ts` -- Read-State Snapshot
 
-Mounted at `/Message` after the message router, in the same `app.use` behind one `securityStep` (`srv/api.ts`; a request runs the step once), so the route is `/Message/getSyncState`.
+Mounted at `/Message` after the message router, in the same `app.use` behind one `securityStep` (`srv/api/mountRouters.ts`; a request runs the step once), so the route is `/Message/getSyncState`.
 
 - `/getSyncState` -- `{ channelIds? }` (at most 500 unique UUIDs; Joi validator in `srv/validators/api/syncState.ts`) → `{ serverTime, notificationUnreadCount, channels }`. Session users only: not on the bot allowlist, and a bot principal is refused in the handler. One statement (`syncStateHelper.getChannelStates`, `srv/repositories/syncState.ts`) returns one entry per community channel the user can read and per chat the user is a member of, each with `channelId`, `communityId` or `chatId`, `syncSeq`, `lastMessageDate`, `lastRead` and `unread`:
   - community channels: in the communities where the user holds a claimed, not deleted role (the communities `getOwnCommunities` lists; deleted communities and channels excluded), the channels for which the user's claimed roles plus the community's predefined `Public` role together grant `CHANNEL_EXISTS` and `CHANNEL_READ` -- the same rule as the message read check. Public channels of communities the user is not a member of are not listed;
@@ -1458,6 +1463,8 @@ Creates and exports a `pg.Pool` instance connected to database `cryptogram`. Con
 - Host: `DB_HOST` env var, default `db`
 - Password: from Docker secrets (`pg_su_password` or `pg_password`) or env vars
 - Port: `DB_PORT` env var, default `5432`
+- an `error` listener on the pool (`logConnectionError`): node-postgres re-emits the failure of an **idle** connection (the database restarted or closed it, `pg_terminate_backend`) as the pool's `error` event and drops that connection, so the failure is logged instead of ending the process, and the next query opens a new connection. A held connection (`pool.connect()`) has no listener from the pool: its failure fails the query that runs (if any) and is then emitted as the connection's own `error` event as well — also while a query runs, possibly twice — which ends the process (in a job-runner worker thread: the worker) as an uncaught exception unless the holder listens. So an api or wsapi transaction that runs while the database restarts ends that process, which then restarts (as before the gateway work). The long-lived LISTEN connections listen themselves: memberlist (`shutdown(1)`), the call server (`srv/mediasoup.ts`) and the job-runner's `callUpdateEmitter` worker exit — their restart registers LISTEN again — and the wsapi's typing cache (`srv/repositories/typingCache.ts`, listening on its connection's `error` from right after `pool.connect()`) gives the connection up and sets LISTEN up again on a new connection — at start-up as well, retried with a delay doubling from 2 s up to 30 s until it works — and drops its cached channel entries when the connection is lost and again once LISTEN works; a failing keepalive counts as a lost connection there too
+- Size: `PG_POOL_MAX` (`poolMaxFromEnv`), default 10 (node-postgres' own); anything but a positive integer stops the process. One pool per process, one per job-runner worker thread; the self-host compose file sets it per service ([docs/deployment §5](../deployment/README.md#5-resource-footprint--tuning))
 - Supports mutual TLS via Docker secrets (`rootca.crt`, `appservers.key`, `appservers.crt`)
 
 ### `srv/util/datasource.ts` -- TypeORM DataSource
@@ -1497,7 +1504,8 @@ fail strict validation get no keys and the request is rejected with
 ### `srv/util/express.ts` -- Express Configuration
 
 Sets up Express with:
-- CORS configuration (`BASE_URL`, dev origins; the `CGID_URL` origin only in legacy CG ID mode)
+- the origin check (`originGuard`: 403 for an `Origin` outside the list) and CORS from the list shared with the wsapi (`allowedOrigins()` in `srv/util/origins.ts`: the `BASE_URL` origin, dev origins; the `CGID_URL` origin only in legacy CG ID mode)
+- in gateway mode (`CG_GATEWAY=true`) the gateway's route allowlist (`gatewayApiGuard`, `srv/util/gateway.ts`), before the session and every router ([docs/auth-identity §12](../auth-identity/README.md#12-gateway-mode))
 - Session management via `connect-redis` (Redis-backed sessions; host-only cookie, `.<APP_HOSTNAME>` only in legacy CG ID mode)
 - Cookie parser
 - Passport integration (for Twitter OAuth)

@@ -23,7 +23,8 @@
 > against commit 330fe2f, 2026-11-03; the `mediasoup` role's column grants on `communities` and
 > `user_community_state` against commit eebc3cf, 2026-11-03; the data cleanup
 > `1793635400000-permissionDataCleanup` (incl. the community order rebuild and the channel/article step)
-> against commits ccffa3b and 5f50cc0, 2026-11-03
+> against commits ccffa3b and 5f50cc0, 2026-11-03;
+> the raw pool's size (`PG_POOL_MAX`) against commit 696102b, 2026-11-06
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -1247,7 +1248,7 @@ Defined in `srv/util/datasource.ts` (TypeORM DataSource) and `srv/util/postgres.
 
 **Raw pg Pool** (`srv/util/postgres.ts`):
 - A raw `pg.Pool` instance with the same connection credentials
-- No explicit pool sizing configuration (uses `pg` defaults: 10 connections)
+- Pool size `PG_POOL_MAX` (default: `pg`'s 10 connections); the self-host compose file sets it per service so that all processes of the instance and its gateway stay below `max_connections` (`docker/db/postgresql.conf` has the arithmetic)
 - Used by all repository files for queries (most queries are raw SQL, not TypeORM QueryBuilder)
 - SSL is configured identically to the TypeORM DataSource when Docker secrets are available
 

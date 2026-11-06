@@ -24,7 +24,11 @@
 > the build ID, the Compose-plugin requirement, IPv6 detection, health checks,
 > the migration gate, memory limits and log rotation, server hardening and the
 > external-service checklist (§3.1–3.3, 3.6, 3.10–3.12, §5, §6) against commit
-> 170a73b, 2026-11-03
+> 170a73b, 2026-11-03; the gateway of a
+> moved instance (§3.2 checks, §3.3 services, §3.4 sites, §3.13), the per-service pool sizes and
+> the connection arithmetic (§5) against commit 696102b, 2026-11-06; the gateway without storage
+> credentials, the domain check against its cookie scope and the Valkey cleanup after switching it
+> off (§3.2 `up`, §3.3 `gateway-api`, §3.13) against commit 696102b, 2026-11-07
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -225,13 +229,13 @@ Commands:
 | Command | Action |
 |---|---|
 | `build` | builds the builder image, installs frontend deps, then type-checks, lints, builds and HTML-rewrite-checks the frontend in one builder run (`yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite`, `DEPLOYMENT=prod`, `NODE_OPTIONS=--max-old-space-size=4096`), rsyncs `build/` into `caddy/dist`, builds the caddy / backend / db images — the backend with the build ID the frontend build drew (`build/build-id.txt` → `--build-arg CG_BUILD_ID`, [docs/infrastructure](../infrastructure/README.md#build-id); the checkout stays unmodified) — and generates `vapid_keys.json` for web push if missing |
-| `up` | on a restore drill (`CG_BACKUP_DRILL=true`) prints a `DRILL INSTANCE` banner (mail is then forced off for every command, see [3.7](#37-backup-and-restore)); warns about mail settings that can't work together (see [3.9](#39-email-smtp-and-the-mail-relay)), about an ignored `CG_ID_DOMAIN` and about a `CG_PUBLIC_IP` that is empty or not IPv4, then `compose up -d --remove-orphans`, stops and removes the containers of switched-off optional services (`compose rm -sf`), and `ps` |
+| `up` | on a restore drill (`CG_BACKUP_DRILL=true`) prints a `DRILL INSTANCE` banner (mail is then forced off for every command, see [3.7](#37-backup-and-restore)); warns about mail settings that can't work together (see [3.9](#39-email-smtp-and-the-mail-relay)), about an ignored `CG_ID_DOMAIN` and about a `CG_PUBLIC_IP` that is empty or not IPv4, refuses a gateway that is not set up (`CG_ENABLE_GATEWAY=true` without its own domains and session secret, or with `CG_DOMAIN` under the gateway's domain, see [3.13](#313-the-gateway-of-a-moved-instance)), then `compose up -d --remove-orphans`, stops and removes the containers of switched-off optional services (`compose rm -sf`), and `ps` |
 | `down` | stop the stack (`--remove-orphans`) |
 | `logs [service]` | follow logs (all, or one service) |
 | `ps` | container status |
 | `stats` | `docker stats --no-stream` |
 | `compose <args>` | pass-through to docker compose |
-| `update` | `git pull`, then continues in the pulled script: rebuild, the mail and edge checks, the same start as `up`, and `ps` |
+| `update` | `git pull`, then continues in the pulled script: rebuild, the mail, edge and gateway checks, the same start as `up`, and `ps` |
 | `mail-dns` | prints the SPF, DKIM, DMARC and PTR records the built-in mail relay needs (see [3.9](#39-email-smtp-and-the-mail-relay)) |
 | `backup init\|run\|list\|check\|verify\|install-timer\|uninstall-timer` | backups, handled by `docker/selfhost/backup.sh` (see [3.7](#37-backup-and-restore)) |
 | `restore …` | restores a backup or a dump file (see [3.7](#37-backup-and-restore)); runs before `.env.selfhost` exists too (a new server gets it back from the backup) |
@@ -274,7 +278,7 @@ which sits on two networks of its own: `mail-relay` (`internal: true`; only
 | `redis` | `valkey/valkey:9.1-alpine` line (exact tag + digest in the compose file) | state instance: sessions, the Socket.IO adapter, rate limits, replay guards; password-protected, `noeviction`, RDB snapshots in `valkey-data`, `maxmemory ${REDIS_MAXMEMORY:-1024mb}`; no host port |
 | `redis-cache` | same image | cache instance (URL previews): password-protected, `allkeys-lru`, unpersisted, `maxmemory ${REDIS_CACHE_MAXMEMORY:-256mb}`; no host port |
 | `seaweed` | `chrislusf/seaweedfs` 4.x (exact tag + digest in the compose file) | SeaweedFS object storage — one all-in-one `weed server` (master + volume + filer + S3 gateway, aliased `s3.local`); only the S3 port 8333 is consumed by other services |
-| `migrate-db` | `cryptogram/backend` | one-shot DB migration (`migrateDb.js`); starts once `db` is healthy, `restart: on-failure:3`; the image's health check is disabled for it. Every backend service (`api`, `wsapi`, `memberlist`, `job-runner`, `onchain`, `mediasoup`) starts only after it exited 0 — see "Migrations during an update" below |
+| `migrate-db` | `cryptogram/backend` | one-shot DB migration (`migrateDb.js`); starts once `db` is healthy, `restart: on-failure:3`; the image's health check is disabled for it. Every backend service (`api`, `wsapi`, `memberlist`, `job-runner`, `onchain`, `mediasoup`, and the gateway's `gateway-api`, `gateway-wsapi`) starts only after it exited 0 — see "Migrations during an update" below |
 | `api` | `cryptogram/backend` | REST API (`api.js`); the image everything else reuses |
 | `wsapi` | `cryptogram/backend` | Socket.IO / real-time server (`wsapi.js`) |
 | `memberlist` | `cryptogram/backend` | member-list worker (`memberlist.js`) |
@@ -282,15 +286,18 @@ which sits on two networks of its own: `mail-relay` (`internal: true`; only
 | `mediasoup` | `cryptogram/backend` | WebRTC media (`mediasoup.js`); publishes `40000-40099` over UDP **and** TCP (each worker's `WebRtcServer` listens on `40000+n` for both; TCP is the ICE fallback for UDP-blocking networks); uses the internal self-signed cert and `MEDIASOUP_ANNOUNCED_IP=CG_PUBLIC_IP`. Starts only after `migrate-db` completed successfully — the `mediasoup` DB role comes from `docker/db/init.sh`, but its table privileges come from the migrations. Compose profile `calls` — optional, see [3.8](#38-optional-services-calls-and-blockchain) |
 | `onchain` | `cryptogram/backend` | blockchain indexer / balance & role listener (`onchain.js`); receives all `QUIKNODE_*`/RPC and staking env. Compose profile `blockchain` — optional, see [3.8](#38-optional-services-calls-and-blockchain) |
 | `mail` | `foxcpp/maddy:0.9.6` (pinned by digest) | send-only SMTP relay: accepts the app's mail on `mail-relay` port 587, DKIM-signs, queues and delivers to the recipients' MX. No published port. Compose profile `mail` — optional, see [3.9](#39-email-smtp-and-the-mail-relay) |
+| `gateway-api` | `cryptogram/backend` | the gateway's REST API (`api.js` with `CG_GATEWAY=true`, `CG_LEGACY_CGID=true`, its own `BASE_URL`/`CGID_URL`/`REDIS_SECRET`, `TRANSFER_TARGET_URL` = this instance; no S3 credentials); joins `mail-relay` for email-code sign-in. Compose profile `gateway` — optional, see [3.13](#313-the-gateway-of-a-moved-instance) |
+| `gateway-wsapi` | `cryptogram/backend` | the gateway's Socket.IO server (`wsapi.js`, same gateway settings). Compose profile `gateway` |
 | `cg-builder` | `commonground/node` | build-only helper container (not a runtime service) |
 
-The seven runtime `cryptogram/backend` services are the same image invoked with
+The seven runtime `cryptogram/backend` services (nine with the gateway) are the same image invoked with
 different `command` entrypoints and `DB_TYPE` roles (`writer` for most,
 `mediasoup` for the media server). Each long-running one reports real health
 — its database, Valkey (where it uses it) and its own listener; `selfhost.sh
 ps` shows `healthy`/`unhealthy`, `docker inspect` the failing probe — see
 [docs/infrastructure](../infrastructure/README.md#backend-health-checks).
-Every service has a memory limit and rotating logs ([§5](#5-resource-footprint--tuning)).
+Every service has a memory limit and rotating logs, and every backend process caps its
+PostgreSQL pool with `PG_POOL_MAX` ([§5](#5-resource-footprint--tuning)).
 
 **Migrations during an update.** On `selfhost.sh up` and `update`, Compose
 first recreates every backend container whose image changed (the old ones are
@@ -327,7 +334,9 @@ defines, all from env:
   `mediasoup`, so its per-client connection limits use the address Caddy puts
   in `X-Forwarded-For`.
 - `CG_ID_DOMAIN` — the legacy CG ID mini-app, only with `CG_CGID_VHOST=on`
-  (legacy CG ID gateway); off on every normal instance.
+  (this instance itself in legacy CG ID mode); off on every normal instance.
+- `CG_GATEWAY_DOMAIN` and `CG_GATEWAY_ID_DOMAIN` — the gateway of a moved instance and its CG ID
+  app, only with `CG_GATEWAY_EDGE=on` (`CG_ENABLE_GATEWAY=true`, [3.13](#313-the-gateway-of-a-moved-instance)).
 
 `CG_TLS_MODE` (passed to the `caddy` service, default `acme`) selects one of
 two snippets that the global options block imports
@@ -879,6 +888,40 @@ Also domain-bound, outside this repository: the reCAPTCHA site key's domain
 list (only with `CAPTCHA_PROVIDER=recaptcha`; the default ALTCHA needs none)
 and the Giphy key, if its dashboard restricts origins.
 
+### 3.13 The gateway of a moved instance
+
+For the move of the hosted instance (app.cg → cg.box) the new instance serves the old domain as a
+sign-in-only gateway ([docs/auth-identity §12](../auth-identity/README.md#12-gateway-mode); operator
+guide: [`docker/SELFHOST.md`](../../docker/SELFHOST.md#gateway-for-a-moved-instance)). Design: the
+simplest that fits one server and one edge —
+
+- **Backend**: two more services from the same image, `gateway-api` and `gateway-wsapi`, under the
+  Compose profile `gateway` (`CG_ENABLE_GATEWAY=true`), on the same `db` and `redis` (writer role,
+  like api; a narrower database role is possible later). No storage credentials: no route the
+  gateway serves reads or writes files (LUKSO and Farcaster refuse an unknown account before any
+  profile image is fetched).
+  Only api and wsapi: job-runner, onchain, memberlist, mediasoup and migrate-db run once, for this
+  instance, and refuse to start in gateway mode.
+- **Edge**: the same Caddy, two more sites (`CG_GATEWAY_DOMAIN`, `CG_GATEWAY_ID_DOMAIN`; snippet
+  `cg_gateway_app` and the CG ID site, [docs/infrastructure §3](../infrastructure/README.md#gateway-of-a-moved-instance))
+  with their own certificates. The same frontend build: the gateway's `/instance-config.js` comes
+  from the `GATEWAY_CG_*` variables of the Caddy container and carries `gatewayTargetUrl`, which
+  switches the web app to the gateway page.
+- **Configuration** in `.env.selfhost`: `CG_ENABLE_GATEWAY`, `CG_GATEWAY_DOMAIN`,
+  `CG_GATEWAY_ID_DOMAIN`, `CG_GATEWAY_SESSION_SECRET` and `CG_MAIL_LIMIT_SECRET` (shared by both
+  instances for the per-address mail limits; `init.sh` generates both), optionally
+  `CG_GATEWAY_TWITTER_CALLBACK_URL` and `CG_GATEWAY_WALLETCONNECT_PROJECT_ID`. Mail, chains, X keys
+  are the instance's; LUKSO sign-in uses the instance's `onchain` service (`CG_ENABLE_BLOCKCHAIN`).
+  `selfhost.sh up` refuses a gateway without its domains or `CG_MAIL_LIMIT_SECRET`, with the
+  instance's own domains or secret, with `CG_DOMAIN` under `CG_GATEWAY_DOMAIN` (the gateway's
+  session cookie, scoped to `.<gateway domain>` and named like the instance's, would reach the
+  instance; the gateway api refuses such a `TRANSFER_TARGET_URL` itself, too), or with
+  `CG_LEGACY_CGID=true` on the instance itself. A gateway under `CG_DOMAIN` is fine (the instance's
+  cookie is host-only).
+- **Isolation**: own session secret and Valkey key prefix (`gateway:`), cookie on the old domain;
+  see auth-identity §12. Switched off, its `gateway:` keys stay in Valkey (the copies of the
+  session generations have no TTL); SELFHOST.md has the command that removes them.
+
 ---
 
 ## 4. Graceful degradation of optional integrations
@@ -940,7 +983,24 @@ Postgres tuning lives in `docker/db/postgresql.conf` (not in `.env.selfhost`),
 sized for the same 16 GB machine: `shared_buffers=1GB`,
 `effective_cache_size=4GB`, `work_mem=8MB`, `maintenance_work_mem=256MB`,
 `max_connections=200`, `jit=off` (full list and reasons in the file and in
-[docs/infrastructure §1](../infrastructure/README.md#db-postgresql)). The reference guide
+[docs/infrastructure §1](../infrastructure/README.md#db-postgresql)).
+
+**Connections.** Every backend process caps its pool with `PG_POOL_MAX`; the compose file sets it
+per service, overridable in `.env.selfhost` (`PG_POOL_MAX_API`, `PG_POOL_MAX_WSAPI`,
+`PG_POOL_MAX_MEMBERLIST`, `PG_POOL_MAX_JOBS`, `PG_POOL_MAX_ONCHAIN`, `PG_POOL_MAX_MEDIASOUP`,
+`PG_POOL_MAX_GATEWAY_API`, `PG_POOL_MAX_GATEWAY_WSAPI`). Worst case with every pool full:
+
+| | connections |
+|---|---|
+| api 20, wsapi 10, memberlist 6, job-runner 9 worker threads × 3 + 1 (its main thread's health probe, one query at a time), onchain 10, mediasoup 4 | 78 |
+| gateway-api 5, gateway-wsapi 3 (when the gateway runs) | 8 |
+| migrate-db (TypeORM pool, at start only) 10, a backup's `pg_dump` 1–2, admin sessions, `superuser_reserved_connections` 3 | ~20 |
+| **total** | **~106 of `max_connections=200`** |
+
+One connection of each wsapi (the typing cache), of memberlist and of mediasoup is a LISTEN connection held for good, inside its pool. The health probes ([docs/infrastructure](../infrastructure/README.md#backend-health-checks)) run inside the pools; the job-runner's main thread uses its pool for its probe alone.
+
+The headroom covers a second api or wsapi or larger pools; raise `max_connections` (and restart
+`db`) before the sum gets close to it. The reference guide
 `docker/SELFHOST.md` reports the stack idling at well under 2 GB, with RAM mostly
 consumed under load (calls, many users, image processing) — treat this as an
 operator observation rather than a code-verified figure.
@@ -971,11 +1031,13 @@ excluded, sampled every 2 s, and the cgroup `memory.peak` (cache included):
 | `mediasoup` | `2g` | 63 MiB | 84 MiB | one worker process per core; grows with participants (one two-person call here) |
 | `migrate-db` | `2g` | — | — | one-shot; migrations that rewrite large tables run in it (1 GiB heap) |
 | `mail` | `256m` | — | — | maddy; not in the e2e run (Mailpit there) |
+| `gateway-api` | `1g` | 96 MiB | 101 MiB | half of `api`'s: only the gateway's sign-in routes — no NSFW model (`IMAGE_MODERATION_ENABLED=false`), no social preview images. Profile `gateway`; measured in a separate e2e run with the gateway (2026-11-06, the full suite plus the gateway flow and `e2e/checks/gateway.sh`) |
+| `gateway-wsapi` | `512m` | 79 MiB | 84 MiB | a third of `wsapi`'s: no logged-in sockets, only the short-lived ones that watch a CG ID popup's result. Profile `gateway`; same run as `gateway-api` |
 | `cg-builder` | `6g` | — | — | the frontend build: ~2.65 GiB `memory.peak` (Vite 8, see [3.2](#32-dockerselfhostselfhostsh--build-and-operate)), `--max-old-space-size=4096` |
 
 All containers together peaked at about 1.2 GB (sum of the `docker stats`
 maxima). The limits are ceilings, not reservations: their sum (about 23 GB
-for the long-running services) exceeds a 16 GB server on purpose — services do not peak
+for the long-running services, 1.5 GB more with the gateway) exceeds a 16 GB server on purpose — services do not peak
 together, and each limit only has to keep one service from taking the
 machine. What bounds the defaults from below is Node: a Node process sizes
 its heap from its cgroup limit — measured with this image (Node 26): 1 GB →

@@ -12,7 +12,11 @@
 > online status management and the wsapi shutdown row against commit fc15832, 2026-11-02;
 > the memberlist's empty lists, new-channel seeding and channel-event retry (§4) against
 > commit 2e72119, 2026-11-02; the backend health checks (§4) against commit 170a73b,
-> 2026-11-03
+> 2026-11-03;
+> the shared origin list, the session secret at startup, the router mounting
+> (`srv/api/mountRouters.ts`) and the gateway's key prefix against commit 696102b, 2026-11-06; the
+> LISTEN connections after a database restart (PostgreSQL LISTEN/NOTIFY) against commit 696102b,
+> 2026-11-07
 
 # Common Ground - Architecture Documentation
 
@@ -224,16 +228,17 @@ Sessions are managed by `express-session` with a Redis-backed store. Key configu
 - **Cookie name**: `connect.sid` when `DEPLOYMENT === 'prod'`; otherwise `cg_{deployment}.sid` (`SESSION_COOKIE_NAME` in `srv/serverconfig.ts`)
 - **Cookie settings**: `httpOnly`, `secure` (except in dev), `sameSite: lax`, 12-hour max age; the cookie of a logged-in session is re-sent (expiry refreshed) on every response, other sessions' only when they change (`rolling: false` plus a hook for logged-in sessions)
 - **Cookie domain**: host-only; only legacy CG ID mode (`CG_LEGACY_CGID=true`, non-dev) sets it to `.{APP_HOSTNAME}` (derived from `BASE_URL`), so the app and the CG ID app (`id.<domain>`) share a session.
-- **Secret**: loaded from Docker secret `redis_secret` or `REDIS_SECRET` env var
+- **Secret**: loaded from Docker secret `redis_secret` or `REDIS_SECRET` env var; a missing one stops api, wsapi and job-runner at startup
+- **Gateway** (`CG_GATEWAY=true`, the old domain during the move): its own secret and the key prefix `gateway:` for sessions, their index, revocations, generation copies and the Socket.IO channels, plus a server-side route and socket-event allowlist ([auth-identity §12](../auth-identity/README.md#12-gateway-mode))
 - **saveUninitialized**: `false` (a session exists only once a request stores something in it; anonymous requests that store nothing get no session and no cookie)
 - **trust proxy / proxy**: enabled (the edge sits in front and sets `X-Forwarded-*` itself)
 
 ### CORS Configuration
 
-Both the API (`srv/util/express.ts`) and WebSocket (`srv/wsapi.ts`) servers maintain their own CORS allowed-origin lists:
-- **Production/Staging**: `BASE_URL` + `CGID_URL` (the CG ID subdomain)
+The API (`srv/util/express.ts`) and WebSocket (`srv/wsapi.ts`, `srv/util/socketServer.ts`) servers share one allowed-origin list (`allowedOrigins()`, `srv/util/origins.ts`, [auth-identity §2 "CORS"](../auth-identity/README.md#cors)):
+- **Production/Staging**: the `BASE_URL` origin; a legacy CG ID process also the `CGID_URL` origin (the CG ID subdomain)
 - **Dev**: additional localhost origins on ports 3000/8000/8001, plus `app.cg.local`, `bs-local.com`, and an optional `LOCAL_CERTIFICATE_IP`
-- Requests with no `Origin` header are allowed (mobile apps, curl, server-to-server)
+- A request with an `Origin` outside the list is refused (api: 403; wsapi: every handshake, polling request and WebSocket upgrade); requests with no `Origin` header pass (same-origin GETs, the SDK, curl, bots)
 - The mediasoup server uses `cors()` with no restrictions (allows all origins)
 
 ### Session Data Shape
@@ -325,7 +330,7 @@ The system runs as multiple independent Node.js processes (Docker containers), e
 
 ### API Routers
 
-The API server (`srv/api.ts`) mounts the following Express routers:
+The API server (`srv/api.ts`, through `mountApiRouters` in `srv/api/mountRouters.ts`) mounts the following Express routers:
 
 | Route Prefix | Router | Source |
 |-------------|--------|--------|
@@ -358,11 +363,11 @@ srv/wsapi.ts:
   io.adapter(createAdapter(
     redisManager.getClient('socketIOPub'),
     redisManager.getClient('socketIOSub'),
-    { key: 'v2:' }
+    { key: socketAdapterKey() }   // 'v2:'; a gateway: 'gateway:v2:'
   ));
 ```
 
-This allows the API server to emit events (via the shared Redis pub/sub channel) that are broadcast by any connected `wsapi` instance. The `v2:` key prefix namespaces the adapter messages.
+This allows the API server to emit events (via the shared Redis pub/sub channel) that are broadcast by any connected `wsapi` instance. The `v2:` key prefix namespaces the adapter messages; a gateway's processes use `gateway:v2:`, so the two instances' events never mix.
 
 ### Redis Clients
 
@@ -375,14 +380,16 @@ Two Valkey instances (Redis-protocol compatible) split by what may be lost: the 
 | `data` | state | `UserDataManager`, rate limiting, captcha key and replay guards, plugin replay keys, bot connection-presence leases. | plain command connection |
 | `cache` | cache | URL-preview cache (`urlpreview:`), skipped (not waited for) while the cache instance is unreachable. | lives on the evicting instance |
 
-Key prefixes are pairwise disjoint (`sess:`, `sess-revoked:`, `sess-user:`, `sess-gen:`, `sess-keep:`, `ratelimit:`, `bot-ratelimit:`, `bot-presence:`, `captcha:`, `pluginRequest:`, `ud:`/`us:`, `tmp:`, `online-user-addresses`, and the adapter's `v2:` on the state instance; `urlpreview:` on the cache instance). The split between the instances is load-bearing: a cache filling a shared `noeviction` instance would make session writes fail — see [docs/infrastructure](../infrastructure/README.md#redis-and-redis-cache-valkey). New cache data (anything that can be rebuilt) belongs on the `cache` client; anything whose loss changes behaviour belongs on `data`.
+Key prefixes are pairwise disjoint (`sess:`, `sess-revoked:`, `sess-user:`, `sess-gen:`, `sess-keep:` — each also under `gateway:` for a gateway's own —, `ratelimit:`, `bot-ratelimit:`, `bot-presence:`, `captcha:`, `pluginRequest:`, `ud:`/`us:`, `tmp:`, `online-user-addresses`, and the adapter's `v2:` on the state instance; `urlpreview:` on the cache instance). The split between the instances is load-bearing: a cache filling a shared `noeviction` instance would make session writes fail — see [docs/infrastructure](../infrastructure/README.md#redis-and-redis-cache-valkey). New cache data (anything that can be rebuilt) belongs on the `cache` client; anything whose loss changes behaviour belongs on `data`.
 
 ### PostgreSQL LISTEN/NOTIFY
 
 Several services use PostgreSQL's built-in LISTEN/NOTIFY for event-driven communication without Redis:
 
-- **mediasoup**: Listens for `callservercallupdate_{serverId}` events (hyphens in the server UUID replaced by underscores) to receive call state changes directly from the database. Uses a dedicated long-lived `PoolClient` with a 60s keepalive; on keepalive failure the process exits.
-- **memberlist**: Listens for `userdatachange`, `userrolechange`, `rolechange`, and `channelrolepermissionchange` events (lowercase channel names) to maintain its in-memory member list. Also uses a dedicated long-lived `PoolClient` with a 60s keepalive; events are queued and processed in batches on a 1-second loop. A community or channel created less than a second ago is therefore not known yet: for it, `/getMemberListWindow` and `/getChannelMemberListWindow` answer an empty member list (and the `Community/getMemberList` / `getChannelMemberList` routes and the client connector map a reply without a list to an empty one), so the lists never fail during that window. A new channel always gets a member list, seeded with the community's admins as at startup, even if none of its events moves a user. A `channelrolepermissionchange` for an unknown channel needs the community's Admin role; in normal operation it is always known by then (the permission rows reference `roles` by foreign key, so the `rolechange` NOTIFY comes first), but as a safety net such an event is retried in the next batches (up to 60, keeping the order within the community, `srv/util/memberListChannelEvents.ts`) instead of being dropped. `srv/memberlist.ts` starts the service only as the entry point, so `srv/tests/memberListEvents.spec.ts` can drive its event processing.
+- **mediasoup**: Listens for `callservercallupdate_{serverId}` events (hyphens in the server UUID replaced by underscores) to receive call state changes directly from the database. Uses a dedicated long-lived `PoolClient` with a 60s keepalive; on keepalive failure or an `error` event of that connection (the database restarted or closed it) the process exits, and its restart listens again.
+- **memberlist**: Listens for `userdatachange`, `userrolechange`, `rolechange`, and `channelrolepermissionchange` events (lowercase channel names) to maintain its in-memory member list. Also uses a dedicated long-lived `PoolClient` with a 60s keepalive (a failing keepalive or an `error` event of the connection shuts the process down); events are queued and processed in batches on a 1-second loop. A community or channel created less than a second ago is therefore not known yet: for it, `/getMemberListWindow` and `/getChannelMemberListWindow` answer an empty member list (and the `Community/getMemberList` / `getChannelMemberList` routes and the client connector map a reply without a list to an empty one), so the lists never fail during that window. A new channel always gets a member list, seeded with the community's admins as at startup, even if none of its events moves a user. A `channelrolepermissionchange` for an unknown channel needs the community's Admin role; in normal operation it is always known by then (the permission rows reference `roles` by foreign key, so the `rolechange` NOTIFY comes first), but as a safety net such an event is retried in the next batches (up to 60, keeping the order within the community, `srv/util/memberListChannelEvents.ts`) instead of being dropped. `srv/memberlist.ts` starts the service only as the entry point, so `srv/tests/memberListEvents.spec.ts` can drive its event processing.
+- **job-runner** (`callUpdateEmitter` worker): listens for `callchange`, `callmemberchange` and `callserverchange` to keep the clients' call lists current; a failing keepalive or an `error` event of its connection ends the worker, which the job-runner restarts.
+- **wsapi** (typing cache, `srv/repositories/typingCache.ts`): listens for `channelrolepermissionchange` and `rolechange` to drop cached typing permissions; a lost connection (its `error` event or a failing keepalive) is replaced by a new one that listens again, without a restart of the wsapi.
 
 ### API-to-Onchain Communication
 

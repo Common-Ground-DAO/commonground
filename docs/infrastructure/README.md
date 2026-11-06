@@ -34,7 +34,10 @@
 > build row, the memory figure) against commit 440c779, 2026-11-02; the build ID (§2),
 > the backend health checks (§1), `migrate-db`'s disabled health check, and in §7 log
 > rotation, memory limits, IPv6 detection, the Compose-plugin requirement and
-> `harden.sh` against commit 170a73b, 2026-11-03
+> `harden.sh` against commit 170a73b, 2026-11-03;
+> the gateway of a moved instance (§1 `api`/`wsapi`, §3 `cg_gateway_app`/`cg_cgid_site` and the instance-config prefix,
+> §7), the session secret and `PG_POOL_MAX` at startup, `max_connections` and the e2e gateway
+> option against commit 696102b, 2026-11-06
 
 # Common Ground Infrastructure Documentation
 
@@ -124,7 +127,10 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
   - `./api_data:/api_data:ro` — static API data
 - **Key environment variables:** `DB_TYPE=writer`, `PG_PASSWORD` (writer), `REDIS_PASSWORD`, `REDIS_SECRET`, `DEPLOYMENT`, `BASE_URL`, `CGID_URL` (read only in legacy CG ID mode), `S3_SECRET`, the `SMTP_*`/`EMAIL_FROM*` set (see [Email](#email-smtp)), `GOOGLE_RECAPTCHA_SECRET_KEY`, Twitter OAuth credentials, the `STAKING_*` set, and the bot limits (`PLATFORM_OPERATOR_USER_IDS`, `BOT_USER_OWNER_LIMIT`, `BOT_COMMUNITY_OWNER_LIMIT`, `BOT_PLATFORM_OWNER_LIMIT`, `BOT_ACTIVE_TOKEN_LIMIT`, `BOT_API_RATE_LIMIT_PER_MINUTE`, `BOT_MESSAGE_RATE_LIMIT_PER_MINUTE`).
 - **Passkey variables (every backend process — api, wsapi, migrate-db, job-runner, onchain, memberlist, mediasoup — with the same values; both compose files pass `PASSKEY_RP_ID=${PASSKEY_RP_ID:-}` and `CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}` to each, from `docker/.env` / `.env.selfhost`, and `BASE_URL` too — `mediasoup` included, which derives the RP ID from it for the account-security check at its login):** `PASSKEY_RP_ID` (empty = the `BASE_URL` host — on selfhost the `CG_DOMAIN` host; otherwise that host or a parent domain; must never change once passkeys exist — the selfhost caddy gets the same value as `CG_PASSKEY_RP_ID` for the instance config) and `CG_LEGACY_CGID=true` (legacy CG ID / gateway mode only). `CGID_URL` is passed to `api` only and read only in legacy mode (the CG ID app's RP and CORS origin). Shared code reads the RP ID in whichever process it runs, see [docs/auth-identity §7](../auth-identity/README.md#7-passkeys).
-- **`TRANSFER_TARGET_URL`** (`api` only, optional): the `https` origin transfer links lead to (`User/createTransferLink`, [docs/auth-identity §11](../auth-identity/README.md#11-transfer-links-and-the-account-security-step)); unset = this instance mints no links (the default — only the move gateway sets it, e.g. `https://cg.box`). A malformed value stops the api at startup. Neither compose file passes it: only the gateway's compose setup will (roadmap G1); `docker/.env.example` lists it, commented out.
+- **`TRANSFER_TARGET_URL`** (`api` only, optional): the `https` origin transfer links lead to (`User/createTransferLink`, [docs/auth-identity §11](../auth-identity/README.md#11-transfer-links-and-the-account-security-step)); unset = this instance mints no links (the default — only the move gateway sets it, e.g. `https://cg.box`). A malformed value stops the api at startup. Only the self-host profile's `gateway-api` service passes it (`https://${CG_DOMAIN}`); `docker/.env.example` lists it, commented out.
+- **`REDIS_SECRET`** (api, wsapi, job-runner): read at startup; missing, the template placeholder or shorter than 16 characters stops the process (`srv/util/sessionSecret.ts`).
+- **`PG_POOL_MAX`** (every backend process, optional): connections of the process's PostgreSQL pool (`srv/util/postgres.ts`; each job-runner worker thread has its own pool), default 10 (node-postgres' own); anything but a positive integer stops the process. The self-host compose file sets it per service (`PG_POOL_MAX_API` … in `.env.selfhost` override the defaults: api 20, wsapi 10, memberlist 6, job-runner 3 per thread, onchain 10, mediasoup 4, gateway-api 5, gateway-wsapi 3); the dev stack keeps the default. The sum stays below `max_connections` (`docker/db/postgresql.conf` has the arithmetic).
+- **`CG_GATEWAY`** (`true` only on a gateway's api and wsapi, [docs/auth-identity §12](../auth-identity/README.md#12-gateway-mode)): serves only the gateway's routes and socket events, keeps its sessions and Socket.IO channels under the key prefix `gateway:`, and needs `CG_LEGACY_CGID=true` (and on the api `TRANSFER_TARGET_URL`). job-runner, onchain, memberlist, mediasoup and migrate-db exit when it is set.
 
 #### `wsapi`
 - **Image:** `cryptogram/backend`
@@ -199,6 +205,7 @@ failed.
 |---|---|
 | `api` | PostgreSQL answers `SELECT 1` (its pool), the Valkey state instance answers `PING`, the HTTP listener on :4000 accepts connections |
 | `wsapi` | the same three (Socket.IO listener on :4000; `srv/healthcheck/wsapi.ts`) |
+| `gateway-api`, `gateway-wsapi` | the same code as `api` and `wsapi` (self-host profile `gateway`): the same three each |
 | `onchain` | the same three |
 | `memberlist` | PostgreSQL and its listener on :4000 — no Valkey (it uses none, and loads no Redis code for the check) |
 | `job-runner` | PostgreSQL and Valkey (the workers publish their events through it); no listener |
@@ -743,7 +750,7 @@ host never share a frontend build.
 
 | File | Used by |
 |---|---|
-| `common.caddy` | imported by the three configs below: the app's routing (`cg_app`), CSP, common headers, HSTS, access log, instance config, CG ID variants, call-signalling proxy |
+| `common.caddy` | imported by the three configs below: the app's routing (`cg_app`), the gateway's (`cg_gateway_app`), the CG ID site (`cg_cgid_site`), CSP, common headers, HSTS, access log, instance config, CG ID variants, call-signalling proxy |
 | `Caddyfile.dev` | dev stack, service `caddy` |
 | `Caddyfile.selfhost` | self-host stack ([section 7](#7-self-hosted-single-server-deployment)) |
 | `Caddyfile.conformance` | the disposable conformance stack (`docker-compose.conformance.yml`, which bind-mounts it — it is not in the image): the self-host routing as plain HTTP for any host. Test-only: it trusts `X-Forwarded-For` from private addresses, because the suite isolates its fixture clients by address (`sdk/conformance/src/fixtures.ts`) |
@@ -847,6 +854,11 @@ match `srv/util/instanceConfig.ts`, which builds the same object for
 keeps the last good copy for starts without network or with an error
 response.
 
+A site can render it from another set of variables: `vars cg_env_prefix GATEWAY_` makes the
+template read `GATEWAY_CG_*` instead of `CG_*` (the gateway's sites, [Gateway of a moved
+instance](#gateway-of-a-moved-instance)), so one Caddy serves the configs of both instances. Gateway
+sites also emit `gatewayTargetUrl` (from `GATEWAY_CG_GATEWAY_TARGET_URL`, an http(s) origin).
+
 Both shells load it as `<script defer src="/instance-config.js">` ahead of the
 entry module (deferred scripts run in document order, so the config is set
 before any module code). The share-link pages the backend renders
@@ -872,6 +884,32 @@ The fourth argument of `cg_app` decides what happens to the CG ID mini-app
   by the backend's own CORS (`CGID_URL`).
 - `samehost` (dev): the CgId API is routed and the shell is served on the main
   origin at `/index_cgid.html` (the dev stack's `CGID_URL`).
+
+The CG ID site itself is the snippet `cg_cgid_site` (argument: the app's domain, for its CSP), used
+by the legacy CG ID site above and by the gateway's CG ID site.
+
+### Gateway of a moved instance
+
+With `CG_GATEWAY_EDGE=on` (`selfhost.sh` sets it from `CG_ENABLE_GATEWAY=true`;
+[docs/auth-identity §12](../auth-identity/README.md#12-gateway-mode), `docker/SELFHOST.md`) the
+self-host Caddy serves two more sites for the gateway's backend (`gateway-api`, `gateway-wsapi`):
+
+- `{$CG_GATEWAY_DOMAIN}` (the old domain, e.g. `app.cg`): snippet `cg_gateway_app` — narrower than
+  `cg_app`. `/api/v2/(User|Instance|Twitter|Lukso|Accounts|CgId)/` → `gateway-api:4000` (prefix
+  stripped; the gateway api's allowlist is the authority, this only keeps the rest from reaching it),
+  `/api/ws/` → `gateway-wsapi:4000`, the X sign-in pages `/twitter-callback` and `/twitter-login` →
+  `gateway-api`; every other `/api/` path, `/files/` (no media) and `/index_cgid.html` → 404/403; no
+  Bot API, no page routes; the built assets like `cg_app`; every other path gets the web app's shell
+  (`no-cache`), so an old deep link opens the gateway page, which takes the path along to the new
+  instance. `robots.txt` disallows everything, request bodies are capped at 1 MiB, HSTS as on the
+  main site. The site sets `vars cg_env_prefix GATEWAY_`: its `/instance-config.js` comes from the
+  `GATEWAY_CG_*` variables of the Caddy container (legacy CG ID, no calls, `gatewayTargetUrl` = the
+  main instance).
+- `{$CG_GATEWAY_ID_DOMAIN}` (e.g. `id.app.cg`): the CG ID site (`cg_cgid_site`) for the gateway's
+  domain, its instance config from the `GATEWAY_CG_*` variables as well.
+
+Both get certificates like the main site (Let's Encrypt or the local CA), so their DNS records must
+point at the server before `up`.
 
 ### Dev stack: `Caddyfile.dev`
 
@@ -1091,7 +1129,12 @@ own. Details, options and how to add a flow: [`e2e/README.md`](../../e2e/README.
   layers it on `docker-compose.selfhost.yml` + `docker-compose.selfhost.calls.yml`;
   its edge config `e2e/Caddyfile.e2e` is the self-host site plus one test-only
   rule (a per-browser cookie becomes the client address, so the per-address
-  sign-up limit does not cap the suite).
+  sign-up limit does not cap the suite). `E2E_GATEWAY=1 … up` also starts the
+  gateway of a moved instance on `app.cg-e2e.test` / `id.app.cg-e2e.test`;
+  `e2e/run.sh --instance` then passes `--gateway-url` and the `gateway` flow
+  runs, and `e2e/checks/gateway.sh` checks it server-side (complete route
+  list, socket events, origins, wallet and CG ID passkey sign-in, transfer
+  link, Valkey keys, startup refusals).
 - `./run.sh e2e --instance` runs the suite against it; `e2e/run.sh --url
   https://<host> --ca <root.crt>` against any other instance (a private CA is
   verified by the suite, which then pins only the instance's leaf
@@ -1116,6 +1159,8 @@ This profile runs the **entire stack on one server** with real production semant
 - **Postgres loads the tuned `postgresql.conf`** (same `config_file` command as dev).
 - **Valkey memory is set from `.env.selfhost`**: `${REDIS_MAXMEMORY:-1024mb}` for the state instance (`redis`) and `${REDIS_CACHE_MAXMEMORY:-256mb}` for the cache (`redis-cache`), instead of the dev 1 GB / 256 MB. `.env.selfhost` files from before 2026-10-31 still carry `REDIS_MAXMEMORY=1536mb` (then the budget of the single instance); it now applies to the state instance alone, and the cache instance adds its default 256 MB.
 - **`mediasoup` and `onchain` are optional**: they carry the Compose profiles `calls` and `blockchain`, which `selfhost.sh` enables from `CG_ENABLE_CALLS` / `CG_ENABLE_BLOCKCHAIN` in `.env.selfhost` (both default to `true`). See [docs/deployment §3.8](../deployment/README.md#38-optional-services-calls-and-blockchain) and `docker/SELFHOST.md`.
+- **The gateway of a moved instance** (`gateway-api`, `gateway-wsapi`) carries the Compose profile `gateway`, enabled by `CG_ENABLE_GATEWAY=true` (default off), with its own domains (`CG_GATEWAY_DOMAIN`, `CG_GATEWAY_ID_DOMAIN`) and session secret (`CG_GATEWAY_SESSION_SECRET`); `up` refuses to start it without them, with the instance's own secret or domains, or with `CG_LEGACY_CGID=true` on the instance itself. Like `api` and `wsapi` they start only after `migrate-db` exited 0, report the same health and have a memory limit (`1g` and `512m`) and rotating logs. See [Gateway of a moved instance](#gateway-of-a-moved-instance) and [docs/deployment §3.3](../deployment/README.md#33-services-docker-composeselfhostyml).
+- **Every backend process caps its PostgreSQL pool** (`PG_POOL_MAX`, defaults per service); the sum, the gateway included, stays below `max_connections`.
 - **`CG_ENABLE_IMAGE_FILTER`** (default `true`) is a plain switch, not a profile: it feeds `IMAGE_MODERATION_ENABLED` into the `api`/`onchain` services and the instance-config injection (`features.imageFilter`), which also turns off the client-side pre-upload warning. `CG_IMAGE_FILTER_THRESHOLD` / `CG_IMAGE_FILTER_MODEL_PATH` pass through to `IMAGE_MODERATION_THRESHOLD` / `IMAGE_MODERATION_MODEL_PATH`.
 - **SeaweedFS master** uses `-volumeSizeLimitMB=${SEAWEED_VOLUME_LIMIT_MB:-1024}`.
 - **Log rotation:** every service logs through the `json-file` driver with `max-size ${CG_LOG_MAX_SIZE:-20m}`, `max-file ${CG_LOG_MAX_FILE:-5}` and `compress` (the `x-logging` anchor), so a container keeps at most about 100 MB of logs; `docker inspect -f '{{json .HostConfig.LogConfig}}' <container>` shows it. The dev stack keeps Docker's defaults.
@@ -1144,13 +1189,15 @@ The routing, headers and instance config are described in
 [section 3](#3-caddy-the-edge); specific to the self-host config:
 
 - Env-driven: `CG_DOMAIN`, `CG_ACME_EMAIL`, `CG_TLS_MODE`,
-  `CG_CALLS_EDGE`, `CG_CGID_VHOST`, `CG_ID_DOMAIN`, plus the instance-config
-  variables. Nothing is templated into the config or the image at build time,
+  `CG_CALLS_EDGE`, `CG_CGID_VHOST`, `CG_ID_DOMAIN`, `CG_GATEWAY_EDGE`,
+  `CG_GATEWAY_DOMAIN`, `CG_GATEWAY_ID_DOMAIN`, plus the instance-config
+  variables (`CG_*`, and `GATEWAY_CG_*` for the gateway's sites). Nothing is templated into the config or the image at build time,
   so the image does not depend on the domain.
 - The global options block does `import tls_mode_{$CG_TLS_MODE:acme}`: snippet `tls_mode_acme` sets `email {$CG_ACME_EMAIL}` (Let's Encrypt), `tls_mode_internal` sets `local_certs` + `skip_install_trust` (every site from Caddy's local CA; root in the `caddy-data` volume under `/data/caddy/pki/authorities/local/`). Any other value fails at startup. Compose passes `CG_TLS_MODE=${CG_TLS_MODE:-acme}`, so an `.env.selfhost` without the key stays on ACME.
 - The main site imports `cg_app` with `X-Forwarded-Proto: https`, `frame-src https:`, `connect-src` for `https://` and `wss://` on the own domain, and adds HSTS (`max-age=31536000`, HTTPS responses only).
 - `{$CG_DOMAIN}:4443` → `reverse_proxy https://mediasoup:4443` with `tls_insecure_skip_verify` (the internal hop trusts mediasoup's self-signed cert) — only with `CG_CALLS_EDGE=on`, which `docker-compose.selfhost.calls.yml` sets together with publishing the port.
 - The legacy CG ID site (`{$CG_ID_DOMAIN}`) exists only with `CG_CGID_VHOST=on` (see [Legacy CG ID mini-app](#legacy-cg-id-mini-app)); `CG_ID_DOMAIN` is otherwise unused, and an `.env.selfhost` from before 2026-10-31 that still carries it no longer gets a second site or certificate.
+- The gateway's sites (`{$CG_GATEWAY_DOMAIN}`, `{$CG_GATEWAY_ID_DOMAIN}`) exist only with `CG_GATEWAY_EDGE=on` (see [Gateway of a moved instance](#gateway-of-a-moved-instance)).
 - Ports published: `80`, `443` (tcp+udp, HTTP/3), and `4443` (tcp) with calls. WebRTC media `40000–40099` (UDP and TCP) is published directly by the mediasoup container.
 
 ### Instance identity

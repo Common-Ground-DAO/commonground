@@ -211,7 +211,7 @@ const UpgradesTab: React.FC = () => {
               <span className="cg-text-md-400 cg-text">Must be unique</span>
             </div>
             <div className="flex flex-wrap gap-2 items-center">
-              <span className="cg-text-md-400">app.cg/c/</span>
+              <span className="cg-text-md-400">{window.location.host}/c/</span>
               <TextInputField
                 placeholder="your-url"
                 value={pickedUrl}

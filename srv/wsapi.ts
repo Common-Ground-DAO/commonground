@@ -26,8 +26,8 @@ import { isSecurityStepRequiredForRealtime } from "./util/securityStep";
 import validators from './validators';
 import userHelper from './repositories/users';
 import redisManager from './redis';
-import { fakeHealthcheck } from './healthcheck';
-import buildId from './common/random_build_id';
+import { startWsapiHealthcheck } from './healthcheck/wsapi';
+import buildId from './common/buildId';
 import botTokenHelper from './repositories/botTokens';
 import botHelper from './repositories/bots';
 import * as typingCache from './repositories/typingCache';
@@ -783,7 +783,7 @@ const shutdown = async (code = 0) => {
   }
 };
 
-fakeHealthcheck();
+startWsapiHealthcheck();
 
 process.on("SIGTERM", () => shutdown());
 process.on("unhandledRejection", (reason, promise) => {

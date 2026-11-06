@@ -20,6 +20,7 @@
 #   - the send-only mail relay (mail) sits behind the profile "mail",
 #     switched by CG_ENABLE_MAIL (init.sh writes true; unset = off, so an
 #     older .env.selfhost does not start sending mail on its own)
+#   - rotating container logs and a memory limit for every service (below)
 #
 # Usage: see docker/SELFHOST.md. Never run this with the dev docker/.env —
 # use docker/selfhost/init.sh to generate .env.selfhost with fresh secrets.
@@ -27,6 +28,27 @@
 # distinct project name: containers and volumes stay separate from the dev
 # stack (docker-compose.yml) even when both live in the same directory
 name: cg-selfhost
+
+# Container logs (`selfhost.sh logs`, `docker logs`) rotate: every service
+# keeps at most CG_LOG_MAX_FILE files of CG_LOG_MAX_SIZE each (default 5 x
+# 20 MB, older files compressed), so a chatty or failing service cannot fill
+# the disk. Applied to every service below (`logging: *logging`).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${CG_LOG_MAX_SIZE:-20m}
+    max-file: ${CG_LOG_MAX_FILE:-5}
+    compress: "true"
+
+# Memory limits: every service has one (`mem_limit`), overridable per service
+# with CG_MEM_LIMIT_<SERVICE> in .env.selfhost (e.g. CG_MEM_LIMIT_API=3g).
+# The defaults fit a 16 GB server and leave room for a frontend build next to
+# the running stack; the measurements behind them are in
+# docs/deployment/README.md ("Memory limits"). A Node process sizes its heap
+# from its limit (about half of it), so raise the limit — not NODE_OPTIONS —
+# for a process that needs more heap. The Go services (caddy, seaweed) get
+# GOMEMLIMIT at about 85% of their limit (CG_GOMEMLIMIT_<SERVICE>; selfhost.sh
+# derives it from an overridden CG_MEM_LIMIT_<SERVICE>).
 
 services:
   caddy:
@@ -65,6 +87,9 @@ services:
       - CG_IMAGE_FILTER_THRESHOLD=${CG_IMAGE_FILTER_THRESHOLD:-}
       - CG_GIPHY_API_KEY=${CG_GIPHY_API_KEY}
       - CG_WALLETCONNECT_PROJECT_ID=${CG_WALLETCONNECT_PROJECT_ID}
+      # Go runtime: collect harder before the memory limit (about 85% of it;
+      # selfhost.sh derives it from CG_MEM_LIMIT_CADDY when that is set)
+      - GOMEMLIMIT=${CG_GOMEMLIMIT_CADDY:-435MiB}
     volumes:
       - caddy-data:/data
       - caddy-config:/config
@@ -73,6 +98,8 @@ services:
     networks:
       - cryptogram
     restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_CADDY:-512m}
+    logging: *logging
 
   db:
     build:
@@ -110,6 +137,8 @@ services:
     stop_signal: SIGINT
     stop_grace_period: 1m
     restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_DB:-4g}
+    logging: *logging
 
   # Valkey (Redis-protocol compatible), two instances split by what may be
   # lost — see docs/infrastructure/README.md#redis-and-redis-cache-valkey.
@@ -141,6 +170,8 @@ services:
     # time for the final RDB save on shutdown
     stop_grace_period: 1m
     restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_REDIS:-2g}
+    logging: *logging
 
   # `redis-cache` holds only data that can be rebuilt (the URL-preview
   # cache): own memory budget, least-recently-used eviction, no persistence,
@@ -162,6 +193,8 @@ services:
     networks:
       - cryptogram
     restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_REDIS_CACHE:-512m}
+    logging: *logging
 
   # one all-in-one `weed server` process instead of separate master/volume/filer
   # containers: -s3 implies -filer, so this single service serves master 9333,
@@ -176,6 +209,8 @@ services:
     image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
     command: "server -dir=/data -ip=seaweed -master.volumeSizeLimitMB=${SEAWEED_VOLUME_LIMIT_MB:-1024} -volume.max=0 -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.port.iceberg=0"
     restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_SEAWEED:-1g}
+    logging: *logging
     networks:
       cryptogram:
         aliases:
@@ -183,6 +218,9 @@ services:
     environment:
       WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
       WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
+      # Go runtime: collect harder before the memory limit (about 85% of it;
+      # selfhost.sh derives it from CG_MEM_LIMIT_SEAWEED when that is set)
+      GOMEMLIMIT: ${CG_GOMEMLIMIT_SEAWEED:-870MiB}
     volumes:
       - ./s3_config/s3.selfhost.json:/etc/seaweedfs/s3.json:ro
       - seaweedfs-data:/data
@@ -213,7 +251,13 @@ services:
     networks:
       - cryptogram
     restart: on-failure:3
+    mem_limit: ${CG_MEM_LIMIT_MIGRATE_DB:-2g}
+    logging: *logging
     command: node /dist/migrateDb.js
+    # a one-shot run: the image's health check (the report of a long-running
+    # process, srv/healthcheck.ts) does not apply
+    healthcheck:
+      disable: true
     stop_grace_period: 1m
 
   wsapi:
@@ -230,14 +274,22 @@ services:
       - DEPLOYMENT=prod
       - BASE_URL=https://${CG_DOMAIN}
       - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
     depends_on:
-      - db
-      - redis
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
     networks:
       - cryptogram
     command: ["node", "/dist/wsapi.js"]
     stop_grace_period: 1m
     restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_WSAPI:-1536m}
+    logging: *logging
 
   api:
     build:
@@ -295,12 +347,21 @@ services:
       - BOT_ACTIVE_TOKEN_LIMIT=${BOT_ACTIVE_TOKEN_LIMIT:-10}
       - BOT_API_RATE_LIMIT_PER_MINUTE=${BOT_API_RATE_LIMIT_PER_MINUTE:-120}
       - BOT_MESSAGE_RATE_LIMIT_PER_MINUTE=${BOT_MESSAGE_RATE_LIMIT_PER_MINUTE:-30}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
     depends_on:
-      - db
-      - redis
-      - redis-cache
-      - seaweed
-      - memberlist
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+      redis-cache:
+        condition: service_started
+      seaweed:
+        condition: service_started
+      memberlist:
+        condition: service_started
     networks:
       - cryptogram
       - mail-relay
@@ -310,6 +371,8 @@ services:
     command: ["node", "/dist/api.js"]
     stop_grace_period: 1m
     restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_API:-2g}
+    logging: *logging
 
   memberlist:
     image: cryptogram/backend
@@ -322,13 +385,20 @@ services:
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - DEPLOYMENT=prod
       - BASE_URL=https://${CG_DOMAIN}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
     depends_on:
-      - db
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
     networks:
       - cryptogram
     command: ["node", "/dist/memberlist.js"]
     stop_grace_period: 1m
     restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_MEMBERLIST:-4g}
+    logging: *logging
 
   job-runner:
     image: cryptogram/backend
@@ -360,16 +430,27 @@ services:
       # receive the mail relay's bounce reports on port 2525 (mail-relay
       # network; same login as SMTP_USER/SMTP_PASSWORD)
       - MAIL_BOUNCE_RECEIVER=${CG_ENABLE_MAIL:-false}
+      # heap cap per worker thread (srv/jobs.ts, default 384 MB)
+      - JOB_WORKER_MAX_OLD_SPACE_MB=${JOB_WORKER_MAX_OLD_SPACE_MB:-}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
     depends_on:
-      - db
-      - redis
-      - seaweed
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+      seaweed:
+        condition: service_started
     networks:
       - cryptogram
       - mail-relay
     command: ["node", "/dist/jobs.js"]
     stop_grace_period: 1m
     restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_JOB_RUNNER:-4g}
+    logging: *logging
 
   # voice/video calls — disable with CG_ENABLE_CALLS=false in .env.selfhost
   mediasoup:
@@ -411,6 +492,8 @@ services:
       - "40000-40099:40000-40099/tcp"
     stop_grace_period: 30s
     restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_MEDIASOUP:-2g}
+    logging: *logging
 
   # blockchain indexing/token gating — disable with CG_ENABLE_BLOCKCHAIN=false
   onchain:
@@ -454,14 +537,22 @@ services:
       - IMAGE_MODERATION_ENABLED=${CG_ENABLE_IMAGE_FILTER:-true}
       - IMAGE_MODERATION_THRESHOLD=${CG_IMAGE_FILTER_THRESHOLD:-}
       - IMAGE_MODERATION_MODEL_PATH=${CG_IMAGE_FILTER_MODEL_PATH:-}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
     depends_on:
-      - db
-      - redis
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
     networks:
       - cryptogram
     command: ["node", "/dist/onchain.js"]
     stop_grace_period: 1m
     restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_ONCHAIN:-1536m}
+    logging: *logging
 
   # send-only mail relay (maddy) — disable with CG_ENABLE_MAIL=false and point
   # SMTP_* at an external server instead (SELFHOST.md, "Email"). The app
@@ -497,6 +588,8 @@ services:
       - no-new-privileges:true
     stop_grace_period: 1m
     restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_MAIL:-256m}
+    logging: *logging
 
   cg-builder:
     build:
@@ -512,6 +605,8 @@ services:
       - BUILDER_UID=${BUILDER_UID:-1000}
       - BUILDER_GID=${BUILDER_GID:-1000}
     restart: "no"
+    mem_limit: ${CG_MEM_LIMIT_CG_BUILDER:-6g}
+    logging: *logging
     volumes:
       - ../:/cg
       - builder-cache:/builder-cache

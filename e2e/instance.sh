@@ -223,7 +223,9 @@ build() {
   docker build -t "$PREFIX/backend_stage_0" -f "$ctx/backend/Dockerfile_dev_stage_0" "$ctx/backend"
   sed "s#^FROM commonground/backend_stage_0#FROM $PREFIX/backend_stage_0#" \
     "$ctx/backend/Dockerfile_dev_stage_1" > "$ctx/backend/Dockerfile.e2e"
-  docker build -t "$PREFIX/backend" -f "$ctx/backend/Dockerfile.e2e" "$ctx/backend"
+  # the frontend build's ID (vite/buildId.ts), as selfhost.sh build does
+  docker build -t "$PREFIX/backend" --build-arg CG_BUILD_ID="$(cat "$REPO_ROOT/build/build-id.txt")" \
+    -f "$ctx/backend/Dockerfile.e2e" "$ctx/backend"
 
   echo "--- database image ($PREFIX/db)"
   docker build -t "$PREFIX/db" "$DOCKER_DIR/db"

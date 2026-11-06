@@ -5,9 +5,25 @@
 import { Worker } from 'worker_threads';
 import cron from "node-cron";
 import path from 'path';
-import { fakeHealthcheck } from './healthcheck';
+import { postgresProbe, startHealthcheck } from './healthcheck';
+import { valkeyProbe } from './redis/healthProbe';
+import pool from './util/postgres';
 
 let processIsExiting = false;
+
+/**
+ * Heap cap of every worker thread. Without it each worker sizes its heap like
+ * the main thread — about half of the container's memory limit — so a few
+ * busy workers together could pass the limit long before V8 collects. With
+ * it, the workers' sum stays below the job-runner's limit: at most nine run
+ * at once (four permanent ones, five scheduled ones, each at most once), 9 x
+ * 384 MB = 3.4 GB of the default 4 GB (docker-compose.selfhost.yml, docs/
+ * deployment §5). JOB_WORKER_MAX_OLD_SPACE_MB overrides it; a worker that hits
+ * it ends with ERR_WORKER_OUT_OF_MEMORY and is restarted like any crashed one.
+ */
+const WORKER_RESOURCE_LIMITS = {
+  maxOldGenerationSizeMb: Number(process.env.JOB_WORKER_MAX_OLD_SPACE_MB) || 384,
+};
 
 const allWorkers: Map<string, Worker> = new Map();
 
@@ -21,7 +37,7 @@ async function createCronOrIntervalWorker(filename: string, options: ({ cronExpr
       console.log(`=== Spawning ${type} ${filename} Worker... ===`);
       const existingWorker = allWorkers.get(filename);
       if (!existingWorker) {
-        const worker = new Worker(path.join(__dirname, 'jobs', `${filename}.js`));
+        const worker = new Worker(path.join(__dirname, 'jobs', `${filename}.js`), { resourceLimits: WORKER_RESOURCE_LIMITS });
         allWorkers.set(filename, worker);
         worker.on("error", (error) => {
           console.error(`An error occurred in ${filename} Worker`, error);
@@ -50,7 +66,7 @@ async function createPermanentWorker(filename: string, restart = true, sleepBefo
     await new Promise<void>(resolve => setTimeout(resolve, sleepBefore));
 
   console.log(`=== Spawning Permanent ${filename} Worker... ===`);
-  const worker = new Worker(path.join(__dirname, 'jobs', `${filename}.js`));
+  const worker = new Worker(path.join(__dirname, 'jobs', `${filename}.js`), { resourceLimits: WORKER_RESOURCE_LIMITS });
   allWorkers.set(filename, worker);
   worker.on("error", (error) => {
     console.error(`An error occurred in ${filename} Worker`, error);
@@ -71,7 +87,7 @@ async function createOneshotWorker(filename: string, sleepBefore?: number) {
     await new Promise<void>(resolve => setTimeout(resolve, sleepBefore));
 
   console.log(`=== Spawning Oneshot ${filename} Worker... ===`);
-  const worker = new Worker(path.join(__dirname, 'jobs', `${filename}.js`));
+  const worker = new Worker(path.join(__dirname, 'jobs', `${filename}.js`), { resourceLimits: WORKER_RESOURCE_LIMITS });
   worker.on("error", (error) => {
     console.error(`An error occurred in ${filename} Worker`, error);
   });
@@ -95,10 +111,15 @@ if (process.env.MAIL_BOUNCE_RECEIVER === 'true') {
   }
 }
 
-// the backend image's HEALTHCHECK reads healthcheck.txt; without this the
-// job-runner container reports permanently unhealthy (every other backend
-// service already does the same)
-fakeHealthcheck();
+// healthy: the database and the Valkey state instance (the workers publish
+// their events through it) answer; the job-runner has no listener. The main
+// thread uses its pool for this probe only (the workers have their own): an
+// idle connection the database drops (a restart) is reported, not thrown —
+// without a listener the pool's `error` event would end the whole job-runner.
+pool.on('error', (error) => {
+  console.warn(`healthcheck: idle database connection lost (${error.message})`);
+});
+startHealthcheck([postgresProbe(pool), valkeyProbe()]);
 
 createCronOrIntervalWorker('onlineStatusCheck', { interval: 30000 });
 // staking Spark drip: the pro-rata target math makes cadence cosmetic —

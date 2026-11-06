@@ -13,7 +13,7 @@
 
 import { PrecacheController, PrecacheRoute } from 'workbox-precaching';
 import { registerRoute } from 'workbox-routing';
-import buildId from 'common/random_build_id';
+import buildId from 'common/buildId';
 import { getUrl } from 'common/util';
 import type { MessageFromServiceWorker } from 'data/appstate/serviceWorker';
 import { UAParser } from 'ua-parser-js';

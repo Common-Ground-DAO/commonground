@@ -13,6 +13,7 @@ import { absoluteSocialMeta } from './vite/absoluteSocialMeta';
 import { baseUrlResolve } from './vite/baseUrlResolve';
 import { htmlEntryScripts } from './vite/htmlEntryScripts';
 import { serviceWorker } from './vite/serviceWorker';
+import { buildIdDefine, buildIdPlugin, resolveBuildId } from './vite/buildId';
 
 // The browser floor, in esbuild's notation — Vite 8 still takes that for
 // `build.target` and converts it for Oxc (JS lowering) and Lightning CSS
@@ -366,6 +367,12 @@ function assertCgidEntryChunks(): Plugin {
   };
 }
 
+// One ID per build, shared by the app bundle, the service worker and (via
+// build/build-id.txt and the build scripts) the backend image — see
+// vite/buildId.ts and src/common/buildId.ts. (The dev server uses the dev
+// stack's ID instead, see buildIdPlugin.)
+const BUILD_ID = resolveBuildId();
+
 export default defineConfig(() => ({
   // Both HTML entries live at the repo root; `public/` stays copy-verbatim.
   root: __dirname,
@@ -409,9 +416,11 @@ export default defineConfig(() => ({
     // Only the legacy Azure pipelines set PUBLIC_URL; everywhere else this is
     // a no-op. See vite/absoluteSocialMeta.ts.
     absoluteSocialMeta(process.env.PUBLIC_URL),
+    buildIdPlugin(BUILD_ID, __dirname),
     serviceWorker({
       swSrc: 'src/service-worker.ts',
       plugins: [baseUrlResolve('src')],
+      define: buildIdDefine(BUILD_ID),
     }),
     assertCgidEntryChunks(),
   ],

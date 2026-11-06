@@ -29,7 +29,8 @@
 > room (`hasPermissionToJoinCall`, Public role) against commits 2484880 and eebc3cf, 2026-11-03; media
 > permissions on `produce`, the join and moderation checks (roles of the call's community, the
 > predefined Public role, bans), the call role ids, the server-side demotion and the client's refusal
-> warning against commits 7814781, 9385d52, dac9eaf and ae660a0, 2026-11-03
+> warning against commits 7814781, 9385d52, dac9eaf and ae660a0, 2026-11-03;
+> the health-check connections and the call server's health check against commit 170a73b, 2026-11-03
 
 This document covers all real-time communication in Common Ground: the Socket.IO event layer, WebRTC media via MediaSoup, signaling via protoo, push notifications, and the Redis infrastructure tying it together.
 
@@ -873,7 +874,7 @@ No queue or job state lives in Valkey (the job runner schedules in-process and k
 The `RedisManager` class (`srv/redis/index.ts`) manages all connections:
 
 - Up to five clients: `session`, `socketIOPub`, `socketIOSub`, `data` (state instance) and `cache` (cache instance), each built by `srv/redis/client.ts`, which pins `RESP: 2` (node-redis 6 defaults to RESP3; `@socket.io/redis-adapter` 8.3 is written against RESP2).
-- **Clients are created and connect on first use** (`getClient(type)`), so a process holds only the connections it needs. Measured on a smoke stack: `api` 3 state connections (`session`, `data`, `socketIOPub`) + 1 cache connection once a URL preview was requested; each `wsapi` 3 (`socketIOPub`, `socketIOSub`, `data` — it never reads the session store, it only unsigns the session cookie); `memberlist` 0 (it used to open 4 through `healthcheck.ts`). By the import graph, the job-runner main thread and `migrate-db` open none either, and job workers that emit events open `socketIOPub` only. Commands sent before a connection is up wait in node-redis' offline queue, bounded to 10,000 commands per client (`commandsQueueMaxLength`; beyond it node-redis rejects new commands at once with "The queue is full").
+- **Clients are created and connect on first use** (`getClient(type)`), so a process holds only the connections it needs. Measured on a smoke stack: `api` 3 state connections (`session`, `data`, `socketIOPub`) + 1 cache connection once a URL preview was requested; each `wsapi` 3 (`socketIOPub`, `socketIOSub`, `data` — it never reads the session store, it only unsigns the session cookie); `memberlist` 0 (it used to open 4 through `healthcheck.ts`; its health check probes no Valkey). By the import graph `migrate-db` opens none either, and job workers that emit events open `socketIOPub` only. The health check's Valkey probe (`srv/redis/healthProbe.ts`) pings over the `data` client, so since 2026-11-02 the job-runner main thread holds that one connection and `onchain` opens it at start instead of at its first role check (`api` and `wsapi` hold it anyway). Commands sent before a connection is up wait in node-redis' offline queue, bounded to 10,000 commands per client (`commandsQueueMaxLength`; beyond it node-redis rejects new commands at once with "The queue is full").
 - `ready(...types)` resolves once the given clients have connected (once — it says nothing about the connection still being up, and it waits for as long as the server is unreachable), so it is only used for startup ordering (`wsapi` attaches the Socket.IO adapter after it); request paths never wait on it. If a client's `connect()` gives up anyway (e.g. an invalid URL), the client is dropped and the next `getClient()` starts over. `connectedClient(type)` returns the client only if it is connected right now — the URL-preview cache uses it, so previews are built uncached instead of waiting while the cache instance is down.
 - Exposes `get`, `set`, `del` convenience operations and `userData` (below); generates a random `instanceId` per process (bot presence leases).
 - **Error handling:** every client has an `error` listener (`client.ts`). Without one, node-redis' `error` event — emitted on every failed (re)connection attempt — is thrown and kills the process; before 2026-10-31 only the two Socket.IO clients had one (attached by the adapter, in `wsapi` only), so a Redis restart crashed every process that imports `srv/redis` — observed for `memberlist`, which exited with `SocketClosedUnexpectedlyError`. The listener logs at most one line per client every 30 s (with a count of suppressed errors) and one line when the client is connected again. Reconnects use node-redis' default strategy (exponential backoff capped at 2 s plus jitter, unlimited retries); pub/sub subscriptions are restored on reconnect.
@@ -936,7 +937,6 @@ Key prefixes:
 | `srv/mediasoup/config.ts` | MediaSoup worker/router/transport configuration |
 | `srv/mediasoup/utils.ts` | `clone()` deep-copy utility |
 | `srv/mediasoup/logger.ts` | Debug logger wrapper |
-| `srv/mediasoup/mediasoupHealthcheck.ts` | Fake healthcheck (writes file periodically) |
 | `srv/redis/index.ts` | RedisManager: two Valkey instances (state, cache), up to five lazily created clients |
 | `srv/redis/client.ts` | The one `createClient` call: `RESP: 2`, `error` listener, reconnect logging |
 | `srv/redis/userdata.ts` | UserDataManager for online status tracking |

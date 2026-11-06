@@ -31,7 +31,10 @@
 > Vite 8 / Rolldown (§2 package-manager allowlist, "Frontend build steps",
 > output layout incl. the worker's buffered scripts, chunking; §6 dev-server commands)
 > against commit 3e8b08e, 2026-11-01; Tailwind CSS 4 in "Frontend build steps" (the
-> build row, the memory figure) against commit 440c779, 2026-11-02
+> build row, the memory figure) against commit 440c779, 2026-11-02; the build ID (§2),
+> the backend health checks (§1), `migrate-db`'s disabled health check, and in §7 log
+> rotation, memory limits, IPv6 detection, the Compose-plugin requirement and
+> `harden.sh` against commit 170a73b, 2026-11-03
 
 # Common Ground Infrastructure Documentation
 
@@ -115,7 +118,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Purpose:** Main HTTP REST API server. Handles all `/api/v2/*` requests plus the Bot API v1 (`/BotV1/*`): authentication, community management, file uploads, messaging, contracts, notifications, Twitter/Lukso integrations, search, reporting, bots, and staking.
 - **Command:** `node /dist/api.js`
 - **Port:** Internal only (reached by Caddy on port 4000 over the Docker network)
-- **Depends on:** `db`, `redis`, `redis-cache`, `seaweed`, `memberlist`
+- **Depends on:** `migrate-db` (`condition: service_completed_successfully`, see [migrate-db](#migrate-db)), `db`, `redis`, `redis-cache`, `seaweed`, `memberlist`
 - **Volumes:**
   - `./vapid_keys.json:/run/secrets/vapid_keys_json:ro` — VAPID keys for web push notifications
   - `./api_data:/api_data:ro` — static API data
@@ -127,20 +130,20 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Image:** `cryptogram/backend`
 - **Purpose:** WebSocket API server. Handles real-time communication at `/api/ws/` — message delivery, presence updates, typing indicators, etc.
 - **Command:** `node /dist/wsapi.js`
-- **Depends on:** `db`, `redis`
+- **Depends on:** `migrate-db` (`condition: service_completed_successfully`, see [migrate-db](#migrate-db)), `db`, `redis`
 - **Key environment variables:** `DB_TYPE=writer`, `PG_PASSWORD`, `REDIS_PASSWORD`, `REDIS_SECRET`, `DEPLOYMENT`, `BASE_URL`, the passkey variables (see `api`)
 
 #### `memberlist`
 - **Image:** `cryptogram/backend`
 - **Purpose:** Dedicated service for member-list queries. Offloads heavy member-list operations from the main API to avoid blocking other requests.
 - **Command:** `node /dist/memberlist.js`
-- **Depends on:** `db`
+- **Depends on:** `migrate-db` (`condition: service_completed_successfully`, see [migrate-db](#migrate-db)), `db`
 
 #### `job-runner`
 - **Image:** `cryptogram/backend`
 - **Purpose:** Background job processor. Runs scheduled and queued tasks: activity-score calculation, email sending, cleanup jobs, and the Spark staking-accrual job.
 - **Command:** `node /dist/jobs.js`
-- **Depends on:** `db`, `redis`, `seaweed`
+- **Depends on:** `migrate-db` (`condition: service_completed_successfully`, see [migrate-db](#migrate-db)), `db`, `redis`, `seaweed`
 - **Key environment variables:** the writer DB/Redis set, `S3_SECRET`, the `SMTP_*`/`EMAIL_FROM*` set, and the `STAKING_*` set.
 
 #### `mediasoup`
@@ -159,7 +162,7 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Image:** `cryptogram/backend`
 - **Purpose:** Blockchain event listener and token-gating engine. Monitors ERC-20/721/1155 balances across multiple chains, assigns roles based on token holdings, indexes staking events, and syncs on-chain data.
 - **Command:** `node /dist/onchain.js`
-- **Depends on:** `db`, `redis`
+- **Depends on:** `migrate-db` (`condition: service_completed_successfully`, see [migrate-db](#migrate-db)), `db`, `redis`
 - **Key environment variables:** all `QUIKNODE_*` and `INFURA_LINEA` RPC endpoint URLs (ETH, BSC, Polygon/Matic, Gnosis/xDai, Fantom, Avalanche, Arbitrum, Optimism, Base, Linea, Arbitrum Nova, Celo, Polygon zkEVM, Scroll, zkSync, **and LUKSO — `QUIKNODE_LUKSO`, now a configurable endpoint like the others**), the `STAKING_*` set, and `RECALCULATE_BALANCES_AND_ROLES`.
 
 #### `migrate-db`
@@ -167,8 +170,66 @@ All services run on an internal Docker network called `cryptogram` (legacy name;
 - **Purpose:** Database migration runner. Executes on startup to apply pending schema migrations (and creates the mediasoup DB role if `docker/db/init.sh` has not).
 - **Command:** `node /dist/migrateDb.js`
 - **Depends on:** `db` with `condition: service_healthy` — `migrateDb.js` does not retry its connection, and on a fresh volume postgres initializes for several seconds.
+- **Gate for every backend service** (since 2026-11-02, both compose files): `api`, `wsapi`, `memberlist`, `job-runner`, `onchain` and `mediasoup` depend on it with `condition: service_completed_successfully`, so none of them queries a schema that is not yet migrated (before, `memberlist` restarted a few times on a fresh install until the tables existed). Compose runs it again on every `up` — also `up -d <service>` for a single service, unless `--no-deps` — which is a no-op without pending migrations. All pending migrations run in one transaction (TypeORM's default), so a failing one leaves the schema as it was.
 - **Restart policy:** `deploy.restart_policy` on failure, max 2 attempts (Compose v2 maps it to the container's `on-failure:2`; the 2-second delay and 60-second window are Swarm-only). Does not run persistently. `mediasoup` waits for it to complete successfully.
+- **Health check:** disabled (`healthcheck: disable: true`, both compose files) — the image's check reads the report of a long-running process, which a one-shot run never writes; an exited `migrate-db` would otherwise stay listed as `unhealthy`.
 - **Key environment variables:** `PG_SU_PASSWORD`, `PG_SU_NAME=postgres`, `PG_MEDIASOUP_PASSWORD`, `REDIS_PASSWORD`, `S3_SECRET`, `DEPLOYMENT`, `BASE_URL`
+
+#### Backend health checks
+
+Every long-running backend process reports its own health
+(`srv/healthcheck.ts`, since 2026-11-02 — before, every process wrote an
+unconditional "healthy" through `fakeHealthcheck()`): every 10 s it runs the
+probes it depends on, each with a 5 s timeout, and writes `ok` or `fail` plus
+one line per failed probe to `/dist/healthcheck.txt`. A probe whose last
+attempt has not settled is not started again (a hung database connection does
+not take one more pool client every round) and counts as failed. The image's
+`HEALTHCHECK` (`srv/healthcheck/healthcheck.sh`; stage 1: every 15 s, timeout
+5 s, 3 retries, start period 1 min probed every 5 s; the legacy single-stage
+`Dockerfile`: every 20 s, timeout 5 s, start period 1 min, no start interval
+— older engines' builders reject that flag) is healthy while that
+report says `ok` **and** is at most 30 s old — so a process whose event loop
+hangs turns unhealthy too. Each process deletes a report left from a
+previous run at start (a container restart keeps its filesystem), so only its
+own reports count. The script prints the report, so
+`docker inspect -f '{{json .State.Health}}' <container>` shows which probe
+failed.
+
+| process | healthy means |
+|---|---|
+| `api` | PostgreSQL answers `SELECT 1` (its pool), the Valkey state instance answers `PING`, the HTTP listener on :4000 accepts connections |
+| `wsapi` | the same three (Socket.IO listener on :4000; `srv/healthcheck/wsapi.ts`) |
+| `onchain` | the same three |
+| `memberlist` | PostgreSQL and its listener on :4000 — no Valkey (it uses none, and loads no Redis code for the check) |
+| `job-runner` | PostgreSQL and Valkey (the workers publish their events through it); no listener |
+| `mediasoup` | PostgreSQL (the call-server heartbeat; the process exits on its own when that fails), the signalling listener on :4443, every mediasoup worker running |
+
+The cache instance (`redis-cache`) is not probed: the app works without it.
+The Valkey probe uses the `data` client, so the job-runner's main thread
+holds one Valkey connection more than before; its pool, used only by the
+probe, has an `error` listener, so a database restart does not end the
+job-runner. Measured on the disposable e2e instance (2026-11-02):
+
+- `redis` stopped: `api`, `wsapi` and `job-runner` `unhealthy` after about
+  45 s (`valkey: not connected`), `memberlist` and `mediasoup` stayed
+  `healthy`; all `healthy` again within 15–20 s of the restart.
+- `db` paused (connections hang instead of failing): every backend
+  container `unhealthy` within 45–80 s (`postgres: no answer for 45 s`), no
+  restarts; `healthy` again within 10–25 s of `docker unpause`.
+- `db` stopped — the behaviour at the time of measurement (develop
+  4731fc1 plus F7), not a property of the health check: `api` and `wsapi`
+  exited once when the database closed their idle pool connections (the
+  pool's `error` event had no listener in those processes), `mediasoup`
+  exits when its heartbeat fails, and Docker restarted them; `memberlist` and
+  `mediasoup` kept failing at startup until the database was back. The
+  job-runner stayed up (restart count 0) and turned `unhealthy` after about
+  45 s; the restarted ones reported `unhealthy`
+  (`postgres: getaddrinfo EAI_AGAIN db`) once their start period had passed.
+  All `healthy` again within 20–60 s of the restart.
+
+Nothing in the stack depends on these states (`depends_on` stays plain);
+they are for the operator and for monitoring (roadmap S4). Docker does not
+restart an unhealthy container on its own.
 
 #### `seaweed` (SeaweedFS)
 - **Image:** `chrislusf/seaweedfs` 4.x, exact tag + digest pinned in the compose files (do not run an untagged/`latest` image, and keep any deployment at ≥ 4.34 for the 2026 security fixes). Moved 4.40 → 4.48 on 2026-10-31: 4.48 starts with exactly this command line and serves S3 (smoke-tested), and the SDK conformance suite passed against it.
@@ -366,11 +427,11 @@ The complete build pipeline, for first-time setup or full rebuilds.
    once to get the same resolution outside the containers.)
 3. **Internal mediasoup certificate:** `mediasoup/ensureInternalCert.sh` creates the self-signed caddy→mediasoup certificate if it is missing (browser-facing certificates come from Caddy's local CA, see [section 1](#tls-certificates-dev)).
 4. **Clear `backend/dist/` and `caddy/dist/`**, then install frontend dependencies (`docker compose run --rm cg-builder yarn install --immutable`).
-5. **Generate random build ID:** a random base64 string is written into `src/common/random_build_id.ts` for cache-busting / new-build detection.
+5. *(No build-ID step any more: the Vite build draws the build ID itself, see [Build ID](#build-id).)*
 6. **Type-check, lint and build the frontend:** one builder run of `yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite`, with `DEPLOYMENT=prod` and `NODE_OPTIONS=--max-old-space-size=4096`. Output goes to `../build/`, then `rsync`ed into `caddy/dist/`. See [Frontend build steps](#frontend-build-steps) for what each step does and why it is a separate step now.
 7. **Build the caddy image:** `docker compose build --no-cache caddy`.
 8. **Generate VAPID keys:** if `vapid_keys.json` doesn't exist, generate Web Push VAPID keys via `npx web-push generate-vapid-keys`.
-9. **Build the backend:** clear `backend/dist/`, `rsync` `srv/` (excluding `node_modules` and `.yarn`), copy `build/index.html` into `backend/dist/` (used for server-rendered meta tags), build `commonground/backend_stage_0`, then build the `api` image (stage 1 runs `yarn tsc`).
+9. **Build the backend:** clear `backend/dist/`, `rsync` `srv/` (excluding `node_modules` and `.yarn`), copy `build/index.html` into `backend/dist/` (used for server-rendered meta tags), build `commonground/backend_stage_0`, then build the `api` image (stage 1 runs `yarn tsc`) with `--build-arg CG_BUILD_ID=<build/build-id.txt>`.
 10. **Build and start the database:** `docker compose build --no-cache db && docker compose up -d db`.
 11. **Start the full stack:** `docker compose up -d`.
 12. **Deploy smart contracts:** runs `contracts/scripts/deploy.ts` against the local Hardhat node (`--network cgstack`).
@@ -378,15 +439,55 @@ The complete build pipeline, for first-time setup or full rebuilds.
 
 ### Backend-Only Update: `docker/updateBackend.sh` (`./run.sh update_backend`)
 
-Faster rebuild that only recompiles the backend: stops the backend services (caddy keeps running — it resolves the containers per request), rebuilds `cg-builder`, creates the internal mediasoup certificate and the VAPID keys if missing, re-copies `srv/` sources and `build/index.html` into `backend/dist/`, builds the stage-0 and stage-1 backend images, then starts the stack and redeploys contracts.
+Faster rebuild that only recompiles the backend: stops the backend services (caddy keeps running — it resolves the containers per request), rebuilds `cg-builder`, creates the internal mediasoup certificate and the VAPID keys if missing, re-copies `srv/` sources and `build/index.html` into `backend/dist/`, builds the stage-0 and stage-1 backend images (the latter with the build ID of the frontend Caddy serves, `caddy/dist/build-id.txt`, or `dev` without one), then starts the stack and redeploys contracts.
 
 ### Frontend-Only Update: `docker/updateFrontend.sh` (`./run.sh update_frontend`)
 
 Rebuilds only the frontend and the caddy image:
 1. Clear `caddy/dist/`, rebuild `cg-builder`.
-2. Install dependencies, generate a new random build ID.
+2. Install dependencies. The build below keeps the build ID of the deployed frontend (`caddy/dist/build-id.txt`, read before `caddy/dist/` is cleared), which is the one the running backend carries, so frontend and backend stay equal; without a deployed ID it draws a new one. Open clients therefore get no `version-update`; they pick the new frontend up through the service worker's own update check. (Until 2026-11-02 the script wrote a new ID that the running backend did not have — every client then saw a mismatch until the next `update_backend`.)
 3. Run `yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite` with `DEPLOYMENT=prod` and **`NODE_OPTIONS=--max-old-space-size=4096`** (see [Frontend build steps](#frontend-build-steps)).
 4. `rsync` the build output into `caddy/dist/`, then `docker compose up -d --no-deps --build caddy`.
+
+### Build ID
+
+The build ID ties a frontend build to the backend built with it: wsapi greets
+every websocket client with the backend's ID, a client whose own ID differs
+switches to `version-update` and lets the service worker update
+(src/data/appstate/webSocket.ts, [docs/realtime](../realtime/README.md)), and
+the service worker uses it as the precache revision of the unhashed files it
+adds by hand (fonts, call sounds, the cross-origin-isolation shells). It is
+a build-time value since 2026-11-02, read from `src/common/buildId.ts` — the
+build scripts used to `sed` a fresh value into the tracked
+`src/common/random_build_id.ts`, so every build left a modified checkout. That
+file is kept byte-identical to its last committed state and is no longer read
+(an existing checkout with a modified copy runs `git checkout --
+src/common/random_build_id.ts` once, `docker/SELFHOST.md`); it is deleted
+later (`docs/todo/TODO.md`).
+
+- **Frontend:** every `vite build` takes `CG_BUILD_ID` from its environment
+  (validated: up to 64 characters of `A-Za-z0-9+/=_-`) or draws 10 random
+  bytes (base64url), replaces `__CG_BUILD_ID__` in the app bundle and in the
+  service worker with it (`define`, `vite/buildId.ts`) and writes it to
+  `build/build-id.txt`. That file is not precached (the worker's glob covers
+  `*.html` and `static/` only); Caddy serves it as `/build-id.txt`, which is
+  harmless — the websocket hands the same ID to every client — and shows
+  which build is deployed (`curl https://<domain>/build-id.txt`; Caddy sends
+  it with `Cache-Control: no-cache`).
+- **Dev server:** `vite` (`./run.sh start`) draws no ID: it uses the deployed
+  dev-stack frontend's (`docker/caddy/dist/build-id.txt`, read at start), the
+  one the dev backend carries, or `dev` without one — the backend's fallback.
+- **Backend:** `Dockerfile_dev_stage_1` (and the legacy single-stage
+  `Dockerfile`) turn the build argument `CG_BUILD_ID` into the image's
+  environment variable of the same name; `src/common/buildId.ts`
+  (shared with the backend through the `srv/common` symlink) reads it there.
+  `selfhost.sh build`, `docker/build.sh` and `e2e/instance.sh build` pass the
+  content of `build/build-id.txt` (`--build-arg`), `updateBackend.sh` that of
+  `caddy/dist/build-id.txt` (the frontend Caddy serves); the legacy pipelines generate one ID, export it as the
+  pipeline variable `CG_BUILD_ID` for the frontend build and pass it to the
+  backend image build.
+- **Fallback:** `dev` — unit tests, and a backend image built without the
+  argument (e.g. `update_backend` before any frontend build).
 
 ### Frontend build steps
 
@@ -401,7 +502,7 @@ legacy Azure pipelines — runs the same four steps in this order:
 | type-check | `yarn typecheck` | `tsc --noEmit` for `src/**` plus `tsconfig.node.json` for the Vite-side files. The old webpack build ran ForkTsChecker inline; a Vite build type-checks nothing, so without this a type error ships silently. |
 | lint | `yarn lint` | `eslint .` against `eslint.config.mjs`. Same reason: react-scripts ran ESLintPlugin inline. Errors fail the build, warnings do not — the same contract CRA had. |
 | build | `yarn build` | `vite build` → `build/`. The CSS goes through Tailwind CSS 4 as a Vite plugin (`@tailwindcss/vite`, configured in `src/tailwind.css`) and Lightning CSS; there is no PostCSS step and no `postcss.config.js`/`tailwind.config.js` any more (wave M4, [docs/frontend §9 "Styling: Tailwind CSS 4"](../frontend/README.md#styling-tailwind-css-4)). |
-| HTML rewrite check | `yarn check:html-rewrite` | `tools/checkHtmlRewriteCompat.mjs` checks both emitted shells against their two serve-time consumers, which fail *silently* when the markup shape drifts: the real meta-rewrite logic of `srv/api/getRoutes.ts`, and the Caddy edge — each shell loads `/instance-config.js` once as a deferred classic script before the entry module, every inline script of `index.html` has its sha256 in the CSP of `docker/caddy/common.caddy`, and `index_cgid.html` has no inline script. |
+| HTML rewrite check | `yarn check:html-rewrite` | `tools/checkHtmlRewriteCompat.mjs` checks both emitted shells against their two serve-time consumers, which fail *silently* when the markup shape drifts: the real meta-rewrite logic of `srv/api/getRoutes.ts`, and the Caddy edge — each shell loads `/instance-config.js` once as a deferred classic script before the entry module, every inline script of `index.html` has its sha256 in the CSP of `docker/caddy/common.caddy`, and `index_cgid.html` has no inline script; `index.html` carries no `og:site_name` (the backend adds the instance's host on the pages it renders). |
 
 **Environment.** `DEPLOYMENT=prod` and `NODE_OPTIONS=--max-old-space-size=4096`
 are the only variables the build reads. `NODE_OPTIONS` stays set on every
@@ -600,7 +701,7 @@ scripts yet; the suite is a small set of unit tests (`src/**/*.test.ts`).
 ### Backend Docker Image Build (Two-Stage for Dev)
 
 - **Stage 0 (`Dockerfile_dev_stage_0`):** `FROM node:26-trixie` line, exact tag + digest pinned. Switches apt to the `snapshot.debian.org` timestamp of the Debian rootfs underneath the pinned node image ([UPDATE-POLICY.md](UPDATE-POLICY.md#apt-debian)), then — before the dependency layers, so they only rebuild when a pin changes — runs three verified downloads: `fetch_chrome.sh` (Chrome for Testing for puppeteer, sha256-pinned, plus its runtime libraries from the archive's `deb.deps` via apt; x86_64 only — on other architectures it is skipped and social preview images do not work), `download_model.sh` (the NSFW classification model, ~87 MB, from a **pinned HuggingFace revision** into `/models/nsfw`, sha256 per file) and `fetch_mediasoup_worker.sh` (the prebuilt mediasoup worker for the build host's arch and kernel major — kernels older than 6 get the kernel6 asset — sha256-pinned). The build needs network access to `storage.googleapis.com`, `huggingface.co`, `github.com`, `registry.npmjs.org` and `snapshot.debian.org`; the runtime needs none of them. It then installs corepack (pinned sha512), copies `package.json` / `yarn.lock` / `.yarnrc.yml`, runs `yarn install --immutable` (bcrypt compiled from source against the image's Node headers; the mediasoup and puppeteer postinstall downloads skipped via `MEDIASOUP_WORKER_BIN` / `PUPPETEER_SKIP_DOWNLOAD`), runs `check_pinned_binaries.sh` (fails if the installed mediasoup/puppeteer expect a different worker/Chrome than the pinned ones) and prunes the darwin/win32 `onnxruntime-node` binaries plus the browser-only `onnxruntime-web` (~290 MB that can never run in the linux node image). Details: [UPDATE-POLICY.md](UPDATE-POLICY.md#binary-downloads).
-- **Stage 1 (`Dockerfile_dev_stage_1`):** `FROM commonground/backend_stage_0`. Copies the full `dist/` source and runs `yarn tsc`. Rebuilt on every code change.
+- **Stage 1 (`Dockerfile_dev_stage_1`):** `FROM commonground/backend_stage_0`. Copies the full `dist/` source and runs `yarn tsc`; declares the `HEALTHCHECK` (see [Backend health checks](#backend-health-checks)) and, last, the build ID (`ARG`/`ENV CG_BUILD_ID`, see [Build ID](#build-id)). Rebuilt on every code change.
 
 **Production backend (`Dockerfile`):** single-stage build used by the legacy CI/CD pipelines, same base and the same steps as stage 0 + stage 1 in one image (verified downloads before `COPY ./dist`, then `yarn install --immutable`, `check_pinned_binaries.sh`, `yarn tsc`). The compilers and python3 that node-gyp needs come with the `node:*-trixie` base, so no build packages are installed or removed any more.
 
@@ -905,7 +1006,7 @@ The project uses **Azure DevOps Pipelines** (YAML). The build/deploy pipelines t
 
 **Trigger:** push to `staging`. **Pool:** `ubuntu-20` (self-hosted agent).
 
-Steps: install Docker/Node/Yarn toolchain → fetch the secure `.yarnrc` (private registry creds) → `yarn` install → copy `srv/` to `docker/backend/dist/` → generate a build ID (written to both `src/common/random_build_id.ts` and `docker/backend/dist/common/random_build_id.ts`) → frontend build with `yarn typecheck && yarn lint && DEPLOYMENT=prod PUBLIC_URL="https://staging.app.cg" yarn build && node tools/checkHtmlRewriteCompat.mjs` → copy `index.html`/build output into backend and nginx dirs → build and push **backend** and **nginx** images (nginx build args `SERVER_NAME=staging.app.cg`, `CGID_SERVER_NAME=id.staging.app.cg`) with tags `beta` + `$(Build.BuildNumber)` → deploy via **Ansible** over SSH (`docker_swarm_deploy_beta.yml` for the main stack, `deploy_docker_mediasoup.yml` for mediasoup) → clean up.
+Steps: install Docker/Node/Yarn toolchain → fetch the secure `.yarnrc` (private registry creds) → `yarn` install → copy `srv/` to `docker/backend/dist/` → generate a build ID (pipeline variable `CG_BUILD_ID`: the frontend build embeds it, the backend image build gets it as `--build-arg`) → frontend build with `yarn typecheck && yarn lint && DEPLOYMENT=prod PUBLIC_URL="https://staging.app.cg" yarn build && node tools/checkHtmlRewriteCompat.mjs` → copy `index.html`/build output into backend and nginx dirs → build and push **backend** and **nginx** images (nginx build args `SERVER_NAME=staging.app.cg`, `CGID_SERVER_NAME=id.staging.app.cg`) with tags `beta` + `$(Build.BuildNumber)` → deploy via **Ansible** over SSH (`docker_swarm_deploy_beta.yml` for the main stack, `deploy_docker_mediasoup.yml` for mediasoup) → clean up.
 
 ### Production: `pipelines/build-production.yml`
 
@@ -1002,7 +1103,7 @@ own. Details, options and how to add a flow: [`e2e/README.md`](../../e2e/README.
 
 ## 7. Self-Hosted Single-Server Deployment
 
-**Files:** `docker/docker-compose.selfhost.yml`, `docker/docker-compose.selfhost.calls.yml`, `docker/SELFHOST.md`, `docker/selfhost/` (`init.sh`, `selfhost.sh`, `backup.sh`), `docker/caddy/` (image, `Caddyfile.selfhost`, `common.caddy`, `instance-config.js`).
+**Files:** `docker/docker-compose.selfhost.yml`, `docker/docker-compose.selfhost.calls.yml`, `docker/SELFHOST.md`, `docker/selfhost/` (`init.sh`, `selfhost.sh`, `backup.sh`, `harden.sh`), `docker/caddy/` (image, `Caddyfile.selfhost`, `common.caddy`, `instance-config.js`).
 
 This profile runs the **entire stack on one server** with real production semantics on your own domain. A 4–8 core / 16 GB machine is enough (idle < 2 GB; RAM is mostly consumed under call/upload load). Full walkthrough in `docker/SELFHOST.md`.
 
@@ -1017,19 +1118,24 @@ This profile runs the **entire stack on one server** with real production semant
 - **`mediasoup` and `onchain` are optional**: they carry the Compose profiles `calls` and `blockchain`, which `selfhost.sh` enables from `CG_ENABLE_CALLS` / `CG_ENABLE_BLOCKCHAIN` in `.env.selfhost` (both default to `true`). See [docs/deployment §3.8](../deployment/README.md#38-optional-services-calls-and-blockchain) and `docker/SELFHOST.md`.
 - **`CG_ENABLE_IMAGE_FILTER`** (default `true`) is a plain switch, not a profile: it feeds `IMAGE_MODERATION_ENABLED` into the `api`/`onchain` services and the instance-config injection (`features.imageFilter`), which also turns off the client-side pre-upload warning. `CG_IMAGE_FILTER_THRESHOLD` / `CG_IMAGE_FILTER_MODEL_PATH` pass through to `IMAGE_MODERATION_THRESHOLD` / `IMAGE_MODERATION_MODEL_PATH`.
 - **SeaweedFS master** uses `-volumeSizeLimitMB=${SEAWEED_VOLUME_LIMIT_MB:-1024}`.
+- **Log rotation:** every service logs through the `json-file` driver with `max-size ${CG_LOG_MAX_SIZE:-20m}`, `max-file ${CG_LOG_MAX_FILE:-5}` and `compress` (the `x-logging` anchor), so a container keeps at most about 100 MB of logs; `docker inspect -f '{{json .HostConfig.LogConfig}}' <container>` shows it. The dev stack keeps Docker's defaults.
+- **Memory limits:** every service has a `mem_limit`, overridable per service with `CG_MEM_LIMIT_<SERVICE>` (e.g. `CG_MEM_LIMIT_API`, `CG_MEM_LIMIT_JOB_RUNNER`) in `.env.selfhost`. The Go services (`caddy`, `seaweed`) get `GOMEMLIMIT` at about 85% of their limit, the job-runner's worker threads a heap cap each (`JOB_WORKER_MAX_OLD_SPACE_MB`, default 384); `up` warns when `CG_MEM_LIMIT_REDIS` is below twice `REDIS_MAXMEMORY`. Defaults, the measurements behind them and Node's heap sizing: [docs/deployment §5](../deployment/README.md#memory-limits). The dev stack has none.
+- **Health checks:** the backend services report real health ([Backend health checks](#backend-health-checks)); `migrate-db` has the image's check disabled.
 - **Mail:** no `mailpit`; instead an optional send-only relay, service `mail` (`foxcpp/maddy:0.9.6`, pinned by digest, config in `docker/mail/`), behind the Compose profile `mail`, which `selfhost.sh` enables only for `CG_ENABLE_MAIL=true` (written by `init.sh`; unset = off). It sits on its own networks — `mail-relay` (`internal: true`, shared with `api` and `job-runner`) and `mail-egress` — and keeps its DKIM key and queue in the `mail-data` volume. Bounce reports go back over `mail-relay` to the job-runner's receiver on port 2525 (`MAIL_BOUNCE_RECEIVER=${CG_ENABLE_MAIL:-false}` on the `job-runner` service), which only accepts connections from the relay's own address. The relay is the only component meant to send to port 25; the app containers still have ordinary egress, so enforcing that takes a host firewall rule. See [docs/deployment §3.9](../deployment/README.md#39-email-smtp-and-the-mail-relay).
 
 ### Operation scripts
 
-- **`docker/selfhost/init.sh [--tls-internal] <domain> <acme-email> [id-domain] [public-ip]`** — one-time bootstrap. Idempotent (never overwrites existing files). It:
-  - Auto-detects the public IP (via ipify) if not supplied; a supplied IP (e.g. a LAN address) is used as-is.
+- **`docker/selfhost/init.sh [--tls-internal] <domain> <acme-email> [id-domain] [public-ip] [public-ipv6]`** — one-time bootstrap. Idempotent (never overwrites existing files). It:
+  - Auto-detects the public IPv4 address (via ipify, `curl -4`) if not supplied; a supplied IP (e.g. a LAN address) is used as-is, and must be IPv4 (mediasoup listens on IPv4 only).
+  - Auto-detects the public IPv6 address (`curl -6`, `api6.ipify.org`) unless one — or `-` for none — is supplied or `--tls-internal` is given, and records it as `CG_PUBLIC_IPV6`. Nothing in the stack uses it yet: the stack's Docker networks are IPv4-only, so the next steps say to publish an A record and no AAAA record (`docker/SELFHOST.md`, "IPv6").
   - `--tls-internal` writes `CG_TLS_MODE=internal` instead of `acme`, accepts `-` for the then-unused ACME email, and requires the IP argument.
   - Generates `docker/.env.selfhost` with fresh random secrets (`openssl rand`) — all DB/Redis/S3 credentials, the relay login `SMTP_PASSWORD` (with `CG_ENABLE_MAIL=true`, `SMTP_HOST=mail` and the `MAIL_*` settings), the backup password `CG_BACKUP_PASSWORD` with the other `CG_BACKUP_*` settings, resource-tuning defaults sized for 16 GB, bot limits, and a fully-commented set of optional-integration keys. Written `chmod 600`.
   - Generates `docker/s3_config/s3.selfhost.json` (creating `s3_config/`, which holds no tracked file and so is missing in a fresh clone) with an S3 secret matching the generated `S3_SECRET`. Seaweed reads it as its in-container uid 1000, so it is made owned by `1000:1000` with mode `600` (run as uid 1000 or root); any other user can't `chown`, gets mode `644` and a printed note on how to tighten it as root.
   - Generates a self-signed cert in `docker/selfhost/certs/` for the internal caddy→mediasoup hop only (clients only ever see Caddy's cert).
   - The third argument (`id-domain`, or `-`) is only for the legacy CG ID gateway; by default `CG_ID_DOMAIN` is written empty.
   - The generated `.env.selfhost` prefills the RPC endpoints with **free public JSON-RPC URLs** and `CG_ACTIVE_CHAINS=eth,arbitrum,xdai,base,matic,lukso`, so token-gating works out of the box.
-- **`docker/selfhost/selfhost.sh <cmd>`** — build/operate wrapper. Requires `.env.selfhost` (except `backup`/`restore`, see below); runs Compose with `--env-file .env.selfhost -f docker-compose.selfhost.yml`, plus `-f docker-compose.selfhost.calls.yml` when calls are enabled (publishes `4443` and switches on Caddy's call-signalling site), and exports `CG_CGID_VHOST=on` only when `CG_LEGACY_CGID=true` and `CG_ID_DOMAIN` is set (the legacy CG ID site; `up`/`update` note a `CG_ID_DOMAIN` that is ignored). Commands: `build`, `up`, `down`, `logs [service]`, `ps`, `stats`, `compose <args>`, `update` (git pull + rebuild + restart), `mail-dns` (SPF/DKIM/DMARC/PTR records for the mail relay), `backup <init|run|list|check|verify|install-timer|uninstall-timer>` and `restore …` (both handed to `backup.sh`). `up` and `update` first warn about contradictory mail settings. It sets `COMPOSE_PROFILES` from the `CG_ENABLE_CALLS` / `CG_ENABLE_BLOCKCHAIN` / `CG_ENABLE_MAIL` switches and runs `up`/`down`/`update` with `--remove-orphans`; `up` and `update` also stop and remove the container of a service whose switch was flipped off (`compose rm -sf` — `--remove-orphans` does not touch profile-disabled services), so e.g. the media ports are no longer published once calls are off. `update` runs `git pull` and continues in the pulled script. The `build` command mirrors `build.sh` (same type-check/lint/build/check chain, same `NODE_OPTIONS=--max-old-space-size=4096`) and builds the caddy image from `docker/caddy/` with the frontend in it. Sourcemaps ship here too — see [Frontend build steps](#frontend-build-steps).
+- **`docker/selfhost/selfhost.sh <cmd>`** — build/operate wrapper. Requires `.env.selfhost` (except `backup`/`restore`, see below); runs Compose with `--env-file .env.selfhost -f docker-compose.selfhost.yml`, plus `-f docker-compose.selfhost.calls.yml` when calls are enabled (publishes `4443` and switches on Caddy's call-signalling site), and exports `CG_CGID_VHOST=on` only when `CG_LEGACY_CGID=true` and `CG_ID_DOMAIN` is set (the legacy CG ID site; `up`/`update` note a `CG_ID_DOMAIN` that is ignored). Commands: `build`, `up`, `down`, `logs [service]`, `ps`, `stats`, `compose <args>`, `update` (git pull + rebuild + restart), `mail-dns` (SPF/DKIM/DMARC/PTR records for the mail relay), `backup <init|run|list|check|verify|install-timer|uninstall-timer>` and `restore …` (both handed to `backup.sh`). It needs the Compose plugin (`docker compose`, v2 or later) and stops with a message otherwise — the standalone `docker-compose` v1 is no fallback any more, since it ignores `COMPOSE_PROFILES` and would silently start neither mediasoup, onchain nor the mail relay. `up` and `update` first warn about contradictory mail settings and about a `CG_PUBLIC_IP` that is empty or not an IPv4 address. It sets `COMPOSE_PROFILES` from the `CG_ENABLE_CALLS` / `CG_ENABLE_BLOCKCHAIN` / `CG_ENABLE_MAIL` switches and runs `up`/`down`/`update` with `--remove-orphans`; `up` and `update` also stop and remove the container of a service whose switch was flipped off (`compose rm -sf` — `--remove-orphans` does not touch profile-disabled services), so e.g. the media ports are no longer published once calls are off. `update` runs `git pull` and continues in the pulled script. The `build` command mirrors `build.sh` (same type-check/lint/build/check chain, same `NODE_OPTIONS=--max-old-space-size=4096`, the build ID handed from `build/build-id.txt` to the backend image — [Build ID](#build-id)) and builds the caddy image from `docker/caddy/` with the frontend in it. Sourcemaps ship here too — see [Frontend build steps](#frontend-build-steps).
+- **`docker/selfhost/harden.sh [--dry-run] [--ssh-user <name>] [--skip <part>]`** — base hardening of a dedicated Ubuntu/Debian server (roadmap S3): key-only SSH (refused unless the operator has an authorized key), ufw with only the stack's ports, unattended security upgrades, a bounded journal, and the two sysctls the stack needs (`net.ipv4.ip_local_reserved_ports = 40000-40099`, `vm.overcommit_memory = 1`). Idempotent; `--dry-run` prints every change. Details: [docs/deployment §3.11](../deployment/README.md#311-server-hardening).
 - **`docker/selfhost/backup.sh`** — backup and restore with restic (official image, pinned by digest as `RESTIC_IMAGE`; also the helper for file operations in volumes): a local repository in `CG_BACKUP_DIR` plus an off-server copy in `CG_BACKUP_REPOSITORY`, systemd timers via `backup install-timer` (running as the checkout owner), drill mode (`restore --drill`) and `restore --undo`. `selfhost.sh up`/`update` resume a `seaweed` that a killed backup left paused. Called through `selfhost.sh`, which runs Compose operations for it (`selfhost.sh compose …`). Design and verification: [docs/deployment §3.7](../deployment/README.md#37-backup-and-restore); operator guide: `docker/SELFHOST.md` ("Backup and restore").
 
 ### Caddy (`docker/caddy/Caddyfile.selfhost`)
@@ -1079,4 +1185,4 @@ Off by default. To enable, deploy your own non-custodial `CgStaking` contract (`
 
 ### Backups & firewall
 
-State lives in two named volumes: `pgdata` (database) and `seaweedfs-data` (uploaded media), plus `mail-data` (DKIM key and outgoing queue) when the mail relay runs; `caddy-data` holds the ACME account and certificates (or the local CA). `selfhost.sh backup run` saves a `pg_dump` (online), `seaweedfs-data` (read while the `seaweed` container is paused), `caddy-data`, the DKIM key and the secrets bundle (`.env.selfhost`, `vapid_keys.json`, `s3.selfhost.json`, `selfhost/certs/`, `backup/`) into restic — see [docs/deployment §3.7](../deployment/README.md#37-backup-and-restore). `valkey-data` holds the state instance's RDB snapshot (sessions, rate-limit windows, replay guards); it is not backed up — losing it logs everyone out once, and a database restore removes it on purpose. The cache instance is unpersisted. Ports to open: `80/tcp` (ACME + HTTPS redirect), `443/tcp+udp` (app, HTTP/3), `4443/tcp` (call signalling, with calls), `40000–40099/udp+tcp` (WebRTC media; TCP is the fallback for UDP-blocking client networks). The mail relay needs outbound `25/tcp` only.
+State lives in two named volumes: `pgdata` (database) and `seaweedfs-data` (uploaded media), plus `mail-data` (DKIM key and outgoing queue) when the mail relay runs; `caddy-data` holds the ACME account and certificates (or the local CA). `selfhost.sh backup run` saves a `pg_dump` (online), `seaweedfs-data` (read while the `seaweed` container is paused), `caddy-data`, the DKIM key and the secrets bundle (`.env.selfhost`, `vapid_keys.json`, `s3.selfhost.json`, `selfhost/certs/`, `backup/`) into restic — see [docs/deployment §3.7](../deployment/README.md#37-backup-and-restore). `valkey-data` holds the state instance's RDB snapshot (sessions, rate-limit windows, replay guards); it is not backed up — losing it logs everyone out once, and a database restore removes it on purpose. The cache instance is unpersisted. Ports to open: `80/tcp` (ACME + HTTPS redirect), `443/tcp+udp` (app, HTTP/3), `4443/tcp` (call signalling, with calls), `40000–40099/udp+tcp` (WebRTC media; TCP is the fallback for UDP-blocking client networks). The mail relay needs outbound `25/tcp` only. These are the only ports the self-host compose files publish — Docker-published ports bypass a host firewall such as ufw, so nothing else may be published; `harden.sh` sets up ufw for exactly this set and lists any published port outside it.

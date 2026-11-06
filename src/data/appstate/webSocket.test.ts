@@ -572,7 +572,7 @@ describe('version update', () => {
     useDataLayerFakeTimers();
     const tab = await openTab();
     await settle(tab);
-    const { default: buildId } = await import('common/random_build_id');
+    const { default: buildId } = await import('common/buildId');
     tab.socket.deliver('buildId', buildId, Date.now());
     expect(tab.ws.updateAvailable).toBe(false);
   });

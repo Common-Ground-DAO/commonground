@@ -86,7 +86,26 @@ start_stack() {
     echo "seaweed was left paused (an interrupted backup?) — resuming it"
     docker_compose unpause seaweed
   fi
-  docker_compose up -d --remove-orphans
+  # The backend services start only once migrate-db has exited 0 (their
+  # depends_on). Compose recreates them first and starts them after the
+  # migrations, so the app is down while migrations run; a failing migration
+  # leaves them created but not started — and `up` does not always say so in
+  # its exit code. Check migrate-db's outcome explicitly.
+  local up_rc=0 migration
+  docker_compose up -d --remove-orphans || up_rc=$?
+  migration="$(docker_compose ps -a --format '{{.State}} {{.ExitCode}}' migrate-db 2>/dev/null | head -n 1)"
+  if [ -n "$migration" ] && [ "$migration" != "exited 0" ]; then
+    echo
+    echo "The database migrations did not finish successfully (migrate-db: $migration)."
+    echo "The app containers were NOT started — the instance is down until this is fixed."
+    echo "See why:   ./selfhost/selfhost.sh logs migrate-db"
+    echo "Then fix the cause (or go back to the previous version: git checkout <previous commit>,"
+    echo "./selfhost/selfhost.sh build) and run ./selfhost/selfhost.sh up again."
+    exit 1
+  fi
+  if [ "$up_rc" != 0 ]; then
+    exit "$up_rc"
+  fi
   local off=()
   if ! calls_enabled; then
     off+=(mediasoup)
@@ -207,6 +226,11 @@ Also check that your hoster allows outbound connections to port 25 — many bloc
 it for new servers until you ask. The relay keeps undeliverable mail in its
 queue and retries for about three days (./selfhost/selfhost.sh logs mail).
 EOF
+  if [ -n "${CG_PUBLIC_IPV6:-}" ]; then
+    echo
+    echo "The relay sends over IPv4 only (its Docker network has no IPv6), so ${CG_PUBLIC_IPV6}"
+    echo "needs no SPF entry and no PTR record."
+  fi
 }
 
 # The legacy CG ID mini-app (passkeys on a separate CG ID origin) is served
@@ -267,14 +291,26 @@ docker_compose() {
   fi
   export CG_CGID_VHOST
   CG_CGID_VHOST="$(cgid_vhost)"
+  COMPOSE_PROFILES="$profiles" docker compose --env-file .env.selfhost "${files[@]}" "$@"
+}
+
+# The Compose plugin (`docker compose`, v2 or later) is required. The old
+# standalone `docker-compose` (v1) is not a fallback: it ignores
+# COMPOSE_PROFILES, so mediasoup, onchain and the mail relay would silently
+# not start. Checked once here, before anything runs — docker_compose is also
+# called inside $(...), where a failure would not stop the script.
+require_compose() {
   if docker compose version >/dev/null 2>&1; then
-    COMPOSE_PROFILES="$profiles" docker compose --env-file .env.selfhost "${files[@]}" "$@"
-  elif docker-compose version >/dev/null 2>&1; then
-    COMPOSE_PROFILES="$profiles" docker-compose --env-file .env.selfhost "${files[@]}" "$@"
-  else
-    echo "Neither docker compose nor docker-compose is available."
-    exit 1
+    return 0
   fi
+  echo "This needs the Docker Compose plugin ('docker compose', v2 or later), which is not available."
+  if command -v docker-compose >/dev/null 2>&1; then
+    echo "The standalone 'docker-compose' (v1) found on this system is not supported: it ignores"
+    echo "COMPOSE_PROFILES, so calls, blockchain and mail would silently not start."
+  fi
+  echo "Install the plugin (Debian/Ubuntu with Docker's apt repository: apt install docker-compose-plugin;"
+  echo "see https://docs.docker.com/compose/install/linux/), then run this again."
+  exit 1
 }
 
 checkError() {
@@ -295,13 +331,6 @@ build() {
   docker_compose run --rm cg-builder yarn install --immutable
   checkError
 
-  buildId=$(dd if=/dev/random bs=1 count=10 status=none | base64)
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    sed -i '' 's#^const buildId =.*$#const buildId = "'$buildId'";#' ../src/common/random_build_id.ts
-  else
-    sed -i 's#^const buildId =.*$#const buildId = "'$buildId'";#' ../src/common/random_build_id.ts
-  fi
-
   # Type-check and lint are separate steps now: the webpack build ran
   # ForkTsChecker + ESLintPlugin inline and a Vite build does neither.
   # Sourcemaps ship on every path — the app is AGPL, the old no-sourcemap
@@ -312,6 +341,10 @@ build() {
   checkError
   mkdir -p caddy/dist && rm -rf caddy/dist/* && rsync -a ../build/* caddy/dist/
   checkError
+  # the build ID the frontend build drew (vite/buildId.ts); the backend image
+  # gets the same one, so clients notice when a new version is deployed
+  local build_id
+  build_id="$(cat ../build/build-id.txt)"
 
   printf "\n---\n--- Building caddy image\n---\n"
   docker_compose build --no-cache caddy
@@ -332,7 +365,7 @@ build() {
   cp ../build/index.html backend/dist/
   docker build --tag commonground/backend_stage_0 -f backend/Dockerfile_dev_stage_0 ./backend/
   checkError
-  docker_compose build --no-cache api
+  docker_compose build --no-cache --build-arg CG_BUILD_ID="$build_id" api
   checkError
 
   printf "\n---\n--- Building database image\n---\n"
@@ -341,6 +374,73 @@ build() {
 
   printf "\n---\n--- Build finished. Start your instance with: ./selfhost/selfhost.sh up\n---\n"
 }
+
+# warns (never fails) about addresses that cannot work: mediasoup listens on
+# IPv4 only (srv/mediasoup/config.ts), so the address it announces to callers
+# must be the server's IPv4 address
+check_network_config() {
+  if [ -z "${CG_PUBLIC_IP:-}" ]; then
+    echo "Warning: CG_PUBLIC_IP is empty — calls cannot connect. Set it to the server's public IPv4 address."
+  elif [[ ! "$CG_PUBLIC_IP" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+    echo "Warning: CG_PUBLIC_IP '$CG_PUBLIC_IP' is not an IPv4 address. Calls announce it to the"
+    echo "         browsers and listen on IPv4 only: set the server's public IPv4 address (an IPv6"
+    echo "         address belongs in CG_PUBLIC_IPV6 — SELFHOST.md, \"IPv6\")."
+  fi
+}
+
+# a memory size in MiB, from Docker's notation (512m, 2g, plain bytes) or
+# Valkey's (1024mb, 1gb); Valkey's 1m/1g (10^6/10^9 bytes) are read as MiB/GiB,
+# close enough for the checks below. Fails on anything else.
+to_mib() {
+  local v="${1,,}" n unit
+  [[ "$v" =~ ^([0-9]+)([a-z]*)$ ]] || return 1
+  n="${BASH_REMATCH[1]}"
+  unit="${BASH_REMATCH[2]}"
+  case "$unit" in
+    ""|b) echo $(( n / 1048576 )) ;;
+    k|kb|kib) echo $(( n / 1024 )) ;;
+    m|mb|mib) echo "$n" ;;
+    g|gb|gib) echo $(( n * 1024 )) ;;
+    *) return 1 ;;
+  esac
+}
+
+# GOMEMLIMIT for the Go services follows an overridden memory limit (about
+# 85% of it) unless it is set itself; the compose defaults match the default
+# limits. Exported values win over .env.selfhost in docker compose.
+derive_gomemlimit() {
+  local limit_var="CG_MEM_LIMIT_$1" go_var="CG_GOMEMLIMIT_$1" mib
+  [ -z "${!go_var:-}" ] || return 0
+  [ -n "${!limit_var:-}" ] || return 0
+  mib="$(to_mib "${!limit_var}")" || return 0
+  export "$go_var=$(( mib * 85 / 100 ))MiB"
+}
+derive_gomemlimit CADDY
+derive_gomemlimit SEAWEED
+
+# warns (never fails) about memory settings that cannot work together: the
+# Valkey state instance forks for its snapshots, so its container needs about
+# twice its data budget; at the limit it would be killed instead of refusing
+# writes
+check_memory_config() {
+  local data limit
+  data="$(to_mib "${REDIS_MAXMEMORY:-1024mb}")" || return 0
+  if ! limit="$(to_mib "${CG_MEM_LIMIT_REDIS:-2g}")"; then
+    echo "Warning: CG_MEM_LIMIT_REDIS '${CG_MEM_LIMIT_REDIS}' is not a size docker understands (e.g. 2g, 1536m)."
+    return 0
+  fi
+  if [ "$limit" -lt $(( data * 2 )) ]; then
+    echo "Warning: CG_MEM_LIMIT_REDIS (${CG_MEM_LIMIT_REDIS:-2g}) is less than twice REDIS_MAXMEMORY"
+    echo "         (${REDIS_MAXMEMORY:-1024mb}): a snapshot (fork) of a full state instance can exceed"
+    echo "         the container's limit and get it killed. Raise CG_MEM_LIMIT_REDIS to at least $(( data * 2 ))m."
+  fi
+}
+
+case "${1:-}" in
+  build|up|down|logs|ps|compose|update|_build-and-up|mail-dns)
+    require_compose
+    ;;
+esac
 
 case "${1:-}" in
   build)
@@ -351,6 +451,8 @@ case "${1:-}" in
     drill_banner
     check_mail_config
     check_edge_config
+    check_network_config
+    check_memory_config
     # --remove-orphans cleans up containers of services that are no longer
     # part of the stack (e.g. after the three redis instances were merged
     # into one); start_stack also removes switched-off optional services
@@ -388,6 +490,8 @@ case "${1:-}" in
     drill_banner
     check_mail_config
     check_edge_config
+    check_network_config
+    check_memory_config
     start_stack
     docker_compose ps
     ;;

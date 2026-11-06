@@ -63,6 +63,8 @@ export type ServiceWorkerPluginOptions = {
   swSrc: string;
   /** Extra plugins the worker bundle needs (resolvers, polyfills, …). */
   plugins: Plugin[];
+  /** Build-time constants the worker shares with the app (the build ID). */
+  define?: Record<string, string>;
 };
 
 export function serviceWorker(options: ServiceWorkerPluginOptions): Plugin {
@@ -153,11 +155,13 @@ async function buildWorker(
     plugins: options.plugins,
     resolve: { alias: config.resolve.alias },
     define: {
-      // The only build-time env token in shipped code: CRA substituted it
+      // The only build-time env token in shipped code (besides the build ID
+      // in `options.define`, vite/buildId.ts): CRA substituted it
       // via DefinePlugin. Scoped to this exact member expression on purpose
       // — `src/common/` is dual-runtime and must never see a blanket
       // `process`/`process.env` define.
       'process.env.PUBLIC_URL': JSON.stringify(config.base.replace(/\/$/, '')),
+      ...options.define,
     },
     build: {
       outDir: tmpDir,

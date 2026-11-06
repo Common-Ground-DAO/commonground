@@ -55,8 +55,16 @@ then
   checkError
 fi
 
+# the backend carries the build ID of the frontend Caddy serves
+# (vite/buildId.ts), so the two stay equal
+buildId=dev
+if [ -f caddy/dist/build-id.txt ]
+then
+  buildId="$(cat caddy/dist/build-id.txt)"
+fi
+
 docker build --tag commonground/backend_stage_0 -f backend/Dockerfile_dev_stage_0 ./backend/ && \
-docker_compose build --no-cache api
+docker_compose build --no-cache --build-arg CG_BUILD_ID="$buildId" api
 checkError
 
 printf "\n---\n--- Build finished, starting server\n---\n"

@@ -38,15 +38,6 @@ mkdir -p caddy/dist && rm -rf caddy/dist/* && \
 docker_compose run --rm cg-builder yarn install --immutable
 checkError
 
-buildId=$(dd if=/dev/random bs=1 count=10 status=none | base64)
-
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  sed -i '' 's#^const buildId =.*$#const buildId = "'$buildId'";#' ../src/common/random_build_id.ts
-else
-  sed -i 's#^const buildId =.*$#const buildId = "'$buildId'";#' ../src/common/random_build_id.ts
-fi
-checkError
-
 # Type-check and lint are separate steps now: the webpack build used to run
 # ForkTsChecker + ESLintPlugin inline, and a Vite build does neither, so
 # without these two a type or lint error would ship silently.
@@ -73,11 +64,13 @@ then
 fi
 
 printf "\n---\n--- Building backend\n---\n"
+# the build ID of the frontend just built (vite/buildId.ts) goes into the
+# backend image, so clients notice when a new version is deployed
 rm -rf backend/dist/{*,.??*} && \
 rsync -aL --exclude=node_modules --exclude=.yarn ../srv/ backend/dist/ && \
 cp ../build/index.html backend/dist/ && \
 docker build --tag commonground/backend_stage_0 -f backend/Dockerfile_dev_stage_0 ./backend/ && \
-docker_compose build --no-cache api
+docker_compose build --no-cache --build-arg CG_BUILD_ID="$(cat ../build/build-id.txt)" api
 checkError
 
 printf "\n---\n--- Setting up database\n---\n"

@@ -20,6 +20,7 @@ import type { ChannelWindow } from "data/chat/types";
 import MessageSkeletonPlaceholder from "../MessageSkeletonPlaceholder/MessageSkeletonPlaceholder";
 import { useWindowSizeContext } from "context/WindowSizeProvider";
 import Scrollable, { PositionData, ScrollableHandle } from "../../../molecules/Scrollable/Scrollable";
+import { SCROLL_BOTTOM_THRESHOLD, showsScrollHelper } from "../scrollHelper";
 
 export type RendererProps = {
   item: Models.Message.Message;
@@ -39,8 +40,8 @@ type Props= {
   channelWindow: ChannelWindow;
   state: Models.ItemList.ItemListState<Models.Message.Message>;
   identifierKey?: string;
-  scrollHelper: React.JSX.Element;
-  scrollHelperRef: React.RefObject<HTMLDivElement | null>;
+  /** shows / hides the scroll-down helper (stable; GenericMessageList's `scrollHelper.ts` control) */
+  setShowScrollHelper: (visible: boolean) => void;
   Renderer: React.FC<RendererProps>;
   replyClick: (id: string, senderId: string, body: Models.Message.Body) => void;
   editClick: (message: Models.Message.Message) => void;
@@ -60,7 +61,6 @@ type Props= {
 
 type MessageGroupsArray = [string, ([string, string, Models.Message.Message[]])[]][];
 
-const SCROLL_BOTTOM_THRESHOLD = 30;
 const SOFT_ITEM_LIMIT = 200;
 export const BETWEEN_LOADS_TIMEOUT = 500;
 
@@ -100,8 +100,7 @@ export default function ScrollingMessageList(props: Props) {
     loadingPreviousRef,
     initializingRef,
     canReply,
-    scrollHelper,
-    scrollHelperRef,
+    setShowScrollHelper,
   } = props;
 
   const messages = state.items;
@@ -121,22 +120,10 @@ export default function ScrollingMessageList(props: Props) {
     return '' + Math.random();
   }, [messages]);
 
-  const showScrollHelperRef = useRef<boolean>(false);
-  const setShowScrollHelper = useCallback((visible: boolean, skipCheck = false) => {
-    if (showScrollHelperRef.current !== visible || skipCheck) {
-      showScrollHelperRef.current = visible;
-      const div = scrollHelperRef.current;
-      if (!!div) {
-        div.style.opacity = visible ? '1' : '0';
-        div.style.pointerEvents = visible ? 'auto' : 'none';
-        div.style.cursor = visible ? 'pointer' : 'default';
-      }
-    }
-  }, []);
-
+  // a list (of a new channel) starts hidden until its first position report
   useLayoutEffect(() => {
-    setShowScrollHelper(showScrollHelperRef.current, true);
-  }, [scrollHelper])
+    setShowScrollHelper(false);
+  }, [setShowScrollHelper]);
 
   const showLoadNext = useMemo(() => {
     if (messages.length > 0) {
@@ -224,15 +211,15 @@ export default function ScrollingMessageList(props: Props) {
         loadNext();
       }
 
-      const shouldShowScrollHelper = data.scrollTop + data.visibleHeight < data.contentHeight - SCROLL_BOTTOM_THRESHOLD;
-      if (showScrollHelperRef.current !== shouldShowScrollHelper) setShowScrollHelper(shouldShowScrollHelper);
-      // reported on every position update; the receiver ignores repeats
+      const shouldShowScrollHelper = showsScrollHelper(data);
+      // both receivers ignore repeats
+      setShowScrollHelper(shouldShowScrollHelper);
       onAtBottomChange?.(!shouldShowScrollHelper);
     }
 
     const deltaY = data.contentHeight - data.scrollTop - data.visibleHeight;
     onScroll?.(deltaY);
-  }, [loadNext, loadPrevious, onScroll, onAtBottomChange]);
+  }, [loadNext, loadPrevious, onScroll, onAtBottomChange, setShowScrollHelper]);
 
   useLayoutEffect(() => {
     if (!targetFocusId) scrollableRef.current?.scrollToBottom();
@@ -262,6 +249,7 @@ export default function ScrollingMessageList(props: Props) {
         ref={scrollableRef}
         autoScroll={true}
         hideOnNoScroll={true}
+        topAndBottomThreshold={SCROLL_BOTTOM_THRESHOLD}
         positionCallback={positionCallback}
       >
         <div

@@ -7,6 +7,17 @@
   &.auth-flow-modal {
     @apply h-full overflow-y-auto px-6 pb-6;
     padding-top: 2rem;
+
+    /* a smaller logo in the dialog: room for the whole login step */
+    .auth-flow-logo {
+      @apply p-2;
+      border-radius: 14px;
+
+      > svg {
+        width: 36px;
+        height: 36px;
+      }
+    }
   }
 
   &.auth-flow-page {

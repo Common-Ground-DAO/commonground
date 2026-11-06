@@ -27,6 +27,7 @@ import { chat } from 'data/chat/runtime';
 import { WINDOW_ERROR, type ChannelWindow } from 'data/chat/types';
 import { useChannelReadMarking } from 'hooks/useChannelReadMarking';
 import { consumesIntent, leavesBottom, scrollActionForChange, type ResetIntent, type ScrollAction } from './scrollAnchoring';
+import { createScrollHelperControl } from './scrollHelper';
 
 type Props = {
   channelName?: string;
@@ -443,14 +444,16 @@ export default function GenericMessageList(props: Props) {
     }
   }, [jumpToLatest]);
 
-  const scrollHelperRef = useRef<HTMLDivElement>(null);
+  // the helper's level, applied to whichever helper node is mounted (the
+  // composer area re-mounts on its own, e.g. after joining the community)
+  const scrollHelperControl = useMemo(createScrollHelperControl, []);
   const scrollHelper = useMemo(() => {
     return (
-      <div className="scroll-helper" ref={scrollHelperRef}>
+      <div className="scroll-helper" ref={scrollHelperControl.attach}>
         <ArrowDownCircleIcon className='h-12 w-12' onClick={scrollDownHandler} />
       </div>
     );
-  }, [scrollDownHandler]);
+  }, [scrollDownHandler, scrollHelperControl]);
 
   /* const MAX_SCROLL_ACCUMULATED = 150;
   const lastDistanceFromBottomRef = useRef<number | undefined>(undefined);
@@ -604,8 +607,7 @@ export default function GenericMessageList(props: Props) {
         loadingPreviousRef={loadingPreviousRef}
         initializingRef={initializingRef}
         canReply={!writingForbiddenMessage}
-        scrollHelper={scrollHelper}
-        scrollHelperRef={scrollHelperRef}
+        setShowScrollHelper={scrollHelperControl.set}
       />}
       {!hideInput && <div className='edit-container-container'>
         <TypingIndicator channelId={channelId} />

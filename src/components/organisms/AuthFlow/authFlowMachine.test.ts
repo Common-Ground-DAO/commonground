@@ -123,6 +123,14 @@ describe('AuthFlow sign-up', () => {
     expect(state.signup.displayName).toBe('alice');
   });
 
+  it('hands the method step\'s captcha to the password / wallet step only where createUser checks it', () => {
+    const atMethod = run(noMailInstance, [{ type: 'SHOW_SIGNUP' }, { type: 'DETAILS_SUBMITTED', data: details }]);
+    expect(run(noMailInstance, [{ type: 'CHOOSE_METHOD', method: 'password', captchaToken: 'tok' }], atMethod).signup.captchaToken).toBe('tok');
+    expect(run(noMailInstance, [{ type: 'CHOOSE_METHOD', method: 'wallet', captchaToken: '' }], atMethod).signup.captchaToken).toBeUndefined();
+    const mailAtMethod = run(mailInstance, [{ type: 'SHOW_SIGNUP' }, { type: 'DETAILS_SUBMITTED', data: details }, { type: 'EMAIL_VERIFIED' }]);
+    expect(run(mailInstance, [{ type: 'CHOOSE_METHOD', method: 'password', captchaToken: 'tok' }], mailAtMethod).signup.captchaToken).toBeUndefined();
+  });
+
   it('sends a createUser captcha failure after the email code back to the details (new code + captcha)', () => {
     const atMethod = run(mailInstance, [{ type: 'SHOW_SIGNUP' }, { type: 'DETAILS_SUBMITTED', data: details }, { type: 'EMAIL_VERIFIED' }]);
     const state = run(mailInstance, [{ type: 'SIGNUP_FAILED', code: 'CAPTCHA_FAILED' }], atMethod);

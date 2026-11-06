@@ -54,6 +54,7 @@ const DesktopUserWidgetContainer: React.FC<Props> = (props) => {
   const { showSnackbar } = useSnackbarContext();
 
   const selfRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
   const setIsClosed = useCallback((closed: boolean) => {
@@ -126,12 +127,29 @@ const DesktopUserWidgetContainer: React.FC<Props> = (props) => {
     };
   }, [repositionWidget]);
 
-  // Reposition on connected with delay
+  // Joining or leaving a call animates the container's padding (100 ms,
+  // UserWidget.css): the slot moves without changing size, which the
+  // ResizeObserver below won't see. Measure again once the animation is over,
+  // in both directions; the timeout covers a transition that never runs
+  // (reduced motion, nothing changed).
   useEffect(() => {
-    if (isConnected) {
-      setTimeout(repositionWidget, 120);
-    }
+    const timeout = setTimeout(repositionWidget, 120);
+    return () => clearTimeout(timeout);
   }, [isConnected, repositionWidget]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const listener = (ev: TransitionEvent) => {
+      // one event per animated property (hover animates the background):
+      // only the padding moves the slot
+      if (ev.target === container && ev.propertyName.startsWith('padding')) {
+        repositionWidget();
+      }
+    };
+    container.addEventListener('transitionend', listener);
+    return () => container.removeEventListener('transitionend', listener);
+  }, [repositionWidget]);
 
   // Resize listener
   useEffect(() => {
@@ -196,7 +214,7 @@ const DesktopUserWidgetContainer: React.FC<Props> = (props) => {
     }
   }, [isOpen, isConnected, ownUser, setIsClosed, setStep, setUserOnboardingVisibility])
 
-  return <div className={containerClassname} onClick={onContainerClick}>
+  return <div className={containerClassname} onClick={onContainerClick} ref={containerRef}>
     {isConnected && <AudioManagerButtons />}
     <div className={portalContainerClassName} ref={selfRef}>
       {createPortal(<div className='absolute' style={style} ref={modalRef}>

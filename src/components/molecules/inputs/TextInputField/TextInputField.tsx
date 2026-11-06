@@ -13,6 +13,8 @@ type Props = {
   onChange: (value: string) => void;
   placeholder?: string;
   label?: string | React.JSX.Element;
+  /** the input's accessible name when no visible label is shown */
+  ariaLabel?: string;
   subLabel?: string;
   inputClassName?: string;
   labelClassName?: string;
@@ -53,6 +55,7 @@ export default function TextInputField(props: Props) {
     onChange,
     placeholder,
     label,
+    ariaLabel,
     subLabel,
     inputClassName,
     labelClassName,
@@ -140,6 +143,7 @@ export default function TextInputField(props: Props) {
           maxLength={maxLetters}
           autoComplete={autoComplete}
           inputMode={inputMode}
+          aria-label={ariaLabel}
           name={name}
           style={style}
         />

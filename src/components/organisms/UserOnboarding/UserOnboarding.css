@@ -49,6 +49,21 @@
         min-width: min(var(--onboardingModalWidth), 100vw);
         max-width: min(var(--onboardingModalWidth), 100vw);
     }
+
+    /* the login / sign-up flow (AuthFlow) on desktop: at least the usual
+       height, taller when its content needs it (up to 95vh, then it scrolls),
+       so the whole login step fits without scrolling */
+    &.start:not(.mobile-layout) .modal-content {
+        @apply flex flex-col;
+        height: auto;
+        /* .modal-centered caps the dialog at the visual height minus 2rem */
+        max-height: min(95vh, calc(var(--visualHeight) - 2rem));
+
+        > .auth-flow {
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+    }
 }
 
 .onboarding-x {

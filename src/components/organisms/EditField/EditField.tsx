@@ -187,8 +187,10 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
   const setAttachmentUploadedState = React.useCallback((imageId: string, state: boolean) => {
     setAttachments(oldAttachments => {
       const oldAttachmentIndex = oldAttachments.findIndex(att => att.type === 'image' && att.imageId === imageId);
+      // removed (or sent) while its upload ran: nothing to update
+      if (oldAttachmentIndex === -1) return oldAttachments;
       const newAttachments = [...oldAttachments];
-      newAttachments[oldAttachmentIndex].state = state ? 'LOADED' : 'LOADING';
+      newAttachments[oldAttachmentIndex] = { ...newAttachments[oldAttachmentIndex], state: state ? 'LOADED' : 'LOADING' };
       return newAttachments;
     });
   }, [setAttachments]);

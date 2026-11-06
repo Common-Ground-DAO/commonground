@@ -217,19 +217,21 @@ export const LoginForm: React.FC<LoginProps & {
         className='auth-flow-form'
         onSubmit={ev => { ev.preventDefault(); submitPassword(); }}
       >
+        {/* no visible labels: the placeholders name the two fields, room for the whole step */}
         <TextInputField
-          label='Email or username'
+          ariaLabel='Email or username'
           iconLeft={<UserIcon className='w-5 h-5' />}
           value={identifier}
           onChange={value => { setIdentifier(value); setIdentifierError(undefined); }}
           error={identifierError}
-          placeholder='name@email.com'
+          placeholder='Email or username'
           autoComplete='username webauthn'
           autoCapitalize='none'
           name='username'
         />
         <PasswordField
           label='Password'
+          hideLabel
           sublabel=''
           placeholder='Password'
           password={password}
@@ -439,12 +441,12 @@ export const LoginCode: React.FC<LoginProps & { initialEmail: string }> = ({ sta
       />
       {!sentTo && <form className='auth-flow-form' noValidate onSubmit={ev => { ev.preventDefault(); sendCode(email.trim()); }}>
         <TextInputField
-          label='Email address'
+          ariaLabel='Email address'
           iconLeft={<EnvelopeIcon className='w-5 h-5' />}
           value={email}
           onChange={value => { setEmail(value); setEmailError(undefined); }}
           error={emailError}
-          placeholder='name@email.com'
+          placeholder='Email address'
           type='email'
           autoComplete='email'
           name='email'

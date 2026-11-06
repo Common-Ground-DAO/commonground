@@ -56,6 +56,12 @@ export type SignupData = {
   email: string;
   /** the address the email code confirmed in this flow (going back keeps it) */
   verifiedEmail?: string;
+  /**
+   * instances that check the captcha at createUser: the captcha solved on the
+   * method step, handed to the password / wallet step (single use: that step
+   * shows a new one after a failed attempt)
+   */
+  captchaToken?: string;
 };
 
 export type AuthFlowState = {
@@ -76,7 +82,7 @@ export type AuthFlowEvent =
   | { type: 'BACK' }
   | { type: 'DETAILS_SUBMITTED'; data: SignupData }
   | { type: 'EMAIL_VERIFIED' }
-  | { type: 'CHOOSE_METHOD'; method: Exclude<SignupMethod, 'passkey'> }
+  | { type: 'CHOOSE_METHOD'; method: Exclude<SignupMethod, 'passkey'>; captchaToken?: string }
   | { type: 'SIGNUP_FAILED'; code: string; retryAfterSeconds?: number }
   | { type: 'ACCOUNT_CREATED' }
   | { type: 'LOGGED_IN'; offerPasskey: boolean }
@@ -231,7 +237,9 @@ export function authFlowReducer(config: AuthFlowConfig) {
         if (state.step !== 'signup-method' || !signupMethods(config).includes(event.method)) {
           return state;
         }
-        return to(event.method === 'password' ? 'signup-password' : 'signup-wallet');
+        return to(event.method === 'password' ? 'signup-password' : 'signup-wallet', {
+          signup: { ...state.signup, captchaToken: captchaAtCreateUser(config) ? event.captchaToken || undefined : undefined },
+        });
 
       case 'SIGNUP_FAILED': {
         const failure = signupFailure(event.code, event.retryAfterSeconds);

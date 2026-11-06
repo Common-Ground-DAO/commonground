@@ -32,12 +32,15 @@ const CAPTCHA_FIRST = "Please solve the captcha first.";
 /**
  * The captcha of a step that calls createUser directly (instances without the
  * email code step); renders nothing when the code request covered it.
+ * `handedOver`: a token the method step's captcha produced (no widget then,
+ * until a failed attempt used it up).
  */
-function useCreateUserCaptcha(config: StepProps['config']) {
+function useCreateUserCaptcha(config: StepProps['config'], handedOver?: string) {
   const needed = captchaAtCreateUser(config);
-  const [token, setToken] = useState('');
+  const [token, setToken] = useState(handedOver ?? '');
+  const [showWidget, setShowWidget] = useState(!handedOver);
   const [widgetKey, setWidgetKey] = useState(0);
-  const element = needed ? <SignupCaptcha key={widgetKey} onChange={setToken} /> : null;
+  const element = needed && showWidget ? <SignupCaptcha key={widgetKey} onChange={setToken} /> : null;
   return {
     needed,
     token: needed ? token : undefined,
@@ -46,6 +49,7 @@ function useCreateUserCaptcha(config: StepProps['config']) {
     /** a token is single-use: after a failed attempt, solve again */
     reset: useCallback(() => {
       setToken('');
+      setShowWidget(true);
       setWidgetKey(key => key + 1);
     }, []),
   };
@@ -180,13 +184,14 @@ export const SignupDetails: React.FC<StepProps> = ({ state, dispatch, config }) 
       <StepHeader title='Create your account' subtitle='Already have one?' />
       <Button className='auth-flow-inline-link' role='textual' text='Log in instead' onClick={() => dispatch({ type: 'SHOW_LOGIN' })} />
       <form className='auth-flow-form' noValidate onSubmit={ev => { ev.preventDefault(); submit(); }}>
+        {/* no visible labels: the placeholders name the fields (like the login form) */}
         <TextInputField
-          label='Display name'
+          ariaLabel='Display name'
           subLabel='Also your username. Letters, numbers, - and _'
           iconLeft={<UserIcon className='w-5 h-5' />}
           value={displayName}
           onChange={value => { setDisplayName(value); setNameError(undefined); }}
-          placeholder='your_name'
+          placeholder='Display name'
           error={nameError}
           autoComplete='nickname'
           autoCapitalize='none'
@@ -194,12 +199,12 @@ export const SignupDetails: React.FC<StepProps> = ({ state, dispatch, config }) 
           maxLetters={30}
         />
         <TextInputField
-          label='Email address'
+          ariaLabel='Email address'
           subLabel={alreadyVerified ? "Confirmed." : reuseCode ? "We already sent you a code." : verifyEmail ? "We'll send you a code to confirm it." : undefined}
           iconLeft={<EnvelopeIcon className='w-5 h-5' />}
           value={email}
           onChange={value => { setEmail(value); setEmailError(undefined); }}
-          placeholder='name@email.com'
+          placeholder='Email address'
           error={emailError}
           type='email'
           autoComplete='email'
@@ -355,7 +360,8 @@ export const SignupMethod: React.FC<StepProps & { createAccount: CreateAccount }
   const passkey = usePasskeyContext();
   const [loading, setLoading] = useState(false);
   const methods = signupMethods(config);
-  // only for the passkey here; password and wallet have it on their own step
+  // below the methods: the passkey uses it here, password and wallet get it
+  // handed to their step (CHOOSE_METHOD), which asks for one only without it
   const captcha = useCreateUserCaptcha(config);
 
   const createPasskey = useCallback(async () => {
@@ -405,14 +411,13 @@ export const SignupMethod: React.FC<StepProps & { createAccount: CreateAccount }
           disabled={loading}
         />
         <span className='cg-text-sm-400 cg-text-secondary'>Recommended. Sign in with your fingerprint, face or screen lock — nothing to remember, nothing to phish.</span>
-        {captcha.element}
       </div>}
       {methods.includes('password') && <Button
         className='w-full'
         role={methods.includes('passkey') ? 'secondary' : 'primary'}
         iconLeft={<PasswordIcon className='w-5 h-5' weight='duotone' />}
         text='Use a password'
-        onClick={() => dispatch({ type: 'CHOOSE_METHOD', method: 'password' })}
+        onClick={() => dispatch({ type: 'CHOOSE_METHOD', method: 'password', captchaToken: captcha.token })}
         disabled={loading}
       />}
       {methods.includes('wallet') && <Button
@@ -420,9 +425,10 @@ export const SignupMethod: React.FC<StepProps & { createAccount: CreateAccount }
         role='secondary'
         iconLeft={<WalletIcon className='w-5 h-5' weight='duotone' />}
         text='Use a wallet'
-        onClick={() => dispatch({ type: 'CHOOSE_METHOD', method: 'wallet' })}
+        onClick={() => dispatch({ type: 'CHOOSE_METHOD', method: 'wallet', captchaToken: captcha.token })}
         disabled={loading}
       />}
+      {methods.includes('passkey') && captcha.element}
       <StepError message={state.error} />
       <span className='cg-text-sm-400 cg-text-secondary text-center'>You can add more ways to sign in later in your settings.</span>
     </div>
@@ -436,7 +442,7 @@ export const SignupPassword: React.FC<StepProps & { createAccount: CreateAccount
   const [password, setPassword] = useState('');
   const [passwordError, setPasswordError] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
-  const captcha = useCreateUserCaptcha(config);
+  const captcha = useCreateUserCaptcha(config, state.signup.captchaToken);
 
   const submit = useCallback(async () => {
     const problem = validatePassword(password, MIN_PASSWORD_LENGTH) || undefined;
@@ -467,6 +473,7 @@ export const SignupPassword: React.FC<StepProps & { createAccount: CreateAccount
         <input type='email' name='email' autoComplete='username' value={state.signup.email} readOnly hidden />
         <PasswordField
           label='Password'
+          hideLabel
           sublabel=''
           placeholder='Password'
           password={password}
@@ -491,7 +498,7 @@ export const SignupPassword: React.FC<StepProps & { createAccount: CreateAccount
 // 3c. Wallet (SIWE)
 
 export const SignupWallet: React.FC<StepProps & { createAccount: CreateAccount }> = ({ state, dispatch, config, createAccount }) => {
-  const captcha = useCreateUserCaptcha(config);
+  const captcha = useCreateUserCaptcha(config, state.signup.captchaToken);
   const signed = useCallback(async (data: API.User.prepareWalletAction.Request) => {
     const prepared = await userApi.prepareWalletAction(data);
     if (!prepared.readyForCreation) {

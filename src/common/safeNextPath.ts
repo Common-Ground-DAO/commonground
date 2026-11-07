@@ -8,7 +8,8 @@
  * that is not a plain absolute path (`//host`, `\`, schemes), any control
  * character (browsers strip tabs and newlines, so `/\t/evil.com` would
  * become `//evil.com`), and anything that resolves to another origin; returns
- * the normalized pathname + search + hash, or null.
+ * the normalized pathname + search + hash, or null. The normalized result
+ * never starts with `//` either (dot segments can collapse into one).
  */
 export function safeNextPath(next: string | null | undefined, origin: string): string | null {
   if (!next || !next.startsWith('/') || next.startsWith('//') || next.includes('\\')) {
@@ -28,5 +29,12 @@ export function safeNextPath(next: string | null | undefined, origin: string): s
   if (url.origin !== origin) {
     return null;
   }
-  return `${url.pathname}${url.search}${url.hash}`;
+  const path = `${url.pathname}${url.search}${url.hash}`;
+  // normalisation can make a path out of dot segments that starts with two
+  // slashes (`/.//host` → `//host`), which a browser reads as another host;
+  // the result is checked like the input
+  if (!path.startsWith('/') || path.startsWith('//') || path.includes('\\')) {
+    return null;
+  }
+  return path;
 }

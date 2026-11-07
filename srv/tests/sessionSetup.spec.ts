@@ -323,12 +323,12 @@ describe('legacy CG ID mode', () => {
     delete process.env.CG_LEGACY_CGID;
   });
 
-  it('the cookie covers the subdomains; the old-scope cleanup is off', async () => {
+  it('the cookie is host-only as well; an old subdomain-scoped cookie is expired', async () => {
     const created = await request(legacy, 'POST', '/secret');
     expect(created.cookieLines).toHaveLength(1);
-    expect(created.cookieLines[0]).toMatch(/Domain=\.cg\.box/i);
+    expect(created.cookieLines[0]).not.toMatch(/Domain=/i);
     const stale = await request(legacy, 'GET', '/read', 's%3Aunknown.signature');
-    expect(stale.legacyCleared).toBe(false);
+    expect(stale.legacyCleared).toBe(true);
     expect(stale.sessionCookies).toEqual([]);
   });
 });

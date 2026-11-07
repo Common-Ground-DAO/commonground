@@ -18,6 +18,13 @@
 #   sysctl    net.ipv4.ip_local_reserved_ports = 40000-40099 (the mediasoup
 #             ports are not handed out as ephemeral ports) and
 #             vm.overcommit_memory = 1 (Valkey's background saves fork).
+#   mail25    outgoing tcp/25 from containers only through the mail relay's
+#             network: a rule in Docker's DOCKER-USER chain refuses tcp/25
+#             from every other Docker bridge (docker0, br-*; the relay's
+#             bridge is cg-mail-out), re-applied by a systemd unit whenever
+#             Docker starts. Needs Docker's iptables firewall backend; leave
+#             it out (--skip mail25) when the instance sends through another
+#             server on port 25 (SMTP_HOST other than the built-in relay).
 #
 # Usage: sudo ./selfhost/harden.sh [--dry-run] [--ssh-user <name>] [--skip <part>]...
 #   --dry-run          print every change (file diffs, commands), change nothing;
@@ -25,8 +32,8 @@
 #   --ssh-user <name>  the account you log in with (default: the login user of
 #                      this session — /proc/self/loginuid, also after `sudo su -`
 #                      — else $SUDO_USER, else the current user)
-#   --skip <part>      leave out ssh | firewall | upgrades | logs | sysctl
-#                      (repeatable)
+#   --skip <part>      leave out ssh | firewall | upgrades | logs | sysctl |
+#                      mail25 (repeatable)
 #   --no-login-check   do not require a past key login of the operator in the
 #                      logs (e.g. when the logs were rotated away)
 #
@@ -51,12 +58,12 @@ while [ $# -gt 0 ]; do
       shift ;;
     --skip)
       case "${2:-}" in
-        ssh|firewall|upgrades|logs|sysctl) SKIP="$SKIP$2 " ;;
-        *) echo "--skip takes ssh, firewall, upgrades, logs or sysctl" >&2; exit 2 ;;
+        ssh|firewall|upgrades|logs|sysctl|mail25) SKIP="$SKIP$2 " ;;
+        *) echo "--skip takes ssh, firewall, upgrades, logs, sysctl or mail25" >&2; exit 2 ;;
       esac
       shift ;;
     --no-login-check) LOGIN_CHECK=false ;;
-    -h|--help) sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
   shift
@@ -71,6 +78,8 @@ JOURNALD_DROPIN=/etc/systemd/journald.conf.d/90-commonground.conf
 AUTO_UPGRADES=/etc/apt/apt.conf.d/20auto-upgrades
 UPGRADES_BLACKLIST=/etc/apt/apt.conf.d/51commonground-unattended-upgrades
 UFW_DEFAULTS=/etc/default/ufw
+MAIL25_SCRIPT=/usr/local/sbin/cg-mail-egress
+MAIL25_UNIT=/etc/systemd/system/cg-mail-egress.service
 
 FAILED=0
 CHANGES=0
@@ -474,6 +483,123 @@ part_firewall() {
   check_docker_firewall_backend
 }
 
+# ------------------------------------------------------------------- mail25
+# The relay (docker-compose.selfhost.yml, service mail) is the only container
+# that sends to the recipients' servers: the SPF record of the instance's
+# domain authorises the server's address, and the relay is where sender
+# checks, DKIM and the sending limits apply. Its network's bridge is
+# named cg-mail-out; every other Docker bridge is docker0 or br-<id>.
+MAIL25_SCRIPT_CONTENT='#!/bin/sh
+# Common Ground self-host (docker/selfhost/harden.sh, part mail25): containers
+# reach tcp/25 only through the mail relay'"'"'s network (bridge cg-mail-out).
+# Refuses tcp/25 forwarded from every other Docker bridge, in Docker'"'"'s
+# DOCKER-USER chain (iptables firewall backend). Idempotent; run by
+# cg-mail-egress.service whenever Docker starts.
+# Only while the relay'"'"'s bridge cg-mail-out exists: a relay network made
+# before it had that name is a br-<id> bridge, and the rule would refuse the
+# relay itself. Without cg-mail-out the rule is removed again (and the unit
+# fails, so it shows).
+if [ ! -e /sys/class/net/cg-mail-out ]; then
+  echo "no bridge cg-mail-out (the mail relay'"'"'s network is missing or was created under another name, see docker/SELFHOST.md \"Outgoing mail\"): rule not applied" >&2
+  for cmd in iptables ip6tables; do
+    command -v "$cmd" >/dev/null 2>&1 || continue
+    for bridge in docker0 br-+; do
+      rule="-i $bridge -p tcp --dport 25 -m comment --comment cg-mail-egress -j REJECT --reject-with tcp-reset"
+      # shellcheck disable=SC2086
+      while "$cmd" -w -C DOCKER-USER $rule 2>/dev/null; do "$cmd" -w -D DOCKER-USER $rule || break; done
+    done
+  done
+  exit 1
+fi
+status=0
+for cmd in iptables ip6tables; do
+  command -v "$cmd" >/dev/null 2>&1 || continue
+  if ! "$cmd" -w -n -L DOCKER-USER >/dev/null 2>&1; then
+    # IPv6 without ip6tables in Docker is fine; IPv4 without the chain is not
+    if [ "$cmd" = iptables ]; then
+      echo "no DOCKER-USER chain (Docker not running, or its nftables firewall backend): rule not applied" >&2
+      status=1
+    fi
+    continue
+  fi
+  for bridge in docker0 br-+; do
+    rule="-i $bridge -p tcp --dport 25 -m comment --comment cg-mail-egress -j REJECT --reject-with tcp-reset"
+    # shellcheck disable=SC2086
+    "$cmd" -w -C DOCKER-USER $rule 2>/dev/null || "$cmd" -w -I DOCKER-USER $rule || status=1
+  done
+done
+exit $status'
+
+MAIL25_UNIT_CONTENT="# Common Ground self-host (docker/selfhost/harden.sh, part mail25)
+[Unit]
+Description=Common Ground: outgoing tcp/25 from containers only through the mail relay's network
+After=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$MAIL25_SCRIPT
+
+[Install]
+WantedBy=docker.service"
+
+part_mail25() {
+  skipped mail25 && return 0
+  say "== mail25 (outgoing tcp/25 only from the mail relay)"
+  if ! has_systemd; then
+    warn "no systemd: the rule would not survive a reboot — not set up (docker/SELFHOST.md, \"Outgoing mail\")"
+    return
+  fi
+  local backend=""
+  if command -v docker >/dev/null 2>&1; then
+    backend="$(docker info --format '{{with .FirewallBackend}}{{.Driver}}{{end}}' 2>/dev/null)" || backend=""
+    case "$backend" in
+      *nftables*)
+        warn "Docker uses its nftables firewall backend ($backend): there is no DOCKER-USER chain — not set up; see docker/SELFHOST.md, \"Outgoing mail\", for an nftables rule"
+        return ;;
+    esac
+  fi
+  # with Docker running, only once the relay's own bridge exists: a relay
+  # network from before it had a fixed name is br-<id>, and the rule would
+  # refuse the relay itself
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && [ ! -e /sys/class/net/cg-mail-out ]; then
+    warn "no bridge cg-mail-out: the mail relay is not running, or its network was created before it had that name (then it is br-<id>, and the rule would refuse the relay itself). Nothing set up — see docker/SELFHOST.md, \"Outgoing mail\" (recreate the network), then run this again"
+    return
+  fi
+  local rc_script rc_unit
+  write_file "$MAIL25_SCRIPT" 755 "$MAIL25_SCRIPT_CONTENT"; rc_script=$?
+  write_file "$MAIL25_UNIT" 644 "$MAIL25_UNIT_CONTENT"; rc_unit=$?
+  { [ $rc_script = 2 ] || [ $rc_unit = 2 ]; } && return
+  if [ $rc_unit = 0 ]; then
+    change "systemctl daemon-reload"
+    run systemctl daemon-reload || { fail "systemctl daemon-reload"; return; }
+  fi
+  if $IS_ROOT && systemctl is-enabled --quiet cg-mail-egress.service 2>/dev/null; then
+    ok "cg-mail-egress.service is enabled (runs whenever Docker starts)"
+  else
+    change "enable cg-mail-egress.service (runs whenever Docker starts)"
+    run systemctl enable --quiet cg-mail-egress.service || { fail "systemctl enable cg-mail-egress.service"; return; }
+  fi
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    ok "Docker is not running: the rule is applied when it starts (if the relay's bridge cg-mail-out exists then)"
+    return
+  fi
+  local present=false
+  if $IS_ROOT && iptables -w -n -L DOCKER-USER 2>/dev/null | grep -q 'cg-mail-egress'; then
+    present=true
+  fi
+  if $present && [ $rc_script = 1 ]; then
+    ok "rule in place: tcp/25 from Docker bridges other than cg-mail-out is refused"
+  else
+    change "apply the rule now: DOCKER-USER -i docker0|br-+ -p tcp --dport 25 -j REJECT"
+    if ! run systemctl restart cg-mail-egress.service; then
+      fail "applying the rule failed: journalctl -u cg-mail-egress.service"
+      return
+    fi
+  fi
+}
+
 # ---------------------------------------------------------------------- ssh
 # the authorized-key files sshd uses for the operator (as it resolves them)
 operator_key_files() {
@@ -633,6 +759,7 @@ part_sysctl
 part_logs
 part_upgrades
 part_firewall
+part_mail25
 part_ssh
 
 say ""

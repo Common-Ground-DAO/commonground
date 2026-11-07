@@ -151,7 +151,12 @@ startup "PG_POOL_MAX" -e REDIS_SECRET=a-long-enough-secret-123 -e PG_POOL_MAX=0 
 startup "CG_LEGACY_CGID=true" -e CG_GATEWAY=true -e REDIS_SECRET=a-long-enough-secret-123 -e TRANSFER_TARGET_URL="https://$DOMAIN" "$IMAGE" node /dist/api.js
 BASE="https://$GW_DOMAIN" startup "CG_MAIL_LIMIT_SECRET" -e CG_GATEWAY=true -e CG_LEGACY_CGID=true -e REDIS_SECRET=a-long-enough-secret-123 -e TRANSFER_TARGET_URL="https://$DOMAIN" -e CGID_URL="https://$GW_ID_DOMAIN" "$IMAGE" node /dist/api.js
 startup "CG_LEGACY_CGID=true" -e CG_GATEWAY=true -e REDIS_SECRET=a-long-enough-secret-123 "$IMAGE" node /dist/wsapi.js
-# the gateway's session cookie is scoped to .<gateway domain>: no instance on or under it
+# a gateway never runs as a dev stack; the gateway's settings without CG_GATEWAY=true are refused (api and wsapi)
+BASE="https://$GW_DOMAIN" startup "DEPLOYMENT=dev" -e DEPLOYMENT=dev -e CG_GATEWAY=true -e CG_LEGACY_CGID=true -e REDIS_SECRET=a-long-enough-secret-123 -e CG_MAIL_LIMIT_SECRET=a-shared-mail-limit-secret -e TRANSFER_TARGET_URL="https://$DOMAIN" -e CGID_URL="https://$GW_ID_DOMAIN" "$IMAGE" node /dist/api.js
+BASE="https://$GW_DOMAIN" startup "CG_LEGACY_CGID=true is for a gateway only" -e CG_LEGACY_CGID=true -e REDIS_SECRET=a-long-enough-secret-123 -e CGID_URL="https://$GW_ID_DOMAIN" "$IMAGE" node /dist/wsapi.js
+BASE="https://$GW_DOMAIN" startup "CG_LEGACY_CGID=true is for a gateway only" -e CG_LEGACY_CGID=true -e REDIS_SECRET=a-long-enough-secret-123 -e TRANSFER_TARGET_URL="https://$DOMAIN" -e CGID_URL="https://$GW_ID_DOMAIN" "$IMAGE" node /dist/api.js
+startup "TRANSFER_TARGET_URL is for a gateway only" -e REDIS_SECRET=a-long-enough-secret-123 -e TRANSFER_TARGET_URL="https://$DOMAIN" "$IMAGE" node /dist/api.js
+# the old domain's cookies (connect.sid of the old instance too) reach every host under it: no instance on or under it
 BASE="https://$GW_DOMAIN" startup "must not be the gateway's domain or lie under it" -e CG_GATEWAY=true -e CG_LEGACY_CGID=true -e REDIS_SECRET=a-long-enough-secret-123 -e CG_MAIL_LIMIT_SECRET=a-shared-mail-limit-secret -e TRANSFER_TARGET_URL="https://new.$GW_DOMAIN" -e CGID_URL="https://$GW_ID_DOMAIN" "$IMAGE" node /dist/api.js
 
 log "done: $FAILS failed"

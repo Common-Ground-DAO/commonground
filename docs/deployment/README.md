@@ -29,7 +29,10 @@
 > the connection arithmetic (§5) against commit 696102b, 2026-11-06; the gateway without storage
 > credentials, the domain check against its cookie scope and the Valkey cleanup after switching it
 > off (§3.2 `up`, §3.3 `gateway-api`, §3.13) against commit 696102b, 2026-11-07; the gateway's
-> replacement service worker and the browser check of it (§3.13) against commit 050245d, 2026-11-07
+> replacement service worker and the browser check of it (§3.13) against commit 050245d, 2026-11-07;
+> the secret files' modes and the storage container's copy of its config (§3.1, §3.2, §3.3), the
+> builder's own network (§3.3), the outgoing port-25 rule (§3.9, §3.11) and the gateway's host-only
+> cookie (§3.13) against commit 04c72b2, 2026-11-07
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -200,9 +203,11 @@ It:
    creates a user/group for ids the `node:26-trixie` base doesn't have).
 3. Generates `docker/s3_config/s3.selfhost.json` (creating `s3_config/`, which
    a fresh clone lacks) with an S3 secret matching
-   `.env.selfhost` for the SeaweedFS filer — owned by uid/gid `1000` (seaweed's
-   in-container user) with mode `600` when run as root or uid 1000, otherwise
-   mode `644` with a note on how to tighten it.
+   `.env.selfhost` for the SeaweedFS filer, mode `600`, owned by whoever runs
+   `init.sh`. The `seaweed` container reads it as root at start and copies it
+   for its own user (§3.3), so no ownership change is needed. The script runs
+   with `umask 077`: `.env.selfhost` and the other files exist with mode `600`
+   from the start, not only after a later `chmod`.
 4. Generates a self-signed cert (`docker/selfhost/certs/`) for the internal
    Caddy→mediasoup hop.
 
@@ -229,7 +234,7 @@ Commands:
 
 | Command | Action |
 |---|---|
-| `build` | builds the builder image, installs frontend deps, then type-checks, lints, builds and HTML-rewrite-checks the frontend in one builder run (`yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite`, `DEPLOYMENT=prod`, `NODE_OPTIONS=--max-old-space-size=4096`), rsyncs `build/` into `caddy/dist`, builds the caddy / backend / db images — the backend with the build ID the frontend build drew (`build/build-id.txt` → `--build-arg CG_BUILD_ID`, [docs/infrastructure](../infrastructure/README.md#build-id); the checkout stays unmodified) — and generates `vapid_keys.json` for web push if missing |
+| `build` | builds the builder image, installs frontend deps, then type-checks, lints, builds and HTML-rewrite-checks the frontend in one builder run (`yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite`, `DEPLOYMENT=prod`, `NODE_OPTIONS=--max-old-space-size=4096`), rsyncs `build/` into `caddy/dist`, builds the caddy / backend / db images — the backend with the build ID the frontend build drew (`build/build-id.txt` → `--build-arg CG_BUILD_ID`, [docs/infrastructure](../infrastructure/README.md#build-id); the checkout stays unmodified) — and generates `vapid_keys.json` for web push if missing (`umask 077`: mode `600`; the api reads it as root). Then, like `up`, it checks the modes of the secret files (`.env.selfhost`, `vapid_keys.json`, `s3_config/s3.selfhost.json`, `selfhost/certs/server.key`): one that others can read is set to `600` when the current user owns it, else a warning names it (`check_secret_modes`) |
 | `up` | on a restore drill (`CG_BACKUP_DRILL=true`) prints a `DRILL INSTANCE` banner (mail is then forced off for every command, see [3.7](#37-backup-and-restore)); warns about mail settings that can't work together (see [3.9](#39-email-smtp-and-the-mail-relay)), about an ignored `CG_ID_DOMAIN` and about a `CG_PUBLIC_IP` that is empty or not IPv4, refuses a gateway that is not set up (`CG_ENABLE_GATEWAY=true` without its own domains and session secret, or with `CG_DOMAIN` under the gateway's domain, see [3.13](#313-the-gateway-of-a-moved-instance)), then `compose up -d --remove-orphans`, stops and removes the containers of switched-off optional services (`compose rm -sf`), and `ps` |
 | `down` | stop the stack (`--remove-orphans`) |
 | `logs [service]` | follow logs (all, or one service) |
@@ -268,8 +273,11 @@ for it rather than ~4 GB
 
 All services share the internal `cryptogram` network, except the mail relay,
 which sits on two networks of its own: `mail-relay` (`internal: true`; only
-`api`, `job-runner` and `mail` join it) and `mail-egress` (its way out to port
-25). State lives in named volumes (`pgdata`, `seaweedfs-data`, `caddy-data`,
+`api`, `job-runner`, `gateway-api` and `mail` join it) and `mail-egress` (its
+way out to port 25; its bridge is named `cg-mail-out` so a host rule can single
+it out, [3.11](#311-server-hardening)), and the build helper `cg-builder`, which
+is only on its own `builder` network: the build needs the package registry,
+never the stack's database, Valkey, storage or onchain service. State lives in named volumes (`pgdata`, `seaweedfs-data`, `caddy-data`,
 `caddy-config`, `builder-cache`, `mail-data`).
 
 | Service | Image | Role |
@@ -278,7 +286,7 @@ which sits on two networks of its own: `mail-relay` (`internal: true`; only
 | `db` | `cryptogram/db:18` (PostgreSQL 18, `postgres:18-alpine` line; exact tag + digest in `docker/db/Dockerfile`) | primary database; `pgdata` mounted at `/var/lib/postgresql` (cluster in `18/docker`); init script creates the database and the `writer`/`reader`/`mediasoup` roles; loads tuned `postgresql.conf`; healthcheck; `shm_size 256m` |
 | `redis` | `valkey/valkey:9.1-alpine` line (exact tag + digest in the compose file) | state instance: sessions, the Socket.IO adapter, rate limits, replay guards; password-protected, `noeviction`, RDB snapshots in `valkey-data`, `maxmemory ${REDIS_MAXMEMORY:-1024mb}`; no host port |
 | `redis-cache` | same image | cache instance (URL previews): password-protected, `allkeys-lru`, unpersisted, `maxmemory ${REDIS_CACHE_MAXMEMORY:-256mb}`; no host port |
-| `seaweed` | `chrislusf/seaweedfs` 4.x (exact tag + digest in the compose file) | SeaweedFS object storage — one all-in-one `weed server` (master + volume + filer + S3 gateway, aliased `s3.local`); only the S3 port 8333 is consumed by other services |
+| `seaweed` | `chrislusf/seaweedfs` 4.x (exact tag + digest in the compose file) | SeaweedFS object storage — one all-in-one `weed server` (master + volume + filer + S3 gateway, aliased `s3.local`); only the S3 port 8333 is consumed by other services. `s3.selfhost.json` is mounted at `/run/cg/s3.json`; a small entrypoint copies it, as root, to `/etc/seaweedfs/s3.json` owned by the image's `seaweed` user (mode 600) and then runs the image's entrypoint, which drops to that user — the host file stays mode 600 whoever owns it |
 | `migrate-db` | `cryptogram/backend` | one-shot DB migration (`migrateDb.js`); starts once `db` is healthy, `restart: on-failure:3`; the image's health check is disabled for it. Every backend service (`api`, `wsapi`, `memberlist`, `job-runner`, `onchain`, `mediasoup`, and the gateway's `gateway-api`, `gateway-wsapi`) starts only after it exited 0 — see "Migrations during an update" below |
 | `api` | `cryptogram/backend` | REST API (`api.js`); the image everything else reuses |
 | `wsapi` | `cryptogram/backend` | Socket.IO / real-time server (`wsapi.js`) |
@@ -289,7 +297,7 @@ which sits on two networks of its own: `mail-relay` (`internal: true`; only
 | `mail` | `foxcpp/maddy:0.9.6` (pinned by digest) | send-only SMTP relay: accepts the app's mail on `mail-relay` port 587, DKIM-signs, queues and delivers to the recipients' MX. No published port. Compose profile `mail` — optional, see [3.9](#39-email-smtp-and-the-mail-relay) |
 | `gateway-api` | `cryptogram/backend` | the gateway's REST API (`api.js` with `CG_GATEWAY=true`, `CG_LEGACY_CGID=true`, its own `BASE_URL`/`CGID_URL`/`REDIS_SECRET`, `TRANSFER_TARGET_URL` = this instance; no S3 credentials); joins `mail-relay` for email-code sign-in. Compose profile `gateway` — optional, see [3.13](#313-the-gateway-of-a-moved-instance) |
 | `gateway-wsapi` | `cryptogram/backend` | the gateway's Socket.IO server (`wsapi.js`, same gateway settings). Compose profile `gateway` |
-| `cg-builder` | `commonground/node` | build-only helper container (not a runtime service) |
+| `cg-builder` | `commonground/node` | build-only helper container (not a runtime service); network `builder` only |
 
 The seven runtime `cryptogram/backend` services (nine with the gateway) are the same image invoked with
 different `command` entrypoints and `DB_TYPE` roles (`writer` for most,
@@ -744,11 +752,11 @@ read-only):
   attempts over about three days; `outbound.conf` delivers to the recipient's
   MX over port 25, IPv4 only (`force_ipv4`, so the PTR check runs against the
   IPv4 address), requiring TLS towards the MX (`min_tls_level encrypted`) and
-  honouring MTA-STS. The relay is the only component that sends to port 25
-  — by design, not enforced: `api` and `job-runner` have ordinary outbound
-  access (`cryptogram` network). To enforce it, block outbound 25/tcp on the
-  host for everything but the relay container (e.g. a rule in the
-  `DOCKER-USER` iptables chain).
+  honouring MTA-STS. The relay is the only component that sends to port 25.
+  The compose file alone does not enforce it (`api` and `job-runner` have
+  ordinary outbound access on `cryptogram`); `harden.sh`'s `mail25` part does,
+  with a `DOCKER-USER` rule that refuses outgoing 25/tcp from every Docker
+  bridge except the relay's `cg-mail-out` ([3.11](#311-server-hardening)).
 - Bounces: a permanent failure becomes a delivery status notification to
   `EMAIL_FROM`; the queue's `bounce` block routes it through `bounce_queue`
   (retries while the job-runner is down) to the job-runner's bounce receiver
@@ -830,7 +838,7 @@ server (roadmap S3; the Ansible suite takes it over after the move). It is
 idempotent — a second run reports every part `[ok]` and changes nothing — and
 `--dry-run` prints each change it would make (file diffs, commands) without
 touching the system; without root a dry run reads what it can. `--skip <part>`
-leaves out `ssh`, `firewall`, `upgrades`, `logs` or `sysctl`. Exit code 1 when
+leaves out `ssh`, `firewall`, `upgrades`, `logs`, `sysctl` or `mail25`. Exit code 1 when
 a part failed or was refused.
 
 | Part | What it does |
@@ -840,13 +848,19 @@ a part failed or was refused.
 | `upgrades` | installs `unattended-upgrades` and enables the daily run (`/etc/apt/apt.conf.d/20auto-upgrades`) with the distribution's default origins — security updates, installed as soon as they are published (a standing exception to the waiting periods, [UPDATE-POLICY.md](../infrastructure/UPDATE-POLICY.md#standing-exception-the-hosts-distribution-security-updates)). The container runtime is excluded (`/etc/apt/apt.conf.d/51commonground-unattended-upgrades`: `docker.io`, `docker-ce*`, the Compose and Buildx plugins, `containerd*`, `runc`) — updating it restarts every container, so it is done by hand. No automatic reboot: a pending one is reported. |
 | `logs` | journald capped at 1 GB and four weeks (`/etc/systemd/journald.conf.d/90-commonground.conf`); `logrotate` installed (it ships with both distributions' server images). Container logs rotate through the compose files ([§5](#log-rotation)). |
 | `sysctl` | `/etc/sysctl.d/90-commonground.conf`: `net.ipv4.ip_local_reserved_ports = 40000-40099` (the ephemeral port range overlaps the media ports, and a collision keeps mediasoup from starting) and `vm.overcommit_memory = 1` (the Valkey state instance forks for its snapshots); loaded at once and checked. |
+| `mail25` | outgoing 25/tcp from containers only through the mail relay's network: `/usr/local/sbin/cg-mail-egress` inserts, idempotently, `-i docker0` and `-i br-+ -p tcp --dport 25 -j REJECT --reject-with tcp-reset` (comment `cg-mail-egress`) at the top of Docker's `DOCKER-USER` chain, for `iptables` and, where Docker has the chain, `ip6tables`; the relay's bridge `cg-mail-out` matches neither. The script applies the rule only while the interface `cg-mail-out` exists; without it (a relay network created before the bridge had a fixed name is `br-<id>`) it removes its rules and exits 1, and the part, with Docker running, warns and sets nothing up — SELFHOST.md has the steps to recreate the network. `cg-mail-egress.service` (oneshot, `After=`/`PartOf=`/`WantedBy=docker.service`) applies it whenever Docker starts, so it survives reboots and Docker restarts; the part enables the unit and applies the rule at once when Docker runs. Needs Docker's iptables firewall backend (on Ubuntu 26.04 `iptables-nft`, which provides `DOCKER-USER` the same way); with the nftables backend the part warns and sets nothing up (SELFHOST.md has an nftables equivalent), and the script exits non-zero when the chain is missing, so the unit shows as failed. Leave it out when the instance sends through another server on port 25. |
 
 A file that cannot be written is reported as `[FAILED]`; `--ssh-user`
 without a name is a usage error (exit 2).
 
-Not covered: fail2ban (key-only SSH leaves nothing to brute-force), the
-hoster's own firewall, and the outbound port 25 restriction to the mail relay
-([docs/infrastructure §7](../infrastructure/README.md#7-self-hosted-single-server-deployment)).
+Not covered: fail2ban (key-only SSH leaves nothing to brute-force) and the
+hoster's own firewall. The `mail25` rule script was tested 2026-11-07 in an
+`alpine:3` container's own network namespace (`iptables-nft`, a `DOCKER-USER`
+chain and a dummy `cg-mail-out` link created by hand): two runs leave exactly
+two rules per family, without the link no rule is applied and existing ones
+are removed (exit 1); the part itself was dry-run on Ubuntu 26.04 with
+Docker 29.9 (iptables backend). The real run on a server with Docker is
+still to be done on the test VM.
 Tested 2026-11-02 in throwaway `ubuntu:26.04` and `debian:13` containers (own
 network namespace, a running sshd, no `--privileged`): dry runs as root and
 non-root, `--ssh-user` without a value, the refusals (no key, only a
@@ -922,13 +936,15 @@ simplest that fits one server and one edge —
   `CG_GATEWAY_TWITTER_CALLBACK_URL` and `CG_GATEWAY_WALLETCONNECT_PROJECT_ID`. Mail, chains, X keys
   are the instance's; LUKSO sign-in uses the instance's `onchain` service (`CG_ENABLE_BLOCKCHAIN`).
   `selfhost.sh up` refuses a gateway without its domains or `CG_MAIL_LIMIT_SECRET`, with the
-  instance's own domains or secret, with `CG_DOMAIN` under `CG_GATEWAY_DOMAIN` (the gateway's
-  session cookie, scoped to `.<gateway domain>` and named like the instance's, would reach the
-  instance; the gateway api refuses such a `TRANSFER_TARGET_URL` itself, too), or with
-  `CG_LEGACY_CGID=true` on the instance itself. A gateway under `CG_DOMAIN` is fine (the instance's
-  cookie is host-only).
-- **Isolation**: own session secret and Valkey key prefix (`gateway:`), cookie on the old domain;
-  see auth-identity §12. Switched off, its `gateway:` keys stay in Valkey (the copies of the
+  instance's own domains or secret, with `CG_DOMAIN` under `CG_GATEWAY_DOMAIN` (cookies scoped to
+  `.<gateway domain>` — the old instance's session cookie, named like the instance's — would reach
+  the instance; the gateway api refuses such a `TRANSFER_TARGET_URL` itself, too), or with
+  `CG_LEGACY_CGID=true` on the instance itself (whose backend refuses it as well). A gateway under
+  `CG_DOMAIN` is fine (both session cookies are host-only).
+- **Isolation**: own session secret and Valkey key prefix (`gateway:`), a host-only cookie on the
+  old domain; see auth-identity §12. Other host names under the old domain still receive the
+  cookies browsers keep for the whole old domain: while the gateway runs, the old zone holds only
+  the gateway's two names (SELFHOST.md, "Old host names"). Switched off, its `gateway:` keys stay in Valkey (the copies of the
   session generations have no TTL); SELFHOST.md has the command that removes them.
 
 **Checking the worker replacement with a browser that has the old app** (dress rehearsal; the

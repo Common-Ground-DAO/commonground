@@ -72,24 +72,42 @@ function urlHost(value: string | undefined): string | undefined {
 }
 
 /**
- * Every startup check of a gateway process: it must run in legacy CG ID mode
- * (the passkeys of the old origin), and the api must know where its transfer
- * links lead — an instance that does not lie on or under the gateway's own
- * domain, whose session cookie (`.<gateway domain>`, the same name as the
- * instance's) it would receive as well — and the mail-limit secret it shares
- * with that instance (read like the mail limits read it,
- * sharedMailLimitSecret). Throws with a descriptive message.
+ * Every startup check of a gateway process: it never runs with
+ * DEPLOYMENT=dev, it must run in legacy CG ID mode (the passkeys of the old
+ * origin), and the api must know where its transfer links lead — an instance
+ * that does not lie on or under the gateway's own domain (it would share the
+ * old domain's cookies, `connect.sid` included) — and the mail-limit secret
+ * it shares with that instance (read like the mail limits read it,
+ * sharedMailLimitSecret). Outside dev, the other way round: a process with
+ * the gateway's settings (CG_LEGACY_CGID=true, TRANSFER_TARGET_URL) must be
+ * a gateway. Throws with a descriptive message.
  */
 export function validateGatewayConfig(
   options: { needsTransferTarget: boolean },
   env: NodeJS.ProcessEnv = process.env,
   readDockerSecret: (name: string) => string | false | undefined = dockerSecret,
 ): void {
+  const dev = env.DEPLOYMENT === "dev";
   if (!isGatewayMode(env)) {
     if (env.CG_GATEWAY !== undefined && env.CG_GATEWAY !== "" && env.CG_GATEWAY !== "false") {
       throw new Error(`CG_GATEWAY must be "true" or "false", got "${env.CG_GATEWAY}"`);
     }
+    // Legacy CG ID mode keeps the whole old sign-up and sign-in surface; only
+    // the gateway's allowlists restrict it. A process with the gateway's
+    // settings but without CG_GATEWAY=true would be a full instance on the old
+    // domain (on the main instance's Valkey keys and Socket.IO channels).
+    if (!dev && env.CG_LEGACY_CGID === "true") {
+      throw new Error("CG_LEGACY_CGID=true is for a gateway only and needs CG_GATEWAY=true (outside dev)");
+    }
+    if (!dev && env.TRANSFER_TARGET_URL?.trim()) {
+      throw new Error("TRANSFER_TARGET_URL is for a gateway only and needs CG_GATEWAY=true (outside dev)");
+    }
     return;
+  }
+  if (dev) {
+    // a dev stack turns off login throttles, accepts http transfer targets
+    // and local origins: nothing a gateway that takes real sign-ins may do
+    throw new Error("CG_GATEWAY=true does not run with DEPLOYMENT=dev");
   }
   if (env.CG_LEGACY_CGID !== "true") {
     throw new Error("CG_GATEWAY=true needs CG_LEGACY_CGID=true (the gateway serves the old sign-in methods)");
@@ -101,7 +119,7 @@ export function validateGatewayConfig(
     const targetHost = urlHost(env.TRANSFER_TARGET_URL);
     const gatewayHost = urlHost(env.BASE_URL);
     if (targetHost && gatewayHost && isSameOrSubdomain(targetHost, gatewayHost)) {
-      throw new Error(`CG_GATEWAY=true: TRANSFER_TARGET_URL (${targetHost}) must not be the gateway's domain or lie under it (${gatewayHost}): it would receive the gateway's session cookie`);
+      throw new Error(`CG_GATEWAY=true: TRANSFER_TARGET_URL (${targetHost}) must not be the gateway's domain or lie under it (${gatewayHost}): it would share the old domain's cookies`);
     }
   }
   if (options.needsTransferTarget && !sharedMailLimitSecret(env, readDockerSecret)) {

@@ -136,6 +136,7 @@ const OPEN_ROUTES = new Set([
   "POST /user/getuserdata",
   "POST /user/previewtransferlink",
   "POST /user/redeemtransferlink",
+  "POST /user/declinetransferlink",
   // one-click unsubscribe links in mails (token-authenticated)
   "GET /user/emailunsubscribe",
   "POST /user/emailunsubscribe",

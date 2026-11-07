@@ -24,6 +24,9 @@
 # Safe to re-run: existing files are never overwritten.
 set -euo pipefail
 cd "${0%/*}/.."   # docker/
+# every file this script writes holds secrets (or is the key of the internal
+# certificate): readable by its owner only from the moment it exists
+umask 077
 
 usage() {
   echo "Usage: $0 [--tls-internal] <domain> <acme-email> [id-domain] [public-ip] [public-ipv6]"
@@ -417,18 +420,9 @@ else
   ]
 }
 EOF
-  # seaweed reads the bind-mounted file as its in-container user, uid 1000
-  # (chrislusf/seaweedfs drops root via su-exec). Keep the production secret
-  # unreadable for others: owned by 1000 with mode 600 — which needs either
-  # running as uid 1000 or the right to chown (root).
-  if [ "$(id -u)" = "1000" ] || chown 1000:1000 s3_config/s3.selfhost.json 2>/dev/null; then
-    chmod 600 s3_config/s3.selfhost.json
-  else
-    chmod 644 s3_config/s3.selfhost.json
-    echo "Note: s3_config/s3.selfhost.json is world-readable (mode 644): seaweed reads it as"
-    echo "      uid 1000 and this user can't chown it. To tighten it, run as root:"
-    echo "        chown 1000:1000 s3_config/s3.selfhost.json && chmod 600 s3_config/s3.selfhost.json"
-  fi
+  # readable by its owner only: the seaweed container reads it as root and
+  # copies it for its own user (docker-compose.selfhost.yml), whoever owns it
+  chmod 600 s3_config/s3.selfhost.json
   echo "Wrote s3_config/s3.selfhost.json"
 fi
 

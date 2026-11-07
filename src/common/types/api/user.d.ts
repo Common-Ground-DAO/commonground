@@ -599,11 +599,28 @@ declare global {
                     displayName: string;
                     /** the unique handle (cg profile name), if the account has one */
                     username: string | null;
+                    /**
+                     * a unique identifier of the account to show next to the
+                     * free display name: the cg profile name, else the linked
+                     * X or Farcaster handle, else the Universal Profile
+                     * address; null if the account has none of them
+                     */
+                    identity: {
+                        type: 'cg' | 'twitter' | 'farcaster' | 'lukso';
+                        handle: string;
+                    } | null;
                     /** profile image of the displayed account */
                     imageId: string | null;
                     /** epoch ms */
                     expiresAt: number;
                 };
+            }
+
+            namespace declineTransferLink {
+                type Request = {
+                    token: string;
+                };
+                type Response = void;
             }
 
             namespace redeemTransferLink {

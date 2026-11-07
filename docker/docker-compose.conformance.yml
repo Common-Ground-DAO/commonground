@@ -22,7 +22,7 @@ services:
   seaweed:
     volumes: !override
       - seaweedfs-data:/data
-      - ./s3_config/s3.conformance.json:/etc/seaweedfs/s3.json:ro
+      - ./s3_config/s3.conformance.json:/run/cg/s3.json:ro
   mediasoup:
     # DOMAIN drives both the callservers.url row and the protoo URL the
     # client builds (wss://<url>:4443). CG_DOMAIN carries a port for the

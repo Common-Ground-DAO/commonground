@@ -388,6 +388,10 @@ const userApi = {
     token: common.TransferToken.required(),
     device: newDeviceValidator.required(),
   }).strict(true).required(),
+
+  declineTransferLink: Joi.object<API.User.declineTransferLink.Request>({
+    token: common.TransferToken.required(),
+  }).strict(true).required(),
 }
 
 export default userApi;

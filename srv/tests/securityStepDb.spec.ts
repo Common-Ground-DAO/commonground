@@ -202,6 +202,40 @@ describeDb('account-security step and transfer links on PostgreSQL', () => {
       await pool.end();
     }
   });
+
+  it('transfer tokens (as the api\'s role): a declined link and the unused links of a sign-out never redeem; other accounts keep theirs', async () => {
+    const { helper, pool } = withRole('writer', () => ({
+      helper: require('../repositories/transferTokens').default as typeof import('../repositories/transferTokens').default,
+      pool: require('../util/postgres').default as Pool,
+    }));
+    try {
+      const declined = await helper.create(user, null, 600000, 0);
+      const sibling = await helper.create(user, null, 600000, 0);
+      const othersOpen = await helper.create(xOnly, null, 600000, 0);
+      await expect(helper.decline(declined.token)).resolves.toBe(true);
+      await expect(helper.decline(declined.token)).resolves.toBe(false);
+      await expect(helper.peek(declined.token)).resolves.toBeNull();
+      await expect(helper.consume(declined.token)).resolves.toBeNull();
+      // the account's other unused link went with it; another account's did not
+      await expect(helper.consume(sibling.token)).resolves.toBeNull();
+      await expect(helper.peek(othersOpen.token)).resolves.toMatchObject({ userId: xOnly });
+      await expect(helper.decline('A'.repeat(43))).resolves.toBe(false);
+
+      const used = await helper.create(user, null, 600000, 0);
+      await expect(helper.consume(used.token)).resolves.toMatchObject({ userId: user });
+      const open1 = await helper.create(user, null, 600000, 0);
+      const open2 = await helper.create(user, '/c/y/', 600000, 0);
+      const others = await helper.create(xOnly, null, 600000, 0);
+      await expect(helper.discardUnused(user)).resolves.toBe(2);
+      await expect(helper.consume(open1.token)).resolves.toBeNull();
+      await expect(helper.consume(open2.token)).resolves.toBeNull();
+      await expect(helper.discardUnused(user)).resolves.toBe(0);
+      await expect(helper.consume(others.token)).resolves.toMatchObject({ userId: xOnly });
+    }
+    finally {
+      await pool.end();
+    }
+  });
   describe('session generations', () => {
     type Repos = {
       users: typeof import('../repositories/users').default;

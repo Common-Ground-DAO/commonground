@@ -170,6 +170,20 @@ const transferTokens = {
     row.usedAt = Date.now();
     return { userId: row.userId, nextPath: row.nextPath };
   }),
+  decline: jest.fn(async (token: string) => {
+    const { hashTransferToken } = require('../util/transferLink');
+    const row = tokenRows.find(r => r.hash === hashTransferToken(token) && r.usedAt === null && r.expiresAt > Date.now());
+    if (!row) return false;
+    for (const r of tokenRows) {
+      if (r.userId === row.userId && r.usedAt === null && r.expiresAt > Date.now()) r.usedAt = Date.now();
+    }
+    return true;
+  }),
+  discardUnused: jest.fn(async (userId: string) => {
+    const rows = tokenRows.filter(r => r.userId === userId && r.usedAt === null && r.expiresAt > Date.now());
+    for (const row of rows) row.usedAt = Date.now();
+    return rows.length;
+  }),
 };
 
 function ownData(id: string): any {
@@ -213,6 +227,7 @@ const users = {
   setUserExtraDataField: jest.fn(async () => undefined),
   isEmailAvailable: jest.fn(async () => true),
   nextSessionGeneration: jest.fn(async () => 1),
+  getUserByAccount: jest.fn(async () => ownData(USER)),
 };
 const devices = {
   createDevice: jest.fn(async () => ({ deviceId: 'device-new' })),
@@ -232,7 +247,7 @@ const mocks: Record<string, object> = {
   emails: {},
   suggestedUsers: {},
   articles: {},
-  onchain: {},
+  onchain: { luksoIsValidSignature: jest.fn(async () => true) },
   permissions: {},
   passkeys: {},
 };
@@ -343,7 +358,9 @@ describe('transfer links: minting', () => {
 
   it('takes no user id, and no foreign or odd next path', async () => {
     await expect(call('User/createTransferLink', loggedIn(), { userId: OTHER_USER })).rejects.toThrow();
-    for (const next of ['//evil.com', '/\\evil.com', 'https://evil.com/', 'javascript:alert(1)', '/\t/evil.com', '/transfer']) {
+    for (const next of ['//evil.com', '/\\evil.com', 'https://evil.com/', 'javascript:alert(1)', '/\t/evil.com', '/transfer',
+      // dot segments that normalize into a protocol-relative path
+      '/.//evil.com', '/..//evil.com', '/a/..//evil.com', '/%2e//evil.com']) {
       await call('User/createTransferLink', loggedIn(), { nextPath: next });
       expect(transferTokens.create).toHaveBeenLastCalledWith(USER, null, expect.any(Number), 0);
     }
@@ -377,9 +394,62 @@ describe('transfer links: redemption', () => {
 
   it('preview names the account and leaves the link usable', async () => {
     const token = await mint();
-    await expect(call('User/previewTransferLink', makeRequest(), { token })).resolves.toMatchObject({ userId: USER, displayName: 'someone' });
+    await expect(call('User/previewTransferLink', makeRequest(), { token })).resolves.toMatchObject({
+      userId: USER, displayName: 'someone', username: 'someone', identity: { type: 'cg', handle: 'someone' },
+    });
     await expect(call('User/previewTransferLink', makeRequest(), { token })).resolves.toMatchObject({ userId: USER });
     expect(tokenRows[0].usedAt).toBeNull();
+  });
+
+  it('preview shows a unique handle for an account without a cg profile', async () => {
+    const token = await mint();
+    const address = '0x' + 'ab'.repeat(20);
+    const accountsOnly = (accounts: any[], displayAccount: string) => users.getOwnDataById.mockResolvedValueOnce({ ...ownData(USER), displayAccount, accounts });
+    accountsOnly([{ type: 'twitter', displayName: 'someone_x', imageId: null, extraData: null }], 'twitter');
+    await expect(call('User/previewTransferLink', makeRequest(), { token })).resolves.toMatchObject({ username: null, identity: { type: 'twitter', handle: 'someone_x' } });
+    accountsOnly([{ type: 'farcaster', displayName: 'Some One', imageId: null, extraData: { type: 'farcaster', fid: 1, username: 'someone' } }], 'farcaster');
+    await expect(call('User/previewTransferLink', makeRequest(), { token })).resolves.toMatchObject({ displayName: 'Some One', identity: { type: 'farcaster', handle: 'someone' } });
+    accountsOnly([{ type: 'lukso', displayName: 'Some One', imageId: null, extraData: { type: 'lukso', upAddress: address } }], 'lukso');
+    await expect(call('User/previewTransferLink', makeRequest(), { token })).resolves.toMatchObject({ identity: { type: 'lukso', handle: address } });
+  });
+
+  it("'This isn't me' uses the link and the account's other unused links up without signing in; the answer does not tell whether it was usable", async () => {
+    const token = await mint();
+    const sibling = await mint();
+    const { url } = await call('User/createTransferLink', loggedIn(OTHER_USER), {});
+    const othersLink = url.split('#')[1];
+    const request = makeRequest();
+    await expect(call('User/declineTransferLink', request, { token })).resolves.toBeUndefined();
+    expect(request.session.user).toBeUndefined();
+    expect(tokenRows[0].usedAt).not.toBeNull();
+    await expect(call('User/redeemTransferLink', makeRequest(), { token, device: { publicKey: DEVICE_KEY } })).rejects.toThrow('TRANSFER_LINK_INVALID');
+    await expect(call('User/redeemTransferLink', makeRequest(), { token: sibling, device: { publicKey: DEVICE_KEY } })).rejects.toThrow('TRANSFER_LINK_INVALID');
+    await expect(call('User/previewTransferLink', makeRequest(), { token: othersLink })).resolves.toMatchObject({ userId: OTHER_USER });
+    // again, or an unknown link: the same answer
+    await expect(call('User/declineTransferLink', makeRequest(), { token })).resolves.toBeUndefined();
+    await expect(call('User/declineTransferLink', makeRequest(), { token: 'A'.repeat(43) })).resolves.toBeUndefined();
+    await expect(call('User/declineTransferLink', makeRequest(), { token: 'short' })).rejects.toThrow();
+  });
+
+  it('signing out where the link was minted ends the unused links of that account', async () => {
+    const used = await mint();
+    await call('User/redeemTransferLink', makeRequest(), { token: used, device: { publicKey: DEVICE_KEY } });
+    const open = await mint();
+    const { url } = await call('User/createTransferLink', loggedIn(OTHER_USER), {});
+    const othersLink = url.split('#')[1];
+    await call('User/logout', fresh(USER), undefined);
+    expect(transferTokens.discardUnused).toHaveBeenCalledWith(USER);
+    await expect(call('User/redeemTransferLink', makeRequest(), { token: open, device: { publicKey: DEVICE_KEY } })).rejects.toThrow('TRANSFER_LINK_INVALID');
+    // another account's link is untouched
+    await expect(call('User/previewTransferLink', makeRequest(), { token: othersLink })).resolves.toMatchObject({ userId: OTHER_USER });
+  });
+
+  it('a sign-out where no links are minted (the main instance) leaves them alone', async () => {
+    const token = await mint();
+    delete process.env.TRANSFER_TARGET_URL;
+    await call('User/logout', fresh(USER), undefined);
+    expect(transferTokens.discardUnused).not.toHaveBeenCalled();
+    await expect(call('User/previewTransferLink', makeRequest(), { token })).resolves.toMatchObject({ userId: USER });
   });
 
   it('signs in once: new session, a transfer authentication, the next path', async () => {
@@ -458,6 +528,7 @@ describe('transfer links: redemption', () => {
     process.env.CG_LEGACY_CGID = 'true';
     await expect(call('User/redeemTransferLink', makeRequest(), { token, device: { publicKey: DEVICE_KEY } })).rejects.toThrow('NOT_SUPPORTED');
     await expect(call('User/previewTransferLink', makeRequest(), { token })).rejects.toThrow('NOT_SUPPORTED');
+    await expect(call('User/declineTransferLink', makeRequest(), { token })).rejects.toThrow('NOT_SUPPORTED');
   });
 });
 
@@ -854,6 +925,36 @@ describe('password login throttling', () => {
     await call('User/login', makeRequest(), { type: 'password', aliasOrEmail: 'someone', password: 'correct horse', device });
     failureCounts['user:login:password:identifier:someone'] = 100;
     await expect(call('User/login', makeRequest(), { type: 'password', aliasOrEmail: 'someone', password: 'correct horse', device })).rejects.toThrow('RATE_LIMIT_EXCEEDED');
+  });
+});
+
+// ===========================================================================
+describe('LUKSO sign-in (User/login after Lukso/PrepareLuksoAction)', () => {
+  const ADDRESS = '0x' + '33'.repeat(20);
+  const message = (domain = 'cg.box', uri = 'https://cg.box') => [
+    `${domain} wants you to sign in with your Ethereum account:`, ADDRESS, '',
+    'Sign this to log into Common Ground.', '',
+    `URI: ${uri}`, 'Version: 1', 'Chain ID: 42', 'Nonce: abcdefghij0123456789', `Issued At: ${new Date().toISOString()}`,
+  ].join('\n');
+  const prepared = (fields: Record<string, unknown> = {}) => makeRequest({
+    lukso: { address: ADDRESS, message: message(), signature: '0x00', username: 'someone', profileImageUrl: '', existsAlready: true, preparedAt: Date.now(), ...fields },
+  });
+  const login = (request: any) => call('User/login', request, { type: 'lukso', device: { publicKey: DEVICE_KEY } });
+
+  it('signs in with a fresh prepared sign-in for this instance', async () => {
+    const result = await login(prepared());
+    expect(result).toMatchObject({ ownData: { id: USER } });
+    expect((mocks.onchain as any).luksoIsValidSignature).toHaveBeenCalledWith(ADDRESS, '0x00', expect.stringMatching(/^cg\.box wants you/));
+  });
+
+  it('refuses a prepared sign-in that is old, has no time, or names another site or profile', async () => {
+    await expect(login(prepared({ preparedAt: Date.now() - 11 * 60 * 1000 }))).rejects.toThrow('INVALID_SECRET');
+    await expect(login(prepared({ preparedAt: undefined }))).rejects.toThrow('INVALID_SECRET');
+    await expect(login(prepared({ message: message('evil.example', 'https://evil.example') }))).rejects.toThrow('INVALID_SIGNATURE');
+    await expect(login(prepared({ message: 'sign in\nNonce: abcdefghij0123456789' }))).rejects.toThrow('INVALID_REQUEST');
+    await expect(login(prepared({ address: '0x' + '44'.repeat(20) }))).rejects.toThrow('INVALID_SIGNATURE');
+    await expect(login(makeRequest())).rejects.toThrow('INVALID_REQUEST');
+    expect((mocks.onchain as any).luksoIsValidSignature).not.toHaveBeenCalled();
   });
 });
 

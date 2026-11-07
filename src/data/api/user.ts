@@ -479,6 +479,15 @@ class UserApiConnector extends BaseApiConnector {
     );
   }
 
+  /** uses a transfer link up without signing in ("This isn't me") */
+  public async declineTransferLink(data: API.User.declineTransferLink.Request): Promise<API.User.declineTransferLink.Response> {
+    return await this.ajax<API.User.declineTransferLink.Response>(
+      "POST",
+      "/declineTransferLink",
+      data,
+    );
+  }
+
   /** use `loginManager.redeemTransferLink`, which also sets up the login */
   public async redeemTransferLink(data: API.User.redeemTransferLink.Request): Promise<API.User.redeemTransferLink.Response> {
     return await this.ajax<API.User.redeemTransferLink.Response>(

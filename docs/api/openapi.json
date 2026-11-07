@@ -2527,6 +2527,14 @@
                             },
                             "roleTitle": {
                               "type": "string"
+                            },
+                            "roleType": {
+                              "enum": [
+                                "CUSTOM_AUTO_ASSIGN",
+                                "CUSTOM_MANUAL_ASSIGN",
+                                "PREDEFINED"
+                              ],
+                              "type": "string"
                             }
                           },
                           "required": [
@@ -2680,6 +2688,14 @@
                           "type": "string"
                         },
                         "roleTitle": {
+                          "type": "string"
+                        },
+                        "roleType": {
+                          "enum": [
+                            "CUSTOM_AUTO_ASSIGN",
+                            "CUSTOM_MANUAL_ASSIGN",
+                            "PREDEFINED"
+                          ],
                           "type": "string"
                         }
                       },
@@ -3018,6 +3034,14 @@
                           "type": "string"
                         },
                         "roleTitle": {
+                          "type": "string"
+                        },
+                        "roleType": {
+                          "enum": [
+                            "CUSTOM_AUTO_ASSIGN",
+                            "CUSTOM_MANUAL_ASSIGN",
+                            "PREDEFINED"
+                          ],
                           "type": "string"
                         }
                       },
@@ -7757,6 +7781,14 @@
                             },
                             "roleTitle": {
                               "type": "string"
+                            },
+                            "roleType": {
+                              "enum": [
+                                "CUSTOM_AUTO_ASSIGN",
+                                "CUSTOM_MANUAL_ASSIGN",
+                                "PREDEFINED"
+                              ],
+                              "type": "string"
                             }
                           },
                           "required": [
@@ -7921,6 +7953,14 @@
                           "type": "string"
                         },
                         "roleTitle": {
+                          "type": "string"
+                        },
+                        "roleType": {
+                          "enum": [
+                            "CUSTOM_AUTO_ASSIGN",
+                            "CUSTOM_MANUAL_ASSIGN",
+                            "PREDEFINED"
+                          ],
                           "type": "string"
                         }
                       },
@@ -8249,6 +8289,14 @@
                           "type": "string"
                         },
                         "roleTitle": {
+                          "type": "string"
+                        },
+                        "roleType": {
+                          "enum": [
+                            "CUSTOM_AUTO_ASSIGN",
+                            "CUSTOM_MANUAL_ASSIGN",
+                            "PREDEFINED"
+                          ],
                           "type": "string"
                         }
                       },
@@ -14790,6 +14838,82 @@
           }
         },
         "summary": "User/createUser",
+        "tags": [
+          "User"
+        ]
+      }
+    },
+    "/api/v2/User/declineTransferLink": {
+      "post": {
+        "operationId": "User_declineTransferLink",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "token": {
+                    "pattern": "^[A-Za-z0-9_-]{43}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "token"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "data": {},
+                        "status": {
+                          "enum": [
+                            "OK"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "error": {
+                          "description": "machine error code (srv/common/errors.ts)",
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ERROR"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "error"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "RPC envelope. status OK carries data (shape from the TS API types); status ERROR carries a machine error code. Note: RPC-level errors also use HTTP 200."
+          }
+        },
+        "summary": "User/declineTransferLink",
         "tags": [
           "User"
         ]

@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-// Minimal in-memory stand-in for srv/redis (GET, SET with NX, DEL, INCR, the
+// Minimal in-memory stand-in for srv/redis (GET, SET with NX, DEL, INCR/INCRBY/DECRBY, the
 // compare-and-delete script of srv/util/emailCodes.ts, and the sorted-set
 // commands of srv/util/rateLimit.ts with MULTI), for jest.mock('../redis', ...).
 // TTLs are not modelled.
@@ -49,6 +49,16 @@ const client = {
     keys.set(key, String(next));
     return next;
   },
+  async incrBy(key: string, by: number) {
+    const next = Number(keys.get(key) ?? 0) + by;
+    keys.set(key, String(next));
+    return next;
+  },
+  async decrBy(key: string, by: number) {
+    const next = Number(keys.get(key) ?? 0) - by;
+    keys.set(key, String(next));
+    return next;
+  },
   async expire() {
     return 1;
   },
@@ -56,6 +66,7 @@ const client = {
   multi() {
     const ops: (() => unknown)[] = [];
     const chain = {
+      incrBy(key: string, by: number) { ops.push(() => { const next = Number(keys.get(key) ?? 0) + by; keys.set(key, String(next)); return next; }); return chain; },
       zAdd(key: string, entry: { value: string; score: number }) { ops.push(() => { sortedSet(key).set(entry.value, entry.score); return 1; }); return chain; },
       expire() { ops.push(() => 1); return chain; },
       zRemRangeByScore(key: string, min: number, max: number) { ops.push(() => zRemRangeByScore(key, min, max)); return chain; },

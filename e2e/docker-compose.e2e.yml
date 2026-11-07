@@ -51,7 +51,7 @@ services:
   seaweed:
     volumes: !override
       - seaweedfs-data:/data
-      - ../e2e/.instance/s3.json:/etc/seaweedfs/s3.json:ro
+      - ../e2e/.instance/s3.json:/run/cg/s3.json:ro
 
   migrate-db:
     image: ${E2E_IMAGE_PREFIX:-cg-e2e}/backend

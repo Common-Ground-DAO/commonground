@@ -17,6 +17,7 @@ import { getUrl } from 'common/util';
 import userApi from 'data/api/user';
 import loginManager from 'data/appstate/login';
 import { forgetTransferToken, getTransferToken } from 'data/auth/transferToken';
+import { transferIdentityText } from './transferIdentity';
 import 'components/organisms/AuthFlow/AuthFlow.css';
 import 'components/organisms/SecurityStep/SecurityStep.css';
 
@@ -85,6 +86,15 @@ const TransferView: React.FC = () => {
     navigate(safeNextPath(next, window.location.origin) || getUrl({ type: 'home' }), { replace: true });
   }, [navigate]);
 
+  // "This isn't me": the link is used up on the server too, so it cannot be
+  // opened again, from this browser's history for example
+  const decline = useCallback(() => {
+    if (token) {
+      userApi.declineTransferLink({ token }).catch(e => console.warn("Could not discard the transfer link", e));
+    }
+    leave(null);
+  }, [token, leave]);
+
   const continueAs = useCallback(async () => {
     if (!token) {
       return;
@@ -125,7 +135,7 @@ const TransferView: React.FC = () => {
             <div className='flex flex-col items-center gap-2 py-2'>
               <AccountImage preview={preview} />
               <span className='cg-text-lg-500 cg-text-main'>{preview.displayName}</span>
-              {!!preview.username && <span className='cg-text-md-400 cg-text-secondary'>@{preview.username}</span>}
+              <span className='cg-text-md-400 cg-text-secondary text-center' style={{ overflowWrap: 'anywhere' }}>{transferIdentityText(preview)}</span>
             </div>
             {otherAccount && <span className='cg-text-md-400 cg-text-secondary text-center'>
               You are signed in here with another account. Continuing signs you out of it.
@@ -133,7 +143,7 @@ const TransferView: React.FC = () => {
             {sameAccount
               ? <Button className='w-full' role='primary' text='Continue' onClick={() => leave(null)} />
               : <Button className='w-full' role='primary' text={`Continue as ${preview.displayName}`} onClick={continueAs} loading={busy} disabled={busy || !settled} />}
-            {!sameAccount && <Button className='w-full' role='textual' text="This isn't me" onClick={() => leave(null)} disabled={busy} />}
+            {!sameAccount && <Button className='w-full' role='textual' text="This isn't me" onClick={decline} disabled={busy} />}
           </>}
           {!preview && !error && <StepHeader title='Checking your link…' />}
           {!!error && <>

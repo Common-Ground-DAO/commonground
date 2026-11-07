@@ -27,6 +27,8 @@
 #   - every backend process caps its PostgreSQL pool (PG_POOL_MAX); the sum
 #     over all of them, the gateway included, stays well below the server's
 #     max_connections (docker/db/postgresql.conf has the arithmetic)
+#   - the build helper (cg-builder) is on a network of its own, not on the
+#     stack's; secret files stay mode 600 (seaweed copies its config in)
 #
 # Usage: see docker/SELFHOST.md. Never run this with the dev docker/.env —
 # use docker/selfhost/init.sh to generate .env.selfhost with fresh secrets.
@@ -230,8 +232,13 @@ services:
   # Volume blobs and the filer leveldb (filerldb2/) share one /data volume, so a
   # filesystem snapshot of it is atomic across blobs and metadata — see
   # SELFHOST.md for the backup and the 3-to-1 upgrade procedure.
+  # s3.selfhost.json holds the S3 admin secret and stays readable by its owner
+  # only (mode 600, whoever ran init.sh). The container starts as root, copies
+  # it to where weed reads it, owned by the image's own user, and then runs
+  # the image's entrypoint, which drops to that user as before.
   seaweed:
     image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    entrypoint: ["/bin/sh", "-c", "install -m 600 -o seaweed -g seaweed /run/cg/s3.json /etc/seaweedfs/s3.json && exec /entrypoint.sh \"$$@\"", "seaweed-entrypoint"]
     command: "server -dir=/data -ip=seaweed -master.volumeSizeLimitMB=${SEAWEED_VOLUME_LIMIT_MB:-1024} -volume.max=0 -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.port.iceberg=0"
     restart: unless-stopped
     mem_limit: ${CG_MEM_LIMIT_SEAWEED:-1g}
@@ -247,7 +254,7 @@ services:
       # selfhost.sh derives it from CG_MEM_LIMIT_SEAWEED when that is set)
       GOMEMLIMIT: ${CG_GOMEMLIMIT_SEAWEED:-870MiB}
     volumes:
-      - ./s3_config/s3.selfhost.json:/etc/seaweedfs/s3.json:ro
+      - ./s3_config/s3.selfhost.json:/run/cg/s3.json:ro
       - seaweedfs-data:/data
 
   migrate-db:
@@ -753,8 +760,10 @@ services:
     volumes:
       - ../:/cg
       - builder-cache:/builder-cache
+    # its own network: the build needs the package registry, never the
+    # stack's services (database, Valkey, storage, onchain)
     networks:
-      - cryptogram
+      - builder
     command: ["echo", "Not running interactive, exiting..."]
 
 volumes:
@@ -769,9 +778,16 @@ volumes:
 networks:
   cryptogram:
     attachable: true
+  # cg-builder only: a way out to the package registry, no stack service on it
+  builder:
   # app (api, job-runner) -> mail relay; no route to the outside
   mail-relay:
     internal: true
-  # the mail relay's own way out (SMTP to the recipients' MX, port 25)
+  # the mail relay's own way out (SMTP to the recipients' MX, port 25). Its
+  # bridge has a fixed name, so a host firewall rule can let tcp/25 out of
+  # this network only (harden.sh, part mail25); every other Docker bridge is
+  # named br-<id>.
   mail-egress:
+    driver_opts:
+      com.docker.network.bridge.name: cg-mail-out
 

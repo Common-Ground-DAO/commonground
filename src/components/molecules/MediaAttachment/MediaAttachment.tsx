@@ -18,6 +18,8 @@ import { cssBackgroundImage } from 'util/cssBackground';
 type Props = InMemoryAttachment & {
   updateAttachment: (imageId: string, largeImageId: string) => void;
   removeAttachment: () => void;
+  /** the upload failed (true) — the composer stops waiting for it */
+  markUploadFailed?: (failed: boolean) => void;
   setIsLoadedState: (imageId: string, state: boolean) => void;
 };
 
@@ -71,8 +73,10 @@ const AttachmentButton: React.FC<Props> = (props) => {
   // over `setAttachments` and the imageId), so it is read through a ref: the
   // upload effect below must not restart because the parent re-rendered.
   const removeAttachmentRef = React.useRef(props.removeAttachment);
+  const markUploadFailedRef = React.useRef(props.markUploadFailed);
   React.useEffect(() => {
     removeAttachmentRef.current = props.removeAttachment;
+    markUploadFailedRef.current = props.markUploadFailed;
   });
 
   // The upload outlives this component whenever the user hits "Remove" (or
@@ -107,6 +111,9 @@ const AttachmentButton: React.FC<Props> = (props) => {
           // already gone.
           removeAttachmentRef.current();
         } else if (mountedRef.current) {
+          // only while mounted: a remounted tile (its index key changed)
+          // runs an upload of its own, which must not be marked by this one
+          markUploadFailedRef.current?.(true);
           setError(result.error || '');
         }
       }
@@ -155,7 +162,8 @@ const AttachmentButton: React.FC<Props> = (props) => {
       </>}
       {attachmentImage}
       <FullscreenImageModal open={showPreview} images={[{url: fileUrl}]} close={() => setShowPreview(false)} />
-      {isLoaded && <div ref={closeButtonRef} role="button" className='attachmentCloseButton' onClick={props.removeAttachment}>
+      {/* also while uploading: an upload that never ends must not trap the tile */}
+      {(isLoaded || !imageId) && <div ref={closeButtonRef} role="button" className='attachmentCloseButton' onClick={props.removeAttachment}>
         <div className='attachmentCloseButtonInternal'>
           <CloseIcon />
           <span>Remove</span>

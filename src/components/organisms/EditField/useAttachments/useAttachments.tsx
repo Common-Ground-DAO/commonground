@@ -24,6 +24,8 @@ export type InMemoryAttachment = Models.Message.Attachment & {
    * during the check cannot silently drop the attachment.
    */
   precheckPending?: boolean;
+  /** the upload of `tentativeFile` failed: the tile shows the error, sending leaves it out */
+  uploadFailed?: boolean;
   originalUrl?: string;
   giphyGif?: IGif;
 };

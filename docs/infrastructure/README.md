@@ -37,7 +37,8 @@
 > `harden.sh` against commit 170a73b, 2026-11-03;
 > the gateway of a moved instance (§1 `api`/`wsapi`, §3 `cg_gateway_app`/`cg_cgid_site` and the instance-config prefix,
 > §7), the session secret and `PG_POOL_MAX` at startup, `max_connections` and the e2e gateway
-> option against commit 696102b, 2026-11-06
+> option against commit 696102b, 2026-11-06; the gateway's replacement service worker (Caddy
+> image, "Gateway of a moved instance") against commit 050245d, 2026-11-07
 
 # Common Ground Infrastructure Documentation
 
@@ -741,8 +742,8 @@ down after the move.
 **Image** — `docker/caddy/Dockerfile`: stock `caddy` (`2.11.x-alpine`, exact
 tag + digest pinned; no plugins — a custom build would pull third-party Go
 modules outside the [update policy](UPDATE-POLICY.md)), plus the frontend build
-in `/srv`, the Caddyfiles in `/etc/caddy/` and the instance-config template in
-`/etc/caddy/templates/`. `Caddyfile.vite` and `Caddyfile.conformance` are not in the image (bind-mounted by their compose files). Nothing instance-specific is baked in, so one image
+in `/srv`, the Caddyfiles in `/etc/caddy/`, the instance-config template in
+`/etc/caddy/templates/` and a gateway's replacement service worker in `/etc/caddy/gateway/`. `Caddyfile.vite` and `Caddyfile.conformance` are not in the image (bind-mounted by their compose files). Nothing instance-specific is baked in, so one image
 serves any domain; the compose file picks the config with `command` and passes
 everything else as environment. Tags: `cryptogram/caddy` (dev) and
 `cryptogram/caddy-selfhost` (self-host), kept apart so the two stacks on one
@@ -899,7 +900,10 @@ self-host Caddy serves two more sites for the gateway's backend (`gateway-api`, 
   stripped; the gateway api's allowlist is the authority, this only keeps the rest from reaching it),
   `/api/ws/` → `gateway-wsapi:4000`, the X sign-in pages `/twitter-callback` and `/twitter-login` →
   `gateway-api`; every other `/api/` path, `/files/` (no media) and `/index_cgid.html` → 404/403; no
-  Bot API, no page routes; the built assets like `cg_app`; every other path gets the web app's shell
+  Bot API, no page routes; the built assets like `cg_app`; `/service-worker.js` is the replacement
+  worker `/etc/caddy/gateway/service-worker.js` from the image (`docker/caddy/gateway-service-worker.js`,
+  `no-cache`; [docs/frontend](../frontend/README.md#service-worker-on-a-gateway)), not the build's;
+  every other path gets the web app's shell
   (`no-cache`), so an old deep link opens the gateway page, which takes the path along to the new
   instance. `robots.txt` disallows everything, request bodies are capped at 1 MiB, HSTS as on the
   main site. The site sets `vars cg_env_prefix GATEWAY_`: its `/instance-config.js` comes from the

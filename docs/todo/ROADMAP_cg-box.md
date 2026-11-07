@@ -397,7 +397,14 @@ and a browser pass on the test VM:
 - [ ] **G6 Service worker on app.cg.** The new server serves, at the old service
   worker URL, a worker that replaces the old PWA: clears the old caches, takes
   control and loads the gateway. Must be tested with a browser that has the old
-  app installed (P5).
+  app installed (P5). (Implementation done 2026-11-07, branch
+  `feature/sw-replacement`: the old worker URL is `/service-worker.js`, scope
+  `/`; the gateway's site serves `docker/caddy/gateway-service-worker.js` there
+  — skipWaiting, deletes every cache, claims, reloads the pages the old worker
+  controlled, no fetch handler, shows pushes in the old format; the gateway
+  page registers the same file, so nothing loops; e2e `gateway` flow with a
+  stand-in for the old worker; docs/frontend "Service worker on a gateway".
+  Open: the browser test in P5, procedure in docs/deployment §3.13.)
 - [ ] **G7 Farewell push.** One-off script that sends "Common Ground moved" to
   every stored push subscription, in the payload format of the **old** service
   worker, signed with the **old VAPID key pair** (must come with the production
@@ -405,7 +412,11 @@ and a browser pass on the test VM:
   cg.box — users re-subscribe there (part of G3). The key pair is the `api`
   service's secret `vapid_keys_json` (`/run/secrets/vapid_keys_json` inside a
   running `api` container: JSON with `publicKey` and `privateKey`; Swarm does not
-  show a secret's value through `docker secret inspect`).
+  show a secret's value through `docker secret inspect`). The replacement worker
+  of G6 shows the push and opens `navUrl` only as a path on its own origin (an
+  absolute cg.box URL becomes `/`); a push to a device whose app was not opened
+  since the DNS switch also triggers the worker update, which installs the
+  replacement.
 - [x] **G8 Mail.** (done 2026-10-31: nodemailer + optional maddy relay with bounce policy, send limits, one-click unsubscribe; accepted on the test VM; real delivery to Gmail/Outlook, PTR and outbound port 25 are checked on a public server before move day, P5) SMTP via nodemailer instead of SendGrid (the swap point is
   `EmailUtils.sendEmail` in `srv/api/emails.ts` + init in `srv/serverconfig.ts`),
   Mailchimp removed. Optional send-only MTA container (compose profile `mail`,
@@ -499,7 +510,10 @@ and a browser pass on the test VM:
   `id.app.test` as stand-ins for the old ones (Caddy `tls internal`, hosts file):
   import (G5), gateway, transfer link, account-security step, farewell push
   against a test subscription, service-worker replacement with a browser that has
-  the old production app installed (served under `app.test` before the switch).
+  the old production app installed (served under `app.test` before the switch;
+  the old build carries absolute `https://app.cg` URLs, so docs/deployment §3.13
+  installs it from the live `app.cg` in a separate profile and points `app.cg`
+  at the test VM by hosts file instead — procedure there).
 - [x] Backup → restore onto a freshly reset test VM (F8; passed 2026-11-01).
 - [ ] One real Let's Encrypt run on a publicly reachable server (the test VM only
   exercises `tls internal`), so the ACME path is proven before move day.

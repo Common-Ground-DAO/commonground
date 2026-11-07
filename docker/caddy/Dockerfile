@@ -18,6 +18,9 @@ FROM caddy:2.11.6-alpine@sha256:d44355d3c2149dc580ce2cac735955d1c08d3d00882c3048
 COPY common.caddy Caddyfile.dev Caddyfile.selfhost /etc/caddy/
 # rendered per request by Caddy's templates handler (common.caddy)
 COPY instance-config.js /etc/caddy/templates/instance-config.js
+# served only by a gateway's site as /service-worker.js (common.caddy,
+# cg_gateway_app); the app's own worker stays in /srv
+COPY gateway-service-worker.js /etc/caddy/gateway/service-worker.js
 COPY dist /srv
 # robots.txt points crawlers at the API's sitemap on whatever host serves it;
 # the line is a Caddy template, rendered per request (common.caddy)

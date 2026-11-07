@@ -408,7 +408,8 @@
 # serves are routed (the gateway api refuses everything else anyway, its
 # allowlist is the authority), no media, no Bot API, no page routes but the
 # X sign-in callbacks — every other path, old deep links included, gets the
-# web app's shell, which takes the path along to the new instance. The
+# web app's shell, which takes the path along to the new instance.
+# /service-worker.js is a small replacement worker instead of the app's. The
 # including site sets `vars cg_env_prefix GATEWAY_`, so /instance-config.js is
 # rendered from the GATEWAY_CG_* variables.
 #   args[0]  connect-src sources for the own host (see cg_csp)
@@ -505,9 +506,22 @@ Disallow: /
 			respond 403
 		}
 
-		# the shell and the service worker: always revalidated, like on the
-		# app's site
-		@gatewayshell path_regexp ^/(index\.html|service-worker\.js)?$
+		# The replacement service worker (gateway-service-worker.js in the
+		# Caddy image, not the app's worker from the build) at the URL the old
+		# app registered its worker under: it deletes the old app's caches
+		# and reloads its pages into the gateway page (docs/frontend "Service
+		# worker on a gateway"). Always revalidated, so browsers see every
+		# change on their next update check; text/javascript from the file
+		# extension.
+		handle /service-worker.js {
+			root * /etc/caddy/gateway
+			import cg_csp {args[0]} {args[1]}
+			header Cache-Control "no-cache"
+			file_server
+		}
+
+		# the shell: always revalidated, like on the app's site
+		@gatewayshell path_regexp ^/(index\.html)?$
 		handle @gatewayshell {
 			root * /srv
 			import cg_csp {args[0]} {args[1]}

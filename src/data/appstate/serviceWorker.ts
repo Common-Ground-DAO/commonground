@@ -23,6 +23,9 @@ const { href } = window.location;
 const re = /^https?:\/\/[^/:]+:3000/;
 const SW_ENABLED = 'serviceWorker' in navigator && href.match(re) === null;
 
+// On a gateway this URL serves a replacement worker instead of
+// src/service-worker.ts (no cache, no fetch handler; docs/frontend "Service
+// worker on a gateway"), so the gateway page registers that one.
 function __getRegistration() {
   if (!SW_ENABLED) return null;
   return navigator.serviceWorker.register("/service-worker.js", {scope: "/"});

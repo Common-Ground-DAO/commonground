@@ -230,7 +230,7 @@ build() {
 
   echo "--- edge image ($PREFIX/caddy)"
   mkdir -p "$ctx/caddy"
-  cp "$DOCKER_DIR"/caddy/{Dockerfile,common.caddy,Caddyfile.dev,Caddyfile.selfhost,instance-config.js} "$ctx/caddy/"
+  cp "$DOCKER_DIR"/caddy/{Dockerfile,common.caddy,Caddyfile.dev,Caddyfile.selfhost,instance-config.js,gateway-service-worker.js} "$ctx/caddy/"
   cp -r "$REPO_ROOT/build" "$ctx/caddy/dist"
   docker build -t "$PREFIX/caddy" "$ctx/caddy"
 

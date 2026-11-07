@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import errors from "../common/errors";
+import { appOrigins } from "./origins";
 
 /**
  * A Sign-In with Ethereum message (EIP-4361), parsed by its structure: every
@@ -135,6 +136,29 @@ export function assertSiweMessageCurrent(message: SiweMessage, now = Date.now())
     throw new Error(errors.server.INVALID_SIGNATURE);
   }
   if (message.notBefore !== null && Date.parse(message.notBefore) > now) {
+    throw new Error(errors.server.INVALID_SIGNATURE);
+  }
+}
+
+const SIWE_DOMAIN_LINE = /^(\S+) wants you to sign in with your Ethereum account:$/;
+
+/**
+ * A sign-in message (EIP-4361) names the site it is for: its first line
+ * carries the host, its `URI:` the origin. Both must be this instance's web
+ * app (appOrigins), so a signature a user gave another site cannot be
+ * replayed here. Used for wallet, Farcaster and LUKSO sign-in messages.
+ * Throws INVALID_SIGNATURE otherwise.
+ */
+export function assertSiweForThisInstance(domainLine: string | undefined, uri: string, origins: string[] = appOrigins()) {
+  const domain = domainLine?.match(SIWE_DOMAIN_LINE)?.[1];
+  let uriOrigin: string;
+  try {
+    uriOrigin = new URL(uri).origin;
+  }
+  catch {
+    throw new Error(errors.server.INVALID_SIGNATURE);
+  }
+  if (!domain || !origins.includes(uriOrigin) || new URL(uriOrigin).host !== domain) {
     throw new Error(errors.server.INVALID_SIGNATURE);
   }
 }

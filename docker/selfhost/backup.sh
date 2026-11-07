@@ -1057,7 +1057,7 @@ manifest_get() {
 # restores the snapshot path $2 of repository $1 into the directory
 # /backup/$3 (CG_BACKUP_DIR/$3). $4 = give: the files are handed to the
 # caller (the dump, read on the host); keep: they keep the owner and mode they
-# were backed up with (the secrets — seaweed reads s3.selfhost.json as uid 1000)
+# were backed up with (the secrets)
 restore_to_dir() {
   local repo="$1" path="$2" sub="$3" mode="${4:-give}"
   helper -v "$CG_BACKUP_DIR:/backup" -- 'rm -rf "/backup/$1" && mkdir -p "/backup/$1"' "$sub"
@@ -1516,8 +1516,8 @@ plan_secrets() {
 
 # compares (plan) or copies (apply) every bundle path into docker/.
 # .env.selfhost and backup/ belong to the owner of the checkout, everything
-# else keeps the owner and mode it had when it was backed up (seaweed reads
-# s3.selfhost.json as uid 1000) — also when the restore runs as root. A path
+# else keeps the owner and mode it had when it was backed up (mode 600; the
+# containers that read them run as root) — also when the restore runs as root. A path
 # that differs is kept unless secrets were asked for (--with-secrets / --only
 # secrets); then it needs --force. An existing backup/ (the SSH access that
 # just reached the repository) is always kept.

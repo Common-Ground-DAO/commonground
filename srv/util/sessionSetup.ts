@@ -10,7 +10,6 @@ import passport from 'passport';
 import config from '../common/config';
 import serverconfig from '../serverconfig';
 import urls from './urls';
-import { isLegacyCgidMode } from './passkeyConfig';
 import { SIGNUP_CAPTCHA_TTL_MS } from './signupEmail';
 import { sessionGenerationGuard } from './userSessions';
 import { requireSessionSecret } from './sessionSecret';
@@ -110,13 +109,11 @@ export function sessionStoreTtlSeconds(
   return Math.ceil(keepMs / 1000);
 }
 
-// Legacy CG ID mode only: scope the session cookie to all subdomains so the
-// app and the CG ID app (id.<domain>) share a session (.app.cg unchanged).
-// Everywhere else the cookie is host-only — no other host under the domain
-// ever receives it.
-if (config.DEPLOYMENT !== 'dev' && isLegacyCgidMode()) {
-  sessionCookieOptions.domain = `.${urls.APP_HOSTNAME}`;
-}
+// The session cookie is host-only on every instance, a legacy CG ID gateway
+// included: no other host under the domain ever receives it. The CG ID app
+// (id.<domain>) needs no shared scope — it only calls the api on the app's
+// own host (credentialed, same-site), and those requests carry this host's
+// cookie.
 
 export function createSessionOptions(store: session.Store): session.SessionOptions {
   return {
@@ -306,12 +303,12 @@ export function hasSessionCookie(request: express.Request): boolean {
 }
 
 /**
- * Instances upgraded in place used to scope the session cookie to
- * `.<APP_HOSTNAME>`; the cookie is host-only now (except in legacy CG ID mode,
- * which keeps the old scope, and in dev).
+ * Instances upgraded in place — and the old instance a legacy CG ID gateway
+ * replaces — used to scope the session cookie to `.<APP_HOSTNAME>`; the
+ * cookie is host-only now (in dev it never had a domain).
  */
 export function legacyDomainCookieCleanupActive(): boolean {
-  return config.DEPLOYMENT !== 'dev' && !isLegacyCgidMode();
+  return config.DEPLOYMENT !== 'dev';
 }
 
 /**

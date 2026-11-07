@@ -205,6 +205,9 @@ EOF
     -keyout "$STATE_DIR/certs/server.key" -out "$STATE_DIR/certs/server.crt" \
     -days 30 -nodes -subj "/CN=mediasoup.e2e.invalid" 2>/dev/null
   chmod 644 "$STATE_DIR/certs/server.key"
+  # the S3 identities and the push key as on a real instance: owner only
+  # (the containers that read them run as root, seaweed copies its file)
+  chmod 600 "$STATE_DIR/s3.json" "$STATE_DIR/vapid_keys.json"
 }
 
 build() {

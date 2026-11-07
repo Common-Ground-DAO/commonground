@@ -79,6 +79,16 @@ automatically on first start. After DNS propagates, the app is live at
 `https://chat.example.org`. Then set up
 backups with an off-server copy — see [Backup and restore](#backup-and-restore).
 
+**Secret files.** `init.sh` writes `.env.selfhost`, `s3_config/s3.selfhost.json`
+and the key of the internal certificate readable by their owner only (mode
+600, from the moment they exist), and `build` does the same for
+`vapid_keys.json`. `build` and `up` tighten any of these files that others can
+read (or say so when it belongs to another user). The containers that read
+them run as root — the storage container copies its file for its own user —
+so whoever owns the files, the stack can read them. Clone into a directory
+only you can enter (your home directory on Ubuntu, mode 750): under `/opt`
+or `/srv` every local account can look inside unless you restrict it.
+
 Operating:
 
 ```bash
@@ -372,11 +382,53 @@ nobody and logs a warning starting with `!!!` in
 `./selfhost/selfhost.sh logs job-runner` — check `mail-dns` and the relay log
 then. Details: [docs/email-notifications](../docs/email-notifications/README.md#bounces).
 
-The relay is meant to be the only thing on the server that talks to port 25,
-but the app containers have normal internet access too. If you want to
-enforce it (e.g. so a compromised container can't send spam directly), block
-outbound 25/tcp on the host for every container except the relay, e.g. in the
-`DOCKER-USER` iptables chain.
+#### Outgoing mail
+
+The relay is the only thing on the server that talks to port 25: the SPF
+record authorises the server's address for your domain, and the relay is
+where sender checks, DKIM and the sending limits apply. `harden.sh` (part `mail25`, see [Server hardening](#server-hardening))
+enforces it: a rule in Docker's `DOCKER-USER` chain refuses outgoing 25/tcp
+from every Docker bridge except the relay's own network. That network's bridge
+has a fixed name, `cg-mail-out` (`docker-compose.selfhost.yml`), so the rule
+does not depend on addresses Docker hands out; every other Docker bridge is
+`docker0` or `br-<id>`. The rule lives in `/usr/local/sbin/cg-mail-egress`,
+and the systemd unit `cg-mail-egress.service` applies it again whenever Docker
+starts (after a reboot, too). Check it with
+`sudo iptables -S DOCKER-USER | grep cg-mail-egress`.
+
+- It needs Docker's **iptables** firewall backend (the default; on Ubuntu
+  26.04 `iptables` is the nftables-based `iptables-nft`, which Docker uses
+  the same way). With Docker's `nftables` backend there is no `DOCKER-USER`
+  chain: `harden.sh` says so and sets nothing up; add an equivalent rule in a
+  table of your own, a `forward` hook with a priority before Docker's, that
+  rejects `iifname "br-*"` / `"docker0"` with `tcp dport 25`.
+- Sending through an **external server on port 25** (`SMTP_HOST` other than
+  `mail`): leave the part out (`--skip mail25`), the app's own connection to
+  that server would be refused too. Ports 587 and 465 are not affected.
+- Two instances with the relay on one Docker host would both want the bridge
+  name `cg-mail-out`; the self-host setup runs one instance per server.
+- The rule is applied only while the bridge `cg-mail-out` exists. Without it
+  (relay not running, or its network created before the bridge had a fixed
+  name, so it is `br-<id>`) `harden.sh` sets nothing up and says so, and the
+  unit removes the rule and fails (`systemctl status cg-mail-egress`) — the
+  relay itself must never be refused.
+
+**Instances set up before the fixed bridge name.** Compose normally recreates
+the relay's network on the next `up` when its options changed. If the relay
+is still on a `br-<id>` bridge afterwards, recreate the network by hand:
+
+```bash
+./selfhost/selfhost.sh down
+docker network rm cg-selfhost_mail-egress     # <compose project>_mail-egress
+./selfhost/selfhost.sh up
+# check: prints cg-mail-out, and the interface exists
+docker network inspect cg-selfhost_mail-egress --format '{{index .Options "com.docker.network.bridge.name"}}'
+ip link show cg-mail-out
+```
+
+Then run `sudo ./selfhost/harden.sh` again (or `sudo systemctl restart
+cg-mail-egress`) and send yourself a login code to see the relay still
+delivers.
 
 ### External SMTP server (`CG_ENABLE_MAIL=false`)
 
@@ -748,11 +800,20 @@ CG_MAIL_LIMIT_SECRET=...          # openssl rand -hex 24 — shared by this inst
   `CG_MAIL_LIMIT_SECRET` (an `.env.selfhost` from before needs the line added;
   the per-address mail limits start counting anew once), with this instance's
   own domain or session secret, with `CG_DOMAIN` under the gateway's domain
-  (e.g. `new.app.cg` next to `app.cg`: the gateway's session cookie covers
-  `.app.cg` and has the same name as this instance's — the other way round,
-  a gateway under `CG_DOMAIN`, is fine), or when this instance itself runs
-  with `CG_LEGACY_CGID=true` (only the gateway does; this instance keeps
-  `CG_LEGACY_CGID=false`).
+  (e.g. `new.app.cg` next to `app.cg`: it would receive the cookies browsers
+  keep for `.app.cg`, the old instance's session cookie of the same name
+  among them — the other way round, a gateway under `CG_DOMAIN`, is fine), or
+  when this instance itself runs with `CG_LEGACY_CGID=true` (only the gateway
+  does; this instance keeps `CG_LEGACY_CGID=false` — its backend refuses to
+  start with it).
+- **Old host names**: the gateway's session cookie is host-only (it reaches
+  `CG_GATEWAY_DOMAIN` and no other host), but browsers of old users may still
+  hold cookies the old instance scoped to the whole old domain, and they send
+  them to every host under it. While the gateway runs, keep only the two
+  gateway names (e.g. `app.cg`, `id.app.cg`) in the old domain's DNS: remove
+  every other record under it (old staging, media, analytics hosts, CNAMEs to
+  cloud resources that no longer exist), or make sure each remaining one is
+  a server you run and trust. Check the zone, not only the hosts you remember.
 - Mail (email-code sign-in) goes out like this instance's, from its sender
   address; the chains and the X keys are this instance's as well. For X
   sign-in, the X app must list the gateway's callback URL too. LUKSO sign-in
@@ -1449,8 +1510,12 @@ sudo ./selfhost/harden.sh              # apply
   rotate on their own (see [Resource tuning](#resource-tuning)).
 - **Kernel settings:** reserves the media ports 40000–40099 (see below) and
   sets `vm.overcommit_memory = 1` for Valkey's snapshots.
+- **Outgoing mail (`mail25`):** outgoing 25/tcp from containers only through
+  the mail relay's network, kept across reboots — see
+  [Outgoing mail](#outgoing-mail). Leave it out (`--skip mail25`) when the
+  instance sends through another server on port 25.
 
-`--skip ssh|firewall|upgrades|logs|sysctl` leaves a part out. Details:
+`--skip ssh|firewall|upgrades|logs|sysctl|mail25` leaves a part out. Details:
 `docs/deployment/README.md`, "Server hardening".
 
 ## Firewall summary

@@ -139,6 +139,26 @@ describe('gateway configuration', () => {
     expect(() => validateGatewayConfig({ needsTransferTarget: true }, full, none)).not.toThrow();
   });
 
+  it('never runs a gateway with DEPLOYMENT=dev', () => {
+    const full = { CG_GATEWAY: 'true', CG_LEGACY_CGID: 'true', TRANSFER_TARGET_URL: 'https://cg.box', CG_MAIL_LIMIT_SECRET: 'shared-mail-limit-secret' };
+    expect(() => validateGatewayConfig({ needsTransferTarget: true }, { ...full, DEPLOYMENT: 'dev' }, none)).toThrow(/DEPLOYMENT=dev/);
+    expect(() => validateGatewayConfig({ needsTransferTarget: false }, { CG_GATEWAY: 'true', CG_LEGACY_CGID: 'true', DEPLOYMENT: 'dev' }, none)).toThrow(/DEPLOYMENT=dev/);
+    expect(() => validateGatewayConfig({ needsTransferTarget: true }, { ...full, DEPLOYMENT: 'prod' }, none)).not.toThrow();
+    expect(() => validateGatewayConfig({ needsTransferTarget: true }, { ...full, DEPLOYMENT: 'staging' }, none)).not.toThrow();
+  });
+
+  it('outside dev, a process with the gateway\'s settings (api or wsapi) must be a gateway', () => {
+    for (const needsTransferTarget of [true, false]) {
+      expect(() => validateGatewayConfig({ needsTransferTarget }, { CG_LEGACY_CGID: 'true', DEPLOYMENT: 'prod' }, none)).toThrow(/CG_LEGACY_CGID=true is for a gateway only/);
+      expect(() => validateGatewayConfig({ needsTransferTarget }, { CG_LEGACY_CGID: 'true', CG_GATEWAY: 'false' }, none)).toThrow(/needs CG_GATEWAY=true/);
+      expect(() => validateGatewayConfig({ needsTransferTarget }, { TRANSFER_TARGET_URL: 'https://cg.box', DEPLOYMENT: 'prod' }, none)).toThrow(/TRANSFER_TARGET_URL is for a gateway only/);
+      // the main instance's own settings pass
+      expect(() => validateGatewayConfig({ needsTransferTarget }, { CG_LEGACY_CGID: 'false', TRANSFER_TARGET_URL: ' ', DEPLOYMENT: 'prod' }, none)).not.toThrow();
+      // a dev stack may try legacy mode or transfer links on their own
+      expect(() => validateGatewayConfig({ needsTransferTarget }, { CG_LEGACY_CGID: 'true', TRANSFER_TARGET_URL: 'http://localhost:8000', DEPLOYMENT: 'dev' }, none)).not.toThrow();
+    }
+  });
+
   it('accepts the shared mail-limit secret from wherever the mail limits read it (the Docker secret too)', () => {
     const full = { CG_GATEWAY: 'true', CG_LEGACY_CGID: 'true', TRANSFER_TARGET_URL: 'https://cg.box' };
     const fromFile = (name: string) => (name === 'mail_limit_secret' ? 'shared-mail-limit-secret\n' : false);

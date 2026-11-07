@@ -192,7 +192,7 @@ describe('gateway allowlist', () => {
     expect(allow('POST', '/User/login')).toBe(true);
     expect(allow('POST', '/User/createTransferLink')).toBe(true);
     expect(allow('POST', '/CgId/verifyAuthenticationResponse')).toBe(true);
-    for (const p of ['/User/createUser', '/User/requestSignupEmailCode', '/User/redeemTransferLink', '/User/previewTransferLink',
+    for (const p of ['/User/createUser', '/User/requestSignupEmailCode', '/User/redeemTransferLink', '/User/previewTransferLink', '/User/declineTransferLink',
       '/User/updateOwnData', '/User/setPassword', '/User/addPreparedWallet', '/User/getUserData', '/User/signOutOtherDevices',
       '/Community/getOwnCommunities', '/Message/loadMessages', '/Chat/getChats', '/File/uploadImage', '/Bot/listBots',
       // the chat catch-up and the notification store

@@ -18,8 +18,11 @@
  *   wallet     wallet sign-in on the gateway (SIWE for the gateway's domain)
  *   passkey    the CG ID passkey assertion on the gateway (a credential of
  *              the CG ID domain's RP) and User/login {type:'passkey-success'}
- *   transfer   a transfer link minted on the gateway redeemed on the instance
- *   isolation  cookies of one instance are anonymous on the other
+ *   transfer   a transfer link minted on the gateway redeemed on the instance;
+ *              a declined link and one minted before a gateway sign-out
+ *              no longer sign in
+ *   isolation  cookies of one instance are anonymous on the other; the
+ *              gateway's cookie is host-only
  *
  * Environment: GW_DOMAIN, GW_ID_DOMAIN, MAIN_DOMAIN, ROUTE_LIST (file),
  * WALLET_KEY (hex private key of the wallet gateway.sh linked), USER_ID,
@@ -277,7 +280,8 @@ function b64url(buffer) {
 
 async function passkeyLogin() {
   const gw = client(GW, GW_ORIGIN, ip());
-  // the CG ID app and the gateway share the session (cookie for .<gateway domain>)
+  // the CG ID app calls the gateway's api on the gateway's host: one session
+  // (the gateway's host-only cookie, sent with the app's same-site requests)
   const cgid = client(GW, GW_ID_ORIGIN, ip());
   const opts = await cgid.call('POST', '/CgId/generateAuthenticationOptions', {});
   check(opts.json?.data?.rpId === env.GW_ID_DOMAIN, `passkey: assertion options for the CG ID RP ${env.GW_ID_DOMAIN} (${opts.json?.data?.rpId ?? opts.text.slice(0, 80)})`);
@@ -335,6 +339,29 @@ async function transferAndIsolation(gw) {
   check(backStatus.json?.data?.userId === null, 'isolation: the instance session cookie is anonymous on the gateway');
   const onGateway = await client(GW, GW_ORIGIN, ip()).call('POST', '/User/redeemTransferLink', { token: 'x'.repeat(43), device: { publicKey: deviceKey() } });
   check(onGateway.status === 404 && onGateway.json?.error === 'NOT_SUPPORTED', 'transfer: the gateway does not redeem links');
+
+  // the gateway's session cookie is host-only: no other host under its domain receives it
+  const anonymous = await fetch(`${GW}/User/getSignableSecret`, {
+    method: 'POST',
+    headers: { origin: GW_ORIGIN, 'x-forwarded-proto': 'https', 'x-forwarded-for': ip(), 'content-type': 'application/json' },
+    body: '{}',
+  });
+  const sessionCookies = anonymous.headers.getSetCookie().filter(line => line.startsWith('connect.sid=') && !/Expires=Thu, 01 Jan 1970/i.test(line));
+  check(sessionCookies.length === 1 && !/;\s*Domain=/i.test(sessionCookies[0]), `cookie: the gateway's session cookie is host-only (${sessionCookies[0]?.replace(/=[^;]*/, '=…') ?? 'none'})`);
+
+  // "This isn't me" on the instance uses a link up without signing in
+  const declinedToken = (await gw.call('POST', '/User/createTransferLink', {})).json?.data?.url?.split('#')[1];
+  const declined = await client(MAIN, MAIN_ORIGIN, ip()).call('POST', '/User/declineTransferLink', { token: declinedToken });
+  check(declined.json?.status === 'OK', `transfer: a link can be declined on the instance (${declined.json?.error ?? 'ok'})`);
+  const afterDecline = await client(MAIN, MAIN_ORIGIN, ip()).call('POST', '/User/redeemTransferLink', { token: declinedToken, device: { publicKey: deviceKey() } });
+  check(afterDecline.json?.error === 'TRANSFER_LINK_INVALID', 'transfer: a declined link no longer signs in');
+
+  // signing out on the gateway ends the account's unused links
+  const openToken = (await gw.call('POST', '/User/createTransferLink', {})).json?.data?.url?.split('#')[1];
+  const loggedOut = await gw.call('POST', '/User/logout', {});
+  check(loggedOut.json?.status === 'OK', `transfer: sign-out on the gateway (${loggedOut.json?.error ?? 'ok'})`);
+  const afterLogout = await client(MAIN, MAIN_ORIGIN, ip()).call('POST', '/User/redeemTransferLink', { token: openToken, device: { publicKey: deviceKey() } });
+  check(afterLogout.json?.error === 'TRANSFER_LINK_INVALID', 'transfer: a link minted before the gateway sign-out no longer signs in');
 }
 
 // --- review additions --------------------------------------------------------
@@ -362,16 +389,31 @@ async function checkReviewItems() {
 
   // LUKSO: the gateway reaches the onchain service like the instance does
   // (same answer for the same request; on this instance the blockchain
-  // services may be off, then both say so)
-  const lukso = async (base, origin) => {
+  // services may be off, then both say so). The signed text must be a
+  // sign-in message for the instance it is sent to.
+  const upAddress = '0x' + '22'.repeat(20);
+  const signInMessage = (domain, secret) => [
+    `${domain} wants you to sign in with your Ethereum account:`, upAddress, '',
+    'Sign this to log into Common Ground.', '',
+    `URI: https://${domain}`, 'Version: 1', 'Chain ID: 42', `Nonce: ${secret}`, `Issued At: ${new Date().toISOString()}`,
+  ].join('\n');
+  const lukso = async (base, origin, messageOf) => {
     const c = client(base, origin, ip());
     const secret = (await c.call('POST', '/User/getSignableSecret', {})).json?.data;
-    return c.call('POST', '/Lukso/PrepareLuksoAction', { address: '0x' + '22'.repeat(20), signature: '0x00', message: `sign in\nNonce: ${secret}` });
+    return c.call('POST', '/Lukso/PrepareLuksoAction', { address: upAddress, signature: '0x00', message: messageOf(secret) });
   };
-  const onGateway = await lukso(GW, GW_ORIGIN);
-  const onMain = await lukso(MAIN, MAIN_ORIGIN);
+  const onGateway = await lukso(GW, GW_ORIGIN, secret => signInMessage(env.GW_DOMAIN, secret));
+  const onMain = await lukso(MAIN, MAIN_ORIGIN, secret => signInMessage(env.MAIN_DOMAIN, secret));
   check(onGateway.json?.error === onMain.json?.error && onGateway.json?.error !== 'NOT_SUPPORTED',
     `lukso: PrepareLuksoAction answers on the gateway like on the instance (${onGateway.json?.error} / ${onMain.json?.error})`);
+  for (const [what, base, origin, messageOf] of [
+    ['a nonce without a sign-in message', GW, GW_ORIGIN, secret => `sign in\nNonce: ${secret}`],
+    ['a message for the instance, on the gateway', GW, GW_ORIGIN, secret => signInMessage(env.MAIN_DOMAIN, secret)],
+    ['a message for the gateway, on the instance', MAIN, MAIN_ORIGIN, secret => signInMessage(env.GW_DOMAIN, secret)],
+  ]) {
+    const refused = await lukso(base, origin, messageOf);
+    check(['LUKSO_LOGIN_FAILED', 'INVALID_SIGNATURE'].includes(refused.json?.error), `lukso: ${what} is refused (${refused.json?.error})`);
+  }
 }
 
 const step = async (name, fn) => {

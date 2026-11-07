@@ -767,7 +767,7 @@ const NOT_PROTECTED = new Set([
   'User/logout', 'User/createUser', 'User/prepareWalletAction', 'User/sendOneTimePasswordForLogin',
   'User/requestEmailVerification', 'User/verifyEmail', 'User/getSecurityStatus',
   // transfer links: minted for the session's own user, redeemed logged out
-  'User/createTransferLink', 'User/previewTransferLink', 'User/redeemTransferLink',
+  'User/createTransferLink', 'User/previewTransferLink', 'User/redeemTransferLink', 'User/declineTransferLink',
   'Passkey/authenticationOptions', 'Passkey/list', 'Passkey/rename',
   // editing the cg profile
   'User/updateUserAccount',

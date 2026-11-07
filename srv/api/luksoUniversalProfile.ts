@@ -8,10 +8,10 @@ import { registerPostRoute } from "./util";
 import validators from "../validators";
 import onchainHelper from "../repositories/onchain";
 import userHelper from "../repositories/users";
-import { SIGNABLE_SECRET_LENGTH } from "./user";
 import ipRateLimitHandler from "../util/rateLimit";
 import { AUTH_LIMITS } from "../util/authLimits";
 import { isGatewayMode } from "../util/gateway";
+import { assertLuksoSignInMessage } from "../util/luksoSignIn";
 
 const luksoUniversalProfileRouter = express.Router();
 
@@ -31,15 +31,15 @@ registerPostRoute<
   async (request, response, data) => {
     await signatureCheckLimiter(request, response);
     try {
-      const { signSecret } = request.session;
-      const secret = data.message.match(new RegExp(`Nonce: ([a-zA-Z0-9]{${SIGNABLE_SECRET_LENGTH}})`))?.[1];
-      if (!signSecret || secret !== signSecret) {
-        throw new Error(errors.server.INVALID_SECRET);
-      }
+      // a sign-in message made for this instance, with this session's nonce
+      // and recent (srv/util/luksoSignIn.ts)
+      assertLuksoSignInMessage(data.message, { address: data.address, nonce: request.session.signSecret });
       const isValidSignature = await onchainHelper.luksoIsValidSignature(data.address, data.signature, data.message);
       if (!isValidSignature) {
         throw new Error(errors.server.INVALID_SIGNATURE);
       }
+      // the nonce is used up: a second message needs a new one
+      delete request.session.signSecret;
       const universalProfileValid = !(await userHelper.isUniversalProfileAlreadyLinked(data.address));
       if (universalProfileValid && isGatewayMode()) {
         // a gateway (srv/util/gateway.ts) signs in existing accounts only: no
@@ -58,6 +58,7 @@ registerPostRoute<
         signature: data.signature,
         description: universalProfileExists.description,
         existsAlready: !universalProfileValid,
+        preparedAt: Date.now(),
        };
       return { universalProfileValid, universalProfileExists: !!universalProfileExists, readyForLogin, readyForCreation, description: universalProfileExists.description, username: universalProfileExists.username, profileImageUrl: universalProfileExists.profileImageUrl };
     } catch (e: any) {

@@ -66,6 +66,38 @@ class TransferTokenHelper {
   }
 
   /**
+   * The recipient declined the link ("This isn't me"): uses it up without
+   * signing anyone in, together with every other unused link of the same
+   * account. Only a usable token does that. True when it was usable.
+   */
+  public async decline(token: string): Promise<boolean> {
+    const result = await pool.query(`
+      WITH declined AS (
+        SELECT "userId" FROM transfer_tokens
+        WHERE "tokenHash" = $1 AND "usedAt" IS NULL AND "expiresAt" > now()
+      )
+      UPDATE transfer_tokens t
+      SET "usedAt" = now()
+      FROM declined d
+      WHERE t."userId" = d."userId" AND t."usedAt" IS NULL AND t."expiresAt" > now()
+    `, [hashTransferToken(token)]);
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  /**
+   * Uses up every unused token of `userId` (the user signed out where the
+   * links were minted): a link that is still open somewhere stops working.
+   */
+  public async discardUnused(userId: string): Promise<number> {
+    const result = await pool.query(`
+      UPDATE transfer_tokens
+      SET "usedAt" = now()
+      WHERE "userId" = $1 AND "usedAt" IS NULL AND "expiresAt" > now()
+    `, [userId]);
+    return result.rowCount ?? 0;
+  }
+
+  /**
    * Clean-up after a sign-out of other devices: the user's unused tokens
    * below `generation` (they no longer redeem anyway) are deleted.
    */

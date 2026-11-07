@@ -56,6 +56,8 @@ import { loginGeneration, setLoginGeneration } from "../util/userSessions";
 import { hasStoredData } from "../util/sessionSetup";
 import { computeSecurityStatus, computeSecurityStatusVersioned, rememberSecurityStepClear, requireAuthToAdd, SECURITY_STEP_AUTH_MAX_AGE_MS, securityStepEnforced } from "../util/securityStep";
 import { consumeEmailCode, EMAIL_CODE_MAX_ATTEMPTS, getPendingEmail, issueEmailCode, VERIFY_CODE_TTL_MS } from "../util/emailCodes";
+import { assertSiweForThisInstance, parseSiweMessage } from "../util/siweMessage";
+import { LUKSO_PREPARED_MAX_AGE_MS } from "../util/luksoSignIn";
 import transferTokenHelper from "../repositories/transferTokens";
 import {
   getTransferTargetOrigin,
@@ -436,9 +438,17 @@ registerPostRoute<
         throw new Error(errors.server.INVALID_REQUEST);
       }
       const { lukso } = request.session;
-      const secret = request.session.lukso.message.match(new RegExp(`Nonce: ([a-zA-Z0-9]{${SIGNABLE_SECRET_LENGTH}})`))?.[1];
-      if (!signSecret || secret !== signSecret) {
+      // prepared by Lukso/PrepareLuksoAction, which checked the message
+      // (srv/util/luksoSignIn.ts) and used up the session's nonce; the
+      // proof is only good for a short while, and the message must still
+      // name this instance
+      if (typeof lukso.preparedAt !== 'number' || Date.now() - lukso.preparedAt > LUKSO_PREPARED_MAX_AGE_MS) {
         throw new Error(errors.server.INVALID_SECRET);
+      }
+      const parsedLukso = parseSiweMessage(lukso.message);
+      assertSiweForThisInstance(parsedLukso.headerLine, parsedLukso.uri);
+      if (parsedLukso.address !== lukso.address.toLowerCase()) {
+        throw new Error(errors.server.INVALID_SIGNATURE);
       }
       const isValidSignature = await onchainHelper.luksoIsValidSignature(lukso.address, lukso.signature, lukso.message);
       if (!isValidSignature) {
@@ -809,6 +819,12 @@ registerPostRoute<
     const { user } = request.session;
     if (!!user) {
       await deviceHelper.deleteDevice(user.deviceId);
+      // where transfer links are minted (the gateway), signing out also ends
+      // the links of this account that were not used yet
+      if (getTransferTargetOrigin()) {
+        await transferTokenHelper.discardUnused(user.id)
+          .catch(e => console.error("Error discarding unused transfer links", e instanceof Error ? e.message : e));
+      }
       // logout disconnects the device's sockets: with the requesting tab's
       // socket named, the other tabs get cliSignedOut and that socket logs
       // out itself; without it (old clients) all of them, no event
@@ -2286,9 +2302,59 @@ registerPostRoute<
       displayName: getDisplayNameString(ownData),
       // the unique handle (cg profile name), so look-alike names can't fool anyone
       username: ownData.accounts.find(account => account.type === 'cg')?.displayName ?? null,
+      // the same for an account without a cg profile: a handle of a linked account
+      identity: transferIdentity(ownData),
       imageId: displayed?.imageId ?? null,
       expiresAt: new Date(row.expiresAt).getTime(),
     };
+  }
+);
+
+/**
+ * A unique identifier of the account for the transfer confirmation, next to
+ * the free display name: the cg profile name, else the linked X handle, the
+ * Farcaster username or the Universal Profile address. Display names can be
+ * copied; none of these can.
+ */
+export function transferIdentity(ownData: Pick<Models.User.OwnData, 'accounts'>): API.User.previewTransferLink.Response['identity'] {
+  const account = (type: Models.User.ProfileItemType) => ownData.accounts.find(item => item.type === type);
+  const cg = account('cg');
+  if (cg?.displayName) {
+    return { type: 'cg', handle: cg.displayName };
+  }
+  // the X account's name is its handle (set from the X username when linked)
+  const twitter = account('twitter');
+  if (twitter?.displayName) {
+    return { type: 'twitter', handle: twitter.displayName };
+  }
+  const farcaster = account('farcaster');
+  if (farcaster?.extraData?.type === 'farcaster' && farcaster.extraData.username) {
+    return { type: 'farcaster', handle: farcaster.extraData.username };
+  }
+  const lukso = account('lukso');
+  if (lukso?.extraData?.type === 'lukso' && lukso.extraData.upAddress) {
+    return { type: 'lukso', handle: lukso.extraData.upAddress };
+  }
+  return null;
+}
+
+registerPostRoute<
+  API.User.declineTransferLink.Request,
+  API.User.declineTransferLink.Response
+>(
+  userRouter,
+  '/declineTransferLink',
+  validators.API.User.declineTransferLink,
+  async (request, response, data) => {
+    // "This isn't me": the link is used up without signing anyone in, so it
+    // cannot be opened again (from the browser history, say). The answer is
+    // the same whether or not the link was still usable.
+    if (isLegacyCgidMode()) {
+      throw new Error(errors.server.NOT_SUPPORTED);
+    }
+    await transferFailureLimiter.assertBelow(request);
+    await transferRedeemIpLimiter(request, response);
+    await transferTokenHelper.decline(data.token);
   }
 );
 

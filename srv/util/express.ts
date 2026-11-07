@@ -57,6 +57,8 @@ declare module 'express-session' {
       signature: string;
       description?: string;
       existsAlready?: boolean;
+      /** when Lukso/PrepareLuksoAction checked the message and signature (ms) */
+      preparedAt?: number;
     };
 
     farcaster?: {

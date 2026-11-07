@@ -23,6 +23,7 @@ import { channelMemberListOrEmpty, memberListOrEmpty } from "../common/memberLis
 import newsletterHelper from "../repositories/newsletter";
 import dayjs from "dayjs";
 import emailUtils from "./emails";
+import { reserveEventMailRound } from "../util/eventMailBudget";
 import userHelper from "../repositories/users";
 import messageHelper from "../repositories/messages";
 
@@ -1679,11 +1680,15 @@ registerPostRoute<
 
     // Todo: If event ever creates notifications, emit them here
     // email failures must not fail the update itself
+    // capped per event, per acting account and per instance
+    // (srv/util/eventMailBudget.ts): over budget, the change mails no one
     try {
-      const eventOptions = await communityEventHelper.prepareEventToSendEmail(result.id, user.id, "changed", result);
       const userEmails = await communityEventHelper.getUserEmailsToNotify({eventId: result.id});
-      for (const userEmail of userEmails) {
-        await emailUtils.sendEventEmail(userEmail, eventOptions);
+      if (await reserveEventMailRound({ eventId: result.id, actorId: user.id, recipients: userEmails.length })) {
+        const eventOptions = await communityEventHelper.prepareEventToSendEmail(result.id, user.id, "changed", result);
+        for (const userEmail of userEmails) {
+          await emailUtils.sendEventEmail(userEmail, eventOptions);
+        }
       }
     } catch (e) {
       console.error("Error sending event update emails", e);
@@ -1719,11 +1724,14 @@ registerPostRoute<
     await communityEventHelper.deleteCommunityEvent(data.eventId);
 
     // email failures must not fail the deletion itself
+    // capped like the change mails (srv/util/eventMailBudget.ts)
     try {
-      const eventOptions = await communityEventHelper.prepareEventToSendEmail(data.eventId, user.id, "cancelled", existingEvent);
       const userEmails = await communityEventHelper.getUserEmailsToNotify({eventId: data.eventId});
-      for (const userEmail of userEmails) {
-        await emailUtils.sendEventEmail(userEmail, eventOptions);
+      if (await reserveEventMailRound({ eventId: data.eventId, actorId: user.id, recipients: userEmails.length })) {
+        const eventOptions = await communityEventHelper.prepareEventToSendEmail(data.eventId, user.id, "cancelled", existingEvent);
+        for (const userEmail of userEmails) {
+          await emailUtils.sendEventEmail(userEmail, eventOptions);
+        }
       }
     } catch (e) {
       console.error("Error sending event cancellation emails", e);

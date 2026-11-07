@@ -208,11 +208,11 @@ describe('a session of one instance', () => {
     expect((await call(main, 'GET', '/me', signedCookie(onMain.body.sid, MAIN_SECRET))).body.user).not.toBeNull();
   });
 
-  it('is scoped to its domain: host-only on the main instance, .app.cg on the gateway', async () => {
+  it('is host-only on both instances: no other host under either domain receives it', async () => {
     const onMain = await call(main, 'POST', '/login');
     const onGateway = await call(gateway, 'POST', '/login');
     expect(onMain.setCookie[0]).not.toMatch(/Domain=/i);
-    expect(onGateway.setCookie[0]).toMatch(/Domain=\.app\.cg/i);
+    expect(onGateway.setCookie[0]).not.toMatch(/Domain=/i);
     expect(onGateway.setCookie[0]).toMatch(/Secure/);
     expect(onGateway.setCookie[0]).toMatch(/HttpOnly/);
   });

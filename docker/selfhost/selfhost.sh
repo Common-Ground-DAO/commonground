@@ -257,6 +257,30 @@ cgid_vhost() {
   fi
 }
 
+# The files with the instance's secrets are readable by their owner only.
+# Every container that reads one runs as root (api: vapid_keys.json; the
+# seaweed container copies s3.selfhost.json for its own user;
+# mediasoup: the internal certificate's key), so mode 600 works whoever owns
+# them. Tightens what the current user owns, warns about the rest (never
+# fails).
+SECRET_FILES=(.env.selfhost vapid_keys.json s3_config/s3.selfhost.json selfhost/certs/server.key)
+check_secret_modes() {
+  local file mode
+  for file in "${SECRET_FILES[@]}"; do
+    [ -f "$file" ] || continue
+    mode="$(stat -c '%a' "$file")"
+    if [ $((8#$mode & 8#077)) -eq 0 ]; then
+      continue
+    fi
+    if [ -O "$file" ] && chmod 600 "$file"; then
+      echo "Note: $file was readable by others (mode $mode); it is now 600."
+    else
+      echo "Warning: $file is readable by others (mode $mode, owner $(stat -c '%U' "$file"))."
+      echo "         As its owner or root: chmod 600 docker/$file"
+    fi
+  done
+}
+
 # warns (never fails) about edge settings that do not do what they look like
 check_edge_config() {
   if [ -n "${CG_ID_DOMAIN:-}" ] && [ "$(cgid_vhost)" = "off" ]; then
@@ -264,9 +288,10 @@ check_edge_config() {
     echo "      (the legacy CG ID gateway). Passkeys run on ${CG_DOMAIN:-CG_DOMAIN} itself; you can"
     echo "      remove CG_ID_DOMAIN from .env.selfhost and its DNS record."
   fi
-  if [ "${CG_LEGACY_CGID:-false}" = "true" ] && [ -z "${CG_ID_DOMAIN:-}" ]; then
-    echo "Warning: CG_LEGACY_CGID=true needs CG_ID_DOMAIN (the CG ID app's domain); without it"
-    echo "         the backend refuses to start. Set CG_ID_DOMAIN, or CG_LEGACY_CGID=false."
+  if [ "${CG_LEGACY_CGID:-false}" = "true" ]; then
+    echo "Warning: CG_LEGACY_CGID=true is for the gateway of a moved instance only (its own"
+    echo "         gateway-api/gateway-wsapi services set it); this instance's backend refuses to"
+    echo "         start with it. Set CG_LEGACY_CGID=false (SELFHOST.md, \"Gateway for a moved instance\")."
   fi
 }
 
@@ -286,12 +311,12 @@ check_gateway_config() {
       problems+=("the gateway's domain $domain is this instance's own")
     fi
   done
-  # the same domain in another spelling (case, a trailing dot), and: the
-  # gateway's session cookie (connect.sid, like this instance's) is scoped
-  # to .CG_GATEWAY_DOMAIN: under it, this instance's site would get both
-  # cookies. (CG_ID_DOMAIN is not served here with a gateway: this instance
-  # runs without CG_LEGACY_CGID. A gateway under CG_DOMAIN is fine: this
-  # instance's cookie is host-only.)
+  # the same domain in another spelling (case, a trailing dot), and: under
+  # CG_GATEWAY_DOMAIN, this instance's site would receive the cookies scoped
+  # to the old domain (connect.sid of the old instance, like this
+  # instance's). (CG_ID_DOMAIN is not served here with a gateway: this
+  # instance runs without CG_LEGACY_CGID. A gateway under CG_DOMAIN is fine:
+  # both session cookies are host-only.)
   local gateway_domain="${CG_GATEWAY_DOMAIN:-}" own_domain="${CG_DOMAIN:-}"
   gateway_domain="${gateway_domain,,}"
   gateway_domain="${gateway_domain%.}"
@@ -302,7 +327,7 @@ check_gateway_config() {
       # the same spelling is reported above already
       [ "${CG_DOMAIN}" = "${CG_GATEWAY_DOMAIN}" ] || problems+=("CG_DOMAIN ${CG_DOMAIN} is the gateway's domain ${CG_GATEWAY_DOMAIN} in another spelling")
     elif [[ "$own_domain" == *".$gateway_domain" ]]; then
-      problems+=("CG_DOMAIN $own_domain lies under the gateway's domain $gateway_domain, whose session cookie its site would receive as well")
+      problems+=("CG_DOMAIN $own_domain lies under the gateway's domain $gateway_domain, whose cookies its site would receive as well")
     fi
   fi
   if [ -z "${CG_GATEWAY_SESSION_SECRET:-}" ] || [ "${#CG_GATEWAY_SESSION_SECRET}" -lt 16 ]; then
@@ -428,9 +453,12 @@ build() {
     if [ ! -d ../srv/node_modules/web-push ]; then
       docker_compose run --rm -T cg-builder bash -c "cd srv && yarn install --immutable"
     fi
-    docker_compose run --rm -T cg-builder bash -c "cd srv && npx --no web-push generate-vapid-keys --json > ../docker/vapid_keys.json"
+    # the private key of web push: readable by its owner only (the api
+    # container reads it as root)
+    docker_compose run --rm -T cg-builder bash -c "umask 077 && cd srv && npx --no web-push generate-vapid-keys --json > ../docker/vapid_keys.json"
     checkError
   fi
+  check_secret_modes
 
   printf "\n---\n--- Building backend\n---\n"
   rm -rf backend/dist/{*,.??*} || true
@@ -522,6 +550,7 @@ case "${1:-}" in
   up)
     backup_lock
     drill_banner
+    check_secret_modes
     check_mail_config
     check_edge_config
     check_network_config

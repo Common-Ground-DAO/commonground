@@ -28,7 +28,8 @@
 > moved instance (§3.2 checks, §3.3 services, §3.4 sites, §3.13), the per-service pool sizes and
 > the connection arithmetic (§5) against commit 696102b, 2026-11-06; the gateway without storage
 > credentials, the domain check against its cookie scope and the Valkey cleanup after switching it
-> off (§3.2 `up`, §3.3 `gateway-api`, §3.13) against commit 696102b, 2026-11-07
+> off (§3.2 `up`, §3.3 `gateway-api`, §3.13) against commit 696102b, 2026-11-07; the gateway's
+> replacement service worker and the browser check of it (§3.13) against commit 050245d, 2026-11-07
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -907,6 +908,14 @@ simplest that fits one server and one edge —
   with their own certificates. The same frontend build: the gateway's `/instance-config.js` comes
   from the `GATEWAY_CG_*` variables of the Caddy container and carries `gatewayTargetUrl`, which
   switches the web app to the gateway page.
+- **Service worker**: at `/service-worker.js`, the URL the old app's worker was registered under
+  (scope `/`), the gateway's site serves a small replacement worker from the Caddy image
+  (`docker/caddy/gateway-service-worker.js`, `no-cache`, `text/javascript`) instead of the build's
+  worker: it deletes the old app's caches, takes control and reloads the old app's pages into the
+  gateway page ([docs/frontend](../frontend/README.md#service-worker-on-a-gateway)). The main site
+  serves its own worker as before. Nothing in front of Caddy may cache `/service-worker.js` or the
+  shell beyond what `no-cache` allows (a CDN in front of the old domain: no "cache everything" or
+  edge-TTL rule for these paths).
 - **Configuration** in `.env.selfhost`: `CG_ENABLE_GATEWAY`, `CG_GATEWAY_DOMAIN`,
   `CG_GATEWAY_ID_DOMAIN`, `CG_GATEWAY_SESSION_SECRET` and `CG_MAIL_LIMIT_SECRET` (shared by both
   instances for the per-address mail limits; `init.sh` generates both), optionally
@@ -921,6 +930,50 @@ simplest that fits one server and one edge —
 - **Isolation**: own session secret and Valkey key prefix (`gateway:`), cookie on the old domain;
   see auth-identity §12. Switched off, its `gateway:` keys stay in Valkey (the copies of the
   session generations have no TTL); SELFHOST.md has the command that removes them.
+
+**Checking the worker replacement with a browser that has the old app** (dress rehearsal; the
+e2e `gateway` flow covers it only with a stand-in for the old worker). The old app's build carries
+absolute `https://app.cg/…` URLs (its `index.html` script tags, its precache list and the cached
+shell `https://app.cg/index.html`), so it only works as installed from `app.cg` itself. Most faithful
+therefore: a **separate browser profile** on a test machine, the real app installed from the live
+`https://app.cg`, then the old domains pointed at the test VM by that machine's hosts file — with
+the test VM's gateway configured for the real names for this test (`CG_GATEWAY_DOMAIN=app.cg`,
+`CG_GATEWAY_ID_DOMAIN=id.app.cg`, `CG_TLS_MODE=internal`, the test CA trusted on that machine). (The
+alternative, an old build served under `app.test`, needs the `production` branch rebuilt for that
+origin.) Remove the hosts entries and the profile afterwards.
+
+1. In the test profile (Chrome; once more in Firefox, Safari if available) open
+   `https://app.cg/`, sign in with a test account if wanted, and install the app (address bar →
+   Install). DevTools → Application → Service workers: `https://app.cg/service-worker.js`, scope
+   `https://app.cg/`, *activated and is running*; Application → Cache storage:
+   `workbox-precache-v2-https://app.cg/` with the old app's files. Optionally allow notifications
+   (Application → Push messaging shows the subscription).
+2. Close the installed app and every tab. Add `<test VM IP> app.cg id.app.cg cg.test` to the
+   hosts file (the gateway runs on the test VM), and make sure the browser resolves it (restart
+   the browser; Chrome may use secure DNS — turn it off in the test profile).
+3. Start the installed app (not a tab). Expected, within a few seconds: it shows the old app from
+   its cache first, then reloads by itself once and shows "Common Ground has moved to cg.test"
+   with the sign-in form. Repeat with a tab on a deep link (`https://app.cg/c/<community>/`).
+4. DevTools → Application → Service workers ("Update on reload" and "Bypass for network" **off**,
+   so the browser's own update path is tested): the registration's script is still
+   `https://app.cg/service-worker.js`, the running version is a new one (higher number), its
+   source (click the script) starts with the replacement's header and `VERSION = 'gateway-sw-1'`.
+   Console (with DevTools open during the switch, "Preserve log" on): `gateway-sw-1: activated, N
+   cache(s) deleted, reloading M page(s)`. Cache storage: empty. IndexedDB/Local storage: still
+   there (with the rehearsal's copy of the production data, the device key signs in silently).
+   Network tab: `/service-worker.js` with `Cache-Control: no-cache`, `Content-Type:
+   text/javascript`; the reloaded document came from the network ("Size" not "(ServiceWorker)").
+5. Reload a few times and leave the tab open for a minute: no further automatic reloads; the
+   worker version stays the same.
+6. Sign in and continue: the transfer link lands on `cg.test/<path>` of the page the app was on.
+7. Push (G7's script against the subscription of step 1, if one was made): the notice appears
+   once with its text; a click opens the gateway page.
+
+Failure signs: the old app stays (worker still the old version — check the Network tab for the
+`/service-worker.js` response and that nothing in front of Caddy serves it from a cache); a reload
+loop (the worker console shows repeated activations — the version changed between loads, or the
+gateway serves a different file each time); a frozen page after the switch (a worker that waits
+for its own reloads inside `activate`, see docs/frontend).
 
 ---
 

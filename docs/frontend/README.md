@@ -58,7 +58,8 @@
 > 2026-11-07;
 > the scroll-down helper level of `GenericMessageList` and `Scrollable`'s position report and
 > `autoScroll` against commit a67ef53, 2026-11-07; the composer's send block during image uploads
-> (`isAttachmentBusy`) against commit 63e944a, 2026-11-07
+> (`isAttachmentBusy`) against commit 63e944a, 2026-11-07; the replacement service worker of a gateway
+> ("Service worker on a gateway", the entry-point note) against commit 050245d, 2026-11-07
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -1477,7 +1478,7 @@ with wave M3 (2026-11-01), Tailwind CSS 4 with wave M4 (2026-11-02).
 
 - **Main entry**: `src/index.tsx` -- the primary web app entry point.
 - **CG ID entry**: `src/index_cgid.tsx` -- alternative entry point for the CG Identity service.
-- **Service Worker**: `src/service-worker.ts` -- handles caching, push notifications and notification clicks, the update/reload flow, and a one-release compat answer to old pages' tab-role requests (§8).
+- **Service Worker**: `src/service-worker.ts` -- handles caching, push notifications and notification clicks, the update/reload flow, and a one-release compat answer to old pages' tab-role requests (§8). A gateway serves a small replacement worker at the same URL instead ([Service worker on a gateway](#service-worker-on-a-gateway)).
 - **Config**: `src/common/config.ts` -- deployment configuration (dev/staging/prod), feature flags, URLs, chain set.
 - **Docker**: `docker/.env` -- environment variables of the dev compose stack (gitignored, generated from the tracked `docker/.env.example` on first `./run.sh`; see [docs/infrastructure §4](../infrastructure/README.md#4-environment-variables)).
 
@@ -1632,6 +1633,59 @@ the new instance's `TransferView` redeems.
 
 The Farcaster sign-in sends `window.location.host` as the SIWE domain (the server checks domain and
 URI against its own origin, [auth-identity §5.8](../auth-identity/README.md#58-farcaster-type-farcaster)).
+
+### Service worker on a gateway
+
+The old app on the gateway's domain registered its worker at `/service-worker.js` with scope `/`
+(`ServiceWorkerManager`, `src/data/appstate/serviceWorker.ts`; the only URL it ever used — the
+production build of app.cg serves its Workbox worker there, registered by
+`navigator.serviceWorker.register("/service-worker.js",{scope:"/"})`, checked against the live site
+on 2026-11-07). That worker precached the old app and answered every navigation with the cached
+shell (`createHandlerBoundToURL`), so a browser that has it — an installed app above all — would
+keep starting the old app from Cache Storage on the gateway's domain.
+
+The gateway's site therefore serves a different file at that URL:
+`docker/caddy/gateway-service-worker.js`, copied into the Caddy image as
+`/etc/caddy/gateway/service-worker.js` and served only by `cg_gateway_app` (`common.caddy`) with
+`Cache-Control: no-cache` and `text/javascript`. The build's own worker (`build/service-worker.js`,
+in `/srv`) is never served there; the main instance keeps serving its own worker, unchanged. The
+replacement is a few lines of plain JavaScript without imports or build step:
+
+- `install`: `skipWaiting()` — it replaces the old worker at once, with old pages still open.
+- `activate`: lists the window clients the registration already controls (the pages of the
+  previous worker), deletes every Cache Storage cache of the origin (the old precache), calls
+  `clients.claim()` and navigates each of those pages to its own URL (if `navigate()` is missing or
+  refused, it posts `{action:'reload'}`, on which the old app reloads itself). Pages that no worker
+  controlled are not reloaded. The navigations are started but not awaited: a navigation of a page
+  the worker controls waits until the worker is activated, so awaiting it inside `activate` holds
+  both up and freezes the page (measured with Chrome 151 in the e2e flow).
+- no `fetch` handler: from then on every request goes to the network, so the reloaded pages get the
+  gateway page with the path they were on, and `GatewayView` takes that path along.
+- `push` / `notificationclick`: a push in the old app's format (`{action:'new', data}` with
+  `extraData.type: 'generalData'`) shows its title and text, anything else a fixed "Common Ground
+  has moved" notice; a click opens the given path on the gateway's own origin (else `/`). This keeps
+  old push subscriptions usable for a one-off notice after the worker was replaced.
+- IndexedDB and localStorage stay as they are: the gateway signs in with the device key stored
+  there.
+
+How an old installation gets it: every navigation in the worker's scope runs an update check
+(soft update), and the old app calls `registration.update()` every 30 s (every 3 s while an update
+is in progress); both fetch the script past the HTTP cache (the default `updateViaCache:
+'imports'`). A `register()` with the unchanged URL by itself checks nothing. So the first start
+after the domain points at the gateway installs the replacement, which reloads the page into the
+gateway.
+
+No loop: the gateway page is the same web app, so its `ServiceWorkerManager` registers
+`/service-worker.js` as well — on the gateway that is the replacement itself. On a first visit that
+installs it once: the page that registered it was not controlled, so it is not reloaded; afterwards
+the script is byte-identical and nothing is installed again. The gateway therefore never has the
+app's precaching worker, and no worker caches anything there. `VERSION` in the file changes with
+every change to it (a changed file is installed once more and reloads the pages it controls once).
+
+`src/gatewayServiceWorker.test.ts` runs the file in a fake worker scope; the e2e `gateway` flow
+checks the served headers and replaces a stand-in for the old worker in Chrome (e2e/README.md). The
+procedure for a browser with the real old app installed is in
+[docs/deployment §3.13](../deployment/README.md#313-the-gateway-of-a-moved-instance).
 
 ### Account-security step (`SecurityStepView`, `SecurityStep`)
 

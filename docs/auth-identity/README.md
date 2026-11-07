@@ -23,7 +23,10 @@
 > parsing (§5.8), the legacy CG ID surface (§7), transfer links (§11) and gateway mode (§12)
 > against commit 696102b, 2026-11-06; the session secret as configured (§2), the gateway's start-up
 > checks, storage, mail-limit secret and web app (old page data, continuation per tab) (§12)
-> against commit 696102b, 2026-11-07
+> against commit 696102b, 2026-11-07; the LUKSO sign-in message (§5.7), the host-only cookie on
+> every process and the old-scope cleanup (§2, §7), the transfer link's next path, confirmation
+> identifier, declining and sign-out (§11), and the gateway's start-up checks and cookie notes (§12)
+> against commit 04c72b2, 2026-11-07
 
 # Authentication & Identity
 
@@ -312,13 +315,13 @@ after a replaced password, the email-change notice to the previous address.
 
 ### Cookie scoping
 
-The session cookie is **host-only**: it is sent to the instance's own host and to no other host
-under the domain. Only a process running in legacy CG ID mode (`CG_LEGACY_CGID=true`, the gateway,
-see [§7](#legacy-cg-id-gateway-only)) sets the cookie `domain` to `.<APP_HOSTNAME>`
-(`srv/util/sessionSetup.ts`), so that the main app and the CG ID app (`id.<domain>`) share one session.
-`APP_HOSTNAME` is derived from `BASE_URL` (`srv/util/urls.ts`). A gateway's cookie (`.app.cg`)
-never reaches the main instance's host (`cg.box`), and it would be worthless there anyway: the
-gateway signs with its own secret and keeps its sessions under its own key prefix ([§12](#12-gateway-mode)).
+The session cookie is **host-only** on every process, a legacy CG ID gateway included
+(`srv/util/sessionSetup.ts`): it is sent to the instance's own host and to no other host under the
+domain. The CG ID app (`id.<domain>`, [§7](#legacy-cg-id-gateway-only)) needs no shared scope: it
+calls the api only on the app's own host (`APP_URL`, `src/data/util/urls.ts`) with credentials, a
+same-site request that carries that host's cookie. A gateway's cookie never reaches the main
+instance's host (`cg.box`), and it would be worthless there anyway: the gateway signs with its own
+secret and keeps its sessions under its own key prefix ([§12](#12-gateway-mode)).
 
 ### Middleware order
 
@@ -711,13 +714,25 @@ registered when `TWITTER_API_KEY`/`TWITTER_API_SECRET` are configured (`srv/api/
 
 ### 5.7 LUKSO Universal Profile (`type: "lukso"`)
 
-1. `POST /Lukso/PrepareLuksoAction` (`srv/api/luksoUniversalProfile.ts:15-69`): the client submits a
-   signed message. The endpoint extracts the `Nonce` from the message and requires it to equal
-   `session.signSecret`, verifies the signature on-chain via
-   `onchainHelper.luksoIsValidSignature()` (ERC-1271 / LSP0), fetches the Universal Profile data, and
-   stores `session.lukso` with `readyForLogin` / `readyForCreation`.
-2. `POST /User/login` with `type: "lukso"` re-checks the nonce and on-chain signature, then resolves
-   the user via `getUserByAccount("lukso", address)` (`srv/api/user.ts:248-272`).
+1. `POST /Lukso/PrepareLuksoAction` (`srv/api/luksoUniversalProfile.ts`): the client submits the
+   Universal Profile address, a signature and the signed message. The message must be a Sign-In with
+   Ethereum message made for this instance, checked like a wallet or Farcaster sign-in message
+   (`assertLuksoSignInMessage`, `srv/util/luksoSignIn.ts`): parsed by its structure
+   (`parseSiweMessage`), its domain line and `URI` name this instance's web app
+   (`assertSiweForThisInstance`), its address is the profile's, `Version` is 1, `Chain ID` is 42
+   (LUKSO mainnet, the chain the signature is checked on), its `Nonce` equals `session.signSecret`
+   (single use), its `Issued At` lies within 15 minutes of the server's clock either way (room for
+   client clocks that are off), and it is not expired. The endpoint then verifies the
+   signature on-chain via `onchainHelper.luksoIsValidSignature()` (ERC-1271 / LSP0), uses the nonce
+   up (`signSecret` is deleted), fetches the Universal Profile data, and stores `session.lukso` with
+   `readyForLogin` / `readyForCreation` and the time of the check (`preparedAt`). The web app builds
+   the message with `src/util/siwe.ts` from `window.location.host` and the page origin
+   (`src/context/UniversalProfileProvider.tsx`), so it names whichever instance it runs on — the
+   gateway's domain on a gateway (§12).
+2. `POST /User/login` with `type: "lukso"` requires a prepared sign-in at most 10 minutes old,
+   checks again that the stored message names this instance and the profile, re-checks the on-chain
+   signature, then resolves the user via `getUserByAccount("lukso", address)` (`srv/api/user.ts`).
+   `User/addUserAccount` (linking a profile) uses the same prepared, checked state.
 
 ### 5.8 Farcaster (`type: "farcaster"`)
 
@@ -750,7 +765,7 @@ SIWE-based (Sign In With Farcaster), verified against the on-chain Farcaster ID 
 | Password | `password` | email/alias + password | Yes | `users` |
 | Email code | `verificationCode` | emailed 8-digit code, bound to the address | Yes | `users` / Valkey |
 | Twitter | `twitter` | Passport OAuth session | Yes | `user_accounts` |
-| LUKSO | `lukso` | on-chain signature + nonce | Yes | `user_accounts` |
+| LUKSO | `lukso` | SIWE for this instance + on-chain (ERC-1271) signature | Yes | `user_accounts` |
 | Farcaster | `farcaster` | SIWE + on-chain FID registry | Yes | `user_accounts` |
 
 ---
@@ -1032,27 +1047,31 @@ joins it with the `watchCgIdRequest` socket event before it opens the popup, so 
 depend on which session cookie the socket connected with — and, for clients from before that
 event, to the `expressSession:<sid>` room; the popup also posts the result to its opener, which
 accepts it only from the CG ID origin. The request id is 120 random bits (`crypto.getRandomValues`). Popup and
-main window share the session through the subdomain-scoped cookie: the popup's first write (the
+main window share the session: the popup calls the api on the app's host (`APP_URL`), so its
+credentialed, same-site requests carry the app host's host-only cookie, and its first write (the
 challenge) creates it if there is none. `/CgId/ensureSession` is a keepalive like
 `User/ensureSession` and creates nothing. The main window then calls
 `User/login {type:'passkey-success'}`, which is accepted only in this mode and within 5 minutes
 (`passkeyData.expiresAt`). Only in this mode does
-the session cookie cover subdomains, does the API CORS list include the `CGID_URL` origin and does
-the instance config carry `cgidUrl`. The CG ID views (`src/cgid/*`) still call the registration
+the API CORS list include the `CGID_URL` origin and does the instance config carry `cgidUrl`. The CG ID views (`src/cgid/*`) still call the registration
 endpoints, which no backend serves any more.
 
 Apart from the passkey surface, legacy mode keeps the **full previous sign-up and login surface**:
 `createUser` with every selector (including X, LUKSO and Farcaster), no sign-up email verification,
 the recovery-phrase wallet path, and all other routers. Restricting what a gateway process serves is
 left entirely to the gateway's server-side allowlists ([§12](#12-gateway-mode)); legacy mode itself
-does not restrict it.
+does not restrict it. That is why, outside `DEPLOYMENT=dev`, an api or wsapi refuses to start with
+`CG_LEGACY_CGID=true` unless it is a gateway (`CG_GATEWAY=true`; `validateGatewayConfig`,
+`srv/util/gateway.ts`).
 
 ### Session cookie on upgraded instances
 
-Outside legacy mode the session cookie is host-only. A browser may still hold the
-subdomain-scoped cookie (`Domain=.<APP_HOSTNAME>`) of an instance that ran an older version; the
-api expires it in the response to every request that carries a session cookie until a login marks
-the session (`legacyDomainCookieCleared`, set by `establishLoginSession`). The cleanup only adds a
+The session cookie is host-only. A browser may still hold the subdomain-scoped cookie
+(`Domain=.<APP_HOSTNAME>`) of an instance that ran an older version — on a gateway, the cookie of
+the old instance it replaces; the api (outside dev, legacy mode included) expires it in the
+response to every request that carries a session cookie until a login marks the session
+(`legacyDomainCookieCleared`, set by `establishLoginSession`). Without that, the browser would send
+both cookies of the same name, the older one first, and the api would read the old one. The cleanup only adds a
 header and never writes to the session, so it creates none. The session the old cookie pointed to
 stays valid. Release note for in-place upgrades: users keep their sessions; nothing to do.
 
@@ -1250,16 +1269,25 @@ generic.
   `TRANSFER_TARGET_URL` names the instance the links lead to (an `https` origin; `NOT_SUPPORTED`
   otherwise; a malformed value stops the api at startup). The answer is
   `{ url: "<target>/transfer#<token>", expiresAt }`. `nextPath` is kept only if it is a same-site
-  path on the target (`safeNextPath`, `src/common/safeNextPath.ts`, shared with the web app).
+  path on the target (`safeNextPath`, `src/common/safeNextPath.ts`, shared with the web app): a
+  plain absolute path that resolves to the target's origin, checked before and after normalisation,
+  so dot segments that collapse into a leading `//` (`/.//host`, `/%2e//host`) are refused too.
 - **Token** — 32 random bytes, base64url (43 characters), valid 10 minutes. Only its SHA-256 is
   stored, with the user id and the path. It travels in the URL fragment, which browsers never send
   to a server — not in requests, server logs or `Referer`.
 - **Confirmation** — the target's web app (`/transfer`, `TransferView`) takes the token out of the
   address bar first thing at startup (`history.replaceState`, kept in memory only), shows whose
-  account the link signs in to (`POST /User/previewTransferLink { token }` → `{ userId,
-  displayName, expiresAt }`, which does not use the token) and redeems it only after an explicit
-  "Continue as …". A different account signed in there is signed out first (after the page said
-  so); "This isn't me" leaves without using the link.
+  account the link signs in to (`POST /User/previewTransferLink { token }`, which does not use the
+  token) and redeems it only after an explicit "Continue as …". A different account signed in there
+  is signed out first (after the page said so). "This isn't me" uses the link up without signing
+  anyone in, together with every other unused link of that account (`POST
+  /User/declineTransferLink { token }`, same limits as the preview; only a usable link does that,
+  and the answer is the same whether it was usable or not), so none of them can be opened again,
+  from the browser's history for example.
+- **Sign-out** — where links are minted (`TRANSFER_TARGET_URL` set, i.e. on the gateway),
+  `User/logout` also uses up every unused link of that account (`discardUnused`): a link that is
+  still open somewhere stops working once its owner signs out where they got it. The gateway
+  session itself stays valid after a link was minted (its page offers "Continue to …" again).
 - **Redemption** — `POST /User/redeemTransferLink { token, device }` only from a logged-out session
   (`ALREADY_LOGGED_IN` otherwise). One conditional statement (`UPDATE … SET "usedAt" = now() WHERE
   "tokenHash" = $1 AND "usedAt" IS NULL AND "expiresAt" > now() AND <live human account>
@@ -1271,11 +1299,14 @@ generic.
   client IP, and after 20 failed attempts in 15 minutes an IP is refused before the lookup
   (`ipFailureLimiter`); more than 100 failures per hour instance-wide log one `[security]` warning
   per hour. Unknown, used and expired tokens all answer `TRANSFER_LINK_INVALID`.
-- **Confirmation page** shows the account's display name, its unique handle (`@<cg profile
-  name>`, so a look-alike display name cannot fool anyone) and profile image (`previewTransferLink`
-  → `{ userId, displayName, username, imageId, expiresAt }`).
-- **Legacy CG ID mode** (the gateway) mints but never redeems: preview and redemption are
-  `NOT_SUPPORTED` there (on a gateway they are off its allowlist as well). The gateway
+- **Confirmation page** shows the account's display name and profile image, and next to them an
+  identifier no other account has (`previewTransferLink` → `{ userId, displayName, username,
+  identity, imageId, expiresAt }`; `transferIdentity`, `srv/api/user.ts`): the cg profile name
+  (`@name`), else the linked X handle, the Farcaster username or the Universal Profile address,
+  else the start of the account id (`src/views/TransferView/transferIdentity.ts`). A look-alike
+  display name and image therefore never stand alone.
+- **Legacy CG ID mode** (the gateway) mints but never redeems: preview, redemption and declining
+  are `NOT_SUPPORTED` there (on a gateway they are off its allowlist as well). The gateway
   ([§12](#12-gateway-mode)) exposes `User/createTransferLink` to its logged-in users and runs with
   `TRANSFER_TARGET_URL=https://<new instance>`.
 
@@ -1366,10 +1397,14 @@ Nothing else is served. Deployment: [docker/SELFHOST.md](../../docker/SELFHOST.m
 **Configuration.** Every gateway process (api, wsapi) runs with `CG_GATEWAY=true`,
 `CG_LEGACY_CGID=true`, `BASE_URL=https://<old domain>`, `CGID_URL=https://<old CG ID domain>`; the
 api also with `TRANSFER_TARGET_URL=https://<new instance>` and the shared mail-limit secret (below).
-Missing pieces stop the process at startup (`validateGatewayConfig`), and so does a
-`TRANSFER_TARGET_URL` whose host is the gateway's own domain or lies under it: the gateway's
-session cookie (scoped to `.<old domain>`, below) would reach that instance as well, next to its own
-cookie of the same name. The singleton processes — job-runner, onchain, memberlist, the
+Missing pieces stop the process at startup (`validateGatewayConfig`), and so do `DEPLOYMENT=dev`
+(a dev stack turns off the login throttles and allows `http` transfer targets) and a
+`TRANSFER_TARGET_URL` whose host is the gateway's own domain or lies under it: that instance would
+receive every cookie scoped to the old domain, the old instance's session cookie of the same name
+included. The other way round, outside dev an api or wsapi with the gateway's settings
+(`CG_LEGACY_CGID=true` or `TRANSFER_TARGET_URL`) but without `CG_GATEWAY=true` refuses to start:
+it would be a full instance on the old domain, on the main instance's Valkey keys and Socket.IO
+channels. The singleton processes — job-runner, onchain, memberlist, the
 call server and migrate-db — run once, for the new instance; started in gateway mode they exit
 (`refuseInGatewayMode`).
 
@@ -1439,10 +1474,15 @@ its source and from `API.Server.ServerToClientEvents`) on a real Socket.IO serve
   login-code mails to one address count together; a gateway api refuses to start without it (the
   Docker secret `mail_limit_secret` counts as well — the check reads it like the mail limits do,
   `sharedMailLimitSecret`, without surrounding whitespace).
-- Cookie scope `.app.cg` (legacy CG ID mode, shared with the CG ID app on `id.app.cg`); the new
-  instance's cookie is host-only on `cg.box`. Both are named `connect.sid`, so the new instance
-  must not lie on or under the gateway's domain (checked by the gateway api and by `selfhost.sh
-  up`); a gateway under the new instance's domain is fine.
+- Both session cookies are host-only (`app.cg` and `cg.box`; [§2](#cookie-scoping)): no other host
+  under the old domain receives the gateway's cookie, and the CG ID app on `id.app.cg` reaches the
+  gateway's session through its same-site requests to `app.cg`. A cookie the old instance scoped to
+  `.app.cg` is expired by the gateway ([§7](#session-cookie-on-upgraded-instances)). The new
+  instance must not lie on or under the gateway's domain all the same (checked by the gateway api
+  and by `selfhost.sh up`); a gateway under the new instance's domain is fine. Every other host name
+  under the old domain still receives what browsers keep for `.app.cg`, so the operator keeps only
+  the gateway's two host names in DNS while the gateway runs
+  ([docker/SELFHOST.md](../../docker/SELFHOST.md#gateway-for-a-moved-instance)).
 
 **Web app.** The instance config of a gateway carries `gatewayTargetUrl` (the new instance's origin;
 `srv/util/instanceConfig.ts`, the Caddy template renders it from `GATEWAY_CG_GATEWAY_TARGET_URL`).

@@ -6,7 +6,8 @@
 > 2fad7d3, 2026-11-01; `CG_FEATURE_EMAIL` note against commit fe3937f, 2026-10-31;
 > verification and login codes, the notice mails of the account-security changes against commit 9fc05a9, 2026-11-01;
 > the "other devices were signed out" sentence of the password and address notices against commit 23a4c1e, 2026-11-01;
-> the session secret at startup and the shared per-address mail-limit secret against commit 696102b, 2026-11-06.
+> the session secret at startup and the shared per-address mail-limit secret against commit 696102b, 2026-11-06;
+> the budget of the event change and cancellation mails against commit 04c72b2, 2026-11-07.
 
 This document covers every email path in Common Ground: transactional mail (verification, one-time-password login, event mails), the weekly digest and per-community article newsletters, one-click unsubscribe, send limits, bounce handling, and the user/community preference model that gates them. Web push and in-app notifications are a separate delivery channel — see [docs/realtime](../realtime/README.md) (§ Push Notifications) — and the boundary between the two is described in [Boundary to web push](#boundary-to-web-push). Running a mail server for a self-hosted instance (the `mail` relay, SPF/DKIM/DMARC/PTR) is covered in [docs/deployment §3.9](../deployment/README.md#39-email-smtp-and-the-mail-relay) and [`docker/SELFHOST.md`](../../docker/SELFHOST.md#email).
 
@@ -176,6 +177,7 @@ Sent to event participants. `sendEventEmail` produces one of four variants via `
 - The `starting` variant is driven by the every-minute job: `getUpcomingEventsToNotify()` finds events scheduled within the next 15 minutes that have not yet been notified (`eventNotified = FALSE`) and whose participants have `emailVerified = TRUE`; the mails go out through `sendToAll()` like article mails, and `markEventAsNotified` then sets `eventNotified = TRUE` regardless of individual failures.
 - Recipient resolution for `changed`/`cancelled` uses `getUserEmailsToNotify({eventId})`, which returns participants with `emailVerified = TRUE`.
 - In all API-triggered cases the email send is wrapped in a try/catch so a mail failure never fails the underlying event mutation.
+- `changed` and `cancelled` rounds are capped per event, per acting account and per instance ([Send limits](#event-change-and-cancellation-mails)); over budget the change goes through without mail.
 - Event mails are treated as transactional (the user joined the event); there is no email preference for them and they carry no unsubscribe headers.
 
 ---
@@ -217,6 +219,18 @@ Three endpoints make the server mail an address the caller chooses. They are lim
 | `POST /user/requestEmailVerification` (login required) | 30/h, same prefixes | 5/h | 5/h |
 
 The per-address buckets are keyed by an HMAC of the lower-cased address, with a key derived from `CG_MAIL_LIMIT_SECRET` (Docker secret `mail_limit_secret`; without it the session secret `REDIS_SECRET`, as on the dev stack; label `cg-mail-send-limit-v1`), so no address is stored in Redis in clear and the keys can't be matched against a list of known addresses (an instance and the gateway of a moved instance share `CG_MAIL_LIMIT_SECRET` while their session secrets differ, so their login-code mails to one address count together, [auth-identity §12](../auth-identity/README.md#12-gateway-mode)); they stop one inbox from being flooded from many IPs or accounts. For the login code that limit is also a lever against the address owner: anyone who knows an address can use up its budget and keep the owner from getting a code. The short cooldown (one code per minute) with a higher hourly cap (10) keeps that window short while still capping the mail volume to one inbox. The limits of a request are counted together (`enforceLimits`): a refused request counts in none of them, and the refusal names the longest wait. Over the limit the endpoint answers `RATE_LIMIT_EXCEEDED` with `retryAfterSeconds` (and a `Retry-After` header, [auth-identity §4 "Limits"](../auth-identity/README.md#limits)); the web app's "send again" buttons count down the per-address minute. Account creation with email (`POST /user/createUser`) sends at most one verification mail and is covered by the account limit (20 per network per hour, 50 per day). The selfhost relay additionally caps submissions at 50 messages/s and 10 in parallel (`limits` in `docker/mail/maddy.conf`); maddy has no limit on the queue size.
+
+### Event change and cancellation mails
+
+The `changed` and `cancelled` [event mails](#event-notification-mails) go to every participant with a verified address each time an event is edited or deleted, so they have a budget of their own (`srv/util/eventMailBudget.ts`, `reserveEventMailRound`), checked before a round is sent:
+
+| Budget | Counts | Limit |
+|--------|--------|-------|
+| Per event | mail rounds (one per change or cancellation) | 3 per hour (sliding window) |
+| Per acting account | mail rounds across all events | 10 per hour (sliding window) |
+| Per instance | mails (one per recipient) of all events | 10,000 per hour (fixed hourly window) |
+
+Over any of them the change or cancellation itself still goes through; it just mails no one (a warning is logged), and a refused round counts in none of the budgets. A round is counted whole, so an event with more participants than the instance budget never sends change or cancellation mails. Event mails can therefore neither flood participants nor use up the relay's outbound volume that sign-in codes and verification mails rely on. An unreachable Valkey sends no event mails either. The `attending` and `starting` mails are not affected (one per participant and event).
 
 ---
 

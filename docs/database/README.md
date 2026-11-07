@@ -24,7 +24,8 @@
 > `user_community_state` against commit eebc3cf, 2026-11-03; the data cleanup
 > `1793635400000-permissionDataCleanup` (incl. the community order rebuild and the channel/article step)
 > against commits ccffa3b and 5f50cc0, 2026-11-03;
-> the raw pool's size (`PG_POOL_MAX`) against commit 696102b, 2026-11-06
+> the raw pool's size (`PG_POOL_MAX`) against commit 696102b, 2026-11-06;
+> the `transfer_tokens.usedAt` row (declined links, sign-out) against commit 04c72b2, 2026-11-07
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -154,7 +155,7 @@ One-time sign-in links from an instance on the same database (the app.cg gateway
 | `nextPath` | `varchar(2048)` | Nullable, a same-site path to continue to |
 | `createdAt` | `timestamptz(3)` | Default `now()` |
 | `expiresAt` | `timestamptz(3)` | About 10 minutes after creation, indexed |
-| `usedAt` | `timestamptz(3)` | Nullable; set by the single statement that redeems the token |
+| `usedAt` | `timestamptz(3)` | Nullable; set by the single statement that redeems the token, or when the link (or another unused link of the account) is declined, or its owner signs out where it was minted (it then never redeems) |
 | `generation` | `bigint` | Default `0`. The generation of the session that minted it; redeemable only while not below the user's `sessionGeneration` |
 
 Rows that expired more than a day ago are deleted whenever a new link is minted. Added by

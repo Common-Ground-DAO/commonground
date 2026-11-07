@@ -59,7 +59,8 @@
 > the scroll-down helper level of `GenericMessageList` and `Scrollable`'s position report and
 > `autoScroll` against commit a67ef53, 2026-11-07; the composer's send block during image uploads
 > (`isAttachmentBusy`) against commit 63e944a, 2026-11-07; the replacement service worker of a gateway
-> ("Service worker on a gateway", the entry-point note) against commit 050245d, 2026-11-07
+> ("Service worker on a gateway", the entry-point note) against commit 050245d, 2026-11-07;
+> the transfer page's account identifier and "This isn't me" against commit 04c72b2, 2026-11-07
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -1570,12 +1571,15 @@ A link from another instance (`/transfer#<token>`, [auth-identity §11](../auth-
 `captureTransferToken()` (`src/data/auth/transferToken.ts`) runs at the top of `src/index.tsx`,
 before the app loads anything: it takes the token out of the address bar (`history.replaceState`)
 and keeps it in memory only — a reload drops it. `TransferView` (outside the layouts, like `/login`)
-shows the account the link signs in to (`User/previewTransferLink`: display name, `@handle`,
-profile image — `Jdenticon` when there is none) and asks
+shows the account the link signs in to (`User/previewTransferLink`: display name, profile image —
+`Jdenticon` when there is none — and a unique identifier, `transferIdentityText`
+(`src/views/TransferView/transferIdentity.ts`): `@<cg name>`, else `X @<handle>`,
+`Farcaster @<username>` or `Universal Profile <address>`, else the start of the account id) and asks
 "Continue as …?"; if another account is signed in, it says that continuing signs it out, and does
 so (`loginManager.logout()`) before `loginManager.redeemTransferLink(token)`. Then it goes to the
-link's `nextPath` (`safeNextPath`) or home. "This isn't me" leaves without using the link; the
-same account already signed in just continues.
+link's `nextPath` (`safeNextPath`) or home. "This isn't me" uses the link (and the account's other unused links) up on the server
+(`User/declineTransferLink`, fire and forget) and leaves; the same account already signed in just
+continues.
 
 ### The gateway page (`GatewayView`)
 

@@ -58,7 +58,8 @@
 > `srv/util/express.ts`, `srv/api/mountRouters.ts` (incl. the shared `/Message` mount with
 > `syncState`) and the singleton processes' gateway refusal against commit 696102b, 2026-11-06;
 > the pool's `error` listener (idle connections only) and the LISTEN holders' own listeners against
-> commit 696102b, 2026-11-07.
+> commit 696102b, 2026-11-07;
+> the transfer-link routes (`/declineTransferLink`, sign-out) against commit 04c72b2, 2026-11-07
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -419,11 +420,11 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 - `/requestSignupEmailCode`, `/verifySignupEmailCode` -- verify the sign-up address before the account exists (`srv/util/signupEmail.ts`)
 - `/clearLoginSession` -- Clear session
 - `/checkLoginStatus` -- Check if logged in
-- `/logout` -- Log out (the session is destroyed, its id revoked and the cookie expired; no new session). Logout disconnects the device's sockets: when the request names its socket (`x-cg-socket-id`), the other sockets get `cliSignedOut` first and the requesting one is left to log out itself; without the header all of them, no event ([docs/realtime](../realtime/README.md#socket-scoped-targeting))
+- `/logout` -- Log out (the session is destroyed, its id revoked and the cookie expired; no new session). Where transfer links are minted (`TRANSFER_TARGET_URL`, the gateway) it also uses up the account's unused links. Logout disconnects the device's sockets: when the request names its socket (`x-cg-socket-id`), the other sockets get `cliSignedOut` first and the requesting one is left to log out itself; without the header all of them, no event ([docs/realtime](../realtime/README.md#socket-scoped-targeting))
 - `/signOutOtherDevices` -- step-up; ends every other session of the user (session generation in PostgreSQL + index) and deletes every other device key and unused transfer link, returns `{ devices }` (`srv/util/signOutOtherDevices.ts`, `srv/util/userSessions.ts`)
 - `/getSecurityStatus` -- what the account-security step still needs (`srv/util/securityStep.ts`)
 - `/createTransferLink` -- a one-time link for the session's own user to the instance `TRANSFER_TARGET_URL` names (off without it); limited per user
-- `/previewTransferLink`, `/redeemTransferLink` -- show whose account a link signs in to; redeem it (logged out only, one conditional `UPDATE`, failed attempts limited per IP); not on a legacy CG ID process (`srv/util/transferLink.ts`, `srv/repositories/transferTokens.ts`)
+- `/previewTransferLink`, `/redeemTransferLink`, `/declineTransferLink` -- show whose account a link signs in to (display name, image and a unique identifier); redeem it (logged out only, one conditional `UPDATE`, failed attempts limited per IP); use it and the account's other unused links up without signing in ("This isn't me", same answer whether it was usable); not on a legacy CG ID process (`srv/util/transferLink.ts`, `srv/repositories/transferTokens.ts`)
 
 **User creation and profile:**
 - `/createUser` -- Create new user account

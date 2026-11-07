@@ -296,8 +296,9 @@ and a browser pass on the test VM:
   methods incl. CGID passkey assertion, session, transfer-link creation; nothing
   else) — enforced in the backend, not just hidden in the UI. Frontend: after
   login only the "Common Ground moved to cg.box" screen. Deep links: after the
-  transfer, `app.cg/<path>` lands on `cg.box/<path>`. Session cookie scoped to
-  `.app.cg`. Because the gateway needs the CGID passkey flow for rpID `id.app.cg`,
+  transfer, `app.cg/<path>` lands on `cg.box/<path>`. Session cookie host-only on
+  `app.cg`; the CG ID app reaches the session through its same-site requests
+  to `app.cg`. Because the gateway needs the CGID passkey flow for rpID `id.app.cg`,
   the CGID app can only be removed from the code base **after** the gateway is
   gone (P7). The gateway gets its own session secret, session-store prefix and
   Socket.IO adapter key (a cookie from one origin must not work on the other);
@@ -483,6 +484,19 @@ and a browser pass on the test VM:
   with `fix/hardening-batch-1`, the rest is slotted into the items above.)
 - [ ] **S2 Review of the new code** (gateway, transfer link, account-security
   step, passkeys on the main origin, mail) — independent security review.
+  (Review done 2026-11-07; resulting changes on `fix/s2-review`, not merged
+  yet. What holds with them: LUKSO sign-in takes a SIWE-format message naming
+  this instance; both session cookies are host-only; a transfer link's next
+  path is always a same-site path, the confirmation page shows a unique
+  identifier of the account, "This isn't me" and a gateway sign-out use the
+  account's open links up; gateway settings start only in gateway mode and
+  never with `DEPLOYMENT=dev`; event change/cancellation mails have a budget;
+  the self-host builder has its own network; secret files are mode 600;
+  `harden.sh` part `mail25` limits outgoing port 25 to the relay. Still to do
+  by the maintainer: the old domain's DNS reduced to `app.cg` and `id.app.cg`
+  before the gateway takes real sign-ins (SELFHOST.md, "Old host names");
+  `mail25` and the seaweed config copy on the test VM; a LUKSO sign-in with a
+  real Universal Profile on the test VM.)
 - [ ] **S3 Server hardening.** SSH key-only login, firewall (only 22, 80,
   443 tcp+udp (HTTP/3), 4443, 40000–40099 udp+tcp; note that Docker-published ports bypass ufw — publish
   nothing else), unattended security upgrades, log rotation. Reserve the

@@ -103,6 +103,35 @@ id.app.cg ──┤          (develop, gateway mode)   SeaweedFS             │
     login lasts at most an hour, and the longer code keeps guessing harder
     than the earlier daily budget with 6 digits did (2026-11-01).
 
+2026-11-07:
+
+23. **The production server exists and is sized**: an existing machine at the
+    existing hoster (data processing agreement in place), freshly set up with
+    Ubuntu 26.04 LTS — the same release as the test VM —, 8 cores, 16 GB RAM,
+    240 GB SSD, **IPv4 only** (no AAAA records). Its address is known to the
+    maintainer and only becomes public with the DNS records.
+24. **S3 objects are copied by the maintainer straight from the production
+    storage to the new server**, not through a local backup; they are static,
+    so a first copy ahead of time plus a delta sync on move day is enough. A
+    production **database dump** for the restore test comes from the maintainer.
+25. **The transition period lasts months**: the gateway runs until app.cg's
+    registration ends (see the open question on P7).
+26. **Legal pages become instance settings** (G14); today's texts are community
+    articles on production, the maintainer provides copies.
+27. **Monitoring: the simplest solution that works, alerts to a Telegram bot
+    and channel** (S4).
+28. **Operator duties (S6)** are handled by the maintainer with Florian (legal).
+29. **Administration and updates with as little effort as possible**: the
+    server runs the self-host profile (`selfhost.sh`, `harden.sh`,
+    `backup.sh`); the Ansible suite still comes after the move (decision 5).
+30. **A transfer session adds sign-in methods only while the account is in the
+    account-security step**; for a complete account it is an ordinary sign-in,
+    and changes to sign-in methods need the usual re-authentication (narrows
+    decision 18).
+31. **The DNS zone of app.cg is cut down to `app.cg` and `id.app.cg` on move
+    day**, not before: the other records still serve the running production
+    instance until then (P6).
+
 ## Phases
 
 Order: P0 → P1 → (P2 ∥ P3) → P4 → P5 → P6. Work inside a phase runs in parallel
@@ -282,7 +311,7 @@ and a browser pass on the test VM:
   is the only thing standing between the gateway and that surface; test it
   against the complete route list. (Done 2026-11-07, `696102b`, accepted on the
   test VM: `CG_GATEWAY` with the selfhost profile `gateway` (`gateway-api`,
-  `gateway-wsapi`); a 20-route API allowlist and a two-event socket allowlist,
+  `gateway-wsapi`); a 19-route API allowlist and a two-event socket allowlist,
   checked against every mounted route; own secret and `gateway:` prefix, shared
   mail-limit secret, start-up config checks; the gateway page keeps no local
   data and continues by itself only after a sign-in in the same tab;
@@ -373,7 +402,10 @@ and a browser pass on the test VM:
   every stored push subscription, in the payload format of the **old** service
   worker, signed with the **old VAPID key pair** (must come with the production
   secrets); removes expired subscriptions. Old subscriptions are not usable for
-  cg.box — users re-subscribe there (part of G3).
+  cg.box — users re-subscribe there (part of G3). The key pair is the `api`
+  service's secret `vapid_keys_json` (`/run/secrets/vapid_keys_json` inside a
+  running `api` container: JSON with `publicKey` and `privateKey`; Swarm does not
+  show a secret's value through `docker secret inspect`).
 - [x] **G8 Mail.** (done 2026-10-31: nodemailer + optional maddy relay with bounce policy, send limits, one-click unsubscribe; accepted on the test VM; real delivery to Gmail/Outlook, PTR and outbound port 25 are checked on a public server before move day, P5) SMTP via nodemailer instead of SendGrid (the swap point is
   `EmailUtils.sendEmail` in `srv/api/emails.ts` + init in `srv/serverconfig.ts`),
   Mailchimp removed. Optional send-only MTA container (compose profile `mail`,
@@ -400,6 +432,22 @@ and a browser pass on the test VM:
   the UI shows the wait and another way in; countdowns on "send again"; input
   checks in the forms; 8-digit email codes and hourly code-login failure
   budgets per the maintainer's review of the screenshot walkthrough.)
+- [ ] **G14 Legal pages and official-site links.** Privacy policy, terms of use,
+  legal notice and help as instance settings (Markdown text or an external
+  URL), shown by every instance instead of links to the official instance's
+  community articles; one constant for the official site (`https://cg.box`) for
+  the remaining links to it. The texts come from today's production articles
+  (decision 26). Inventory (moved here from TODO.md, found in G9): privacy policy,
+  terms of use and help (`src/views/Home/Home.tsx`), "get started"
+  (`src/views/Home/Banner.tsx`), the feedback channel (`FeedbackPage.tsx`), the
+  support channel (`CommunityViewSidebar.tsx`), learn-more articles
+  (`HowSparkWorks.tsx`, `PremiumManagement.tsx`, `RolesManagement.tsx`,
+  `NewslettersManagement.tsx`, `PluginEditor.tsx`, `PluginAppstore.tsx` — the last
+  also three sample articles on `staging.app.cg` —, `TokenSale.tsx`,
+  `IdentitiesEditor.tsx`). Not part of it: the legacy domain logic
+  (`src/data/util/urls.ts`, `authMode.ts`, `common/config.ts`, `srv/util/urls.ts`),
+  the Matomo snippet in `src/index.tsx` (runs only without an instance config),
+  the dead Fractal link in `IdentitiesEditor.tsx`.
 - [x] **G13 Runtime fixes.** Long-standing defects found in a 2026-11-02
   analysis: inline backgrounds without an image URL request `…/undefined`;
   calls whose call server goes away are never ended (no periodic sweep), so
@@ -435,7 +483,8 @@ and a browser pass on the test VM:
   distribution install right away, see UPDATE-POLICY.md; run on the test VM
   without the SSH part. Open: the full run on the new server.)
 - [ ] **S4 Monitoring.** External uptime check; alerts for disk space, certificate
-  expiry, container health; where alerts go.
+  expiry, container health, failed backups; alerts go to a Telegram bot and
+  channel (decision 27).
 - [ ] **S5 DNS.** CAA record (Let's Encrypt only); lowered TTL on app.cg ahead of
   the move; HSTS without preload first.
 - [ ] **S6 Operator duties** (maintainer, not code): legal notice and privacy
@@ -464,11 +513,14 @@ and a browser pass on the test VM:
 
 ### P6 — Move
 
-- [ ] Server ordered and sized (from the rehearsal numbers); base setup per S3.
+- [x] Server ordered and sized (decision 23).
+- [ ] Base setup per S3 (`harden.sh` including SSH), Docker, first `selfhost.sh`
+  run for cg.box; S3 objects copied ahead of time (decision 24).
 - [ ] Soft launch: cg.box running for the team for a few days (fresh data).
 - [ ] Announcement with the downtime window.
 - [ ] Move day per runbook: stop the old stack → final dump → import → DNS for
-  app.cg / id.app.cg / cg.box → checks → farewell push.
+  app.cg / id.app.cg / cg.box, and every other record under app.cg removed
+  (decision 31) → checks → farewell push.
 - [ ] Transition period (length to decide), then P7.
 
 ### P7 — After the move
@@ -489,11 +541,13 @@ and a browser pass on the test VM:
 
 ## Open questions
 
-- Length of the transition period (P6).
-- Production storage backend and data volume; who produces the dump and how (G5,
-  P5).
-- Server sizing: a frontend build needs ~4.2 GB on top of the running stack
-  (test VM, 2026-10-31) — enough RAM or swap, or builds with the stack stopped.
+- P7 says app.cg and id.app.cg **stay registered** after the move (whoever takes
+  over a lapsed domain could serve installed PWAs and the old passkey origin);
+  decision 25 lets the gateway run until app.cg's registration ends. Keep the
+  registrations with a plain redirect afterwards, or let them lapse?
+- The size of the S3 data (it shares the 240 GB disk with the database, local
+  backups and images) and the off-server target for backups
+  (`CG_BACKUP_REPOSITORY`, any restic backend).
 
 ## Test infrastructure
 

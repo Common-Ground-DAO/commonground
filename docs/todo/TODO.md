@@ -89,23 +89,6 @@ that stack — confirm and delete:
   holders' decision; do not publish before it is settled), keep
   `@commonground/conformance` private. Positioning it as the official bot SDK waits on
   finding F-11 (below).
-- [ ] **Links to the official instance's articles** (2026-11-02, found in G9) — the
-  frontend links to articles and channels of the `commonground` community on
-  `https://app.cg/…`: privacy policy, terms of use and help (`src/views/Home/Home.tsx`),
-  "get started" (`src/views/Home/Banner.tsx`), the feedback channel
-  (`FeedbackPage.tsx`), the support channel (`CommunityViewSidebar.tsx`), learn-more
-  articles (`HowSparkWorks.tsx`, `PremiumManagement.tsx`, `RolesManagement.tsx`,
-  `NewslettersManagement.tsx`, `PluginEditor.tsx`, `PluginAppstore.tsx` — the last also
-  three sample articles on `staging.app.cg`, `TokenSale.tsx`, `IdentitiesEditor.tsx`).
-  On cg.box, during the transition these lead to the gateway (a login screen for
-  anonymous visitors) and afterwards through a redirect. Decide: one constant for the
-  official site (switched to `https://cg.box` with the move), and whether privacy
-  policy and terms become instance settings (instance config) — a self-hosted instance
-  shows the hosted instance's policy today, although its operator is someone else.
-  Not changed: the legacy domain logic (`src/data/util/urls.ts`, `authMode.ts`,
-  `common/config.ts`, `srv/util/urls.ts`), the Matomo snippet in `src/index.tsx`
-  (runs only without an instance config), the dead Fractal link in
-  `IdentitiesEditor.tsx`, comments and tests.
 - [ ] **Native IPv6 for the self-host stack?** (2026-11-02, F7) — the stack is
   IPv4-only; Docker's proxy hands IPv6 connections to Caddy from the bridge gateway's
   address, so behind an AAAA record every IPv6 visitor shares one address for the

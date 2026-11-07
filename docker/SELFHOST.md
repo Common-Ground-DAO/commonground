@@ -758,6 +758,13 @@ CG_MAIL_LIMIT_SECRET=...          # openssl rand -hex 24 — shared by this inst
   sign-in, the X app must list the gateway's callback URL too. LUKSO sign-in
   checks signatures through this instance's `onchain` service, so it needs
   `CG_ENABLE_BLOCKCHAIN` on (the default).
+- Installed copies of the old app: at `/service-worker.js` the gateway serves
+  a small replacement worker (part of the Caddy image) instead of the app's.
+  An old installation picks it up on its next start, drops the old app's
+  cached files and reloads into the gateway page; sign-in data in the browser
+  stays. It is served with `Cache-Control: no-cache` — if a CDN sits in front
+  of the old domain, it must not cache that file or the page itself. This
+  instance keeps its own worker.
 - Sessions of the gateway are separate from this instance's: signing in on
   one does not sign in on the other except through the link, and the two
   cookies never work across. A replaced password here signs the account's

@@ -16,13 +16,18 @@ import { assert, clickText, fill, hasText, until, waitText } from '../lib/ui.ts'
  * stored, then with a code by email — and every time continues on the
  * instance with a one-time transfer link, which keeps the deep link the
  * gateway was opened with. The gateway offers no sign-up, and its session
- * cookie is worthless on the instance (and the other way round).
+ * cookie is worthless on the instance (and the other way round). At the old
+ * app's worker URL the gateway serves a replacement worker, which replaces an
+ * old worker: its caches go, and its page reloads once into the gateway page.
  *
  * What runs where the browser cannot go (the CG ID passkey popup, a wallet)
  * is covered by e2e/checks/gateway.sh at the API level.
  */
 
 const DEEP_LINK = '/notifications/';
+
+/** in the gateway's replacement worker (docker/caddy/gateway-service-worker.js) */
+const REPLACEMENT_WORKER_MARKER = "const VERSION = 'gateway-sw-";
 
 function gatewayUrl(t: FlowContext, path = '/') {
   return `${t.config.gatewayUrl}${path}`;
@@ -93,6 +98,75 @@ export const gateway: Flow = {
       await openGateway(t, gw.page, DEEP_LINK, targetHost);
       await gw.page.waitForSelector('input[name=username]', { visible: true });
       assert(!await hasText(gw.page, 'Create an account'), 'the gateway offers a sign-up');
+    });
+
+    await t.step('the old worker URL serves the replacement worker (JavaScript, no-cache); the instance keeps its own', async () => {
+      const response = await fetch(gatewayUrl(t, '/service-worker.js'));
+      const body = await response.text();
+      assert(response.status === 200, `gateway /service-worker.js: HTTP ${response.status}`);
+      const type = response.headers.get('content-type') ?? '';
+      assert(/^(text|application)\/javascript\b/.test(type), `gateway /service-worker.js: Content-Type ${type}`);
+      const cacheControl = response.headers.get('cache-control') ?? '';
+      assert(/\bno-(cache|store)\b/.test(cacheControl), `gateway /service-worker.js: Cache-Control ${cacheControl}`);
+      assert(body.includes(REPLACEMENT_WORKER_MARKER), 'the gateway serves another worker than the replacement at /service-worker.js');
+      const own = await (await fetch(`${t.origin}/service-worker.js`)).text();
+      assert(!own.includes(REPLACEMENT_WORKER_MARKER) && own.includes('precache'), "the instance's own worker is not its precaching one");
+    });
+
+    const old = await t.session('gateway-old-worker');
+    await t.step('an old worker on the gateway origin is replaced: its caches go, its page reloads once into the gateway page', async () => {
+      const page = old.page;
+      const gatewayOrigin = new URL(t.config.gatewayUrl!).origin;
+      // counts the documents this tab loads on the gateway origin
+      await page.evaluateOnNewDocument(() => {
+        if (window.top !== window) return;
+        try {
+          sessionStorage.setItem('e2eDocuments', String(Number(sessionStorage.getItem('e2eDocuments') ?? '0') + 1));
+        }
+        catch {
+          // no storage on this document
+        }
+      });
+      // A stand-in for the old app's worker, registered from a page of the
+      // origin that is not the app: the same file under another URL, so the
+      // real URL is an update of it, as for an old app. It controls the
+      // pages from here on; the old app's precache is seeded by hand.
+      await page.goto(gatewayUrl(t, '/robots.txt'), { waitUntil: 'domcontentloaded' });
+      await page.evaluate(async () => {
+        const registration = await navigator.serviceWorker.register('/service-worker.js?e2e=stand-in-for-the-old-worker', { scope: '/' });
+        const deadline = Date.now() + 15_000;
+        while (registration.active?.state !== 'activated') {
+          if (Date.now() > deadline) throw new Error('the stand-in worker did not activate');
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        const cache = await caches.open(`workbox-precache-v2-${location.origin}/`);
+        await cache.put('/index.html', new Response('the old app'));
+      });
+      // the gateway page registers /service-worker.js — an update of the
+      // stand-in; the new worker reloads the page the stand-in controls
+      await page.goto(gatewayUrl(t, DEEP_LINK), { waitUntil: 'domcontentloaded' });
+      const readState = () => page.evaluate(async () => ({
+        documents: Number(sessionStorage.getItem('e2eDocuments') ?? '0'),
+        caches: await caches.keys(),
+        workers: (await navigator.serviceWorker.getRegistrations()).map(r => r.active?.scriptURL ?? null),
+        controlled: !!navigator.serviceWorker.controller,
+        path: location.pathname,
+      }));
+      await until('the replacement worker to reload the page', async () => {
+        const now = await readState().catch(() => null);
+        return now && now.documents >= 3 ? true : null;
+      }, 30_000).catch(async (error: Error) => {
+        throw new Error(`${error.message}; page state: ${JSON.stringify(await readState().catch(e => String(e)))}`);
+      });
+      await waitText(page, `Common Ground has moved to ${targetHost}`, 30_000);
+      // no second reload: the reloaded page registers the same worker again
+      await new Promise(resolve => setTimeout(resolve, 3_000));
+      const state = await readState();
+      assert(state.documents === 3, `the tab loaded ${state.documents} documents, expected robots.txt, the gateway page and one reload`);
+      assert(state.caches.length === 0, `caches left: ${state.caches.join(', ')}`);
+      assert(state.workers.length === 1 && state.workers[0] === `${gatewayOrigin}/service-worker.js`, `registered workers: ${state.workers.join(', ')}`);
+      assert(state.controlled, 'the reloaded page has no controlling worker');
+      assert(state.path === DEEP_LINK, `the reloaded page is on ${state.path}, expected ${DEEP_LINK}`);
     });
 
     await t.step('sign in on the gateway with email + password: the transfer link leads to the deep link on the instance', async () => {

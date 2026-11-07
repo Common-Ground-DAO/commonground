@@ -428,6 +428,21 @@ export const updateAttachmentImageId = (setAttachments: React.Dispatch<React.Set
   });
 }
 
+/**
+ * Matched by the picked file itself, not by its name: pasted screenshots all
+ * share one name (e.g. "image.png") until their upload gives them ids.
+ */
+export const markAttachmentUploadFailed = (setAttachments: React.Dispatch<React.SetStateAction<InMemoryAttachment[]>>, file: File | undefined) => (failed: boolean) => {
+  if (!file) return;
+  setAttachments(oldAttachments => {
+    const index = oldAttachments.findIndex(att => att.type === 'image' && att.tentativeFile === file);
+    if (index < 0 || !!oldAttachments[index].uploadFailed === failed) return oldAttachments;
+    const newAttachments = [...oldAttachments];
+    newAttachments[index] = { ...oldAttachments[index], uploadFailed: failed };
+    return newAttachments;
+  });
+}
+
 export const removeAttachment = (setAttachments: React.Dispatch<React.SetStateAction<InMemoryAttachment[]>>, imageId: string) => () => {
   setAttachments(oldAttachments => oldAttachments.filter(att => !(att.type === 'image' && att.imageId === imageId)));
 }

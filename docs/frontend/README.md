@@ -57,7 +57,8 @@
 > continuation only after a sign-in in the same tab (`signedInInThisTab`) against commit 696102b,
 > 2026-11-07;
 > the scroll-down helper level of `GenericMessageList` and `Scrollable`'s position report and
-> `autoScroll` against commit a67ef53, 2026-11-07
+> `autoScroll` against commit a67ef53, 2026-11-07; the composer's send block during image uploads
+> (`isAttachmentBusy`) against commit 63e944a, 2026-11-07
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -896,8 +897,11 @@ A courtesy check that warns **before** upload; it never blocks.
   the two EditField funnels `addFiles` / `addImageMedia` (covering file
   picker, drag & drop and paste for chat attachments and Slate inline
   images), and the `FieldMediaImage` "Replace" input. Chat attachments render
-  immediately in a `precheckPending` state — the upload starts (and the send
-  button unblocks) only once the check clears; declined files are removed.
+  immediately in a `precheckPending` state — the upload starts only once the
+  check clears; declined files are removed. The send button stays blocked
+  ("Uploading…") until the upload and the loading of the uploaded image are
+  done (`isAttachmentBusy`, `EditField/attachmentState.ts`); a failed upload
+  shows its error, stops blocking and is left out of the sent message.
   The confirm dialog renders into its own portal node above every modal
   layer (nested-modal safe; see the rationale in
   `SuspiciousImageModalProvider.tsx`).

@@ -468,6 +468,14 @@ that stack — confirm and delete:
   `yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite` chain that
   `docker/build.sh`, `docker/updateFrontend.sh`, `docker/selfhost/selfhost.sh` and both
   legacy pipelines run.
+- [ ] **Give chat-composer image attachments a local id** (2026-11-07). Until the
+  upload returns, an attachment's `imageId` is its file name, and the tiles are keyed
+  by list index (`EditField.tsx`, `image_${index}_…`). Two pasted screenshots share
+  one name (`image.png`), so `updateAttachmentImageId` and `removeAttachment`
+  (`EditField.helpers.ts`) can hit the wrong tile or both. Removing an earlier tile
+  remounts the later ones, which start their upload a second time. Fix: a local
+  id per attachment from `addFiles`, used as the key and for update, flag and
+  remove (the failed-upload flag already matches the `File` itself).
 
 ## Deferred (decided against for now)
 

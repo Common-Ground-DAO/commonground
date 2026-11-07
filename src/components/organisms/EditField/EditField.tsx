@@ -11,7 +11,8 @@ import { BaseEditor, createEditor, Range, Text, Editor, Transforms, Descendant }
 import { HistoryEditor, withHistory } from 'slate-history'
 import { Slate, Editable, withReact, ReactEditor, RenderElementProps, RenderLeafProps, useSelected, useFocused, RenderPlaceholderProps } from 'slate-react';
 import { getDisplayNameString } from '../../../util';
-import { clearEditor, convertToMessageBody, currentWord, CustomElement, CustomText, emptyState, findAndSetWordType, insertMention, isCurrentNodeEmptyParagraph, isCurrentNodeParagraph, isFirstNodeOfType, MentionElement, recalculateNodeTypes, removeAttachment, updateAttachmentImageId } from './EditField.helpers';
+import { clearEditor, convertToMessageBody, currentWord, CustomElement, CustomText, emptyState, findAndSetWordType, insertMention, isCurrentNodeEmptyParagraph, isCurrentNodeParagraph, isFirstNodeOfType, markAttachmentUploadFailed, MentionElement, recalculateNodeTypes, removeAttachment, updateAttachmentImageId } from './EditField.helpers';
+import { isAttachmentBusy } from './attachmentState';
 
 import ImageIcon from "../../atoms/icons/16/Image.svg?react";
 import Spinner from '../../../components/atoms/icons/16/Spinner.svg?react';
@@ -195,12 +196,12 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
     });
   }, [setAttachments]);
 
-  // `precheckPending` counts as busy: sending while the NSFW pre-check is still
-  // running would drop the attachment (it has no imageId yet) and clear the
-  // list out from under `addFiles`.
+  // Busy (isAttachmentBusy): the NSFW pre-check, the upload itself and the
+  // loading of the uploaded image. Sending meanwhile would drop the image (it
+  // has no uploaded ids yet) and clear the list out from under `addFiles`.
   const areAttachmentsLoaded = React.useMemo(() => {
     if (!!attachments) {
-      const foundLoadingAttachment = attachments.find((attachment) => attachment.state === 'LOADING' || attachment.precheckPending);
+      const foundLoadingAttachment = attachments.find(isAttachmentBusy);
       return !foundLoadingAttachment;
     }
     return true;
@@ -475,7 +476,8 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
   }, [editor, isMobile]);
 
   const sendHandler = React.useCallback((sendEmpty = false) => {
-    if (areAttachmentsLoaded) {
+    // `sendEmpty` cancels an edit: never held up by an upload
+    if (areAttachmentsLoaded || sendEmpty) {
       // if getting message body is inside timeout, then editor.children are affected by something and got wrong state until timeout reach 100ms
       let messageBody: Models.Message.Body;
       if (sendEmpty) {
@@ -891,6 +893,7 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
               key={fileKey || imageKey}
               updateAttachment={updateAttachmentImageId(setAttachments, attachment.imageId)}
               removeAttachment={removeAttachment(setAttachments, attachment.imageId)}
+              markUploadFailed={markAttachmentUploadFailed(setAttachments, attachment.tentativeFile)}
               setIsLoadedState={setAttachmentUploadedState}
             />;
           } else if (attachment.type === 'giphy') {

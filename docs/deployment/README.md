@@ -1,6 +1,7 @@
 # Common Ground Deployment
 
-> Status: verified against commit 6e7975641, 2026-08-04; image-filter
+> Status: cg.box maintenance release and www redirect verified against commit
+> 4095d86 and live checks, 2026-11-08; other sections: verified against commit 6e7975641, 2026-08-04; image-filter
 > additions against the fix/image-filter-review-53 branch, 2026-08-15; local
 > TLS mode, call ports, root builds and startup ordering against commit
 > a5633d5be (+ fix/selfhost-local-test), 2026-10-27; Redis-cutover note (no
@@ -66,11 +67,13 @@ application runs on the Hetzner single-server self-host stack; `app.cg` and
 `id.app.cg` now serve the login/transfer gateway. The old Swarm deployment receives
 no further releases. Its shutdown is an operator follow-up, not a confirmed action.
 
-- Deployment branch: `main`; integration branch: `develop`. Deployed application
-  build: `db1823b`; subsequent migration-record commits changed documentation only.
+- Deployment branch: `main`; integration branch: `develop`. Latest application
+  release: `4095d86`, frontend build ID `VMfvM2co20lIqg` (2026-11-08). It includes
+  local login recovery, update coordination and mobile account-menu scrolling.
+  The initial migration deployment was `db1823b`.
 - Repository on the server: `/root/commonground`. Private configuration:
   `docker/.env.selfhost`; credentials remain outside git.
-- DNS: `cg.box`, `app.cg`, `id.app.cg` resolve to `2.31.206.74`. The gateway uses
+- DNS: `cg.box`, `www.cg.box`, `app.cg`, `id.app.cg` resolve to `2.31.206.74`. The gateway uses
   A records `@` and `id` in the `app.cg` zone, DNS only; no AAAA records at cutover.
   No separate public API, S3 or WebSocket subdomains are needed by this stack.
 - Caddy obtains and renews HTTPS certificates. All three domains were externally
@@ -78,6 +81,12 @@ no further releases. Its shutdown is an operator follow-up, not a confirmed acti
   its community API returns 404 as intended, and its replacement service worker
   returns 200. cg.box was opened at about 13:42 UTC; gateway certificates were
   verified at about 13:47 UTC on 2026-11-08.
+- `CG_WWW_REDIRECT=on`: `https://www.cg.box` returns 301 to `https://cg.box`,
+  preserving the path and query. HTTP first upgrades to HTTPS. The www name's
+  Let's Encrypt certificate and redirect were verified externally after the
+  maintenance release. All services were healthy; the mobile anonymous login page,
+  service-worker activation and reload passed a Chromium browser smoke test.
+  Private deployment logs: `/root/cg-migration/deploy-4095d86-*.log`.
 - System mail: `smtp.sendgrid.net:587`, required STARTTLS, SMTP user `apikey`,
   sender `Common Ground <noreply@cg.box>`. The maintainer confirmed domain
   authentication and receipt of the single live test message. `CG_ENABLE_MAIL=false`

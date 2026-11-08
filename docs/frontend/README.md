@@ -1,7 +1,7 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit 7224927 plus the local-data recovery and mobile
-> account-scrolling working-tree changes, 2026-11-08; other sections verified
+> Status: local-data recovery and mobile account scrolling verified against commit
+> 4095d86, 2026-11-08; other sections verified
 > against commit 4a9754f8f, 2026-08-04; ConnectionManager,
 > WebSocketManager, LoginManager cross-tab behaviour, `ConnectionStatusIndicator`, the
 > `x-cg-socket-id` header and §8 items 1–2 (independent tabs) against commit 964f6b3,
@@ -716,6 +716,16 @@ Manages authentication:
 - `logout()`: clears all databases, removes device keypair, resets state, then broadcasts the logout.
 - Every tab has its own login state. HTTP logins (device, interactive, `createUser`, transfer link) run under the Web Lock `cg:login` (wait at most 15 s); a device login holds it for secret, signature and request (one signable secret per session). After 10 s (`LOGIN_LOCK_HOLD_MAX_MS`) the lock is released for the other tabs, but the holder keeps waiting for its own request; it only starts no further step (signature, request) without the lock — it queues again once. A device login answered `INVALID_SECRET` (a late secret request of another tab replaced the secret) is repeated once under the lock with a fresh secret. Inside the lock a tab compares the stored current user with the device it is about to log in and follows the stored user if they differ. A page device login that fails with anything but `NOT_FOUND` or a local-data recovery error is retried with a backoff (5/15/60 s, ±50 %) and on the next visibility/online check (never sooner than 5 s after the failure); `User/logout` also runs under the lock. A tab that had to wait for the lock and then finds the session logged in as the stored user takes it over instead of a second login. Logins and logouts are broadcast on `BroadcastChannel('cg:auth')` (`authBroadcast.ts`), with the `storage` event on `CG_CURRENT_USER` (and a re-check when the tab becomes visible) as fallback: another tab's logout drops this tab's login without a second `User/logout`; another tab's login is taken over after `User/checkLoginStatus` (no HTTP login); another user's login counts as a logout first. A logout also posts `'anonymous'` on the legacy `CG_LOGIN_STATE` channel for one release (older pages still open); nothing listens there.
 - `loginRequiredErrorHandler()` (any tab): under the login lock re-checks the session with `User/checkLoginStatus`; only if it is not this tab's user any more it runs `autoLogin()`.
+
+Local persistence regression coverage lives in `login.test.ts`, `localData.test.ts`,
+`entityDbs.test.ts` and `data/util/device.test.ts`. The 2026-11-08 validation of
+`4095d86` passed 720 tests, type-checking, lint (existing warnings) and the production
+build. On cg.test, mobile Chromium verified delayed database-open completion,
+recovery after a withheld completion without deleting website data, real worker
+activation during login, touch scrolling, and code login followed by device-key
+login. That code was issued locally and the mail-send response supplied by the
+harness; delivery was not part of this test. The original Android/Brave state was
+not available, so the physical-device trigger remains unconfirmed.
 
 #### ServiceWorkerManager (`serviceWorker.ts`)
 

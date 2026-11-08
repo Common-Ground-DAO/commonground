@@ -1,5 +1,5 @@
-> Status: verified against commit 7224927 plus the local login persistence and
-> update-coordination working-tree changes, 2026-11-08; other sections verified
+> Status: local login persistence and update coordination verified against commit
+> 4095d86, 2026-11-08; other sections verified
 > against commit 40f4a0b0f, 2026-08-04; `emailEnabled()` reference and email
 > send limits against commit e44dac1, 2026-10-31; session store instance (Valkey state
 > instance) against commit ff0da06, 2026-10-31; sessions (§2), the login endpoint (§4), passkeys

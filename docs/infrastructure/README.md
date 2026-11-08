@@ -1,4 +1,4 @@
-> Status: optional www redirect verified against commit 7224927 plus this change,
+> Status: optional www redirect verified against commit 4095d86,
 > 2026-11-08; other sections verified against commit 8613352a4, 2026-08-04; image-moderation
 > additions against the fix/image-filter-review-53 branch, 2026-08-15; local
 > TLS mode, call ports, root builds and startup ordering against commit

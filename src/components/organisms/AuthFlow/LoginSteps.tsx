@@ -374,8 +374,9 @@ export const LoginCode: React.FC<LoginProps & { initialEmail: string }> = ({ sta
             what: "We can't send another code to this address right now.",
             alternative: `Use the last code we sent (check your spam folder), or sign in with ${alternatives}.`,
           })
-          : code === errors.server.EMAIL_DISABLED ? "This site can't send emails right now."
-            : "The code could not be sent. Please try again.",
+          : code === errors.server.ALREADY_LOGGED_IN ? "You are already signed in. Reload the page to continue."
+            : code === errors.server.EMAIL_DISABLED ? "This site can't send emails right now."
+              : "The code could not be sent. Please try again.",
       });
     }
     finally {

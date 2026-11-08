@@ -6,19 +6,20 @@
 import { useWindowSizeContext } from "../../context/WindowSizeProvider";
 
 import Scrollable from "../../components/molecules/Scrollable/Scrollable";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useLoadedCommunityContext } from "context/CommunityProvider";
 import { getUrl } from 'common/util';
 import CommunityHeaderSimple from "components/organisms/CommunityHeader/CommunityHeaderSimple";
 import { useCallback, useEffect } from "react";
 import { CommunitySettingsListItem } from "components/organisms/CommunitySettingsList/CommunitySettingsList";
-import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
+import SparkIcon from 'components/atoms/icons/misc/spark.svg?react';
 
 import "./CommunitySettingsView.css";
-import { PredefinedRole, RoleType } from "common/enums";
-import { ChatsTeardrop, HandWaving, HouseSimple, Plug, PokerChip, UserCircle, Users, Prohibit } from "@phosphor-icons/react";
+import { PredefinedRole } from "common/enums";
+import { ChatsTeardrop, HandWaving, HouseSimple, Plug, PokerChip, Robot, UserCircle, Users, Prohibit } from "@phosphor-icons/react";
 import ManagementHeader2 from "components/molecules/ManagementHeader2/ManagementHeader2";
 import SettingsButton from "components/molecules/SettingsButton/SettingsButton";
+import { isPredefinedRole } from "util/predefinedRoles";
 
 type Props = {
 
@@ -73,6 +74,10 @@ export default function CommunitySettingsView(props: Props) {
         navigate(getUrl({ type: 'community-settings-plugins', community }));
         break;
       }
+      case 'bots': {
+        navigate(getUrl({ type: 'community-settings-bots', community }));
+        break;
+      }
     }
   }, [community, navigate]);
 
@@ -92,7 +97,7 @@ export default function CommunitySettingsView(props: Props) {
               leftElement={<HouseSimple weight="duotone" className="w-5 h-5"/>}
               onClick={() => navigateToManagementPage('community')}
             />}
-            {ownRoles.some(role => role.title === PredefinedRole.Admin && role.type === RoleType.PREDEFINED) && <SettingsButton
+            {ownRoles.some(role => isPredefinedRole(role, PredefinedRole.Admin)) && <SettingsButton
               className="max-w-full w-full justify-between"
               text="Premium"
               leftElement={<SparkIcon className="w-5 h-5" />}
@@ -139,7 +144,13 @@ export default function CommunitySettingsView(props: Props) {
               leftElement={<PokerChip weight="duotone" className="w-5 h-5"/>}
               onClick={() => navigateToManagementPage('token')}
             />}
-            {ownRoles.some(role => role.title === PredefinedRole.Admin && role.type === RoleType.PREDEFINED) && <SettingsButton
+            {communityPermissions.has('COMMUNITY_MANAGE_ROLES') && <SettingsButton
+              className="max-w-full w-full justify-between"
+              text="Bots"
+              leftElement={<Robot weight="duotone" className="w-5 h-5"/>}
+              onClick={() => navigateToManagementPage('bots')}
+            />}
+            {ownRoles.some(role => isPredefinedRole(role, PredefinedRole.Admin)) && <SettingsButton
               className="max-w-full w-full justify-between"
               text="Plugins"
               leftElement={<Plug weight="duotone" className="w-5 h-5"/>}

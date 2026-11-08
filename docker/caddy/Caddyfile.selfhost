@@ -1,0 +1,94 @@
+# Edge of a self-hosted Common Ground instance (docker-compose.selfhost.yml):
+# TLS, routing, static frontend, security headers (docs/infrastructure,
+# "Caddy"; docker/SELFHOST.md).
+#
+# Environment (set by docker-compose.selfhost.yml from .env.selfhost):
+#   CG_DOMAIN        the instance's domain
+#   CG_TLS_MODE      where the certificates come from:
+#     acme      Caddy obtains and renews Let's Encrypt certificates — the
+#               domain must point to this server in public DNS and ports
+#               80/443 must be reachable from the internet.
+#     internal  Caddy issues every certificate from its own local CA (root in
+#               the caddy-data volume, /data/caddy/pki/authorities/local/).
+#               For local/LAN test instances without public DNS; browsers
+#               only accept it once that root is trusted — see SELFHOST.md.
+#     Any other value fails at startup ("File to import not found").
+#   CG_CALLS_EDGE    "on" serves call signalling on :4443
+#                    (docker-compose.selfhost.calls.yml, added by selfhost.sh
+#                    when calls are enabled; also publishes the port)
+#   CG_CGID_VHOST    "on" serves the legacy CG ID mini-app on CG_ID_DOMAIN and
+#                    routes /api/v2/CgId/ — only for the legacy CG ID gateway
+#                    (selfhost.sh sets it when CG_LEGACY_CGID=true and
+#                    CG_ID_DOMAIN is set); off everywhere else
+#   CG_ID_DOMAIN     the CG ID mini-app's domain (only with CG_CGID_VHOST=on)
+#   CG_GATEWAY_EDGE  "on" serves the gateway (docs/auth-identity §12) next to
+#                    this instance: CG_GATEWAY_DOMAIN (the old domain, e.g.
+#                    app.cg) and CG_GATEWAY_ID_DOMAIN (its CG ID app, e.g.
+#                    id.app.cg); selfhost.sh sets it from CG_ENABLE_GATEWAY
+#   GATEWAY_CG_*     the gateway site's instance config (same names as below,
+#                    with the prefix)
+#   plus the CG_* variables of templates/instance-config.js
+
+(tls_mode_acme) {
+	email {$CG_ACME_EMAIL}
+}
+
+(tls_mode_internal) {
+	# every site, including the :4443 call-signalling one, gets a cert from
+	# the local CA; don't try to install that root into the container's own
+	# trust store (pointless — the browsers that need it are elsewhere)
+	local_certs
+	skip_install_trust
+}
+
+{
+	import tls_mode_{$CG_TLS_MODE:acme}
+}
+
+import /etc/caddy/common.caddy
+
+# main app
+{$CG_DOMAIN} {
+	import cg_app "https://{$CG_DOMAIN}:* wss://{$CG_DOMAIN}:*" "https:" https {$CG_CGID_VHOST:off} on
+}
+
+# Legacy CG ID mini-app (passkeys on a separate origin), when this instance
+# itself runs in legacy CG ID mode (CG_CGID_VHOST=on); a normal instance —
+# including one that has CG_ID_DOMAIN in an older .env.selfhost — does not
+# serve it at all.
+(cgid_vhost_on) {
+	{$CG_ID_DOMAIN} {
+		import cg_cgid_site {$CG_DOMAIN}
+	}
+}
+(cgid_vhost_off) {
+}
+import cgid_vhost_{$CG_CGID_VHOST:off}
+
+# The gateway next to this instance (CG_GATEWAY_EDGE=on, docs/auth-identity
+# §12): the old domain and its CG ID domain, served by the gateway's own
+# backend (gateway-api, gateway-wsapi; compose profile "gateway"). Its
+# /instance-config.js is rendered from the GATEWAY_CG_* variables.
+(gateway_edge_on) {
+	{$CG_GATEWAY_DOMAIN} {
+		vars cg_env_prefix GATEWAY_
+		import cg_gateway_app "https://{$CG_GATEWAY_DOMAIN}:* wss://{$CG_GATEWAY_DOMAIN}:*" "https:" on
+	}
+	{$CG_GATEWAY_ID_DOMAIN} {
+		vars cg_env_prefix GATEWAY_
+		import cg_cgid_site {$CG_GATEWAY_DOMAIN}
+	}
+}
+(gateway_edge_off) {
+}
+import gateway_edge_{$CG_GATEWAY_EDGE:off}
+
+# mediasoup call signalling (wss), only when calls are enabled
+(calls_edge_on) {
+	{$CG_DOMAIN}:4443 {
+		import cg_calls_edge
+	}
+}
+(calls_edge_off) {
+}
+import calls_edge_{$CG_CALLS_EDGE:off}

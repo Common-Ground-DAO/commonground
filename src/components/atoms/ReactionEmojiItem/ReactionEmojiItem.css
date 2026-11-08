@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .emoji-reaction-item {
     width: fit-content;
     border-radius: 999px;
@@ -41,8 +43,11 @@
 .emoji-reaction-item:active,
 .active-emoji-reaction-item {
     border-color: var(--reactionItemFocusBorder);
-        
-        > .reaction-count {
-            color: var(--reactionItemFocusText);
-        }
+}
+
+/* not nested: under a selector list, native nesting would give both the
+   specificity of `:active` (`:is()`) */
+.emoji-reaction-item:active > .reaction-count,
+.active-emoji-reaction-item > .reaction-count {
+    color: var(--reactionItemFocusText);
 }

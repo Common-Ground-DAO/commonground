@@ -1,0 +1,94 @@
+.message-markdown {
+  /* Children participate directly in the surrounding message flow, so the
+     floating message timestamp can share the last rendered line. */
+  display: contents;
+}
+
+.message-markdown p {
+  margin: 0 0 0.5em;
+}
+
+.message-markdown > p:last-child {
+  display: inline;
+  margin: 0;
+}
+
+.message-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.message-markdown h1,
+.message-markdown h2,
+.message-markdown h3,
+.message-markdown h4,
+.message-markdown h5,
+.message-markdown h6 {
+  font-weight: 700;
+  margin: 0.25em 0;
+}
+
+.message-markdown h1 {
+  font-size: 1.25em;
+}
+
+.message-markdown h2 {
+  font-size: 1.15em;
+}
+
+.message-markdown h3 {
+  font-size: 1.05em;
+}
+
+.message-markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.875em;
+  background-color: var(--surface-buttons-secondary);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.message-markdown pre {
+  background-color: var(--surface-buttons-secondary);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 4px 0 0.5em;
+  overflow-x: auto;
+}
+
+.message-markdown pre code {
+  background-color: transparent;
+  border-radius: 0;
+  padding: 0;
+  white-space: pre;
+}
+
+.message-markdown blockquote {
+  border-left: 3px solid var(--text-secondary);
+  margin: 4px 0 0.5em;
+  padding: 0 0 0 8px;
+  color: var(--text-secondary);
+}
+
+.message-markdown ul {
+  list-style: disc outside;
+  margin: 0 0 0.5em;
+  padding-left: 1.5em;
+}
+
+.message-markdown ol {
+  list-style: decimal outside;
+  margin: 0 0 0.5em;
+  padding-left: 1.5em;
+}
+
+.message-markdown li > ul,
+.message-markdown li > ol {
+  margin-bottom: 0;
+}
+
+.message-markdown hr {
+  border: none;
+  border-top: 1px solid var(--text-secondary);
+  opacity: 0.4;
+  margin: 0.5em 0;
+}

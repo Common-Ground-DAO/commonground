@@ -6,7 +6,7 @@ import React, { useCallback, useMemo } from "react";
 import { useLiveQuery } from 'dexie-react-hooks';
 import data from "data";
 import errors from "common/errors";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { getUrl } from 'common/util';
 
 type OwnDataState = {

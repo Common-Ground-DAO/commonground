@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .message-item {
   @apply whitespace-pre mr-4 p-2 relative;
   margin-left: 1px;
@@ -195,7 +197,7 @@
     @apply my-1;
 
     > span {
-      @apply rounded px-2 py-1;
+      @apply rounded-sm px-2 py-1;
       color: var(--warningColor);
       background-color: var(--warningBg);
     }
@@ -204,7 +206,7 @@
     @apply my-1;
 
     > span {
-      @apply rounded px-2 py-1;
+      @apply rounded-sm px-2 py-1;
       color: var(--errorColor);
       background-color: var(--errorBg);
     }
@@ -221,4 +223,8 @@
   .message-item {
     @apply cg-box-shadow-sm;
   }
+}
+/* own message not yet confirmed by the server */
+.message-item.sending .message-item-message {
+  opacity: 0.6;
 }

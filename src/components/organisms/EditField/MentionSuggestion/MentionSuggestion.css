@@ -1,5 +1,7 @@
+@reference '../../../../tailwind.css';
+
 .mentionSuggestion {
-    @apply flex items-center w-full py-1 px-2 gap-2 rounded;
+    @apply flex items-center w-full py-1 px-2 gap-2 rounded-sm;
     font-weight: 400;
 
     .mentionSuggestion-bold {
@@ -9,6 +11,15 @@
     .jdenticon {
         width: 40px;
         height: 40px;
+    }
+
+    .mentionSuggestion-username {
+        @apply flex items-center gap-1 min-w-0;
+    }
+
+    .mentionSuggestion-owner {
+        @apply cg-text-sm-400 overflow-hidden text-ellipsis whitespace-nowrap;
+        color: var(--text-secondary);
     }
 }
 

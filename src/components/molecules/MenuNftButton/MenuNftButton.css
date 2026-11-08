@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .menu-non-nft-button {
   border-width: 4px 0px 0px 0px;
   border-radius: 50%;
@@ -24,7 +26,7 @@
 
 .mobile-layout {
   button.menu-non-nft-button {
-    @apply flex flex-col gap-0 p-0 outline-none w-12;
+    @apply flex flex-col gap-0 p-0 outline-hidden w-12;
 
     >.btnText {
       @apply mt-1;

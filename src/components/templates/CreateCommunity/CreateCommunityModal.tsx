@@ -9,7 +9,7 @@ import { useCreateCommunityModalContext } from '../../../context/CreateCommunity
 import CreateCommunityInner from './CreateCommunityInner';
 import Button from '../../../components/atoms/Button/Button';
 
-import { ReactComponent as CloseIcon } from '../../../components/atoms/icons/16/Close.svg';
+import CloseIcon from '../../../components/atoms/icons/16/Close.svg?react';
 import { useWindowSizeContext } from '../../../context/WindowSizeProvider';
 
 const CreateCommunityModal = () => {

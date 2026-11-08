@@ -1,8 +1,10 @@
+@reference '../../../../../tailwind.css';
+
 .channel-item {
     @apply flex flex-col;
 
     .channel-item-inner {
-        @apply flex-shrink-0 flex-grow p-2 pl-0 flex items-center cursor-pointer cg-text-lg-500 cg-border-m;
+        @apply shrink-0 grow p-2 pl-0 flex items-center cursor-pointer cg-text-lg-500 cg-border-m;
         color: var(--cardTextMain);
         transition: background 300ms ease-out;
 

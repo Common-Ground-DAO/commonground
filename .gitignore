@@ -27,10 +27,30 @@ src/common/generated
 public/workers
 public/*.wasm
 tools/iconOverview.html
-tools/buildStats.json
 
 tools/BrowserStack
 
 dbdump*
 
 .yarn/
+
+# self-hosting: generated instance credentials and internal certs
+docker/.env.selfhost
+docker/.env.conformance
+docker/s3_config/s3.selfhost.json
+docker/s3_config/s3.conformance.json
+docker/selfhost/certs/
+# backups: SSH key + pinned host key of an sftp backup repository, and the
+# secrets a forced restore moved aside (selfhost.sh restore --force)
+docker/backup/
+docker/**/*.pre-restore-*
+
+# dev stack: local configuration, generated on first run by docker/ensureEnv.sh
+# (docker/.env from the docker/.env.example template, s3.json from its S3_SECRET).
+# docker/.env.* also covers the generator's temp files, so an interrupted run
+# can't leave an untracked file full of secrets behind.
+docker/.env
+docker/.env.*
+!docker/.env.example
+docker/s3_config/s3.json
+docker/s3_config/.s3.json.*

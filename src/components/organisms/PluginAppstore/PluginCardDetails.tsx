@@ -21,9 +21,10 @@ import { useOwnCommunities } from 'context/OwnDataProvider';
 import { useAsyncMemo } from 'hooks/useAsyncMemo';
 import communityDatabase from 'data/databases/community';
 import { useSnackbarContext } from 'context/SnackbarContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 type Props = {
   isOpen: boolean;
@@ -61,7 +62,7 @@ const PluginCardDetails: React.FC<Props> = (props) => {
     const adminCommunities: Models.Community.DetailView[] = [];
     for (const community of myCommunities) {
       const roles = await communityDatabase.getRoles(community.id);
-      if (roles.some(role => community.myRoleIds.includes(role.id) && role.title === PredefinedRole.Admin && role.type === 'PREDEFINED')) {
+      if (roles.some(role => community.myRoleIds.includes(role.id) && isPredefinedRole(role, PredefinedRole.Admin))) {
         adminCommunities.push(community);
       };
     }
@@ -131,7 +132,7 @@ const PluginCardDetails: React.FC<Props> = (props) => {
 
       <div className='grid grid-flow-row grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-6'>
         <div className='flex flex-col gap-2 cg-text-secondary cg-text-md-500'>
-          <p className='cg-text-secondary cg-text-md-500 break-words'>Hosted at: {plugin.url}</p>
+          <p className='cg-text-secondary cg-text-md-500 wrap-break-word'>Hosted at: {plugin.url}</p>
           {plugin.permissions.mandatory.length > 0 && <div className='flex flex-col gap-1'>
             <span>Mandatory permissions:</span>
             <div className='flex flex-wrap gap-1'>{plugin.permissions.mandatory.map(permission => <PermissionLabel key={permission} permission={permission} />)}</div>

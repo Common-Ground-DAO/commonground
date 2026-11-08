@@ -1,5 +1,7 @@
+@reference '../../../tailwind.css';
+
 .live-call-explorer-container {
-    @apply opacity-0 h-0 w-full flex flex-col justify-center self-stretch items-start p-0 m-0 gap-4 flex-none order-none flex-grow-0;
+    @apply opacity-0 h-0 w-full flex flex-col justify-center self-stretch items-start p-0 m-0 gap-4 flex-none order-none grow-0;
     transition: opacity 100ms, margin 100ms, height 300ms;
 
     > .live-call-slider {
@@ -8,11 +10,11 @@
     }
 
     > .front-page-section-header {
-        @apply h-0 w-full flex flex-row items-center justify-between p-0 gap-4 self-stretch flex-none order-none flex-grow-0;
+        @apply h-0 w-full flex flex-row items-center justify-between p-0 gap-4 self-stretch flex-none order-none grow-0;
         transition: height 300ms 100ms;
         
         > .front-page-section-title {
-            @apply flex m-0 items-center flex-none order-none flex-grow-0;
+            @apply flex m-0 items-center flex-none order-none grow-0;
 
             > button {
                 .btnText {

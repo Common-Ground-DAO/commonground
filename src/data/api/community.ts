@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import BaseApiConnector from "./baseConnector";
+import { channelMemberListOrEmpty, memberListOrEmpty } from "common/memberLists";
 
 class CommunityApiConnector extends BaseApiConnector {
   constructor() {
@@ -78,23 +79,27 @@ class CommunityApiConnector extends BaseApiConnector {
   public async getMemberList(
     data: API.Community.getMemberList.Request
   ): Promise<API.Community.getMemberList.Response> {
-    const result = await this.ajax<API.Community.getMemberList.Response>(
+    const result = await this.ajax<API.Community.getMemberList.Response | null | undefined>(
       "POST",
       '/getMemberList',
       data
     );
-    return result;
+    // a reply without a list (e.g. for a community created a moment ago)
+    // counts as an empty one; failed requests reject as before
+    return memberListOrEmpty(result);
   }
 
   public async getChannelMemberList(
     data: API.Community.getChannelMemberList.Request
   ): Promise<API.Community.getChannelMemberList.Response> {
-    const result = await this.ajax<API.Community.getChannelMemberList.Response>(
+    const result = await this.ajax<API.Community.getChannelMemberList.Response | null | undefined>(
       "POST",
       '/getChannelMemberList',
       data
     );
-    return result;
+    // a reply without a list (e.g. for a channel created a moment ago) counts
+    // as an empty one; failed requests reject and the callers handle them
+    return channelMemberListOrEmpty(result);
   }
 
   public async getMemberNewsletterCount(
@@ -239,11 +244,18 @@ class CommunityApiConnector extends BaseApiConnector {
   public async checkCommunityRoleClaimability(
     data: API.Community.checkCommunityRoleClaimability.Request
   ): Promise<API.Community.checkCommunityRoleClaimability.Response> {
-    return await this.ajax<API.Community.checkCommunityRoleClaimability.Response>(
-      "POST",
-      '/checkCommunityRoleClaimability',
-      data
-    );
+    // asked on every join and roles view; a failed check (e.g. an instance
+    // without the onchain service) means nothing is claimable
+    try {
+      return await this.ajax<API.Community.checkCommunityRoleClaimability.Response>(
+        "POST",
+        '/checkCommunityRoleClaimability',
+        data
+      );
+    } catch (e) {
+      console.warn("Role claimability check failed, treating every role as not claimable", e);
+      return [];
+    }
   }
 
   public async claimRole(
@@ -618,14 +630,6 @@ class CommunityApiConnector extends BaseApiConnector {
     );
   }
 
-  public async getCommunityCount(data: API.Community.getCommunityCount.Request): Promise<API.Community.getCommunityCount.Response> {
-    return await this.ajax<API.Community.getCommunityCount.Response>(
-      "POST",
-      '/getCommunityCount',
-      data
-    );
-  }
-
   public async updateNotificationState(
     data: API.Community.updateNotificationState.Request
   ): Promise<API.Community.updateNotificationState.Response> {
@@ -692,106 +696,6 @@ class CommunityApiConnector extends BaseApiConnector {
     return await this.ajax<API.Community.getAirdropCommunities.Response>(
       "POST",
       '/getAirdropCommunities',
-      data
-    );
-  }
-
-  public async getWizardData(
-    data: API.Community.Wizard.getWizardData.Request
-  ): Promise<API.Community.Wizard.getWizardData.Response> {
-    return await this.ajax<API.Community.Wizard.getWizardData.Response>(
-      "POST",
-      '/Wizard/getWizardData',
-      data
-    );
-  }
-
-  public async wizardConsumeReferralCode(
-    data: API.Community.Wizard.consumeReferralCode.Request
-  ): Promise<API.Community.Wizard.consumeReferralCode.Response> {
-    return await this.ajax<API.Community.Wizard.consumeReferralCode.Response>(
-      "POST",
-      '/Wizard/consumeReferralCode',
-      data
-    );
-  }
-
-  public async wizardVerifyCode(
-    data: API.Community.Wizard.wizardVerifyCode.Request
-  ): Promise<API.Community.Wizard.wizardVerifyCode.Response> {
-    return await this.ajax<API.Community.Wizard.wizardVerifyCode.Response>(
-      "POST",
-      '/Wizard/wizardVerifyCode',
-      data
-    );
-  }
-
-  public async wizardVerifyWallet(
-    data: API.Community.Wizard.wizardVerifyWallet.Request
-  ): Promise<API.Community.Wizard.wizardVerifyWallet.Response> {
-    return await this.ajax<API.Community.Wizard.wizardVerifyWallet.Response>(
-      "POST",
-      '/Wizard/wizardVerifyWallet',
-      data
-    );
-  }
-
-  public async wizardFinished(
-    data: API.Community.Wizard.wizardFinished.Request
-  ): Promise<API.Community.Wizard.wizardFinished.Response> {
-    return await this.ajax<API.Community.Wizard.wizardFinished.Response>(
-      "POST",
-      '/Wizard/wizardFinished',
-      data
-    );
-  }
-
-  public async wizardClaimInvestmentTransaction(
-    data: API.Community.Wizard.claimInvestmentTransaction.Request
-  ): Promise<API.Community.Wizard.claimInvestmentTransaction.Response> {
-    return await this.ajax<API.Community.Wizard.claimInvestmentTransaction.Response>(
-      "POST",
-      '/Wizard/claimInvestmentTransaction',
-      data
-    );
-  }
-
-  public async wizardGetMyReferralCodes(
-    data: API.Community.Wizard.getMyReferralCodes.Request
-  ): Promise<API.Community.Wizard.getMyReferralCodes.Response> {
-    return await this.ajax<API.Community.Wizard.getMyReferralCodes.Response>(
-      "POST",
-      '/Wizard/getMyReferralCodes',
-      data
-    );
-  }
-
-  public async wizardSetWizardStepData(
-    data: API.Community.Wizard.setWizardStepData.Request
-  ): Promise<API.Community.Wizard.setWizardStepData.Response> {
-    return await this.ajax<API.Community.Wizard.setWizardStepData.Response>(
-      "POST",
-      '/Wizard/setWizardStepData',
-      data
-    );
-  }
-
-  public async wizardGetInvestmentTargetBeneficiaryBalance(
-    data: API.Community.Wizard.getInvestmentTargetBeneficiaryBalance.Request
-  ): Promise<API.Community.Wizard.getInvestmentTargetBeneficiaryBalance.Response> {
-    return await this.ajax<API.Community.Wizard.getInvestmentTargetBeneficiaryBalance.Response>(
-      "POST",
-      '/Wizard/getInvestmentTargetBeneficiaryBalance',
-      data
-    );
-  }
-
-  public async wizardGetInvestmentTargetPersonalContribution(
-    data: API.Community.Wizard.getInvestmentTargetPersonalContribution.Request
-  ): Promise<API.Community.Wizard.getInvestmentTargetPersonalContribution.Response> {
-    return await this.ajax<API.Community.Wizard.getInvestmentTargetPersonalContribution.Response>(
-      "POST",
-      '/Wizard/getInvestmentTargetPersonalContribution',
       data
     );
   }

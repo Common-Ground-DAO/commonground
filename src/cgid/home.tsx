@@ -12,7 +12,7 @@ import {
 } from '@simplewebauthn/browser';
 
 import errors from 'common/errors';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { randomString } from '../util';
 import urlConfig from '../data/util/urls';
 
@@ -56,16 +56,13 @@ function CgIdHome({
     if (!!navigator.credentials) {
       setExtraInfo(undefined);
 
-      const options = await cgIdApi.generateRegistrationOptions({
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      });
-      console.log("options", options);
-  
-      const result = await startRegistration(options)
-      console.log("result", result);
-  
       let verified = false;
       try {
+        // inside the try: a cancelled ceremony must not become an unhandled rejection
+        const options = await cgIdApi.generateRegistrationOptions({
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        });
+        const result = await startRegistration({ optionsJSON: options });
         verified = await cgIdApi.verifyRegistrationResponse({ frontendRequestId, registrationResponse: result });
         console.log("verified", verified);
 
@@ -92,14 +89,11 @@ function CgIdHome({
     if (!!navigator.credentials) {
       setExtraInfo(undefined);
 
-      const options = await cgIdApi.generateAuthenticationOptions({});
-      console.log("options", options);
-  
-      const result = await startAuthentication(options, false);
-      console.log("result", result);
-  
       let verified = false;
       try {
+        // inside the try: a cancelled ceremony must not become an unhandled rejection
+        const options = await cgIdApi.generateAuthenticationOptions({});
+        const result = await startAuthentication({ optionsJSON: options });
         verified = await cgIdApi.verifyAuthenticationResponse({ frontendRequestId, authenticationResponse: result });
         console.log("verified", verified);
 

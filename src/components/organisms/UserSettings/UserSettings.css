@@ -1,5 +1,7 @@
+@reference '../../../tailwind.css';
+
 .user-settings {
-  @apply flex flex-col items-start self-stretch p-0 mb-4 flex-none order-1 flex-grow-0;
+  @apply flex flex-col items-start self-stretch p-0 mb-4 flex-none order-1 grow-0;
   gap: 0.125rem;
 
   > .list-header {

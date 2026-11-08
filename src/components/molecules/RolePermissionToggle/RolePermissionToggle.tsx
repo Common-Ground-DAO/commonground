@@ -3,10 +3,11 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useMemo } from 'react'
-import { PredefinedRole } from 'common/enums';
+import { PredefinedRole, RoleType } from 'common/enums';
 import RolePermissionToggleUnit from 'components/atoms/RolePermissionToggleUnit/RolePermissionToggleUnit';
 
 import './RolePermissionToggle.css';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 export type PermissionType = 'none' | 'preview' | 'read' | 'full' | 'moderate';
 
@@ -23,9 +24,9 @@ const RolePermissionToggle: React.FC<Props> = (props) => {
   const { title, subtitle, availablePermissions, roles, rolesPermissions, setRolesPermissions } = props;
   const [publicRole, memberRole, customRoles] = useMemo(() => {
     return [
-      roles.find(role => role.title === PredefinedRole.Public),
-      roles.find(role => role.title === PredefinedRole.Member),
-      roles.filter(role => !([PredefinedRole.Admin, PredefinedRole.Member, PredefinedRole.Public] as string[]).includes(role.title))
+      roles.find(role => isPredefinedRole(role, PredefinedRole.Public)),
+      roles.find(role => isPredefinedRole(role, PredefinedRole.Member)),
+      roles.filter(role => role.type !== RoleType.PREDEFINED)
     ];
   }, [roles]);
 

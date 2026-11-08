@@ -4,7 +4,7 @@
 
 import React, { useMemo } from "react";
 import './ContractDetails.css';
-import { ethers } from 'ethers';
+import { formatUnits } from 'viem';
 import config from "common/config";
 import { getTruncatedId } from "../../../util";
 import { CheckBadgeIcon } from "@heroicons/react/20/solid";
@@ -73,7 +73,7 @@ const RuleDetail: React.FC<RuleDetailProps> = (props) => {
   return (
     <div className="rule-details p-4 flex flex-col cg-text-lg-400 cg-border-xxl self-stretch">
       <span className="cg-text-lg-500 cg-text-main">
-        Hold at least {ethers.utils.formatUnits(rule.amount, contract.data.type === "ERC20" || contract.data.type === 'LSP7' ? contract.data.decimals : 0)}
+        Hold at least {formatUnits(BigInt(rule.amount), contract.data.type === "ERC20" || contract.data.type === 'LSP7' ? contract.data.decimals : 0)}
         {" "}
         {contract.data.type !== "ERC1155" ? contract.data.symbol : contract.data.name || 'ERC1155'}
       </span>

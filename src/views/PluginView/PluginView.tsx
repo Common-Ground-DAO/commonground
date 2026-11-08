@@ -188,7 +188,7 @@ export const PluginView = () => {
           <Wrench weight="duotone" className="w-8 h-8" /> Embedding mode
         </div>
         <div className="cg-heading-4 text-center mb-4">
-          To use this plugin, app.cg needs to switch embedding mode. Click below to switch mode and reload.
+          To use this plugin, {window.location.host} needs to switch embedding mode. Click below to switch mode and reload.
         </div>
         <Button
           role="primary"

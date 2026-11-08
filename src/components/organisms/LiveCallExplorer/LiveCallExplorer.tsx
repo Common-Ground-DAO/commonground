@@ -9,7 +9,7 @@ import Button from '../../../components/atoms/Button/Button';
 import FrontPageSectionHeader from '../../../components/molecules/FrontPageSectionHeader/FrontPageSectionHeader';
 import LiveCallSlider from '../../../components/molecules/LiveCallSlider/LiveCallSlider';
 
-import { ReactComponent as ArrowLeftIcon } from '../../../components/atoms/icons/24/ArrowLeft.svg';
+import ArrowLeftIcon from '../../../components/atoms/icons/24/ArrowLeft.svg?react';
 
 import { useWindowSizeContext } from '../../../context/WindowSizeProvider';
 import { useCalls } from 'context/CommunityProvider';
@@ -24,7 +24,7 @@ function useCurrentCalls(fetchCalls: boolean) {
   const refetchTimeoutRef = useRef<any>(null);
   const [calls, setCalls] = useState<Models.Calls.Call[]>([]);
   const fetchCallsAndPrepareUpdate = useCallback(() => {
-    communityApi.getCurrentCalls({offset: 0}).then(setCalls);
+    communityApi.getCurrentCalls({offset: 0}).then(setCalls).catch(e => console.warn("Could not load the current calls", e instanceof Error ? e.message : e));
     refetchTimeoutRef.current = setTimeout(() => {
       fetchCallsAndPrepareUpdate();
     }, 60 * 1000);

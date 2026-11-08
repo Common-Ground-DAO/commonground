@@ -4,7 +4,7 @@
 
 import './OnboardingManagement.css';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { HandWaving, Keyhole, ListChecks, LockKey, UserCirclePlus } from '@phosphor-icons/react';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import ManagementHeader2 from 'components/molecules/ManagementHeader2/ManagementHeader2';
@@ -320,8 +320,8 @@ const OnboardingManagement: React.FC = () => {
 
 type OnboardingBoxProps = {
   expanded: boolean;
-  header: JSX.Element;
-  content: JSX.Element;
+  header: React.JSX.Element;
+  content: React.JSX.Element;
 }
 
 const OnboardingBox: React.FC<OnboardingBoxProps> = (props) => {

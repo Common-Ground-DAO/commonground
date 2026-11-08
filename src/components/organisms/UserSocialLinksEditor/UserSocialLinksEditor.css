@@ -1,5 +1,7 @@
+@reference '../../../tailwind.css';
+
 .user-socials-link-editor {
-  @apply flex flex-col items-start p-2 gap-2 flex-none order-1 flex-grow-0;
+  @apply flex flex-col items-start p-2 gap-2 flex-none order-1 grow-0;
 
   .user-socials-link-editor-links-container {
     @apply flex flex-col gap-2;

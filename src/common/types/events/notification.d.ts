@@ -6,6 +6,17 @@ declare namespace Events {
   namespace Notification {
     type Notification = {
       type: 'cliNotificationEvent';
+      /**
+       * chat-sync: the user's unread notification count after this change,
+       * as a number. Absent on older servers; clients then refresh the count
+       * with `Notification/getUnreadCount` instead of counting themselves.
+       */
+      unreadCount?: number;
+      /**
+       * chat-sync: database `now()` (ISO) at which `unreadCount` was read;
+       * clients keep the count with the newest time
+       */
+      unreadCountAt?: string;
     } & ({
       action: 'new';
       data: Models.Notification.ApiNotification;

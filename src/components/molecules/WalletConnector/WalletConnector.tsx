@@ -5,7 +5,7 @@
 import { Tooltip } from 'components/atoms/Tooltip/Tooltip';
 import Button from 'components/atoms/Button/Button';
 
-import { ReactComponent as MetamaskIcon } from 'components/atoms/icons/24/MetamaskIcon.svg';
+import MetamaskIcon from 'components/atoms/icons/24/MetamaskIcon.svg?react';
 
 import "./WalletConnector.css";
 

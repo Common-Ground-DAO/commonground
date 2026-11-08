@@ -1,0 +1,11 @@
+# Call signalling at the edge — layered on docker-compose.selfhost.yml by
+# selfhost.sh when calls are enabled (CG_ENABLE_CALLS is not "false"), next to
+# the compose profile "calls" that starts mediasoup. Caddy then serves
+# wss://<CG_DOMAIN>:4443 in front of mediasoup and the port is published;
+# without calls, neither happens.
+services:
+  caddy:
+    ports:
+      - "4443:4443"
+    environment:
+      - CG_CALLS_EDGE=on

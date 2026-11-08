@@ -9,7 +9,14 @@ import React, {
   useEffect,
   useState,
 } from "react";
-import { ethers } from "ethers";
+// The Lukso UP extension injects a plain EIP-1193 provider on `window.lukso`.
+// This used to go through ethers 5's `Web3Provider`; the raw provider is used
+// directly now, deliberately *not* viem's wallet client — the login signature
+// is produced with `eth_sign`, and viem's `signMessage` would send
+// `personal_sign` instead, which the backend's verification would reject.
+type Eip1193Provider = {
+  request: (args: { method: string; params?: unknown[] }) => Promise<any>;
+};
 import errors from "common/errors";
 import userApi from "data/api/user";
 import getSiweMessage from "util/siwe";
@@ -56,9 +63,7 @@ export const useUniversalProfile = () => useContext(UniversalProfileContext);
 export const UniversalProfileProvider: React.FC<
   React.PropsWithChildren<{}>
 > = ({ children }) => {
-  const [etherProvider, setEtherProvider] = useState<
-    ethers.providers.Web3Provider | undefined
-  >(undefined);
+  const [luksoProvider, setLuksoProvider] = useState<Eip1193Provider | undefined>(undefined);
   // Initialize the profile state with null
   const [universalProfileAddress, setAddress] = useState<string | undefined>(
     undefined
@@ -70,7 +75,7 @@ export const UniversalProfileProvider: React.FC<
 
   useEffect(() => {
     if (window.lukso) {
-      setEtherProvider(new ethers.providers.Web3Provider(window.lukso));
+      setLuksoProvider(window.lukso as Eip1193Provider);
       setHasExtension(true);
     } else {
       setHasExtension(false);
@@ -79,27 +84,25 @@ export const UniversalProfileProvider: React.FC<
 
   const connectToUniversalProfile = async () => {
     try {
-      if (!etherProvider) {
-        throw new Error("No ether provider found");
+      if (!luksoProvider) {
+        throw new Error("No lukso provider found");
       }
       setLoading(true);
-      if (etherProvider.network.chainId !== 42) {
-        const hexChainID = ethers.utils.hexlify(42);
+      const chainId = await luksoProvider.request({ method: "eth_chainId" });
+      if (parseInt(chainId, 16) !== 42) {
         try {
-          await etherProvider.send("wallet_switchEthereumChain", [
-            {
-              chainId: hexChainID,
-            },
-          ]);
+          await luksoProvider.request({
+            method: "wallet_switchEthereumChain",
+            params: [{ chainId: "0x2a" }],
+          });
         } catch (error: any) {
           setError(error.message);
           return;
         }
       }
-      await etherProvider.send("eth_requestAccounts", []);
-      const signer = etherProvider.getSigner();
+      const accounts: string[] = await luksoProvider.request({ method: "eth_requestAccounts" });
       try {
-        const upAddress = await signer.getAddress();
+        const upAddress = accounts?.[0];
         if (upAddress) {
           setAddress(upAddress);
           setLoading(false);
@@ -120,8 +123,8 @@ export const UniversalProfileProvider: React.FC<
   };
 
   const signWithUniversalProfile = useCallback(async () => {
-    if (!etherProvider) {
-      throw new Error("No ether provider found");
+    if (!luksoProvider) {
+      throw new Error("No lukso provider found");
     }
     if (!universalProfileAddress) {
       throw new Error("No universal profile address found");
@@ -129,12 +132,12 @@ export const UniversalProfileProvider: React.FC<
     const secret = await userApi.getSignableSecret();
     let siweMessage = getSiweMessage({ address: universalProfileAddress as Common.Address, chainId: 42, secret });
 
-    const signature = await etherProvider.send("eth_sign", [
-      universalProfileAddress,
-      siweMessage,
-    ]);
+    const signature: string = await luksoProvider.request({
+      method: "eth_sign",
+      params: [universalProfileAddress, siweMessage],
+    });
     return { signature, siweMessage, secret };
-  }, [universalProfileAddress, etherProvider]);
+  }, [universalProfileAddress, luksoProvider]);
 
   const confirmOwnership = useCallback(async () => {
     setLoading(true);

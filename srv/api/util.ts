@@ -8,31 +8,57 @@ import errors from "../common/errors";
 import { MEMBER_PERMISSIONS, MODERATOR_PERMISSIONS } from "../repositories/calls";
 import puppeteer from 'puppeteer';
 import axios from "../util/axios";
-import * as crypto from "crypto";
-import userHelper from "../repositories/users";
-import { dockerSecret } from "../util";
 import emailHelper from "../repositories/emails";
-import emailUtils from "./emails";
 import { recoverPersonalSignature } from '@metamask/eth-sig-util';
+import { asyncRequestHandler } from "../util/asyncHandler";
+import { describeErrorForLog } from "../util/errorLog";
+import { RateLimitError } from "../util/rateLimitError";
+
+export { describeErrorForLog };
 
 export const OK: API.AjaxResponse<void> = { status: 'OK' };
 export const ERROR: API.AjaxResponse<void> = { status: "ERROR", error: errors.server.UNKNOWN };
 const allowedErrorMessages = new Set<string>(Object.values(errors.server));
 
 export function handleError(response: express.Response, e: unknown) {
-  if (e instanceof Error && allowedErrorMessages.has(e.message)) {
+  if (e instanceof RateLimitError) {
+    // the envelope stays on HTTP 200 like every RPC error; the wait goes
+    // into the envelope (what clients read) and the standard header
+    response.set('Retry-After', String(e.retryAfterSeconds));
+    const body: API.AjaxResponse<void> = { status: 'ERROR', error: e.message, retryAfterSeconds: e.retryAfterSeconds, limit: e.limit };
+    response.send(body);
+  } else if (e instanceof Error && allowedErrorMessages.has(e.message)) {
     response.send({ ...ERROR, error: e.message });
   } else if (e instanceof Joi.ValidationError) {
-    console.log(`ValidationError: ${e.message}`);
-    // console.log(e.details);
-    // console.log(e.name);
-    // console.log(e._original());
-    // console.log(e.details);
+    // the message names the offending field; it can quote its value, so
+    // only the field paths are logged
+    console.log(`ValidationError at ${e.details.map(detail => detail.path.join('.') || '(root)').join(', ')}`);
     response.send({ ...ERROR, error: errors.server.VALIDATION });
   } else {
-    console.log(e);
+    console.log(describeErrorForLog(e));
     response.send(ERROR);
   }
+}
+
+/**
+ * Express error middleware (registered last in api.ts) for errors that
+ * middleware passes to `next(error)` before any route handler runs.
+ */
+export function apiErrorHandler(
+  error: unknown,
+  request: express.Request,
+  response: express.Response,
+  next: express.NextFunction,
+) {
+  if (response.headersSent) {
+    return next(error);
+  }
+  const status = (error as { status?: unknown } | null)?.status;
+  const httpStatus = typeof status === 'number' && status >= 400 && status < 500 ? status : 500;
+  if (httpStatus === 500) {
+    console.error(`Request ${request.method} ${request.path} failed in middleware:`, describeErrorForLog(error));
+  }
+  response.status(httpStatus).json(ERROR);
 }
 
 export function registerPostRoute<RQ, RS>(
@@ -46,8 +72,12 @@ export function registerPostRoute<RQ, RS>(
   ) => (RS | Promise<RS>),
   options?: Parameters<typeof express.json>[0],
 ) {
-  router.post(route, express.json(options), async (request, response) => {
-    const data = request.body as RQ;
+  // the try/catch answers handler errors; the wrapper catches what escapes it
+  // (e.g. handleError itself failing because the handler already responded)
+  router.post(route, express.json(options), asyncRequestHandler(async (request, response) => {
+    // Express 5's body parser leaves `body` undefined when the request has no
+    // JSON body; Express 4 always gave `{}`, which the validators expect
+    const data = (request.body ?? {}) as RQ;
     try {
       if (!!validator) {
         const validatedData = await validator.validateAsync(data);
@@ -61,7 +91,7 @@ export function registerPostRoute<RQ, RS>(
     } catch (e) {
       handleError(response, e);
     }
-  });
+  }, handleError));
 }
 
 export function convertEventPermissionToCallPermission(rolePermissions: API.Community.createCommunityEvent.Request['rolePermissions']): API.Community.startCall.Request['rolePermissions'] {
@@ -142,28 +172,6 @@ export async function farcasterApi(type: FcApiCalls, data: any): Promise<any> {
   }
 }
 
-function createSignature(url: string, method: string) {
-  const secret = dockerSecret("sumsub_secret_key") || process.env.SUMSUB_SECRET_KEY;
-
-  if (!secret) {
-    console.error("No Sumsub secret found");
-    throw new Error("No Sumsub secret found");
-  }
-
-  const ts = Math.floor(Date.now() / 1000);
-  const signature = crypto.createHmac('sha256', secret);
-  signature.update(`${ts}${method.toUpperCase()}${url}`);
-
-  const headers = {
-    'X-App-Access-Ts': ts,
-    'X-App-Access-Sig': signature.digest('hex'),
-    'X-App-Token': dockerSecret("sumsub_app_token") || process.env.SUMSUB_APP_TOKEN,
-    'Accept': '*/*'
-  };
-
-  return headers;
-}
-
 export function isSignatureValid({
   data,
   signature,
@@ -177,115 +185,6 @@ export function isSignatureValid({
   return signer.toLowerCase() === expectedSigner.toLowerCase();
 }
 
-export async function getSumsubAccessToken(
-  endpoint: string,
-  method: "GET" | "POST",
-  config: {
-    ttlInSecs: number,
-    userId: string,
-    levelName: string
-  }): Promise<{
-    accessToken: string,
-    userId: string
-  }> {
-  const baseURL = 'https://api.sumsub.com';
-  const url = `${endpoint}?userId=${encodeURIComponent(config.userId)}&levelName=${encodeURIComponent(config.levelName)}&ttlInSecs=${config.ttlInSecs}`;
-
-  const headers = createSignature(url, method);
-
-  try {
-    const response = await axios({
-      url: baseURL + url,
-      method,
-      headers
-    });
-    return { accessToken: response.data.token, userId: response.data.userId };
-  } catch (error) {
-    console.error("Error fetching accessToken for user:", config.userId, "error: ", error);
-    throw error;
-  }
-}
-
-export async function handleSumsubWebhook(data: {
-  type: 'applicantReviewed';
-  inspectionId: string;
-  correlationId: string;
-  externalUserId: string;
-  levelName: API.Sumsub.KycType;
-  reviewResult: {
-    reviewAnswer: 'GREEN' | 'RED';
-    moderationComment?: string;
-    clientComment?: string;
-    reviewRejectType?: string;
-    rejectLabels?: string[];
-  };
-  reviewStatus: string;
-  createdAtMs: string; // ISO date string
-} | {
-  type: 'applicantWorkflowCompleted';
-  inspectionId: string;
-  correlationId: string;
-  applicantId: string;
-  externalUserId: string;
-  levelName: API.Sumsub.KycType;
-  createdAtMs: string; // ISO date string
-  applicantType: 'individual';
-  sandboxMode: boolean;
-  reviewResult: {
-    reviewAnswer: 'GREEN' | 'RED';
-    moderationComment?: string;
-    clientComment?: string;
-    reviewRejectType?: string;
-    rejectLabels?: string[];
-  };
-  reviewStatus: string;
-}) {
-  let extraDataKey: "kycLivenessSuccess" | "kycFullSuccess" | "kycCgTokensaleSuccess";
-  switch (data.levelName) {
-    case "liveness-only":
-      extraDataKey = "kycLivenessSuccess";
-      break;
-    case "full-kyc-level":
-      extraDataKey = "kycFullSuccess";
-      break;
-    case "cg-tokensale":
-      extraDataKey = "kycCgTokensaleSuccess";
-      break;
-    default:
-      throw new Error("Invalid level name");
-  }
-  console.log("Sumsub Webhook called", JSON.stringify(data, null, 2));
-  let kycSuccess: boolean = false;
-  const userId = data.externalUserId;
-  if (data.type === "applicantReviewed" || data.type === "applicantWorkflowCompleted") {
-    kycSuccess = data.reviewResult.reviewAnswer === "GREEN";
-  }
-  try {
-    await userHelper.setUserExtraDataField(extraDataKey, kycSuccess, userId);
-    if (!kycSuccess) {
-      await userHelper.setUserExtraDataField(
-        "kycRejectReason",
-        data.reviewResult.moderationComment,
-        userId,
-      );
-    } else {
-      // if success for higher levels, also set liveness to true
-      if (data.levelName === "full-kyc-level" || data.levelName === "cg-tokensale") {
-        await userHelper.setUserExtraDataField("kycLivenessSuccess", true, userId);
-      }
-    }
-  } catch (error) {
-    console.error("Error handling Sumsub webhook:", error);
-    throw error;
-  }
-  const email = await userHelper.getUserEmail(userId);
-  if (!email) {
-    console.error("No email found for user:", userId);
-    return;
-  } else {
-    await emailUtils.sendKycResultEmail(email, kycSuccess, data.levelName, data.reviewResult.moderationComment);
-  }
-}
 
 export async function htmlToImage(data: {
   body: string;
@@ -401,7 +300,10 @@ export async function htmlToImage(data: {
 
   const content = await page.$("body");
   if (content) {
-    imageBuffer = await content.screenshot({ omitBackground: true });
+    // puppeteer 23 changed every screenshot API from `Buffer` to `Uint8Array`
+    // (it dropped the Node-only type so the same code runs in the browser).
+    // Callers pass this straight into sharp, which wants a Buffer.
+    imageBuffer = Buffer.from(await content.screenshot({ omitBackground: true }));
   }
 
   await page.close();

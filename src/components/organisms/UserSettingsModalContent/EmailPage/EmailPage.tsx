@@ -3,7 +3,9 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { EnvelopeOpenIcon } from '@heroicons/react/20/solid';
+import config from 'common/config';
 import { validateEmailInput, validatePassword } from 'common/validators';
+import { PASSWORD_MIN_LENGTH } from 'common/passwordPolicy';
 import Button from 'components/atoms/Button/Button';
 import PasswordField from 'components/molecules/PasswordField/PasswordField';
 import TextInputField from 'components/molecules/inputs/TextInputField/TextInputField';
@@ -13,6 +15,10 @@ import data from 'data';
 import userApi from 'data/api/user';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {useEmailConfirmationContext} from 'context/EmailConfirmationProvider';
+import { securityActionErrorMessage } from 'data/auth/authErrors';
+import { signedOutDevicesText } from 'data/auth/signedOut';
+import EmailCodeConfirm from 'components/molecules/EmailCodeConfirm/EmailCodeConfirm';
+import ConfirmEmailAgain from 'components/molecules/EmailCodeConfirm/ConfirmEmailAgain';
 
 type Props = {
   saveOnCloseMode?: boolean;
@@ -27,6 +33,8 @@ const EmailPage: React.FC<Props> = ({ saveOnCloseMode, goBack }) => {
   const [emailValidateEnabled, setEmailValidateEnabled] = useState(false);
   const [loadingSubmit, setLoadingSubmit] = useState(false);
 
+  // a confirmation code was sent to this new address
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
   const [password, setPassword] = React.useState('');
   const [passwordError, setPasswordError] = React.useState<string | undefined>();
   const emailContext = useEmailConfirmationContext();
@@ -37,7 +45,7 @@ const EmailPage: React.FC<Props> = ({ saveOnCloseMode, goBack }) => {
 
   const setPasswordAndValidate = useCallback((password: string) => {
     setPassword(password);
-    setPasswordError(validatePassword(password, 8));
+    setPasswordError(validatePassword(password, PASSWORD_MIN_LENGTH));
   }, []);
 
   // Keep data up-to-date to save on-close
@@ -48,7 +56,7 @@ const EmailPage: React.FC<Props> = ({ saveOnCloseMode, goBack }) => {
     password: string;
     passwordError: string | undefined;
     emailVerified: boolean;
-  }>();
+  }>(undefined);
 
   useEffect(() => {
     requestInfo.current = {
@@ -61,7 +69,8 @@ const EmailPage: React.FC<Props> = ({ saveOnCloseMode, goBack }) => {
     }
   }, [email, emailError, ownUser?.email, ownUser?.emailVerified, ownUser?.newsletter, password, passwordError]);
 
-  const onSubmit = useCallback(async () => {
+  /** 'pending': a new address waits for its confirmation code */
+  const onSubmit = useCallback(async (): Promise<'pending' | 'done' | undefined> => {
     if (!requestInfo.current) return;
 
     const {
@@ -77,18 +86,36 @@ const EmailPage: React.FC<Props> = ({ saveOnCloseMode, goBack }) => {
     if (email === userOwnEmail && !password) return;
 
     try {
+      let pending = false;
       if (email !== userOwnEmail) {
-        await data.user.updateOwnData({ email });
-        await userApi.requestEmailVerification({ email });
-        showSnackbar({ type: 'warning', text: `We've sent you an email with a verification link, please check your inbox` });
+        if (config.EMAIL_ENABLED) {
+          // the address changes once the code sent to it comes back
+          await userApi.requestEmailVerification({ email });
+          setPendingEmail(email);
+          pending = true;
+          showSnackbar({ type: 'warning', text: `We've sent a confirmation code and link to ${email}. Your address changes once you confirm it.` });
+        }
+        else {
+          await data.user.updateOwnData({ email });
+        }
       }
-      if (password) await userApi.setPassword({ password });
+      // a replaced password signs the other devices out
+      const changed = password ? await userApi.setPassword({ password }) : null;
+      const signedOut = changed ? signedOutDevicesText(changed.signedOutDevices, changed.signOutDelayed) : null;
 
-      const updateText = 'E-mail' + (password ? ' and password' : '') + ' updated';
-      showSnackbar({ type: 'info', text: updateText });
+      if (!pending || password) {
+        const updateText = pending ? 'Password updated' : 'E-mail' + (password ? ' and password' : '') + ' updated';
+        showSnackbar({ type: 'info', text: signedOut ? `${updateText}. ${signedOut}` : updateText });
+      }
+      return pending ? 'pending' : 'done';
     } catch (e) {
       console.error(e);
-      showSnackbar({ type: 'warning', text: 'Failed to update info' });
+      // email and password changes ask "Confirm it's you" first; nothing to
+      // show when that was cancelled
+      const message = securityActionErrorMessage(e, 'Failed to update info');
+      if (message) {
+        showSnackbar({ type: 'warning', text: message });
+      }
     }
   }, [emailContext, showSnackbar])
 
@@ -118,6 +145,10 @@ const EmailPage: React.FC<Props> = ({ saveOnCloseMode, goBack }) => {
       passwordError={passwordError}
       label='Password (optional)'
     />
+    {config.EMAIL_ENABLED && !!ownUser?.email && !ownUser.emailVerified && !pendingEmail && <ConfirmEmailAgain
+      email={ownUser.email}
+      onConfirmed={() => showSnackbar({ type: 'info', text: 'E-mail confirmed' })}
+    />}
     <div className='cg-text-md-500 cg-text-main'>
       Hint: Setting a password is optional, you can also log in using one-time codes sent to your email.
     </div>
@@ -127,10 +158,22 @@ const EmailPage: React.FC<Props> = ({ saveOnCloseMode, goBack }) => {
       disabled={!!emailError || !!passwordError || !email || !password}
       onClick={async () => {
         setLoadingSubmit(true);
-        await onSubmit();
-        goBack?.();
+        const result = await onSubmit();
+        setLoadingSubmit(false);
+        if (result !== 'pending') {
+          goBack?.();
+        }
       }}
       loading={loadingSubmit}
+    />}
+    {!!pendingEmail && <EmailCodeConfirm
+      email={pendingEmail}
+      subLabel={`We sent an 8-digit code to ${pendingEmail}. You can also open the link in that mail.`}
+      onConfirmed={() => {
+        setPendingEmail(null);
+        showSnackbar({ type: 'info', text: 'E-mail updated' });
+        goBack?.();
+      }}
     />}
   </div>);
 }

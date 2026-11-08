@@ -7,7 +7,7 @@ import communityManager from 'data/managers/communityManager';
 import config from 'common/config';
 import { parseIdOrUrl } from '../../../util';
 import data from 'data';
-import shortUUID from "short-uuid";
+import { createTranslator } from "short-uuid";
 import communityApi from 'data/api/community';
 
 export type PreviewState = {
@@ -24,7 +24,7 @@ export type PreviewState = {
 const eventRegex = new RegExp(`/${config.URL_COMMUNITY}/([a-zA-Z0-9]*)/${config.URL_EVENT}/([~a-zA-Z0-9]*)(?:/){0,1}`, 'i');
 const articleRegex = new RegExp(`/${config.URL_COMMUNITY}/([a-zA-Z0-9]*)/${config.URL_ARTICLE}/.*-([a-zA-Z0-9]{22})(?:/){0,1}`, 'i');
 const communityRegex = new RegExp(`/${config.URL_COMMUNITY}/([a-zA-Z0-9]*)(?:/){0,1}`, 'i');
-const t = shortUUID();
+const t = createTranslator();
 
 export async function fetchInternalLinkData(localExtract: string): Promise<PreviewState | undefined> {
   if (localExtract) {

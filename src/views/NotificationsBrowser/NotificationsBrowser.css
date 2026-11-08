@@ -1,3 +1,5 @@
+@reference '../../tailwind.css';
+
 .layout-notifications {
   @apply h-full;
   .notifications-menu {
@@ -13,10 +15,24 @@
     @apply flex flex-col gap-2 px-2;
 
     .notifications-menu-header-top {
-      @apply flex gap-2;
+      /* wraps on narrow screens: "Mark all read" moves to its own line */
+      @apply flex flex-wrap gap-2;
 
       >*:first-child {
         @apply flex-1;
+      }
+
+      .notifications-mark-all-read {
+        @apply flex p-1 items-center justify-center cursor-pointer whitespace-nowrap rounded;
+        color: var(--cardTextMain);
+        background: none;
+        border: none;
+        font: inherit;
+
+        &:focus-visible {
+          outline: 2px solid var(--cardTextMain);
+          outline-offset: 1px;
+        }
       }
 
       .notifications-read-toggle {

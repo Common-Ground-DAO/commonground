@@ -2,12 +2,13 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import type { AccessLevel, AjaxResponse } from "common/types";
 import { idRegex, itemUrlRegex } from "common/util";
-import short from 'short-uuid';
-import { ReactComponent as XIcon } from '../components/atoms/icons/24/X.svg';
-import { ReactComponent as OfficialIcon } from "../components/atoms/icons/20/OfficialIcon.svg";
-import { ReactComponent as FarcasterIcon } from '../components/atoms/icons/24/Farcaster.svg';
+import { createTranslator } from 'short-uuid';
+import XIcon from '../components/atoms/icons/24/X.svg?react';
+import OfficialIcon from "../components/atoms/icons/20/OfficialIcon.svg?react";
+import FarcasterIcon from '../components/atoms/icons/24/Farcaster.svg?react';
 import { Tooltip } from "components/atoms/Tooltip/Tooltip";
 import ExternalIcon from "components/atoms/ExternalIcon/ExternalIcon";
 import CrystalIcon from "../components/atoms/icons/misc/communitySettings/crystal.webp";
@@ -20,7 +21,7 @@ import GoldTvIcon from "../components/atoms/icons/misc/communitySettings/goldtv.
 import { MdWorkspacePremium } from "react-icons/md";
 import dayjs from "dayjs";
 
-const t = short();
+const t = createTranslator();
 
 export async function ajax<T>(method: "GET" | "PUT" | "POST" | "UPDATE", url: string, data?: string | FormData): Promise<AjaxResponse<T>> {
   try {
@@ -86,7 +87,7 @@ export function getTruncatedId(userId: string) {
 
 export function getDisplayName(userData: Pick<Models.User.Data, | 'displayAccount' | 'accounts' | 'id'>, hideIcon?: boolean, specificAccountType?: Models.User.ProfileItemType) {
   let currentAccount: Models.User.ProfileItem | undefined = undefined;
-  let customDisplayName: JSX.Element | undefined = undefined;
+  let customDisplayName: React.JSX.Element | undefined = undefined;
   if (!!specificAccountType) {
     currentAccount = userData.accounts?.find(acc => acc.type === specificAccountType);
   }
@@ -173,7 +174,7 @@ export function getDisplayNameString(userData: Pick<Models.User.Data, 'displayAc
 }
 
 export function getCommunityDisplayName(community: Pick<Models.Community.ListView, 'title' | 'official' | 'premium'>, iconClassName = 'w-5 h-5', noIcon?: boolean) {
-  let premiumIcon: JSX.Element | undefined = undefined;
+  let premiumIcon: React.JSX.Element | undefined = undefined;
   if (!noIcon && !!community.premium && dayjs(community.premium.activeUntil).isAfter(dayjs())) {
     const tier = community.premium.featureName;
     premiumIcon = <Tooltip

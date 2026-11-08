@@ -1,0 +1,109 @@
+# Disposable instance for the end-to-end browser suite (e2e/instance.sh).
+#
+# Layered on docker-compose.selfhost.yml + docker-compose.selfhost.calls.yml
+# under its own project name (default cg-e2e) and env file
+# (e2e/.instance/env), so containers, volumes and the network never touch the
+# dev stack (project `docker`) or a real self-host deployment on the same host.
+#
+# Differences from a real self-host instance:
+#   - own image tags (cg-e2e/*), built from the checkout by instance.sh build —
+#     the shared cryptogram/* images are never used or retagged
+#   - the edge maps a per-browser cookie to X-Forwarded-For, so the
+#     backend's per-address limits (e.g. sign-ups per network) see
+#     each browser context as its own client (Caddyfile.e2e)
+#   - nothing is published on the host: the suite's browser runs in a
+#     container on this stack's network and reaches the edge by its domain
+#     (a network alias of caddy), Caddy issues the certificates from its local
+#     CA (CG_TLS_MODE=internal); the suite trusts that root (--ca)
+#   - mediasoup announces its own container address (the browser is on the
+#     same network), so calls need no host ports either
+#   - a mailpit catcher receives the instance's mail (sign-up codes); its API
+#     is reachable from the runner as http://mailpit:8025
+#   - generated secrets/support files live in e2e/.instance/ (gitignored),
+#     never in docker/
+#
+# Relative paths below resolve against docker/ (the directory of the first
+# compose file), hence the ../e2e/ prefixes.
+services:
+  caddy:
+    image: ${E2E_IMAGE_PREFIX:-cg-e2e}/caddy
+    build: !reset null
+    # Caddyfile.selfhost (internal TLS, calls edge) plus per-browser client
+    # addresses for the backend's per-address limits — see Caddyfile.e2e
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile.e2e", "--adapter", "caddyfile"]
+    volumes:
+      - ../e2e/Caddyfile.e2e:/etc/caddy/Caddyfile.e2e:ro
+    ports: !override []
+    networks:
+      cryptogram:
+        aliases:
+          - ${CG_DOMAIN}
+          # the gateway's sites (E2E_GATEWAY=1)
+          - ${CG_GATEWAY_DOMAIN}
+          - ${CG_GATEWAY_ID_DOMAIN}
+
+  db:
+    image: ${E2E_IMAGE_PREFIX:-cg-e2e}/db
+    build: !reset null
+    healthcheck:
+      interval: 10s
+
+  seaweed:
+    volumes: !override
+      - seaweedfs-data:/data
+      - ../e2e/.instance/s3.json:/run/cg/s3.json:ro
+
+  migrate-db:
+    image: ${E2E_IMAGE_PREFIX:-cg-e2e}/backend
+
+  wsapi:
+    image: ${E2E_IMAGE_PREFIX:-cg-e2e}/backend
+
+  api:
+    image: ${E2E_IMAGE_PREFIX:-cg-e2e}/backend
+    build: !reset null
+    environment:
+      # test hook: lowers single auth limits to show their messages
+      # (srv/util/authLimits.ts), e.g. E2E_AUTH_LIMITS='{"createUser.hour":1}'
+      - CG_TEST_AUTH_LIMITS=${E2E_AUTH_LIMITS:-}
+    volumes: !override
+      - ../e2e/.instance/vapid_keys.json:/run/secrets/vapid_keys_json:ro
+      - ./api_data:/api_data:ro
+
+  memberlist:
+    image: ${E2E_IMAGE_PREFIX:-cg-e2e}/backend
+
+  job-runner:
+    image: ${E2E_IMAGE_PREFIX:-cg-e2e}/backend
+
+  mediasoup:
+    image: ${E2E_IMAGE_PREFIX:-cg-e2e}/backend
+    volumes: !override
+      - ../e2e/.instance/certs:/dist/mediasoup/certs/selfhost:ro
+    # the browser runs on this network: announce the container's own address
+    # (MEDIASOUP_ANNOUNCED_IP from the env file is ignored)
+    command: ["sh", "-c", "MEDIASOUP_ANNOUNCED_IP=$$(hostname -i | cut -d' ' -f1) exec node /dist/mediasoup.js"]
+    ports: !override []
+
+  onchain:
+    image: ${E2E_IMAGE_PREFIX:-cg-e2e}/backend
+
+  # the gateway (profile "gateway", E2E_GATEWAY=1)
+  gateway-api:
+    image: ${E2E_IMAGE_PREFIX:-cg-e2e}/backend
+
+  gateway-wsapi:
+    image: ${E2E_IMAGE_PREFIX:-cg-e2e}/backend
+
+  # catches every mail of the instance; the suite reads sign-up codes from its
+  # API (http://mailpit:8025/api/v1/...). Same pin as the dev stack.
+  mailpit:
+    image: axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498
+    networks:
+      - cryptogram
+    restart: unless-stopped
+
+  # never built or started here
+  cg-builder:
+    profiles: ["never"]
+    build: !reset null

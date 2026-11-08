@@ -7,7 +7,7 @@ import React from 'react'
 import './PaddedIcon.css';
 
 type Props = {
-  icon: JSX.Element;
+  icon: React.JSX.Element;
   className?: string;
   defaultClassName?: 'success' | 'info';
   onClick?: () => void;

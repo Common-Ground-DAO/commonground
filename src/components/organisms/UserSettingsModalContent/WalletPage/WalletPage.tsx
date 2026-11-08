@@ -13,6 +13,7 @@ import ToggleInputField from 'components/molecules/inputs/ToggleInputField/Toggl
 import RemoveWalletModal from 'components/organisms/ConnectedWalletsModal/RemoveWalletModal/RemoveWalletModal';
 import userApi from 'data/api/user';
 import { useSnackbarContext } from 'context/SnackbarContext';
+import { securityActionErrorMessage } from 'data/auth/authErrors';
 
 type Props = {
   currentWalletId: string;
@@ -46,7 +47,7 @@ const WalletPage: React.FC<Props> = (props) => {
   const requestInfo = useRef<{
     // visibility: Models.Wallet.Visibility
     useToLogin: boolean;
-  }>();
+  }>(undefined);
 
   useEffect(() => {
     requestInfo.current = {
@@ -72,7 +73,12 @@ const WalletPage: React.FC<Props> = (props) => {
         showSnackbar({ type: 'info', text: 'Wallet info successfully updated' });
       } catch (e) {
         console.error(e);
-        showSnackbar({ type: 'warning', text: 'Failed to update wallet' });
+        // switching sign-in on or off asks "Confirm it's you"; switching off
+        // the last way to sign in is refused
+        const message = securityActionErrorMessage(e, 'Failed to update wallet');
+        if (message) {
+          showSnackbar({ type: 'warning', text: message });
+        }
       }
     };
 

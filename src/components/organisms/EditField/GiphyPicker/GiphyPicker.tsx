@@ -51,8 +51,12 @@ const GiphyPicker: React.FC<Props> = (props) => {
   }, [setSearchTermDebounced]);
 
   const fetchGifs = (offset: number) => {
-    if (searchTerm) return gf.search(searchTerm, { offset, limit: 10 })
-    else return gf.trending({ offset, limit: 10 });
+    // `rating: 'g'` explicitly rather than relying on the Giphy API default:
+    // GIFs are never stored server-side (the client loads them straight from
+    // the Giphy CDN), so they cannot pass through the image filter and this
+    // rating is the only content control on them.
+    if (searchTerm) return gf.search(searchTerm, { offset, limit: 10, rating: 'g' })
+    else return gf.trending({ offset, limit: 10, rating: 'g' });
   };
 
   const setOpen = useCallback((open: boolean) => {

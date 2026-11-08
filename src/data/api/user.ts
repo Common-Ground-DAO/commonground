@@ -42,6 +42,49 @@ class UserApiConnector extends BaseApiConnector {
     );
   }
 
+  /** session keepalive (refreshes the rolling session cookie) */
+  public async ensureSession() {
+    return await this.ajax<API.User.ensureSession.Response>(
+      "POST",
+      "/ensureSession"
+    );
+  }
+
+  /** signs the account out on every other device (step-up) */
+  public async signOutOtherDevices(): Promise<API.User.signOutOtherDevices.Response> {
+    return await this.ajax<API.User.signOutOtherDevices.Response>(
+      "POST",
+      "/signOutOtherDevices",
+      {}
+    );
+  }
+
+  /** step-up: proves again that the session user is at the keyboard */
+  public async reauthenticate(data: API.User.reauthenticate.Request): Promise<API.User.reauthenticate.Response> {
+    return await this.ajax<API.User.reauthenticate.Response>(
+      "POST",
+      "/reauthenticate",
+      data
+    );
+  }
+
+  /** sign-up step 1: mails an 8-digit code to the address the account will get */
+  public async requestSignupEmailCode(data: API.User.requestSignupEmailCode.Request): Promise<void> {
+    return await this.ajax<void>(
+      "POST",
+      "/requestSignupEmailCode",
+      data
+    );
+  }
+
+  public async verifySignupEmailCode(data: API.User.verifySignupEmailCode.Request): Promise<void> {
+    return await this.ajax<void>(
+      "POST",
+      "/verifySignupEmailCode",
+      data
+    );
+  }
+
   public async checkLoginStatus() {
     return await this.ajax<API.User.checkLoginStatus.Response>(
       "POST",
@@ -418,64 +461,38 @@ class UserApiConnector extends BaseApiConnector {
     );
   }
 
-  public async redeemWizardCode(data: API.User.redeemWizardCodeForExistingUser.Request): Promise<void> {
-    await this.ajax<API.User.redeemWizardCodeForExistingUser.Response>(
+  /** what the account-security step still needs */
+  public async getSecurityStatus(): Promise<API.User.getSecurityStatus.Response> {
+    return await this.ajax<API.User.getSecurityStatus.Response>(
       "POST",
-      "/redeemWizardCode",
+      "/getSecurityStatus",
+      {},
+    );
+  }
+
+  /** whose account a transfer link signs in to (does not use it up) */
+  public async previewTransferLink(data: API.User.previewTransferLink.Request): Promise<API.User.previewTransferLink.Response> {
+    return await this.ajax<API.User.previewTransferLink.Response>(
+      "POST",
+      "/previewTransferLink",
       data,
     );
   }
 
-  public async getTokenSaleAllowance(): Promise<API.User.getTokenSaleAllowance.Response> {
-    return await this.ajax<API.User.getTokenSaleAllowance.Response>(
+  /** uses a transfer link up without signing in ("This isn't me") */
+  public async declineTransferLink(data: API.User.declineTransferLink.Request): Promise<API.User.declineTransferLink.Response> {
+    return await this.ajax<API.User.declineTransferLink.Response>(
       "POST",
-      "/getTokenSaleAllowance",
-    );
-  }
-
-  public async getConnectionCountry(): Promise<API.User.getConnectionCountry.Response> {
-    return await this.ajax<API.User.getConnectionCountry.Response>(
-      "POST",
-      "/getConnectionCountry",
-    );
-  }
-
-  public async setReferredBy(data: API.User.setReferredBy.Request): Promise<void> {
-    await this.ajax<API.User.setReferredBy.Response>(
-      "POST",
-      "/setReferredBy",
+      "/declineTransferLink",
       data,
     );
   }
 
-  public async getOwnTokenSaleData(data: API.User.getOwnTokenSaleData.Request): Promise<API.User.getOwnTokenSaleData.Response> {
-    return await this.ajax<API.User.getOwnTokenSaleData.Response>(
+  /** use `loginManager.redeemTransferLink`, which also sets up the login */
+  public async redeemTransferLink(data: API.User.redeemTransferLink.Request): Promise<API.User.redeemTransferLink.Response> {
+    return await this.ajax<API.User.redeemTransferLink.Response>(
       "POST",
-      "/getOwnTokenSaleData",
-      data,
-    );
-  }
-
-  public async getTokenSaleEvents(data: API.User.getTokenSaleEvents.Request): Promise<API.User.getTokenSaleEvents.Response> {
-    return await this.ajax<API.User.getTokenSaleEvents.Response>(
-      "POST",
-      "/getTokenSaleEvents",
-      data,
-    );
-  }
-
-  public async claimTokenSaleReward(data: API.User.claimTokenSaleReward.Request): Promise<API.User.claimTokenSaleReward.Response> {
-    await this.ajax<API.User.claimTokenSaleReward.Response>(
-      "POST",
-      "/claimTokenSaleReward",
-      data,
-    );
-  }
-
-  public async saveTokenSaleTargetAddress(data: API.User.saveTokenSaleTargetAddress.Request): Promise<void> {
-    await this.ajax<API.User.saveTokenSaleTargetAddress.Response>(
-      "POST",
-      "/saveTokenSaleTargetAddress",
+      "/redeemTransferLink",
       data,
     );
   }

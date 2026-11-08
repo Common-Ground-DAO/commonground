@@ -11,9 +11,9 @@ import './ManagementHeader2.css';
 type Props = {
   title: string;
   goBack?: () => void;
-  help?: string | JSX.Element;
-  // rightControls?: JSX.Element;
-  // iconLeft?: JSX.Element;
+  help?: string | React.JSX.Element;
+  // rightControls?: React.JSX.Element;
+  // iconLeft?: React.JSX.Element;
 };
 
 const ManagementHeader2: React.FC<Props> = (props) => {

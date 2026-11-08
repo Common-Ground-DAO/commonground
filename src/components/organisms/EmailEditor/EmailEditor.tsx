@@ -9,10 +9,15 @@ import { EnvelopeIcon, EnvelopeOpenIcon } from '@heroicons/react/20/solid';
 import TextInputField from 'components/molecules/inputs/TextInputField/TextInputField';
 import { useOwnUser } from 'context/OwnDataProvider';
 import { validateEmailInput, validatePassword } from 'common/validators';
+import config from 'common/config';
+import EmailCodeConfirm from 'components/molecules/EmailCodeConfirm/EmailCodeConfirm';
+import { PASSWORD_MIN_LENGTH } from 'common/passwordPolicy';
 import Button from 'components/atoms/Button/Button';
 import Checkbox from 'components/atoms/Checkbox/Checkbox';
 import data from 'data';
 import userApi from 'data/api/user';
+import { securityActionErrorMessage } from 'data/auth/authErrors';
+import { signedOutDevicesText } from 'data/auth/signedOut';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import PasswordField from 'components/molecules/PasswordField/PasswordField';
 import { useEmailConfirmationContext } from 'context/EmailConfirmationProvider';
@@ -26,6 +31,8 @@ const EmailEditor: React.FC<Props> = () => {
   const [emailError, setEmailError] = React.useState<string | undefined>();
   const emailContext = useEmailConfirmationContext();
 
+  // a confirmation code was sent to this new address
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
   const [password, setPassword] = React.useState('');
   const [passwordError, setPasswordError] = React.useState<string | undefined>();
 
@@ -38,7 +45,7 @@ const EmailEditor: React.FC<Props> = () => {
 
   const setPasswordAndValidate = useCallback((password: string) => {
     setPassword(password);
-    setPasswordError(validatePassword(password, 8));
+    setPasswordError(validatePassword(password, PASSWORD_MIN_LENGTH));
   }, []);
 
   const onSubmit = useCallback(async () => {
@@ -56,21 +63,43 @@ const EmailEditor: React.FC<Props> = () => {
 
       // only update emails if they are different
       if (email !== ownUser?.email) {
-        await data.user.updateOwnData({ email });
-        await userApi.requestEmailVerification({ email });
-        showSnackbar({ type: 'info', text: `We've sent you an email with a verification link, please check your inbox` });
+        if (config.EMAIL_ENABLED) {
+          // the address changes once the code sent to it comes back
+          await userApi.requestEmailVerification({ email });
+          setPendingEmail(email);
+          showSnackbar({ type: 'info', text: `We've sent a confirmation code and link to ${email}. Your address changes once you confirm it.` });
+        }
+        else {
+          await data.user.updateOwnData({ email });
+        }
       }
       if (password.length > 0) {
-        await userApi.setPassword({ password });
-        showSnackbar({ type: 'info', text: 'Password updated' });
+        // a replaced password signs the other devices out
+        const { signedOutDevices, signOutDelayed } = await userApi.setPassword({ password });
+        const signedOut = signedOutDevicesText(signedOutDevices, signOutDelayed);
+        showSnackbar({ type: 'info', text: signedOut ? `Password updated. ${signedOut}` : 'Password updated' });
       }
       
     } catch (e) {
       console.error(e);
-      showSnackbar({ type: 'warning', text: 'Failed to update info' });
+      // email and password changes ask "Confirm it's you"; nothing to show
+      // when that was cancelled
+      const message = securityActionErrorMessage(e, 'Failed to update info');
+      if (message) {
+        showSnackbar({ type: 'warning', text: message });
+      }
     }
 
   }, [email, emailContext, emailError, newsletterActive, ownUser?.email, password, passwordError, showSnackbar]);
+
+  const codeField = pendingEmail ? <EmailCodeConfirm
+    email={pendingEmail}
+    subLabel={`We sent an 8-digit code to ${pendingEmail}. You can also open the link in that mail.`}
+    onConfirmed={() => {
+      setPendingEmail(null);
+      showSnackbar({ type: 'info', text: 'E-mail updated' });
+    }}
+  /> : null;
 
   return (<div className='email-editor-container'>
     <div className='flex items-center gap-2 cg-text-main'>
@@ -107,6 +136,7 @@ const EmailEditor: React.FC<Props> = () => {
           onClick={onSubmit}
         />
       </div>
+      {codeField}
     </div>
   </div>);
 }

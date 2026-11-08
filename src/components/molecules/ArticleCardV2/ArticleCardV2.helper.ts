@@ -5,6 +5,7 @@
 import { PredefinedRole } from "common/enums";
 import data from "data";
 import dayjs, { Dayjs } from "dayjs";
+import { isPredefinedRolePermission } from "util/predefinedRoles";
 
 export function isRecentUnread(date: Dayjs, isDraft: boolean, isRead: boolean) {
   return dayjs().diff(date, 'days') <= 7 && !isRead && !isDraft;
@@ -42,18 +43,18 @@ export async function isArticleGated(
   communityArticle: Models.Community.CommunityArticle,
 ): Promise<GatedFooterStatus> {
   // Short-circuit if public can read to avoid async fetch
-  const publicCanRead = communityArticle.rolePermissions.some(rolePermission => rolePermission.roleTitle === PredefinedRole.Public && rolePermission.permissions.includes('ARTICLE_READ'));
+  const publicCanRead = communityArticle.rolePermissions.some(rolePermission => isPredefinedRolePermission(rolePermission, PredefinedRole.Public) && rolePermission.permissions.includes('ARTICLE_READ'));
   if (publicCanRead) return null;
 
   const myCommunities = await data.community.getOwnCommunities();
   const community = myCommunities.find(comm => comm.id === communityArticle.communityId);
   const ownRoleIds: string[] = [];
   
-  const publicRoleId = communityArticle.rolePermissions.find(role => role.roleTitle === PredefinedRole.Public)?.roleId;
+  const publicRoleId = communityArticle.rolePermissions.find(role => isPredefinedRolePermission(role, PredefinedRole.Public))?.roleId;
   if (publicRoleId) ownRoleIds.push(publicRoleId);
   if (community) {
     ownRoleIds.push(...community.myRoleIds);
-    const memberRoleId = communityArticle.rolePermissions.find(role => role.roleTitle === PredefinedRole.Member)?.roleId;
+    const memberRoleId = communityArticle.rolePermissions.find(role => isPredefinedRolePermission(role, PredefinedRole.Member))?.roleId;
     if (memberRoleId) ownRoleIds.push(memberRoleId);  
   }
 

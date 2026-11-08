@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .desktop-layout {
   .article-management-inner {
     @apply grid;
@@ -48,7 +50,7 @@
         grid-row: content-start / content-end;
 
         .title-label {
-          @apply w-full flex p-0 mt-6 flex-none order-none flex-grow-0 bg-transparent border-none;
+          @apply w-full flex p-0 mt-6 flex-none order-none grow-0 bg-transparent border-none;
 
           color: var(--articleHeader);
           .textarea-container {
@@ -60,7 +62,7 @@
         }
 
         .title-input {
-          @apply w-full flex py-2 px-0 m-0 flex-none order-none flex-grow-0 bg-transparent border-none font-normal cg-heading-1;
+          @apply w-full flex py-2 px-0 m-0 flex-none order-none grow-0 bg-transparent border-none font-normal cg-heading-1;
           color: var(--articleHeader);
         }
 
@@ -123,7 +125,7 @@
 }
 
 .article-visibility-item {
-  @apply flex flex-row self-stretch justify-center items-center p-2 gap-4 flex-none order-none flex-grow-0;
+  @apply flex flex-row self-stretch justify-center items-center p-2 gap-4 flex-none order-none grow-0;
 
   border-radius: 6px;
 }
@@ -140,30 +142,30 @@
 }
 
 .article-visibility-selected-icon {
-  @apply flex w-4 h-4 flex-none order-4 flex-grow-0;
+  @apply flex w-4 h-4 flex-none order-4 grow-0;
 }
 .article-visibility-selected-icon.invisible {
   visibility: hidden;
 }
 
 .area-popup-item {
-  @apply flex flex-row items-center self-stretch p-3 gap-2 flex-none order-5 flex-grow-0;
+  @apply flex flex-row items-center self-stretch p-3 gap-2 flex-none order-5 grow-0;
   
   /* height: 38px; */
   border-radius: 6px;
 
   .area-closed-icon {
-    @apply flex w-4 h-4 flex-none order-none flex-grow-0;
+    @apply flex w-4 h-4 flex-none order-none grow-0;
   }
 
   .area-checked {
-    @apply flex flex-row items-center p-0 gap-1 flex-none order-none flex-grow cursor-pointer;
+    @apply flex flex-row items-center p-0 gap-1 flex-none order-none grow cursor-pointer;
 
     height: 22px;
     border-radius: 6px;
 
     p {
-      @apply flex items-center flex-none order-2 flex-grow font-normal;
+      @apply flex items-center flex-none order-2 grow font-normal;
       height: 22px;
       
       font-size: 16px;
@@ -192,18 +194,18 @@
 }
 
 .send-post-as-email-modal {
-  @apply flex flex-col justify-center items-center p-2 gap-2 flex-none order-none flex-grow-0;
+  @apply flex flex-col justify-center items-center p-2 gap-2 flex-none order-none grow-0;
 
   .send-post-as-email-modal-header{
-    @apply flex justify-center items-center p-2 gap-2 flex-none order-none flex-grow-0;
+    @apply flex justify-center items-center p-2 gap-2 flex-none order-none grow-0;
   }
 
   .send-post-as-email-modal-footer{
-    @apply flex flex-col w-full justify-center p-4 items-center flex-grow-0;
+    @apply flex flex-col w-full justify-center p-4 items-center grow-0;
     gap: 14px;
 
     .send-post-as-email-modal-footer-button{
-      @apply flex justify-center items-center w-full p-4 gap-2 flex-none order-none flex-grow-0;
+      @apply flex justify-center items-center w-full p-4 gap-2 flex-none order-none grow-0;
       border-radius: 12px;
     }
   }

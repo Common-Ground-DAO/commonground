@@ -5,7 +5,7 @@
 import React, { createContext, useContext, useRef } from "react";
 import Dialog, { DialogRefHandle } from "../components/molecules/Dialog/Dialog";
 
-import { ReactComponent as CheckmarkFilledIcon } from '../components/atoms/icons/20/CheckmarkFilled.svg';
+import CheckmarkFilledIcon from '../components/atoms/icons/20/CheckmarkFilled.svg?react';
 
 type CopiedToClipboardDialogState = {
     triggerCopiedToClipboardDialog: (textToCopy: string) => void;

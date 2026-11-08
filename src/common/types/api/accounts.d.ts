@@ -5,16 +5,6 @@
 declare global {
     namespace API {
         namespace Accounts {
-            namespace TokenSale {
-                namespace registerForSale { 
-                    type Request = {
-                        email: string;
-                        referredBy?: string;
-                    };
-                    type Response = void;
-                }
-            }
-
             namespace Farcaster {
                 namespace verifyLogin {
                     type Request = {

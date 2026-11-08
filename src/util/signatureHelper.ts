@@ -3,7 +3,13 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import type { Address, SignableSecret, SignedData } from 'common/types';
-import { type ethers } from "ethers";
+// Plain EIP-1193, as injected by MetaMask (or returned by its SDK). This used
+// to hold an ethers 5 `Web3Provider`, whose only use was `.send()` — i.e.
+// `request()` under a different name.
+type Eip1193Provider = {
+  request: (args: { method: string; params?: unknown[] }) => Promise<any>;
+  on?: (event: string, listener: (...args: any[]) => void) => void;
+};
 import config from '../common/config';
 
 // MetaMask
@@ -16,7 +22,7 @@ class SignatureHelper {
   private metamaskAccount: Address | undefined;
   private metamaskChainId: number = 0;
   private metamaskAccountListeners = new Set<(data: MetamaskData) => void>();
-  private provider: ethers.providers.Web3Provider | undefined | null = undefined;
+  private provider: Eip1193Provider | undefined | null = undefined;
   
   constructor() {
     this.metamaskAccount = (window as any).ethereum?.selectedAddress || undefined;
@@ -29,13 +35,12 @@ class SignatureHelper {
   }
 
   public async connectMetamask() {
-      let provider = window.ethereum;
-      // if ((!provider || !provider.isBraveWallet)) { // && !(navigator.userAgent.includes('Firefox'))) {
-        // try to get it by sdk  
-        const metaMaskSDKModule = await import("@metamask/sdk");
-        const metamaskSDK = new metaMaskSDKModule.default();
-        provider = metamaskSDK.getProvider(); // You can also access via window.ethereum
-      // }
+      // This used to instantiate `@metamask/sdk` and take its `getProvider()`,
+      // then require it to be identical to `window.ethereum` — every path where
+      // it was not threw below. So the SDK could only ever hand back what
+      // `window.ethereum` already was, and the dependency (0.1.0, deprecated
+      // and superseded by MetaMask Connect) is gone with the wagmi 2 migration.
+      const provider = window.ethereum;
       if (provider) {
         const metamask: any = (window as any).ethereum;
         if (metamask === provider) {
@@ -46,8 +51,7 @@ class SignatureHelper {
             this.notifyListeners();
 
             if (!this.provider) {
-              const ethers = await import('ethers');
-              this.provider = new ethers.providers.Web3Provider(metamask);
+              this.provider = metamask as Eip1193Provider;
               metamask.on("accountsChanged", (accounts: string[]) => {
                 if (accounts && accounts.length > 0) {
                   this.metamaskAccount = accounts[0].toLowerCase() as Address;
@@ -108,7 +112,10 @@ class SignatureHelper {
       throw new Error("Given account not provided by metamask");
     }
     try {
-      const signature: string = await this.provider.send("eth_signTypedData_v4", [this.metamaskAccount, JSON.stringify(data)]);
+      const signature: string = await this.provider.request({
+        method: "eth_signTypedData_v4",
+        params: [this.metamaskAccount, JSON.stringify(data)],
+      });
       return { data, signature };
     } catch (e) {
       let message = !!e ? (e as any).message : "Metamask sign account failed";

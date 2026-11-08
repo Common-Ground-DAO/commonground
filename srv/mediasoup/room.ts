@@ -4,15 +4,14 @@
 
 import protoo, { AcceptFn, Peer, ProtooRequest, RejectFn } from 'protoo-server';
 import { mediasoupConfig } from './config';
-import { ActiveSpeakerObserver, AudioLevelObserver, Consumer, Producer, Router, WebRtcServer, WebRtcTransport, Worker } from 'mediasoup/node/lib/types';
+import { ActiveSpeakerObserver, AudioLevelObserver, Consumer, Producer, Router, WebRtcServer, WebRtcTransport, Worker } from 'mediasoup/types';
 import Logger from './logger';
-import { randomString } from '../util';
 import validators from '../validators';
-import deviceHelper from '../repositories/device';
 import errors from '../common/errors';
 import callHelper from '../repositories/calls';
 import { CallType } from '../common/enums';
-const EventEmitter = require('events').EventEmitter;
+import { EventEmitter } from 'events';
+import { authorizeProduce } from './mediaPermissions';
 
 const logger = new Logger('Room');
 /**
@@ -58,18 +57,26 @@ export default class Room extends EventEmitter {
         // Create a mediasoup Router.
         const mediasoupRouter = await mediasoupWorker.createRouter({ mediaCodecs });
 
-        // Create a mediasoup AudioLevelObserver.
-        const audioLevelObserver = await mediasoupRouter.createAudioLevelObserver(
-            {
-                maxEntries: 1,
-                threshold: -50,
-                interval: 500
-            });
+        let audioLevelObserver: AudioLevelObserver;
+        let activeSpeakerObserver: ActiveSpeakerObserver;
+        try {
+            // Create a mediasoup AudioLevelObserver.
+            audioLevelObserver = await mediasoupRouter.createAudioLevelObserver(
+                {
+                    maxEntries: 1,
+                    threshold: -50,
+                    interval: 500
+                });
 
-        // Create a mediasoup ActiveSpeakerObserver.
-        const activeSpeakerObserver = await mediasoupRouter.createActiveSpeakerObserver(
-            { interval: 2500 }
-        );
+            // Create a mediasoup ActiveSpeakerObserver.
+            activeSpeakerObserver = await mediasoupRouter.createActiveSpeakerObserver(
+                { interval: 2500 }
+            );
+        } catch (error) {
+            // closing the Router also closes any observer created on it
+            mediasoupRouter.close();
+            throw error;
+        }
 
         const room = new Room(
             {
@@ -87,8 +94,6 @@ export default class Room extends EventEmitter {
                 audioOnly,
                 highQuality
             });
-        console.log('ROOM CREATED WITH X BROADCASTERS SLOTS: ')
-        console.log(stageSlots);
         return room;
     }
     
@@ -183,17 +188,33 @@ export default class Room extends EventEmitter {
      * Closes the Room instance by closing the protoo Room and the mediasoup Router.
      */
     close(options?: { force: boolean }) {
+        // Reentrancy guard: the peer 'close' handler can reach both the
+        // "last peer left" and "last broadcaster left" branches in the same
+        // pass, which would otherwise close the protoo Room and mediasoup
+        // Router twice and emit 'close'/'forceClose' twice.
+        if (this._closed) {
+            return;
+        }
+
         logger.debug('close()');
 
         this._closed = true;
 
         this._broadCasters = new Map();
 
-        // Close the protoo Room.
-        this._protooRoom.close();
-
-        // Close the mediasoup Router.
-        this._mediasoupRouter.close();
+        // Close the protoo Room and the mediasoup Router. A failure here must
+        // not keep the 'close'/'forceClose' event below from being emitted:
+        // its listener ends the call.
+        try {
+            this._protooRoom.close();
+        } catch (error) {
+            logger.error('protooRoom.close() failed [roomId:%s]:%o', this._roomId, error);
+        }
+        try {
+            this._mediasoupRouter.close();
+        } catch (error) {
+            logger.error('mediasoupRouter.close() failed [roomId:%s]:%o', this._roomId, error);
+        }
 
         // Emit 'close' event.
         if (options?.force) {
@@ -203,24 +224,31 @@ export default class Room extends EventEmitter {
         }
     }
 
-    logStatus() {
-        logger.info(
-            'logStatus() [roomId:%s, protoo Peers:%s]',
-            this._roomId,
-            this._protooRoom.peers.length
-        );
+    /**
+     * Closes the room if no connection is attached to it, e.g. when the
+     * connection that caused its creation went away before it was attached.
+     */
+    closeIfEmpty() {
+        if (this._protooRoom.peers.length === 0) {
+            this.close();
+        }
     }
 
     /**
-     * Called from mediasoup.ts upon a protoo WebSocket connection request from a
-     * browser.
+     * Called from mediasoup.ts once a protoo WebSocket connection has logged
+     * in as `peerId` (see connectionGate.ts). An existing peer with the same
+     * id is the same user's previous connection and is replaced.
      */
     async handleProtooConnection({ peerId, consume, protooWebSocketTransport }: { peerId: string, consume: boolean, protooWebSocketTransport: protoo.WebSocketTransport }) {
+        if (this._closed || protooWebSocketTransport.closed) {
+            throw new Error('connection or room already closed');
+        }
+
         const existingPeer = this._protooRoom.getPeer(peerId);
 
         if (existingPeer) {
-            logger.error(
-                'handleProtooConnection() | there is already a protoo Peer with same peerId, closing it [peerId:%s]',
+            logger.warn(
+                'handleProtooConnection() | replacing the previous connection of this peer [peerId:%s]',
                 peerId);
 
             existingPeer.close();
@@ -245,7 +273,7 @@ export default class Room extends EventEmitter {
         peer.data.displayName = undefined;
         peer.data.device = undefined;
         peer.data.rtpCapabilities = undefined;
-        peer.data._cgAuth = false;
+        peer.data._cgAuth = true;
         peer.data.membershipId = '';
 
         // Have mediasoup related maps ready even before the Peer joins since we
@@ -274,11 +302,26 @@ export default class Room extends EventEmitter {
                 return;
 
             logger.debug('protoo Peer "close" event [peerId:%s]', peer.id);
-            if (!!peer.data.membershipId) {
-                callHelper.callMemberLeave(peer.data.membershipId);
+
+            // Each step below is guarded on its own: a database error or a
+            // notification to a peer whose connection closes at the same
+            // moment (everyone leaving at the end of a broadcast) must not
+            // skip the remaining steps, least of all the checks at the end
+            // that close the room. Closing the room is what ends the call
+            // (`softEndCall` in mediasoup.ts).
+            try {
+                if (!!peer.data.membershipId) {
+                    await callHelper.callMemberLeave(peer.data.membershipId);
+                }
+            } catch (error) {
+                logger.error('callMemberLeave() failed [peerId:%s]:%o', peer.id, error);
             }
-            //remove peer from db table callmembers
-            callHelper.updateCallPreviewIds(this._roomId, this._getJoinedPeers().map(peer => peer.id));
+            try {
+                //remove peer from db table callmembers
+                await callHelper.updateCallPreviewIds(this._roomId, this._getJoinedPeers().map(peer => peer.id));
+            } catch (error) {
+                logger.error('updateCallPreviewIds() failed [roomId:%s]:%o', this._roomId, error);
+            }
 
             // If the Peer was joined, notify all Peers.
             if (peer.data.joined) {
@@ -287,13 +330,15 @@ export default class Room extends EventEmitter {
                     if (this._broadCasters.get(peer.id)) {
                         this._broadCasters.delete(peer.id);
                         for (const otherPeer of this._getJoinedPeers(peer)) {
-                            await otherPeer.notify('demotedBroadcaster', { peerId: peer.id });
+                            otherPeer.notify('demotedBroadcaster', { peerId: peer.id })
+                                .catch(() => { });
                         }
                     }
                     if (this._handsRaised.get(peer.id)) {
                         this._handsRaised.delete(peer.id);
                         for (const otherPeer of this._getJoinedPeers(peer)) {
-                            await otherPeer.notify('loweredHand', { peerId: peerId });
+                            otherPeer.notify('loweredHand', { peerId: peer.id })
+                                .catch(() => { });
                         }
                     }
                 }
@@ -306,7 +351,11 @@ export default class Room extends EventEmitter {
             // Iterate and close all mediasoup Transport associated to this Peer, so all
             // its Producers and Consumers will also be closed.
             for (const transport of peer.data.transports.values()) {
-                transport.close();
+                try {
+                    transport.close();
+                } catch (error) {
+                    logger.error('transport.close() failed [peerId:%s]:%o', peer.id, error);
+                }
             }
 
             // If this is the latest Peer in the room, close the room.
@@ -393,44 +442,12 @@ export default class Room extends EventEmitter {
      * @async
      */
     async _handleProtooRequest(peer: Peer, request: ProtooRequest, accept: AcceptFn, reject: RejectFn) {
-        if (
-            !peer.data._cgAuth &&
-            !(request.method === 'getSignableSecret' || request.method === 'login')
-        ) {
+        // Connections only reach a room after logging in (connectionGate.ts).
+        if (!peer.data._cgAuth) {
             throw new Error(errors.server.LOGIN_REQUIRED);
         }
 
         switch (request.method) {
-            case 'getSignableSecret':
-                {
-                    const secret = randomString(20);
-                    peer.data._cgSecret = secret;
-                    accept(secret);
-
-                    break;
-                }
-
-            case 'login':
-                {
-                    const signableSecret = peer.data._cgSecret as string | undefined;
-                    let data: API.Socket.login.Request = request.data;
-                    data = await validators.API.Socket.login.validateAsync(data);
-                    if (!!signableSecret && signableSecret === data.secret) {
-                        const { userId } = await deviceHelper.verifyDeviceAndGetUserId(data.deviceId, signableSecret, data.base64Signature);
-                        delete peer.data._cgSecret;
-                        if (peer.id !== userId) {
-                            accept("ERROR");
-                        }
-                        peer.data._cgAuth = true;
-                        accept("OK");
-
-                    } else {
-                        accept("ERROR");
-                    }
-
-                    break;
-                }
-
             case 'getRouterRtpCapabilities':
                 {
                     accept(this._mediasoupRouter.rtpCapabilities);
@@ -443,6 +460,8 @@ export default class Room extends EventEmitter {
                     // Ensure the Peer is not already joined.
                     if (peer.data.joined)
                         throw new Error('Peer already joined');
+
+                    const data = await validators.API.Mediasoup.join.validateAsync(request.data);
 
                     await this.hasJoinPermissions(peer.id);
 
@@ -476,7 +495,7 @@ export default class Room extends EventEmitter {
                         displayName,
                         device,
                         rtpCapabilities
-                    } = request.data;
+                    } = data;
 
                     // Store client data into the protoo Peer data object.
                     peer.data.joined = true;
@@ -553,13 +572,31 @@ export default class Room extends EventEmitter {
             case 'createWebRtcTransport':
                 {
                     // NOTE: Don't require that the Peer is joined here, so the client can
-                    // initiate mediasoup Transports and be ready when he later joins.é sex
+                    // initiate mediasoup Transports and be ready when he later joins.
+
+                    const data = await validators.API.Mediasoup.createWebRtcTransport.validateAsync(request.data);
 
                     const {
                         forceTcp,
                         producing,
                         consuming,
-                    } = request.data;
+                    } = data;
+
+                    // A peer needs at most one producing and one consuming
+                    // transport. Close any existing transport of the same
+                    // direction first: this closes the old server-side transport
+                    // on a reconnect instead of leaking it, and combined with the
+                    // hard cap below it bounds per-peer transports to two so a
+                    // client cannot exhaust the worker by looping this request.
+                    for (const existing of peer.data.transports.values()) {
+                        if (existing.appData.producing === producing && existing.appData.consuming === consuming) {
+                            existing.close();
+                            peer.data.transports.delete(existing.id);
+                        }
+                    }
+                    if (peer.data.transports.size >= 2) {
+                        throw new Error('transport limit exceeded');
+                    }
 
                     const webRtcTransportOptions =
                     {
@@ -595,12 +632,17 @@ export default class Room extends EventEmitter {
                             transport.id, trace.type, trace);
 
                         if (trace.type === 'bwe' && trace.direction === 'out') {
+                            const info = trace.info as {
+                                desiredBitrate: number;
+                                effectiveDesiredBitrate: number;
+                                availableBitrate: number;
+                            };
                             peer.notify(
                                 'downlinkBwe',
                                 {
-                                    desiredBitrate: trace.info.desiredBitrate,
-                                    effectiveDesiredBitrate: trace.info.effectiveDesiredBitrate,
-                                    availableBitrate: trace.info.availableBitrate
+                                    desiredBitrate: info.desiredBitrate,
+                                    effectiveDesiredBitrate: info.effectiveDesiredBitrate,
+                                    availableBitrate: info.availableBitrate
                                 })
                                 .catch((error) => {
                                     logger.error(error)
@@ -625,7 +667,7 @@ export default class Room extends EventEmitter {
 
             case 'connectWebRtcTransport':
                 {
-                    const { transportId, dtlsParameters } = request.data;
+                    const { transportId, dtlsParameters } = await validators.API.Mediasoup.connectWebRtcTransport.validateAsync(request.data);
                     const transport: WebRtcTransport = peer.data.transports.get(transportId);
 
                     if (!transport)
@@ -641,7 +683,7 @@ export default class Room extends EventEmitter {
 
             case 'restartIce':
                 {
-                    const { transportId } = request.data;
+                    const { transportId } = await validators.API.Mediasoup.restartIce.validateAsync(request.data);
                     const transport = peer.data.transports.get(transportId);
 
                     if (!transport)
@@ -660,16 +702,23 @@ export default class Room extends EventEmitter {
                     if (!peer.data.joined)
                         throw new Error('Peer not yet joined');
 
-                    const { transportId, kind, rtpParameters } = request.data;
-                    let { appData } = request.data;
+                    const produceData = await validators.API.Mediasoup.produce.validateAsync(request.data);
+                    const { transportId, kind, rtpParameters } = produceData;
+                    let { appData } = produceData;
                     const transport = peer.data.transports.get(transportId);
 
-                    if (this._callType === CallType.BROADCAST) {
-                        // check whether the peer is broadcaster
-                        if (!this._broadCasters.get(peer.id)) {
-                            throw new Error(errors.server.BROADCASTERS_LIMIT_EXCEEDED);
-                        }
-                    }
+                    // audio-only, the broadcast stage, then the peer's call
+                    // permission for the kind (mediaPermissions.ts)
+                    await authorizeProduce(
+                        {
+                            callType: this._callType,
+                            audioOnly: this._audioOnly,
+                            isBroadcaster: !!this._broadCasters.get(peer.id),
+                        },
+                        kind,
+                        appData,
+                        (permission, onStage) => callHelper.hasPermissionToSendMedia(peer.id, this._roomId, permission, onStage),
+                    );
 
                     if (!transport)
                         throw new Error(`transport with id "${transportId}" not found`);
@@ -753,7 +802,7 @@ export default class Room extends EventEmitter {
                     if (!peer.data.joined)
                         throw new Error('Peer not yet joined');
 
-                    const { producerId } = request.data;
+                    const { producerId } = await validators.API.Mediasoup.closeProducer.validateAsync(request.data);
                     const producer = peer.data.producers.get(producerId);
 
                     if (!producer)
@@ -776,7 +825,7 @@ export default class Room extends EventEmitter {
                     if (!peer.data.joined)
                         throw new Error('Peer not yet joined');
 
-                    const { producerId } = request.data;
+                    const { producerId } = await validators.API.Mediasoup.pauseProducer.validateAsync(request.data);
                     const producer = peer.data.producers.get(producerId);
 
                     if (!producer)
@@ -795,7 +844,7 @@ export default class Room extends EventEmitter {
                     if (!peer.data.joined)
                         throw new Error('Peer not yet joined');
 
-                    const { producerId } = request.data;
+                    const { producerId } = await validators.API.Mediasoup.resumeProducer.validateAsync(request.data);
                     const producer = peer.data.producers.get(producerId);
 
                     if (!producer)
@@ -815,7 +864,7 @@ export default class Room extends EventEmitter {
                     if (!peer.data.joined)
                         throw new Error('Peer not yet joined');
 
-                    const { consumerId } = request.data;
+                    const { consumerId } = await validators.API.Mediasoup.pauseConsumer.validateAsync(request.data);
                     const consumer = peer.data.consumers.get(consumerId);
 
                     if (!consumer)
@@ -835,7 +884,7 @@ export default class Room extends EventEmitter {
                     if (!peer.data.joined)
                         throw new Error('Peer not yet joined');
 
-                    const { consumerId } = request.data;
+                    const { consumerId } = await validators.API.Mediasoup.resumeConsumer.validateAsync(request.data);
                     const consumer = peer.data.consumers.get(consumerId);
 
                     if (!consumer)
@@ -855,7 +904,7 @@ export default class Room extends EventEmitter {
                     if (!peer.data.joined)
                         throw new Error('Peer not yet joined');
 
-                    const { consumerId, spatialLayer, temporalLayer } = request.data;
+                    const { consumerId, spatialLayer, temporalLayer } = await validators.API.Mediasoup.setConsumerPreferredLayers.validateAsync(request.data);
                     const consumer = peer.data.consumers.get(consumerId);
 
                     if (!consumer)
@@ -874,7 +923,7 @@ export default class Room extends EventEmitter {
                     if (!peer.data.joined)
                         throw new Error('Peer not yet joined');
 
-                    const { consumerId, priority } = request.data;
+                    const { consumerId, priority } = await validators.API.Mediasoup.setConsumerPriority.validateAsync(request.data);
                     const consumer = peer.data.consumers.get(consumerId);
 
                     if (!consumer)
@@ -890,7 +939,7 @@ export default class Room extends EventEmitter {
 
             case 'promoteBroadcaster':
                 {
-                    const { promotedPeerId } = request.data;
+                    const { promotedPeerId } = await validators.API.Mediasoup.promoteBroadcaster.validateAsync(request.data);
 
                     if (!peer.data.joined)
                         throw new Error('Peer not yet joined');
@@ -919,7 +968,7 @@ export default class Room extends EventEmitter {
                 }
                 case 'demoteBroadcaster':
                     {
-                        const { demotedPeerId } = request.data;
+                        const { demotedPeerId } = await validators.API.Mediasoup.demoteBroadcaster.validateAsync(request.data);
 
                         if (!peer.data.joined)
                             throw new Error('Peer not yet joined');
@@ -927,6 +976,27 @@ export default class Room extends EventEmitter {
                         await this.hasModeratePermissions(peer.id);
 
                         this._broadCasters.delete(demotedPeerId);
+                        // Drop any raised-hand state for the demoted peer.
+                        this._handsRaised.delete(demotedPeerId);
+
+                        // Enforce the demotion server-side: close the demoted
+                        // peer's producers and their producing transport so a
+                        // client that ignores the demotedBroadcaster
+                        // notification can no longer keep publishing media.
+                        const demotedPeer = this._protooRoom.getPeer(demotedPeerId);
+                        if (demotedPeer) {
+                            for (const producer of demotedPeer.data.producers.values()) {
+                                producer.close();
+                                demotedPeer.data.producers.delete(producer.id);
+                            }
+                            for (const transport of demotedPeer.data.transports.values()) {
+                                if (transport.appData.producing) {
+                                    transport.close();
+                                    demotedPeer.data.transports.delete(transport.id);
+                                }
+                            }
+                        }
+
                         const allPeers = this._getJoinedPeers(peer);
                         if (demotedPeerId === peer.id) {
                             await peer.notify('demotedBroadcaster', { peerId: demotedPeerId });
@@ -956,16 +1026,18 @@ export default class Room extends EventEmitter {
 
             case 'raiseHand':
                 {
-                    const { peerId } = request.data;
+                    // Validate the shape, but bind the acted-on peerId to the
+                    // caller's own id: a peer may only raise its own hand.
+                    await validators.API.Mediasoup.raiseHand.validateAsync(request.data);
 
                     if (!peer.data.joined)
                         throw new Error('Peer not yet joined');
 
-                    this._handsRaised.set(peerId, peerId);
+                    this._handsRaised.set(peer.id, peer.id);
 
                     const allPeers = this._getJoinedPeers(peer);
                     for (const otherPeer of allPeers) {
-                        await otherPeer.notify('raisedHand', { peerId: peerId });
+                        await otherPeer.notify('raisedHand', { peerId: peer.id });
                     }
                     accept({success : true});
                     break;
@@ -973,23 +1045,25 @@ export default class Room extends EventEmitter {
 
             case 'lowerHand':
                 {
-                    const { peerId } = request.data;
+                    // A peer may only lower its own hand; moderators lower other
+                    // peers' hands through promoteBroadcaster instead.
+                    await validators.API.Mediasoup.lowerHand.validateAsync(request.data);
 
                     if (!peer.data.joined)
                         throw new Error('Peer not yet joined');
 
-                    this._handsRaised.delete(peerId);
+                    this._handsRaised.delete(peer.id);
 
                     const allPeers = this._getJoinedPeers(peer);
                     for (const otherPeer of allPeers) {
-                        await otherPeer.notify('loweredHand', { peerId: peerId });
+                        await otherPeer.notify('loweredHand', { peerId: peer.id });
                     }
                     accept({success : true});
                     break;
                 }
 
             case 'moderationMute': {
-                const { mutedPeerId } = request.data;
+                const { mutedPeerId } = await validators.API.Mediasoup.moderationMute.validateAsync(request.data);
 
                 await this.hasModeratePermissions(peer.id);
 
@@ -1001,22 +1075,24 @@ export default class Room extends EventEmitter {
                     throw new Error('Peer not yet joined');
                 }
 
-                this._getJoinedPeers().forEach(async (otherPeer) => {
+                for (const otherPeer of this._getJoinedPeers()) {
                     if (otherPeer.id === mutedPeerId) {
-                        otherPeer.data.producers.forEach(async (producer: Producer) => {
+                        for (const producer of otherPeer.data.producers.values()) {
                             if (producer.kind === 'audio') {
                                 await producer.pause();
                             }
-                        });
-                        otherPeer.notify('moderationMuted');
+                        }
+                        await otherPeer.notify('moderationMuted');
                     }
-                });
+                }
                 accept({success : true});
                 break;
             }
 
             case "peerReaction": {
-                const { peerId, reaction } = request.data;
+                // Validate the shape, but bind the broadcast peerId to the
+                // caller's own id: a peer may only react as itself.
+                const { reaction } = await validators.API.Mediasoup.peerReaction.validateAsync(request.data);
 
                 if (!peer.data.joined) {
                     throw new Error('Peer not yet joined');
@@ -1027,9 +1103,9 @@ export default class Room extends EventEmitter {
                     accept({success : true});
                     break;
                 } else {
-                    this._getJoinedPeers().forEach(async (otherPeer) => {
-                        await otherPeer.notify('reactionReceived', { peerId, reaction });
-                    });
+                    for (const otherPeer of this._getJoinedPeers()) {
+                        await otherPeer.notify('reactionReceived', { peerId: peer.id, reaction });
+                    }
                     peer.data.reactionBlacklist.add(reaction);
                     //remove reaction after 200ms
                     setTimeout(() => {
@@ -1225,21 +1301,19 @@ export default class Room extends EventEmitter {
         }
     }
 
+    /** The call creator included (`hasPermissionToModerateCall`), unless banned. */
     private async hasModeratePermissions(peerId: string) {
-        if (peerId !== this._callCreator) {
-            const hasPermission = await callHelper.hasPermissionToModerateCall(peerId, this._roomId);
-            if (!hasPermission) {
-                throw new Error(errors.server.NOT_ALLOWED);
-            }
+        const hasPermission = await callHelper.hasPermissionToModerateCall(peerId, this._roomId);
+        if (!hasPermission) {
+            throw new Error(errors.server.NOT_ALLOWED);
         }
     }
 
+    /** The call creator included (`hasPermissionToJoinCall`), unless banned. */
     private async hasJoinPermissions(peerId: string) {
-        if (peerId !== this._callCreator) {
-            const hasPermission = await callHelper.hasPermissionToJoinCall(peerId, this._roomId);
-            if (!hasPermission) {
-                throw new Error(errors.server.NOT_ALLOWED);
-            }
+        const hasPermission = await callHelper.hasPermissionToJoinCall(peerId, this._roomId);
+        if (!hasPermission) {
+            throw new Error(errors.server.NOT_ALLOWED);
         }
     }
 
@@ -1254,5 +1328,3 @@ export default class Room extends EventEmitter {
         }
     }
 }
-
-module.exports = Room;

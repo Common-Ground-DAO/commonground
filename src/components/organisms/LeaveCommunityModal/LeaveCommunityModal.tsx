@@ -2,11 +2,12 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import Button from "../../../components/atoms/Button/Button";
 import Modal from "../../atoms/Modal/Modal";
 
-import { ReactComponent as CheckmarkFilledIcon } from '../../../components/atoms/icons/20/CheckmarkFilled.svg';
-import { ReactComponent as CloseIcon } from '../../../components/atoms/icons/16/Close-1.svg';
+import CheckmarkFilledIcon from '../../../components/atoms/icons/20/CheckmarkFilled.svg?react';
+import CloseIcon from '../../../components/atoms/icons/16/Close-1.svg?react';
 import Dialog, { DialogRefHandle } from "../../molecules/Dialog/Dialog";
 import { useRef } from "react";
 import { useLoadedCommunityContext } from "context/CommunityProvider";
@@ -30,7 +31,7 @@ export default function LeaveCommunityModal(props: Props) {
       showSnackbar({type: 'info', text: `You left ${community.title}`});
     }
 
-    const content: JSX.Element | null = open ? (
+    const content: React.JSX.Element | null = open ? (
       <Modal headerText={`Leave ${community.title}`} close={onClose}>
         <div className="modal-inner">
           <p>Are you sure you want to leave {community.title}? You will lose roles and any member status you have earned, but may rejoin at any time.</p>

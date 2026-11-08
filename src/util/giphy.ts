@@ -3,9 +3,11 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { GiphyFetch } from "@giphy/js-fetch-api";
-
-const APIKEY = 'ir89rjdyvl6GNuHNHO71QldCPQzSAjI4';
+import config from "../common/config";
 
 // use @giphy/js-fetch-api to fetch gifs
 // apply for a new Web SDK key. Use a separate key for every platform (Android, iOS, Web)
-export const gf = new GiphyFetch(APIKEY);
+// self-hosted instances configure their own key (or none — the picker is
+// hidden then); the default key is CG's
+export const giphyEnabled = !!config.GIPHY_API_KEY;
+export const gf = new GiphyFetch(config.GIPHY_API_KEY || 'disabled');

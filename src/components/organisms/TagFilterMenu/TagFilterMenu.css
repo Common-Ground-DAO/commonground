@@ -1,0 +1,9 @@
+.tag-filter-menu {
+    width: 100%;
+    padding: 0 !important;
+    height: min(calc(var(--visualHeight) - 50px), 600px);
+
+    &.desktop {
+        max-width: 400px !important;
+    }
+}

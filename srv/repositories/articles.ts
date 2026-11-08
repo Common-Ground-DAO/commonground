@@ -7,11 +7,63 @@ import errors from "../common/errors";
 import format from "pg-format";
 import communityHelper from "./communities";
 import emailHelper from "./emails";
-import emailUtils from "../api/emails";
 import { rolePermissionPresets } from "../common/presets";
 import pool from "../util/postgres";
 import { type Pool, type PoolClient } from "pg";
 import config from "../common/config";
+
+/* Article-list pagination helpers (shared by community + user article lists).
+ *
+ * The list is ordered by the selected timestamp field (published or updatedAt),
+ * so pages must always break ties by articleId in the same direction — otherwise
+ * a page boundary inside a group sharing a timestamp duplicates or omits rows.
+ * A supplied cursor id turns the matching timestamp bound into a tuple predicate
+ * so paging continues strictly after the cursor item. `alias` is the article
+ * table alias whose "articleId"/"published"/"updatedAt" columns are used ("ca"
+ * for community articles, "ua" for user articles). */
+
+type ArticleListCursorData = {
+  orderBy?: 'updatedAt' | 'published';
+  order?: 'ASC' | 'DESC';
+  publishedBefore?: string;
+  publishedAfter?: string;
+  updatedBefore?: string;
+  updatedAfter?: string;
+  beforeId?: string | null;
+  afterId?: string | null;
+};
+
+function articleListTimeClauses(alias: string, data: ArticleListCursorData): string {
+  const orderByPublished = data.orderBy !== 'updatedAt';
+  const desc = data.order !== 'ASC';
+  const idCol = `${alias}."articleId"`;
+
+  const clause = (col: string, op: '<' | '>', value: string, id: string | null | undefined): string =>
+    id
+      ? format(`AND (${col} ${op} %L::timestamptz OR (${col} = %L::timestamptz AND ${idCol} ${op} %L::UUID))`, value, value, id)
+      : format(`AND ${col} ${op} %L::timestamptz`, value);
+
+  const parts: string[] = [];
+  if (data.publishedAfter) {
+    parts.push(clause(`${alias}."published"`, '>', data.publishedAfter, orderByPublished && !desc ? data.afterId : null));
+  }
+  if (data.publishedBefore) {
+    parts.push(clause(`${alias}."published"`, '<', data.publishedBefore, orderByPublished && desc ? data.beforeId : null));
+  }
+  if (data.updatedAfter) {
+    parts.push(clause(`${alias}."updatedAt"`, '>', data.updatedAfter, !orderByPublished && !desc ? data.afterId : null));
+  }
+  if (data.updatedBefore) {
+    parts.push(clause(`${alias}."updatedAt"`, '<', data.updatedBefore, !orderByPublished && desc ? data.beforeId : null));
+  }
+  return parts.join('\n      ');
+}
+
+function articleListOrderBy(alias: string, data: { orderBy?: 'updatedAt' | 'published'; order?: 'ASC' | 'DESC' }): string {
+  const col = data.orderBy === 'updatedAt' ? `${alias}."updatedAt"` : `${alias}."published"`;
+  const dir = data.order === 'ASC' ? 'ASC' : 'DESC';
+  return `${col} ${dir}, ${alias}."articleId" ${dir}`;
+}
 
 /* Community Content Retrieval */
 
@@ -44,6 +96,8 @@ async function _getCommunityArticleSocialPreviewData(
         AND ca."articleId" = carp."articleId"
     INNER JOIN roles r
       ON carp."roleId" = r."id"
+      AND r."deletedAt" IS NULL
+      AND r."communityId" = ca."communityId"
     INNER JOIN articles a
       ON carp."articleId" = a."id"
     INNER JOIN communities c
@@ -105,12 +159,14 @@ async function _getCommunityArticleList(
             SELECT JSON_BUILD_OBJECT(
               'roleId', r2."id",
               'roleTitle', r2."title",
+              'roleType', r2."type",
               'permissions', carp2."permissions"
             ) AS "item"
             FROM communities_articles_roles_permissions carp2
             INNER JOIN roles r2
                 ON r2."id" = carp2."roleId"
                 AND r2."deletedAt" IS NULL
+                AND r2."communityId" = carp2."communityId"
             WHERE ca."communityId" = carp2."communityId"
               AND ca."articleId" = carp2."articleId"
           ) sub
@@ -145,6 +201,7 @@ async function _getCommunityArticleList(
     INNER JOIN roles r
       ON carp."roleId" = r."id"
       AND r."deletedAt" IS NULL
+      AND r."communityId" = ca."communityId"
     INNER JOIN articles a
       ON carp."articleId" = a."id"
     INNER JOIN communities c
@@ -159,7 +216,7 @@ async function _getCommunityArticleList(
     ) cpr ON TRUE
     ${!!userId
       ? `LEFT JOIN roles_users_users ruu
-           ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)`
+           ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ruu."userId" = ${format("%L::UUID", userId)})`
       : ''}
     WHERE (
         (
@@ -193,29 +250,25 @@ async function _getCommunityArticleList(
         ArticlePermission.ARTICLE_PREVIEW
       )}
       ${!!data.tags && data.tags.length > 0
-        ? format('AND a."tags" @> ARRAY[%L]::text[]', data.tags) 
+        ? format('AND a."tags" @> ARRAY[%L]::text[]', data.tags)
         : ''}
       ${!!data.anyTags && data.anyTags.length > 0
         ? format('AND a."tags" && ARRAY[%L]::text[]', data.anyTags)
         : ''
       }
-      ${!!data.publishedAfter
-        ? format('AND ca."published" > %L::timestamptz', data.publishedAfter)
+      ${!!data.communityTags && data.communityTags.length > 0
+        ? format('AND c."tags" @> ARRAY[%L]::varchar[]', data.communityTags)
         : ''}
-      ${!!data.publishedBefore
-        ? format('AND ca."published" < %L::timestamptz', data.publishedBefore)
-        : ''}
-      ${!!data.updatedAfter
-        ? format('AND ca."updatedAt" > %L::timestamptz', data.updatedAfter)
-        : ''}
-      ${!!data.updatedBefore
-        ? format('AND ca."updatedAt" < %L::timestamptz', data.updatedBefore)
-        : ''}
+      ${!!data.anyCommunityTags && data.anyCommunityTags.length > 0
+        ? format('AND c."tags" && ARRAY[%L]::varchar[]', data.anyCommunityTags)
+        : ''
+      }
+      ${articleListTimeClauses('ca', data)}
       ${!!data.ids
         ? `AND ca."articleId" = ANY(ARRAY[${format('%L', data.ids)}]::UUID[])`
         : ''}
     GROUP BY ca."articleId", ca."communityId", a."id"
-    ORDER BY ${'orderBy' in data ? format('ca.%I', data.orderBy) : 'ca."published"'} ${data.order === 'ASC' ? 'ASC' : 'DESC'}
+    ORDER BY ${articleListOrderBy('ca', data)}
     LIMIT ${+data.limit}
   `;
 
@@ -265,6 +318,8 @@ async function _getCommunityArticleListForEmails(
         AND ca."articleId" = carp."articleId"
     INNER JOIN roles r
       ON carp."roleId" = r."id"
+      AND r."deletedAt" IS NULL
+      AND r."communityId" = ca."communityId"
     INNER JOIN articles a
       ON carp."articleId" = a."id"
     INNER JOIN communities c
@@ -279,7 +334,7 @@ async function _getCommunityArticleListForEmails(
     ) cpr ON TRUE
     ${!!userId
       ? `LEFT JOIN roles_users_users ruu
-           ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)`
+           ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ruu."userId" = ${format("%L::UUID", userId)})`
       : ''}
     WHERE (
         (
@@ -353,12 +408,14 @@ async function _getCommunityArticleDetailView(
             SELECT JSON_BUILD_OBJECT(
               'roleId', r2."id",
               'roleTitle', r2."title",
+              'roleType', r2."type",
               'permissions', carp2."permissions"
             ) AS "item"
             FROM communities_articles_roles_permissions carp2
             INNER JOIN roles r2
                 ON r2."id" = carp2."roleId"
                 AND r2."deletedAt" IS NULL
+                AND r2."communityId" = carp2."communityId"
             WHERE ca."communityId" = carp2."communityId"
               AND ca."articleId" = carp2."articleId"
           ) sub
@@ -394,17 +451,18 @@ async function _getCommunityArticleDetailView(
     INNER JOIN roles r
       ON carp."roleId" = r."id"
       AND r."deletedAt" IS NULL
+      AND r."communityId" = ca."communityId"
     INNER JOIN articles a
       ON carp."articleId" = a."id"
     ${!!userId
       ? `LEFT JOIN roles_users_users ruu
-          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)`
+          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ruu."userId" = ${format("%L::UUID", userId)})`
       : ''}
     WHERE (
         ${!!userId
           ? format('ruu."userId" = %L::UUID OR', userId)
           : ''}
-        r."title" = ${format("%L", PredefinedRole.Public)}
+        (r."title" = ${format("%L", PredefinedRole.Public)} AND r."type" = ${format("%L", RoleType.PREDEFINED)})
       )
       AND ca."deletedAt" IS NULL
       AND ca."communityId" = $1
@@ -483,9 +541,10 @@ async function _createCommunityArticle(
     INSERT INTO communities_articles (
       "communityId",
       "articleId",
-      "url"
-    ) VALUES ($8, (SELECT "id" FROM insert_article), $9)
-    RETURNING "updatedAt", "articleId", (SELECT "id" FROM insert_channel) AS "channelId"
+      "url",
+      "published"
+    ) VALUES ($8, (SELECT "id" FROM insert_article), $9, $10)
+    RETURNING "updatedAt", "articleId", "published", (SELECT "id" FROM insert_channel) AS "channelId"
   `;
   const result = await db.query(query, [
     userId,
@@ -496,13 +555,17 @@ async function _createCommunityArticle(
     article.previewText,
     article.tags,
     communityArticle.communityId,
-    communityArticle.url
+    communityArticle.url,
+    // honor the requested publish state on create: null -> draft, a timestamp
+    // -> published/scheduled (the validator already constrains it). The INSERT
+    // used to drop this, so every create produced a draft regardless.
+    communityArticle.published ?? null
   ]);
   if (result.rows.length === 1) {
-    const row: { updatedAt: string, articleId: string; channelId: string; } = result.rows[0];
+    const row: { updatedAt: string, articleId: string; channelId: string; published: string | null; } = result.rows[0];
     const communityRoles = await communityHelper.getCommunityRoles(communityArticle.communityId, db);
     const existingRoleIds = new Set(communityRoles.map(r => r.id));
-    const adminId = communityRoles.filter(r => r.title === PredefinedRole.Admin)[0].id;
+    const adminId = communityRoles.filter(r => r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Admin)[0].id;
     // check if all roleIds really belong to this community
     for (const rolePermission of communityArticle.rolePermissions) {
       if (!existingRoleIds.has(rolePermission.roleId) || rolePermission.roleId === adminId) {
@@ -513,6 +576,7 @@ async function _createCommunityArticle(
       {
         roleId: adminId,
         roleTitle: PredefinedRole.Admin,
+        roleType: RoleType.PREDEFINED,
         permissions: rolePermissionPresets.Article.Visible
       },
       ...communityArticle.rolePermissions.filter(rp => rp.roleId !== adminId),
@@ -532,7 +596,7 @@ async function _createCommunityArticle(
         ).join(',')}
     `;
     const caaResult = await db.query(query);
-    if (caaResult.rowCount > 0) {
+    if ((caaResult.rowCount ?? 0) > 0) {
       return row;
     }
   }
@@ -616,7 +680,7 @@ async function _updateCommunityArticle(
   if (communityArticle.rolePermissions !== undefined && communityArticle.rolePermissions.length > 0) {
     const communityRoles = await communityHelper.getCommunityRoles(communityArticle.communityId, db);
     const existingRoleIds = new Set(communityRoles.map(r => r.id));
-    const adminId = communityRoles.filter(r => r.title === PredefinedRole.Admin)[0].id;
+    const adminId = communityRoles.filter(r => r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Admin)[0].id;
     // check if all roleIds really belong to this community
     for (const rolePermission of communityArticle.rolePermissions) {
       if (!existingRoleIds.has(rolePermission.roleId) || rolePermission.roleId === adminId) {
@@ -777,18 +841,7 @@ async function _getUserArticleList(
       ${!!data.tags && data.tags.length > 0
         ? format('AND a."tags" @> ARRAY[%L]', data.tags) 
         : ''}
-      ${!!data.publishedAfter
-        ? format('AND ua."published" > %L::timestamptz', data.publishedAfter)
-        : ''}
-      ${!!data.publishedBefore
-        ? format('AND ua."published" < %L::timestamptz', data.publishedBefore)
-        : ''}
-      ${!!data.updatedAfter
-        ? format('AND ua."updatedAt" > %L::timestamptz', data.updatedAfter)
-        : ''}
-      ${!!data.updatedBefore
-        ? format('AND ua."updatedAt" < %L::timestamptz', data.updatedBefore)
-        : ''}
+      ${articleListTimeClauses('ua', data)}
       ${data.verification === "verified"
         ? 'AND u."fractalId" IS NOT NULL'
         : data.verification === "unverified"
@@ -797,7 +850,7 @@ async function _getUserArticleList(
       ${!!data.ids
         ? `AND ua."articleId" = ANY(ARRAY[${format('%L', data.ids)}]::UUID[])`
         : ''}
-    ORDER BY ${'orderBy' in data ? format('ua.%I', data.orderBy) : 'ua."published"'} ${data.order === 'ASC' ? 'ASC' : 'DESC'}
+    ORDER BY ${articleListOrderBy('ua', data)}
     LIMIT ${+data.limit}
   `;
   const result = await db.query(query);
@@ -871,11 +924,13 @@ async function _getUserArticleDetailView(
       }
       AND ua."deletedAt" IS NULL
       AND ua."userId" = $1
-      AND (ua."userId" = $1 OR ua."published" < now())
+      -- unpublished (no date or a future one) only for the author
+      AND (ua."published" < now() OR ua."userId" = $2::uuid)
     ORDER BY ua."published" DESC
   `;
   const result = await db.query(query, [
-    data.userId
+    data.userId,
+    userId ?? null,
   ]);
   if (result.rows.length === 1) {
     return result.rows[0] as {
@@ -931,9 +986,10 @@ async function _createUserArticle(
     INSERT INTO users_articles (
       "userId",
       "articleId",
-      "url"
-    ) VALUES ($1, (SELECT "id" FROM insert_article), $8)
-    RETURNING "updatedAt", "articleId", (SELECT "id" FROM insert_channel) AS "channelId"
+      "url",
+      "published"
+    ) VALUES ($1, (SELECT "id" FROM insert_article), $8, $9)
+    RETURNING "updatedAt", "articleId", "published", (SELECT "id" FROM insert_channel) AS "channelId"
   `;
   const result = await db.query(query, [
     userId,
@@ -943,10 +999,12 @@ async function _createUserArticle(
     article.content,
     article.previewText,
     article.tags,
-    userArticle.url
+    userArticle.url,
+    // honor the requested publish state on create (see _createCommunityArticle)
+    userArticle.published ?? null
   ]);
   if (result.rows.length === 1) {
-    return result.rows[0] as { updatedAt: string, articleId: string, channelId: string };
+    return result.rows[0] as { updatedAt: string, articleId: string, channelId: string, published: string | null };
   }
   throw new Error("Error adding article");
 }

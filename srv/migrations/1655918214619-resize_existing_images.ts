@@ -25,7 +25,7 @@ export class resizeExistingImages1655918214582 implements MigrationInterface {
                     const buffer = await fileHelper.getFile(imageId);
                     if (buffer !== null) {
                         try {
-                            const newObjectId = await fileHelper.saveImage(null, { type: 'communityLogoSmall' }, buffer, { width: 150, height: 150 });
+                            const newObjectId = await fileHelper.saveImage(null, { type: 'communityLogoSmall' }, buffer, { width: 150, height: 150 }, { skipModeration: true });
                             await queryRunner.query(`
                                 UPDATE groups
                                 SET info = jsonb_set(info, '{imageId}', $2)
@@ -49,7 +49,7 @@ export class resizeExistingImages1655918214582 implements MigrationInterface {
                     const buffer = await fileHelper.getFile(imageId);
                     if (buffer !== null) {
                         try {
-                            const newObjectId = await fileHelper.saveImage(null, { type: 'userProfileImage' }, buffer, { width: 110, height: 110 });
+                            const newObjectId = await fileHelper.saveImage(null, { type: 'userProfileImage' }, buffer, { width: 110, height: 110 }, { skipModeration: true });
                             await queryRunner.query(`
                                 UPDATE accounts
                                 SET "imageId" = $2

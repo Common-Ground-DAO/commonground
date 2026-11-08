@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .modal-root {
   @apply w-screen h-screen flex justify-center items-center absolute;
   height: var(--visualHeight);

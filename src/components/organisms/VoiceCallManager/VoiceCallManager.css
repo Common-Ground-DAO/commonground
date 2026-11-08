@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
   .voice-call-manager {
     @apply flex flex-col items-start p-1 gap-0 cursor-pointer;
     background-color: var(--audioWidgetBg);

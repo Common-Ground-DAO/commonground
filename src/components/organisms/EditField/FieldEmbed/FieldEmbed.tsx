@@ -18,7 +18,7 @@ import YoutubeIframe from 'components/atoms/YoutubeIframe/YoutubeIframe';
 
 const FieldEmbed: React.FC<RenderElementProps & { element: EmbedElement }> = (props) => {
   const editor = useSlate();
-  const selected = useSelected();
+  const selected = useSelected({ suppressThrow: true });
   const focused = useFocused();
   const [error, setError] = React.useState<string | undefined>();
   const [showReassignModal, setShowReassignModal] = React.useState(false);
@@ -53,7 +53,7 @@ const FieldEmbed: React.FC<RenderElementProps & { element: EmbedElement }> = (pr
         triggerContent={
           <>
             {props.element.embedId && <div className={`fieldEmbedVideoContainer ${props.element.size}`}>
-              {/** Note: https://www.youtube.com is the only allowed frame-src, configured in nginx.conf */}
+              {/** Note: frames are subject to the edge's CSP frame-src (docker/caddy/common.caddy) */}
               {/** Also note: Iframes always need sandbox="allow-forms allow-scripts" for security reasons */}
               <YoutubeIframe
                 divClassName='fieldEmbedVideo'

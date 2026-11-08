@@ -4,6 +4,7 @@
 
 import Joi from "joi";
 import common from "../common";
+import { messageAccessValidator } from "./message";
 
 const socketApi = {
   login: Joi.object<API.Socket.login.Request>({
@@ -12,8 +13,18 @@ const socketApi = {
     base64Signature: common.Base64DeviceSignature.required(),
   }).required().strict(true),
 
+  watchCgIdRequest: Joi.object<API.Socket.watchCgIdRequest.Request>({
+    // the main window's random id of a CG ID popup request
+    frontendRequestId: Joi.string().min(16).max(20).required(),
+  }).required().strict(true),
+
   joinCommunityVisitorRoom: Joi.object<API.Socket.joinCommunityVisitorRoom.Request>({
     communityId: common.Uuid.required(),
+  }).required().strict(true),
+
+  setTyping: Joi.object<API.Socket.setTyping.Request>({
+    access: messageAccessValidator.required(),
+    isTyping: Joi.boolean().required(),
   }).required().strict(true),
 }
 

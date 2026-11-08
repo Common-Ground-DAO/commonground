@@ -2,8 +2,8 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { FloatingDelayGroup } from "@floating-ui/react-dom-interactions";
+import React, { useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import { FloatingDelayGroup } from "@floating-ui/react";
 import dayjs from "dayjs";
 
 import Jdenticon from "../../../atoms/Jdenticon/Jdenticon";
@@ -16,10 +16,11 @@ import { useUserData } from "context/UserDataProvider";
 import EmptyState from "components/molecules/EmptyState/EmptyState";
 import { useConnectionContext } from "context/ConnectionProvider";
 import config from "common/config";
-import channelDatabaseManager from "data/databases/channel";
+import type { ChannelWindow } from "data/chat/types";
 import MessageSkeletonPlaceholder from "../MessageSkeletonPlaceholder/MessageSkeletonPlaceholder";
 import { useWindowSizeContext } from "context/WindowSizeProvider";
 import Scrollable, { PositionData, ScrollableHandle } from "../../../molecules/Scrollable/Scrollable";
+import { SCROLL_BOTTOM_THRESHOLD, showsScrollHelper } from "../scrollHelper";
 
 export type RendererProps = {
   item: Models.Message.Message;
@@ -35,39 +36,39 @@ export type RendererProps = {
 }
 
 type Props= {
-  itemList: Models.ItemList.ItemList<Models.Message.Message>;
+  /** the window the list shows; `state` is its current state */
+  channelWindow: ChannelWindow;
+  state: Models.ItemList.ItemListState<Models.Message.Message>;
   identifierKey?: string;
-  scrollHelper: JSX.Element;
-  scrollHelperRef: React.RefObject<HTMLDivElement>;
+  /** shows / hides the scroll-down helper (stable; GenericMessageList's `scrollHelper.ts` control) */
+  setShowScrollHelper: (visible: boolean) => void;
   Renderer: React.FC<RendererProps>;
   replyClick: (id: string, senderId: string, body: Models.Message.Body) => void;
   editClick: (message: Models.Message.Message) => void;
   messageToEdit?: Models.Message.Message;
   targetFocusId?: string;
-  lastFocusedIdRef: React.MutableRefObject<string | undefined>;
   onScroll?: (deltaY: number) => void;
-  channelId: string;
-  scrollableRef: React.RefObject<ScrollableHandle>;
-  scrollableInnerRef: React.RefObject<HTMLDivElement>;
+  /** reports whether the list is scrolled to the bottom (on every change) */
+  onAtBottomChange?: (atBottom: boolean) => void;
+  scrollableRef: React.RefObject<ScrollableHandle | null>;
+  scrollableInnerRef: React.RefObject<HTMLDivElement | null>;
   loadingNextRef: React.MutableRefObject<Promise<void> | null>;
   loadingPreviousRef: React.MutableRefObject<Promise<void> | null>;
-  initializingItemListRef: React.MutableRefObject<Promise<void> | null>;
-  messages: Models.Message.Message[];
-  setMessages: React.Dispatch<React.SetStateAction<Models.Message.Message[]>>;
+  /** number of the list's own inits / jumps in flight (no paging meanwhile) */
+  initializingRef: React.MutableRefObject<number>;
   canReply: boolean;
 }
 
 type MessageGroupsArray = [string, ([string, string, Models.Message.Message[]])[]][];
 
-const SCROLL_BOTTOM_THRESHOLD = 30;
 const SOFT_ITEM_LIMIT = 200;
 export const BETWEEN_LOADS_TIMEOUT = 500;
 
 /**
- * 
+ *
  * @returns true if element was found an scrolled to, false otherwise
  */
-export function scrollToMessageById(scrollableRef: React.RefObject<ScrollableHandle>, messageId: string): boolean {
+export function scrollToMessageById(scrollableRef: React.RefObject<ScrollableHandle | null>, messageId: string): boolean {
   const element = document.getElementById(messageId);
   const scrollable = scrollableRef.current;
   if (!!scrollable && !!element) {
@@ -77,56 +78,52 @@ export function scrollToMessageById(scrollableRef: React.RefObject<ScrollableHan
   return false;
 }
 
+/** paging sentinel of one end: items trimmed off in memory, more on the server, or none */
+function pagingSource(hasLocally: boolean, hasOnRemote: boolean): "local" | "remote" | null {
+  return hasLocally ? "local" : hasOnRemote ? "remote" : null;
+}
+
 export default function ScrollingMessageList(props: Props) {
   const {
-    itemList,
+    channelWindow,
+    state,
     Renderer,
     replyClick,
     editClick,
     messageToEdit,
     targetFocusId,
-    lastFocusedIdRef,
     onScroll,
-    channelId,
+    onAtBottomChange,
     scrollableRef,
     scrollableInnerRef,
-    messages,
-    setMessages,
     loadingNextRef,
     loadingPreviousRef,
-    initializingItemListRef,
+    initializingRef,
     canReply,
-    scrollHelper,
-    scrollHelperRef,
+    setShowScrollHelper,
   } = props;
 
-  const [ showEmptyStateText, setShowEmptyStateText ] = useState<boolean>(false);
+  const messages = state.items;
   const { webSocketState } = useConnectionContext();
   const loadTopTriggerRef = React.useRef<HTMLDivElement>(null);
   const loadBottomTriggerRef = React.useRef<HTMLDivElement>(null);
-  const [ randomizeTrigger, setRandomizeTrigger ] = useState<string>('' + Math.random());
-  const [nextStorage, setNextStorage] = useState<"local" | "remote" | null>(itemList.state.hasNextItemsLocally ? "local" : itemList.state.hasNextItemsOnRemote ? "remote" : null);
-  const [previousStorage, setPreviousStorage] = useState<"local" | "remote" | null>(itemList.state.hasPreviousItemsLocally ? "local" : itemList.state.hasPreviousItemsOnRemote ? "remote" : null);
-  const isCurrentlyScrollingRef = useRef<boolean>(false);
-  const allCurrentItemsByIdRef = useRef(new Map(messages.map(m => [m.id, m])));
+  const nextStorage = pagingSource(state.hasNextItemsLocally, state.hasNextItemsOnRemote);
+  const previousStorage = pagingSource(state.hasPreviousItemsLocally, state.hasPreviousItemsOnRemote);
+  // isEmpty counts server items only: a pending send is shown in an empty channel
+  const showEmptyStateText = state.isEmpty && messages.length === 0;
   const ownUser = useOwnUser();
 
-  const showScrollHelperRef = useRef<boolean>(false);
-  const setShowScrollHelper = useCallback((visible: boolean, skipCheck = false) => {
-    if (showScrollHelperRef.current !== visible || skipCheck) {
-      showScrollHelperRef.current = visible;
-      const div = scrollHelperRef.current;
-      if (!!div) {
-        div.style.opacity = visible ? '1' : '0';
-        div.style.pointerEvents = visible ? 'auto' : 'none';
-        div.style.cursor = visible ? 'pointer' : 'default';
-      }
-    }
-  }, []);
+  // reply-parent lookup of the renderers; current before they render
+  const allCurrentItemsByIdRef = useRef(new Map<string, Models.Message.Message>());
+  const randomizeTrigger = useMemo(() => {
+    allCurrentItemsByIdRef.current = new Map(messages.map(m => [m.id, m]));
+    return '' + Math.random();
+  }, [messages]);
 
+  // a list (of a new channel) starts hidden until its first position report
   useLayoutEffect(() => {
-    setShowScrollHelper(showScrollHelperRef.current, true);
-  }, [scrollHelper])
+    setShowScrollHelper(false);
+  }, [setShowScrollHelper]);
 
   const showLoadNext = useMemo(() => {
     if (messages.length > 0) {
@@ -163,164 +160,43 @@ export default function ScrollingMessageList(props: Props) {
     return result;
   }, [messages]);
 
-  const itemListStateUpdateHandler = useCallback((state: Models.ItemList.ItemListState<Models.Message.Message>) => {
-    const {
-      isDestroyed,
-      isEmpty,
-      items,
-      hasNextItemsLocally,
-      hasNextItemsOnRemote,
-      hasPreviousItemsLocally,
-      hasPreviousItemsOnRemote,
-    } = state;
-
-    if (isDestroyed) {
-      console.warn("ItemList destroyed!");
-      return;
-    }
-
-    if (messages !== items) {
-      const allNewMessagesById = new Map(items.map(m => [m.id, m]));
-      allCurrentItemsByIdRef.current = allNewMessagesById;
-      setMessages(items);
-      setRandomizeTrigger('' + Math.random());
-    }
-
-    if (isEmpty && items.length === 0) {
-      if (!showEmptyStateText) {
-        setShowEmptyStateText(true);
-      }
-    }
-    else {
-      if (showEmptyStateText) {
-        setShowEmptyStateText(false);
-      }
-    }
-
-    if (hasNextItemsLocally) {
-      if (nextStorage !== "local") {
-        setNextStorage("local");
-      }
-    }
-    else if (hasNextItemsOnRemote) {
-      if (nextStorage !== "remote") {
-        setNextStorage("remote");
-      }
-    }
-    else if (nextStorage !== null) {
-      setNextStorage(null);
-    }
-
-    if (hasPreviousItemsLocally) {
-      if (previousStorage !== "local") {
-        setPreviousStorage("local");
-      }
-    }
-    else if (hasPreviousItemsOnRemote) {
-      if (previousStorage !== "remote") {
-        setPreviousStorage("remote");
-      }
-    }
-    else if (previousStorage !== null) {
-      setPreviousStorage(null);
-    }
-  }, [messages, setMessages, showLoadNext, showLoadPrevious, showEmptyStateText, nextStorage, previousStorage]);
-
-  useEffect(() => {
-    itemList.addUpdateListener(itemListStateUpdateHandler);
-    return () => {
-      itemList.removeUpdateListener(itemListStateUpdateHandler);
-    };
-  }, [itemList, itemListStateUpdateHandler]);
-
-  useEffect(() => {
-    itemListStateUpdateHandler(itemList.state);
-  }, [itemList]);
+  /** one load per end at a time; the scroll lock is set by the window listener */
+  const startLoad = useCallback((
+    ref: React.MutableRefObject<Promise<void> | null>,
+    load: () => Promise<void>,
+    trimFrom: 'start' | 'end',
+  ) => {
+    ref.current = load()
+      .then(() => {
+        // keep the rendered list bounded: drop the far end once it grew too long
+        if (channelWindow.state.items.length > SOFT_ITEM_LIMIT) {
+          channelWindow.trim({ keep: SOFT_ITEM_LIMIT, from: trimFrom });
+        }
+      })
+      .catch(e => {
+        console.error("Error loading messages", e);
+      })
+      .finally(async () => {
+        await new Promise<void>(resolve => {
+          setTimeout(() => {
+            ref.current = null;
+            resolve();
+          }, 0);
+        });
+      });
+  }, [channelWindow]);
 
   const loadNext = useCallback(() => {
-    if (showLoadNext && !loadingNextRef.current && !initializingItemListRef.current) {
-      let promise: Promise<void> | undefined;
-      const { state } = itemList;
-      let shrink: number | undefined;
-      if (state.items.length > SOFT_ITEM_LIMIT) {
-        shrink = state.items.length - SOFT_ITEM_LIMIT;
-      }
-      if (state.hasNextItemsLocally) {
-        promise = itemList.update({ growEnd: config.ITEMLIST_BATCH_SIZE, shrinkStart: shrink }).then(() => {
-          scrollableRef.current?.lockScrollForNextUpdate({ type: 'lockByVisibleItemDate', elementClassWithTimestamp: 'message-item-content', dateOrder: 'ASC' });
-        });
-      }
-      else if (state.hasNextItemsOnRemote && state.rangeEnd) {
-        promise = channelDatabaseManager.loadItems({
-          channelId,
-          createdAfter: state.rangeEnd,
-          order: "ASC",
-        })
-        .then(() => {
-          // use the updated state (itemList.state can have changed) to check if we can load more
-          if (itemList.state.hasNextItemsLocally) {
-            scrollableRef.current?.lockScrollForNextUpdate({ type: 'lockByVisibleItemDate', elementClassWithTimestamp: 'message-item-content', dateOrder: 'ASC' });
-            return itemList.update({ growEnd: config.ITEMLIST_BATCH_SIZE, shrinkStart: shrink });
-          }
-          else if (!itemList.state.withEndOfList) {
-            console.warn("Remote items loaded but hasNextItemsLocally is still false, cannot load more");
-          }
-        });
-      }
-      if (!!promise) {
-        loadingNextRef.current = promise.finally(async () => {
-          await new Promise<void>(resolve => {
-            setTimeout(() => {
-              loadingNextRef.current = null;
-              resolve();
-            }, 0)
-          });
-        });
-      }
+    if (showLoadNext && !loadingNextRef.current && initializingRef.current === 0) {
+      startLoad(loadingNextRef, () => channelWindow.loadNewer(config.ITEMLIST_BATCH_SIZE), 'start');
     }
-  }, [itemList, showLoadNext]);
+  }, [channelWindow, showLoadNext, startLoad]);
 
   const loadPrevious = useCallback(() => {
-    if (showLoadPrevious && !loadingPreviousRef.current && !initializingItemListRef.current) {
-      let promise: Promise<void> | undefined;
-      const { state } = itemList;
-      let shrink: number | undefined;
-      if (state.items.length > SOFT_ITEM_LIMIT) {
-        shrink = state.items.length - SOFT_ITEM_LIMIT;
-      }
-      if (state.hasPreviousItemsLocally) {
-        promise = itemList.update({ growStart: config.ITEMLIST_BATCH_SIZE, shrinkEnd: shrink }).then(() => {
-          scrollableRef.current?.lockScrollForNextUpdate({ type: 'lockByVisibleItemDate', elementClassWithTimestamp: 'message-item-content', dateOrder: 'ASC' });
-        });
-      }
-      else if (state.hasPreviousItemsOnRemote && state.rangeStart) {
-        promise = channelDatabaseManager.loadItems({
-          channelId,
-          createdBefore: state.rangeStart,
-          order: "DESC",
-        })
-        .then(() => {
-          if (itemList.state.hasPreviousItemsLocally) {
-            scrollableRef.current?.lockScrollForNextUpdate({ type: 'lockByVisibleItemDate', elementClassWithTimestamp: 'message-item-content', dateOrder: 'ASC' });
-            return itemList.update({ growStart: config.ITEMLIST_BATCH_SIZE, shrinkEnd: shrink });
-          }
-          else if (!itemList.state.withStartOfList) {
-            console.warn("Remote items loaded but hasPreviousItemsLocally is still false, cannot load more");
-          }
-        });
-      }
-      if (!!promise) {
-        loadingPreviousRef.current = promise.finally(async () => {
-          await new Promise<void>(resolve => {
-            setTimeout(() => {
-              loadingPreviousRef.current = null;
-              resolve();
-            }, 0)
-          });
-        });
-      }
+    if (showLoadPrevious && !loadingPreviousRef.current && initializingRef.current === 0) {
+      startLoad(loadingPreviousRef, () => channelWindow.loadOlder(config.ITEMLIST_BATCH_SIZE), 'end');
     }
-  }, [itemList, showLoadPrevious]);
+  }, [channelWindow, showLoadPrevious, startLoad]);
 
   const positionCallback: (data: PositionData) => void = useCallback((data) => {
     const scrollable = scrollableRef.current;
@@ -335,13 +211,15 @@ export default function ScrollingMessageList(props: Props) {
         loadNext();
       }
 
-      const shouldShowScrollHelper = data.scrollTop + data.visibleHeight < data.contentHeight - SCROLL_BOTTOM_THRESHOLD;
-      if (showScrollHelperRef.current !== shouldShowScrollHelper) setShowScrollHelper(shouldShowScrollHelper);
+      const shouldShowScrollHelper = showsScrollHelper(data);
+      // both receivers ignore repeats
+      setShowScrollHelper(shouldShowScrollHelper);
+      onAtBottomChange?.(!shouldShowScrollHelper);
     }
 
     const deltaY = data.contentHeight - data.scrollTop - data.visibleHeight;
     onScroll?.(deltaY);
-  }, [loadNext, loadPrevious, onScroll]);
+  }, [loadNext, loadPrevious, onScroll, onAtBottomChange, setShowScrollHelper]);
 
   useLayoutEffect(() => {
     if (!targetFocusId) scrollableRef.current?.scrollToBottom();
@@ -371,6 +249,7 @@ export default function ScrollingMessageList(props: Props) {
         ref={scrollableRef}
         autoScroll={true}
         hideOnNoScroll={true}
+        topAndBottomThreshold={SCROLL_BOTTOM_THRESHOLD}
         positionCallback={positionCallback}
       >
         <div
@@ -397,7 +276,7 @@ export default function ScrollingMessageList(props: Props) {
 
 const MessagesLoadingIndicator = (props: {
   visible: boolean | 'invisible';
-  divRef: React.RefObject<HTMLDivElement>;
+  divRef: React.RefObject<HTMLDivElement | null>;
   randomizePlaceholderTrigger: string;
 }) => {
   const {

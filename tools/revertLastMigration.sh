@@ -1,5 +1,7 @@
 #!/bin/bash
 cd ${0%/*}
+# docker/.env is sourced inside the container below
+../docker/ensureEnv.sh || exit 1
 
 docker_compose() {
   if docker compose version >/dev/null 2>&1; then
@@ -16,8 +18,8 @@ cd ../docker
 docker_compose run --rm -T cg-builder bash -C <<EOF
 source docker/.env &&
 cd srv &&
-yarn &&
-yarn tsc --outDir __tmp --target es2021 --module commonjs --esModuleInterop true --experimentalDecorators true --emitDecoratorMetadata true --skipLibCheck true migrations/*.ts util/datasource.ts entities/*.ts common/types/models/*.d.ts common/types/api/*.d.ts common/types/events/*.d.ts common/types/common.d.ts types/*.d.ts > /dev/null &&
+yarn install --immutable &&
+yarn tsc -p tsconfig.typeorm-cli.json &&
 PG_SU_NAME=postgres DB_HOST=db PG_SU_PASSWORD=\$PG_SU_PASSWORD yarn typeorm migration:revert -d __tmp/util/datasource.js
 rm -rf ./__tmp
 EOF

@@ -7,8 +7,8 @@ import React, { useRef } from "react";
 import './CollapsableTopBarLayout.css';
 
 type Props = {
-    topPart: JSX.Element;
-    bottomPart: JSX.Element;
+    topPart: React.JSX.Element;
+    bottomPart: React.JSX.Element;
     isTopVisible: boolean;
 }
 

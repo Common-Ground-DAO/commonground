@@ -3,11 +3,12 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { readFileSync } from "fs";
-import shortUUID from "short-uuid";
+import { createTranslator } from "short-uuid";
 import express from "express";
 import config from "../common/config";
 import articleHelper from "../repositories/articles";
-import { handleError, htmlToImage } from "./util";
+import { describeErrorForLog, handleError, htmlToImage } from "./util";
+import { asyncHandler } from "./asyncHandler";
 import fileHelper from "../repositories/files";
 import userHelper from "../repositories/users";
 import communityHelper from "../repositories/communities";
@@ -24,6 +25,7 @@ import fs from "fs";
 import pool from "../util/postgres";
 import passport from "passport";
 import pluginHelper from "../repositories/plugins";
+import { instanceConfigScriptTag } from "../util/instanceConfig";
 dayjs.extend(advancedFormat);
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -47,6 +49,14 @@ const getRoutesRouter = express.Router();
 let indexhtml: string = '';
 try {
   indexhtml = readFileSync("/dist/index.html").toString();
+  // declare this instance's identity to the frontend (see src/common/instance.ts).
+  // The shell normally loads it as /instance-config.js from the edge
+  // (docker/caddy), like every page Caddy serves itself; an inline copy here
+  // would be blocked by the edge's CSP. Only a shell without that script tag
+  // gets the inline fallback.
+  if (!indexhtml.includes('__CG_INSTANCE__') && !indexhtml.includes('src="/instance-config.js"')) {
+    indexhtml = indexhtml.replace('<head>', `<head>${instanceConfigScriptTag()}`);
+  }
 } catch (e) {
   console.error('ERROR: No index.html present! Social previews will not work.');
   console.log(e);
@@ -58,15 +68,27 @@ const _tpl = indexhtml
   .replace(/<meta +property="(og:title|og:description|og:type|og:image|og:url)" +content="[^"]+" *\/?>/g, '')
   .replace(/<meta +name="(twitter:title|twitter:description|twitter:image|description)" +content="[^"]+" *\/?>/g, '');
 const insertPos = _tpl.indexOf('</head>');
-const translator = shortUUID();
+const translator = createTranslator();
 
 const escapeHtml = (str: string | null | undefined) => (str || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as any)[m]);
 
+// og:site_name names this instance by its host — the shell carries none, since
+// the static index.html is the same on every instance
+function siteName(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '';
+  }
+}
+
 function makeIndexHtml(title: string, description: string, type: 'article' | 'profile' | 'website', url: string, imageUrl: string): string {
   title = title || 'Common Ground';
+  const site = siteName(url);
   return [
     _tpl.substring(0, insertPos),
     `<meta name="description" content="${escapeHtml(description)}" />`,
+    ...(site ? [`<meta property="og:site_name" content="${escapeHtml(site)}" />`] : []),
     `<meta property="og:title" content="${escapeHtml(title)}" />`,
     `<meta property="og:description" content="${escapeHtml(description)}" />`,
     `<meta property="og:type" content="${escapeHtml(type)}" />`,
@@ -87,9 +109,9 @@ function getWorkingHost(hostname: string): string {
 }
 
 // User Profile
-getRoutesRouter.get(`/${config.URL_USER}/:userId/image.jpeg`, async (req, res) => {
+getRoutesRouter.get(`/${config.URL_USER}/:userId/image.jpeg`, asyncHandler(async (req, res) => {
   try {
-    const userId = translator.toUUID(req.params.userId.replace('~', ''));
+    const userId = translator.toUUID((req.params.userId as string).replace('~', ''));
     const data = await userHelper.getSocialPreviewData({ userId });
     if (data) {
       const imageBuffer = await fileHelper.getFile(data.previewImageId);
@@ -103,8 +125,8 @@ getRoutesRouter.get(`/${config.URL_USER}/:userId/image.jpeg`, async (req, res) =
     }
     res.sendStatus(404);
   } catch (e) { handleError(res, e) }
-});
-getRoutesRouter.get(new RegExp(`/${config.URL_USER}/([^/]+)/?`), async (req, res) => {
+}));
+getRoutesRouter.get(new RegExp(`/${config.URL_USER}/([^/]+)/?`), asyncHandler(async (req, res) => {
   try {
     const userId = translator.toUUID(req.params[0].replace('~', ''));
     const baseUrl = [
@@ -136,10 +158,10 @@ getRoutesRouter.get(new RegExp(`/${config.URL_USER}/([^/]+)/?`), async (req, res
       res.send(indexHtml);
     }
   } catch (e) { handleError(res, e) }
-});
+}));
 
 // Community Article
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_ARTICLE}/([^/]+)/image.jpeg`), async (req, res) => {
+getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_ARTICLE}/([^/]+)/image.jpeg`), asyncHandler(async (req, res) => {
   try {
     const communityUrl = req.params[0];
     const articleUri = req.params[1];
@@ -161,8 +183,8 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_AR
     }
     res.sendStatus(404);
   } catch (e) { handleError(res, e) }
-});
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_ARTICLE}/([^/]+)(/?.*)?`), async (req, res) => {
+}));
+getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_ARTICLE}/([^/]+)(/?.*)?`), asyncHandler(async (req, res) => {
   try {
     const communityUrl = req.params[0];
     const articleUri = req.params[1];
@@ -195,10 +217,10 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_AR
       res.send(indexHtml);
     }
   } catch (e) { handleError(res, e) }
-});
+}));
 
 // Community events
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_EVENT}/([^/]+)/image.jpeg`), async (req, res) => {
+getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_EVENT}/([^/]+)/image.jpeg`), asyncHandler(async (req, res) => {
   try {
     const eventUri = req.params[1];
     const eventIdOrUrl = parseIdOrUrl(eventUri);
@@ -292,8 +314,8 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_EV
     }
     res.sendStatus(404);
   } catch (e) { handleError(res, e) }
-});
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_EVENT}/([^/]+)(/?.*)?`), async (req, res) => {
+}));
+getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_EVENT}/([^/]+)(/?.*)?`), asyncHandler(async (req, res) => {
   try {
     const communityUrl = req.params[0];
     const eventUri = req.params[1];
@@ -324,10 +346,10 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_EV
       res.send(indexHtml);
     }
   } catch (e) { handleError(res, e) }
-});
+}));
 
 // Community plugin
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_PLUGIN}/([^/]+)/image.jpeg`), async (req, res) => {
+getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_PLUGIN}/([^/]+)/image.jpeg`), asyncHandler(async (req, res) => {
   try {
     const pluginId = req.params[1];
     const communityPlugin = await pluginHelper.getCommunityPlugin(pluginId);
@@ -418,8 +440,8 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_PL
     }
     res.sendStatus(404);
   } catch (e) { handleError(res, e) }
-});
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_PLUGIN}/([^/]+)(/?.*)?`), async (req, res) => {
+}));
+getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_PLUGIN}/([^/]+)(/?.*)?`), asyncHandler(async (req, res) => {
   try {
     const communityUrl = req.params[0];
     const pluginId = req.params[1];
@@ -449,10 +471,10 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_PL
       res.send(indexHtml);
     }
   } catch (e) { handleError(res, e) }
-});
+}));
 
 // Appstore plugin
-getRoutesRouter.get(new RegExp(`/${config.URL_APPSTORE}/([^/]+)/image.jpeg`), async (req, res) => {
+getRoutesRouter.get(new RegExp(`/${config.URL_APPSTORE}/([^/]+)/image.jpeg`), asyncHandler(async (req, res) => {
   try {
     const pluginId = req.params[0];
     const plugin = await pluginHelper.getAppstorePlugin(pluginId);
@@ -501,8 +523,8 @@ getRoutesRouter.get(new RegExp(`/${config.URL_APPSTORE}/([^/]+)/image.jpeg`), as
     }
     res.sendStatus(404);
   } catch (e) { handleError(res, e) }
-});
-getRoutesRouter.get(new RegExp(`/${config.URL_APPSTORE}/([^/]+)(/?.*)?`), async (req, res) => {
+}));
+getRoutesRouter.get(new RegExp(`/${config.URL_APPSTORE}/([^/]+)(/?.*)?`), asyncHandler(async (req, res) => {
   try {
     const pluginId = req.params[0];
         
@@ -529,54 +551,10 @@ getRoutesRouter.get(new RegExp(`/${config.URL_APPSTORE}/([^/]+)(/?.*)?`), async 
       res.send(indexHtml);
     }
   } catch (e) { handleError(res, e) }
-});
-
-// Community wizard
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/${config.URL_WIZARD}/([^/]+)(/?.*)?`), async (req, res) => {
-  try {
-    const communityUrl = req.params[0];
-    const wizardIdParam = req.params[1];
-    let wizardId: string | undefined;
-    if (wizardIdParam.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)) {
-      wizardId = wizardIdParam;
-    }
-    else if (wizardIdParam.match(/^[0-9a-z]{22}$/i)) {
-      wizardId = translator.toUUID(wizardIdParam);
-    }
-    if (!wizardId) {
-      res.sendStatus(404);
-    } else {
-      const communityData = await communityHelper.getCommunitySocialPreview({ communityUrl });
-      const wizardData = await communityHelper.getWizardDataForSocialPreview(wizardId);
-      if (!communityData || !wizardData) {
-        res.sendStatus(404);
-      } else if (!wizardData.isPublic) {
-        // show error page
-        res.sendStatus(404);
-      } else {
-        const baseUrl = [
-          getWorkingHost(req.hostname),
-          config.URL_COMMUNITY,
-          communityUrl,
-        ].join('/');
-
-        res.setHeader('Content-Type', 'text/html');
-        res.setHeader('Cache-Control', 'public, max-age=30, must-revalidate');
-        const indexHtml = makeIndexHtml(
-          communityData.title || '',
-          wizardData.socialPreviewDescription,
-          "website",
-          `${baseUrl}/${config.URL_WIZARD}/${wizardIdParam}`,
-          `${baseUrl}/wizardImage.jpeg`,
-        );
-        res.send(indexHtml);
-      }
-    }
-  } catch (e) { handleError(res, e) }
-});
+}));
 
 // Community
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/image.jpeg`), async (req, res) => {
+getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/image.jpeg`), asyncHandler(async (req, res) => {
   try {
     const communityUrl = req.params[0];
     const data = await communityHelper.getCommunitySocialPreview({ communityUrl });
@@ -669,41 +647,8 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/image.jpeg`), a
     }
     res.sendStatus(404);
   } catch (e) { handleError(res, e) }
-});
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)/wizardImage.jpeg`), async (req, res) => {
-  try {
-    const communityUrl = req.params[0];
-    const data = await communityHelper.getCommunitySocialPreview({ communityUrl });
-    if (data) {
-      const loglogo = await fileHelper.getFile(data.logoLargeId || data.logoSmallId);
-
-      const imageBuffer = await htmlToImage({
-        body: `<div class="flex flex-col" style="padding:24px;gap:13px;height: 100%; width: 100%;">
-          <div class="flex" style="justify-content: space-between; gap: 23px; flex: 1; align-items: center; justify-content: center;">
-            <div class="flex flex-col" style="gap: 8px; align-items: center; justify-content: center;">
-              <div
-                style="z-index:1; border-radius: 16px; height: 160px; width: 160px; background-position: center; background-repeat: no-repeat; background-size: cover; background-image: url('data:image/jpg;base64,${loglogo?.toString('base64')}')">
-              </div>
-              <span class="cg-heading-2 cg-text-main" style="padding-top: 8px; display: block;">${data.title}</span>
-            </div>
-          </div>
-        </div>`,
-        height: 268,
-        width: 512
-      });
-
-      if (!!imageBuffer) {
-        const outputBuffer = await fileHelper.convertToJpg(imageBuffer, 512, 268);
-        res.setHeader('Content-Type', 'image/jpeg');
-        res.setHeader('Cache-Control', 'public, max-age=30, must-revalidate');
-        res.status(200).send(outputBuffer);
-        return;
-      }
-    }
-    res.sendStatus(404);
-  } catch (e) { handleError(res, e) }
-});
-getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)(/.*)?`), async (req, res) => {
+}));
+getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)(/.*)?`), asyncHandler(async (req, res) => {
   try {
     const communityUrl = req.params[0];
     const baseUrl = [
@@ -728,9 +673,9 @@ getRoutesRouter.get(new RegExp(`/${config.URL_COMMUNITY}/([^/]+)(/.*)?`), async 
       res.send(indexHtml);
     }
   } catch (e) { handleError(res, e) }
-});
+}));
 
-getRoutesRouter.get('/sitemap.xml', async (req, res) => {
+getRoutesRouter.get('/sitemap.xml', asyncHandler(async (req, res) => {
   try {
     const sitemap = await communityHelper.getSitemap();
 
@@ -739,42 +684,43 @@ getRoutesRouter.get('/sitemap.xml', async (req, res) => {
     res.send(sitemap);
     
   } catch (e) { handleError(res, e) }
-});
+}));
 
 //////////////// TWITTER ////////////////
 
 // twitter callback
-getRoutesRouter.get('/twitter-callback', passport.authenticate("twitter", {
+// keepSessionInfo: passport regenerates the session on success; keep the
+// rest of it (above all the logged-in user who is linking an X account)
+// (passport >= 0.6 supports the option; @types/passport does not list it yet)
+const twitterCallbackOptions: passport.AuthenticateOptions & { keepSessionInfo: boolean } = {
   successReturnToOrRedirect: '/twitter-login',
   failureRedirect: '/',
-}));
+  keepSessionInfo: true,
+};
+getRoutesRouter.get('/twitter-callback', passport.authenticate("twitter", twitterCallbackOptions));
 
 // Fallback twitter callback route for when service worker
 // is not installed (return indexhtml either way)
-getRoutesRouter.get('/twitter-login', async (request, response) => {
+getRoutesRouter.get('/twitter-login', asyncHandler(async (request, response) => {
   response.setHeader('Content-Type', 'text/html');
   response.send(indexhtml);
-});
+}));
 
 // verify-email callback route for when service worker
 // is not installed (return indexhtml either way)
-getRoutesRouter.get('/verify-email', async (request, response) => {
+getRoutesRouter.get('/verify-email', asyncHandler(async (request, response) => {
   response.setHeader('Content-Type', 'text/html');
   response.send(indexhtml);
-});
+}));
 
-getRoutesRouter.get('/token-sale', async (request, response) => {
-  response.redirect('/token');
-});
-
-getRoutesRouter.get('/store', async (request, response) => {
+getRoutesRouter.get('/store', asyncHandler(async (request, response) => {
   response.setHeader('Content-Type', 'text/html');
   response.send(indexhtml);
-});
+}));
 
-// token-sale callback route for when service worker
+// token page route for when the service worker
 // is not installed (return indexhtml either way)
-getRoutesRouter.get('/token', async (request, response) => {
+getRoutesRouter.get('/token', asyncHandler(async (request, response) => {
   const host = getWorkingHost(request.hostname);
   response.setHeader('Content-Type', 'text/html');
   response.setHeader('Cache-Control', 'public, max-age=30, must-revalidate');
@@ -786,9 +732,9 @@ getRoutesRouter.get('/token', async (request, response) => {
     `${host}/images/tokensale_social_preview.png`,
   );
   response.send(indexHtml);
-});
+}));
 
-getRoutesRouter.get('/push-icon', async (request, response) => {
+getRoutesRouter.get('/push-icon', asyncHandler(async (request, response) => {
   const userId = request.query["userId"] as string | undefined;
   const communityId = request.query["communityId"] as string | undefined;
 
@@ -833,7 +779,36 @@ getRoutesRouter.get('/push-icon', async (request, response) => {
   catch (e) {
     handleError(response, e);
   }
-});
+}));
+
+// the gated-file routes answer failures with a plain-text 500, not the API's
+// JSON (the app's default Content-Type is application/json)
+function gatedFileFailed(res: express.Response, err: unknown) {
+  console.error(describeErrorForLog(err));
+  res.status(500).type('text').send('Internal server error');
+}
+
+/**
+ * Streams a gated file. A read error (e.g. the file vanished between stat and
+ * read) answers 500 while nothing has been sent yet and otherwise aborts the
+ * response; a client that goes away early releases the file handle.
+ */
+function sendGatedFile(res: express.Response, file: fs.ReadStream, status: number, headers: Record<string, string | number>) {
+  file.on('error', (err) => {
+    if (res.headersSent) {
+      console.error(describeErrorForLog(err));
+      res.destroy();
+      return;
+    }
+    for (const header of Object.keys(headers)) {
+      res.removeHeader(header);
+    }
+    gatedFileFailed(res, err);
+  });
+  res.on('close', () => file.destroy());
+  res.status(status).set(headers);
+  file.pipe(res);
+}
 
 async function getGatedFileData(filename: string, userId: string) {
   const fileData = await pool.query<{ type: 'download' | 'video', isAllowed: boolean }>(`
@@ -852,9 +827,10 @@ async function getGatedFileData(filename: string, userId: string) {
   return fileData.rows[0];
 }
 
-getRoutesRouter.get('/gated-videos/:filename', async (req, res) => {
+getRoutesRouter.get('/gated-videos/:filename', asyncHandler(async (req, res) => {
   const { user } = req.session;
-  const { filename } = req.params;
+  // a named parameter is a string (only wildcards yield arrays)
+  const filename = req.params.filename as string;
 
   try {
     if (!user) {
@@ -902,26 +878,25 @@ getRoutesRouter.get('/gated-videos/:filename', async (req, res) => {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
       };
-      res.status(206).set(headers);
-      file.pipe(res);
+      sendGatedFile(res, file, 206, headers);
     } else {
+      const file = fs.createReadStream(filePath);
       const headers = {
         'Content-Type': contentType,
         'Content-Length': fileSize,
         'Accept-Ranges': 'bytes',
       };
-      res.status(200).set(headers);
-      fs.createReadStream(filePath).pipe(res);
+      sendGatedFile(res, file, 200, headers);
     }
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Internal server error');
+    gatedFileFailed(res, err);
   }
-});
+}, gatedFileFailed));
 
-getRoutesRouter.get('/gated-files/:filename', async (req, res) => {
+getRoutesRouter.get('/gated-files/:filename', asyncHandler(async (req, res) => {
   const { user } = req.session;
-  const { filename } = req.params;
+  // a named parameter is a string (only wildcards yield arrays)
+  const filename = req.params.filename as string;
 
   try {
     if (!user) {
@@ -956,17 +931,16 @@ getRoutesRouter.get('/gated-files/:filename', async (req, res) => {
     const stat = fs.statSync(filePath);
     const fileSize = stat.size;
 
+    const file = fs.createReadStream(filePath);
     const headers = {
       'Content-Type': contentType,
       'Content-Length': fileSize,
     };
-    res.status(200).set(headers);
-    fs.createReadStream(filePath).pipe(res);
+    sendGatedFile(res, file, 200, headers);
 
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Internal server error');
+    gatedFileFailed(res, err);
   }
-});
+}, gatedFileFailed));
 
 export default getRoutesRouter;

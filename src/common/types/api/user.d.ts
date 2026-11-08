@@ -2,6 +2,8 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import { type AuthenticationResponseJSON } from "@simplewebauthn/browser";
+
 declare global {
     namespace API {
         namespace User {
@@ -22,14 +24,6 @@ declare global {
                 secret: string;
                 siweMessage: string;
                 type: "evm";
-            } | {
-                type: "fuel";
-                address: Common.FuelAddress;
-                secret: string;
-            } | {
-                type: "aeternity";
-                address: Common.AeternityAddress;
-                secret: string;
             }
 
             namespace clearLoginSession {
@@ -56,6 +50,13 @@ declare global {
                         publicKey: any;
                     };
                 } | {
+                    type: 'passkey';
+                    authenticationResponse: AuthenticationResponseJSON;
+                    device: {
+                        publicKey: any;
+                    };
+                } | {
+                    /** passkey-success: legacy CG ID (gateway) mode only */
                     type: 'twitter' | 'passkey-success' | 'farcaster';
                     device: {
                         publicKey: any;
@@ -79,8 +80,78 @@ declare global {
                     webPushSubscription: Models.Notification.PushSubscription | null;
                     communities: Models.Community.DetailViewFromApi[];
                     chats: Models.Chat.ChatFromApi[];
+                    /**
+                     * servers before chat-sync may send a numeric string
+                     * (uncast int8 count); clients coerce it with `Number()`
+                     */
                     unreadNotificationCount: number;
+                    /**
+                     * the account must finish the account-security step before
+                     * anything else works (User/getSecurityStatus); absent on
+                     * older servers
+                     */
+                    securityStepRequired?: boolean;
+                    /**
+                     * epoch ms until which the session's last interactive
+                     * authentication counts for sensitive actions (null: it
+                     * does not); also after a silent device re-login
+                     */
+                    stepUpValidUntil?: number | null;
                 };
+            }
+
+            namespace ensureSession {
+                type Request = Record<string, never>;
+                type Response = undefined;
+            }
+
+            /**
+             * Signs the account out on every other device: their sessions
+             * end and their device keys are deleted; this session and device
+             * stay (step-up; docs/auth-identity §2)
+             */
+            namespace signOutOtherDevices {
+                type Request = Record<string, never>;
+                type Response = {
+                    /** how many other devices were signed out */
+                    devices: number;
+                    /** their sessions end within a minute (not right away) */
+                    delayed: boolean;
+                };
+            }
+
+            namespace reauthenticate {
+                type Request = {
+                    type: 'passkey';
+                    authenticationResponse: AuthenticationResponseJSON;
+                } | {
+                    type: 'password';
+                    password: string;
+                } | {
+                    /** after a fresh User/prepareWalletAction of a login-enabled wallet */
+                    type: 'wallet';
+                };
+                type Response = {
+                    /** epoch ms until which sensitive actions are allowed */
+                    validUntil: number;
+                };
+            }
+
+            namespace requestSignupEmailCode {
+                type Request = {
+                    email: string;
+                    /** the sign-up captcha; not needed for a resend to the same address */
+                    recaptchaToken?: string;
+                };
+                type Response = void;
+            }
+
+            namespace verifySignupEmailCode {
+                type Request = {
+                    email: string;
+                    code: string;
+                };
+                type Response = void;
             }
 
             namespace checkLoginStatus {
@@ -106,14 +177,10 @@ declare global {
                         email: string;
                         password: string;
                     };
-                    useWizardCode?: {
-                        email: string;
-                        code: string;
-                        wizardId: string;
-                    };
                     useCgProfile?: Models.User.ProfileItemWithDetails & { type: 'cg', extraData: Models.User.UserAccountExtraData_CG };
-                    displayAccount: Models.User.ProfileItemType;
-                    recaptchaToken: string;
+                    displayAccount: Exclude<Models.User.ProfileItemType, 'bot'>;
+                    /** not needed when the sign-up went through the email code (captcha solved there) */
+                    recaptchaToken?: string;
                     device: {
                         publicKey: any;
                     };
@@ -137,17 +204,8 @@ declare global {
 
             namespace setOwnExtraDataField {
                 type Request = {
-                    key: "registeredForTokenSale" | "installedPWA";
+                    key: "installedPWA";
                     value: boolean;
-                } | {
-                    key: "agreedToTokenSaleTermsTimestamp";
-                    value?: string; // value is replaced with server timestamp
-                } | {
-                    key: "investsFromSwitzerland";
-                    value: {
-                        value: boolean;
-                        serverTimestamp?: string; // is replaced with server timestamp
-                    };
                 };
                 type Response = void;
             }
@@ -160,7 +218,7 @@ declare global {
                     links?: Common.Link[];
                     homepage?: string;
                 } | {
-                    type: Exclude<Models.User.ProfileItemType, "cg">;
+                    type: Exclude<Models.User.ProfileItemType, "cg" | "bot">;
                 };
                 type Response = void;
             }
@@ -179,16 +237,16 @@ declare global {
 
             namespace removeUserAccount {
                 type Request = {
-                    type: Models.User.ProfileItemType;
+                    type: Exclude<Models.User.ProfileItemType, "bot">;
                 }
                 type Response = void;
             }
 
             namespace prepareWalletAction {
                 type Request = {
-                    type: Exclude<Models.Wallet.Type, "contract_evm">;
+                    type: Extract<Models.Wallet.Type, "evm" | "cg_evm">;
                     signature: string;
-                    data: SignableWalletData;
+                    data: Extract<SignableWalletData, { type: "evm" }>;
                 };
                 type Response = {
                     walletValid: boolean;
@@ -239,6 +297,41 @@ declare global {
                 type Response = Models.User.Data[];
             }
 
+            // Viewer-aware "people to discover". Authenticated only. Returns
+            // lightweight ids + a suggestion reason; clients hydrate profiles
+            // through getUserData. Ranking is a deterministic heuristic:
+            // shared-community members > follow-of-follows > globally-popular
+            // fallback, ordered by a composite score with a stable userId
+            // tiebreaker so keyset pagination cannot duplicate/omit.
+            namespace getSuggestedUsers {
+                type SuggestionReasonType =
+                    'sharedCommunity' |
+                    'followedByFollowing' |
+                    'popular';
+                type SuggestionReason = {
+                    type: SuggestionReasonType;
+                    // Present for 'sharedCommunity' — always a community the
+                    // viewer belongs to, so it reveals nothing the viewer's own
+                    // membership doesn't already expose.
+                    communityId?: string;
+                    // shared-community count (sharedCommunity) or
+                    // follow-of-follows count (followedByFollowing).
+                    mutualCount?: number;
+                };
+                type SuggestedUser = {
+                    userId: string;
+                    reason: SuggestionReason;
+                };
+                type Request = {
+                    limit: number; // 1..50, see validator
+                    cursor?: string; // opaque keyset cursor from a prior nextCursor
+                };
+                type Response = {
+                    users: SuggestedUser[];
+                    nextCursor: string | null;
+                };
+            }
+
             namespace getUserProfileDetails {
                 type Request = {
                     userId: string;
@@ -274,7 +367,12 @@ declare global {
                 type Request = {
                     password: string;
                 }
-                type Response = void;
+                type Response = {
+                    /** other devices signed out with a replaced password (0 for a first one) */
+                    signedOutDevices: number;
+                    /** their sessions end within a minute (not right away) */
+                    signOutDelayed: boolean;
+                };
             }
 
             namespace subscribeNewsletter {
@@ -449,66 +547,93 @@ declare global {
                 type Response = void;
             }
 
-            namespace redeemWizardCodeForExistingUser {
-                type Request = {
-                    wizardId: string;
-                    code: string;
-                };
-                type Response = void;
-            }
-
-            namespace getTokenSaleAllowance {
-                type Request = undefined;
+            /** what the account-security step still needs (docs/auth-identity §11) */
+            namespace getSecurityStatus {
+                type Request = Record<string, never>;
                 type Response = {
-                    allowance: string;
+                    /** anything below is missing: only the step's endpoints work */
+                    required: boolean;
+                    /** no passkey here, no password and no sign-in wallet */
+                    needsSignInMethod: boolean;
+                    /** no verified email (only on an instance that sends mail) */
+                    needsVerifiedEmail: boolean;
+                    /** the password signed in but is shorter than the policy */
+                    needsNewPassword: boolean;
+                    email: string | null;
+                    emailVerified: boolean;
+                    hasPassword: boolean;
+                    /** passkeys of this instance */
+                    passkeys: number;
+                    /** login-enabled wallets */
+                    loginWallets: number;
+                    /** an address a confirmation code was sent to and not yet confirmed */
+                    pendingEmail?: string | null;
+                    /**
+                     * the session signed in (or came with a transfer link) recently
+                     * enough to add what is missing; false: sign in again
+                     */
+                    recentSignIn?: boolean;
                 };
             }
 
-            namespace getConnectionCountry {
-                type Request = undefined;
+            /** a one-time link that signs the session's user in on the transfer target */
+            namespace createTransferLink {
+                type Request = {
+                    /** a same-site path on the target to continue to */
+                    nextPath?: string;
+                };
                 type Response = {
-                    country: string;
+                    /** `<target>/transfer#<token>` */
+                    url: string;
+                    /** epoch ms */
+                    expiresAt: number;
                 };
             }
 
-            namespace setReferredBy {
+            namespace previewTransferLink {
                 type Request = {
-                    tokenSaleId: string;
-                    referredBy: string;
-                };
-                type Response = void;
-            }
-
-            namespace getOwnTokenSaleData {
-                type Request = {
-                    tokenSaleId: string;
+                    token: string;
                 };
                 type Response = {
-                    tokenSaleData: Models.TokenSale.SaleData;
-                    userSaleData?: Models.TokenSale.UserSaleData;
+                    userId: string;
+                    displayName: string;
+                    /** the unique handle (cg profile name), if the account has one */
+                    username: string | null;
+                    /**
+                     * a unique identifier of the account to show next to the
+                     * free display name: the cg profile name, else the linked
+                     * X or Farcaster handle, else the Universal Profile
+                     * address; null if the account has none of them
+                     */
+                    identity: {
+                        type: 'cg' | 'twitter' | 'farcaster' | 'lukso';
+                        handle: string;
+                    } | null;
+                    /** profile image of the displayed account */
+                    imageId: string | null;
+                    /** epoch ms */
+                    expiresAt: number;
                 };
             }
 
-            namespace getTokenSaleEvents {
+            namespace declineTransferLink {
                 type Request = {
-                    tokenSaleId: string;
-                };
-                type Response = Models.Contract.SaleInvestmentEventJson[];
-            }
-
-            namespace claimTokenSaleReward {
-                type Request = {
-                    tokenSaleId: string;
+                    token: string;
                 };
                 type Response = void;
             }
 
-            namespace saveTokenSaleTargetAddress {
+            namespace redeemTransferLink {
                 type Request = {
-                    tokenSaleId: string;
-                    targetAddress: Common.Address;
+                    token: string;
+                    device: {
+                        publicKey: any;
+                    };
                 };
-                type Response = void;
+                type Response = login.Response & {
+                    /** where to continue (a same-site path), or null */
+                    nextPath: string | null;
+                };
             }
         }
     }

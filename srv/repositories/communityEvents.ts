@@ -91,12 +91,14 @@ async function _getEventCTE(
           SELECT JSON_BUILD_OBJECT(
             'roleId', r."id",
             'roleTitle', r."title",
+            'roleType', r."type",
             'permissions', cep."permissions"
           ) AS "item"
           FROM "communities_events_permissions" cep
           INNER JOIN roles r
             ON r."id" = cep."roleId"
             AND r."deletedAt" IS NULL
+            AND r."communityId" = ce."communityId"
           WHERE cep."communityEventId" = ce."id"
         ) sub
       ) as "rolePermissions"
@@ -106,13 +108,14 @@ async function _getEventCTE(
       INNER JOIN roles r
         ON cep."roleId" = r.id
         AND r."deletedAt" IS NULL
+        AND r."communityId" = ce."communityId"
       ${!!data.selfOnly
       ? `INNER JOIN "communities_events_participants" cep2
           ON (cep2."userId" = ${format("%L::UUID", data.userId)} AND cep2."eventId" = ce.id)`
       : ''}
       ${!!data.userId
       ? `LEFT JOIN roles_users_users ruu
-          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)`
+          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ruu."userId" = ${format("%L::UUID", data.userId)})`
       : ''}
       ${!!data.onlyVerifiedOrFollowing || !!data.tags?.length
       ? `INNER JOIN communities c
@@ -144,15 +147,15 @@ async function _getEventCTE(
         )}
         ${!!data.scheduledAfter
         ? ` AND (${!!data.beforeAfterId
-              ? `(${format('ce."scheduleDate" = %L::timestamptz', data.scheduledAfter)} AND ce.id > ${format('%L::UUID', data.userId)}) OR `
+              ? `(${format('ce."scheduleDate" = %L::timestamptz', data.scheduledAfter)} AND ce.id > ${format('%L::UUID', data.beforeAfterId)}) OR `
               : ''}
             ${format('ce."scheduleDate" > %L::timestamptz', data.scheduledAfter)})`
         : ''}
         ${!!data.scheduledBefore
           ? ` AND (${!!data.beforeAfterId
-            ? `(${format('ce."scheduleDate" = %L::timestamptz', data.scheduledAfter)} AND ce.id < ${format('%L::UUID', data.userId)}) OR `
+            ? `(${format('ce."scheduleDate" = %L::timestamptz', data.scheduledBefore)} AND ce.id < ${format('%L::UUID', data.beforeAfterId)}) OR `
             : ''}
-            ${format(' AND ce."scheduleDate" < %L::timestamptz ', data.scheduledBefore)})`
+            ${format('ce."scheduleDate" < %L::timestamptz ', data.scheduledBefore)})`
           : ''}
         ${!!data.tags?.length
           ? format(' AND c."tags" @> ARRAY[%s]::varchar[]', data.tags.map(tag => format('%L', tag)).join(','))
@@ -165,10 +168,11 @@ async function _getEventCTE(
         ${data.where ? `AND ${data.where}` : ''}
       GROUP BY ce."id"
       ORDER BY
-        ce."scheduleDate" ${data.order || 'DESC'}
-        ${(!!data.scheduledBefore || !!data.scheduledAfter)
-        ? `, ce.id ${data.order || 'DESC'}`
-        : ''}
+        ce."scheduleDate" ${data.order || 'DESC'},
+        -- Always break scheduleDate ties by id so the first page and cursor
+        -- pages share one deterministic (scheduleDate, id) ordering; otherwise a
+        -- page boundary inside a same-timestamp group duplicates or omits rows.
+        ce.id ${data.order || 'DESC'}
       ${data.limit ? `LIMIT ${data.limit}` : ''}
   `, data.params);
 
@@ -200,7 +204,42 @@ async function _getEventCTE(
   }[];
 }
 
+/**
+ * The role permissions to store for an event of `communityId`, without the
+ * Admin role. Every role id must be a live role of that community; otherwise
+ * the request is refused with NOT_ALLOWED.
+ */
+async function getCheckedEventRolePermissions<T extends { roleId: string }>(communityId: string, rolePermissions: T[]): Promise<T[]> {
+  const rolesResult = await pool.query(`
+    SELECT "id", "type", "title"
+    FROM roles
+    WHERE "communityId" = $1
+      AND "deletedAt" IS NULL
+  `, [communityId]);
+  const roles = rolesResult.rows as { id: string; type: RoleType; title: string }[];
+  const adminRole = roles.find(r => r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Admin);
+  if (!adminRole) {
+    throw new Error(errors.server.UNKNOWN);
+  }
+  const communityRoleIds = new Set(roles.map(r => r.id));
+  for (const rolePermission of rolePermissions) {
+    if (!communityRoleIds.has(rolePermission.roleId)) {
+      throw new Error(errors.server.NOT_ALLOWED);
+    }
+  }
+  return rolePermissions.filter(p => p.roleId !== adminRole.id);
+}
+
 class CommunityEventHelper {
+  /**
+   * Refuses (NOT_ALLOWED) event role permissions that name anything but
+   * live roles of `communityId`. The event routes run it on the full list
+   * before they write anything (the event's call included).
+   */
+  public async checkEventRolePermissions(communityId: string, rolePermissions: API.Community.createCommunityEvent.Request['rolePermissions']): Promise<void> {
+    await getCheckedEventRolePermissions(communityId, rolePermissions);
+  }
+
   public async getCommunityEvents(communityId: string, userId: string): Promise<API.Community.getEventList.Response> {
     return _getEventCTE(pool, {
       where: 'ce."communityId" = $1',
@@ -247,27 +286,15 @@ class CommunityEventHelper {
         ARRAY[${format("%L", MEMBER_PERMISSIONS)}]::"public"."communities_events_permissions_permissions_enum"[]
       )`;
     } else if (data.rolePermissions.length > 0) {
-      const adminRoleQuery = await pool.query(`
-        SELECT id
-        FROM roles
-        WHERE "communityId" = $1
-          AND "type" = ${format("%L", RoleType.PREDEFINED)}
-          AND "title" = ${format("%L", PredefinedRole.Admin)}
-      `, [data.communityId]);
-
-      const adminRole = adminRoleQuery.rows[0] as {
-        id: string;
-      };
-      if (!adminRole) {
-        throw new Error(errors.server.UNKNOWN);
+      data.rolePermissions = await getCheckedEventRolePermissions(data.communityId, data.rolePermissions);
+      if (data.rolePermissions.length > 0) {
+        roleInsert = `,` + data.rolePermissions.map(role =>
+          format(`(
+            (SELECT id FROM insert_event),
+            %L::uuid,
+            ARRAY[${format("%L", role.permissions)}]::"public"."communities_events_permissions_permissions_enum"[])
+          `, role.roleId)).join(",");
       }
-      data.rolePermissions = data.rolePermissions.filter(p => p.roleId !== adminRole.id);
-      roleInsert = `,` + data.rolePermissions.map(role =>
-        format(`(
-          (SELECT id FROM insert_event),
-          %L::uuid, 
-          ARRAY[${format("%L", role.permissions)}]::"public"."communities_events_permissions_permissions_enum"[])
-        `, role.roleId)).join(",");
     }
 
     const result = await pool.query(`
@@ -371,6 +398,7 @@ class CommunityEventHelper {
         (SELECT array_to_json(array_agg(json_build_object(
           'roleId', "roleId",
           'roleTitle', (SELECT "title" FROM roles r WHERE r."id" = "roleId"),
+          'roleType', (SELECT "type" FROM roles r WHERE r."id" = "roleId"),
           'permissions', "permissions"
         ))) FROM permission_insert) AS "rolePermissions",
         (SELECT array_agg("userId") FROM communities_events_participants WHERE "eventId" = ie.id) AS "participantIds",
@@ -631,6 +659,7 @@ class CommunityEventHelper {
         (SELECT array_to_json(array_agg(json_build_object(
           'roleId', "roleId",
           'roleTitle', (SELECT "title" FROM roles r WHERE r."id" = "roleId"),
+          'roleType', (SELECT "type" FROM roles r WHERE r."id" = "roleId"),
           'permissions', "permissions"
         ))) FROM permission_insert) AS "rolePermissions",
         (SELECT array_agg("userId") FROM communities_events_participants WHERE "eventId" = ue.id) AS "participantIds",
@@ -685,11 +714,17 @@ class CommunityEventHelper {
           FROM roles_users_users ruu
           INNER JOIN communities_events_permissions cep
             ON cep."roleId" = ruu."roleId"
+          INNER JOIN communities_events ce
+            ON ce."id" = cep."communityEventId"
+          INNER JOIN roles r
+            ON r."id" = cep."roleId"
+            AND r."deletedAt" IS NULL
+            AND r."communityId" = ce."communityId"
           WHERE ruu."userId" = communities_events_participants."userId"
             AND cep."communityEventId" = $1
             AND cep."permissions" @> ARRAY['EVENT_ATTEND']::"public"."communities_events_permissions_permissions_enum"[]
         ) RETURNING "userId"`, [data.id]);
-      if (updateEventMembers.rowCount > 0) {
+      if ((updateEventMembers.rowCount ?? 0) > 0) {
         //update the successResult.participantIds and successResult.participantCount
         successResult.participantIds = successResult.participantIds.filter(id => !updateEventMembers.rows.find(row => row.userId === id));
         successResult.participantCount = successResult.participantIds.length;
@@ -716,12 +751,14 @@ class CommunityEventHelper {
   }
 
   public async getEventParticipants(eventId: string): Promise<API.Community.getEventParticipants.Response> {
+    // Leaving an event DELETEs the participant row (eventParticipantLeave), so
+    // there is no "leftAt" column to filter on — the table has only eventId,
+    // userId, createdAt. The stale "leftAt IS NULL" clause errored 42703.
     const result = await pool.query(`
       SELECT
         "userId"
       FROM communities_events_participants
       WHERE "eventId" = $1
-      AND "leftAt" IS NULL
     `, [eventId]);
 
     if (result.rows.length === 0) {
@@ -759,16 +796,22 @@ class CommunityEventHelper {
     //check wether the user has a role with the COMMUNITY event attend permission
     const hasPermissionQuery = await pool.query(`
       SELECT
-        "roleId"
-      FROM communities_events_permissions
-      WHERE "communityEventId" = $1
-      AND "roleId" IN (
+        cep."roleId"
+      FROM communities_events_permissions cep
+      INNER JOIN communities_events ce
+        ON ce."id" = cep."communityEventId"
+      INNER JOIN roles r
+        ON r."id" = cep."roleId"
+        AND r."deletedAt" IS NULL
+        AND r."communityId" = ce."communityId"
+      WHERE cep."communityEventId" = $1
+      AND cep."roleId" IN (
         SELECT "roleId"
         FROM roles_users_users
         WHERE "userId" = $2
         AND "claimed" = TRUE
       )
-      AND "permissions" @> ARRAY[${format("%L", CommunityEventPermission.EVENT_ATTEND)}]::"public"."communities_events_permissions_permissions_enum"[]
+      AND cep."permissions" @> ARRAY[${format("%L", CommunityEventPermission.EVENT_ATTEND)}]::"public"."communities_events_permissions_permissions_enum"[]
     `, [data.eventId, userId]);
     const hasPermission = hasPermissionQuery.rows.length > 0;
 
@@ -900,27 +943,15 @@ class CommunityEventHelper {
         ARRAY[${format("%L", MEMBER_PERMISSIONS)}]::"public"."communities_events_permissions_permissions_enum"[]
       )`;
     } else if (rolePermissions.length > 0) {
-      const adminRoleQuery = await pool.query(`
-        SELECT id
-        FROM roles
-        WHERE "communityId" = $1
-          AND "type" = ${format("%L", RoleType.PREDEFINED)}
-          AND "title" = ${format("%L", PredefinedRole.Admin)}
-      `, [communityId]);
-
-      const adminRole = adminRoleQuery.rows[0] as {
-        id: string;
-      };
-      if (!adminRole) {
-        throw new Error(errors.server.UNKNOWN);
+      rolePermissions = await getCheckedEventRolePermissions(communityId, rolePermissions);
+      if (rolePermissions.length > 0) {
+        roleInsert = `,` + rolePermissions.map(role =>
+          format(`(
+            (SELECT id FROM update_event),
+            %L::uuid,
+            ARRAY[${format("%L", role.permissions)}]::"public"."communities_events_permissions_permissions_enum"[])
+          `, role.roleId)).join(",");
       }
-      rolePermissions = rolePermissions.filter(p => p.roleId !== adminRole.id);
-      roleInsert = `,` + rolePermissions.map(role =>
-        format(`(
-          (SELECT id FROM update_event),
-          %L::uuid, 
-          ARRAY[${format("%L", role.permissions)}]::"public"."communities_events_permissions_permissions_enum"[])
-        `, role.roleId)).join(",");
     }
     return roleInsert;
   }

@@ -20,14 +20,22 @@ declare {
                     },
                     callback: (allowed: boolean) => void,
                 ) => Promise<void>,
+                // wsapi presence: which of these users have a logged-in socket on the answering process
+                "presenceProbe": (
+                    userIds: string[],
+                    callback: (presentUserIds: string[]) => void,
+                ) => void,
             }
 
             interface SocketData {
                 userId?: string;
                 deviceId?: string;
+                botTokenId?: string;
+                botProtocolVersion?: API.Bot.ProtocolVersion;
                 signableSecret?: string;
                 temporaryCommunityId?: string;
                 walletRequestId?: string;
+                cgIdRequestId?: string;
             }
         }
     }
@@ -75,6 +83,11 @@ declare {
                     preWallet?: Omit<Models.Wallet.Wallet, "id" | "userId">;
                     result: API.User.prepareWalletAction.Response;
                     ownerId?: string;
+                    /** the signed wallet (lowercase) and its type: checked again when the signature is used */
+                    walletIdentifier?: string;
+                    walletType?: Models.Wallet.Type;
+                    /** epoch ms of the signature check (login and User/reauthenticate need a fresh one) */
+                    createdAt?: number;
                 }
             }
         }

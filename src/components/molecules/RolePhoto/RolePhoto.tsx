@@ -7,8 +7,11 @@ import React, { createRef, useState } from "react";
 import fileApi from "data/api/file";
 import errors from "../../../common/errors";
 import config from "../../../common/config";
+import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
+import { notifyIfImageRejected } from "moderation/imageUploadError";
 import { useSignedUrl } from "hooks/useSignedUrl";
 import { UserCircle } from "@phosphor-icons/react";
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
   communityId: string;
@@ -29,17 +32,29 @@ const RolePhoto: React.FC<Props> = (props: Props) => {
 
   const handleImageChange = async (ev: React.ChangeEvent<HTMLInputElement>) => {
     ev.stopPropagation();
-    if (ev.target.files && ev.target.files.length === 1) {
-      if (ev.target.files[0].size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
+    // Read the file and clear the input *before* any await: `ev.target` is not
+    // safe to touch afterwards, and leaving the value set would make re-picking
+    // the same file after a "Cancel" in the pre-check dialog fire no change
+    // event at all.
+    const input = ev.target;
+    const files = input.files;
+    const file = files && files.length === 1 ? files[0] : undefined;
+    input.value = '';
+    if (file) {
+      if (file.size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
         setError(errors.client.UPLOAD_SIZE_LIMIT);
       } else {
+        if (!await checkImageBeforeUpload(file)) return;
         try {
-          const result = await fileApi.uploadImage({ type: 'roleImage', roleId, communityId }, ev.target.files[0]);
+          const result = await fileApi.uploadImage({ type: 'roleImage', roleId, communityId }, file);
           setImageId?.(result.imageId);
           setError(undefined);
         } catch (err) {
           console.error(err);
-          setError("An unknown error has occurred");
+          // The rejection is reported by the shared modal, so the inline error
+          // is cleared instead of repeating it in a second place.
+          if (notifyIfImageRejected(err)) setError(undefined);
+          else setError("An unknown error has occurred");
         }
       }
     }
@@ -61,7 +76,7 @@ const RolePhoto: React.FC<Props> = (props: Props) => {
 
   return (
     <>
-      <div className={className} style={{ backgroundImage: `url(${imgUrl})`}} onClick={openLoadImagePopup}>
+      <div className={className} style={{ backgroundImage: cssBackgroundImage(imgUrl) }} onClick={openLoadImagePopup}>
         {editMode && <input type="file" ref={imageUploadRef} onChange={handleImageChange} style={{ display: "none" }} accept={config.ACCEPTED_IMAGE_FORMATS} />}
         {!imgUrl && <UserCircle weight="duotone" className="w-6 h-6" />}
       </div>

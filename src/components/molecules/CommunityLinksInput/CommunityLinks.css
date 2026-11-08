@@ -1,8 +1,10 @@
+@reference '../../../tailwind.css';
+
 .community-links {
-  @apply flex flex-col flex-none flex-grow-0 p-2 gap-2;
+  @apply flex flex-col flex-none grow-0 p-2 gap-2;
 
   .community-link-editor {
-    @apply flex flex-row flex-none flex-grow-0 order-none justify-start items-center p-0 gap-2;
+    @apply flex flex-row flex-none grow-0 order-none justify-start items-center p-0 gap-2;
     
     .error,
     .error:focus,
@@ -14,6 +16,6 @@
   }
 
   button.add-link {
-    @apply w-28 flex flex-row flex-none flex-grow-0 justify-start items-center gap-1;
+    @apply w-28 flex flex-row flex-none grow-0 justify-start items-center gap-1;
   }
 }

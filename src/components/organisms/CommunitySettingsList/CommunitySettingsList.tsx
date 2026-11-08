@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import DropdownItem from "../../atoms/ListItem/ListItem";
 import { useCommunitySidebarContext } from "../CommunityViewSidebar/CommunityViewSidebarContext";
@@ -12,7 +12,7 @@ import { ShareListItem } from "components/atoms/ShareButton/ShareButton";
 
 import './CommunitySettingsList.css';
 
-export type CommunitySettingsListItem = 'community' | 'areas' | 'members' | 'roles' | 'upgrades' | 'token' | 'onboarding' | 'plugins' | 'ban-management';
+export type CommunitySettingsListItem = 'community' | 'areas' | 'members' | 'roles' | 'upgrades' | 'token' | 'onboarding' | 'plugins' | 'bots' | 'ban-management';
 
 type Props = {
   onClick?: () => void;

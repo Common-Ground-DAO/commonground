@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .pwa-wall {
     .logo {
         @apply flex items-center justify-center;
@@ -13,7 +15,7 @@
 }
 
 .modal-centered.pwa-wall {
-    @apply cg-border-xxl relative overflow-hidden !important;
+    @apply cg-border-xxl! relative! overflow-hidden!;
     width: 360px !important;
     margin: 0 !important;
 }

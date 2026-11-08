@@ -4,7 +4,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import "./CommunityViewSidebar.css";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import { useCommunitySidebarContext } from "./CommunityViewSidebarContext";
 import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
@@ -17,14 +17,14 @@ import OwnCommunitiesBrowser from "../../../views/OwnCommunitiesBrowser/OwnCommu
 import Scrollable, { PositionData } from "../../molecules/Scrollable/Scrollable";
 // import { NewspaperIcon, BookOpenIcon, LightBulbIcon, PencilIcon } from '@heroicons/react/20/solid';
 
-import { ReactComponent as SidebarCollapseIcon } from '../../../components/atoms/icons/20/SidebarCollapse.svg';
-import { ReactComponent as SidebarExpandIcon } from '../../../components/atoms/icons/20/SidebarExpand.svg';
+import SidebarCollapseIcon from '../../../components/atoms/icons/20/SidebarCollapse.svg?react';
+import SidebarExpandIcon from '../../../components/atoms/icons/20/SidebarExpand.svg?react';
 import { getUrl } from 'common/util';
 import { StartCallModal } from "../StartCallModal/StartCallModal";
 import config from "common/config";
 import { CallList } from "components/molecules/CallList/CallList";
 import JoinCommunityButton from "components/atoms/JoinCommunityButton/JoinCommunityButton";
-import { Calendar, HouseSimple, IdentificationBadge, Users, Brain, Plug, CoinVertical, Gear, ArrowsOut, X, Storefront, Graph, ShareNetwork, Warning, Spinner } from "@phosphor-icons/react";
+import { Calendar, HouseSimple, IdentificationBadge, Users, Plug, CoinVertical, Gear, ArrowsOut, X, Storefront, Graph, ShareNetwork, Warning, Spinner } from "@phosphor-icons/react";
 import NotificationDot from "components/atoms/NotificationDot/NotificationDot";
 import JoinNewsletterBanner from "components/molecules/JoinNewsletterBanner/JoinNewsletterBanner";
 import ScreenAwarePopover from "components/atoms/ScreenAwarePopover/ScreenAwarePopover";
@@ -41,6 +41,7 @@ import reportApi from "data/api/report";
 import { ReportType } from "common/enums";
 import SimpleLink from "components/atoms/SimpleLink/SimpleLink";
 import { reasonCodeToText } from "context/ReportModalProvider";
+import { cssBackgroundImage } from 'util/cssBackground';
 
 export type MainSidebarContentName = 'lobby' | 'settings' | 'areas';
 
@@ -55,7 +56,6 @@ const memberApplicationsPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/
 const membersPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/members/?$`);
 const rolesPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/roles/?$`);
 const eventsPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/events/?$`);
-const assistantPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/assistant/?$`);
 const pluginPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/plugin/([^/]+)/?$`);
 const tokenPathRegex = new RegExp(`^/${config.URL_COMMUNITY}/[^/]+/token/?$`);
 
@@ -247,13 +247,6 @@ export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
     }
   }, [community?.url]);
 
-  const navigateToAssistant = useCallback(() => {
-    if (!!community?.url) {
-      closeSideBar?.();
-      navigate(getUrl({ type: 'community-assistant', community }));
-    }
-  }, [community?.url]);
-
   const navigateToPlugin = useCallback((plugin: Models.Plugin.Plugin) => {
     if (!!community?.url) {
       closeSideBar?.();
@@ -275,7 +268,6 @@ export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
     isMembersActive,
     isRolesActive,
     isEventsActive,
-    isAssistantActive,
     isPluginsActive,
     activePluginId,
     isTokenActive,
@@ -290,7 +282,6 @@ export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
       isMembersActive: !!pathname.match(membersPathRegex),
       isRolesActive: !!pathname.match(rolesPathRegex),
       isEventsActive: !!pathname.match(eventsPathRegex),
-      isAssistantActive: !!pathname.match(assistantPathRegex),
       isPluginsActive,
       activePluginId,
       isTokenActive: !!pathname.match(tokenPathRegex),
@@ -323,14 +314,6 @@ export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
               rightElement={!!community.membersPendingApproval ? <div className="absolute top-0 bottom-0 right-2 flex items-center"></div> : undefined}
             />
             <SidebarButton icon={<IdentificationBadge weight="duotone" className="w-5 h-5" />} onClick={navigateToRoles} text="Roles" className={isRolesActive ? ' active' : ''} />
-            {(config.COMMUNITY_ASSISTANT_ENABLED) && (
-              <SidebarButton
-                icon={<Brain weight="duotone" className="w-5 h-5" />}
-                onClick={navigateToAssistant}
-                text="Assistant"
-                className={isAssistantActive ? ' active' : ''}
-              />
-            )}
             {(config.TOKEN_CREATION_ENABLED || config.DEPLOYMENT !== 'prod') && (
               <SidebarButton
                 icon={<div className="flex">
@@ -338,7 +321,7 @@ export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
                   <div className="text-xs flex items-center justify-center bg-blue-600 text-white rounded-md px-1 py-0.5 ml-1">NEW</div>
                 </div>}
                 onClick={navigateToToken}
-                text="Token"
+                text="Stake"
                 className={isTokenActive ? ' active' : ''}
               />
             )}
@@ -358,7 +341,7 @@ export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
       );
     }
     return null;
-  }, [isJoinedCommunity, community?.id, community?.membersPendingApproval, community?.plugins, isMemberApplicationsActive, isMembersActive, isRolesActive, isEventsActive, isLobbyActive, isAssistantActive, isPluginsActive, activePluginId, navigateToEvents, navigateToFeed, navigateToMemberApplications, navigateToMembers, navigateToRoles, navigateToAssistant, navigateToPlugin]);
+  }, [isJoinedCommunity, community?.id, community?.membersPendingApproval, community?.plugins, isMemberApplicationsActive, isMembersActive, isRolesActive, isEventsActive, isLobbyActive, isPluginsActive, activePluginId, navigateToEvents, navigateToFeed, navigateToMemberApplications, navigateToMembers, navigateToRoles, navigateToPlugin]);
 
   const innerUnjoinedContent = useMemo(() => {
     if (!isJoinedCommunity && !!community) {
@@ -426,7 +409,7 @@ export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
   }, [community?.id]);
 
   const content = useMemo(() => {
-    let inner: JSX.Element | null;
+    let inner: React.JSX.Element | null;
     if (isJoinedCommunity) {
       inner = innerJoinedContent;
     } else {
@@ -469,9 +452,9 @@ export default function CommunityViewSidebar(props: CommunityViewSidebarProps) {
 type SidebarButtonProps = {
   onClick: () => void;
   className?: string;
-  icon: JSX.Element;
+  icon: React.JSX.Element;
   text: string;
-  rightElement?: JSX.Element;
+  rightElement?: React.JSX.Element;
 };
 
 const SidebarButton = React.memo((props: SidebarButtonProps) => {
@@ -523,7 +506,7 @@ const PluginSidebarButton = React.memo((props: PluginSidebarButtonProps) => {
       </div>}
       {!!props.plugin?.imageId && <div
         className={`${isLoaded ? 'w-16 h-16' : 'w-5 h-5'} cg-border-l overflow-hidden bg-no-repeat bg-cover bg-center flex items-center justify-center ${!pluginImg && !!pluginData?.imageId ? 'animate-pulse' : ''}`}
-        style={{ backgroundImage: `url(${pluginImg})` }}
+        style={{ backgroundImage: cssBackgroundImage(pluginImg) }}
       />}
 
       <div className="flex flex-col gap-2">

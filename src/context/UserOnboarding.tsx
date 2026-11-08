@@ -7,47 +7,23 @@ import { useOwnUser } from "./OwnDataProvider";
 import { useNotificationContext } from "./NotificationProvider";
 import loginManager from "data/appstate/login";
 import { useConnectionContext } from "./ConnectionProvider";
-import { type OnboardingEmailState } from "components/organisms/UserOnboarding/OnboardingEmail/OnboardingEmail";
 import useLocalStorage from "hooks/useLocalStorage";
-import { useSnackbarContext } from "./SnackbarContext";
 
+/**
+ * The onboarding modal (UserOnboarding): `start` shows the login / sign-up
+ * flow (AuthFlow); the rest are the steps after it — "Welcome back" after a
+ * login, and newsletter, push notifications, PWA install and "finished"
+ * after a sign-up.
+ */
 export type OnboardingStep =
     'start' |
-
-    /* create state order */
-    'create' |
-    'create-other' |
-    'create-other-option' |
-    'create-profile-setup' |
-    /* situational extra states here */
-    'create-finished' |
-
-    /* login state order */
-    'login' |
-    'login-other' |
-    'login-other-option' |
-    /* situational extra states here */
     'login-finished' |
-    
-    /* extra states */
     'enable-newsletter' |
     'enable-push' |
-    'post-on-x' |
-    'install-pwa';
+    'install-pwa' |
+    'create-finished';
 
-export type OnboardingWalletData = {
-    request: API.User.prepareWalletAction.Request;
-    response: API.User.prepareWalletAction.Response;
-};
-
-export type FarcasterData = {
-    fid: number;
-    displayName: string;
-    username: string;
-    url?: string;
-    bio?: string;
-    imageId: string | null;
-}
+export type NewsletterState = { email: string; loading: boolean; valid: boolean; error: string };
 
 type UserOnboardingState = {
     isUserOnboardingComplete: boolean;
@@ -55,25 +31,13 @@ type UserOnboardingState = {
     setUserOnboardingVisibility: (visible: boolean) => void;
     step: OnboardingStep
     setStep: (state: OnboardingStep) => void;
-    emailState: OnboardingEmailState;
-    setEmailState: React.Dispatch<React.SetStateAction<OnboardingEmailState>>;
-    createUserData: Omit<API.User.createUser.Request, 'device' | 'recaptchaToken'>;
-    setCreateUserData: React.Dispatch<React.SetStateAction<Omit<API.User.createUser.Request, 'device' | 'recaptchaToken'>>>;
-    createUserButtonState: { loading: boolean; disabled: boolean; clicked: boolean };
-    setCreateUserButtonState: React.Dispatch<React.SetStateAction<{ loading: boolean; disabled: boolean; clicked: boolean }>>;
-    luksoData: API.Lukso.PrepareLuksoAction.Response | undefined;
-    setLuksoData: React.Dispatch<React.SetStateAction<API.Lukso.PrepareLuksoAction.Response | undefined>>;
-    walletData: OnboardingWalletData | undefined;
-    setWalletData: React.Dispatch<React.SetStateAction<OnboardingWalletData | undefined>>;
-    farcasterData: FarcasterData | undefined;
-    setFarcasterData: React.Dispatch<React.SetStateAction<FarcasterData | undefined>>;
-    newsletterState: { email: string; loading: boolean; valid: boolean; error: string };
-    setNewsletterState: React.Dispatch<React.SetStateAction<{ email: string; loading: boolean; valid: boolean; error: string }>>;
-    profileLockedIn: boolean;
-    setProfileLockedIn: React.Dispatch<React.SetStateAction<boolean>>;
-    emailFromTokenSaleRegistration: string | undefined;
-    setEmailFromTokenSaleRegistration: React.Dispatch<React.SetStateAction<string | undefined>>;
+    /** after a sign-up outside the modal (/login): show the tail steps */
+    continueAfterSignup: (email: string | null) => void;
+    newsletterState: NewsletterState;
+    setNewsletterState: React.Dispatch<React.SetStateAction<NewsletterState>>;
 }
+
+const defaultNewsletterState: NewsletterState = { email: '', loading: false, valid: false, error: '' };
 
 export const UserOnboardingContext = React.createContext<UserOnboardingState>({
     isUserOnboardingComplete: false,
@@ -81,80 +45,45 @@ export const UserOnboardingContext = React.createContext<UserOnboardingState>({
     setUserOnboardingVisibility: () => { },
     step: 'start',
     setStep: () => { },
-    emailState: { type: 'password', email: '', password: '', error: '', valid: false, loading: false },
-    setEmailState: () => { },
-    createUserData: null as any,
-    setCreateUserData: () => { },
-    createUserButtonState: { loading: false, disabled: false, clicked: false },
-    setCreateUserButtonState: () => { },
-    luksoData: undefined,
-    setLuksoData: () => { },
-    walletData: undefined,
-    setWalletData: () => { },
-    farcasterData: undefined,
-    setFarcasterData: () => { },
-    newsletterState: { email: '', loading: false, valid: false, error: '' },
+    continueAfterSignup: () => { },
+    newsletterState: defaultNewsletterState,
     setNewsletterState: () => { },
-    profileLockedIn: false,
-    setProfileLockedIn: () => { },
-    emailFromTokenSaleRegistration: undefined,
-    setEmailFromTokenSaleRegistration: () => { },
 });
 
 const initiallyLoggedIn = loginManager.currentUser !== null;
 
-const defaultUserData: Omit<API.User.createUser.Request, 'device' | 'recaptchaToken'> = {
-    displayAccount: 'cg',
-};
-const defaultEmailState: OnboardingEmailState = { type: 'password', email: '', password: '', error: '', valid: false, loading: false };
-const defaultCreateUserButtonState = { loading: false, disabled: false, clicked: false };
-const defaultNewsletterState = { email: '', loading: false, valid: false, error: '' };
-
 export function UserOnboardingProvider(props: { children: ReactNode }) {
     const { pwaStatus } = useNotificationContext();
-    const { webSocketState, finishInstallation, finishInstallationTriggered, serviceWorkerState } = useConnectionContext();
+    const { updateAvailable, finishInstallation, finishInstallationTriggered, serviceWorkerState } = useConnectionContext();
     const [isModalVisible, setIsModalVisible] = useState<boolean>(!initiallyLoggedIn && pwaStatus === 'InMobilePWA');
     const [step, setStep] = useState<OnboardingStep>('start');
     const ownUser = useOwnUser();
-
-    const [emailState, setEmailState] = useState<OnboardingEmailState>(defaultEmailState);
-    const [createUserData, setCreateUserData] = useState<Omit<API.User.createUser.Request, 'device' | 'recaptchaToken'>>(defaultUserData);
-    const [createUserButtonState, setCreateUserButtonState] = useState(defaultCreateUserButtonState);
-    const [luksoData, setLuksoData] = useState<API.Lukso.PrepareLuksoAction.Response | undefined>();
-    const [walletData, setWalletData] = useState<OnboardingWalletData | undefined>();
-    const [newsletterState, setNewsletterState] = useState(defaultNewsletterState);
-    const [profileLockedIn, setProfileLockedIn] = useState<boolean>(false);
-    const [farcasterData, setFarcasterData] = useState<FarcasterData | undefined>();
-    const [emailFromTokenSaleRegistration, setEmailFromTokenSaleRegistration] = useState<string | undefined>();
-    const [emailConfirmationOpened, setEmailConfirmationOpened] = useLocalStorage('', 'emailConfirmation');
-    const { showSnackbar } = useSnackbarContext();
+    const [newsletterState, setNewsletterState] = useState<NewsletterState>(defaultNewsletterState);
+    const [, setEmailConfirmationOpened] = useLocalStorage('', 'emailConfirmation');
 
     useEffect(() => {
-        if (webSocketState === 'version-update' && isModalVisible && !finishInstallationTriggered && serviceWorkerState === 'updated') {
+        if (updateAvailable && isModalVisible && !finishInstallationTriggered && serviceWorkerState === 'updated') {
             finishInstallation();
         }
-    }, [webSocketState, isModalVisible, finishInstallationTriggered, finishInstallation, serviceWorkerState]);
+    }, [updateAvailable, isModalVisible, finishInstallationTriggered, finishInstallation, serviceWorkerState]);
 
     const setUserOnboardingVisibility = useCallback((visible: boolean) => {
         if (visible && !isModalVisible) {
             setStep('start');
-            setCreateUserButtonState(defaultCreateUserButtonState);
-            setEmailState(defaultEmailState);
-            setCreateUserData(defaultUserData);
-            setLuksoData(undefined);
-            setWalletData(undefined);
             setNewsletterState(defaultNewsletterState);
-            setProfileLockedIn(false);
         }
         setIsModalVisible(visible);
         if (!visible) {
             // hide email confirmation modal if the user has just onboarded
             setEmailConfirmationOpened('opened');
-            if (ownUser && !!createUserData.useEmailAndPassword) {
-              showSnackbar({ type: 'warning', text: `We've sent you an email with a verification link, please check your inbox` });
-            }
         }
-    }, [createUserData.useEmailAndPassword, isModalVisible, ownUser, setEmailConfirmationOpened, showSnackbar]);
+    }, [isModalVisible, setEmailConfirmationOpened]);
+
+    const continueAfterSignup = useCallback((email: string | null) => {
+        setNewsletterState({ ...defaultNewsletterState, email: email || '', valid: !!email });
+        setStep('enable-newsletter');
+        setIsModalVisible(true);
+    }, []);
 
     return (
         <UserOnboardingContext.Provider value={{
@@ -163,24 +92,9 @@ export function UserOnboardingProvider(props: { children: ReactNode }) {
             setUserOnboardingVisibility,
             step,
             setStep,
-            emailState,
-            setEmailState,
-            createUserData,
-            setCreateUserData,
-            createUserButtonState,
-            setCreateUserButtonState,
-            luksoData,
-            setLuksoData,
-            walletData,
-            setWalletData,
-            farcasterData,
-            setFarcasterData,
+            continueAfterSignup,
             newsletterState,
             setNewsletterState,
-            profileLockedIn,
-            setProfileLockedIn,
-            emailFromTokenSaleRegistration,
-            setEmailFromTokenSaleRegistration,
         }}>
           {props.children}
         </UserOnboardingContext.Provider>

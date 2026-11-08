@@ -10,16 +10,21 @@ import {
   checkMultiRoleClaimability,
   getSingleTransactionData,
   getErc20Balance,
-  getTokensaleEvents,
   getBlockNumber,
 } from './onchain/index';
 import express from 'express';
 import { OnchainPriority } from './onchain/scheduler';
-import { fakeHealthcheck } from './healthcheck';
+import { listenerProbe, postgresProbe, startHealthcheck } from './healthcheck';
+import { valkeyProbe } from './redis/healthProbe';
 import pool from './util/postgres';
 import format from 'pg-format';
 import { isValidSignature, getUniversalProfileData } from './onchain/lukso';
 import { PredefinedRole, RoleType } from './common/enums';
+import { refuseInGatewayMode } from './util/gateway';
+
+// runs once, for the main instance only: never as part of a gateway
+// (srv/util/gateway.ts)
+refuseInGatewayMode('onchain');
 
 const app = express();
 
@@ -136,30 +141,6 @@ app.post('/getErc20Balance', express.json(), async (req, res) => {
   } catch (e) {
     res.sendStatus(500);
     console.error("An error occurred getting the ERC20 balance", e);
-  }
-});
-
-app.post('/getTokensaleEvents', express.json(), async (req, res) => {
-  const data: {
-    chain: Models.Contract.ChainIdentifier;
-    contractAddress: Common.Address;
-    contractType: Models.Contract.SaleContractType;
-    fromBlock: number;
-    toBlock: number;
-  } = req.body;
-  try {
-    const result = await getTokensaleEvents(
-      data.chain,
-      data.contractAddress,
-      data.contractType,
-      data.fromBlock,
-      data.toBlock,
-      OnchainPriority.HIGH,
-    );
-    res.json(result);
-  } catch (e) {
-    res.sendStatus(500);
-    console.error("An error occurred getting the tokensale events", e);
   }
 });
 
@@ -280,7 +261,18 @@ app.listen(4000);
   }
 })();
 
-fakeHealthcheck();
+// healthy: the database and the Valkey state instance answer, and the HTTP
+// listener the api calls accepts connections
+startHealthcheck([postgresProbe(pool), valkeyProbe(), listenerProbe(4000)]);
+
+// Deliberately no imageFilter.warmUp() here, unlike srv/api.ts. This process
+// stores images too (LSP3 avatar ingests in onchain/generic.ts), but those
+// callers already treat a classification failure as "proceed without an
+// image", so a broken model degrades instead of breaking — and warming would
+// cost this process the ~300 MB model RSS at boot even on instances whose
+// chain events never carry a profile image. The api process reports the same
+// model from the same path, which is where the hard failure (every upload
+// returning INTERNAL) actually lives.
 
 process.on("SIGTERM", async () => {
   process.exit(0);

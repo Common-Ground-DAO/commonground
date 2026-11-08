@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .conversation-element {
     @apply mt-2 cg-border-l;
     color: var(--dmCardText);

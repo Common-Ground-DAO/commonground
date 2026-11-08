@@ -8,9 +8,10 @@ import { useWindowSizeContext } from "context/WindowSizeProvider";
 import { usePluginIframeContext } from "context/PluginIframeProvider";
 import { createPortal } from "react-dom";
 import { Resize, X } from "@phosphor-icons/react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { getUrl } from "common/util";
 import communityDatabase from "data/databases/community";
+import { isPluginUrlAllowed } from "data/auth/pluginOrigin";
 
 const IframePluginPortal = () => {
   const navigate = useNavigate();
@@ -123,6 +124,9 @@ const IframePluginPortal = () => {
     return null;
   }
 
+  // never run plugin content on this instance's host or a subdomain of it
+  const urlAllowed = isPluginUrlAllowed(iframeUrl);
+
   const style: CSSProperties = {
     top: `${dockCoordinates.top}px`,
     left: `${dockCoordinates.left}px`,
@@ -146,7 +150,10 @@ const IframePluginPortal = () => {
         </div>
       </div>
     </div>}
-    {allowString && iframeUrl && <iframe title={`iframe_${iframeUrl}`} allow={allowString} ref={iframeRef} src={iframeUrl} sandbox='allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-downloads' className='w-full h-full' />}
+    {!urlAllowed && <div className='flex flex-1 items-center justify-center p-4 text-center cg-text-main cg-bg-2nd cg-text-md-400'>
+      This plugin can't be shown: it is served from this site's own address.
+    </div>}
+    {urlAllowed && allowString && iframeUrl && <iframe title={`iframe_${iframeUrl}`} allow={allowString} ref={iframeRef} src={iframeUrl} sandbox='allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-downloads' className='w-full h-full' />}
   </div>,
     document.body
   );

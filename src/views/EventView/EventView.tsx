@@ -5,7 +5,7 @@
 import React from 'react'
 import './EventView.css';
 import dayjs from 'dayjs';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';
 import { dayJsToUrlFormat, generateEventICSFile, getUrl } from 'common/util';
 import Event from './Event';

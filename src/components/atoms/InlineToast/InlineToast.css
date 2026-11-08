@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .input-toast {
     @apply px-4 gap-2 flex items-center cg-text-md-500 w-fit;
     right: 6px;

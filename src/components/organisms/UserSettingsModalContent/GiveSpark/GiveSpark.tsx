@@ -8,7 +8,7 @@ import { useUserSettingsContext } from 'context/UserSettingsProvider';
 import CommunityPhoto from 'components/atoms/CommunityPhoto/CommunityPhoto';
 import { getCommunityDisplayName } from '../../../../util';
 import TextInputField from 'components/molecules/inputs/TextInputField/TextInputField';
-import { ReactComponent as SparkIcon } from '../../../atoms/icons/misc/spark.svg';
+import SparkIcon from '../../../atoms/icons/misc/spark.svg?react';
 import { useCommunityListView } from 'context/CommunityListViewProvider';
 import { useOwnUser } from 'context/OwnDataProvider';
 import communityApi from 'data/api/community';

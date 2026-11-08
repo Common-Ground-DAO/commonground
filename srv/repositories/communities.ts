@@ -22,6 +22,7 @@ import { type Pool, type PoolClient } from "pg";
 import format from 'pg-format';
 import errors from "../common/errors";
 import config from "../common/config";
+import urls from "../util/urls";
 import eventHelper from "./event";
 import permissionHelper from "./permissions";
 import { randomString } from "../util";
@@ -38,8 +39,8 @@ import notificationHelper from "./notifications";
 import dayjs from "dayjs";
 import userHelper from "./users";
 import emailHelper from "./emails";
-import { investmentTargets } from "../common/investmentTargets";
-import { parseUnits } from "ethers/utils";
+import botHelper from "./bots";
+import { isReservedRoleTitle } from "../util/roleTitles";
 
 /* Community Retrieval */
 
@@ -98,6 +99,7 @@ async function _getCommunityListView(
       c."shortDescription",
       c."tags",
       c."official",
+      c."allowUserBots",
       c."updatedAt",
       c."createdAt",
       c."memberCount",
@@ -131,6 +133,7 @@ async function _getCommunityListView(
     shortDescription: string;
     tags: string[];
     official: boolean;
+    allowUserBots: boolean;
     updatedAt: string;
     createdAt: string;
     memberCount: number;
@@ -160,6 +163,7 @@ async function _getCommunityDetailView<Ext>(
       c."shortDescription",
       c."tags",
       c."official",
+      c."allowUserBots",
       c."updatedAt",
       c."description",
       c."links",
@@ -277,12 +281,14 @@ async function _getCommunityDetailView<Ext>(
               SELECT JSON_BUILD_OBJECT(
                 'roleId', r2."id",
                 'roleTitle', r2."title",
+                'roleType', r2."type",
                 'permissions', ccrp."permissions"
               ) AS "item"
               FROM "communities_channels_roles_permissions" ccrp
               INNER JOIN roles r2
                 ON r2."id" = ccrp."roleId"
                 AND r2."deletedAt" IS NULL
+                AND r2."communityId" = ccrp."communityId"
               WHERE ccrp."communityId" = ch."communityId"
                 AND ccrp."channelId" = ch."channelId"
             ) sub
@@ -428,6 +434,7 @@ async function _getCommunityDetailView<Ext>(
     shortDescription: string;
     tags: string[];
     official: boolean;
+    allowUserBots: boolean;
     updatedAt: string;
 
     description: string;
@@ -874,7 +881,7 @@ async function _createChannel(
     ).join(',')}
     `;
     const permResult = await runner.query(query);
-    if (permResult.rowCount > 0) {
+    if ((permResult.rowCount ?? 0) > 0) {
       return insertResult;
     }
   }
@@ -1165,7 +1172,7 @@ async function _updateRole(
     SET ${setArray.join(',')}, "updatedAt" = NOW()
     WHERE "communityId" = $1 AND "id" = $2 AND "deletedAt" IS NULL
     ${_noPredefined ? format('AND "type" <> %L', RoleType.PREDEFINED) : ''}
-    ${_noAdmin ? format('AND "title" <> %L', PredefinedRole.Admin) : ''}
+    ${_noAdmin ? format('AND NOT ("type" = %L AND "title" = %L)', RoleType.PREDEFINED, PredefinedRole.Admin) : ''}
     RETURNING "updatedAt"
   `;
   const result = await db.query(query, params);
@@ -1227,7 +1234,7 @@ async function _addUserToRoles(
       SELECT "id", "title", $2::UUID AS "userId", TRUE AS "claimed"
       FROM roles
       WHERE "communityId" = $1
-        AND "title" <> ${format('%L', PredefinedRole.Public)}
+        AND NOT ("type" = ${format('%L', RoleType.PREDEFINED)} AND "title" = ${format('%L', PredefinedRole.Public)})
         AND "id" = ANY(ARRAY[${roleIds.map(s => format('%L', s)).join(',')}]::uuid[])
         AND "deletedAt" IS NULL
     )
@@ -1256,7 +1263,7 @@ async function _removeUserFromRoles(
     WITH role_data AS (
       SELECT "id" FROM roles
       WHERE "communityId" = $1
-        AND "title" <> ${format('%L', PredefinedRole.Member)}
+        AND NOT ("type" = ${format('%L', RoleType.PREDEFINED)} AND "title" = ${format('%L', PredefinedRole.Member)})
         AND "id" = ANY(ARRAY[${roleIds.map(s => format('%L::UUID', s)).join(',')}])
     )
     DELETE FROM roles_users_users
@@ -1268,6 +1275,140 @@ async function _removeUserFromRoles(
   return {
     deletedUserRoles: result.rows as { roleId: string }[]
   }
+}
+
+type MembershipRemoval = {
+  memberCount: number;
+  deletedRolesIds: string[];
+  communityOrder: string[];
+  updatedAt: string;
+};
+
+/**
+ * Removes the user's membership of the community in one statement: all of
+ * the user's roles of it, the community from the user's order, the channel
+ * settings, and one from the member count. Null when the user holds no role
+ * of the community (nothing changes then).
+ */
+async function _removeCommunityMembership(
+  db: Pool | PoolClient,
+  userId: string,
+  communityId: string,
+): Promise<MembershipRemoval | null> {
+  const result = await db.query(`
+      WITH delete_roles AS (
+        DELETE FROM roles_users_users
+        WHERE "userId" = $1
+          AND "roleId" = ANY(
+            SELECT "id" FROM roles
+            WHERE "communityId" = $2
+          )
+        RETURNING "roleId"
+      ),
+      user_update AS (
+        UPDATE users u
+        SET "communityOrder" =
+          CASE
+            WHEN u."communityOrder" @> ARRAY[$2::UUID]
+            THEN array_remove(u."communityOrder", $2::UUID)
+            ELSE u."communityOrder"
+          END
+        WHERE u.id = $1
+          AND EXISTS (SELECT 1 FROM delete_roles)
+        RETURNING "communityOrder"
+      ),
+      channel_setting_delete AS (
+        DELETE FROM user_channel_settings
+        WHERE "userId" = $1
+          AND "communityId" = $2
+      ),
+      user_community_state_update AS (
+        UPDATE user_community_state
+        SET "userLeftCommunity" = now()
+        WHERE "userId" = $1
+          AND "communityId" = $2
+      )
+      UPDATE communities
+      SET "memberCount" = "memberCount" - 1, "updatedAt" = now()
+      WHERE id = $2 AND EXISTS (SELECT 1 FROM delete_roles)
+      RETURNING "memberCount", (
+        SELECT array_to_json(array_agg("roleId"))
+        FROM delete_roles
+      ) AS "deletedRolesIds",
+      (SELECT "communityOrder" FROM user_update),
+      "updatedAt"
+    `, [userId, communityId]);
+  if (result.rows.length !== 1) {
+    return null;
+  }
+  return result.rows[0] as MembershipRemoval;
+}
+
+/**
+ * Runs `fn` in a transaction on a client of its own. On failure the
+ * transaction is rolled back and the original error is thrown; a client
+ * whose ROLLBACK fails is discarded instead of going back to the pool.
+ */
+async function _inTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  let broken: Error | undefined;
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      console.error("ROLLBACK failed", rollbackError);
+      broken = rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError));
+    }
+    throw e;
+  } finally {
+    client.release(broken);
+  }
+}
+
+/**
+ * Takes the transaction-scoped lock on the membership of `userId` in
+ * `communityId`. Joining and banning take it before they read or change the
+ * membership, so they run one after the other.
+ */
+async function _lockMembership(db: PoolClient, userId: string, communityId: string) {
+  await db.query(`SELECT pg_advisory_xact_lock(hashtextextended('membership:' || $1::text || ':' || $2::text, 0))`, [communityId, userId]);
+}
+
+/** Whether `userId` has an active ban (no end, or an end in the future) in `communityId`. */
+async function _isBanned(db: Pool | PoolClient, userId: string, communityId: string): Promise<boolean> {
+  const result = await db.query(`
+    SELECT 1
+    FROM user_community_state
+    WHERE "userId" = $1
+      AND "communityId" = $2
+      AND "blockState" = ${format('%L', UserBlockState.BANNED)}
+      AND ("blockStateUntil" > NOW() OR "blockStateUntil" IS NULL)
+  `, [userId, communityId]);
+  return result.rows.length > 0;
+}
+
+/**
+ * A channel role permission list with each role's stored title and type
+ * (for events), whatever the request said about them.
+ */
+function _withStoredRoles(
+  rolePermissions: Models.Community.CommunityChannelPermission[],
+  roles: { id: string; title: string; type: RoleType }[],
+): Models.Community.CommunityChannelPermission[] {
+  return rolePermissions.map(rp => {
+    const role = roles.find(r => r.id === rp.roleId);
+    return {
+      roleId: rp.roleId,
+      roleTitle: role?.title ?? rp.roleTitle,
+      roleType: role?.type,
+      permissions: rp.permissions,
+    };
+  });
 }
 
 async function _getCommunityRoles(
@@ -1434,7 +1575,7 @@ class CommunityHelper {
           VALUES ${channelTdsWithoutLastRead.map(channelId =>
           format("(%L::UUID, %L::UUID, %L::TIMESTAMPTZ)", channelId, userId, newLastRead)
         ).join(',')}
-          ON CONFLICT ("channelId", "userId") DO UPDATE SET "lastRead" = EXCLUDED."lastRead"
+          ON CONFLICT ("channelId", "userId") DO UPDATE SET "lastRead" = GREATEST(channelreadstate."lastRead", EXCLUDED."lastRead")
         `);
       }
       return result[0] as typeof result[0] & {
@@ -1542,9 +1683,15 @@ class CommunityHelper {
   }
 
   private async joinCommunity(userId: string, communityId: string, questionnaireAnswers?: Models.Community.QuestionnaireAnswer[]): Promise<Models.Community.DetailViewFromApi> {
-    const blockState = await this.getUserBlockState(userId, communityId);
-    if (blockState !== 'BANNED') {
-      const result = await pool.query(`
+    // the ban check and the role insert hold the user's membership lock, as
+    // a ban does (setUserBlockState): a join and a ban of the same user and
+    // community run one after the other
+    const result = await _inTransaction(async client => {
+      await _lockMembership(client, userId, communityId);
+      if (await _isBanned(client, userId, communityId)) {
+        throw new Error(errors.server.NOT_ALLOWED);
+      }
+      return client.query(`
         WITH member_role AS (
           SELECT r."id" FROM roles r
           WHERE r."communityId" = $2::UUID
@@ -1582,111 +1729,15 @@ class CommunityHelper {
         WHERE id = $2::UUID AND EXISTS (SELECT 1 FROM role_insert)
         RETURNING "memberCount", (SELECT "communityOrder" FROM user_update), "updatedAt"
       `, [userId, communityId]);
-      if (result.rows.length !== 1) {
-        throw new Error(errors.server.NOT_ALLOWED);
-      }
-      const data = await this.getCommunityDetailView({ id: communityId }, userId);
-      const memberRoleId = data.roles.find(r => r.title === PredefinedRole.Member)?.id;
-      if (!memberRoleId) {
-        throw new Error("Member Role not found, this is - theoretically - impossible. If this happened, a member role was either not created or deleted, which should not happen.");
-      }
-      eventHelper.emit({
-        type: "cliCommunityEvent",
-        action: "update",
-        data: {
-          id: communityId,
-          memberCount: result.rows[0].memberCount,
-          updatedAt: result.rows[0].updatedAt,
-        },
-      }, {
-        communityIds: [communityId],
-      });
-      eventHelper.emit({
-        type: "cliMembershipEvent",
-        action: "join",
-        data: {
-          communityId: communityId,
-          userId: userId,
-          roleIds: [memberRoleId],
-        },
-      }, {
-        communityIds: [communityId],
-      });
-      eventHelper.emit({
-        type: "cliUserOwnData",
-        data: {
-          communityOrder: result.rows[0].communityOrder,
-        },
-      }, {
-        userIds: [userId]
-      });
-      eventHelper.userJoinRooms(userId, {
-        roleIds: [memberRoleId],
-        communityIds: [communityId],
-      });
-      return data;
-    }
-
-    throw new Error(errors.server.NOT_ALLOWED);
-  }
-
-  public async leaveCommunity(userId: string, communityId: string): Promise<Models.Community.DetailViewFromApi> {
-    const result = await pool.query(`
-      WITH delete_roles AS (
-        DELETE FROM roles_users_users
-        WHERE "userId" = $1
-          AND "roleId" = ANY(
-            SELECT "id" FROM roles
-            WHERE "communityId" = $2
-          )
-        RETURNING "roleId"
-      ),
-      user_update AS (
-        UPDATE users u
-        SET "communityOrder" =
-          CASE
-            WHEN u."communityOrder" @> ARRAY[$2::UUID]
-            THEN array_remove(u."communityOrder", $2::UUID)
-            ELSE u."communityOrder"
-          END
-        WHERE u.id = $1
-          AND EXISTS (SELECT 1 FROM delete_roles)
-        RETURNING "communityOrder"
-      ),
-      channel_setting_delete AS (
-        DELETE FROM user_channel_settings
-        WHERE "userId" = $1
-          AND "communityId" = $2
-      ),
-      user_community_state_update AS (
-        UPDATE user_community_state
-        SET "userLeftCommunity" = now()
-        WHERE "userId" = $1
-          AND "communityId" = $2
-      )
-      UPDATE communities
-      SET "memberCount" = "memberCount" - 1, "updatedAt" = now()
-      WHERE id = $2 AND EXISTS (SELECT 1 FROM delete_roles)
-      RETURNING "memberCount", (
-        SELECT array_to_json(array_agg("roleId"))
-        FROM delete_roles
-      ) AS "deletedRolesIds",
-      (SELECT "communityOrder" FROM user_update),
-      "updatedAt"
-    `, [userId, communityId]);
+    });
     if (result.rows.length !== 1) {
       throw new Error(errors.server.NOT_ALLOWED);
     }
-    const leaveResult: {
-      memberCount: number;
-      deletedRolesIds: string[];
-      communityOrder: string[]
-    } = result.rows[0];
     const data = await this.getCommunityDetailView({ id: communityId }, userId);
-    eventHelper.userLeaveRooms(userId, {
-      roleIds: result.rows[0].deletedRolesIds,
-      communityIds: [communityId],
-    });
+    const memberRoleId = data.roles.find(r => r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Member)?.id;
+    if (!memberRoleId) {
+      throw new Error("Member Role not found, this is - theoretically - impossible. If this happened, a member role was either not created or deleted, which should not happen.");
+    }
     eventHelper.emit({
       type: "cliCommunityEvent",
       action: "update",
@@ -1694,6 +1745,62 @@ class CommunityHelper {
         id: communityId,
         memberCount: result.rows[0].memberCount,
         updatedAt: result.rows[0].updatedAt,
+      },
+    }, {
+      communityIds: [communityId],
+    });
+    eventHelper.emit({
+      type: "cliMembershipEvent",
+      action: "join",
+      data: {
+        communityId: communityId,
+        userId: userId,
+        roleIds: [memberRoleId],
+      },
+    }, {
+      communityIds: [communityId],
+    });
+    eventHelper.emit({
+      type: "cliUserOwnData",
+      data: {
+        communityOrder: result.rows[0].communityOrder,
+      },
+    }, {
+      userIds: [userId]
+    });
+    eventHelper.userJoinRooms(userId, {
+      roleIds: [memberRoleId],
+      communityIds: [communityId],
+    });
+    return data;
+  }
+
+  public async leaveCommunity(userId: string, communityId: string): Promise<Models.Community.DetailViewFromApi> {
+    const leaveResult = await _removeCommunityMembership(pool, userId, communityId);
+    if (!leaveResult) {
+      throw new Error(errors.server.NOT_ALLOWED);
+    }
+    return this.afterMembershipRemoved(userId, communityId, leaveResult);
+  }
+
+  /**
+   * What follows a removed membership (`_removeCommunityMembership`): the
+   * user's sockets leave the community and role rooms, the community and the
+   * user hear about it, and the user's bots are reconciled.
+   */
+  private async afterMembershipRemoved(userId: string, communityId: string, leaveResult: MembershipRemoval): Promise<Models.Community.DetailViewFromApi> {
+    const data = await this.getCommunityDetailView({ id: communityId }, userId);
+    eventHelper.userLeaveRooms(userId, {
+      roleIds: leaveResult.deletedRolesIds,
+      communityIds: [communityId],
+    });
+    eventHelper.emit({
+      type: "cliCommunityEvent",
+      action: "update",
+      data: {
+        id: communityId,
+        memberCount: leaveResult.memberCount,
+        updatedAt: leaveResult.updatedAt,
       },
     }, {
       communityIds: [communityId]
@@ -1721,6 +1828,7 @@ class CommunityHelper {
       communityIds: [communityId],
       roleIds,
     });
+    await botHelper.reconcileUserBotsForOwner(userId, communityId);
     return data;
   }
 
@@ -1762,23 +1870,36 @@ class CommunityHelper {
       `, [data.userId, data.communityId]);
     }
     else {
-      if (data.blockState === UserBlockState.BANNED) {
+      // A ban ends the membership: the roles go and the block state is
+      // stored in one transaction, so a failure leaves neither half behind
+      // and fails the request. The events and room changes follow after.
+      // It holds the user's membership lock, as joining does
+      // (joinCommunity), so a join running at the same time comes after it
+      // and sees the ban.
+      const removedMembership = await _inTransaction(async client => {
+        await _lockMembership(client, data.userId, data.communityId);
+        const removed = data.blockState === UserBlockState.BANNED
+          ? await _removeCommunityMembership(client, data.userId, data.communityId)
+          : null;
+        await client.query(`
+          INSERT INTO user_community_state ("userId", "communityId", "blockState", "blockStateUntil", "blockStateUpdatedAt")
+          VALUES ($1, $2, $3, $4, now())
+          ON CONFLICT ("userId", "communityId")
+          DO UPDATE SET
+            "blockState" = EXCLUDED."blockState",
+            "blockStateUntil" = EXCLUDED."blockStateUntil",
+            "blockStateUpdatedAt" = now()
+        `, [data.userId, data.communityId, data.blockState, data.until]);
+        return removed;
+      });
+      if (removedMembership) {
         try {
-          await this.leaveCommunity(data.userId, data.communityId);
+          await this.afterMembershipRemoved(data.userId, data.communityId, removedMembership);
         }
         catch (e) {
-          console.error("Could not make user leave community as of ban", e);
+          console.error("Could not send the membership updates of a ban", e);
         }
       }
-      await pool.query(`
-        INSERT INTO user_community_state ("userId", "communityId", "blockState", "blockStateUntil", "blockStateUpdatedAt")
-        VALUES ($1, $2, $3, $4, now())
-        ON CONFLICT ("userId", "communityId")
-        DO UPDATE SET
-          "blockState" = EXCLUDED."blockState",
-          "blockStateUntil" = EXCLUDED."blockStateUntil",
-          "blockStateUpdatedAt" = now()
-      `, [data.userId, data.communityId, data.blockState, data.until]);
     }
   }
 
@@ -1831,7 +1952,7 @@ class CommunityHelper {
         VALUES ${channelIdsWithoutLastRead.map(channelId =>
         format("(%L::UUID, %L::UUID, %L::TIMESTAMPTZ)", channelId, userId, newLastRead)
       ).join(',')}
-        ON CONFLICT ("channelId", "userId") DO UPDATE SET "lastRead" = EXCLUDED."lastRead"
+        ON CONFLICT ("channelId", "userId") DO UPDATE SET "lastRead" = GREATEST(channelreadstate."lastRead", EXCLUDED."lastRead")
       `);
     }
     return result as (typeof result[0] & {
@@ -1928,6 +2049,7 @@ class CommunityHelper {
                 agg.push({
                   roleId: role.id,
                   roleTitle: role.title,
+                  roleType: role.type,
                   permissions
                 })
               }
@@ -1941,7 +2063,7 @@ class CommunityHelper {
         userId,
         communityId,
         roleIds: roles
-          .filter(r => r.title === PredefinedRole.Admin || r.title === PredefinedRole.Member)
+          .filter(r => r.type === RoleType.PREDEFINED && (r.title === PredefinedRole.Admin || r.title === PredefinedRole.Member))
           .map(r => r.id)
       });
       const communityOrderResult = await client.query(`
@@ -1962,6 +2084,10 @@ class CommunityHelper {
         firstArticleOriginalId = config.COMMUNITY_CREATION_ARTICLE_DEV;
       }
       if (!!firstArticleOriginalId) {
+        // the welcome-article template may not exist (e.g. fresh self-hosted
+        // instances); a savepoint keeps a failure here from aborting the
+        // whole community-creation transaction
+        await client.query("SAVEPOINT initial_article");
         try {
           const articleInsertResult = await client.query(`
             WITH insert_channel AS (
@@ -2020,7 +2146,8 @@ class CommunityHelper {
           `);
         }
         catch (e) {
-          console.error("Creating initial article failed", e);
+          await client.query("ROLLBACK TO SAVEPOINT initial_article");
+          console.error("Creating initial article failed, continuing without it", e);
         }
       }
 
@@ -2034,7 +2161,7 @@ class CommunityHelper {
       });
       await eventHelper.userJoinRooms(userId, {
         roleIds: roles
-          .filter(r => r.title === PredefinedRole.Admin || r.title === PredefinedRole.Member)
+          .filter(r => r.type === RoleType.PREDEFINED && (r.title === PredefinedRole.Admin || r.title === PredefinedRole.Member))
           .map(r => r.id),
         communityIds: [communityId],
       });
@@ -2046,6 +2173,7 @@ class CommunityHelper {
     } finally {
       client.release();
     }
+    await botHelper.reconcilePlatformBotsForCommunity(communityId);
     return await this.getCommunityDetailView({ id: communityId }, userId);
   }
 
@@ -2145,6 +2273,7 @@ class CommunityHelper {
         {
           roleId: adminId,
           roleTitle: PredefinedRole.Admin,
+          roleType: RoleType.PREDEFINED,
           permissions: rolePermissionPresets.Channel.Admin
         },
         ...data.rolePermissions,
@@ -2165,7 +2294,7 @@ class CommunityHelper {
     const eventCommunityIds = new Set<string>();
     for (const r of roleData) {
       if (r.permissions.includes(ChannelPermission.CHANNEL_EXISTS)) {
-        if (r.title === PredefinedRole.Public) {
+        if (r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Public) {
           eventCommunityIds.add(data.communityId);
         } else {
           eventRoleIds.add(r.id);
@@ -2178,6 +2307,13 @@ class CommunityHelper {
       data: {
         ...data,
         ...result,
+        // as stored, with each role's title and type
+        rolePermissions: roleData.map(r => ({
+          roleId: r.id,
+          roleTitle: r.title,
+          roleType: r.type,
+          permissions: r.permissions,
+        })),
         lastRead: new Date().toISOString(),
         lastMessageDate: null,
         pinType: null,
@@ -2190,6 +2326,7 @@ class CommunityHelper {
       roleIds: Array.from(eventRoleIds),
       communityIds: Array.from(eventCommunityIds),
     });
+    await botHelper.reconcileAllUserBotsInCommunity(data.communityId);
   }
 
   public async updateChannel(data: API.Community.updateChannel.Request): Promise<void> {
@@ -2216,6 +2353,7 @@ class CommunityHelper {
       data.rolePermissions.push({
         roleId: adminRole.id,
         roleTitle: PredefinedRole.Admin,
+        roleType: RoleType.PREDEFINED,
         permissions: rolePermissionPresets.Channel.Admin,
       });
     }
@@ -2241,6 +2379,10 @@ class CommunityHelper {
     const deleteRoleIds = new Set<string>();
 
     let extra: Partial<Models.Community.Channel> | undefined;
+    // the events carry each role's stored title and type, not the request's
+    if (!!data.rolePermissions) {
+      extra = { rolePermissions: _withStoredRoles(data.rolePermissions, communityRoles) };
+    }
     if (!data.rolePermissions) {
       oldPermissions.forEach(p => {
         if (p.permissions.includes(ChannelPermission.CHANNEL_EXISTS)) {
@@ -2352,7 +2494,7 @@ class CommunityHelper {
         data: {
           ...channel,
           lastRead: new Date().toISOString(),
-          rolePermissions: data.rolePermissions,
+          rolePermissions: _withStoredRoles(data.rolePermissions, communityRoles),
           pinType: null,
           notifyType: null,
           pinnedUntil: null,
@@ -2368,6 +2510,7 @@ class CommunityHelper {
           : undefined,
       );
     }
+    await botHelper.reconcileAllUserBotsInCommunity(data.communityId);
   }
 
   public async deleteChannel(data: API.Community.deleteChannel.Request): Promise<void> {
@@ -2486,6 +2629,22 @@ class CommunityHelper {
     let result: Awaited<ReturnType<typeof _updateRole>>;
     await client.query("BEGIN");
     try {
+      // a reserved title (Admin, Member, Public) only as the role's own,
+      // unchanged title: a custom role that carries one from before stays
+      // editable, but no role takes one anew
+      if (data.title !== undefined && isReservedRoleTitle(data.title)) {
+        const current = await client.query<{ title: string }>(`
+          SELECT "title"
+          FROM roles
+          WHERE "id" = $1
+            AND "communityId" = $2
+            AND "deletedAt" IS NULL
+        `, [data.id, data.communityId]);
+        if (current.rows[0]?.title.trim() !== data.title) {
+          throw new Error(errors.server.INVALID_REQUEST);
+        }
+      }
+
       // check potential community token
       const { assignmentRules } = data;
       if (!!assignmentRules && assignmentRules.type === "token") {
@@ -2518,6 +2677,7 @@ class CommunityHelper {
     await eventHelper.emit(event, {
       communityIds: [data.communityId],
     });
+    await botHelper.reconcileAllUserBotsInCommunity(data.communityId);
   }
 
   public async deleteRole(data: API.Community.deleteRole.Request): Promise<void> {
@@ -2533,6 +2693,7 @@ class CommunityHelper {
   }
 
   public async addUserToRoles(data: API.Community.addUserToRoles.Request): Promise<void> {
+    await botHelper.guardGenericRoleAssignment(data.userId, data.communityId, data.roleIds);
     const client = await pool.connect();
     let success = false;
     let result: Awaited<ReturnType<typeof _addUserToRoles>>;
@@ -2575,6 +2736,7 @@ class CommunityHelper {
       await eventHelper.emit(event, {
         userIds: [data.userId],
       });
+      await botHelper.reconcileUserBotsForOwner(data.userId, data.communityId);
     }
   }
 
@@ -2593,7 +2755,7 @@ class CommunityHelper {
       FROM role_id_query
       ON CONFLICT ("userId", "roleId") DO NOTHING
     `);
-    return result.rowCount;
+    return result.rowCount ?? 0;
   }
 
   public async removeUserFromUnclaimableRoles(userId: string, roleIds: string[]): Promise<void> {
@@ -2636,6 +2798,7 @@ class CommunityHelper {
   }
 
   public async removeUserFromRoles(data: API.Community.removeUserFromRoles.Request): Promise<void> {
+    await botHelper.guardGenericRoleRemoval(data.userId, data.communityId);
     const client = await pool.connect();
     let success = false;
     let result: Awaited<ReturnType<typeof _removeUserFromRoles>>;
@@ -2678,6 +2841,7 @@ class CommunityHelper {
       await eventHelper.emit(event, {
         userIds: [data.userId],
       });
+      await botHelper.reconcileUserBotsForOwner(data.userId, data.communityId);
     }
   }
 
@@ -3343,28 +3507,6 @@ class CommunityHelper {
     return await _getCommunitySocialPreview(pool, options);
   }
 
-  public async getWizardDataForSocialPreview(wizardId: string) {
-    const wizardData = await pool.query<{
-      socialPreviewDescription: string;
-      isPublic: boolean;
-    }>(`
-      SELECT
-        w."data"->>'socialPreviewDescription' AS "socialPreviewDescription",
-        (r."title" = ${format("%L", PredefinedRole.Public)} AND r."type" = ${format('%L::"public"."roles_type_enum"', RoleType.PREDEFINED)}) as "isPublic"
-      FROM wizards w
-      INNER JOIN wizard_role_permission wrp
-        ON wrp."wizardId" = w.id
-      INNER JOIN roles r
-        ON wrp."roleId" = r.id
-        AND w."communityId" = r."communityId"
-      WHERE w.id = $1
-    `, [wizardId]);
-    if (wizardData.rows.length === 1) {
-      return wizardData.rows[0];
-    }
-    return undefined;
-  }
-
   #sitemapFile = "__sitemapCache.xml";
   #sitemapStaleAfter = 30 * 60 * 1000; // 15m
   public async getSitemap() {
@@ -3408,6 +3550,8 @@ class CommunityHelper {
               AND ca."articleId" = carp."articleId"
           INNER JOIN roles r
             ON carp."roleId" = r."id"
+            AND r."deletedAt" IS NULL
+            AND r."communityId" = ca."communityId"
           INNER JOIN articles a
             ON carp."articleId" = a."id"
 
@@ -3500,7 +3644,7 @@ class CommunityHelper {
       items.push({
         url: [
           {
-            loc: `https://${config.DEPLOYMENT === "staging" ? "staging." : ""}app.cg${item.relativeUrl}`,
+            loc: `${urls.APP_URL}${item.relativeUrl}`,
           },
           {
             lastmod: item.lastModified,
@@ -3587,6 +3731,7 @@ class CommunityHelper {
       INNER JOIN roles r
         ON r."id" = ccrp."roleId"
         AND r."deletedAt" IS NULL
+        AND r."communityId" = ccrp."communityId"
       WHERE ccrp."channelId" = $1
         AND ccrp."communityId" = $2
     `;
@@ -3598,7 +3743,7 @@ class CommunityHelper {
       permissions: Common.ChannelPermission[];
       roleTitle: string;
       roleId: string;
-      type: Models.Community.Role["type"],
+      roleType: Models.Community.Role["type"],
     }[];
   }
 
@@ -3657,6 +3802,7 @@ class CommunityHelper {
         AND r."deletedAt" IS NULL
       INNER JOIN calls c
         ON c."id" = cp."callId"
+        AND c."communityId" = r."communityId"
       WHERE cp."callId" = $1
         AND c."channelId" = $2
     `;
@@ -3669,7 +3815,7 @@ class CommunityHelper {
       roleTitle: string;
       roleId: string;
       communityId: string;
-      type: Models.Community.Role["type"],
+      roleType: Models.Community.Role["type"],
     }[];
   }
 
@@ -3717,22 +3863,6 @@ class CommunityHelper {
       ORDER BY "createdAt" DESC
     `, [communityId]);
     return result.rows;
-  }
-
-  public async getCommunityCount(channel: string) {
-    const result = await pool.query<{
-      count: number;
-    }>(`
-    SELECT
-      COUNT(id) as "count"
-    FROM communities c
-    WHERE $1 = ANY(c."tags")
-    `, [channel]);
-
-    if (result.rows.length === 1) {
-      return result.rows[0];
-    }
-    throw new Error(errors.server.NOT_ALLOWED);
   }
 
   public async getCommunityPassword(communityId: string) {
@@ -4022,7 +4152,7 @@ class CommunityHelper {
   })[]): void {
     for (const community of communities) {
       const myRoleIds = new Set(community.myRoleIds);
-      const myRoles = community.roles.filter(r => myRoleIds.has(r.id) || r.title === "Public");
+      const myRoles = community.roles.filter(r => myRoleIds.has(r.id) || (r.type === RoleType.PREDEFINED && r.title === PredefinedRole.Public));
       community.channels = community.channels.filter(channel => {
         for (const myRole of myRoles) {
           const permissions = channel.rolePermissions.find(rp => rp.roleId === myRole.id)?.permissions;
@@ -4139,6 +4269,7 @@ class CommunityHelper {
           'shortDescription', c."shortDescription",
           'tags', c."tags",
           'official', c."official",
+          'allowUserBots', c."allowUserBots",
           'updatedAt', c."updatedAt",
           'createdAt', c."createdAt",
           'memberCount', c."memberCount",
@@ -4192,6 +4323,7 @@ class CommunityHelper {
         shortDescription: string;
         tags: string[];
         official: boolean;
+        allowUserBots: boolean;
         updatedAt: string;
         createdAt: string;
         memberCount: number;
@@ -4203,536 +4335,6 @@ class CommunityHelper {
     }>(query);
 
     return result.rows;
-  }
-
-  public async isWizardCodeAvailable({ wizardId, code }: { wizardId: string, code: string }) {
-    const result = await pool.query(`
-      SELECT 1
-      FROM wizard_claimable_codes
-      WHERE "wizardId" = $1
-        AND "code" = $2
-        AND "claimedBy" IS NULL
-    `, [wizardId, code]);
-
-    return result.rows.length === 1;
-  }
-
-  public async redeemAndInvalidateWizardCode({ wizardId, code, userId }: { wizardId: string, code: string, userId: string }) {
-    const result = await pool.query(`
-      UPDATE wizard_claimable_codes
-      SET "claimedBy" = $1
-      WHERE "wizardId" = $2
-        AND "code" = $3
-        AND "claimedBy" IS NULL
-    `, [userId, wizardId, code]);
-
-    if (result.rowCount !== 1) {
-      throw new Error(errors.server.NOT_FOUND)
-    }
-  }
-
-  public async wizardVerifyWallet({ wizardId, wallet }: { wizardId: string, wallet: string }): Promise<Models.Wizard.WizardStep> {
-    throw new Error(errors.server.NOT_IMPLEMENTED);
-  }
-
-  public async checkWizardAccessAllowedOrThrow(wizardId: string, userId?: string) {
-    const result = await pool.query(`
-      SELECT 1
-      FROM roles r
-      INNER JOIN wizard_role_permission wrp
-        ON r."id" = wrp."roleId"
-        AND wrp."wizardId" = $1
-      LEFT JOIN roles_users_users ruu
-        ON r."id" = ruu."roleId"
-        AND ruu.claimed = TRUE
-      WHERE r."deletedAt" IS NULL
-        AND (
-          ${!!userId ? format('ruu."userId" = %L OR', userId) : ''}
-          r."title" = ${format('%L', PredefinedRole.Public)}
-        )
-    `, [wizardId]);
-
-    if (result.rows.length === 0) {
-      throw new Error(errors.server.NOT_ALLOWED);
-    }
-  }
-
-  public async getWizardData(wizardId: string, userId?: string): Promise<{
-    wizardData: Models.Wizard.Wizard;
-    userData?: Models.Wizard.WizardUserData;
-  }> {
-    await this.checkWizardAccessAllowedOrThrow(wizardId, userId);
-
-    const result = await pool.query<{ wizardData: Models.Wizard.Wizard, userData?: Models.Wizard.WizardUserData }>(`
-      SELECT 
-        w.data AS "wizardData",
-        wud.data AS "userData"
-      FROM wizards w
-      LEFT JOIN wizard_user_data wud ON w.id = wud."wizardId" AND wud."userId" = $2
-      WHERE w.id = $1
-    `, [wizardId, userId]);
-
-    if (result.rows.length < 1) {
-      throw new Error(errors.server.NOT_FOUND);
-    }
-
-    const { wizardData, userData } = result.rows[0];
-
-    return { wizardData, userData };
-  }
-
-  public async wizardClaimInvestmentTransaction(options: {
-    wizardId: string,
-    userId: string,
-    chain: Models.Contract.ChainIdentifier,
-    txHash: string,
-    fromAddress: Common.Address,
-    toAddress: Common.Address,
-    amount: string,
-    target: Models.Wizard.ValidInvestmentTarget
-  }): Promise<{
-    newInvestmentAmount: string;
-  }> {
-    await this.checkWizardAccessAllowedOrThrow(options.wizardId, options.userId);
-
-    if (!options.amount.match(/^\d+$/) || BigInt(options.amount) <= 0n) {
-      throw new Error(errors.server.INVALID_REQUEST);
-    }
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const query = `
-        INSERT INTO wizard_investment_data (
-          "wizardId",
-          "userId",
-          "chain",
-          "fromAddress",
-          "toAddress",
-          "amount",
-          "txHash",
-          "target"
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      `;
-      const values = [
-        options.wizardId,
-        options.userId,
-        options.chain,
-        options.fromAddress.toLowerCase(),
-        options.toAddress.toLowerCase(),
-        options.amount,
-        options.txHash.toLowerCase(),
-        options.target
-      ];
-
-      await client.query(query, values);
-
-      // Select all amounts from wizard_investment_data for this userId and add them up
-      const selectQuery = `
-        SELECT amount
-        FROM wizard_investment_data
-        WHERE "userId" = $1 AND "target" = $2
-      `;
-      const selectValues = [
-        options.userId,
-        options.target
-      ];
-
-      const result = await client.query<{ amount: string }>(selectQuery, selectValues);
-
-      const newInvestmentAmount = result.rows.reduce((sum, row) => {
-        return sum + BigInt(row.amount);
-      }, 0n).toString();
-
-      await client.query('COMMIT');
-
-      return { newInvestmentAmount };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  public async wizardFinishedSuccess(wizardId: string, userId: string) {
-    await this.checkWizardAccessAllowedOrThrow(wizardId, userId);
-
-    //check if user has already finished the wizard by looking into the wizard_user_data data field and then update the data.state to 'success'	
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const result = await client.query<{
-        wizardData: Models.Wizard.Wizard;
-        communityId: string;
-        userData: Models.Wizard.WizardUserData | null;
-        redeemedCode: boolean;
-        userExtraData: Models.User.ExtraData;
-      }>(`
-        SELECT
-          w."data" AS "wizardData",
-          w."communityId",
-          wud."data" AS "userData",
-          wcc.code IS NOT NULL AS "redeemedCode",
-          (SELECT "extraData" FROM users u WHERE u.id = $2) AS "userExtraData"
-        FROM wizards w
-        LEFT JOIN wizard_user_data wud
-          ON wud."wizardId" = w.id
-          AND wud."userId" = $2
-        LEFT JOIN wizard_claimable_codes wcc
-          ON wcc."wizardId" = w.id
-          AND wcc."claimedBy" = $2
-        WHERE w.id = $1
-      `, [wizardId, userId]);
-
-      if (result.rows.length === 0) {
-        throw new Error(errors.server.NOT_FOUND);
-      }
-      else {
-        const { wizardData, communityId, userData, redeemedCode, userExtraData } = result.rows[0];
-
-        if (!!userData && userData.state !== 'active') {
-          throw new Error(errors.server.NOT_ALLOWED);
-        }
-
-        // check all success conditions
-        for (const successCondition of wizardData.successConditions) {
-          if (
-            (successCondition.type === "kycLiveness" && !userExtraData.kycLivenessSuccess) ||
-            (successCondition.type === "kycFull" && !userExtraData.kycFullSuccess) ||
-            (successCondition.type === "kycCgTokensale" && !userExtraData.kycCgTokensaleSuccess) ||
-            (successCondition.type === "redeemedCode" && !redeemedCode)
-          ) {
-            throw new Error(errors.server.NOT_ALLOWED);
-          }
-
-          if (successCondition.type === "invested") {
-            const investmentStep = wizardData.steps.find(s => s.type === "invest") as (Models.Wizard.WizardStep & { type: "invest" }) | undefined;
-            if (!investmentStep) {
-              throw new Error(errors.server.INVALID_REQUEST);
-            }
-            const investmentTarget = investmentTargets[investmentStep.target];
-            if (!investmentTarget) {
-              throw new Error(errors.server.INVALID_REQUEST);
-            }
-
-            // Fetch all investments for the current user and target
-            const investmentsResult = await client.query<{ amount: string }>(`
-              SELECT amount
-              FROM wizard_investment_data
-              WHERE "userId" = $1 AND "target" = $2
-            `, [userId, investmentStep.target]);
-
-            // Sum up all investments using bigint
-            const totalInvestment = investmentsResult.rows.reduce((sum, row) => {
-              return sum + BigInt(row.amount);
-            }, BigInt(0));
-
-            if (totalInvestment < BigInt(parseUnits(investmentTarget.minimumAmount, investmentTarget.decimals))) {
-              console.log("Insufficient investment amount", totalInvestment.toString(), investmentTarget.minimumAmount);
-              throw new Error(errors.server.NOT_ALLOWED);
-            }
-          }
-
-          if (successCondition.type === "step_ndaAccepted" || successCondition.type === "step_investorDetailsFilled" || successCondition.type === "step_americanSelfCertification") {
-            const keys = Object.keys(userData?.stepData ?? {}) as `${number}`[];
-            let stepData: Models.Wizard.WizardStepData | undefined;
-            for (const key of keys) {
-              let data = userData?.stepData[key];
-              if (successCondition.type === "step_ndaAccepted" && data?.type === "ndaAccepted") {
-                stepData = data;
-                break;
-              }
-              else if (successCondition.type === "step_investorDetailsFilled" && data?.type === "investorDetailsFilled") {
-                stepData = data;
-                break;
-              }
-              else if (successCondition.type === "step_americanSelfCertification" && data?.type === "americanSelfCertification") {
-                stepData = data;
-                break;
-              }
-            }
-            if (!stepData) {
-              throw new Error(errors.server.WIZARD_STEP_DATA_MISSING);
-            }
-          }
-        }
-
-        const updateResult = await client.query<Models.Wizard.WizardUserData>(`
-          INSERT INTO wizard_user_data ("wizardId", "userId", "data")
-          VALUES ($1, $2, jsonb_build_object('state', 'success'))
-          ON CONFLICT ("wizardId", "userId")
-          DO UPDATE SET
-            data = jsonb_set(wizard_user_data.data, '{state}', '"success"'),
-            "updatedAt" = NOW()
-          RETURNING *
-        `, [wizardId, userId]);
-
-        if (updateResult.rowCount < 1) {
-          throw new Error(errors.server.EXISTS_ALREADY);
-        }
-
-        // update wizard successfulUsers
-        const wizardUpdateResult = await client.query<Models.Wizard.Wizard>(`
-          UPDATE wizards
-          SET data = jsonb_set(
-            data,
-            '{successfulUsers}',
-            ((data->>'successfulUsers')::int + 1)::text::jsonb
-          ),
-          "updatedAt" = NOW()
-          WHERE id = $1
-            AND (
-              (data->>'successLimit')::int IS NULL OR
-              (data->>'successfulUsers')::int < (data->>'successLimit')::int
-            )
-        `, [wizardId]);
-
-        if (wizardUpdateResult.rowCount < 1) {
-          throw new Error(errors.server.WIZARD_SUCCESS_LIMIT_EXCEEDED);
-        }
-
-        // execute successAction
-        for (const successAction of wizardData.successActions) {
-          if (successAction.type === "joinWizardCommunity") {
-            // Check if the user already has the member role
-            const memberRoleResult = await client.query(`
-              SELECT 1
-              FROM roles_users_users ruu
-              JOIN roles r ON ruu."roleId" = r.id
-              WHERE ruu."userId" = $1
-                AND r."communityId" = $2
-                AND r.title = ${format('%L', PredefinedRole.Member)}
-                AND r.type = ${format('%L', RoleType.PREDEFINED)}
-                AND ruu.claimed = TRUE
-            `, [userId, communityId]);
-
-            // If the user already has the member role, skip joining the community
-            if (memberRoleResult.rowCount > 0) {
-              continue;
-            }
-
-            const result = await this.joinCommunity(userId, communityId);
-            const event: Events.Community.Community = {
-              type: "cliCommunityEvent",
-              action: "new-or-full-update",
-              data: result,
-            };
-            eventHelper.emit(event, {
-              userIds: [userId],
-            });
-          }
-          else if (successAction.type === "gainRole") {
-            const memberRoleResult = await client.query(`
-              SELECT 1
-              FROM roles_users_users ruu
-              JOIN roles r ON ruu."roleId" = r.id
-              WHERE ruu."userId" = $1
-                AND r."communityId" = $2
-                AND r.id = $3
-                AND ruu.claimed = TRUE
-            `, [userId, communityId, successAction.roleId]);
-
-            if (memberRoleResult.rowCount > 0) {
-              continue;
-            }
-
-            await this.addUserToRoles({ communityId, userId, roleIds: [successAction.roleId] });
-          }
-
-          else if (successAction.type === "generateCodes") {
-            const wizardResult = await client.query<{ communityId: string }>(`
-              SELECT "communityId" FROM wizards
-              WHERE id = ANY(ARRAY[${format('%L', [wizardId, successAction.wizardId])}]::uuid[])
-            `);
-
-            if (wizardResult.rows.length === 2 && wizardResult.rows[0].communityId !== wizardResult.rows[1].communityId) {
-              console.log("Create codes: Wizard community ids do not match", wizardResult.rows[0].communityId, wizardResult.rows[1].communityId);
-              throw new Error(errors.server.INVALID_REQUEST);
-            }
-
-            const codes = Array.from({ length: successAction.numberOfCodes }, () => getRandomReadableString(8));
-            const insertQuery = `
-              INSERT INTO wizard_claimable_codes ("wizardId", "code", "createdBy")
-              SELECT $1, unnest($2::text[]), $3
-            `;
-            await client.query(insertQuery, [successAction.wizardId, codes, userId]);
-          }
-        }
-      }
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  public async wizardFinishedFailure(wizardId: string, userId: string) {
-    await this.checkWizardAccessAllowedOrThrow(wizardId, userId);
-
-    const client = await pool.connect();
-
-    try {
-      await client.query('BEGIN');
-
-      const userDataResult = await client.query<{ data: Models.Wizard.WizardUserData }>(`
-        SELECT data
-        FROM wizard_user_data
-        WHERE "wizardId" = $1 AND "userId" = $2
-      `, [wizardId, userId]);
-
-      if (userDataResult.rows.length > 0) {
-        const userData = userDataResult.rows[0].data;
-        if (userData.state !== 'active') {
-          throw new Error(errors.server.INVALID_REQUEST);
-        }
-      }
-
-      await client.query<Models.Wizard.Wizard>(`
-        UPDATE wizards
-        SET data = jsonb_set(
-          data,
-          '{failedUsers}',
-          ((data->>'failedUsers')::int + 1)::text::jsonb
-        ),
-        "updatedAt" = NOW()
-        WHERE id = $1
-      `, [wizardId]);
-
-      const updateResult = await client.query<Models.Wizard.WizardUserData>(`
-        INSERT INTO wizard_user_data ("wizardId", "userId", data)
-        VALUES ($1, $2, jsonb_build_object('state', 'failed'))
-        ON CONFLICT ("wizardId", "userId")
-        DO UPDATE SET
-          data = jsonb_set(wizard_user_data.data, '{state}', '"failed"'),
-          "updatedAt" = NOW()
-        RETURNING *
-      `, [wizardId, userId]);
-
-      if (updateResult.rowCount < 1) {
-        throw new Error(errors.server.INVALID_REQUEST);
-      }
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  public async getMyReferralCodes(wizardId: string, userId: string): Promise<{ code: string, used: boolean }[]> {
-    const result = await pool.query<{ code: string, used: boolean }>(`
-      SELECT code, "claimedBy" IS NOT NULL AS used
-      FROM wizard_claimable_codes
-      WHERE "wizardId" = $1 AND "createdBy" = $2
-    `, [wizardId, userId]);
-    return result.rows;
-  }
-
-  public async setWizardStepData(
-    wizardId: string,
-    userId: string,
-    stepId: number,
-    value: Models.Wizard.WizardStepData & { serverTimestamp?: never }
-  ): Promise<Models.Wizard.WizardUserData> {
-    await this.checkWizardAccessAllowedOrThrow(wizardId, userId);
-
-    // Check if a wizard_user_data object already exists and its state
-    const existingDataResult = await pool.query<{ state: Models.Wizard.WizardUserData['state'] | null }>(`
-      SELECT data->>'state' AS state
-      FROM wizard_user_data
-      WHERE "wizardId" = $1 AND "userId" = $2
-    `, [wizardId, userId]);
-
-    if (existingDataResult.rows.length > 0) {
-      const state = existingDataResult.rows[0].state;
-      if (!!state && state !== 'active') {
-        throw new Error(errors.server.NOT_ALLOWED);
-      }
-    }
-
-    (value as Models.Wizard.WizardStepData).serverTimestamp = Date.now();
-
-    // Proceed with the update if the state check passes
-    await pool.query(`
-      INSERT INTO wizard_user_data ("wizardId", "userId", data)
-      VALUES ($1, $2, jsonb_build_object('stepData', jsonb_build_object($3::text, $4::jsonb), 'state', 'active'))
-      ON CONFLICT ("wizardId", "userId")
-      DO UPDATE SET data = 
-        CASE 
-          WHEN wizard_user_data.data ? 'stepData' THEN 
-            jsonb_set(
-              wizard_user_data.data,
-              '{stepData}',
-              wizard_user_data.data->'stepData' || jsonb_build_object($3::text, $4::jsonb)
-            )
-          ELSE 
-            jsonb_set(
-              COALESCE(wizard_user_data.data, '{}'::jsonb),
-              '{stepData}',
-              jsonb_build_object($3::text, $4::jsonb)
-            )
-        END
-    `, [wizardId, userId, stepId.toString(), JSON.stringify(value)]);
-
-    const newUserDataResult = await pool.query<{ data: Models.Wizard.WizardUserData }>(`
-      SELECT data
-      FROM wizard_user_data
-      WHERE "wizardId" = $1 AND "userId" = $2
-    `, [wizardId, userId]);
-
-    if (newUserDataResult.rows.length < 1) {
-      throw new Error(errors.server.NOT_FOUND);
-    }
-
-    return newUserDataResult.rows[0].data;
-  }
-
-  public async wizardGetInvestmentTargetBeneficiaryBalance(target: Models.Wizard.ValidInvestmentTarget): Promise<{ balance: string }> {
-    const investmentTarget = investmentTargets[target];
-    if (!investmentTarget || investmentTarget.token.type !== 'erc20') {
-      throw new Error(errors.server.INVALID_REQUEST);
-    }
-
-    // Fetch all investments for the current target
-    const investmentsResult = await pool.query<{ amount: string }>(`
-      SELECT amount
-      FROM wizard_investment_data
-      WHERE "target" = $1
-    `, [target]);
-
-    // Sum up all investments using bigint
-    const claimedBalance = investmentsResult.rows.reduce((sum, row) => {
-      return sum + BigInt(row.amount);
-    }, BigInt(0));
-
-    return { balance: claimedBalance.toString() };
-  }
-
-  public async wizardGetInvestmentTargetPersonalContribution(target: Models.Wizard.ValidInvestmentTarget, userId: string): Promise<{ contribution: string }> {
-    const investmentTarget = investmentTargets[target];
-    if (!investmentTarget) {
-      throw new Error(errors.server.INVALID_REQUEST);
-    }
-
-    // Fetch all investments for the current user and target
-    const investmentsResult = await pool.query<{ amount: string }>(`
-      SELECT amount
-      FROM wizard_investment_data
-      WHERE "userId" = $1 AND "target" = $2
-    `, [userId, target]);
-
-    // Sum up all investments using bigint
-    const contribution = investmentsResult.rows.reduce((sum, row) => {
-      return sum + BigInt(row.amount);
-    }, BigInt(0));
-
-    return { contribution: contribution.toString() };
   }
 
   public async getUserRoles(userId: string, communityId: string): Promise<string[]> {

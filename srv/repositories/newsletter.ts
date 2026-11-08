@@ -5,7 +5,7 @@
 import format from "pg-format";
 import pool from "../util/postgres";
 import eventHelper from "./event";
-import { ArticlePermission, CommunityPermission, PredefinedRole } from "../common/enums";
+import { ArticlePermission, CommunityPermission, PredefinedRole, RoleType } from "../common/enums";
 
 class NewsletterHelper {
 
@@ -126,7 +126,7 @@ class NewsletterHelper {
                 WHERE "userId" = %L AND "sentAt" > NOW() - INTERVAL '7 days'
             `, userId)
         );
-        return result.rowCount > 0;
+        return (result.rowCount ?? 0) > 0;
     }
 
     public async createNewsletterEntries(newsletterId: number): Promise<{userId: string, email: string}[]> {
@@ -220,15 +220,16 @@ class NewsletterHelper {
             INNER JOIN roles r
                 ON carp."roleId" = r."id"
                 AND r."deletedAt" IS NULL
+                AND r."communityId" = ca."communityId"
             ${!!userId
                 ? `LEFT JOIN roles_users_users ruu
-                    ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)`
+                    ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ruu."userId" = ${format("%L::UUID", userId)})`
                 : ''}
             WHERE (
                 ${!!userId
                 ? format('ruu."userId" = %L::UUID OR', userId)
                 : ''}
-                r."title" = ${format("%L", PredefinedRole.Public)}
+                (r."title" = ${format("%L", PredefinedRole.Public)} AND r."type" = ${format("%L", RoleType.PREDEFINED)})
             )
             AND ca."deletedAt" IS NULL
             AND ca."communityId" = $1

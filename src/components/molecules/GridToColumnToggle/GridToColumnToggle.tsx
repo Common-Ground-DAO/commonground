@@ -4,8 +4,8 @@
 
 import SwitchInputField from "../inputs/SwitchInputField/SwitchInputField";
 
-import { ReactComponent as GridIcon } from "../../atoms/icons/16/Grid.svg";
-import { ReactComponent as TripleRowsIcon } from "../../atoms/icons/16/TripleRows.svg";
+import GridIcon from "../../atoms/icons/16/Grid.svg?react";
+import TripleRowsIcon from "../../atoms/icons/16/TripleRows.svg?react";
 
 import "./GridToColumnToggle.css";
 

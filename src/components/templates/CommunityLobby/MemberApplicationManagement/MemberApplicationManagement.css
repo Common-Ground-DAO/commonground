@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .member-applications-management {
     > .intro {
         @apply cg-heading-2;

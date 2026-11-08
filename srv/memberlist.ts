@@ -4,10 +4,19 @@
 
 import pool from './util/postgres';
 import { PoolClient, QueryResult } from 'pg';
-import { fakeHealthcheck } from './healthcheck';
+import { listenerProbe, postgresProbe, startHealthcheck } from './healthcheck';
 import express from 'express';
 import { ChannelPermission, PredefinedRole, RoleType } from './common/enums';
-import { convertUuidToBinary, convertBinaryToUuid } from './util/memberListHelpers';
+import { convertUuidToBinary, convertBinaryToUuid, mergeSortedMemberIds } from './util/memberListHelpers';
+import { asyncRequestHandler } from './util/asyncHandler';
+import { describeErrorForLog } from './util/errorLog';
+import { decideChannelEvent, MAX_CHANNEL_EVENT_DEFERRALS } from './util/memberListChannelEvents';
+import { emptyChannelMemberList, emptyMemberList } from './common/memberLists';
+import { refuseInGatewayMode } from './util/gateway';
+
+// runs once, for the main instance only: never as part of a gateway
+// (srv/util/gateway.ts)
+refuseInGatewayMode('memberlist');
 
 type PgNotifyEvent = Events.PgNotify.UserDataChange | Events.PgNotify.UserRoleChange | Events.PgNotify.CommunityRoleChange | Events.PgNotify.ChannelRolePermissionChange;
 
@@ -41,6 +50,8 @@ type CommunityMemberListArr = {
   _all: string[];
   online: string[];
   offline: string[];
+  /** all members by display name (ties by id), whatever their presence */
+  byName: string[];
 }
 
 type ChannelMemberSet = {
@@ -64,6 +75,10 @@ type ChannelMemberListArr = {
 
 let client: PoolClient;
 const changeEvents: PgNotifyEvent[] = [];
+// safety net: channel events that arrived before their community's roles are
+// retried first in the next batch (memberListChannelEvents.ts) — in normal
+// operation the rolechange NOTIFY always comes first
+const deferredChannelEvents: { event: Events.PgNotify.ChannelRolePermissionChange; deferrals: number }[] = [];
 
 const userDataByUserId = new Map<string, UserData>();
 const userIdsByRoleId = new Map<string, Set<string>>();
@@ -77,10 +92,11 @@ const memberListByCommunityId = new Map<string, CommunityMemberListArr>();
 const memberIdsByCommunityIdByChannelId = new Map<string, Map<string, ChannelMemberSet>>();
 const memberListByCommunityIdByChannelId = new Map<string, Map<string, ChannelMemberListArr>>();
 
+/** by display name, ties by id: a total order, so merging sorted lists is exact */
 function memberIdSortHelper(a: string, b: string) {
   const displayNameA = userDataByUserId.get(a)?.displayName || '';
   const displayNameB = userDataByUserId.get(b)?.displayName || '';
-  return displayNameA.localeCompare(displayNameB);
+  return displayNameA.localeCompare(displayNameB) || (a < b ? -1 : a > b ? 1 : 0);
 }
 
 function getDisplayName(options: {
@@ -385,8 +401,10 @@ async function initFromDb() {
         _all: [],
         online: Array.from(communityMemberSet.online).sort(memberIdSortHelper),
         offline: Array.from(communityMemberSet.offline).sort(memberIdSortHelper),
+        byName: [],
       };
       communityMemberList._all = communityMemberList.online.concat(communityMemberList.offline);
+      communityMemberList.byName = mergeSortedMemberIds(communityMemberList.online, communityMemberList.offline, memberIdSortHelper);
       memberListByCommunityId.set(communityId, communityMemberList);
     }
   }
@@ -589,7 +607,15 @@ function updateUserChannelGroup(options: {
 }
 
 function handleEvents() {
-  const events = changeEvents.splice(0);
+  processChangeEvents();
+  setTimeout(handleEvents, 1000);
+}
+
+function processChangeEvents() {
+  const retried = deferredChannelEvents.splice(0);
+  const deferralsByEvent = new Map<PgNotifyEvent, number>(retried.map(d => [d.event, d.deferrals]));
+  const deferredCommunityIds = new Set<string>();
+  const events: PgNotifyEvent[] = [...retried.map(d => d.event), ...changeEvents.splice(0)];
   const updatedCommunityMemberLists = new Set<string>();
   const updatedMemberLists = new Map<string, Set<string>>();
   for (const event of events) {
@@ -620,14 +646,18 @@ function handleEvents() {
               console.trace("Member set not found for communityId:", convertBinaryToUuid(communityId));
               continue;
             }
-            updatedCommunityMemberLists.add(communityId);
-            if (event.onlineStatus === 'offline') {
-              memberSet.online.delete(event.userId);
-              memberSet.offline.add(event.userId);
-            }
-            else {
-              memberSet.online.add(event.userId);
-              memberSet.offline.delete(event.userId);
+            // only members are in the community's lists; a user with other
+            // roles of the community only changes its channel lists
+            if (memberSet._all.has(event.userId)) {
+              updatedCommunityMemberLists.add(communityId);
+              if (event.onlineStatus === 'offline') {
+                memberSet.online.delete(event.userId);
+                memberSet.offline.add(event.userId);
+              }
+              else {
+                memberSet.online.add(event.userId);
+                memberSet.offline.delete(event.userId);
+              }
             }
 
             const rolePermissionsByChannelId = rolePermissionsByCommunityIdByChannelId.get(communityId);
@@ -674,6 +704,34 @@ function handleEvents() {
         if (displayName !== userData.displayName) {
           userData.displayName = displayName;
           userData.displayNameLower = displayName.toLocaleLowerCase();
+          // the lists are sorted by name: rebuild the user's communities and
+          // the channels they are listed in
+          const renamedUserCommunityIds = new Set<string>();
+          for (const roleId of userData.roleIds) {
+            const communityId = communityIdByRoleId.get(roleId);
+            if (communityId) {
+              renamedUserCommunityIds.add(communityId);
+            }
+          }
+          for (const communityId of renamedUserCommunityIds) {
+            if (memberIdsByCommunityId.has(communityId)) {
+              updatedCommunityMemberLists.add(communityId);
+            }
+            const memberIdsByChannelId = memberIdsByCommunityIdByChannelId.get(communityId);
+            if (!memberIdsByChannelId) {
+              continue;
+            }
+            for (const [channelId, memberIds] of memberIdsByChannelId) {
+              if (memberIds._all.has(event.userId)) {
+                let updatedChannelMemberLists = updatedMemberLists.get(communityId);
+                if (!updatedChannelMemberLists) {
+                  updatedChannelMemberLists = new Set();
+                  updatedMemberLists.set(communityId, updatedChannelMemberLists);
+                }
+                updatedChannelMemberLists.add(channelId);
+              }
+            }
+          }
         }
       }
       else {
@@ -703,7 +761,7 @@ function handleEvents() {
         continue;
       }
       const roleData = roleDataByCommunityId.get(communityId)?.get(event.roleId);
-      if (roleData?.roleType === RoleType.PREDEFINED || roleData?.title === PredefinedRole.Member) {
+      if (roleData?.roleType === RoleType.PREDEFINED && roleData?.title === PredefinedRole.Member) {
         // update general member set
         const memberSet = memberIdsByCommunityId.get(communityId);
         if (!memberSet) {
@@ -787,6 +845,7 @@ function handleEvents() {
               _all: [],
               online: [],
               offline: [],
+              byName: [],
             };
             memberListByCommunityId.set(event.communityId, memberList);
           }
@@ -852,25 +911,29 @@ function handleEvents() {
         console.log("Created new community channel role permission map for community", convertBinaryToUuid(event.communityId));
       }
       let rolePermissions = rolePermissionsByChannelId.get(event.channelId);
-      if (!rolePermissions) {
-        const roles = roleDataByCommunityId.get(event.communityId);
-        if (!roles) {
-          console.trace("ERROR (SKIP): Community roles not found for communityId:", convertBinaryToUuid(event.communityId), event);
-          continue;
-        }
-        let adminRole: string | undefined;
-        for (const [roleId, roleData] of roles) {
-          if (roleData.roleType === RoleType.PREDEFINED && roleData.title === PredefinedRole.Admin) {
-            adminRole = roleId;
-            break;
-          }
-        }
-        if (!adminRole) {
-          console.trace("ERROR (SKIP): Admin role not found for communityId:", convertBinaryToUuid(event.communityId), event);
-          continue;
-        }
+      const deferrals = deferralsByEvent.get(event) ?? 0;
+      const decision = decideChannelEvent({
+        channelKnown: !!rolePermissions,
+        communityRoles: roleDataByCommunityId.get(event.communityId),
+        communityHasDeferredEvent: deferredCommunityIds.has(event.communityId),
+        deferrals,
+      });
+      if (decision.action === 'defer') {
+        deferredCommunityIds.add(event.communityId);
+        deferredChannelEvents.push({ event, deferrals: deferrals + 1 });
+        continue;
+      }
+      if (decision.action === 'drop') {
+        console.trace(`ERROR (SKIP): Community roles or Admin role not found after ${MAX_CHANNEL_EVENT_DEFERRALS} batches for communityId:`, convertBinaryToUuid(event.communityId), event);
+        continue;
+      }
+      // a channel that is new to this service always gets a member list
+      // (with its admins, as initFromDb does), even if no user changes below
+      let newChannel = false;
+      if (decision.action === 'create') {
+        newChannel = true;
         rolePermissions = {
-          admin: adminRole,
+          admin: decision.adminRoleId,
           moderator: new Set(),
           writer: new Set(),
           reader: new Set(),
@@ -898,6 +961,9 @@ function handleEvents() {
           console.log("Created new channel memberId map for community:", convertBinaryToUuid(event.communityId), "channelId:", convertBinaryToUuid(event.channelId));
         }
       }
+      if (!rolePermissions) {
+        continue; // unreachable: 'apply' means the channel is known
+      }
 
       if (event.roleId !== rolePermissions.admin) {
         if (event.permissions.includes(ChannelPermission.CHANNEL_MODERATE)) {
@@ -922,7 +988,12 @@ function handleEvents() {
         }
       }
 
-      const userIds = userIdsByRoleId.get(event.roleId) || [];
+      const userIds = new Set(userIdsByRoleId.get(event.roleId));
+      if (newChannel) {
+        for (const adminUserId of userIdsByRoleId.get(rolePermissions.admin) || []) {
+          userIds.add(adminUserId);
+        }
+      }
       let changed = false;
       for (const userId of userIds) {
         const userData = userDataByUserId.get(userId);
@@ -938,7 +1009,7 @@ function handleEvents() {
           rolePermissions,
         }) || changed;
       }
-      if (changed) {
+      if (changed || newChannel) {
         let updatedMemberListsByCommunity = updatedMemberLists.get(event.communityId);
         if (!updatedMemberListsByCommunity) {
           updatedMemberListsByCommunity = new Set();
@@ -962,6 +1033,7 @@ function handleEvents() {
         _all: [],
         online: [],
         offline: [],
+        byName: [],
       };
       memberListByCommunityId.set(communityId, memberList);
     }
@@ -969,6 +1041,7 @@ function handleEvents() {
     memberList.online = Array.from(memberSet.online).sort(memberIdSortHelper);
     memberList.offline = Array.from(memberSet.offline).sort(memberIdSortHelper);
     memberList._all = memberList.online.concat(memberList.offline);
+    memberList.byName = mergeSortedMemberIds(memberList.online, memberList.offline, memberIdSortHelper);
   }
   for (const [communityId, updatedChannelIds] of updatedMemberLists) {
     let memberListByChannelId = memberListByCommunityIdByChannelId.get(communityId);
@@ -1005,8 +1078,6 @@ function handleEvents() {
       memberList._all = memberList.admin.concat(memberList.moderator, memberList.writer, memberList.reader, memberList.offline);
     }
   }
-
-  setTimeout(handleEvents, 1000);
 }
 
 function getMemberListWindow(options: {
@@ -1015,24 +1086,26 @@ function getMemberListWindow(options: {
   limit: number;
   search?: string;
   roleId?: string;
-}): Models.Community.MemberList | undefined {
+}): Models.Community.MemberList {
   const { communityId, offset, limit, search: _search, roleId } = options;
+  // a community this service does not know (yet — a new one appears with the
+  // next event batch) answers an empty list, never an empty body
   const search = _search?.toLocaleLowerCase();
   const communityRoles = roleDataByCommunityId.get(communityId);
   if (!communityRoles) {
     console.trace("ERROR (SKIP): Community roles not found for communityId:", convertBinaryToUuid(communityId));
-    return undefined;
+    return emptyMemberList();
   }
   const communityRoleIdArray = Array.from(communityRoles.keys());
   const memberRoleId = communityRoleIdArray.find(roleId => communityRoles.get(roleId)?.roleType === RoleType.PREDEFINED && communityRoles.get(roleId)?.title === PredefinedRole.Member);
   if (!memberRoleId) {
     console.trace("ERROR (SKIP): Member role not found for communityId:", convertBinaryToUuid(communityId));
-    return undefined;
+    return emptyMemberList();
   }
   const memberIds = userIdsByRoleId.get(memberRoleId);
   if (!memberIds) {
     console.trace("ERROR (SKIP): Member ids not found for memberRoleId:", convertBinaryToUuid(memberRoleId));
-    return undefined;
+    return emptyMemberList();
   }
   const memberListWindow: Models.Community.MemberList = {
     totalCount: memberIds.size,
@@ -1044,12 +1117,12 @@ function getMemberListWindow(options: {
   const memberList = memberListByCommunityId.get(communityId);
   if (!memberList) {
     console.trace("ERROR (SKIP): Member list not found for communityId:", convertBinaryToUuid(communityId));
-    return undefined;
+    return emptyMemberList();
   }
   const memberSet = memberIdsByCommunityId.get(communityId);
   if (!memberSet) {
     console.trace("ERROR (SKIP): Member set not found for communityId:", convertBinaryToUuid(communityId));
-    return undefined;
+    return emptyMemberList();
   }
 
   let _offset = offset;
@@ -1117,6 +1190,31 @@ function getMemberListWindow(options: {
   return memberListWindow;
 }
 
+/**
+ * The first `limit` members of a community by display name (ties by id),
+ * independent of presence: the counts and the member ids, without roles, the
+ * presence split (all ids are in `offline`) or the per-role counts.
+ */
+function getMemberListPreview(options: {
+  communityId: string;
+  limit: number;
+}): Models.Community.MemberList {
+  const { communityId, limit } = options;
+  const memberList = memberListByCommunityId.get(communityId);
+  if (!memberList) {
+    // a community created a moment ago is only known after the next batch
+    console.trace("ERROR (SKIP): Member list not found for communityId:", convertBinaryToUuid(communityId));
+    return emptyMemberList();
+  }
+  return {
+    totalCount: memberList.count,
+    resultCount: memberList.count,
+    roles: [],
+    online: [],
+    offline: memberList.byName.slice(0, Math.max(0, limit)).map(userId => [userId, []]),
+  };
+}
+
 function getChannelMemberListWindow(options: {
   communityId: string;
   channelId: string;
@@ -1124,23 +1222,25 @@ function getChannelMemberListWindow(options: {
   limit: number;
   search?: string;
   startsWithSearch?: boolean;
-}): Models.Community.ChannelMemberList | undefined {
+}): Models.Community.ChannelMemberList {
   const { communityId, channelId, offset, limit, search: _search, startsWithSearch } = options;
   const search = _search?.toLocaleLowerCase();
+  // a channel this service does not know (yet — a new one appears with the
+  // next event batch) answers an empty list, never an empty body
   const memberList = memberListByCommunityIdByChannelId.get(communityId)?.get(channelId);
   if (!memberList) {
     console.trace("ERROR (SKIP): Member list not found for communityId:", convertBinaryToUuid(communityId), "channelId:", convertBinaryToUuid(channelId));
-    return undefined;
+    return emptyChannelMemberList();
   }
   const memberSet = memberIdsByCommunityIdByChannelId.get(communityId)?.get(channelId);
   if (!memberSet) {
     console.trace("ERROR (SKIP): Member set not found for communityId:", convertBinaryToUuid(communityId), "channelId:", convertBinaryToUuid(channelId));
-    return undefined;
+    return emptyChannelMemberList();
   }
   const communityRoles = roleDataByCommunityId.get(communityId);
   if (!communityRoles) {
     console.trace("ERROR (SKIP): Community roles not found for communityId:", convertBinaryToUuid(communityId));
-    return undefined;
+    return emptyChannelMemberList();
   }
   const communityRoleIdArray = Array.from(communityRoles.keys());
   const memberListWindow: Models.Community.ChannelMemberList = {
@@ -1273,9 +1373,19 @@ async function init() {
   handleEvents();
 }
 
-const ready = init();
+// started only as the service's entry point; tests import this module for
+// `memberListForTests`
+const isMain = require.main === module;
+const ready: Promise<void> = isMain ? init() : Promise.resolve();
 
-app.post('/getMemberListWindow', express.json(), async (req, res) => {
+// a failing request (e.g. initialisation failed) answers 500; the api's caller
+// turns that into its generic error response
+function requestFailed(response: express.Response, error: unknown) {
+  console.error('memberlist request failed:', describeErrorForLog(error));
+  response.status(500).json({ error: 'memberlist_request_failed' });
+}
+
+app.post('/getMemberListWindow', express.json(), asyncRequestHandler(async (req, res) => {
   const { communityId, offset, limit, search, roleId } = req.body as API.Community.getMemberList.Request;
   await ready;
   const memberList = getMemberListWindow({
@@ -1286,9 +1396,15 @@ app.post('/getMemberListWindow', express.json(), async (req, res) => {
     roleId,
   });
   res.json(memberList);
-});
+}, requestFailed));
 
-app.post('/getChannelMemberListWindow', express.json(), async (req, res) => {
+app.post('/getMemberListPreview', express.json(), asyncRequestHandler(async (req, res) => {
+  const { communityId, limit } = req.body as { communityId: string; limit: number };
+  await ready;
+  res.json(getMemberListPreview({ communityId, limit }));
+}, requestFailed));
+
+app.post('/getChannelMemberListWindow', express.json(), asyncRequestHandler(async (req, res) => {
   const { communityId, channelId, offset, limit, search, startsWithSearch } = req.body as API.Community.getChannelMemberList.Request;
   await ready;
   const memberList = getChannelMemberListWindow({
@@ -1300,9 +1416,9 @@ app.post('/getChannelMemberListWindow', express.json(), async (req, res) => {
     startsWithSearch,
   });
   res.json(memberList);
-});
+}, requestFailed));
 
-app.post('/getUserCommunityRoleIds', express.json(), async (req, res) => {
+app.post('/getUserCommunityRoleIds', express.json(), asyncRequestHandler(async (req, res) => {
   const { userId, communityId } = req.body as API.Community.getUserCommunityRoleIds.Request;
   await ready;
   const userData = userDataByUserId.get(userId);
@@ -1312,22 +1428,38 @@ app.post('/getUserCommunityRoleIds', express.json(), async (req, res) => {
     return;
   }
   res.json(Array.from(communityRoleData.keys()).filter(roleId => userData.roleIds.has(roleId)));
-});
-
-app.listen(4000);
+}, requestFailed));
 
 const shutdown = async (code = 0) => {
   process.exit(code);
 }
 
-fakeHealthcheck();
+if (isMain) {
+  app.listen(4000);
 
-process.on("SIGTERM", () => shutdown());
-process.on("unhandledRejection", (reason, promise) => {
-  console.trace('Unhandled Rejection at:', promise, 'reason:', reason);
-  shutdown(1);
-});
-process.on("uncaughtException", (error, origin) => {
-  console.trace('Uncaught Exception at:', error, 'origin:', origin);
-  shutdown(1);
-});
+  // healthy: the database answers and the HTTP listener accepts connections
+  // (memberlist does not use Valkey); only as the entry point, like the
+  // listener — tests import this module
+  startHealthcheck([postgresProbe(pool), listenerProbe(4000)]);
+
+  process.on("SIGTERM", () => shutdown());
+  process.on("unhandledRejection", (reason, promise) => {
+    console.trace('Unhandled Rejection at:', promise, 'reason:', reason);
+    shutdown(1);
+  });
+  process.on("uncaughtException", (error, origin) => {
+    console.trace('Uncaught Exception at:', error, 'origin:', origin);
+    shutdown(1);
+  });
+}
+
+/** the event processing and the windows, driven by tests (tests/memberListEvents.spec.ts) */
+export const memberListForTests = {
+  queueEvent: (event: PgNotifyEvent) => { changeEvents.push(event); },
+  processChangeEvents,
+  getMemberListWindow,
+  getMemberListPreview,
+  getChannelMemberListWindow,
+  hasChannelMemberList: (communityId: string, channelId: string) =>
+    memberListByCommunityIdByChannelId.get(communityId)?.has(channelId) === true,
+};

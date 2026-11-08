@@ -6,7 +6,7 @@ import Button from '../../../atoms/Button/Button';
 import Modal from '../../../atoms/Modal/Modal';
 import React from 'react'
 import { Transforms } from 'slate';
-import shortUUID from 'short-uuid';
+import { createTranslator } from 'short-uuid';
 import { ReactEditor, useSlate } from 'slate-react';
 
 
@@ -18,7 +18,7 @@ type Props = {
   id?: string;
 };
 
-const randomIdGen = shortUUID();
+const randomIdGen = createTranslator();
 
 const EmbedModal: React.FC<Props> = ({ closeModal, id }) => {
   const editor = useSlate();
@@ -38,7 +38,7 @@ const EmbedModal: React.FC<Props> = ({ closeModal, id }) => {
         });
       } else {
         // Creating new embed node
-        Transforms.setNodes(editor, { type: 'embed', id: randomIdGen.new(), size: 'medium', children: [{text: ''}], embedId: '', urlCandidate: inputValue });
+        Transforms.setNodes(editor, { type: 'embed', id: randomIdGen.generate(), size: 'medium', children: [{text: ''}], embedId: '', urlCandidate: inputValue });
         Transforms.insertNodes(editor, { type: 'paragraph', children: [{ text: '' }]});
         ReactEditor.focus(editor);
       }

@@ -7,11 +7,11 @@ import "./TagInputField.css";
 import Tag, { TagIcon } from '../../../../components/atoms/Tag/Tag';
 import { validateTagTextInput } from '../../../../common/validators';
 import InlineToast, { InlineToastType } from '../../../atoms/InlineToast/InlineToast';
-import { predefinedTagList, ecosystemTagList, PredefinedTag } from './predefinedTags';
+import { predefinedTagList, PredefinedTag } from './predefinedTags';
 import TagSuggestionsDropdown from './TagSuggestionsDropdown';
 import { X } from '@phosphor-icons/react';
 
-const allPredefinedTags = new Map([...ecosystemTagList, ...predefinedTagList].map(tag => [tag.name, tag]))
+const allPredefinedTags = new Map(predefinedTagList.map(tag => [tag.name, tag]))
 
 export function tagStringToPredefinedTag(tagsString: string[]): PredefinedTag[] {
     return tagsString.map(tag => {
@@ -125,8 +125,7 @@ export default function TagInputField(props: Props) {
         let lastValidationError: string | undefined = undefined;
 
         for (const val of individualTagValues) {
-            const allPredefinedTags = [...ecosystemTagList, ...predefinedTagList];
-            const predefinedMatch = allPredefinedTags.find(pt => pt.name.toLowerCase() === val.toLowerCase());
+            const predefinedMatch = predefinedTagList.find(pt => pt.name.toLowerCase() === val.toLowerCase());
             let finalTagValue = predefinedMatch ? predefinedMatch.name : val;
 
             const validationError = validateTagTextInput(finalTagValue);
@@ -208,7 +207,6 @@ export default function TagInputField(props: Props) {
                     {inlineToast && <InlineToast type={inlineToast} textAreaToast />}
                     <TagSuggestionsDropdown
                         inputValue={currentTag}
-                        ecosystemTags={ecosystemTagList}
                         generalTags={predefinedTagList}
                         onSelectTag={handleSelectTagFromDropdown}
                         showDropdown={showSuggestions}

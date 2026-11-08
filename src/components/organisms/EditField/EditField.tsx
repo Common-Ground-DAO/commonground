@@ -11,15 +11,16 @@ import { BaseEditor, createEditor, Range, Text, Editor, Transforms, Descendant }
 import { HistoryEditor, withHistory } from 'slate-history'
 import { Slate, Editable, withReact, ReactEditor, RenderElementProps, RenderLeafProps, useSelected, useFocused, RenderPlaceholderProps } from 'slate-react';
 import { getDisplayNameString } from '../../../util';
-import { clearEditor, convertToMessageBody, currentWord, CustomElement, CustomText, emptyState, findAndSetWordType, insertMention, isCurrentNodeEmptyParagraph, isCurrentNodeParagraph, isFirstNodeOfType, MentionElement, recalculateNodeTypes, removeAttachment, updateAttachmentImageId } from './EditField.helpers';
+import { clearEditor, convertToMessageBody, currentWord, CustomElement, CustomText, emptyState, findAndSetWordType, insertMention, isCurrentNodeEmptyParagraph, isCurrentNodeParagraph, isFirstNodeOfType, markAttachmentUploadFailed, MentionElement, recalculateNodeTypes, removeAttachment, updateAttachmentImageId } from './EditField.helpers';
+import { isAttachmentBusy } from './attachmentState';
 
-import { ReactComponent as ImageIcon } from "../../atoms/icons/16/Image.svg";
-import { ReactComponent as Spinner } from '../../../components/atoms/icons/16/Spinner.svg';
-import { ReactComponent as CheckmarkIcon } from '../../../components/atoms/icons/16/Checkmark.svg';
-import { ReactComponent as CloseIcon } from '../../../components/atoms/icons/16/Close.svg';
-import { ReactComponent as MentionIcon } from '../../../components/atoms/icons/20/MentionLarge.svg';
-import { ReactComponent as EmojiOutlineIcon } from "../../atoms/icons/24/EmojiOutlineIcon.svg";
-import { ReactComponent as PaperPlaneIcon } from "../../atoms/icons/misc/PaperPlane.svg";
+import ImageIcon from "../../atoms/icons/16/Image.svg?react";
+import Spinner from '../../../components/atoms/icons/16/Spinner.svg?react';
+import CheckmarkIcon from '../../../components/atoms/icons/16/Checkmark.svg?react';
+import CloseIcon from '../../../components/atoms/icons/16/Close.svg?react';
+import MentionIcon from '../../../components/atoms/icons/20/MentionLarge.svg?react';
+import EmojiOutlineIcon from "../../atoms/icons/24/EmojiOutlineIcon.svg?react";
+import PaperPlaneIcon from "../../atoms/icons/misc/PaperPlane.svg?react";
 
 import MentionSuggestion from './MentionSuggestion/MentionSuggestion';
 import Scrollable from '../../molecules/Scrollable/Scrollable';
@@ -45,6 +46,7 @@ import LinkPreviewSkeleton from 'components/molecules/LinkPreview/LinkPreviewSke
 import communityApi from 'data/api/community';
 import { useMultipleUserData } from 'context/UserDataProvider';
 import GiphyPicker from './GiphyPicker/GiphyPicker';
+import { giphyEnabled } from 'util/giphy';
 import GiphyAttachment from 'components/molecules/GiphyAttachment/GiphyAttachment';
 import EmojiPickerTooltip from 'components/molecules/EmojiPickerTooltip/EmojiPickerTooltip';
 import { useSnackbarContext } from 'context/SnackbarContext';
@@ -186,32 +188,43 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
   const setAttachmentUploadedState = React.useCallback((imageId: string, state: boolean) => {
     setAttachments(oldAttachments => {
       const oldAttachmentIndex = oldAttachments.findIndex(att => att.type === 'image' && att.imageId === imageId);
+      // removed (or sent) while its upload ran: nothing to update
+      if (oldAttachmentIndex === -1) return oldAttachments;
       const newAttachments = [...oldAttachments];
-      newAttachments[oldAttachmentIndex].state = state ? 'LOADED' : 'LOADING';
+      newAttachments[oldAttachmentIndex] = { ...newAttachments[oldAttachmentIndex], state: state ? 'LOADED' : 'LOADING' };
       return newAttachments;
     });
   }, [setAttachments]);
 
+  // Busy (isAttachmentBusy): the NSFW pre-check, the upload itself and the
+  // loading of the uploaded image. Sending meanwhile would drop the image (it
+  // has no uploaded ids yet) and clear the list out from under `addFiles`.
   const areAttachmentsLoaded = React.useMemo(() => {
     if (!!attachments) {
-      const foundLoadingAttachment = attachments.find((attachment) => attachment.state === 'LOADING');
+      const foundLoadingAttachment = attachments.find(isAttachmentBusy);
       return !foundLoadingAttachment;
     }
     return true;
   }, [attachments]);
 
-  const onFilesDrop = React.useCallback((files: File[]) => {
+  // Async since the NSFW pre-check; react-dropzone ignores the returned
+  // promise, which is fine — nothing here depends on the drop being finished.
+  const onFilesDrop = React.useCallback(async (files: File[]) => {
     const imageFiles = files.filter(file => file.type.startsWith('image'));
     if (props.richTextMode) {
       for (const file of files) {
-        addImageMedia(editor, file);
+        await addImageMedia(editor, file);
       }
     } else {
-      addFiles(setAttachments, setAttachmentError, imageFiles, attachmentLimit);
+      await addFiles(setAttachments, setAttachmentError, imageFiles, attachmentLimit);
     }
   }, [props.richTextMode, editor, setAttachments, attachmentLimit]);
 
-  const { getInputProps, getRootProps, isDragActive, rootRef } = useDropzone({ onDrop: onFilesDrop, noClick: true })
+  // `noPaste` is required, not cosmetic: react-dropzone 20 turned paste-to-upload
+  // on by default and wires the handler into `getRootProps`, so a screenshot
+  // pasted into the Slate `<Editable>` below would bubble to the dropzone root
+  // and be attached a second time on top of `handlePaste`'s own `addFiles` call.
+  const { getInputProps, getRootProps, isDragActive, rootRef } = useDropzone({ onDrop: onFilesDrop, noClick: true, noPaste: true })
 
   // Update mentionable users on search string change
   React.useEffect(() => {
@@ -463,7 +476,8 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
   }, [editor, isMobile]);
 
   const sendHandler = React.useCallback((sendEmpty = false) => {
-    if (areAttachmentsLoaded) {
+    // `sendEmpty` cancels an edit: never held up by an upload
+    if (areAttachmentsLoaded || sendEmpty) {
       // if getting message body is inside timeout, then editor.children are affected by something and got wrong state until timeout reach 100ms
       let messageBody: Models.Message.Body;
       if (sendEmpty) {
@@ -595,7 +609,10 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
     }
   }, [editor, filteredUsers, isEditing, isMobile, mentionIndex, mentionTargetRange, props.richTextMode, props.send, sendHandler, normalizeLinks]);
 
-  const handlePaste = React.useCallback((ev: React.ClipboardEvent<HTMLDivElement>) => {
+  // Async since the NSFW pre-check. The clipboard items are read out
+  // synchronously below, before the first await, so the event data is still
+  // alive when we touch it.
+  const handlePaste = React.useCallback(async (ev: React.ClipboardEvent<HTMLDivElement>) => {
     try {
       const items = (ev.clipboardData || ev.nativeEvent.clipboardData).items;
 
@@ -611,10 +628,10 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
       }
 
       if (!props.richTextMode && !props.disableAttachments) {
-        addFiles(setAttachments, setAttachmentError, imageFiles, attachmentLimit);
+        await addFiles(setAttachments, setAttachmentError, imageFiles, attachmentLimit);
       } else if (props.richTextMode) {
         for (const file of imageFiles) {
-          addImageMedia(editor, file);
+          await addImageMedia(editor, file);
         }
       }
 
@@ -671,6 +688,10 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
         renderLeaf={renderLeaf}
         onKeyDown={handleCommandKeys}
         tabIndex={tabIndex}
+        autoCorrect='off'
+        autoCapitalize='off'
+        autoComplete='off'
+        spellCheck='false'
       />
     </EditFieldErrorBoundary>;
 
@@ -714,13 +735,13 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
         onPick={focus}
         attachmentLimit={attachmentLimit}
       />}
-      <GiphyPicker
+      {giphyEnabled && <GiphyPicker
         setAttachments={setAttachments}
         setAttachmentError={showAttachmentError}
         setLockFocus={setLockFocus}
         onPick={focus}
         attachmentLimit={attachmentLimit}
-      />
+      />}
 
       {!isMobile && <EmojiPickerTooltip
         placement='top-start'
@@ -801,7 +822,29 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
   const linkPreview = attachments.find(att => att.type === 'linkPreview');
   return (
     <div {...getRootProps({ className: props.overrideClassName || `message-field${isMobile && isFocused ? ' message-field-expanded' : ''}` })}>
-      <input {...getInputProps()} />
+      {/* react-dropzone 20 stopped absolutely positioning the hidden input (its
+          own #1413: an out-of-flow input scrolls the page when focused). Here
+          the input is a direct child of a `flex flex-col gap-2` container, so
+          in flow it becomes a zero-height flex item and adds one 8px gap above
+          the composer. Putting it back out of flow restores the old layout.
+          CAUTION: getInputProps spreads the passed props AFTER its defaults, so
+          a partial `style` REPLACES the library's hiding style wholesale (a
+          bare `position: absolute` left a fully visible native file widget
+          floating over the composer). The library's hidden style is therefore
+          reproduced here in full, plus the out-of-flow position. */}
+      <input {...getInputProps({
+        style: {
+          border: 0,
+          display: 'block',
+          height: 0,
+          margin: 0,
+          opacity: 0,
+          overflow: 'hidden',
+          padding: 0,
+          width: 0,
+          position: 'absolute',
+        },
+      })} />
       {isDragActive && <div className='message-field-drop-tip'>
         <ImageIcon />
         <span>Drop your files here</span>
@@ -850,6 +893,7 @@ const EditFieldThree: React.ForwardRefRenderFunction<EditFieldHandle, Props> = (
               key={fileKey || imageKey}
               updateAttachment={updateAttachmentImageId(setAttachments, attachment.imageId)}
               removeAttachment={removeAttachment(setAttachments, attachment.imageId)}
+              markUploadFailed={markAttachmentUploadFailed(setAttachments, attachment.tentativeFile)}
               setIsLoadedState={setAttachmentUploadedState}
             />;
           } else if (attachment.type === 'giphy') {
@@ -911,7 +955,7 @@ const Leaf: React.FC<RenderLeafProps> = React.memo((props) => {
   }
 });
 
-export const Portal: React.FC<{ children?: JSX.Element }> = React.memo(({ children }) => {
+export const Portal: React.FC<{ children?: React.JSX.Element }> = React.memo(({ children }) => {
   return typeof document === 'object' ? ReactDOM.createPortal(children, document.body) : null;
 });
 
@@ -934,7 +978,7 @@ const FieldElement: React.FC<RenderElementProps> = React.memo((props) => {
 });
 
 const Mention: React.FC<RenderElementProps & { element: MentionElement }> = React.memo(({ attributes, children, element }) => {
-  const selected = useSelected();
+  const selected = useSelected({ suppressThrow: true });
   const focused = useFocused();
   const displayName = element.userData ? getDisplayNameString(element.userData) : 'Failed to fetch';
   return (

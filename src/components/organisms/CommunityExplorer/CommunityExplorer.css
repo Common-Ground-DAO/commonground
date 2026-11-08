@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .groupExplorer-filter-bar {
     @apply flex justify-between pb-4 w-full;
 }

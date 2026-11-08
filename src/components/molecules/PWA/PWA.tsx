@@ -5,10 +5,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import './PWA.css';
 import { useNotificationContext } from 'context/NotificationProvider';
-import { ReactComponent as IosInstallIcon } from '../../atoms/icons/28/IosInstall.svg';
+import IosInstallIcon from '../../atoms/icons/28/IosInstall.svg?react';
 import Button from 'components/atoms/Button/Button';
 import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal';
-import { ReactComponent as CircleLogo } from "components/atoms/icons/misc/Logo/logo.svg";
+import CircleLogo from "components/atoms/icons/misc/Logo/logo.svg?react";
 import { CheckCircleIcon } from '@heroicons/react/20/solid';
 import { XMarkIcon } from '@heroicons/react/24/solid';
 import { useUserOnboardingContext } from 'context/UserOnboarding';

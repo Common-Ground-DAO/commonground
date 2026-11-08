@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .premium-settings-border-container {
     @apply cg-border-xl;
     border: 1px solid var(--border-panels, #3C425E);

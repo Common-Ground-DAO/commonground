@@ -13,7 +13,7 @@ import { XMarkIcon } from '@heroicons/react/24/solid';
 import RolePermissionList from 'components/molecules/RolePermissionList/RolePermissionList';
 import confetti from 'canvas-confetti';
 import data from 'data';
-import { ReactComponent as SpinnerIcon } from 'components/atoms/icons/16/Spinner.svg';
+import SpinnerIcon from 'components/atoms/icons/16/Spinner.svg?react';
 import { useLiveQuery } from 'dexie-react-hooks';
 
 type Props = {

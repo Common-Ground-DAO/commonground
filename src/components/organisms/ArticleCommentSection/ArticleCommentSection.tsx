@@ -5,10 +5,19 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useOwnCommunities, useOwnUser } from 'context/OwnDataProvider';
 import messageApi from 'data/api/messages';
-import channelDatabaseManager from 'data/databases/channel';
+import webSocketManager from 'data/appstate/webSocket';
+import { chat } from 'data/chat/runtime';
 import CommentList from 'components/molecules/CommentList/CommentList';
 import data from 'data';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { createArticleRoomRegistry } from './articleEventRooms';
+
+/** the tab's article event rooms (one socket, so one registry) */
+const articleEventRooms = createArticleRoomRegistry({
+  transport: webSocketManager,
+  join: access => messageApi.joinArticleEventRoom({ access }),
+  leave: access => messageApi.leaveArticleEventRoom({ access }),
+});
 
 type Props = {
   articleId: string;
@@ -34,7 +43,7 @@ const ArticleCommentSection: React.FC<Props> = (props) => {
   }, [articleCommunityId, articleId, articleUserId, channelId]);
 
   if (!registeredChannel.current && access) {
-    channelDatabaseManager.registerAccessForChannel(access);
+    chat.channels.registerAccessForChannel(access);
     registeredChannel.current = true;
   }
 
@@ -68,26 +77,11 @@ const ArticleCommentSection: React.FC<Props> = (props) => {
     return null;
   }, [articleCommunityId, community, ownCommunities]);
 
-  // Join event room for article comments
+  // Event room of the article comments, held while this section is mounted
+  // (ref-counted: several sections of one article share the socket's room)
   useEffect(() => {
-    let joined = false;
-    if (userId && access) {
-      messageApi.joinArticleEventRoom({ access }).then(() => {
-        joined = true;
-      }).catch(() => {
-        console.error('Failed to join article event room')
-      });
-    }
-
-    return () => {
-      if (joined && userId && access) {
-        messageApi.leaveArticleEventRoom({
-          access
-        }).catch(() => {
-          console.error('Failed to leave article event room');
-        });
-      }
-    };
+    if (!userId || !access) return;
+    return articleEventRooms.acquire(access);
   }, [userId, access]);
 
   const createMessage = useCallback(async (
@@ -99,10 +93,10 @@ const ArticleCommentSection: React.FC<Props> = (props) => {
       !!channelId && !!ownUser?.id &&
       (body.content.length > 0 || attachments.length > 0)
     ) {
-      await data.channelManager.createMessage({
+      // resolves once the pending comment is shown; failures show on it
+      await chat.channels.createMessage({
         body,
         parentMessageId,
-        creatorId: ownUser.id,
         attachments,
         channelId,
       });
@@ -113,15 +107,11 @@ const ArticleCommentSection: React.FC<Props> = (props) => {
 
   const deleteMessage = useCallback((messageId: string) => {
     if (access) {
-      messageApi.deleteMessage({
-        access,
-        messageId,
-        creatorId: ownUser?.id || '',
-      }).catch(() => {
+      chat.channels.deleteMessage(channelId, messageId, ownUser?.id || '').catch(() => {
         console.error('Failed to delete message');
       });
     }
-  }, [access, ownUser?.id]);
+  }, [access, channelId, ownUser?.id]);
 
   return (<div className='flex flex-col gap-4 w-full'>
     {registeredChannel.current && <CommentList

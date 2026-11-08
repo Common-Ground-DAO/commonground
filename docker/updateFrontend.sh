@@ -1,5 +1,8 @@
 #!/bin/bash
 cd ${0%/*}
+# docker compose reads docker/.env
+./ensureEnv.sh || exit 1
+export CG_ENV_ENSURED=1
 
 docker_compose() {
   if docker compose version >/dev/null 2>&1; then
@@ -20,27 +23,26 @@ function checkError {
   fi
 }
 
-printf "\n---\n--- Building frontend and nginx image\n---\n"
-rm -rf nginx/dist/* && \
+printf "\n---\n--- Building frontend and caddy image\n---\n"
+# Keep the build ID of the deployed frontend (read before caddy/dist is
+# cleared): the running backend was built with it, and a new ID would make
+# every client see a version mismatch until the next update_backend. Clients
+# pick the new frontend up through the service worker's own update check.
+# Without a deployed ID the build draws a new one (vite/buildId.ts).
+buildId=""
+if [ -f caddy/dist/build-id.txt ]
+then
+  buildId="$(cat caddy/dist/build-id.txt)"
+fi
+mkdir -p caddy/dist && rm -rf caddy/dist/* && \
 cd ../docker && \
 docker_compose build cg-builder
 checkError
 
-if [ ! -d ../.yarn ]
-then
-  printf "\n---\n--- Missing .yarn directory, setting yarn to version 4.1.0 \n---\n"
-  docker_compose run --rm cg-builder bash -c "sed -i 's/yarnPath: .*//g' .yarnrc.yml && yarn set version 4.1.0"
-  checkError
-fi
 
-docker_compose run --rm cg-builder yarn && \
-buildId=$(dd if=/dev/random bs=1 count=10 status=none | base64) && \
-sed -i 's#^const buildId =.*$#const buildId = "'$buildId'";#' ../src/common/random_build_id.ts && \
-docker_compose run --rm -e DEPLOYMENT=prod -e GENERATE_SOURCEMAP=true -e IMAGE_INLINE_SIZE_LIMIT=5000 cg-builder yarn craco --openssl-legacy-provider build && \
-rsync -a ../build/* nginx/dist/ && \
-docker_compose up -d --no-deps --build nginx
-checkError
-
-printf "\n---\n--- Build finished, restarting\n---\n"
-docker_compose start nginx
+docker_compose run --rm cg-builder yarn install --immutable && \
+docker_compose run --rm -e NODE_OPTIONS="--max-old-space-size=4096" -e DEPLOYMENT=prod -e CG_BUILD_ID="$buildId" cg-builder \
+  bash -c "yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite" && \
+rsync -a ../build/* caddy/dist/ && \
+docker_compose up -d --no-deps --build caddy
 checkError

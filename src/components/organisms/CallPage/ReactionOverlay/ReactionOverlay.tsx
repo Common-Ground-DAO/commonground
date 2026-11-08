@@ -25,7 +25,7 @@ type ActiveReaction = Reaction & {
 const ReactionOverlay: React.FC<Props> = ({ showPicker, closePicker }) => {
   const { recentReactions } = useCallContext();
   const { isMobile } = useWindowSizeContext();
-  const activeReactionsRef = useRef<ActiveReaction[]>();
+  const activeReactionsRef = useRef<ActiveReaction[]>(undefined);
 
   const activeReactions = activeReactionsRef.current;
   const lastActiveElement = activeReactions?.[activeReactions?.length - 1];

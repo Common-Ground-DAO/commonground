@@ -5,14 +5,16 @@
 import Joi from "joi";
 import { tlds } from "@hapi/tlds";
 import common from "../common";
-import baseArticleApi from "./basearticle";
+import baseArticleApi, { articleCursorPairing } from "./basearticle";
 import {
   UserProfileTypeEnum,
   UserPremiumFeatureName,
   PremiumRenewal,
 } from "../../common/enums";
+import { UNSUBSCRIBE_TOKEN_REGEX } from "../../util/unsubscribeToken";
 
-const accountTypes = Object.values(UserProfileTypeEnum);
+const humanAccountTypes = Object.values(UserProfileTypeEnum)
+  .filter(type => type !== UserProfileTypeEnum.BOT);
 const premiumFeature = Joi.string().valid(...Object.values(UserPremiumFeatureName));
 const premiumRenewal = Joi.string().valid(...Object.values(PremiumRenewal)).allow(null);
 
@@ -30,19 +32,9 @@ const cgProfileExtraDataValidator = Joi.object<Models.User.UserAccountExtraData_
 const TldSafeEmailValidator = Joi.string().email({ tlds: { allow: tlds } });
 
 const signableWalletDataValidator = Joi.object({
-  type: Joi.string().valid("evm", "fuel", "aeternity").required(),
-  address: Joi.when('type', {
-    switch: [
-      { is: 'evm', then: common.Address.required() },
-      { is: 'aeternity', then: common.AeternityAddress.required() },
-      { is: 'fuel', then: common.FuelAddress.required(), otherwise: Joi.forbidden() },
-    ]
-  }),
-  siweMessage: Joi.when('type', {
-    switch: [
-      { is: 'evm', then: Joi.string().required(), otherwise: Joi.forbidden() }
-    ]
-  }),
+  type: Joi.string().valid("evm").required(),
+  address: common.Address.required(),
+  siweMessage: Joi.string().required(),
   secret: common.Secret.required(),
 }).strict(true);
 
@@ -53,7 +45,7 @@ const walletValidator = Joi.object({
 
 const userApi = {
   verifyCaptcha: Joi.object<API.User.verifyCaptcha.Request>({
-    token: Joi.string().required(),
+    token: Joi.string().max(4096).required(),
   }).required().strict(true),
 
   login: Joi.alternatives().try(
@@ -70,10 +62,18 @@ const userApi = {
     Joi.object({
       type: Joi.equal("password").required(),
       aliasOrEmail: Joi.alternatives().try(common.CgProfileDisplayName, TldSafeEmailValidator).required(),
-      password: common.Password.required(),
+      // a password that predates the policy still signs in (and then has to
+      // be replaced: User/getSecurityStatus needsNewPassword)
+      password: common.PasswordAttempt.required(),
       device: newDeviceValidator.required(),
     }).strict(true),
     Joi.object({
+      type: Joi.equal("passkey").required(),
+      authenticationResponse: common.WebAuthnAuthenticationResponse.required(),
+      device: newDeviceValidator.required(),
+    }).strict(true),
+    Joi.object({
+      // passkey-success: legacy CG ID mode only (rejected otherwise)
       type: Joi.string().valid("twitter", "passkey-success", "farcaster").required(),
       device: newDeviceValidator.required(),
     }),
@@ -84,10 +84,40 @@ const userApi = {
     Joi.object({
       type: Joi.equal("verificationCode").required(),
       email: TldSafeEmailValidator.required(),
-      code: Joi.string().required(),
+      code: common.EmailCode.required(),
       device: newDeviceValidator.required(),
     }),
   ).required().strict(true),
+
+  ensureSession: Joi.object<API.User.ensureSession.Request>({}).strict(true),
+
+  signOutOtherDevices: Joi.object<API.User.signOutOtherDevices.Request>({}).strict(true),
+
+  reauthenticate: Joi.alternatives().try(
+    Joi.object({
+      type: Joi.equal("passkey").required(),
+      authenticationResponse: common.WebAuthnAuthenticationResponse.required(),
+    }).strict(true),
+    Joi.object({
+      type: Joi.equal("password").required(),
+      password: common.PasswordAttempt.required(),
+    }).strict(true),
+    Joi.object({
+      // proof: a fresh User/prepareWalletAction of a login-enabled wallet
+      type: Joi.equal("wallet").required(),
+    }).strict(true),
+  ).required(),
+
+  requestSignupEmailCode: Joi.object<API.User.requestSignupEmailCode.Request>({
+    email: TldSafeEmailValidator.max(320).required(),
+    // required unless this session already passed the captcha for the address
+    recaptchaToken: Joi.string().max(20000),
+  }).strict(true).required(),
+
+  verifySignupEmailCode: Joi.object<API.User.verifySignupEmailCode.Request>({
+    email: TldSafeEmailValidator.max(320).required(),
+    code: common.EmailCode.required(),
+  }).strict(true).required(),
 
   createUser: Joi.object<API.User.createUser.Request>({
     useTwitterCredentials: Joi.bool().strict(),
@@ -97,7 +127,7 @@ const userApi = {
     usePreparedFarcaster: Joi.bool().strict(),
     useEmailAndPassword: Joi.object<API.User.createUser.Request["useEmailAndPassword"]>({
       email: TldSafeEmailValidator.required(),
-      password: common.Password,
+      password: common.Password.required(),
     }).strict(true),
     useCgProfile: Joi.object<API.User.createUser.Request["useCgProfile"]>({
       type: Joi.string().valid("cg").required(),
@@ -105,13 +135,9 @@ const userApi = {
       imageId: common.ImageId.allow(null).required(),
       extraData: cgProfileExtraDataValidator.required(),
     }).strict(true),
-    useWizardCode: Joi.object<API.User.createUser.Request["useWizardCode"]>({
-      code: Joi.string().required(),
-      email: TldSafeEmailValidator.required(),
-      wizardId: common.Uuid.required(),
-    }).strict(true),
-    displayAccount: Joi.string().valid(...accountTypes).required(),
-    recaptchaToken: Joi.string().required(),
+    displayAccount: Joi.string().valid(...humanAccountTypes).required(),
+    // not needed after a sign-up email code (the captcha was solved there)
+    recaptchaToken: Joi.string(),
     device: newDeviceValidator.required(),
   }).required().strict(true),
 
@@ -121,34 +147,15 @@ const userApi = {
     newsletter: Joi.boolean(),
     weeklyNewsletter: Joi.boolean(),
     email: TldSafeEmailValidator.allow(null),
-    displayAccount: Joi.string().valid(...accountTypes),
+    displayAccount: Joi.string().valid(...humanAccountTypes),
     dmNotifications: Joi.boolean(),
     tags: Joi.alternatives().try(common.Tags, Joi.equal(null)),
   }).strict(true).min(1).required(),
 
   setOwnExtraDataField: Joi.alternatives<any>().try(
     Joi.object<API.User.setOwnExtraDataField.Request>({
-      key: Joi.string().valid("registeredForTokenSale", "installedPWA").required(),
+      key: Joi.string().valid("installedPWA").required(),
       value: Joi.boolean().required(),
-    }).strict(true).required(),
-    Joi.object<API.User.setOwnExtraDataField.Request>({
-      key: Joi.string().valid("agreedToTokenSaleTermsTimestamp").required(),
-      value: Joi.string().allow(''),
-    }).custom((value, helpers) => {
-      /* replace the value with the current server timestamp */
-      value.value = new Date().toISOString();
-      return value;
-    }).strict(true).required(),
-    Joi.object<API.User.setOwnExtraDataField.Request>({
-      key: Joi.string().valid("investsFromSwitzerland").required(),
-      value: Joi.object({
-        value: Joi.boolean().required(),
-        serverTimestamp: Joi.string().allow(''),
-      }).custom((value, helpers) => {
-        /* replace the value with the current server timestamp */
-        value.serverTimestamp = new Date().toISOString();
-        return value;
-      }).strict(true).required(),
     }).strict(true).required(),
     /* Add new non-boolean types here like this:
       Joi.object<API.User.setOwnExtraDataField.Request>({
@@ -159,7 +166,7 @@ const userApi = {
   ).strict(true).required(),
 
   addUserAccount: Joi.object<API.User.addUserAccount.Request>({
-    type: Joi.string().valid(...accountTypes).required(),
+    type: Joi.string().valid(...humanAccountTypes).required(),
     displayName: Joi.when('type', {
       is: 'cg',
       then: common.CgProfileDisplayName.required(),
@@ -191,11 +198,11 @@ const userApi = {
   }).min(2).required().strict(true),
 
   removeUserAccount: Joi.object<API.User.addUserAccount.Request>({
-    type: Joi.string().valid(...accountTypes).required(),
+    type: Joi.string().valid(...humanAccountTypes).required(),
   }).required().strict(true),
 
   prepareWalletAction: Joi.object<API.User.prepareWalletAction.Request>({
-    type: Joi.string().valid("cg_evm", "evm", "fuel", "aeternity").required(),
+    type: Joi.string().valid("cg_evm", "evm").required(),
     signature: common.EIP712Signature.required(),
     data: signableWalletDataValidator.required(),
   }).required().strict(true),
@@ -221,6 +228,11 @@ const userApi = {
 
   getUserData: Joi.object<API.User.getUserData.Request>({
     userIds: Joi.array().items(common.Uuid).min(1).unique(),
+  }).required().strict(true),
+
+  getSuggestedUsers: Joi.object<API.User.getSuggestedUsers.Request>({
+    limit: Joi.number().integer().min(1).max(50).required(),
+    cursor: Joi.string(),
   }).required().strict(true),
 
   getUserProfileDetails: Joi.object<API.User.getUserProfileDetails.Request>({
@@ -251,6 +263,19 @@ const userApi = {
     email: TldSafeEmailValidator,
   }).strict(true).required(),
 
+  // one-click unsubscribe (srv/api/emailUnsubscribe.ts): the signed token
+  // comes in the query string of the List-Unsubscribe URL. Other query keys
+  // are ignored — link rewriters and trackers append utm_* and the like.
+  emailUnsubscribeQuery: Joi.object<{ token: string }>({
+    token: Joi.string().max(200).pattern(UNSUBSCRIBE_TOKEN_REGEX).required(),
+  }).unknown(true).required(),
+
+  // RFC 8058 POST body "List-Unsubscribe=One-Click"; tolerated when absent
+  // (multipart bodies are not parsed) — the token alone authorizes
+  emailUnsubscribeBody: Joi.object<{ 'List-Unsubscribe'?: string }>({
+    'List-Unsubscribe': Joi.string().valid('One-Click'),
+  }),
+
   followUser: Joi.object<API.User.followUser.Request>({
     userId: common.Uuid.required(),
   }).required().strict(true),
@@ -263,7 +288,7 @@ const userApi = {
     ...baseArticleApi._getArticleListRequest,
     userId: common.Uuid,
     followingOnly: Joi.equal(true),
-  }).strict(true).required(),
+  }).strict(true).custom(articleCursorPairing).required(),
 
   getArticleDetailView: Joi.object<API.User.getArticleDetailView.Request>({
     userId: common.Uuid.required(),
@@ -287,7 +312,11 @@ const userApi = {
     }).strict(true).required(),
     article: baseArticleApi._updateArticle,
   }).strict(true).custom((value, helpers) => {
-    if (value?.userArticle?.articleId !== value?.article?.articleId) {
+    // only cross-check the ids when an `article` body is actually present —
+    // updating just the userArticle (e.g. publishing) is valid on its own.
+    // The community variant already guards this; the user one did not, so a
+    // userArticle-only update wrongly failed VALIDATION.
+    if (!!value?.article && value.userArticle?.articleId !== value.article.articleId) {
       return helpers.error("any.invalid");
     }
     return value;
@@ -330,43 +359,38 @@ const userApi = {
   }).strict(true).required(),
 
   requestEmailVerification: Joi.object<API.User.requestEmailVerification.Request>({
-    email: TldSafeEmailValidator.required(),
+    email: TldSafeEmailValidator.max(320).required(),
   }).strict(true).required(),
 
   verifyEmail: Joi.object<API.User.verifyEmail.Request>({
     email: TldSafeEmailValidator.required(),
-    token: Joi.string().required(),
+    token: common.EmailCode.required(),
   }).strict(true).required(),
 
   sendOneTimePasswordForLogin: Joi.object<API.User.sendOneTimePasswordForLogin.Request>({
     email: TldSafeEmailValidator.required(),
   }).strict(true).required(),
 
-  redeemWizardCode: Joi.object<API.User.redeemWizardCodeForExistingUser.Request>({
-    code: Joi.string().required(),
-    wizardId: common.Uuid.required(),
+  getSecurityStatus: Joi.object<API.User.getSecurityStatus.Request>({}).strict(true),
+
+  // transfer links (srv/util/transferLink.ts): minted for the session's own
+  // user only — there is no user id parameter
+  createTransferLink: Joi.object<API.User.createTransferLink.Request>({
+    // a same-site path to continue to after the transfer
+    nextPath: Joi.string().max(2048),
   }).strict(true).required(),
 
-  setReferredBy: Joi.object<API.User.setReferredBy.Request>({
-    tokenSaleId: common.Uuid.required(),
-    referredBy: common.Uuid.required(),
+  previewTransferLink: Joi.object<API.User.previewTransferLink.Request>({
+    token: common.TransferToken.required(),
   }).strict(true).required(),
 
-  getOwnTokenSaleData: Joi.object<API.User.getOwnTokenSaleData.Request>({
-    tokenSaleId: common.Uuid.required(),
+  redeemTransferLink: Joi.object<API.User.redeemTransferLink.Request>({
+    token: common.TransferToken.required(),
+    device: newDeviceValidator.required(),
   }).strict(true).required(),
 
-  getTokenSaleEvents: Joi.object<API.User.getTokenSaleEvents.Request>({
-    tokenSaleId: common.Uuid.required(),
-  }).strict(true).required(),
-
-  claimTokenSaleReward: Joi.object<API.User.claimTokenSaleReward.Request>({
-    tokenSaleId: common.Uuid.required(),
-  }).strict(true).required(),
-
-  saveTokenSaleTargetAddress: Joi.object<API.User.saveTokenSaleTargetAddress.Request>({
-    tokenSaleId: common.Uuid.required(),
-    targetAddress: common.Address.required(),
+  declineTransferLink: Joi.object<API.User.declineTransferLink.Request>({
+    token: common.TransferToken.required(),
   }).strict(true).required(),
 }
 

@@ -16,6 +16,16 @@ export type InMemoryAttachment = Models.Message.Attachment & {
   event?: Models.Community.Event;
   tentativeFile?: File;
   state?: 'INITIAL' | 'LOADING' | 'LOADED';
+  /**
+   * Set while the NSFW pre-check is still running for this file (see
+   * `AttachmentDropdown.helpers.ts`). The tile is rendered immediately so the
+   * pick is visible, but `MediaAttachment` must not start uploading yet, and
+   * `EditField`'s `areAttachmentsLoaded` treats it as busy so a message sent
+   * during the check cannot silently drop the attachment.
+   */
+  precheckPending?: boolean;
+  /** the upload of `tentativeFile` failed: the tile shows the error, sending leaves it out */
+  uploadFailed?: boolean;
   originalUrl?: string;
   giphyGif?: IGif;
 };
@@ -59,8 +69,11 @@ export async function fetchLinkPreview(url: string): Promise<InMemoryAttachment 
         return null;
       }
     } else {
-      // Add external preview attachment
-      const preview = await messageApi.getUrlPreview({ url });
+      // Add external preview attachment. A link typed without a scheme
+      // ("example.org") is fetched as https; `originalUrl` keeps what was typed,
+      // since parseLinks matches the preview against the editor text.
+      const fetchUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `https://${url}`;
+      const preview = await messageApi.getUrlPreview({ url: fetchUrl });
       if (preview.title) {
         return {
           type: 'linkPreview',

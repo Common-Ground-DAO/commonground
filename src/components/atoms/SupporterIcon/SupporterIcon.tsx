@@ -3,9 +3,9 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useMemo } from 'react'
-import { ReactComponent as SupporterSilverIcon } from 'components/atoms/icons/24/SupporterSilverIcon.svg';
-import { ReactComponent as SupporterGoldIcon } from 'components/atoms/icons/24/SupporterGoldIcon.svg';
-import { ReactComponent as SupporterIconBg } from 'components/atoms/icons/24/SupporterIconBg.svg';
+import SupporterSilverIcon from 'components/atoms/icons/24/SupporterSilverIcon.svg?react';
+import SupporterGoldIcon from 'components/atoms/icons/24/SupporterGoldIcon.svg?react';
+import SupporterIconBg from 'components/atoms/icons/24/SupporterIconBg.svg?react';
 import { useUserSettingsContext } from 'context/UserSettingsProvider';
 
 

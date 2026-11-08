@@ -3,12 +3,13 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { getDisplayName } from "../../../../util";
-import { ReactComponent as ReplyIcon } from "../../../atoms/icons/20/Reply.svg";
+import ReplyIcon from "../../../atoms/icons/20/Reply.svg?react";
 import { convertContentToPlainText } from "../../../../common/converters";
 import { useOwnUser } from "context/OwnDataProvider";
 
 import "./ReplyContentRenderer.css";
 import { useUserData } from "context/UserDataProvider";
+import BotBadge from "components/atoms/BotBadge/BotBadge";
 
 export default function ReplyContentRenderer(props: {
   id: string;
@@ -53,6 +54,7 @@ export default function ReplyContentRenderer(props: {
       <div className="replied-to-message-display-name">
         <ReplyIcon />
         {isSelf ? getDisplayName(ownData) : user ? getDisplayName(user) : senderId}
+        {!isSelf && user?.isBot && <BotBadge />}
       </div>
       <div className="replied-to-message-message">
         {replyMessage}

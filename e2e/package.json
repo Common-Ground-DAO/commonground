@@ -1,0 +1,11 @@
+{
+  "name": "@commonground/e2e",
+  "version": "0.1.0",
+  "description": "End-to-end browser suite for Common Ground. Runs inside the backend image (its pinned Chrome + puppeteer); no dependencies of its own.",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=24"
+  }
+}

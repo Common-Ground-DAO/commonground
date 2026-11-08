@@ -4,7 +4,7 @@
 
 import React, { useState } from 'react'
 import './SimpleLink.css';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useExternalModalContext } from 'context/ExternalModalProvider';
 import { useAsyncMemo } from 'hooks/useAsyncMemo';
 import { fetchInternalLinkData } from 'components/molecules/LinkPreview/LinkPreview.helper';
@@ -22,7 +22,7 @@ export function isLocalUrl(url: string) {
 type Props = {
   className?: string;
   href: string;
-  modalContentRef?: React.RefObject<HTMLDivElement>;
+  modalContentRef?: React.RefObject<HTMLDivElement | null>;
   inlineLink?: boolean;
   skipInternalLinkProcessing?: boolean;
 }

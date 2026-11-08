@@ -10,27 +10,26 @@ import MessageToolTip from "./MessageTooltip/MessageTooltip";
 import ReactionsDisplay from "./ReactionsDisplay/ReactionsDisplay";
 import ReplyContentRenderer from "./ReplyContentRenderer/ReplyContentRenderer";
 import ReactDOM from "react-dom";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence } from "motion/react";
 import {
   useFloating,
   useInteractions,
   useHover,
-  useDelayGroupContext,
   useDelayGroup,
   useFloatingParentNodeId,
   FloatingTree,
   offset,
   useDismiss,
-  FloatingContext,
+  HandleCloseContext,
   useClick
-} from "@floating-ui/react-dom-interactions";
+} from "@floating-ui/react";
 import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
 import { useOwnUser } from "context/OwnDataProvider";
 import MessageTimestamp from "./MessageTimestamp/MessageTimestamp";
 import UserTooltip from 'components/organisms/UserTooltip/UserTooltip';
 import { UserTooltipHandle } from 'components/atoms/Tooltip/UserProfilePopover';
 import { useSafeCommunityContext } from 'context/CommunityProvider';
-import { ReactComponent as ReplyIcon } from 'components/atoms/icons/20/Reply.svg';
+import ReplyIcon from 'components/atoms/icons/20/Reply.svg?react';
 
 type Props = {
   message: Models.Message.Message;
@@ -45,7 +44,10 @@ type Props = {
   unsetReaction: () => void;
   replyClick: (id: string, creatorId: string, body: Models.Message.Body) => void;
   editClick: (message: Models.Message.Message) => void;
-  visibilityObserver: IntersectionObserver;
+  /** retry a failed own send or edit (`sendStatus` error-send / error-update) */
+  retrySend?: () => void;
+  /** discard a failed own send or revert a failed edit */
+  discardPending?: () => void;
   selected?: boolean;
   editing?: boolean;
   isolatedNewMsg?: boolean;
@@ -74,7 +76,8 @@ export default function Message(props: Props) {
     channelId,
     attachments,
     editClick,
-    visibilityObserver,
+    retrySend,
+    discardPending,
     selected,
     editing,
     isolatedNewMsg,
@@ -87,11 +90,9 @@ export default function Message(props: Props) {
   const [isTooltipSticked, setTooltipSticked] = useState(false);
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
   const [showReplyIndicator, setShowReplyIndicator] = useState(false);
-  const { delay, currentId, setCurrentId } = useDelayGroupContext();
   const parentId = useFloatingParentNodeId();
   const tooltipRoot = useMemo(() => document.getElementById("tooltip-root") as HTMLElement, []);
   const messageRef = useRef<HTMLDivElement>(null);
-  const delayedCloseTimeoutRef = useRef<any>(null);
   const ownUser = useOwnUser();
   const userTooltipRef = useRef<UserTooltipHandle>(null);
   const replyIndicatorDivRef = useRef<HTMLDivElement>(null);
@@ -99,37 +100,23 @@ export default function Message(props: Props) {
 
   const canModerateUser = communityState.state === "loaded" && communityState.communityPermissions.has('COMMUNITY_MODERATE');
   const ownMessage = !!ownUser && ownUser?.id === message.creatorId;
+  // a pending or failed own send (or an edit in flight): no server actions
+  // (react, reply, edit, delete, pin) until the server has the current version
+  const serverActionsDisabled = message.sendStatus === 'sending' || message.sendStatus === 'error-send';
 
-  useEffect(() => {
-    const element = messageRef.current;
-    if (element) {
-      visibilityObserver.observe(element);
-
-      return () => visibilityObserver.unobserve(element);
-    }
-  }, [visibilityObserver]);
-
+  // `setCurrentId` moved into `useDelayGroup` in `@floating-ui/react` 0.27, and
+  // the `currentId`/`delayedCloseTimeoutRef` branch it used to guard was dead:
+  // both arms only called `setMessageIsHovered(false)` and nothing ever
+  // assigned `delayedCloseTimeoutRef.current`.
   const onOpenChange = useCallback(
     (open: boolean) => {
-      if (open) {
-        setMessageIsHovered(true);
-        setCurrentId(message.id);
-      } else {
-        if (isMobile || message.id !== currentId) {
-          setMessageIsHovered(false);
-        } else {
-          if (delayedCloseTimeoutRef.current) {
-            clearTimeout(delayedCloseTimeoutRef.current);
-          }
-          setMessageIsHovered(false);
-        }
-      }
+      setMessageIsHovered(open);
     }
-  , [message.id, currentId, isMobile, setCurrentId, setMessageIsHovered]);
+  , [setMessageIsHovered]);
 
-  const { x, y, reference, floating, strategy, context, update } = useFloating({
+  const { x, y, refs, strategy, context, update, isPositioned } = useFloating({
     placement: "top-end",
-    open: messageIsHovered && !isImageModalOpen,
+    open: messageIsHovered && !isImageModalOpen && !serverActionsDisabled,
     onOpenChange,
     middleware: [
       offset({ mainAxis: -6 })
@@ -150,13 +137,14 @@ export default function Message(props: Props) {
     });
   }, [context.refs.reference.current]);
 
+  const { delay } = useDelayGroup(context, { id: message.id });
+
   const { getReferenceProps } = useInteractions([
-    useDelayGroup(context, { id: message.id }),
     useHover(context, {
       enabled: !isMobile,
       delay,
       handleClose: (() => {
-        const fn = ({ onClose, refs }: FloatingContext & { onClose: () => void }) => (event: PointerEvent) => {
+        const fn = ({ onClose, refs }: HandleCloseContext) => (event: MouseEvent) => {
           if (isTooltipSticked) return;
 
           const path = event.composedPath();
@@ -194,7 +182,7 @@ export default function Message(props: Props) {
   const touchListener = useCallback((type: 'start' | 'move' | 'end' | 'cancel', event: React.TouchEvent<HTMLDivElement>) => {
     const current = context.refs.reference.current as HTMLDivElement | null;
     const replyDiv = replyIndicatorDivRef.current;
-    if (canReply && current && replyDiv && !!ownUser?.id) {
+    if (canReply && !serverActionsDisabled && current && replyDiv && !!ownUser?.id) {
       switch (type) {
         case 'start': {
           touchOngoingRef.current = true;
@@ -287,7 +275,7 @@ export default function Message(props: Props) {
         replyDiv.style.transform = `translate(-${touchShiftRef.current}px, 0px) ${touchTriggeredRef.current ? 'scale(1)' : 'scale(0.8)'}`;
       }
     }
-  }, [context.refs.reference.current, showReplyIndicator, replyClick, message.id, message.updatedAt.getTime(), canReply, ownUser?.id]);
+  }, [context.refs.reference.current, showReplyIndicator, replyClick, message, canReply, serverActionsDisabled, ownUser?.id]);
 
   const tooltipSetReaction = React.useCallback((reaction: string) => {
     setReaction(reaction);
@@ -322,16 +310,18 @@ export default function Message(props: Props) {
   const floatingStyle = useMemo(() => {
     const result: React.CSSProperties = {
       position: strategy,
-      top: y ?? 0,
-      left: ownMessage ? x ?? 0 : Math.max(x ?? 0, tooltipMinLeft),
-      visibility: x === null || y === null ? "hidden" : "visible",
+      top: y,
+      left: ownMessage ? x : Math.max(x, tooltipMinLeft),
+      // `x`/`y` are no longer `null` before the first positioning pass; that
+      // state is `isPositioned` now (see Tooltip.tsx).
+      visibility: isPositioned ? "visible" : "hidden",
       zIndex: 10,
       boxSizing: "border-box",
       border: "none",
       padding: "0",
     };
     return result;
-  }, [strategy, x, y, tooltipMinLeft, ownMessage]);
+  }, [strategy, x, y, isPositioned, tooltipMinLeft, ownMessage]);
 
   const hasReactions = useMemo(() => !!message.reactions && Object.keys(message.reactions).length > 0, [message.reactions]);
   const isSpecial = useMemo(() => message.body.content[0]?.type === "special", [message.body]);
@@ -342,6 +332,7 @@ export default function Message(props: Props) {
     selected ? 'selected' : '',
     editing ? 'editing' : '',
     isSpecial ? 'special' : '',
+    message.sendStatus === 'sending' ? 'sending' : '',
   ].join(' ').replace(/  +/, ' ').trim();
 
   const replyContent = useMemo(() => {
@@ -364,15 +355,23 @@ export default function Message(props: Props) {
     </>;
   }, [repliedTo, message.parentMessageId, scrollToMessage, showReplyIndicator]);
 
+  // `message` keeps its object identity while unchanged (chat-sync windows),
+  // so depending on it re-renders exactly on edits, reactions and sendStatus.
+  // `data-timestamp` is on every item, pending sends included: the list
+  // anchors its scroll position by it. `data-send-status` is present only
+  // while a send or edit is in flight or failed (the `sendStatus` value), so
+  // an item without it shows what the server stored.
   const messageContent = useMemo(() => {
-    const extraMessageProps = message.sendStatus === undefined
-      ? { "data-timestamp": message.createdAt.toISOString() }
-      : {};
-
     return (
-      <div className="message-item-content" ref={messageRef} {...extraMessageProps}>
+      <div className="message-item-content" ref={messageRef} data-timestamp={message.createdAt.toISOString()} data-send-status={message.sendStatus}>
         <div className="message-item-message">
-          <MessageBodyRenderer message={message} key={`body-${message.id}`} hideTimestamp={attachments && attachments.length > 0} />
+          <MessageBodyRenderer
+            message={message}
+            key={`body-${message.id}`}
+            hideTimestamp={attachments && attachments.length > 0}
+            onRetry={retrySend}
+            onDiscard={discardPending}
+          />
           {attachments && attachments.length > 0 && <>
             <MessageAttachments key={`attachments-${message.id}`} attachments={attachments} setImageModalOpen={setIsImageModalOpen} />
             <MessageTimestamp
@@ -396,10 +395,10 @@ export default function Message(props: Props) {
         />}
       </div>
     );
-  }, [message.id, message.updatedAt.getTime(), setReaction, unsetReaction, canModerateUser, channelId]);
+  }, [message, attachments, setReaction, unsetReaction, canModerateUser, channelId, retrySend, discardPending]);
 
   const messageHoveredContent = useMemo(() => {
-    if (messageIsHovered) {
+    if (messageIsHovered && !serverActionsDisabled) {
       return ReactDOM.createPortal((
         <AnimatePresence>
           <motion.div
@@ -407,7 +406,7 @@ export default function Message(props: Props) {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0 }}
             transition={{ type: "spring", damping: 20, stiffness: 300, delay: 0.0 }}
-            ref={floating}
+            ref={refs.setFloating}
             style={floatingStyle}
           >
             <MessageToolTip
@@ -434,12 +433,13 @@ export default function Message(props: Props) {
     else {
       return null;
     }
-  }, [messageIsHovered, message.body, message.id, message.updatedAt.getTime(), channelId, editClick, floating, floatingStyle, replyClick, tooltipSetReaction, update])
+  }, [messageIsHovered, serverActionsDisabled, message, channelId, editClick, refs.setFloating, floatingStyle, replyClick, tooltipSetReaction, update])
 
   const returnValue = useMemo(() => {
     const content = (
       <div
-        {...getReferenceProps({ ref: reference, className: messageItemClassname })}
+        ref={refs.setReference}
+        {...getReferenceProps({ className: messageItemClassname })}
         id={message.id}
         onTouchStart={touchListener.bind(null, 'start')}
         onTouchMove={touchListener.bind(null, 'move')}
@@ -461,12 +461,12 @@ export default function Message(props: Props) {
     } else {
       return content;
     }
-  }, [reference, messageItemClassname, touchListener, replyContent, messageContent, messageHoveredContent, parentId]);
+  }, [refs.setReference, messageItemClassname, touchListener, replyContent, messageContent, messageHoveredContent, parentId]);
   
   return returnValue;
 }
 
-const ReplyIndicator: React.FC<{ show: boolean, divRef: React.RefObject<HTMLDivElement> }> = ({ show, divRef }) => {
+const ReplyIndicator: React.FC<{ show: boolean, divRef: React.RefObject<HTMLDivElement | null> }> = ({ show, divRef }) => {
   useEffect(() => {
     const current = divRef.current;
     if (current) {

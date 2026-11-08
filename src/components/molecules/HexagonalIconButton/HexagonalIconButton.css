@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 button.hexagonal-icon-button {
   @apply flex items-center flex-none m-0 gap-2 cg-text-lg-500 cg-border-m;
   

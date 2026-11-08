@@ -14,7 +14,7 @@ import { useMultipleUserData, useUserData } from "context/UserDataProvider";
 import Button from "components/atoms/Button/Button";
 import { ArrowLeftIcon } from "@heroicons/react/20/solid";
 import { ArrowsOutSimple } from "@phosphor-icons/react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { getUrl } from "common/util";
 import Jdenticon from "components/atoms/Jdenticon/Jdenticon";
 import { getDisplayName } from "../../../../util";
@@ -24,8 +24,11 @@ import config from "common/config";
 import { useSnackbarContext } from "context/SnackbarContext";
 import errors from "common/errors";
 import fileApi from "data/api/file";
+import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
+import { isUploadTemporarilyRefused, notifyIfImageRejected } from "moderation/imageUploadError";
 import { useSignedUrl } from "hooks/useSignedUrl";
 import UserPosts from "./UserPosts";
+import { cssBackgroundImage } from 'util/cssBackground';
 
 export default function UserProfileInner(props: Props & {
   trayMode?: boolean;
@@ -66,17 +69,34 @@ export default function UserProfileInner(props: Props & {
   }, [closeTray, navigate, user]);
 
   const handleImageChange = useCallback(async (ev: React.ChangeEvent<HTMLInputElement>) => {
-    const file = ev.target.files?.[0];
+    // Read the file and clear the input *before* any await: `ev.target` is not
+    // safe to touch afterwards, and leaving the value set would make re-picking
+    // the same file after a "Cancel" in the pre-check dialog fire no change
+    // event at all.
+    const input = ev.target;
+    const file = input.files?.[0];
+    input.value = '';
     if (!file) return;
     if (file.size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
       showSnackbar({ type: 'warning', text: errors.client.UPLOAD_SIZE_LIMIT });
       return;
     }
 
+    if (!await checkImageBeforeUpload(file)) return;
+
     try {
       await fileApi.uploadImage({ type: 'userBannerImage' }, file);
     } catch (e: any) {
-      showSnackbar({ type: 'warning', text: `Something went wrong, code error: ${e.message}` });
+      if (!notifyIfImageRejected(e)) {
+        showSnackbar({
+          type: 'warning',
+          // a rate-limited or shed upload is a plain "try again", not a code
+          // error the user should be shown
+          text: isUploadTemporarilyRefused(e)
+            ? errors.client.UPLOAD_BUSY
+            : `Something went wrong, code error: ${e.message}`,
+        });
+      }
     }
   }, [showSnackbar]);
 
@@ -102,7 +122,7 @@ export default function UserProfileInner(props: Props & {
       />
     </div>}
     <div className={`user-profile-inner cg-text-main ${isMobile ? 'mobile' : 'desktop-tray'}${trayMode ? ' tray-mode' : ''}`}>
-      <div className={`user-profile-banner flex flex-col items-center justify-center${!trayMode ? ' cg-border-l' : ''} ${isSelf ? ' cursor-pointer' : ''}${!!bannerImageUrl ? ' has-image' : ' no-image'}`} style={{ backgroundImage: `url(${bannerImageUrl})` }} onClick={onBannerClick}>
+      <div className={`user-profile-banner flex flex-col items-center justify-center${!trayMode ? ' cg-border-l' : ''} ${isSelf ? ' cursor-pointer' : ''}${!!bannerImageUrl ? ' has-image' : ' no-image'}`} style={{ backgroundImage: cssBackgroundImage(bannerImageUrl) }} onClick={onBannerClick}>
         {isSelf && !trayMode && <div className={`flex flex-col items-center justify-center gap-4 user-profile-banner-actions cg-border-l p-4${!!bannerImageUrl ? ' cg-content-stack' : ''}`}>
           <input type="file" ref={inputRef} onChange={handleImageChange} style={{ display: "none" }} accept={config.ACCEPTED_IMAGE_FORMATS} />
           <Button

@@ -2,29 +2,29 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { Placement } from "@floating-ui/react-dom-interactions";
+import { Placement } from "@floating-ui/react";
 import Button from "../../atoms/Button/Button";
 import { Popover, PopoverHandle } from "../../atoms/Tooltip/Tooltip";
-import { ReactComponent as ChevronDownIcon } from '../../../components/atoms/icons/16/ChevronDown.svg';
+import ChevronDownIcon from '../../../components/atoms/icons/16/ChevronDown.svg?react';
 
 import "./Dropdown.css";
 import React, { forwardRef, useImperativeHandle, useMemo, useRef } from "react";
 import Scrollable from "../Scrollable/Scrollable";
 
 export type Props = {
-    triggerContent: string | JSX.Element;
+    triggerContent: string | React.JSX.Element;
     triggerClassname?: string;
-    items: JSX.Element[];
+    items: React.JSX.Element[];
     placement?: Placement;
     offset?: number;
     className?: string;
-    footer?: JSX.Element | null;
+    footer?: React.JSX.Element | null;
     closeOnToggleOrLeave?: boolean;
     stayOpenOnClick?: boolean;
     closeOnClick?: boolean;
     title?: string;
     buttonClassName?: string;
-    icon?: JSX.Element;
+    icon?: React.JSX.Element;
     domChildOfTrigger?: boolean;
     onOpen?: () => void;
     onClose?: () => void;

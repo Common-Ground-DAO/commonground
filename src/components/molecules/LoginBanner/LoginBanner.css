@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .login-banner-container {
     @apply relative w-full;
     height: 245px;
@@ -51,22 +53,4 @@
     .login-banner.collapsed {
         @apply mx-2;
     }
-}
-
-.si3-text {
-    background: linear-gradient(180deg, #CBBAFF 0%, #431FFD 100%);
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-}
-
-.token-sale-tag {
-    @apply flex py-1 px-3 items-center justify-center gap-2 cg-border-m;
-    color: var(--text-full-white);
-    background: var(--surface-brand-dark, #125CA0);
-    backdrop-filter: blur(25px);
-}
-
-.token-sale-monospace {
-    font-family: "Geist Mono";
 }

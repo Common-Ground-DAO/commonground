@@ -3,9 +3,9 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { useEffect, useMemo, useCallback, useState, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { startRegistration } from '@simplewebauthn/browser';
-import UAParser from 'ua-parser-js';
+import { UAParser } from 'ua-parser-js';
 
 import cgIdApi from 'data/api/cgid';
 import { randomString } from '../util';
@@ -78,7 +78,7 @@ function CgIdCreatePasskey({
       console.log("options", options);
       step = 1;
 
-      const result = await startRegistration(options)
+      const result = await startRegistration({ optionsJSON: options })
       console.log("result", result);
       step = 2;
 

@@ -5,10 +5,6 @@
 declare namespace Common {
   type Address = `0x${string}`;
 
-  type FuelAddress = `fuel${string}`;
-
-  type AeternityAddress = `ak_${string}`;
-
   type PremiumRenewal = 'MONTH' | 'YEAR';
 
   type Link = {
@@ -113,43 +109,6 @@ declare namespace Common {
       embedId: string;
       size: MediaSize;
     };
-    type NativeVideoEmbed = {
-      type: 'nativeVideoEmbed';
-      filename: string;
-      size: MediaSize;
-    };
-    type NativeDownloadEmbed = {
-      type: 'nativeDownloadEmbed';
-      filename: string;
-      renderType: 'button' | 'link';
-      className?: string;
-      title?: string;
-    };
-    type DynamicTextFunction = {
-      type: 'dynamicTextFunction';
-      className?: string;
-    } & ({
-      functionName: 'wizardRemainingSlots';
-    });
-    type DynamicTextRequest = {
-      type: 'dynamicTextRequest';
-      className?: string;
-    } & ({
-      requestName: 'wizardInvitedBy';
-    } | {
-      requestName: 'wizardPauseTimeRemaining';
-    });
-    type WizardImage = {
-      type: 'wizardImage';
-      wizardImageId: string;
-      className: string;
-    };
-    type InlineImage = {
-      type: 'inlineImage';
-      imageDataUri: string;
-      className: string;
-      style?: string;
-    };
 
     type DurationOption =
       "15m" |
@@ -231,15 +190,7 @@ declare namespace Common {
   type WebSocketState =
     "disconnected" |
     "connecting" |
-    "connected" |
-    "version-update";
-
-  type TabState =
-    'unknown' |
-    'active' |
-    'active-throttled' |
-    'passive' |
-    'passive-throttled';
+    "connected";
 
   type LoginState =
     "pending" |

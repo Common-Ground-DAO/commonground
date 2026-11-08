@@ -7,15 +7,17 @@ import React, { createRef, useMemo, useState } from 'react'
 import Button from 'components/atoms/Button/Button';
 import config from 'common/config';
 import errors from 'common/errors';
+import { checkImageBeforeUpload } from 'moderation/checkImageBeforeUpload';
 
 import './ProfilePhotoField.css';
 import { XCircleIcon } from '@heroicons/react/24/solid';
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
   currentFile: File |undefined;
   setFile: (file: File | undefined) => void;
   originalFileUrl?: string;
-  extraElement?: JSX.Element;
+  extraElement?: React.JSX.Element;
 };
 
 const ProfilePhotoField: React.FC<Props> = (props) => {
@@ -27,11 +29,20 @@ const ProfilePhotoField: React.FC<Props> = (props) => {
 
   const handleImageChange = async (ev: React.ChangeEvent<HTMLInputElement>) => {
     ev.stopPropagation();
-    if (ev.target.files && ev.target.files.length === 1) {
-      if (ev.target.files[0].size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
+    // Read the file and clear the input *before* any await: `ev.target` is not
+    // safe to touch afterwards, and leaving the value set would make re-picking
+    // the same file after a "Cancel" in the pre-check dialog fire no change
+    // event at all.
+    const input = ev.target;
+    const files = input.files;
+    const file = files && files.length === 1 ? files[0] : undefined;
+    input.value = '';
+    if (file) {
+      if (file.size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
         setError(errors.client.UPLOAD_SIZE_LIMIT);
       } else {
-        setFile(ev.target.files[0]);
+        if (!await checkImageBeforeUpload(file)) return;
+        setFile(file);
       }
     }
   }
@@ -46,7 +57,7 @@ const ProfilePhotoField: React.FC<Props> = (props) => {
   return (
     <div className='flex flex-col gap-1'>
       <div className='flex gap-4'>
-        <div className='profile-photo-preview' onClick={openLoadImagePopup} style={{ backgroundImage: `url(${fileUrl})` }} >
+        <div className='profile-photo-preview' onClick={openLoadImagePopup} style={{ backgroundImage: cssBackgroundImage(fileUrl) }} >
           {!currentFile && !originalFileUrl && <ArrowUpTrayIcon className='w-5 h-5' />}
           {currentFile && <XCircleIcon className='absolute w-6 h-6 top-0 right-0 cg-text-warning' onClick={(e) => {
             e.preventDefault();

@@ -63,6 +63,18 @@ declare namespace Models {
       ownReaction: string | null;
       parentMessageId: string | null;
       sendStatus?: Models.ItemList.Item["sendStatus"];
+      /**
+       * chat-sync: per-channel, commit-ordered change sequence of this row
+       * (set by the database on every insert and update, deletes included).
+       * A higher value is a newer version of the message. chat-sync servers
+       * send it on loadMessages, messagesById, getChanges, the createMessage
+       * response and all message events. Absent on older servers and on
+       * pending (unsent) items. Rows not written since the migration have
+       * none until their next write: absent in loadMessages, messagesById
+       * and loadUpdates, `0` (older than every change) in a getChanges reset
+       * page, whose messages always carry a number.
+       */
+      syncSeq?: number;
     };
 
     type ApiMessage = Omit<Message, "createdAt" | "updatedAt" | "sendStatus"> & {

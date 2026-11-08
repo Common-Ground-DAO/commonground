@@ -8,8 +8,13 @@ import {
     type PublicKeyCredentialRequestOptionsJSON,
     type RegistrationResponseJSON,
     type AuthenticatorTransportFuture
-} from "@simplewebauthn/types";
+} from "@simplewebauthn/browser";
 
+// Legacy CG ID app (srv/api/cgid.ts): only served by a process running with
+// CG_LEGACY_CGID=true, and there only ensureSession, generateAuthenticationOptions
+// and verifyAuthenticationResponse. getLoggedInUserData and the registration
+// pair have no backend any more; their types stay until the CG ID app
+// (src/cgid) is deleted.
 declare global {
     namespace API {
         namespace CgId {
@@ -39,9 +44,7 @@ declare global {
             }
 
             namespace generateAuthenticationOptions {
-                type Request = {
-                    userId?: string;
-                };
+                type Request = Record<string, never>;
                 type Response = PublicKeyCredentialRequestOptionsJSON;
             }
 

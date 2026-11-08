@@ -3,9 +3,9 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useEffect, useMemo } from "react";
-import { Route, Routes, useParams } from "react-router-dom";
+import { Route, Routes, useParams } from "react-router";
 
-import { ReactComponent as SpinnerIcon } from '../../components/atoms/icons/16/Spinner.svg';
+import SpinnerIcon from '../../components/atoms/icons/16/Spinner.svg?react';
 
 import CommunityManagementView from "views/CommunityManagementView/CommunityManagementView";
 import AreaChannelManagementView from "views/AreaChannelManagementView/AreaChannelManagementView";
@@ -33,13 +33,12 @@ import SafeAndUpgradesView from "views/SafeAndUpgradesView/SafeAndUpgradesView";
 import TokenSettingsView from "views/TokenSettingsView/TokenSettingsView";
 import OnboardingManagementView from "views/OnboardingManagementView/OnboardingManagementView";
 import MemberApplicationView from "views/MemberApplicationView/MemberApplicationView";
-import { CommunityWizardProvider } from "context/CommunityWizardProvider";
-import AssistantView from "views/AssistantView/AssistantView";
 import { CommunityPluginProvider } from "context/CommunityPluginProvider";
 import PluginView from "views/PluginView/PluginView";
 import CommunityTokenView from "views/CommunityTokenView/CommunityToken";
 import PluginSettingsView from "views/PluginSettingsView/PluginSettingsView";
 import BanManagementView from "views/BanManagementView/BanManagementView";
+import BotManagementView from "views/BotManagementView/BotManagementView";
 type Props = {
 
 }
@@ -97,6 +96,7 @@ function CommunityRouter(props: Props) {
               <Route path='onboarding/' element={<OnboardingManagementView />} />
               <Route path='token/' element={<TokenSettingsView />} />
               <Route path='plugins/' element={<PluginSettingsView />} />
+              <Route path='bots/' element={<BotManagementView />} />
             </Routes>
           } />
           <Route path={`create/${config.URL_ARTICLE}/`} element={<CreateArticleView />} />
@@ -104,7 +104,6 @@ function CommunityRouter(props: Props) {
           <Route path='members/' element={<MemberManagementView />} />
           <Route path='member-applications/' element={<MemberApplicationView />} />
           <Route path='events/' element={<EventsView />} />
-          <Route path='assistant/' element={<AssistantView community={safeCtx.community} />} />
           <Route path='token/' element={<CommunityTokenView />} />
           <Route path={`${config.URL_CALL}/:callId/`} element={<CallPageView />} />
           <Route path={`${config.URL_ARTICLE}/:articleUri/`} element={<ArticleView />} />
@@ -120,16 +119,7 @@ function CommunityRouter(props: Props) {
               <CommunityView />
             </CommunityChannelIdProvider>
           } />
-          <Route path={`${config.URL_WIZARD}/:wizardId/*`} element={
-            <CommunityWizardProvider pageTitle={safeCtx.community.title}>
-              <CommunityView />
-            </CommunityWizardProvider>
-          } />
           <Route path='*' element={<CommunityView />} />
-          {/* <Route path='announcements' element={<CommunityContentList positionCallback={positionCallback} communityId={communityId} tags={['announcement']} />} />
-          <Route path='articles' element={<CommunityContentList positionCallback={positionCallback} communityId={communityId} tags={['article']} />} />
-          <Route path='guides' element={<CommunityContentList positionCallback={positionCallback} communityId={communityId} tags={['guide']} />} />
-          <Route path='drafts' element={<CommunityContentList positionCallback={positionCallback} communityId={communityId} tags={[]} />} /> // Todo */}
         </Routes>
       </div>
     </MemberListProvider>

@@ -5,7 +5,6 @@
 import notificationsApi from 'data/api/notifications';
 import type { ServiceWorkerMessage } from '../../service-worker';
 import loginManager from './login';
-import webSocketManager from './webSocket';
 
 export type MessageFromServiceWorker = {
   action: 'reload';
@@ -13,9 +12,6 @@ export type MessageFromServiceWorker = {
   action: 'navigate';
   url: string;
   ackPort?: MessagePort;
-} | {
-  action: 'channel_notification_closed';
-  channelId: string;
 }
 
 const FAST_UPDATE_INTERVAL = 3000;
@@ -27,6 +23,9 @@ const { href } = window.location;
 const re = /^https?:\/\/[^/:]+:3000/;
 const SW_ENABLED = 'serviceWorker' in navigator && href.match(re) === null;
 
+// On a gateway this URL serves a replacement worker instead of
+// src/service-worker.ts (no cache, no fetch handler; docs/frontend "Service
+// worker on a gateway"), so the gateway page registers that one.
 function __getRegistration() {
   if (!SW_ENABLED) return null;
   return navigator.serviceWorker.register("/service-worker.js", {scope: "/"});
@@ -34,9 +33,6 @@ function __getRegistration() {
 
 const skipWaitingMessage: ServiceWorkerMessage = {
   type: 'SKIP_WAITING',
-};
-const stopTabHandlingMessage: ServiceWorkerMessage = {
-  type: 'STOP_TAB_HANDLING',
 };
 
 function debugLog(...args: any[]) {
@@ -86,7 +82,6 @@ class ServiceWorkerManager {
 
       navigator.serviceWorker.addEventListener('message', function (this: ServiceWorkerContainer, ev: MessageEvent<MessageFromServiceWorker>) {
         if (ev.data.action === 'reload' && that._initialInstallation !== true) {
-          webSocketManager.sendStateBroadcastUpdates = false;
           loginManager.triggerSafeWindowReload();
         }
         else if (ev.data.action === 'navigate') {
@@ -97,16 +92,6 @@ class ServiceWorkerManager {
           }, 50);
           ev.data.ackPort?.postMessage({ ack: true });
           ev.data.ackPort?.close();
-        }
-        else if (ev.data.action === 'channel_notification_closed') {
-          // This is disabled for now since push notifications that do not
-          // trigger a new notification would interfere with the
-          // no-silent-push directive from the web push standard
-
-          // if (webSocketManager.tabState === 'active' || webSocketManager.tabState === 'active-throttled') {
-          //   const { channelId } = ev.data;
-          //   notificationsApi.channelPushNotificationClosed({ channelId });
-          // }
         }
       });
 
@@ -337,7 +322,6 @@ class ServiceWorkerManager {
         if (this.state === "activated") {
           // installation is finished, reset success guard
           that._installationSuccessful = false;
-          active.postMessage(stopTabHandlingMessage);
           stateUpdateHandler();
         }
 
@@ -408,7 +392,6 @@ class ServiceWorkerManager {
           stateUpdateHandler();
         }
         else if (this.state === "redundant") {
-          this.postMessage(stopTabHandlingMessage);
           stateUpdateHandler();
         }
       };
@@ -432,9 +415,6 @@ class ServiceWorkerManager {
         else if (this.state !== "activating" && this.state !== "redundant") {
           debugLog("Unexpected: waiting worker went into state " + this.state);
           stateUpdateHandler();
-        }
-        else if (this.state === "redundant") {
-          this.postMessage(stopTabHandlingMessage);
         }
       };
       waiting.onerror = errorHandler;

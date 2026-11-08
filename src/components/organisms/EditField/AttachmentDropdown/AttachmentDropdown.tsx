@@ -5,8 +5,8 @@
 import React, { useRef, useState } from 'react'
 import Dropdown from '../../../molecules/Dropdown/Dropdown';
 import { InMemoryAttachment } from '../useAttachments/useAttachments';
-import { ReactComponent as AddIcon } from '../../../../components/atoms/icons/16/Add.svg';
-import { ReactComponent as PcIcon } from '../../../../components/atoms/icons/24/PcIcon.svg';
+import AddIcon from '../../../../components/atoms/icons/16/Add.svg?react';
+import PcIcon from '../../../../components/atoms/icons/24/PcIcon.svg?react';
 import DropdownItem from '../../../atoms/ListItem/ListItem';
 import { addFiles } from './AttachmentDropdown.helpers';
 import config from 'common/config';
@@ -25,7 +25,7 @@ const AttachmentDropdown: React.FC<Props> = ({ setAttachments, setAttachmentErro
   const inputFileRef = useRef<HTMLInputElement>(null);
   const [isOpen, setOpen] = useState(false);
 
-  const handleChatMediaChange = React.useCallback((ev: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChatMediaChange = React.useCallback(async (ev: React.ChangeEvent<HTMLInputElement>) => {
     setTimeout(() => {
       setLockFocus(false);
       onPick();
@@ -35,9 +35,11 @@ const AttachmentDropdown: React.FC<Props> = ({ setAttachments, setAttachmentErro
     }
 
     const files = Array.from(ev.target.files);
-    addFiles(setAttachments, setAttachmentError, files, attachmentLimit);
-
+    // Reset before awaiting `addFiles` (which is async since the NSFW
+    // pre-check), so picking the same file again still fires a change event.
     ev.target.value = '';
+
+    await addFiles(setAttachments, setAttachmentError, files, attachmentLimit);
   }, [attachmentLimit, onPick, setAttachmentError, setAttachments, setLockFocus]);
 
   const onUploadImageClick = React.useCallback(() => {
@@ -55,7 +57,7 @@ const AttachmentDropdown: React.FC<Props> = ({ setAttachments, setAttachmentErro
         multiple={true}
         name="image-uploader"
         ref={inputFileRef}
-        onInput={handleChatMediaChange}
+        onChange={handleChatMediaChange}
         style={{ display: "none" }}
       />
       <Dropdown

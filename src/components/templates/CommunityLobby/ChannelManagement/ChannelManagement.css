@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .channel-management {
     &.channel-management-desktop {
         @apply gap-4;

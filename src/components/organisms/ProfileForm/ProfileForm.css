@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .profile-form {
     @apply flex flex-col p-4 gap-4 cg-border-xxl w-full cg-box-shadow-lg;
 

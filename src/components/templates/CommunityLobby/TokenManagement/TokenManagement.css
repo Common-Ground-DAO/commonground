@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .token-management-tooltip {
     .dropdown-items {
         overflow: auto;

@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .search-input-container {
     @apply relative;
 

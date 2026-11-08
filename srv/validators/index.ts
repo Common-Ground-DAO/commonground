@@ -6,6 +6,7 @@ import Common from "./common";
 import BaseArticleApi from "./api/basearticle";
 import UserApi from "./api/user";
 import MessageApi from "./api/message";
+import SyncStateApi from "./api/syncState";
 import CommunityApi from "./api/community";
 import ChatApi from "./api/chat";
 import FileApi from "./api/file";
@@ -15,11 +16,14 @@ import SocketApi from "./api/socket";
 import TwitterApi from "./api/twitter";
 import LuksoApi from "./api/lukso";
 import CgIdApi from "./api/cgid";
+import PasskeyApi from "./api/passkey";
 import AccountsApi from "./api/accounts";
-import SumsubApi from "./api/sumsub";
 import PluginApi from "./api/plugin";
 import SearchApi from "./api/search";
 import ReportApi from "./api/report";
+import BotApi from "./api/bot";
+import MediasoupApi from "./api/mediasoup";
+import FeedApi from "./api/feed";
 
 const validators = {
   Common,
@@ -28,7 +32,9 @@ const validators = {
     User: UserApi,
     Community: CommunityApi,
     Chat: ChatApi,
-    Message: MessageApi,
+    // `Message/getSyncState` lives in its own router and validator file
+    // (srv/api/syncState.ts) but is a Message route
+    Message: { ...MessageApi, ...SyncStateApi },
     Files: FileApi,
     Contract: ContractApi,
     Notification: NotificationApi,
@@ -37,10 +43,13 @@ const validators = {
     Lukso: LuksoApi,
     Accounts: AccountsApi,
     CgId: CgIdApi,
-    Sumsub: SumsubApi,
+    Passkey: PasskeyApi,
     Plugin: PluginApi,
     Search: SearchApi,
     Report: ReportApi,
+    Bot: BotApi,
+    Mediasoup: MediasoupApi,
+    Feed: FeedApi,
   }
 }
 

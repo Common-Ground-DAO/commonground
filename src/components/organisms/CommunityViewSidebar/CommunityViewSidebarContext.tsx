@@ -11,7 +11,7 @@ type CommunitySidebarState = {
     setSidebarLockOpen: React.Dispatch<React.SetStateAction<boolean>>;
     showLeaveGroupModal: boolean;
     setShowLeaveGroupModal: React.Dispatch<React.SetStateAction<boolean>>;
-    sliderTriggerRef: React.RefObject<HTMLButtonElement> | undefined;
+    sliderTriggerRef: React.RefObject<HTMLButtonElement | null> | undefined;
     communityListIsExpanded: boolean;
     setCommunityListIsExpanded: React.Dispatch<React.SetStateAction<boolean>>;
     communityListManualState: boolean;

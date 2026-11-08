@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .toggle-input-field-container {
     @apply flex items-center gap-2 cursor-pointer;
 }

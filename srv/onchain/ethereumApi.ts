@@ -6,10 +6,9 @@
 import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 import { OnchainPriority } from './scheduler';
 import config from '../common/config';
-import cgTokensale_v1_abi from '../common/tokensale/cgTokensale_v1_abi';
 import settings from './settings';
 import { randomString, sleep } from '../util';
-import { BlockTag, ethers, Contract, FetchRequest, EventLog } from 'ethers';
+import { BlockTag, ethers, Contract, FetchRequest } from 'ethers';
 import {
   IERC165_abi,
   IERC20Metadata_abi,
@@ -51,8 +50,7 @@ type RPCCallType =
   'ERC_725Y_contract.getDataBatch' |
   'LSP_7_contract.decimals' |
   'LSP_7_contract.balanceOf' | 
-  'LSP_8_contract.balanceOf' |
-  'investmentContract_getEvents';
+  'LSP_8_contract.balanceOf';
 
 type Request<T extends RPCCallType> = {
   requestId: string;
@@ -81,14 +79,6 @@ type Request<T extends RPCCallType> = {
     {
       chain: Models.Contract.ChainIdentifier;
       txHash: string;
-    }
-  : T extends 'investmentContract_getEvents' ?
-    {
-      chain: Models.Contract.ChainIdentifier;
-      contractAddress: Common.Address;
-      contractType: Models.Contract.SaleContractType;
-      fromBlock: BlockTag;
-      toBlock: BlockTag;
     }
 
   // "normal" contract calls
@@ -164,11 +154,6 @@ type Response<T extends RPCCallType> = {
         amount: string;
       }[];
     }
-  : T extends 'investmentContract_getEvents' ?
-    {
-      events: Models.Contract.SaleInvestmentEventJson[];
-    }
-
   : T extends
     'ERC_20_contract.decimals' |
     'LSP_7_contract.decimals' ?
@@ -862,40 +847,6 @@ else {
         }
 
         return response;
-      }
-    },
-    'investmentContract_getEvents': {
-      factor: 1,
-      fn: async (request: Request<'investmentContract_getEvents'>) => {
-        const { requestId, chain, contractAddress, contractType, fromBlock, toBlock } = request;
-        if (contractType === 'cg_tokensale_v1') {
-          const contract = new Contract(contractAddress, cgTokensale_v1_abi, providers[chain]);
-          const filter = contract.filters.Investment(null);
-          const events = await contract.queryFilter(filter, fromBlock, toBlock) as EventLog[];
-          const eventsJson = events.map(event => {
-            const userIdHex = event.args?.userId;
-            const _investmentId = parseInt(event.args?.investmentId.toString() || '0');
-            const userIdUUID = `${userIdHex.substring(2, 10)}-${userIdHex.substring(10, 14)}-${userIdHex.substring(14, 18)}-${userIdHex.substring(18, 22)}-${userIdHex.substring(22, 34)}`;
-            return {
-              type: 'cg_tokensale_v1' as const,
-              userId: userIdUUID,
-              bigint_investedAmount: event.args?.investedAmount.toString(),
-              bigint_saleProgressBefore: event.args?.saleProgressBefore.toString(),
-              investmentId: _investmentId,
-              dateIsoString_timestamp: new Date(parseInt(event.args?.timestamp.toString()) * 1000).toISOString(),
-              blockNumber: event.blockNumber,
-              txHash: event.transactionHash,
-            };
-          });
-          const response: Response<'investmentContract_getEvents'> = {
-            requestId,
-            events: eventsJson,
-          };
-          return response;
-        }
-        else {
-          throw new Error(`Unknown contract type: ${contractType}`);
-        }
       }
     }
   }

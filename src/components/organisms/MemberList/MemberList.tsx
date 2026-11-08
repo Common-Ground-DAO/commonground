@@ -11,12 +11,15 @@ import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
 
 import UserTag from "../../atoms/UserTag/UserTag";
 import Scrollable, { type PositionData } from "../../molecules/Scrollable/Scrollable";
-import { FloatingDelayGroup } from "@floating-ui/react-dom-interactions";
-import { ReactComponent as SidebarExpandIcon } from '../../../components/atoms/icons/20/SidebarExpand.svg';
+import { FloatingDelayGroup } from "@floating-ui/react";
+import SidebarExpandIcon from '../../../components/atoms/icons/20/SidebarExpand.svg?react';
 import SearchField from "../../../components/atoms/SearchField/SearchField";
 import { useCommunityChannelIdContext } from "context/CommunityChannelProvider";
 import { useMultipleUserData } from "context/UserDataProvider";
 import communityApi from "data/api/community";
+import { cssBackgroundImage } from 'util/cssBackground';
+import { pollChannelMemberList } from 'util/channelMemberListPolling';
+import { calculateChannelPermissions } from "../ChannelList/ChannelList";
 
 type Props = {
 }
@@ -59,24 +62,9 @@ export default function MemberList(props: Props) {
     }
   }, [community.id, channelId]);
 
-  const updateMemberList = useCallback(() => {
-    if (!channelId || !community) return;
-    communityApi.getChannelMemberList({
-      channelId: channelId,
-      communityId: community.id,
-      offset,
-      limit: WINDOW_SIZE,
-      search,
-    }).then(res => {
-      setMemberListData({
-        memberList: res,
-        offset,
-      });
-    }).catch(err => {
-      setMemberListData(undefined);
-      console.log(err);
-    });
-  }, [community.id, channelId, offset, search]);
+  // gated preview channels (visible, not readable) have no member list
+  const channel = channelId ? channelsById.get(channelId) : undefined;
+  const canRead = useMemo(() => !!channel && calculateChannelPermissions(community, channel) === null, [community, channel]);
 
   const updateOffsetByScrollState = useCallback((scrollState: PositionData) => {
     if (scrollState.scrollTop === 0 && offset === 0) {
@@ -116,14 +104,28 @@ export default function MemberList(props: Props) {
     }
   }, [offset, memberListData?.memberList.count]);
 
+  const communityId = community.id;
   useEffect(() => {
-    let interval: any;
-    if (memberListIsOpen) {
-      updateMemberList();
-      interval = setInterval(updateMemberList, 5000);
-    }
-    return () => clearInterval(interval);
-  }, [updateMemberList, memberListIsOpen]);
+    if (!memberListIsOpen || !channelId) return;
+    return pollChannelMemberList({
+      canRead,
+      load: () => communityApi.getChannelMemberList({
+        channelId,
+        communityId,
+        offset,
+        limit: WINDOW_SIZE,
+        search,
+      }),
+      onResult: res => setMemberListData({
+        memberList: res,
+        offset,
+      }),
+      onError: err => {
+        setMemberListData(undefined);
+        console.log(err);
+      },
+    });
+  }, [communityId, channelId, offset, search, canRead, memberListIsOpen]);
 
   useEffect(() => {
     const handleMemberListPosition = () => {
@@ -224,11 +226,11 @@ const MemberListByRole: React.FC<ListByRoleProps> = React.memo(({ channelId, cha
   const readerStart = writerStart + memberList.writerCount;
   const offlineStart = readerStart + memberList.readerCount;
 
-  const adminElements: JSX.Element[] = [];
-  const moderatorElements: JSX.Element[] = [];
-  const writerElements: JSX.Element[] = [];
-  const readerElements: JSX.Element[] = [];
-  const offlineElements: JSX.Element[] = [];
+  const adminElements: React.JSX.Element[] = [];
+  const moderatorElements: React.JSX.Element[] = [];
+  const writerElements: React.JSX.Element[] = [];
+  const readerElements: React.JSX.Element[] = [];
+  const offlineElements: React.JSX.Element[] = [];
 
   const offsetLimitSum = offset + limit;
   const offlineSubtract = Math.max(offlineStart, offset);
@@ -238,7 +240,7 @@ const MemberListByRole: React.FC<ListByRoleProps> = React.memo(({ channelId, cha
 
   // gapCounter is used to add placeholder elements to the list to keep the scroll position
   let gapCounter = 0;
-  let groupForNextGapElement: JSX.Element[] = adminElements;
+  let groupForNextGapElement: React.JSX.Element[] = adminElements;
   const injectGapElement = (currentIndex: number) => {
     if (gapCounter > 0) {
       groupForNextGapElement.push(
@@ -460,7 +462,7 @@ function MemberListItem(props: {
           height: `${height}px`,
           minHeight: `${height}px`,
           padding: "8px 12px 8px 4px",
-          backgroundImage: `url("${svg}")`,
+          backgroundImage: cssBackgroundImage(svg),
           backgroundRepeat: "repeat-y",
           backgroundSize: "204px 56px",
           backgroundPosition: "0 0",

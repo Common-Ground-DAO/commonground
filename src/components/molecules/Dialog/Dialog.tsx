@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import { useState, useImperativeHandle, forwardRef, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import "./Dialog.css";
@@ -11,7 +12,7 @@ export type DialogRefHandle = {
 }
 
 type Props = {
-    children: JSX.Element;
+    children: React.JSX.Element;
 }
 
 const Dialog = forwardRef<DialogRefHandle, Props>((props, ref) => {

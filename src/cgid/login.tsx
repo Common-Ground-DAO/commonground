@@ -4,13 +4,13 @@
 
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import cgIdApi from 'data/api/cgid';
-import UAParser from 'ua-parser-js';
+import { UAParser } from 'ua-parser-js';
 import {
   startAuthentication,
 } from '@simplewebauthn/browser';
 
 import errors from 'common/errors';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { randomString } from '../util';
 import urlConfig from '../data/util/urls';
 import { postEventToOpenerWindow } from './helpers';
@@ -79,7 +79,7 @@ function CgIdLogin({
       console.log("options", options);
       step = 1;
 
-      const result = await startAuthentication(options, false);
+      const result = await startAuthentication({ optionsJSON: options });
       console.log("result", result);
       step = 2;
     

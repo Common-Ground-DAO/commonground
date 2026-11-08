@@ -10,7 +10,7 @@ import Button from 'components/atoms/Button/Button';
 import config from 'common/config';
 import { useUserSettingsContext } from 'context/UserSettingsProvider';
 import SupporterIcon from 'components/atoms/SupporterIcon/SupporterIcon';
-import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
+import SparkIcon from 'components/atoms/icons/misc/spark.svg?react';
 import useLocalStorage from 'hooks/useLocalStorage';
 import { usePremiumTier } from 'hooks/usePremiumTier';
 import SupporterScreen from 'components/organisms/SupporterScreen/SupporterScreen';

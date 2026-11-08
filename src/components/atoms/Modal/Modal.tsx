@@ -17,7 +17,7 @@ type ModalProps = {
   closeOnClick?: boolean;
   noBackground?: boolean;
   noDefaultScrollable?: boolean;
-  footerActions?: JSX.Element;
+  footerActions?: React.JSX.Element;
   modalRootStyle?: React.CSSProperties;
 }
 

@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { InlineToastType } from "../../atoms/InlineToast/InlineToast";
@@ -9,12 +10,12 @@ import TextInputField from "../inputs/TextInputField/TextInputField";
 import { Tooltip } from "../../atoms/Tooltip/Tooltip";
 import Button from "../../../components/atoms/Button/Button";
 
-import { ReactComponent as CloseIcon } from '../../../components/atoms/icons/16/Close.svg';
+import CloseIcon from '../../../components/atoms/icons/16/Close.svg?react';
 
 import "./SocialLink.css";
 
 type Props = {
-  icon?: JSX.Element;
+  icon?: React.JSX.Element;
   placeholder: string;
   index: number;
   value: string;

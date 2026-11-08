@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .social-link {
-  @apply flex flex-row justify-center items-center p-0 gap-2 flex-none order-none flex-grow-0;
+  @apply flex flex-row justify-center items-center p-0 gap-2 flex-none order-none grow-0;
 }

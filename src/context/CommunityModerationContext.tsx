@@ -6,10 +6,10 @@ import React, { useCallback, useState } from "react";
 import Modal from "../components/atoms/Modal/Modal";
 import { useSafeCommunityContext } from "./CommunityProvider";
 
-import { ReactComponent as CloseIcon } from '../components/atoms/icons/16/Close.svg';
-import { ReactComponent as BinIcon } from '../components/atoms/icons/16/Bin.svg';
-import { ReactComponent as VolumeMuteIcon } from "../components/atoms/icons/24/VolumeMuteIcon.svg";
-import { ReactComponent as LightningIcon } from "../components/atoms/icons/24/LightningIcon.svg";
+import CloseIcon from '../components/atoms/icons/16/Close.svg?react';
+import BinIcon from '../components/atoms/icons/16/Bin.svg?react';
+import VolumeMuteIcon from "../components/atoms/icons/24/VolumeMuteIcon.svg?react";
+import LightningIcon from "../components/atoms/icons/24/LightningIcon.svg?react";
 
 import Button from "../components/atoms/Button/Button";
 import messageApi from "data/api/messages";

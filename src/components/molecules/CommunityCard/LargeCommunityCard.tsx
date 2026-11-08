@@ -4,7 +4,7 @@
 
 import React, { useMemo } from 'react'
 import './CommunityCard.css';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import CommunityPhoto from '../../../components/atoms/CommunityPhoto/CommunityPhoto';
 import { getUrl } from 'common/util';

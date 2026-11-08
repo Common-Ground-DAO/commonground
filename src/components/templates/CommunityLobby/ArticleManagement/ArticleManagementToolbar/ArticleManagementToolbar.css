@@ -1,3 +1,5 @@
+@reference '../../../../../tailwind.css';
+
 .bottom-nav-articles-container {
   @apply flex items-center justify-center w-full;
   grid-column: start / end;
@@ -96,7 +98,7 @@
   }
 
   .save-state {
-    @apply flex items-center flex-none order-none flex-grow-0 cg-text-md-500;
+    @apply flex items-center flex-none order-none grow-0 cg-text-md-500;
     height: 19px;
     color: var(--cardTextSecondary);   
   }

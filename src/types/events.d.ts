@@ -12,6 +12,7 @@ declare namespace Events {
     Events.Calls.Event |
     Events.Chat.Event |
     Events.Channel.Event |
+    Events.Typing.Event |
     Events.CgId.Event
   ) & {
     type: `cli${string}`;

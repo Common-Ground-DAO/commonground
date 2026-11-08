@@ -1,0 +1,7 @@
+.bot-management {
+  overflow-y: auto;
+}
+
+.bot-management > * + * {
+  min-width: 0;
+}

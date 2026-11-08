@@ -3,11 +3,12 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { isMainThread } from 'worker_threads';
-import emailUtils from '../api/emails';
+import emailUtils, { emailEnabled, newslettersEnabled } from '../api/emails';
 import emailHelper from '../repositories/emails';
 import articleHelper from '../repositories/articles';
 import newsletterHelper from '../repositories/newsletter';
 import communityEventHelper from '../repositories/communityEvents';
+import { sendToAll } from '../util/sendToAll';
 
 if (isMainThread) {
     throw new Error("articleAsEmailDelivery can only be run as a worker job");
@@ -29,7 +30,12 @@ const articleNotifications = async () => {
 
             const emailPostToSend = preparedArticle.emailPost;
             if (!!emailPostToSend) {
-                await Promise.all(preparedArticle.recipients.map(user => emailUtils.sendArticleAsEmail(user, emailPostToSend)));
+                await sendToAll(
+                    `article ${article.articleId}`,
+                    preparedArticle.recipients,
+                    recipient => `user ${recipient.userId}`,
+                    recipient => emailUtils.sendArticleAsEmail(recipient, emailPostToSend, article.communityId),
+                );
             }
             await newsletterHelper.updateSentAtCommunityNewsletterStatus(article.articleId, article.communityId);
         }
@@ -61,7 +67,12 @@ const eventNotifications = async () => {
             console.log('prepared event: ', preparedEvent.event.title);
             console.log('recipients: ', event.userEmails.length);
 
-            await Promise.all(event.userEmails.map(user => emailUtils.sendEventEmail(user, preparedEvent)));
+            await sendToAll(
+                `event ${event.eventId}`,
+                event.userEmails,
+                (_, i) => `participant #${i}`,
+                email => emailUtils.sendEventEmail(email, preparedEvent),
+            );
             await communityEventHelper.markEventAsNotified(event.eventId);
         }
     } catch (error) {
@@ -71,7 +82,15 @@ const eventNotifications = async () => {
 }
 
 (async () => {
-    await articleNotifications();
+    if (!emailEnabled()) {
+        console.log('Email delivery is not configured, skipping email notifications');
+        process.exit(0);
+    }
+    // Keep queued articles pending while newsletters are paused. Event reminders
+    // are system mails and continue to be delivered.
+    if (newslettersEnabled()) {
+        await articleNotifications();
+    }
     await eventNotifications();
     process.exit(0);
 })();

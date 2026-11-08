@@ -4,7 +4,7 @@
 
 import "./ArticleManagement.css";
 
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useLoadedCommunityContext } from "../../../../context/CommunityProvider";
 import { getUrl } from 'common/util';
@@ -12,6 +12,8 @@ import communityArticleManager from "data/managers/communityArticleManager";
 import { PredefinedRole } from "common/enums";
 import { useSnackbarContext } from "context/SnackbarContext";
 import GenericArticleManagement from "components/organisms/GenericArticleManagement/GenericArticleManagement";
+import errors from "common/errors";
+import { isPredefinedRole } from "util/predefinedRoles";
 
 type Props = {
     community: Models.Community.DetailView;
@@ -39,13 +41,14 @@ export default function ArticleManagement(props: Props) {
     const navigate = useNavigate();
 
     const emptyCommunityArticle: Pick<Models.Community.CommunityArticle, "communityId" | "rolePermissions" | "url" | 'published' | 'sentAsNewsletter' | 'markAsNewsletter'> = useMemo(() => {
-        const publicRole = roles.find(role => role.title === PredefinedRole.Public);
+        const publicRole = roles.find(role => isPredefinedRole(role, PredefinedRole.Public));
         const rolePermissions: Models.Community.CommunityArticlePermission[] = [];
         if (publicRole) {
             rolePermissions.push({
                 permissions: ['ARTICLE_PREVIEW', 'ARTICLE_READ'],
                 roleId: publicRole.id,
-                roleTitle: publicRole.title
+                roleTitle: publicRole.title,
+                roleType: publicRole.type,
             });
         }
         return {
@@ -78,7 +81,15 @@ export default function ArticleManagement(props: Props) {
                 communityArticleRef.current.markAsNewsletter = true;
                 showSnackbar({ type: 'success', text: 'Email newsletter sent successfully' });
             } catch (e) {
-                showSnackbar({ type: 'warning', text: 'Newsletter limit exceeded' });
+                const code = e instanceof Error ? e.message : '';
+                const text = code === errors.server.NEWSLETTER_DISABLED
+                    ? 'Newsletter delivery is paused on this instance.'
+                    : code === errors.server.EMAIL_DISABLED
+                        ? 'Email delivery is unavailable on this instance.'
+                        : code === errors.server.SEND_ARTICLE_LIMIT_EXCEEDED
+                            ? 'Newsletter limit exceeded'
+                            : 'The newsletter could not be scheduled. Please try again.';
+                showSnackbar({ type: 'warning', text });
             }
         }
     }, [community.id, showSnackbar]);

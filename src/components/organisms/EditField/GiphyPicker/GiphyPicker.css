@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .giphy-picker {
     @apply flex flex-col gap-2;
     height: min(600px, 80vh);

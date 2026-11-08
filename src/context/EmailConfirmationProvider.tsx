@@ -4,10 +4,12 @@
 
 import CommunityJoinedModal from "components/organisms/CommunityJoinedModal/CommunityJoinedModal";
 import EmailConfirmationModal, { EmailConfirmationModalState } from "components/organisms/EmailConfirmationModal/EmailConfirmationModal";
+import config from "common/config";
 import { useOwnUser } from "context/OwnDataProvider";
 import data from "data";
 import { useLiveQuery } from "dexie-react-hooks";
 import React, { useCallback, useEffect, useState } from "react";
+import { useSecurityStepRequired } from "hooks/useSecurityStepRequired";
 
 type EmailConfirmationContextState = {
   openModal: (state: EmailConfirmationModalState) => void;
@@ -23,6 +25,8 @@ export function EmailConfirmationProvider(props: React.PropsWithChildren<{}>) {
   const [isModalOpen, setModalOpen] = useState(false);
   const [modalState, setModalState] = useState<EmailConfirmationModalState>('signup');
   const user = useOwnUser();
+  // the account-security step owns the address while it runs
+  const securityStepRequired = useSecurityStepRequired();
 
   useEffect(() => {
     if (modalState === "pending") {
@@ -33,6 +37,10 @@ export function EmailConfirmationProvider(props: React.PropsWithChildren<{}>) {
   }, [user?.emailVerified, modalState]);
 
   const openModal = useCallback((state: EmailConfirmationModalState) => {
+    if (!config.EMAIL_ENABLED) {
+      // verification mails can never arrive on this instance — don't ask
+      return;
+    }
     setModalState(state);
     setModalOpen(true);
   }, []);
@@ -44,7 +52,7 @@ export function EmailConfirmationProvider(props: React.PropsWithChildren<{}>) {
       openModal,
       close
     }}>
-      {!!isModalOpen && <EmailConfirmationModal
+      {!!isModalOpen && !securityStepRequired && <EmailConfirmationModal
         onClose={() => setModalOpen(false)}
         modalState={modalState}
         setModalState={setModalState}

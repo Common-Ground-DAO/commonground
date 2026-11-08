@@ -4,14 +4,14 @@
 
 import express from "express";
 import redisManager from '../redis';
-import UAParser from "ua-parser-js";
-import {
-  randomString
-} from "../util";
+import { UAParser } from "ua-parser-js";
+import { getDisplayNameString, randomString } from "../util";
 import errors from "../common/errors";
 import { UserProfileTypeEnum } from "../common/enums";
 import Validators from "../validators";
 import userHelper, { CreateUserAccountData } from "../repositories/users";
+import { LOGIN_ACCOUNT_TYPES } from "../repositories/loginMethods";
+import suggestedUsersHelper from "../repositories/suggestedUsers";
 import walletHelper from "../repositories/wallets";
 import deviceHelper from "../repositories/device";
 import communityHelper from "../repositories/communities";
@@ -21,29 +21,184 @@ import { registerPostRoute } from "./util";
 import validators from "../validators";
 import articleHelper from "../repositories/articles";
 import eventHelper from "../repositories/event";
+import { requestSockets } from "../util/requestSocket";
 import notificationHelper from "../repositories/notifications";
-import axios from "../util/axios";
+import { fetchRemoteImage } from "../util/safeFetch";
 import onchainHelper from "../repositories/onchain";
-import { dockerSecret } from "../util";
 import permissionHelper from "../repositories/permissions";
-import ipRateLimitHandler from "../util/rateLimit";
+import ipRateLimitHandler, { clientPrefixKey, enforceLimits, failureBudget, ipFailureLimiter, peekLimits, reserveFailures, type FailureReservation } from "../util/rateLimit";
+import { AUTH_LIMITS } from "../util/authLimits";
 import config from "../common/config";
-import emailUtils from "./emails";
-import emailHelper from "../repositories/emails";
-import { uniqueNamesGenerator, adjectives, colors, animals } from 'unique-names-generator';
-import { ethers } from "ethers";
+import { verifyCaptchaToken } from "../util/captcha";
+import emailUtils, { emailEnabled } from "./emails";
+import { registerEmailUnsubscribeRoutes } from "./emailUnsubscribe";
+import { limitOneTimePasswordMail, limitSignupCodeMail, limitVerificationMail } from "../util/mailSendLimits";
+import passkeyHelper from "../repositories/passkeys";
+import { keyRateLimitHandler } from "../util/rateLimit";
+import { getMainRp, getProcessRpIdOrNull, isLegacyCgidMode } from "../util/passkeyConfig";
+import { isGatewayMode } from "../util/gateway";
+import { verifyAuthentication } from "../util/passkeys";
+import { endLoginSession, establishLoginSession, hasRecentAuth, recordReauthentication, requireRecentAuth, stepUpValidUntil, SECURITY_STEP_AUTH, type AuthMethod } from "../util/authSession";
+import {
+  SIGNUP_CODE_MAX_ATTEMPTS,
+  SIGNUP_CODE_TTL_MS,
+  checkSignupEmailCode,
+  getVerifiedSignupEmail,
+  hasSignupCaptcha,
+  normalizeEmail,
+  startSignupEmailVerification,
+  startSignupWithoutCode,
+  verifiedSignupPassedCaptcha,
+} from "../util/signupEmail";
+import { notifyEmailChanged, notifyNewSignInMethod, notifyPasswordChanged } from "../util/signInNotice";
+import { changeAndSignOut, signOutOtherDevices, type BeforeCommit } from "../util/signOutOtherDevices";
+import { loginGeneration, setLoginGeneration } from "../util/userSessions";
+import { hasStoredData } from "../util/sessionSetup";
+import { computeSecurityStatus, computeSecurityStatusVersioned, rememberSecurityStepClear, requireAuthToAdd, SECURITY_STEP_AUTH_MAX_AGE_MS, securityStepEnforced } from "../util/securityStep";
+import { consumeEmailCode, EMAIL_CODE_MAX_ATTEMPTS, getPendingEmail, issueEmailCode, VERIFY_CODE_TTL_MS } from "../util/emailCodes";
+import { assertSiweForThisInstance, parseSiweMessage } from "../util/siweMessage";
+import { LUKSO_PREPARED_MAX_AGE_MS } from "../util/luksoSignIn";
+import transferTokenHelper from "../repositories/transferTokens";
+import {
+  getTransferTargetOrigin,
+  TRANSFER_LINK_TTL_MS,
+  transferLinkUrl,
+  transferNextPath,
+} from "../util/transferLink";
 
-const GOOGLE_RECAPTCHA_SECRET_KEY = dockerSecret("google_recaptcha_secret_key") || process.env.GOOGLE_RECAPTCHA_SECRET_KEY || "";
 export const SIGNABLE_SECRET_LENGTH = 20;
 
 const userRouter = express.Router();
 
-async function verifyRecaptchaToken(token: string): Promise<boolean> {
-  // Sending secret key and response token to Google Recaptcha API for authentication.
-  const googleResponse = await axios.post(
-    `https://www.google.com/recaptcha/api/siteverify?secret=${GOOGLE_RECAPTCHA_SECRET_KEY}&response=${token}`
-  );
-  return googleResponse.data.success as boolean;
+// Like the sign-up limit, the login throttles are off on a dev stack. The
+// conformance suite runs against a disposable instance with DEPLOYMENT=prod:
+// each of its clients claims its own address and it signs in a few times per
+// account, so the limits do not get in its way. The per-code guess budget of
+// email codes always applies. Numbers: srv/util/authLimits.ts.
+const LOGIN_LIMITS = config.DEPLOYMENT !== 'dev';
+
+// Password login (docs/auth-identity §5.4): attempts per client IP, and failed
+// attempts per identifier — from the client's network, and from everywhere.
+// Keyed by the identifier as typed, never by the account it names (see
+// srv/util/authLimits.ts).
+const passwordLoginIpLimiter = ipRateLimitHandler({
+  bucket: 'user:login:password:ip',
+  ...AUTH_LIMITS.passwordLogin.ip,
+});
+const passwordLoginFailures = {
+  perNetwork: failureBudget({ bucket: 'user:login:password:identifier-network', ...AUTH_LIMITS.passwordLogin.identifierFailuresPerNetwork }),
+  all: failureBudget({ bucket: 'user:login:password:identifier', ...AUTH_LIMITS.passwordLogin.identifierFailures }),
+};
+
+// Email login code (§5.5): attempts per client IP, failed guesses per address
+// (from the client's network, and from everywhere), plus a budget per code.
+const loginCodeIpLimiter = ipRateLimitHandler({
+  bucket: 'user:login:code:ip',
+  ...AUTH_LIMITS.codeLogin.ip,
+});
+const loginCodeFailures = {
+  perNetwork: failureBudget({ bucket: 'user:login:code:identifier-network', ...AUTH_LIMITS.codeLogin.identifierFailuresPerNetwork }),
+  all: failureBudget({ bucket: 'user:login:code:identifier', ...AUTH_LIMITS.codeLogin.identifierFailures }),
+};
+// guesses per issued code (login and email verification); a code is dead once
+// its attempts are spent
+const emailCodeAttemptLimiter = keyRateLimitHandler({
+  bucket: 'user:email-code:attempts',
+  windowMs: VERIFY_CODE_TTL_MS,
+  limit: EMAIL_CODE_MAX_ATTEMPTS,
+});
+
+/**
+ * Counts this login attempt as a failure up front, in both budgets of the
+ * typed identifier (atomic, so parallel attempts cannot overrun them); the
+ * caller releases the reservation unless the attempt failed for a wrong
+ * password or code.
+ */
+async function reserveLoginFailure(
+  request: express.Request,
+  budgets: typeof passwordLoginFailures,
+  identifier: string,
+): Promise<FailureReservation> {
+  if (!LOGIN_LIMITS) {
+    return { release: async () => undefined };
+  }
+  const key = identifier.trim().toLowerCase();
+  return reserveFailures([
+    { budget: budgets.perNetwork, key: `${key}|${clientPrefixKey(request)}` },
+    { budget: budgets.all, key },
+  ]);
+}
+
+// Transfer links (§11)
+const transferCreateUserLimiter = keyRateLimitHandler({
+  bucket: 'user:transfer:create:user',
+  ...AUTH_LIMITS.transfer.createPerUser,
+});
+const transferRedeemIpLimiter = ipRateLimitHandler({
+  bucket: 'user:transfer:redeem:ip',
+  ...AUTH_LIMITS.transfer.ip,
+});
+const transferFailureLimiter = ipFailureLimiter({
+  bucket: 'user:transfer:redeem',
+  ...AUTH_LIMITS.transfer.ipFailures,
+});
+// instance-wide: many failed redemptions are worth a log line (once per window)
+const transferFailureAlarm = keyRateLimitHandler({
+  bucket: 'user:transfer:failures:all',
+  ...AUTH_LIMITS.transfer.alarm,
+});
+let transferAlarmLoggedAt = 0;
+
+async function recordTransferFailure(request: express.Request) {
+  await transferFailureLimiter.recordFailure(request);
+  try {
+    await transferFailureAlarm('all');
+  }
+  catch (e) {
+    const { windowMs, limit } = AUTH_LIMITS.transfer.alarm;
+    if (e instanceof Error && e.message === errors.server.RATE_LIMIT_EXCEEDED && Date.now() - transferAlarmLoggedAt > windowMs) {
+      transferAlarmLoggedAt = Date.now();
+      console.warn(`[security] more than ${limit} failed transfer-link redemptions within ${windowMs / 60000} minutes`);
+    }
+  }
+}
+
+const isEmailAvailableLimiter = ipRateLimitHandler({
+  bucket: 'user:isEmailAvailable:ip',
+  ...AUTH_LIMITS.isEmailAvailable.ip,
+});
+
+// Accounts created per client network, per hour and per day (off on a dev
+// stack). Counted when an account is created — in both windows or in none
+// (enforceLimits) —; the sign-up code request only peeks, so nobody fills in
+// a whole sign-up to be refused at the very end.
+const createUserHourLimiter = ipRateLimitHandler({ bucket: 'user:createUser:hour', kind: 'accounts', ...AUTH_LIMITS.createUser.hour });
+const createUserDayLimiter = ipRateLimitHandler({ bucket: 'user:createUser:day', kind: 'accounts', ...AUTH_LIMITS.createUser.day });
+const accountLimitBuckets = (request: express.Request) => [
+  ...createUserHourLimiter.buckets(request),
+  ...createUserDayLimiter.buckets(request),
+];
+const ACCOUNT_LIMITS = config.DEPLOYMENT !== 'dev';
+
+/**
+ * The first thing a login does, before it checks any credential: takes the
+ * next session generation (docs/auth-identity §2). The session it
+ * establishes and the device key it creates carry it.
+ */
+async function beginLogin(request: express.Request) {
+  setLoginGeneration(request, await userHelper.nextSessionGeneration());
+}
+
+/** whether the account must finish the security step (login responses) */
+async function securityStepRequiredAfterLogin(request: express.Request, userId: string): Promise<boolean> {
+  if (!securityStepEnforced()) {
+    return false;
+  }
+  const { status, version } = await computeSecurityStatusVersioned(userId, { emailRequired: emailEnabled() });
+  if (!status.required) {
+    rememberSecurityStepClear(request, userId, version);
+  }
+  return status.required;
 }
 
 async function getAndStoreUniversalProfileImage(profileImageUrl: string): Promise<string | null> {
@@ -52,16 +207,26 @@ async function getAndStoreUniversalProfileImage(profileImageUrl: string): Promis
       profileImageUrl.startsWith("ipfs://") 
       ? `https://ipfs.io/ipfs/${profileImageUrl.split('ipfs://').pop()}`
       : profileImageUrl.replace("_normal", "");
-    const response = await axios.get(imageUrl, { responseType: 'arraybuffer', headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36' } });
-    const buffer = Buffer.from(response.data, "utf-8");
+    const buffer = await fetchRemoteImage(imageUrl, { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36' });
     const image = await fileHelper.saveImage(null, { type: 'userProfileImage' }, buffer, { width: 110, height: 110 });
     return image.fileId;
   } catch (e) {
     // For now just ignore error if this fails, but is this fine for now?
-    console.error("Could not download lukso image", e);
+    console.error("Could not download lukso image", e instanceof Error ? e.message : e);
   }
   return null;
 }
+
+// Pre-login endpoints (srv/util/authLimits.ts "preLogin"): a challenge that
+// starts a new session, and the signature checks behind it
+const newChallengeSessionLimiter = ipRateLimitHandler({
+  bucket: 'user:signable-secret:new-session',
+  ...AUTH_LIMITS.preLogin.newChallengeSession,
+});
+const walletSignatureLimiter = ipRateLimitHandler({
+  bucket: 'user:prepare-wallet-action',
+  ...AUTH_LIMITS.preLogin.signatureCheck,
+});
 
 registerPostRoute<
   API.User.getSignableSecret.Request,
@@ -71,6 +236,11 @@ registerPostRoute<
   '/getSignableSecret',
   undefined,
   async (request, response, data) => {
+    if (!hasStoredData(request.session)) {
+      // this call starts a session: counted per client network (a page load
+      // with a live session reuses it and is not counted)
+      await newChallengeSessionLimiter(request, response);
+    }
     const newSecret = randomString(SIGNABLE_SECRET_LENGTH);
     request.session.signSecret = newSecret;
     await new Promise<void>((resolve, reject) => {
@@ -88,12 +258,7 @@ registerPostRoute<
   }
 );
 
-const verifyCaptchaRateLimiter = ipRateLimitHandler({
-  windowMs: 1000 * 60 * 60 * 24, // 24h
-  limit_v4_v6_64: 3,
-  limit_v6_56: 10,
-  limit_v6_48: 20,
-});
+const verifyCaptchaRateLimiter = ipRateLimitHandler(AUTH_LIMITS.verifyCaptcha.ip);
 
 registerPostRoute<
   API.User.verifyCaptcha.Request,
@@ -109,7 +274,7 @@ registerPostRoute<
       throw new Error(errors.server.NOT_ALLOWED);
     }
 
-    const verifySuccess = await verifyRecaptchaToken(token);
+    const verifySuccess = await verifyCaptchaToken(token);
     // Check response status and send back to the client-side
     if (verifySuccess) {
       await verifyCaptchaRateLimiter(request, response);
@@ -128,10 +293,14 @@ registerPostRoute<
   '/clearLoginSession',
   undefined,
   async (request, response, data) => {
-    request.session.lukso = undefined;
-    request.session.farcaster = undefined;
-    request.session.twitter = undefined;
-    request.session.passport = undefined;
+    // nothing to clear without a stored session — and nothing is created
+    if (!request.session || !hasStoredData(request.session)) {
+      return;
+    }
+    delete request.session.lukso;
+    delete request.session.farcaster;
+    delete request.session.twitter;
+    delete request.session.passport;
   }
 );
 
@@ -143,6 +312,8 @@ registerPostRoute<
   "/login",
   Validators.API.User.login,
   async (request, response, data) => {
+    // before any credential is checked (srv/util/sessionGenerations.ts)
+    await beginLogin(request);
     const { signSecret } = request.session;
     let communities: Models.Community.DetailViewFromApi[],
       chats: Models.Chat.ChatFromApi[],
@@ -162,6 +333,12 @@ registerPostRoute<
       if (!preparedCredential || preparedCredential.type !== "wallet" || preparedCredential.result.readyForLogin === false || !preparedCredential.ownerId) {
         throw new Error(errors.server.INVALID_REQUEST);
       }
+      // used once; it must be fresh and the wallet still a sign-in wallet of
+      // its owner (it may have been removed since the signature was checked)
+      delete request.session.preparedCredential;
+      if (!(await isFreshSignInWalletProof(preparedCredential))) {
+        throw new Error(errors.server.NOT_ALLOWED);
+      }
       const { ownerId } = preparedCredential;
       [
         ownData,
@@ -173,10 +350,9 @@ registerPostRoute<
         userHelper.getOwnDataById(ownerId),
         communityHelper.getOwnCommunities(ownerId),
         chatHelper.getChats(ownerId),
-        deviceHelper.createDevice(ownerId, device.publicKey),
+        deviceHelper.createDevice(ownerId, device.publicKey, loginGeneration(request)),
         notificationHelper.getUnreadCount(ownerId),
       ]);
-      delete request.session.preparedCredential;
 
       // device login
     } else if (data.type === "device") {
@@ -202,7 +378,23 @@ registerPostRoute<
       // Email + Password login
     } else if (data.type === "password") {
       const { aliasOrEmail, password, device } = data;
-      ownData = await userHelper.getOwnDataByCgProfileNameOrEmailAndPassword(aliasOrEmail, password);
+      if (LOGIN_LIMITS) {
+        await passwordLoginIpLimiter(request, response);
+      }
+      const candidateId = await userHelper.findPasswordLoginUserId(aliasOrEmail);
+      const reservation = await reserveLoginFailure(request, passwordLoginFailures, aliasOrEmail);
+      try {
+        // rehashes an old hash; marks a password below the policy for a change
+        ownData = await userHelper.checkPasswordLogin(candidateId, password);
+      }
+      catch (e) {
+        // a wrong password stays counted; anything else was no guess
+        if (!(e instanceof Error && e.message === errors.server.NOT_ALLOWED)) {
+          await reservation.release();
+        }
+        throw e;
+      }
+      await reservation.release();
       [ communities,
         chats,
         { deviceId },
@@ -210,7 +402,7 @@ registerPostRoute<
       ] = await Promise.all([
         communityHelper.getOwnCommunities(ownData.id),
         chatHelper.getChats(ownData.id),
-        deviceHelper.createDevice(ownData.id, device.publicKey),
+        deviceHelper.createDevice(ownData.id, device.publicKey, loginGeneration(request)),
         notificationHelper.getUnreadCount(ownData.id),
       ]);
       // Twitter login
@@ -237,7 +429,7 @@ registerPostRoute<
       ] = await Promise.all([
         communityHelper.getOwnCommunities(ownData.id),
         chatHelper.getChats(ownData.id),
-        deviceHelper.createDevice(ownData.id, device.publicKey),
+        deviceHelper.createDevice(ownData.id, device.publicKey, loginGeneration(request)),
         notificationHelper.getUnreadCount(ownData.id),
       ]);
     } else if (data.type === 'lukso') {
@@ -246,9 +438,17 @@ registerPostRoute<
         throw new Error(errors.server.INVALID_REQUEST);
       }
       const { lukso } = request.session;
-      const secret = request.session.lukso.message.match(new RegExp(`Nonce: ([a-zA-Z0-9]{${SIGNABLE_SECRET_LENGTH}})`))?.[1];
-      if (!signSecret || secret !== signSecret) {
+      // prepared by Lukso/PrepareLuksoAction, which checked the message
+      // (srv/util/luksoSignIn.ts) and used up the session's nonce; the
+      // proof is only good for a short while, and the message must still
+      // name this instance
+      if (typeof lukso.preparedAt !== 'number' || Date.now() - lukso.preparedAt > LUKSO_PREPARED_MAX_AGE_MS) {
         throw new Error(errors.server.INVALID_SECRET);
+      }
+      const parsedLukso = parseSiweMessage(lukso.message);
+      assertSiweForThisInstance(parsedLukso.headerLine, parsedLukso.uri);
+      if (parsedLukso.address !== lukso.address.toLowerCase()) {
+        throw new Error(errors.server.INVALID_SIGNATURE);
       }
       const isValidSignature = await onchainHelper.luksoIsValidSignature(lukso.address, lukso.signature, lukso.message);
       if (!isValidSignature) {
@@ -262,17 +462,47 @@ registerPostRoute<
       ] = await Promise.all([
         communityHelper.getOwnCommunities(ownData.id),
         chatHelper.getChats(ownData.id),
-        deviceHelper.createDevice(ownData.id, device.publicKey),
+        deviceHelper.createDevice(ownData.id, device.publicKey, loginGeneration(request)),
+        notificationHelper.getUnreadCount(ownData.id),
+      ]);
+    } else if (data.type === 'passkey') {
+      if (isLegacyCgidMode()) {
+        throw new Error(errors.server.NOT_SUPPORTED);
+      }
+      const { device } = data;
+      const passkey = await verifyAuthentication(getMainRp(), request.session, data.authenticationResponse, {
+        purpose: 'login',
+        userId: null,
+      });
+      if (passkey.userId === null) {
+        throw new Error(errors.server.NOT_FOUND);
+      }
+      ownData = await userHelper.getOwnDataById(passkey.userId);
+      [ communities,
+        chats,
+        { deviceId },
+        unreadNotificationCount,
+      ] = await Promise.all([
+        communityHelper.getOwnCommunities(ownData.id),
+        chatHelper.getChats(ownData.id),
+        deviceHelper.createDevice(ownData.id, device.publicKey, loginGeneration(request)),
         notificationHelper.getUnreadCount(ownData.id),
       ]);
     } else if (data.type === 'passkey-success') {
+      // legacy CG ID mode only: redeems the assertion the CgId router verified
+      if (!isLegacyCgidMode()) {
+        throw new Error(errors.server.NOT_SUPPORTED);
+      }
       const { device } = data;
       const { passkeyData } = request.session;
-      if (!passkeyData || passkeyData.step !== "success") {
+      delete request.session.passkeyData;
+      if (!passkeyData || passkeyData.step !== "success" || !(passkeyData.expiresAt > Date.now())) {
         throw new Error(errors.server.INVALID_REQUEST);
       }
-      const { passkeyId } = passkeyData;
-      const passkey = await walletHelper.getPasskeyById(passkeyId);
+      const passkey = await passkeyHelper.getByIdAnyRp(passkeyData.passkeyId);
+      if (!passkey) {
+        throw new Error(errors.server.NOT_FOUND);
+      }
       if (passkey.deletedAt !== null) {
         throw new Error(errors.server.DELETED);
       }
@@ -287,13 +517,41 @@ registerPostRoute<
       ] = await Promise.all([
         communityHelper.getOwnCommunities(ownData.id),
         chatHelper.getChats(ownData.id),
-        deviceHelper.createDevice(ownData.id, device.publicKey),
+        deviceHelper.createDevice(ownData.id, device.publicKey, loginGeneration(request)),
         notificationHelper.getUnreadCount(ownData.id),
       ]);
-      delete request.session.passkeyData;
     } else if (data.type === "verificationCode") {
       const { device } = data;
-      ownData = await userHelper.getOwnDataByEmailAndVerificationCode(data.email, data.code);
+      if (LOGIN_LIMITS) {
+        await loginCodeIpLimiter(request, response);
+      }
+      // codes only ever go to verified addresses (sendOneTimePasswordForLogin)
+      const userId = await userHelper.getVerifiedUserIdByEmail(data.email);
+      const reservation = await reserveLoginFailure(request, loginCodeFailures, data.email);
+      try {
+        if (!userId) {
+          throw new Error(errors.server.VERIFY_EMAIL_INVALID_TOKEN);
+        }
+        // an exhausted code answers like a wrong one (emailCodes.ts), so the
+        // answer never tells whether a code was sent to the address
+        await consumeEmailCode('login', userId, data.email, data.code,
+          codeId => emailCodeAttemptLimiter(`login:${codeId}`));
+      }
+      catch (e) {
+        // a wrong, used-up or expired code stays counted; anything else was no guess
+        const guess = e instanceof Error && (
+          e.message === errors.server.VERIFY_EMAIL_INVALID_TOKEN || e.message === errors.server.VERIFY_EMAIL_EXPIRED_TOKEN
+        );
+        if (!guess) {
+          await reservation.release();
+        }
+        throw e;
+      }
+      await reservation.release();
+      if (!userId) {
+        throw new Error(errors.server.VERIFY_EMAIL_INVALID_TOKEN);
+      }
+      ownData = await userHelper.getOwnDataById(userId);
       [ communities,
         chats,
         { deviceId },
@@ -301,7 +559,7 @@ registerPostRoute<
       ] = await Promise.all([
         communityHelper.getOwnCommunities(ownData.id),
         chatHelper.getChats(ownData.id),
-        deviceHelper.createDevice(ownData.id, device.publicKey),
+        deviceHelper.createDevice(ownData.id, device.publicKey, loginGeneration(request)),
         notificationHelper.getUnreadCount(ownData.id),
       ]);
     } else {
@@ -318,24 +576,224 @@ registerPostRoute<
       await userHelper.setUserExtraDataField(isMobileLogin ? 'usesMobileDevice' : 'usesDesktopDevice', true, ownData.id);
     }
 
-    request.session.user = {
-      id: ownData.id,
-      deviceId
-    };
-    delete request.session.signSecret;
-    request.session.save();
+    // new session id, user set, authentication time recorded (not for a
+    // device-key login), awaited save
+    const method: AuthMethod | 'device' = data.type === 'passkey-success' ? 'passkey' : data.type;
+    await establishLoginSession(request, { userId: ownData.id, deviceId, method });
 
+    // a gateway (srv/util/gateway.ts) serves sign-in and transfer links only:
+    // its login answer carries the account, not its communities or chats
+    const gateway = isGatewayMode();
     const result: API.User.login.Response = {
       ownData,
-      communities,
-      chats,
+      communities: gateway ? [] : communities,
+      chats: gateway ? [] : chats,
       deviceId,
-      webPushSubscription,
-      unreadNotificationCount,
+      webPushSubscription: gateway ? null : webPushSubscription,
+      unreadNotificationCount: gateway ? 0 : unreadNotificationCount,
+      securityStepRequired: await securityStepRequiredAfterLogin(request, ownData.id),
+      stepUpValidUntil: stepUpValidUntil(request),
     };
     return result;
   }
 )
+
+registerPostRoute<
+  API.User.ensureSession.Request,
+  API.User.ensureSession.Response
+>(
+  userRouter,
+  '/ensureSession',
+  Validators.API.User.ensureSession,
+  async (request) => {
+    // Session keepalive (the web app calls it every 29 minutes). Nothing to
+    // do: every response refreshes an existing session's store TTL, and the
+    // cookie of a logged-in one (srv/util/sessionSetup.ts). It stores nothing,
+    // so it never creates or rewrites a session — it may run in parallel with
+    // a login.
+  }
+);
+
+registerPostRoute<
+  API.User.signOutOtherDevices.Request,
+  API.User.signOutOtherDevices.Response
+>(
+  userRouter,
+  '/signOutOtherDevices',
+  Validators.API.User.signOutOtherDevices,
+  async (request) => {
+    // every other session ends and every other device key is deleted; this
+    // session and device stay (srv/util/signOutOtherDevices.ts). Step-up:
+    // otherwise whoever holds a session alone could sign the account's owner
+    // out everywhere else.
+    requireRecentAuth(request);
+    return await signOutOtherDevices(request);
+  }
+);
+
+const reauthenticateIpLimiter = ipRateLimitHandler({
+  bucket: 'user:reauthenticate:ip',
+  ...AUTH_LIMITS.reauthenticate.ip,
+});
+const reauthenticateUserLimiter = keyRateLimitHandler({
+  bucket: 'user:reauthenticate:user',
+  ...AUTH_LIMITS.reauthenticate.user,
+});
+/** a prepared wallet signature older than this signs in or re-authenticates no one */
+const WALLET_PROOF_MAX_AGE_MS = 5 * 60 * 1000;
+
+/**
+ * A prepared wallet signature (User/prepareWalletAction) still proves a
+ * sign-in wallet of its owner: at most WALLET_PROOF_MAX_AGE_MS old, and the
+ * wallet is a live, login-enabled wallet of that account right now.
+ */
+async function isFreshSignInWalletProof(prepared: Models.Server.Session.PreparedCredential): Promise<boolean> {
+  return (
+    !!prepared.ownerId &&
+    !!prepared.walletIdentifier &&
+    !!prepared.walletType &&
+    typeof prepared.createdAt === 'number' &&
+    Date.now() - prepared.createdAt <= WALLET_PROOF_MAX_AGE_MS &&
+    await walletHelper.isSignInWallet(prepared.ownerId, prepared.walletIdentifier, prepared.walletType)
+  );
+}
+
+registerPostRoute<
+  API.User.reauthenticate.Request,
+  API.User.reauthenticate.Response
+>(
+  userRouter,
+  '/reauthenticate',
+  Validators.API.User.reauthenticate,
+  async (request, response, data) => {
+    // Proves again that the person at the keyboard controls the account, with
+    // a passkey, the password or a login-enabled wallet (the same methods the
+    // account can sign in with). Refreshes the session's authentication time
+    // for sensitive actions (requireRecentAuth).
+    const { user } = request.session;
+    if (!user) {
+      throw new Error(errors.server.LOGIN_REQUIRED);
+    }
+    await reauthenticateIpLimiter(request, response);
+    await reauthenticateUserLimiter(user.id);
+
+    if (data.type === 'passkey') {
+      if (isLegacyCgidMode()) {
+        throw new Error(errors.server.NOT_SUPPORTED);
+      }
+      await verifyAuthentication(getMainRp(), request.session, data.authenticationResponse, {
+        purpose: 'stepup',
+        userId: user.id,
+      });
+    }
+    else if (data.type === 'password') {
+      if (!(await userHelper.isPasswordCorrect(user.id, data.password))) {
+        throw new Error(errors.server.NOT_ALLOWED);
+      }
+    }
+    else if (data.type === 'wallet') {
+      const { preparedCredential } = request.session;
+      delete request.session.preparedCredential;
+      if (
+        !preparedCredential ||
+        preparedCredential.type !== 'wallet' ||
+        !preparedCredential.result.readyForLogin ||
+        preparedCredential.ownerId !== user.id ||
+        !(await isFreshSignInWalletProof(preparedCredential))
+      ) {
+        throw new Error(errors.server.NOT_ALLOWED);
+      }
+    }
+    else {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
+    const validUntil = await recordReauthentication(request, data.type);
+    return { validUntil };
+  }
+);
+
+registerPostRoute<
+  API.User.requestSignupEmailCode.Request,
+  API.User.requestSignupEmailCode.Response
+>(
+  userRouter,
+  '/requestSignupEmailCode',
+  validators.API.User.requestSignupEmailCode,
+  async (request, response, data) => {
+    // step 1 of sign-up: mail a code to the address the account will get
+    const { user } = request.session;
+    if (user) {
+      throw new Error(errors.server.ALREADY_LOGGED_IN);
+    }
+    if (!emailEnabled()) {
+      throw new Error(errors.server.EMAIL_DISABLED);
+    }
+    if (ACCOUNT_LIMITS) {
+      // this network cannot create an account right now: say so before the
+      // person solves the captcha and fills in the rest
+      await peekLimits(accountLimitBuckets(request));
+    }
+    // the sign-up captcha is solved here, before any mail goes out; a resend
+    // for the same address within the captcha window needs no new one
+    let captchaAt: number;
+    if (hasSignupCaptcha(request.session, data.email)) {
+      captchaAt = request.session.signupEmail!.captchaAt!;
+    }
+    else {
+      if (config.DEPLOYMENT !== 'dev') {
+        const verified = !!data.recaptchaToken && await verifyCaptchaToken(data.recaptchaToken);
+        if (!verified) {
+          throw new Error(errors.server.CAPTCHA_FAILED);
+        }
+      }
+      captchaAt = Date.now();
+    }
+    await limitSignupCodeMail(request, response, data.email);
+    try {
+      if (await userHelper.isEmailAvailable(data.email)) {
+        const code = startSignupEmailVerification(request.session, data.email, Date.now(), captchaAt);
+        await emailUtils.sendSignupCodeEmail(data.email, code);
+      }
+      else {
+        // same response either way (also for a resend); the owner of the
+        // address learns about the attempt instead of receiving a code
+        startSignupWithoutCode(request.session, data.email, Date.now(), captchaAt);
+        await emailUtils.sendSignupAddressTakenEmail(data.email);
+      }
+    }
+    catch (error) {
+      console.error("Error sending the sign-up code mail", error instanceof Error ? error.message : error);
+    }
+  }
+);
+
+// atomic attempt budget per issued sign-up code (Redis): parallel guesses
+// against one session state cannot exceed it
+const signupCodeAttemptLimiter = keyRateLimitHandler({
+  bucket: 'user:signup-code:attempts',
+  windowMs: SIGNUP_CODE_TTL_MS,
+  limit: SIGNUP_CODE_MAX_ATTEMPTS,
+});
+
+registerPostRoute<
+  API.User.verifySignupEmailCode.Request,
+  API.User.verifySignupEmailCode.Response
+>(
+  userRouter,
+  '/verifySignupEmailCode',
+  validators.API.User.verifySignupEmailCode,
+  async (request, response, data) => {
+    const { user } = request.session;
+    if (user) {
+      throw new Error(errors.server.ALREADY_LOGGED_IN);
+    }
+    const codeId = request.session.signupEmail?.codeId;
+    if (codeId) {
+      await signupCodeAttemptLimiter(`${request.sessionID}:${codeId}`);
+    }
+    checkSignupEmailCode(request.session, data.email, data.code);
+  }
+);
 
 registerPostRoute<
   API.User.checkLoginStatus.Request,
@@ -361,21 +819,24 @@ registerPostRoute<
     const { user } = request.session;
     if (!!user) {
       await deviceHelper.deleteDevice(user.deviceId);
+      // where transfer links are minted (the gateway), signing out also ends
+      // the links of this account that were not used yet
+      if (getTransferTargetOrigin()) {
+        await transferTokenHelper.discardUnused(user.id)
+          .catch(e => console.error("Error discarding unused transfer links", e instanceof Error ? e.message : e));
+      }
+      // logout disconnects the device's sockets: with the requesting tab's
+      // socket named, the other tabs get cliSignedOut and that socket logs
+      // out itself; without it (old clients) all of them, no event
+      await eventHelper.logoutDeviceSockets(requestSockets(request, user.deviceId))
+        .catch(e => console.error("Error disconnecting the device's sockets", e));
     }
-    delete request.session.user;
-    delete request.session.passkeyData;
-    delete request.session.lukso;
-    delete request.session.twitter;
-    request.session.save();
+    // the session is destroyed and its id revoked: nothing of it (user,
+    // step-up state, ceremonies, provider data) survives, and no new one
+    // takes its place
+    await endLoginSession(request);
   }
 );
-
-const createUserRateLimiter = ipRateLimitHandler({
-  windowMs: 1000 * 60 * 60 * 24, // 24h
-  limit_v4_v6_64: 2,
-  limit_v6_56: 8,
-  limit_v6_48: 15,
-});
 
 registerPostRoute<
   API.User.createUser.Request,
@@ -385,6 +846,7 @@ registerPostRoute<
   '/createUser',
   Validators.API.User.createUser,
   async (request, response, data) => {
+    await beginLogin(request);
     const {
       device,
       displayAccount,
@@ -393,16 +855,20 @@ registerPostRoute<
       usePreparedWallet,
       usePreparedPasskey,
       usePreparedFarcaster,
-      useWizardCode,
       useCgProfile,
       useEmailAndPassword,
       recaptchaToken,
     } = data;
 
-    if (config.DEPLOYMENT !== 'dev' && !useWizardCode) {
-      const verifyResult = await verifyRecaptchaToken(recaptchaToken);
+    // A sign-up that went through the email code solved its captcha there
+    // (requestSignupEmailCode, bound to the verified address); every other
+    // path (no mail, legacy CG ID mode) sends a fresh token here.
+    const captchaCovered = !isLegacyCgidMode() && emailEnabled() && verifiedSignupPassedCaptcha(request.session);
+    if (config.DEPLOYMENT !== 'dev' && !captchaCovered) {
+      const verifyResult = !!recaptchaToken && await verifyCaptchaToken(recaptchaToken);
       if (!verifyResult) {
-        console.error("Error creating user with recaptcha, captcha failed", recaptchaToken, data);
+        // never log the request: it can carry a password
+        console.error("Error creating user: captcha verification failed");
         throw new Error(errors.server.CAPTCHA_FAILED);
       }
     }
@@ -413,11 +879,33 @@ registerPostRoute<
       throw new Error(errors.server.ALREADY_LOGGED_IN);
     }
 
+    const legacyMode = isLegacyCgidMode();
+    if (!legacyMode && (useTwitterCredentials || useLuksoCredentials || usePreparedFarcaster)) {
+      // X, LUKSO and Farcaster can be linked to an existing account (and then
+      // log in), but they no longer create one
+      throw new Error(errors.server.NOT_SUPPORTED);
+    }
+
+    // The account's address is verified BEFORE the account exists
+    // (User/requestSignupEmailCode + verifySignupEmailCode), whenever this
+    // instance can send mail at all.
+    let verifiedEmail: string | null = null;
+    if (!legacyMode && emailEnabled()) {
+      verifiedEmail = getVerifiedSignupEmail(request.session);
+      if (!verifiedEmail) {
+        throw new Error(errors.server.EMAIL_VERIFICATION_REQUIRED);
+      }
+      if (useEmailAndPassword && normalizeEmail(useEmailAndPassword.email) !== normalizeEmail(verifiedEmail)) {
+        throw new Error(errors.server.INVALID_REQUEST);
+      }
+    }
+
     let loginMethodAdded = false;
 
     const newUserData: Parameters<typeof userHelper.createUser>[0] = {
       activateNewsletter: false,
-      email: null,
+      email: verifiedEmail,
+      emailVerified: verifiedEmail !== null,
       password: null,
       displayAccount,
       devicePublicKey: device.publicKey,
@@ -425,19 +913,17 @@ registerPostRoute<
     };
 
     if (
-      !useWizardCode && (
-        (displayAccount === "lukso" && !useLuksoCredentials) ||
-        (displayAccount === "twitter" && !useTwitterCredentials) ||
-        (displayAccount === "cg" && !useCgProfile)
-      )
+      (displayAccount === "lukso" && !useLuksoCredentials) ||
+      (displayAccount === "twitter" && !useTwitterCredentials) ||
+      (displayAccount === "cg" && !useCgProfile)
     ) {
-      console.error("Error creating user, wizard code not used and display account " + displayAccount + " not provided", data);
+      console.error("Error creating user: display account " + displayAccount + " not provided");
       throw new Error(errors.server.INVALID_REQUEST);
     }
     
     if (useEmailAndPassword) {
       loginMethodAdded = true;
-      newUserData.email = useEmailAndPassword.email;
+      newUserData.email = verifiedEmail || useEmailAndPassword.email;
       newUserData.password = useEmailAndPassword.password;
     }
 
@@ -445,7 +931,7 @@ registerPostRoute<
       loginMethodAdded = true;
       const { preparedCredential } = request.session;
       if (!preparedCredential || preparedCredential.type !== "wallet") {
-        console.error("Error creating user with prepared wallet, incorrect prepared credential", preparedCredential, data);
+        console.error("Error creating user with prepared wallet: prepared credential is not a wallet", preparedCredential?.type);
         throw new Error(errors.server.INVALID_REQUEST);
       }
       const { result, preWallet } = preparedCredential;
@@ -457,26 +943,35 @@ registerPostRoute<
         };
       }
       else {
-        console.error("Error creating user with prepared wallet, not ready for creation or no preWallet", data);
+        console.error("Error creating user with prepared wallet: not ready for creation");
         throw new Error(errors.server.INVALID_REQUEST);
       }
     }
 
     if (usePreparedPasskey) {
-      loginMethodAdded = true;
-      const { passkeyData } = request.session;
-      if (!passkeyData || passkeyData.step !== "success" || passkeyData.userId !== null) {
-        console.error("Error creating user with passkey, invalid passkey data", passkeyData, data);
+      // the passkey registered during this sign-up (Passkey/verifyRegistration
+      // while logged out) waits in the session; it is inserted together with
+      // the user, so an abandoned sign-up leaves no row behind
+      const { pendingPasskey } = request.session;
+      if (
+        legacyMode ||
+        !pendingPasskey ||
+        pendingPasskey.expiresAt <= Date.now() ||
+        pendingPasskey.rpId !== getMainRp().rpId
+      ) {
+        console.error("Error creating user with passkey: no valid pending passkey in the session");
         throw new Error(errors.server.INVALID_REQUEST);
       }
-      newUserData.passkeyId = passkeyData.passkeyId;
+      loginMethodAdded = true;
+      const { expiresAt, ...passkey } = pendingPasskey;
+      newUserData.passkey = passkey;
     }
 
     if (usePreparedFarcaster) {
       loginMethodAdded = true;
       const { farcaster } = request.session;
       if (!farcaster || !farcaster.fid || !farcaster.address || !farcaster.displayName || !farcaster.username) {
-        console.error("Error creating user with prepared farcaster, invalid farcaster data", farcaster, data);
+        console.error("Error creating user with prepared farcaster: invalid farcaster data", farcaster?.fid);
         throw new Error(errors.server.INVALID_REQUEST);
       }
       newUserData.accounts.push({
@@ -527,13 +1022,12 @@ registerPostRoute<
       if (twitterUserData._json.profile_image_url) {
         try {
           const fullSizeUrl = twitterUserData._json.profile_image_url.replace("_normal", "");
-          const response = await axios.get(fullSizeUrl, { responseType: 'arraybuffer' });
-          const buffer = Buffer.from(response.data, "utf-8");
+          const buffer = await fetchRemoteImage(fullSizeUrl);
           const image = await fileHelper.saveImage(null, { type: 'userProfileImage' }, buffer, { width: 110, height: 110 });
           twitterImageId = image.fileId;
         } catch (e) {
           // For now just ignore error if this fails, but is this fine for now?
-          console.error("Could not download twitter image", e);
+          console.error("Could not download twitter image", e instanceof Error ? e.message : e);
         }
       }
       
@@ -557,7 +1051,7 @@ registerPostRoute<
       loginMethodAdded = true;
       const luksoData = request.session.lukso;
       if (!luksoData || luksoData.existsAlready) {
-        console.error("Error creating user with lukso credentials, invalid lukso data or already exists", luksoData, data);
+        console.error("Error creating user with lukso credentials: invalid lukso data or already exists");
         throw new Error(errors.server.INVALID_REQUEST);
       }
       let luksoImageId = null;
@@ -582,78 +1076,40 @@ registerPostRoute<
       delete request.session.lukso;
     }
 
-    if (useWizardCode) {
-      const isAvailable = await communityHelper.isWizardCodeAvailable({ wizardId: useWizardCode.wizardId, code: useWizardCode.code });
-      if (!isAvailable) {
-        throw new Error(errors.server.INVALID_SECRET);
-      }
-
-      let displayName: string = "";
-      let displayNameValid = false;
-      let i = 0;
-      while (!displayNameValid && i < 30) {
-        displayName = uniqueNamesGenerator({ dictionaries: [adjectives, colors, animals] });
-        displayNameValid = await userHelper.isCgProfileNameAvailable(displayName);
-        i++;
-      }
-
-      loginMethodAdded = true;
-      newUserData.email = useWizardCode.email;
-      newUserData.displayAccount = "cg";
-      newUserData.accounts.push({
-        type: "cg",
-        data: null,
-        displayName,
-        imageId: null,
-        extraData: { 
-          type: "cg",
-          description: '',
-          homepage: '',
-          links: [],
-        },
-      });
-    }
-
     if (!loginMethodAdded) {
-      console.error("Error creating user, no login method added", data);
+      console.error("Error creating user: no login method added");
       throw new Error(errors.server.INVALID_REQUEST);
     }
 
     const insertedIds = await userHelper.createUser(newUserData, async () => {
       // make sure rate limits are respected
-      if (config.DEPLOYMENT !== 'dev' && !useWizardCode) {
-        await createUserRateLimiter(request, response);
+      if (ACCOUNT_LIMITS) {
+        await enforceLimits(accountLimitBuckets(request));
       }
     });
-    if (useWizardCode) {
-      await communityHelper.redeemAndInvalidateWizardCode({ wizardId: useWizardCode.wizardId, code: useWizardCode.code, userId: insertedIds.userId });
-    }
-
-    delete request.session.passkeyData;
-    delete request.session.preparedCredential;
-    delete request.session.twitter;
-    delete request.session.passport;
-    delete request.session.lukso;
-    delete request.session.farcaster;
 
     if (!!useCgProfile && !!useCgProfile.imageId) {
       fileHelper.scheduleUserPreviewUpdate(insertedIds.userId, useCgProfile.imageId);
     }
-    request.session.user = {
-      id: insertedIds.userId,
+    // regenerating the session also drops all sign-up state (prepared
+    // credentials, provider data, pending passkey, verified address)
+    await establishLoginSession(request, {
+      userId: insertedIds.userId,
       deviceId: insertedIds.deviceId,
-    };
+      method: 'signup',
+    });
 
     const result: API.User.createUser.Response = {
       ownData: {
         id: insertedIds.userId,
+        isBot: false,
         onlineStatus: "online",
         communityOrder: [],
         finishedTutorials: [],
         newsletter: false,
         weeklyNewsletter: false,
         dmNotifications: true,
-        email: useEmailAndPassword?.email || null,
+        email: newUserData.email,
         followingCount: 0,
         followerCount: 0,
         createdAt: insertedIds.updatedAt,
@@ -670,7 +1126,7 @@ registerPostRoute<
         pointBalance: 0,
         trustScore: '1.0',
         premiumFeatures: [],
-        emailVerified: false,
+        emailVerified: newUserData.emailVerified === true,
         passkeys: insertedIds.passkeyData ? [insertedIds.passkeyData] : [],
         extraData: {},
         tags: null,
@@ -680,15 +1136,15 @@ registerPostRoute<
       communities: [],
       unreadNotificationCount: 0,
       chats: [],
+      securityStepRequired: await securityStepRequiredAfterLogin(request, insertedIds.userId),
     }
 
-    if(useEmailAndPassword?.email){
+    if (!!newUserData.email && !newUserData.emailVerified && emailEnabled()) {
       try {
-        const verificationToken = await emailHelper.generateVerificationEmailToken(insertedIds.userId);
-        await emailUtils.sendVerificationEmail(useEmailAndPassword.email, verificationToken, request.hostname);
+        const code = await issueEmailCode('verify', insertedIds.userId, newUserData.email);
+        await emailUtils.sendVerificationEmail(newUserData.email, code);
       } catch (error) {
-        console.error('Error sending verification email', error);
-        //notify user that email could not be sent
+        console.error('Error sending verification email', error instanceof Error ? error.message : error);
       }
     }
     return result;
@@ -707,7 +1163,37 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    await userHelper.updateUser(user.id, data);
+    // the account's address is replaced or removed (instances without mail)
+    let addressReplaced = false;
+    if (data.email !== undefined) {
+      const current = (await userHelper.getOwnDataById(user.id)).email;
+      if (data.email === current) {
+        // clients re-send the unchanged address with other settings: not a
+        // change (and must not reset the verification)
+        delete data.email;
+        if (Object.keys(data).length === 0) {
+          return;
+        }
+      }
+      else if (emailEnabled()) {
+        // an instance that sends mail only takes an address that was
+        // confirmed: User/requestEmailVerification + User/verifyEmail
+        throw new Error(errors.server.EMAIL_VERIFICATION_REQUIRED);
+      }
+      else if (data.email === null || current === null || normalizeEmail(data.email) !== normalizeEmail(current)) {
+        // changing the account's address: step-up (before any change)
+        requireRecentAuth(request);
+        addressReplaced = current !== null;
+      }
+    }
+    if (addressReplaced) {
+      // the address signs in (password login): the other devices are signed
+      // out with the change, like after a confirmed change with mail
+      await changeAndSignOut(request, (beforeCommit) => userHelper.updateUser(user.id, data, beforeCommit));
+    }
+    else {
+      await userHelper.updateUser(user.id, data);
+    }
   }
 );
 
@@ -735,132 +1221,176 @@ registerPostRoute<
   '/addUserAccount',
   Validators.API.User.addUserAccount as any,
   async (request, response, data) => {
+    const isLoginAccount = LOGIN_ACCOUNT_TYPES.has(data.type);
+    // linking a different account of a type the user has already replaces
+    // the old one (one account per type): a way in is replaced
+    let replacesLoginAccount = false;
+    if (isLoginAccount && request.session.user) {
+      const type = data.type as 'twitter' | 'lukso' | 'farcaster';
+      const linked = await userHelper.getLinkedAccountId(request.session.user.id, type);
+      const pending = pendingAccountId(request, type);
+      replacesLoginAccount = linked !== null && pending !== null && !sameAccountId(type, linked, pending);
+    }
+    if (replacesLoginAccount) {
+      // like removing one: the plain step-up, then the other devices are signed out
+      requireRecentAuth(request);
+    }
+    else if (isLoginAccount) {
+      // an X, LUKSO or Farcaster account can sign in: adding one is adding a
+      // sign-in method — step-up, and the verified address is told afterwards
+      await requireAuthToAdd(request, 'sign-in-method', { emailRequired: emailEnabled() });
+    }
     const { user } = request.session;
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
 
-    if (data.type === 'twitter') {
-      const twitterUserData = request?.session?.passport?.user;
+    // links the account; replacing one signs the other devices out with the change
+    const link = async (beforeCommit?: BeforeCommit) => {
+      if (data.type === 'twitter') {
+        const twitterUserData = request?.session?.passport?.user;
 
-      if (!twitterUserData) {
-        throw new Error(errors.server.INVALID_REQUEST);
-      }
-      
-      let twitterImageId = null;
-
-      // If there's an user image, download it.
-      if (twitterUserData._json.profile_image_url) {
-        try {
-          const fullSizeUrl = twitterUserData._json.profile_image_url.replace("_normal", "");
-          const response = await axios.get(fullSizeUrl, { responseType: 'arraybuffer' });
-          const buffer = Buffer.from(response.data, "utf-8");
-          const image = await fileHelper.saveImage(null, { type: 'userProfileImage' }, buffer, { width: 110, height: 110 });
-          twitterImageId = image.fileId;
-        } catch (e) {
-          // For now just ignore error if this fails, but is this fine for now?
-          console.error("Could not download twitter image", e);
+        if (!twitterUserData) {
+          throw new Error(errors.server.INVALID_REQUEST);
         }
-      }
       
-      const twitterAccount: CreateUserAccountData = {
-        type: UserProfileTypeEnum.TWITTER,
-        displayName: twitterUserData.username,
-        imageId: twitterImageId,
-        data: {
-          type: 'twitter',
-          id: twitterUserData._json.id_str,
-          refreshToken: '',
-          accessToken: '',
-          followersCount: twitterUserData._json.followers_count || 0,
-          followingCount: twitterUserData._json.friends_count || 0
-        },
-        extraData: null,
-      }
+        let twitterImageId = null;
 
-      await userHelper.addUserAccount(user.id, twitterAccount);
-      delete request.session.twitter;
+        // If there's an user image, download it.
+        if (twitterUserData._json.profile_image_url) {
+          try {
+            const fullSizeUrl = twitterUserData._json.profile_image_url.replace("_normal", "");
+            const buffer = await fetchRemoteImage(fullSizeUrl);
+            const image = await fileHelper.saveImage(null, { type: 'userProfileImage' }, buffer, { width: 110, height: 110 });
+            twitterImageId = image.fileId;
+          } catch (e) {
+            // For now just ignore error if this fails, but is this fine for now?
+            console.error("Could not download twitter image", e instanceof Error ? e.message : e);
+          }
+        }
+      
+        const twitterAccount: CreateUserAccountData = {
+          type: UserProfileTypeEnum.TWITTER,
+          displayName: twitterUserData.username,
+          imageId: twitterImageId,
+          data: {
+            type: 'twitter',
+            id: twitterUserData._json.id_str,
+            refreshToken: '',
+            accessToken: '',
+            followersCount: twitterUserData._json.followers_count || 0,
+            followingCount: twitterUserData._json.friends_count || 0
+          },
+          extraData: null,
+        }
 
-    } else if (data.type === 'lukso') {
-      if (!request.session.lukso) {
-        throw new Error(errors.server.INVALID_REQUEST);
-      }
+        await userHelper.addUserAccount(user.id, twitterAccount, beforeCommit);
+        delete request.session.twitter;
 
-      const { address, profileImageUrl, username } = request.session.lukso;
-      let luksoImageId: string | null = null;
-      if (profileImageUrl) {
-        luksoImageId = await getAndStoreUniversalProfileImage(profileImageUrl);
-      }
+      } else if (data.type === 'lukso') {
+        if (!request.session.lukso) {
+          throw new Error(errors.server.INVALID_REQUEST);
+        }
 
-      const luksoAccount: CreateUserAccountData = {
-        type: "lukso",
-        displayName: username,
-        imageId: luksoImageId,
-        data: {
-          type: 'lukso',
-          id: address,
-        },
-        extraData: {
-          type: 'lukso',
-          upAddress: address,
-        },
-      }
+        const { address, profileImageUrl, username } = request.session.lukso;
+        let luksoImageId: string | null = null;
+        if (profileImageUrl) {
+          luksoImageId = await getAndStoreUniversalProfileImage(profileImageUrl);
+        }
 
-      await userHelper.addUserAccount(user.id, luksoAccount);
-      delete request.session.lukso;
+        const luksoAccount: CreateUserAccountData = {
+          type: "lukso",
+          displayName: username,
+          imageId: luksoImageId,
+          data: {
+            type: 'lukso',
+            id: address,
+          },
+          extraData: {
+            type: 'lukso',
+            upAddress: address,
+          },
+        }
 
-    } else if (data.type === 'farcaster') {
-      const { farcaster } = request.session;
-      if (!farcaster) {
-        throw new Error(errors.server.INVALID_REQUEST);
-      }
+        await userHelper.addUserAccount(user.id, luksoAccount, beforeCommit);
+        delete request.session.lukso;
 
-      const { fid, address, username, displayName, imageId, readyForCreation, bio, url } = farcaster;
-      if (!readyForCreation) {
-        throw new Error(errors.server.EXISTS_ALREADY);
-      }
+      } else if (data.type === 'farcaster') {
+        const { farcaster } = request.session;
+        if (!farcaster) {
+          throw new Error(errors.server.INVALID_REQUEST);
+        }
 
-      const farcasterAccount: CreateUserAccountData = {
-        type: "farcaster",
-        displayName,
-        imageId,
-        data: {
-          type: 'farcaster',
-          id: fid.toString(),
-          address,
-        },
-        extraData: {
-          type: 'farcaster',
-          fid,
-          username,
-          bio,
-          url,
-        },
-      };
+        const { fid, address, username, displayName, imageId, readyForCreation, bio, url } = farcaster;
+        if (!readyForCreation) {
+          throw new Error(errors.server.EXISTS_ALREADY);
+        }
 
-      await userHelper.addUserAccount(user.id, farcasterAccount);
-      delete request.session.farcaster;
+        const farcasterAccount: CreateUserAccountData = {
+          type: "farcaster",
+          displayName,
+          imageId,
+          data: {
+            type: 'farcaster',
+            id: fid.toString(),
+            address,
+          },
+          extraData: {
+            type: 'farcaster',
+            fid,
+            username,
+            bio,
+            url,
+          },
+        };
 
-    } else if (data.type === "cg") {
-      const cgProfile: CreateUserAccountData = {
-        type: "cg",
-        displayName: data.displayName,
-        imageId: null,
-        data: null,
-        extraData: {
+        await userHelper.addUserAccount(user.id, farcasterAccount, beforeCommit);
+        delete request.session.farcaster;
+
+      } else if (data.type === "cg") {
+        const cgProfile: CreateUserAccountData = {
           type: "cg",
-          description: data.description || "",
-          homepage: data.homepage || "",
-          links: data.links || [],
-        },
-      };
-      await userHelper.addUserAccount(user.id, cgProfile);
+          displayName: data.displayName,
+          imageId: null,
+          data: null,
+          extraData: {
+            type: "cg",
+            description: data.description || "",
+            homepage: data.homepage || "",
+            links: data.links || [],
+          },
+        };
+        await userHelper.addUserAccount(user.id, cgProfile);
 
-    } else {
-      throw new Error(errors.server.INVALID_REQUEST);
+      } else {
+        throw new Error(errors.server.INVALID_REQUEST);
+      }
+    };
+    if (replacesLoginAccount) {
+      await changeAndSignOut(request, link);
+    }
+    else {
+      await link();
+    }
+    if (isLoginAccount) {
+      notifyNewSignInMethod(user.id, `${data.type === 'twitter' ? 'X' : data.type === 'lukso' ? 'LUKSO' : 'Farcaster'} account`);
     }
   }
 );
+
+/** the provider id of the X/LUKSO/Farcaster account the session has prepared for linking */
+function pendingAccountId(request: express.Request, type: 'twitter' | 'lukso' | 'farcaster'): string | null {
+  const { session } = request;
+  const id = type === 'twitter' ? session.passport?.user?._json?.id_str
+    : type === 'lukso' ? session.lukso?.address
+    : session.farcaster?.fid?.toString();
+  return typeof id === 'string' && id ? id : null;
+}
+
+function sameAccountId(type: 'twitter' | 'lukso' | 'farcaster', a: string, b: string): boolean {
+  // Universal Profile addresses are compared case-insensitively, like at login
+  return type === 'lukso' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
 
 registerPostRoute<
   API.User.updateUserAccount.Request,
@@ -886,12 +1416,25 @@ registerPostRoute<
   '/removeUserAccount',
   Validators.API.User.removeUserAccount,
   async (request, response, data) => {
+    const isLoginAccount = LOGIN_ACCOUNT_TYPES.has(data.type);
+    if (isLoginAccount) {
+      // X, LUKSO and Farcaster accounts can sign in: step-up
+      requireRecentAuth(request);
+    }
     const { user } = request.session;
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-
-    await userHelper.removeUserAccount(user.id, data.type as UserProfileTypeEnum);
+    // never the account's last way to sign in (LAST_LOGIN_METHOD)
+    const remove = (beforeCommit?: BeforeCommit) =>
+      userHelper.removeUserAccount(user.id, data.type as UserProfileTypeEnum, { rpId: getProcessRpIdOrNull() }, beforeCommit);
+    if (isLoginAccount) {
+      // a way in is gone: so are the other devices, with the change
+      await changeAndSignOut(request, remove);
+    }
+    else {
+      await remove();
+    }
   }
 );
 
@@ -903,13 +1446,20 @@ registerPostRoute<
   '/prepareWalletAction',
   Validators.API.User.prepareWalletAction,
   async (request, response, data) => {
+    if (data.type === 'cg_evm' && !isLegacyCgidMode()) {
+      // the deprecated 12-word recovery phrase login (a key derived from the
+      // phrase signs in as the account's cg_evm wallet) is gone outside the
+      // legacy gateway
+      throw new Error(errors.server.NOT_SUPPORTED);
+    }
+    await walletSignatureLimiter(request, response);
     const { secret } = data.data;
     if (!secret || secret !== request.session.signSecret) {
       throw new Error(errors.server.INVALID_SECRET);
     }
     delete request.session.signSecret;
     const preparedWalletCredential = await walletHelper.prepareWalletAction(data, request.session.user?.id || null);
-    request.session.preparedCredential = preparedWalletCredential;
+    request.session.preparedCredential = { ...preparedWalletCredential, createdAt: Date.now() };
     await new Promise(resolve => request.session.save(resolve));
     return preparedWalletCredential.result;
   }
@@ -923,6 +1473,11 @@ registerPostRoute<
   '/addPreparedWallet',
   Validators.API.User.addPreparedWallet,
   async (request, response, data) => {
+    if (data.loginEnabled) {
+      // a wallet that can sign in is a new sign-in method: step-up (a sign-in
+      // within the hour while the account has no sign-in method here at all)
+      await requireAuthToAdd(request, 'sign-in-method', { emailRequired: emailEnabled() });
+    }
     try {
       const { user, preparedCredential } = request.session;
       if (!user) {
@@ -950,6 +1505,9 @@ registerPostRoute<
         eventHelper.emit(event, {
           userIds: [user.id]
         });
+        if (data.loginEnabled) {
+          notifyNewSignInMethod(user.id, 'wallet');
+        }
       }
       else {
         throw new Error(errors.server.INVALID_REQUEST);
@@ -973,7 +1531,35 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    await walletHelper.updateWallet(user.id, data);
+    let switchedOn = false;
+    let switchedOff = false;
+    if (data.loginEnabled !== undefined) {
+      const current = await walletHelper.getOwnWalletLoginEnabled(user.id, data.id);
+      if (current !== null && current !== data.loginEnabled) {
+        // switching a wallet's sign-in on (adding a sign-in method) or off
+        // (removing one): step-up, before any change
+        if (data.loginEnabled) {
+          await requireAuthToAdd(request, 'sign-in-method', { emailRequired: emailEnabled() });
+          switchedOn = true;
+        }
+        else {
+          requireRecentAuth(request);
+          switchedOff = true;
+        }
+      }
+    }
+    // switching off the account's last way to sign in is refused (LAST_LOGIN_METHOD)
+    const update = (beforeCommit?: BeforeCommit) => walletHelper.updateWallet(user.id, data, { rpId: getProcessRpIdOrNull() }, beforeCommit);
+    if (switchedOff) {
+      // a way in is gone: so are the other devices, with the change
+      await changeAndSignOut(request, update);
+    }
+    else {
+      await update();
+    }
+    if (switchedOn) {
+      notifyNewSignInMethod(user.id, 'wallet');
+    }
 
     const event: Events.User.Wallet = {
       type: "cliWalletEvent",
@@ -998,7 +1584,20 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    await walletHelper.deleteWallet(user.id, data);
+    const signInWallet = await walletHelper.getOwnWalletLoginEnabled(user.id, data.id);
+    if (signInWallet) {
+      // removing a sign-in method: step-up (checked before anything changes)
+      requireRecentAuth(request);
+    }
+    // the account's last way to sign in cannot be deleted (LAST_LOGIN_METHOD)
+    const remove = (beforeCommit?: BeforeCommit) => walletHelper.deleteWallet(user.id, data, { rpId: getProcessRpIdOrNull() }, beforeCommit);
+    if (signInWallet) {
+      // a way in is gone: so are the other devices, with the change
+      await changeAndSignOut(request, remove);
+    }
+    else {
+      await remove();
+    }
 
     const event: Events.User.Wallet = {
       type: "cliWalletEvent",
@@ -1032,7 +1631,7 @@ registerPostRoute<
 
       throw new Error(errors.server.NOT_ALLOWED);
     }
-    return await walletHelper.getAllWalletsByUserId(data.userId || user.id, ["evm", "cg_evm", "fuel", "aeternity"]);
+    return await walletHelper.getAllWalletsByUserId(data.userId || user.id, ["evm", "cg_evm"]);
   }
 );
 
@@ -1048,6 +1647,24 @@ registerPostRoute<
     return await userHelper.getUserDataByIds(data.userIds, user?.id);
   },
   { limit: '1mb' },
+);
+
+registerPostRoute<
+  API.User.getSuggestedUsers.Request,
+  API.User.getSuggestedUsers.Response
+>(
+  userRouter,
+  '/getSuggestedUsers',
+  Validators.API.User.getSuggestedUsers,
+  async (request, response, data) => {
+    const { user } = request.session;
+    // Viewer-aware discovery — authenticated only. Anonymous popular fallback
+    // can be added additively later if a signed-out surface needs it.
+    if (!user) {
+      throw new Error(errors.server.LOGIN_REQUIRED);
+    }
+    return await suggestedUsersHelper.getSuggestedUsers(user.id, data);
+  },
 );
 
 registerPostRoute<
@@ -1100,6 +1717,12 @@ registerPostRoute<
   '/isEmailAvailable',
   Validators.API.User.isEmailAvailable,
   async (request, response, data) => {
+    if (emailEnabled() && !isLegacyCgidMode()) {
+      // with mail, nothing needs this: sign-up and address changes answer the
+      // same way for taken and free addresses (no lookup for anyone)
+      throw new Error(errors.server.NOT_SUPPORTED);
+    }
+    await isEmailAvailableLimiter(request, response);
     return await userHelper.isEmailAvailable(data.email);
   }
 );
@@ -1116,7 +1739,28 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    await userHelper.setPassword(user.id, data.password);
+    const { hasPassword } = await computeSecurityStatus(user.id, { emailRequired: emailEnabled() });
+    // replacing a password: step-up (the current password is the usual
+    // proof); a first password adds a sign-in method
+    const { userId } = hasPassword
+      ? requireRecentAuth(request)
+      : await requireAuthToAdd(request, 'sign-in-method', { emailRequired: emailEnabled() });
+    // a replaced password signs the other devices out, with the change; a
+    // first one is an added way in, like a new passkey, and leaves them
+    // signed in
+    let signedOutDevices = 0;
+    let signOutDelayed = false;
+    if (hasPassword) {
+      ({ devices: signedOutDevices, delayed: signOutDelayed } = await changeAndSignOut(request, (beforeCommit) => userHelper.setPassword(userId, data.password, beforeCommit)));
+    }
+    else if (!(await userHelper.setFirstPassword(userId, data.password))) {
+      // a password arrived in the meantime (a concurrent request): this one
+      // would replace it, which takes the step-up — the client confirms and
+      // retries, and the retry takes the replacing branch
+      throw new Error(errors.server.REAUTH_REQUIRED);
+    }
+    notifyPasswordChanged(userId, hasPassword);
+    return { signedOutDevices, signOutDelayed };
   }
 );
 
@@ -1132,9 +1776,12 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    await userHelper.subscribeNewsletter(user.id, data.email);
+    await userHelper.subscribeNewsletter(user.id);
   }
 );
+
+// one-click unsubscribe links of notification mails (no login needed)
+registerEmailUnsubscribeRoutes(userRouter);
 
 registerPostRoute<
   API.User.unsubscribeNewsletter.Request,
@@ -1148,7 +1795,7 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    await userHelper.unsubscribeNewsletter(user.id, data.email);
+    await userHelper.unsubscribeNewsletter(user.id);
   }
 );
 
@@ -1297,7 +1944,7 @@ registerPostRoute<
       ...data.userArticle,
       updatedAt: result.updatedAt,
       userId: user.id,
-      published: null,
+      published: result.published,
       articleId: result.articleId
     }
     return {
@@ -1448,17 +2095,47 @@ registerPostRoute<
   '/requestEmailVerification',
   validators.API.User.requestEmailVerification,
   async (request, response, data) => {
+    // Mails a code that confirms `email` for the session's account. The
+    // address only becomes the account's address when the code comes back
+    // (User/verifyEmail) — that is how it changes on an instance with mail.
     const { user } = request.session;
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    // avoid generating multiple tokens if the existing one is still valid
-    const token = await emailHelper.generateVerificationEmailToken(user.id);
-    try {
-      await emailUtils.sendVerificationEmail(data.email, token, request.hostname);
-    } catch (error) {
-      console.error(error);
+    if (!emailEnabled()) {
+      throw new Error(errors.server.EMAIL_DISABLED);
     }
+    const target = data.email.trim();
+    const current = await userHelper.getOwnDataById(user.id);
+    const sameAddress = !!current.email && normalizeEmail(current.email) === normalizeEmail(target);
+    if (sameAddress && current.emailVerified) {
+      // nothing to confirm
+      return;
+    }
+    if (!sameAddress) {
+      if (current.email && current.emailVerified) {
+        // replacing the verified address: step-up, before anything happens
+        requireRecentAuth(request);
+      }
+      else {
+        await requireAuthToAdd(request, 'email', { emailRequired: true });
+      }
+    }
+    await limitVerificationMail(request, response, target, user.id);
+    // Taken means: another account has it VERIFIED (an unverified holder does
+    // not block it, srv/repositories/users.ts setVerifiedEmail). Either way a
+    // code is pending for the address afterwards (getSecurityStatus shows
+    // it), and no mail is awaited — the answer looks the same.
+    const ownerId = await userHelper.getVerifiedUserIdByEmail(target);
+    const code = await issueEmailCode('verify', user.id, target);
+    if (ownerId !== null && ownerId !== user.id) {
+      // nobody receives this code; its owner hears about the attempt instead
+      emailUtils.sendAddressInUseEmail(target)
+        .catch(error => console.error("Error sending the address-in-use mail", error instanceof Error ? error.message : error));
+      return;
+    }
+    emailUtils.sendVerificationEmail(target, code)
+      .catch(error => console.error("Error sending the verification mail", error instanceof Error ? error.message : error));
   }
 );
 
@@ -1470,18 +2147,43 @@ registerPostRoute<
   '/verifyEmail',
   validators.API.User.verifyEmail,
   async (request, response, data) => {
-    const userId = await emailHelper.verifyEmail(data.email, data.token);
-    if (userId) {
-      const event: Events.User.OwnData = {
-        type: "cliUserOwnData",
-        data: {
-          emailVerified: true,
-        },
-      };
-      eventHelper.emit(event, {
-        userIds: [userId]
-      });
+    // the code is bound to the session's account and to the address it was
+    // sent to; it works once
+    const { user } = request.session;
+    if (!user) {
+      throw new Error(errors.server.LOGIN_REQUIRED);
     }
+    const current = await userHelper.getOwnDataById(user.id);
+    if (current.email && current.emailVerified && normalizeEmail(current.email) !== normalizeEmail(data.email)) {
+      // this replaces a verified address (the code may be a day old):
+      // step-up now as well, before the code is used up
+      requireRecentAuth(request);
+    }
+    const { email } = await consumeEmailCode('verify', user.id, data.email, data.token,
+      codeId => emailCodeAttemptLimiter(`verify:${codeId}`));
+    // the verified address signs in (email codes, password login): a
+    // replaced one signs the other devices out, with the change
+    const replacing = !!current.email && current.emailVerified && normalizeEmail(current.email) !== normalizeEmail(email);
+    const previous = replacing
+      ? (await changeAndSignOut(request, (beforeCommit) => userHelper.setVerifiedEmail(user.id, email, (client) => beforeCommit(client)))).result
+      : await userHelper.setVerifiedEmail(user.id, email);
+    if (previous.previousEmail && previous.previousVerified && normalizeEmail(previous.previousEmail) !== normalizeEmail(email)) {
+      notifyEmailChanged(previous.previousEmail);
+    }
+    for (const clearedUserId of previous.clearedFrom) {
+      // an account that held the address unverified loses it
+      eventHelper.emit({ type: "cliUserOwnData", data: { email: null, emailVerified: false } }, { userIds: [clearedUserId] });
+    }
+    const event: Events.User.OwnData = {
+      type: "cliUserOwnData",
+      data: {
+        email,
+        emailVerified: true,
+      },
+    };
+    eventHelper.emit(event, {
+      userIds: [user.id]
+    });
   }
 );
 
@@ -1497,201 +2199,221 @@ registerPostRoute<
     if (user) {
       throw new Error(errors.server.ALREADY_LOGGED_IN);
     }
+    if (!emailEnabled()) {
+      // tell the client honestly instead of pretending a code was sent
+      throw new Error(errors.server.EMAIL_DISABLED);
+    }
     const { email } = data;
-    const userId = await userHelper.getUserIdByEmail(email);
-    const otp = await emailHelper.generateVerificationEmailToken(userId);
-    try {
-      await emailUtils.sendOneTimePasswordEmail(email, otp);
-    } catch (error) {
-      console.error(error);
-    }
-  }
-); 
-
-registerPostRoute<
-  API.User.redeemWizardCodeForExistingUser.Request,
-  API.User.redeemWizardCodeForExistingUser.Response
->(
-  userRouter,
-  '/redeemWizardCode',
-  validators.API.User.redeemWizardCode,
-  async (request, response, data) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-    const { wizardId, code } = data;
-    const isAvailable = await communityHelper.isWizardCodeAvailable({ wizardId, code });
-    if (!isAvailable) {
-      throw new Error("Invalid code");
-    } else {
-      await communityHelper.redeemAndInvalidateWizardCode({ wizardId, code, userId: user.id });
+    await limitOneTimePasswordMail(request, response, email);
+    // A code only for the VERIFIED address of an account; the same answer for
+    // an unverified, a foreign and an unknown address. (Someone whose address
+    // was never confirmed signs in another way and confirms it in the
+    // settings — never logged out, where the address owner could confirm it
+    // for someone else's account.)
+    const userId = await userHelper.getVerifiedUserIdByEmail(email);
+    if (userId) {
+      const code = await issueEmailCode('login', userId, email);
+      // not awaited: the response takes as long with and without an account
+      emailUtils.sendOneTimePasswordEmail(email, code)
+        .catch(error => console.error("Error sending the login code mail", error instanceof Error ? error.message : error));
     }
   }
 );
 
 registerPostRoute<
-  API.User.getTokenSaleAllowance.Request,
-  API.User.getTokenSaleAllowance.Response
+  API.User.getSecurityStatus.Request,
+  API.User.getSecurityStatus.Response
 >(
   userRouter,
-  '/getTokenSaleAllowance',
-  undefined,
-  async (request, response, data) => {
+  '/getSecurityStatus',
+  validators.API.User.getSecurityStatus,
+  async (request) => {
+    // what the account-security step still needs (docs/auth-identity §11)
     const { user } = request.session;
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    
-    const extraData = await userHelper.getUserExtraData(user.id);
-    if (!extraData.kycCgTokensaleSuccess && config.DEPLOYMENT !== 'dev') {
-      throw new Error(errors.server.KYC_MISSING);
-    }
-    if (!extraData.agreedToTokenSaleTermsTimestamp && config.DEPLOYMENT !== 'dev') {
-      throw new Error(errors.server.AGREEMENT_TO_TERMS_MISSING);
-    }
-
-    let signerPrivateKey: string | undefined;
-    if (config.DEPLOYMENT === 'dev') {
-      // signer address: 0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199
-      signerPrivateKey = '0xdf57089febbacf7ba0bc227dafbffa9fc08a93fdc68e1e42411a14efcf23656e';
-    }
-    else {
-      // signer address: 0x28f5500291DeB91b3F690ea10dDe48EAd3D15c8a
-      signerPrivateKey = dockerSecret('tokensale_allowance_private_key') || undefined;
-    }
-    if (!signerPrivateKey) {
-      throw new Error('tokensale_allowance_private_key is not set');
-    }
-
-    // Sign with server's private key
-    const serverWallet = new ethers.Wallet(signerPrivateKey);
-    // Convert UUID to hex string with 0x prefix
-    const hexId = '0x' + user.id.toLowerCase().replace(/-/g, '');
-    // Convert hex to Uint8Array 
-    const messageBytes = ethers.getBytes(hexId);
-    const signature = await serverWallet.signMessage(messageBytes);
-    
-    return {
-      allowance: signature,
-    };
-  }
-);
-
-registerPostRoute<
-  API.User.getConnectionCountry.Request,
-  API.User.getConnectionCountry.Response
->(
-  userRouter,
-  '/getConnectionCountry',
-  undefined,
-  async (request, response, data) => {
-    const header = request.headers['cf-ipcountry'];
-    if (!header) {
-      return {
-        country: 'unknown',
-      };
+    const { status, version } = await computeSecurityStatusVersioned(user.id, { emailRequired: emailEnabled() });
+    if (!status.required) {
+      rememberSecurityStepClear(request, user.id, version);
     }
     return {
-      country: header as string,
+      ...status,
+      pendingEmail: emailEnabled() ? await getPendingEmail(user.id) : null,
+      // what is missing can be added in this session (else: sign in again
+      // or open a new transfer link)
+      recentSignIn: hasRecentAuth(request, { allow: SECURITY_STEP_AUTH, maxAgeMs: SECURITY_STEP_AUTH_MAX_AGE_MS }),
     };
   }
 );
 
 registerPostRoute<
-  API.User.setReferredBy.Request,
-  API.User.setReferredBy.Response
+  API.User.createTransferLink.Request,
+  API.User.createTransferLink.Response
 >(
   userRouter,
-  '/setReferredBy',
-  validators.API.User.setReferredBy,
+  '/createTransferLink',
+  validators.API.User.createTransferLink,
   async (request, response, data) => {
+    // A one-time link that signs the session's own user in on the instance
+    // TRANSFER_TARGET_URL names (the app.cg gateway → cg.box). There is no
+    // way to mint one for anyone else.
     const { user } = request.session;
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    try {
-      await userHelper.setReferredBy({
-        userId: user.id,
-        referredByUserId: data.referredBy,
-        tokenSaleId: data.tokenSaleId
-      });
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('Cannot change referredByUserId')) {
-        throw new Error(errors.server.CANNOT_CHANGE_REFERRER);
-      } else if (error instanceof Error && error.message.includes('Circular referral detected')) {
-        throw new Error(errors.server.CANNOT_SET_CIRCULAR_REFERRER);
-      } else if (error instanceof Error && error.message.includes('Cannot refer to self')) {
-        throw new Error(errors.server.CANNOT_REFER_SELF);
-      } else if (error instanceof Error && error.message.includes('Cannot refer users who have already bought tokens')) {
-        throw new Error(errors.server.CANNOT_REFER_USER_WHO_BOUGHT_TOKENS);
-      } else {
-        throw error;
-      }
+    const target = getTransferTargetOrigin();
+    if (!target) {
+      throw new Error(errors.server.NOT_SUPPORTED);
     }
-  }
-);
-
-registerPostRoute<
-  API.User.getOwnTokenSaleData.Request,
-  API.User.getOwnTokenSaleData.Response
->(
-  userRouter,
-  '/getOwnTokenSaleData',
-  validators.API.User.getOwnTokenSaleData,
-  async (request, response, data) => {
-    const { user } = request.session;
-    if (config.DEPLOYMENT === 'staging') {
-      console.log("HEADERS", request.headers);
-    }
-    return await userHelper.getTokenSaleData(data.tokenSaleId, user?.id);
-  }
-);
-
-registerPostRoute<
-  API.User.getTokenSaleEvents.Request,
-  API.User.getTokenSaleEvents.Response
->(
-  userRouter,
-  '/getTokenSaleEvents',
-  validators.API.User.getTokenSaleEvents,
-  async (request, response, data) => {
-    return await userHelper.getTokenSaleEvents(data.tokenSaleId);
-  }
-);
-
-registerPostRoute<
-  API.User.claimTokenSaleReward.Request,
-  API.User.claimTokenSaleReward.Response
->(
-  userRouter,
-  '/claimTokenSaleReward',
-  validators.API.User.claimTokenSaleReward,
-  async (request, response, data) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-    const rewardClaimedSecurityData = {
-      ...request.headers,
+    await transferCreateUserLimiter(user.id);
+    const nextPath = transferNextPath(data.nextPath, target);
+    // with the minting session's generation: a sign-out of other devices
+    // after this (or one this session missed) leaves the link unusable
+    const { token, expiresAt } = await transferTokenHelper.create(user.id, nextPath, TRANSFER_LINK_TTL_MS, request.session.gen ?? 0);
+    return {
+      url: transferLinkUrl(target, token),
+      expiresAt: new Date(expiresAt).getTime(),
     };
-    return await userHelper.claimTokenSaleReward(data.tokenSaleId, user.id, rewardClaimedSecurityData);
   }
 );
 
 registerPostRoute<
-  API.User.saveTokenSaleTargetAddress.Request,
-  API.User.saveTokenSaleTargetAddress.Response
+  API.User.previewTransferLink.Request,
+  API.User.previewTransferLink.Response
 >(
   userRouter,
-  '/saveTokenSaleTargetAddress',
-  validators.API.User.saveTokenSaleTargetAddress,
+  '/previewTransferLink',
+  validators.API.User.previewTransferLink,
   async (request, response, data) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
+    // whose account a link signs in to — shown before the user confirms;
+    // the link stays usable
+    if (isLegacyCgidMode()) {
+      throw new Error(errors.server.NOT_SUPPORTED);
     }
-    return await userHelper.saveTokenSaleTargetAddress(user.id, data);
+    await transferFailureLimiter.assertBelow(request);
+    await transferRedeemIpLimiter(request, response);
+    const row = await transferTokenHelper.peek(data.token);
+    if (!row) {
+      await recordTransferFailure(request);
+      throw new Error(errors.server.TRANSFER_LINK_INVALID);
+    }
+    const ownData = await userHelper.getOwnDataById(row.userId);
+    const displayed = ownData.accounts.find(account => account.type === ownData.displayAccount);
+    return {
+      userId: row.userId,
+      displayName: getDisplayNameString(ownData),
+      // the unique handle (cg profile name), so look-alike names can't fool anyone
+      username: ownData.accounts.find(account => account.type === 'cg')?.displayName ?? null,
+      // the same for an account without a cg profile: a handle of a linked account
+      identity: transferIdentity(ownData),
+      imageId: displayed?.imageId ?? null,
+      expiresAt: new Date(row.expiresAt).getTime(),
+    };
+  }
+);
+
+/**
+ * A unique identifier of the account for the transfer confirmation, next to
+ * the free display name: the cg profile name, else the linked X handle, the
+ * Farcaster username or the Universal Profile address. Display names can be
+ * copied; none of these can.
+ */
+export function transferIdentity(ownData: Pick<Models.User.OwnData, 'accounts'>): API.User.previewTransferLink.Response['identity'] {
+  const account = (type: Models.User.ProfileItemType) => ownData.accounts.find(item => item.type === type);
+  const cg = account('cg');
+  if (cg?.displayName) {
+    return { type: 'cg', handle: cg.displayName };
+  }
+  // the X account's name is its handle (set from the X username when linked)
+  const twitter = account('twitter');
+  if (twitter?.displayName) {
+    return { type: 'twitter', handle: twitter.displayName };
+  }
+  const farcaster = account('farcaster');
+  if (farcaster?.extraData?.type === 'farcaster' && farcaster.extraData.username) {
+    return { type: 'farcaster', handle: farcaster.extraData.username };
+  }
+  const lukso = account('lukso');
+  if (lukso?.extraData?.type === 'lukso' && lukso.extraData.upAddress) {
+    return { type: 'lukso', handle: lukso.extraData.upAddress };
+  }
+  return null;
+}
+
+registerPostRoute<
+  API.User.declineTransferLink.Request,
+  API.User.declineTransferLink.Response
+>(
+  userRouter,
+  '/declineTransferLink',
+  validators.API.User.declineTransferLink,
+  async (request, response, data) => {
+    // "This isn't me": the link is used up without signing anyone in, so it
+    // cannot be opened again (from the browser history, say). The answer is
+    // the same whether or not the link was still usable.
+    if (isLegacyCgidMode()) {
+      throw new Error(errors.server.NOT_SUPPORTED);
+    }
+    await transferFailureLimiter.assertBelow(request);
+    await transferRedeemIpLimiter(request, response);
+    await transferTokenHelper.decline(data.token);
+  }
+);
+
+registerPostRoute<
+  API.User.redeemTransferLink.Request,
+  API.User.redeemTransferLink.Response
+>(
+  userRouter,
+  '/redeemTransferLink',
+  validators.API.User.redeemTransferLink,
+  async (request, response, data) => {
+    // before the link is checked (srv/util/sessionGenerations.ts)
+    await beginLogin(request);
+    // Signs in with a transfer link: never into an existing login (the app
+    // signs out first, after asking), a new session, and the session counts
+    // as authenticated by 'transfer' — enough to add what the account-security
+    // step asks for (srv/util/securityStep.ts requireAuthToAdd); for an
+    // account that is not in the step it is an ordinary sign-in, never a
+    // step-up.
+    if (isLegacyCgidMode()) {
+      throw new Error(errors.server.NOT_SUPPORTED);
+    }
+    if (request.session.user) {
+      throw new Error(errors.server.ALREADY_LOGGED_IN);
+    }
+    await transferFailureLimiter.assertBelow(request);
+    await transferRedeemIpLimiter(request, response);
+    const row = await transferTokenHelper.consume(data.token);
+    if (!row) {
+      await recordTransferFailure(request);
+      throw new Error(errors.server.TRANSFER_LINK_INVALID);
+    }
+    const { userId } = row;
+    const [ownData, communities, chats, { deviceId }, unreadNotificationCount] = await Promise.all([
+      userHelper.getOwnDataById(userId),
+      communityHelper.getOwnCommunities(userId),
+      chatHelper.getChats(userId),
+      deviceHelper.createDevice(userId, data.device.publicKey, loginGeneration(request)),
+      notificationHelper.getUnreadCount(userId),
+    ]);
+    const userAgent = UAParser(request.headers["user-agent"]);
+    await deviceHelper.updateDeviceInfo(deviceId, {
+      deviceBrowser: userAgent.browser.name,
+      deviceOS: userAgent.os.name,
+    });
+    await establishLoginSession(request, { userId, deviceId, method: 'transfer' });
+    return {
+      ownData,
+      communities,
+      chats,
+      deviceId,
+      webPushSubscription: null,
+      unreadNotificationCount,
+      securityStepRequired: await securityStepRequiredAfterLogin(request, userId),
+      nextPath: row.nextPath,
+    };
   }
 );
 

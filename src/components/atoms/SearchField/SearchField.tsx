@@ -4,7 +4,7 @@
 
 import React from 'react';
 import TextInputField from "../../molecules/inputs/TextInputField/TextInputField";
-import { ReactComponent as SearchIcon } from "../../atoms/icons/16/Search.svg";
+import SearchIcon from "../../atoms/icons/16/Search.svg?react";
 
 import './SearchField.css';
 

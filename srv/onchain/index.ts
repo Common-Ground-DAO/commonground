@@ -761,26 +761,6 @@ export async function getErc20Balance(
   return result;
 }
 
-export async function getTokensaleEvents(
-  chain: Models.Contract.ChainIdentifier,
-  contractAddress: Common.Address,
-  contractType: Models.Contract.SaleContractType,
-  fromBlock: number,
-  toBlock: number,
-  priority: OnchainPriority,
-): Promise<Models.Contract.SaleInvestmentEventJson[]> {
-  const { events } = await ethereumApi.requestData('investmentContract_getEvents', {
-    chain,
-    contractAddress,
-    contractType,
-    fromBlock,
-    toBlock,
-    priority,
-    retry: true,
-  });
-  return events;
-}
-
 export async function getBlockNumber(
   chain: Models.Contract.ChainIdentifier,
 ): Promise<number> {

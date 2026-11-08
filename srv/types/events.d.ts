@@ -5,6 +5,7 @@
 declare {
     namespace Events {
         type ClientEvent = (
+            Events.Bot.Event |
             Events.Community.Event |
             Events.Message.Event |
             Events.Notification.Event |
@@ -12,6 +13,7 @@ declare {
             Events.Chat.Event |
             Events.Calls.Event |
             Events.Channel.Event |
+            Events.Typing.Event |
             Events.CgId.Event
         );
 
@@ -112,21 +114,6 @@ declare {
                 signatureData: Models.Wallet.Wallet["signatureData"];
                 updatedAt: string;
                 deletedAt: string | null;
-                action: 'INSERT' | 'UPDATE';
-            };
-            type TokensaleChange = {
-                type: 'tokensalechange';
-                id: string;
-                saleContractChain: Models.Contract.ChainIdentifier;
-                saleContractAddress: Common.Address;
-                saleContractType: Models.Contract.SaleContractType;
-                targetTokenChain: Models.Contract.ChainIdentifier;
-                targetTokenAddress: Common.Address;
-                targetTokenDecimals: number;
-                recentUpdateBlockNumber: string;
-                startDate: string;
-                endDate: string;
-                createdAt: string;
                 action: 'INSERT' | 'UPDATE';
             };
         }

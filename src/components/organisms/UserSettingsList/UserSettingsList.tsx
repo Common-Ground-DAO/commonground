@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { useCallback, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import DropdownItem from "../../atoms/ListItem/ListItem";
 import LogOffModal from "../LogOffModal/LogOffModal";

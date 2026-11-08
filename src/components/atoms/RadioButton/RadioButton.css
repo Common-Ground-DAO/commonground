@@ -1,5 +1,7 @@
+@reference '../../../tailwind.css';
+
 .radiobutton {
-    @apply flex flex-row items-center py-2 px-3 gap-2 self-stretch flex-none order-none flex-grow-0;
+    @apply flex flex-row items-center py-2 px-3 gap-2 self-stretch flex-none order-none grow-0;
     border-radius: 6px;
     background-color: var(--inputBg);
 

@@ -14,7 +14,7 @@ import { HouseSimple } from "@phosphor-icons/react";
 import { useLoadedCommunityContext } from "context/CommunityProvider";
 import { CommunityPremiumFeatureName } from "common/enums";
 import Button from "components/atoms/Button/Button";
-import { createSearchParams, useNavigate } from "react-router-dom";
+import { createSearchParams, useNavigate } from "react-router";
 import { getUrl } from "common/util";
 import { useCommunityPremiumTier } from "hooks/usePremiumTier";
 
@@ -63,7 +63,7 @@ const BroadcastCards: React.FC<Props> = ({ mobileCollapsed }) => {
     }, [broadcastersArray, spotlightedPeer, activeSpeaker]);
 
     const broadcasterCards = useMemo(() => {
-        const result: Record<string, JSX.Element> = {};
+        const result: Record<string, React.JSX.Element> = {};
         for (const peer of sortedBroadcastersByPriority) {
             const actualUser = allUsers?.find(u => u.id === peer.id);
             if (actualUser) {

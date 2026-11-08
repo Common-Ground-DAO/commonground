@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React from 'react';
-import { ReactComponent as CheckmarkFilledIcon } from '../../../components/atoms/icons/16/CheckmarkFilled.svg';
+import CheckmarkFilledIcon from '../../../components/atoms/icons/16/CheckmarkFilled.svg?react';
 
 import './Step.css';
 

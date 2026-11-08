@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .society-card {
     @apply p-1 gap-2 flex flex-row items-center relative overflow-hidden;
     border-radius: 8px;

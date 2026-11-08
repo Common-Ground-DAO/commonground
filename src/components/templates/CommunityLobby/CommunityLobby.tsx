@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import { useCallback, useMemo, useRef } from "react";
 
 import { useMemberListContext } from "../../../components/organisms/MemberList/MemberListContext";
@@ -59,7 +60,7 @@ export default function CommunityLobby(props: Props) {
         setShowMemberList(old => !old);
     }, []);
 
-    const content: JSX.Element | null = useMemo(() => {
+    const content: React.JSX.Element | null = useMemo(() => {
         if (!!channel) {
             return (
                 <TextChannel

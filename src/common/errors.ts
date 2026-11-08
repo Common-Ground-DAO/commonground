@@ -8,6 +8,8 @@ const errors = {
     NOT_ALLOWED: "NOT_ALLOWED",
     NOT_FOUND: "NOT_FOUND",
     NOT_SUPPORTED: "NOT_SUPPORTED",
+    EMAIL_DISABLED: "EMAIL_DISABLED",
+    NEWSLETTER_DISABLED: "NEWSLETTER_DISABLED",
     UNKNOWN: "UNKNOWN",
     INVALID_REQUEST: "INVALID_REQUEST",
     INVALID_SECRET: "INVALID_SECRET",
@@ -19,7 +21,6 @@ const errors = {
     DUPLICATE_KEY: "DUPLICATE_KEY",
     SERVICE_UNAVAILABLE: "SERVICE_UNAVAILABLE",
     WALLET_ALREADY_IN_USE: "WALLET_ALREADY_IN_USE",
-    WALLET_NOT_ALLOWED_FOR_LOGIN: "WALLET_NOT_ALLOWED_FOR_LOGIN",
     WALLET_OWNERSHIP_CHANGE_7DAYS: "WALLET_OWNERSHIP_CHANGE_7DAYS",
     ROLE_LIMIT_EXCEEDED: "ROLE_LIMIT_EXCEEDED",
     NO_COMMUNITY_TOKEN: "NO_COMMUNITY_TOKEN",
@@ -42,12 +43,27 @@ const errors = {
     RATE_LIMIT_EXCEEDED: "RATE_LIMIT_EXCEEDED",
     LIMIT_EXCEEDED: "LIMIT_EXCEEDED",
     FILESIZE_EXCEEDED: "FILESIZE_EXCEEDED",
+    IMAGE_CONTENT_REJECTED: "IMAGE_CONTENT_REJECTED",
     EMAIL_VALIDATION_FAILED: "EMAIL_VALIDATION_FAILED",
     CALL_LIMIT_EXCEEDED: "CALL_LIMIT_EXCEEDED",
     BROADCASTERS_LIMIT_EXCEEDED: "BROADCASTERS_LIMIT_EXCEEDED",
     COMMUNITY_JOIN_IN_WAIT_PERIOD: "COMMUNITY_JOIN_IN_WAIT_PERIOD",
     PASSKEY_USER_NULL: "PASSKEY_USER_NULL",
     ALREADY_LOGGED_IN: "ALREADY_LOGGED_IN",
+    // a sensitive action needs a recent authentication: call
+    // User/reauthenticate, then retry the same request
+    REAUTH_REQUIRED: "REAUTH_REQUIRED",
+    // the action would leave the account without a way to sign in
+    LAST_LOGIN_METHOD: "LAST_LOGIN_METHOD",
+    // createUser without a sign-up address verified in this session
+    // (User/requestSignupEmailCode + User/verifySignupEmailCode)
+    EMAIL_VERIFICATION_REQUIRED: "EMAIL_VERIFICATION_REQUIRED",
+    // the account must finish the account-security step first (a sign-in
+    // method that works on this instance, a verified email, a new password):
+    // only the endpoints of that step are open (User/getSecurityStatus)
+    SECURITY_STEP_REQUIRED: "SECURITY_STEP_REQUIRED",
+    // a transfer link that is unknown, expired or already used
+    TRANSFER_LINK_INVALID: "TRANSFER_LINK_INVALID",
     SEND_ARTICLE_LIMIT_EXCEEDED: "SEND_ARTICLE_LIMIT_EXCEEDED",
     
     EVENT_SCHEDULE_IN_THE_PAST: 'EVENT_SCHEDULE_IN_THE_PAST',
@@ -63,17 +79,6 @@ const errors = {
     UPDATE_EVENT_CREATE_CALL_FAILED: 'UPDATE_EVENT_CREATE_CALL_FAILED',
     NOT_IMPLEMENTED: 'NOT_IMPLEMENTED',
     FAILED_TO_FETCH_ACCESS_TOKEN: 'FAILED_TO_FETCH_ACCESS_TOKEN',
-
-    WIZARD_SUCCESS_LIMIT_EXCEEDED: 'WIZARD_SUCCESS_LIMIT_EXCEEDED',
-    WIZARD_STEP_DATA_MISSING: 'WIZARD_STEP_DATA_MISSING',
-    KYC_MISSING: 'KYC_MISSING',
-    AGREEMENT_TO_TERMS_MISSING: 'AGREEMENT_TO_TERMS_MISSING',
-
-    CANNOT_CHANGE_REFERRER: 'CANNOT_CHANGE_REFERRER',
-    CANNOT_REFER_SELF: 'CANNOT_REFER_SELF',
-    CANNOT_SET_CIRCULAR_REFERRER: 'CANNOT_SET_CIRCULAR_REFERRER',
-    CANNOT_REFER_USER_WHO_BOUGHT_TOKENS: 'CANNOT_REFER_USER_WHO_BOUGHT_TOKENS',
-
     SIGNED_REQUEST_EXPIRED: 'SIGNED_REQUEST_EXPIRED',
     DUPLICATED_SIGNED_REQUEST: 'DUPLICATED_SIGNED_REQUEST',
 
@@ -82,6 +87,10 @@ const errors = {
   client: {
     LOGIN_REQUIRED: "This action requires a login",
     UPLOAD_SIZE_LIMIT: "Maximum upload size exceeded",
+    IMAGE_CONTENT_REJECTED: "This image appears to contain explicit content and was not uploaded",
+    // upload rate limit hit, or the NSFW gate is shedding load — both are
+    // transient and both mean the same thing to the person waiting
+    UPLOAD_BUSY: "Too many uploads at the moment — please try again shortly",
     NICKNAME_TAKEN: "This nickname is already taken",
     NOT_FOUND: "Not found",
     TIMEOUT: "Action timed out",

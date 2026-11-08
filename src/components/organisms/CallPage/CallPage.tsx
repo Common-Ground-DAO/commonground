@@ -5,8 +5,8 @@
 import './CallPage.css';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCallContext } from 'context/CallProvider';
-import data from 'data';
-import { useNavigate, useParams } from 'react-router-dom';
+import { chat } from 'data/chat/runtime';
+import { useNavigate, useParams } from 'react-router';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';
@@ -14,7 +14,7 @@ import { CallWidget } from './CallWidget';
 import { getUrl } from 'common/util';
 import { useMultipleUserData } from 'context/UserDataProvider';
 import MessageViewInner from 'views/MessageViewInner/MessageViewInner';
-import shortUUID from 'short-uuid';
+import { createTranslator } from 'short-uuid';
 import EmptyState from 'components/molecules/EmptyState/EmptyState';
 import Button from 'components/atoms/Button/Button';
 import { CallType, PredefinedRole } from 'common/enums';
@@ -26,9 +26,10 @@ import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal
 import JoinCommunityButton from 'components/atoms/JoinCommunityButton/JoinCommunityButton';
 import ReactionPicker from './ReactionPicker/ReactionPicker';
 import { useSnackbarContext } from 'context/SnackbarContext';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 dayjs.extend(relativeTime);
-const short = shortUUID();
+const short = createTranslator();
 
 const CallPage: React.FC = () => {
   const { community, calls, ownRoles } = useLoadedCommunityContext();
@@ -46,14 +47,15 @@ const CallPage: React.FC = () => {
   const { showSnackbar } = useSnackbarContext();
 
   const isCommunityMember = useMemo(() => {
-    return ownRoles.some(role => role.title === PredefinedRole.Member);
+    return ownRoles.some(role => isPredefinedRole(role, PredefinedRole.Member));
   }, [ownRoles]);
   const [showJoinCommunityModal, setShowJoinCommunityModal] = useState(!isCommunityMember);
 
   const currentCall = useMemo(() => {
     const call = calls.find(c => c.id === urlCallId);
     if (!!call) {
-      data.channelManager.registerAccessForChannel({
+      // registered during render, before the call chat's window opens
+      chat.channels.registerAccessForChannel({
         callId: call.id,
         channelId: call.channelId,
       });
@@ -96,22 +98,28 @@ const CallPage: React.FC = () => {
     isFullscreen ? 'full-screen' : ''
   ].join(' ').trim();
 
-  const renderChatOrAudience = useCallback(() => {
-    if (isMobile && currentCall?.callType === 'broadcast' && !showChat) {
+  // the call object is replaced on every calls update: depend on what the chat
+  // uses, and keep the element, so the call chat does not re-render with it
+  const currentCallId = currentCall?.id;
+  const currentCallChannelId = currentCall?.channelId;
+  const currentCallType = currentCall?.callType;
+  const chatOrAudience = useMemo(() => {
+    if (isMobile && currentCallType === 'broadcast' && !showChat) {
       return <Scrollable innerClassName='flex flex-col gap-4 p-4'>
         <AudienceList />
       </Scrollable>;
     }
 
     return <div className='call-chat'>
-      <MessageViewInner
-        channelId={currentCall?.channelId || ''}
+      {/* no window without a call: its channel and access are unknown */}
+      {!!currentCallId && !!currentCallChannelId && <MessageViewInner
+        channelId={currentCallChannelId}
         hideInput={urlCallId !== callId}
         onMobileFocus={setMobileFocused}
         callMode
-      />
+      />}
     </div>;
-  }, [isMobile, currentCall?.callType, currentCall?.channelId, showChat, urlCallId, callId]);
+  }, [isMobile, currentCallId, currentCallChannelId, currentCallType, showChat, urlCallId, callId]);
 
   const onJoinCall = useCallback((currentCall: Models.Calls.Call) => {
     if(currentCall.callMembers >= currentCall.slots){
@@ -164,7 +172,7 @@ const CallPage: React.FC = () => {
             standalone
           />
         </div>}
-        {renderChatOrAudience()}
+        {chatOrAudience}
         {isMobile && <ReactionPicker
           showPicker={showReactionPicker}
           closePicker={() => setShowReactionPicker(false)}

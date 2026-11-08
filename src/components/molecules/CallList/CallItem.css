@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .call-item {
     @apply flex py-2 px-3 flex-col gap-2 cursor-pointer;
     

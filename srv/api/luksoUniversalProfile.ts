@@ -8,9 +8,18 @@ import { registerPostRoute } from "./util";
 import validators from "../validators";
 import onchainHelper from "../repositories/onchain";
 import userHelper from "../repositories/users";
-import { SIGNABLE_SECRET_LENGTH } from "./user";
+import ipRateLimitHandler from "../util/rateLimit";
+import { AUTH_LIMITS } from "../util/authLimits";
+import { isGatewayMode } from "../util/gateway";
+import { assertLuksoSignInMessage } from "../util/luksoSignIn";
 
 const luksoUniversalProfileRouter = express.Router();
+
+// the check asks the chain (srv/util/authLimits.ts "preLogin")
+const signatureCheckLimiter = ipRateLimitHandler({
+  bucket: 'lukso:prepare-action',
+  ...AUTH_LIMITS.preLogin.signatureCheck,
+});
 
 registerPostRoute<
   API.Lukso.PrepareLuksoAction.Request,
@@ -20,17 +29,23 @@ registerPostRoute<
   '/PrepareLuksoAction',
   validators.API.Lukso.PrepareLuksoAction,
   async (request, response, data) => {
+    await signatureCheckLimiter(request, response);
     try {
-      const { signSecret } = request.session;
-      const secret = data.message.match(new RegExp(`Nonce: ([a-zA-Z0-9]{${SIGNABLE_SECRET_LENGTH}})`))?.[1];
-      if (!signSecret || secret !== signSecret) {
-        throw new Error(errors.server.INVALID_SECRET);
-      }
+      // a sign-in message made for this instance, with this session's nonce
+      // and recent (srv/util/luksoSignIn.ts)
+      assertLuksoSignInMessage(data.message, { address: data.address, nonce: request.session.signSecret });
       const isValidSignature = await onchainHelper.luksoIsValidSignature(data.address, data.signature, data.message);
       if (!isValidSignature) {
         throw new Error(errors.server.INVALID_SIGNATURE);
       }
+      // the nonce is used up: a second message needs a new one
+      delete request.session.signSecret;
       const universalProfileValid = !(await userHelper.isUniversalProfileAlreadyLinked(data.address));
+      if (universalProfileValid && isGatewayMode()) {
+        // a gateway (srv/util/gateway.ts) signs in existing accounts only: no
+        // profile lookup, no sign-up prepared
+        throw new Error(errors.server.ACCOUNT_DOES_NOT_EXIST);
+      }
       const universalProfileExists = await onchainHelper.luksoGetUniversalProfileData(data.address);
       const readyForLogin = universalProfileExists && !universalProfileValid;
       const readyForCreation = universalProfileExists && universalProfileValid;
@@ -43,6 +58,7 @@ registerPostRoute<
         signature: data.signature,
         description: universalProfileExists.description,
         existsAlready: !universalProfileValid,
+        preparedAt: Date.now(),
        };
       return { universalProfileValid, universalProfileExists: !!universalProfileExists, readyForLogin, readyForCreation, description: universalProfileExists.description, username: universalProfileExists.username, profileImageUrl: universalProfileExists.profileImageUrl };
     } catch (e: any) {
@@ -53,6 +69,8 @@ registerPostRoute<
       switch (e.message) {
         case errors.server.INVALID_SIGNATURE:
           throw new Error(errors.server.INVALID_SIGNATURE);
+        case errors.server.ACCOUNT_DOES_NOT_EXIST:
+          throw new Error(errors.server.ACCOUNT_DOES_NOT_EXIST);
         case errors.server.LUKSO_PROFILE_NOT_FOUND:
           throw new Error(errors.server.LUKSO_PROFILE_NOT_FOUND);
         case errors.server.LUKSO_FETCH_FAILED:

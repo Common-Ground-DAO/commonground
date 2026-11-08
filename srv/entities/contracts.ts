@@ -24,7 +24,10 @@ export class Contract {
     @Column({ type: 'bigint', nullable: true, select: false })
     updatedAtBlock!: string | null;
 
-    @ManyToMany(() => Role, (role) => role.contracts)
+    // the junction's foreign key to contracts was created without actions
+    // (migration 1676888170060); TypeORM 1.x defaults this inverse side to
+    // CASCADE, so the entity keeps the database's NO ACTION explicitly
+    @ManyToMany(() => Role, (role) => role.contracts, { onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
     roles!: Role[];
 
     @OneToMany(() => WalletBalance, (walletBalance) => walletBalance.contract)

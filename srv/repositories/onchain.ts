@@ -3,14 +3,28 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import axios from "../util/axios";
+import errors from "../common/errors";
 import pool from "../util/postgres";
 import { OnchainPriority } from "../onchain/scheduler";
+
+// Deployments can leave the onchain service out entirely (selfhost:
+// CG_ENABLE_BLOCKCHAIN=false). Fail fast instead of making every caller wait
+// out the 10s axios timeout for a host that is not there.
+// NOTE: the compose files inject CG_ENABLE_BLOCKCHAIN into the `api` service
+// only — that is where every current caller lives. A caller added to wsapi,
+// job-runner or memberlist would read "enabled" here even on an instance that
+// runs without the service, so add the variable to that service's environment
+// when it gets its first onchain call.
+const blockchainEnabled = process.env.CG_ENABLE_BLOCKCHAIN !== 'false';
 
 class OnchainHelper {
   async #request(
     path: `/${string}`,
     data: any,
   ) {
+    if (!blockchainEnabled) {
+      throw new Error(errors.server.SERVICE_UNAVAILABLE);
+    }
     // Using axios
     const url = `http://onchain:4000${path}`;
     const response = await axios.post(url, data, {
@@ -66,6 +80,11 @@ class OnchainHelper {
     roleId: string;
     claimable: boolean;
   }[]> {
+    // the join and roles views ask on every visit: without the onchain
+    // service, no token-gated role can be claimed, which is a valid answer
+    if (!blockchainEnabled) {
+      return [];
+    }
     const result = await this.#request('/checkCommunityRoleClaimability', data);
     console.log(result);
     return result.data;
@@ -113,8 +132,10 @@ class OnchainHelper {
       signature: string,
       message: string
   ): Promise<boolean> {
-    const result = await this.#request('/luksoIsValidSignature', {address, signature, message});
-    return result;
+    // The onchain service answers with `{ isValidSignature: boolean }`; only
+    // an explicit `true` in that field counts as a valid signature.
+    const result: { isValidSignature?: unknown } | undefined = await this.#request('/luksoIsValidSignature', {address, signature, message});
+    return result?.isValidSignature === true;
   }
 
   public async luksoGetUniversalProfileData(
@@ -163,23 +184,6 @@ class OnchainHelper {
   ): Promise<`${number}`> {
     const result: { balance: `${number}` } = await this.#request('/getErc20Balance', { chain, contractAddress, walletAddress });
     return result.balance;
-  }
-
-  public async getTokensaleEvents(
-    chain: Models.Contract.ChainIdentifier,
-    contractAddress: Common.Address,
-    contractType: Models.Contract.SaleContractType,
-    fromBlock: number,
-    toBlock: number,
-  ): Promise<Models.Contract.SaleInvestmentEventJson[]> {
-    const result = await this.#request('/getTokensaleEvents', {
-      chain,
-      contractAddress,
-      contractType,
-      fromBlock,
-      toBlock,
-    });
-    return result;
   }
 
   public async getBlockNumber(

@@ -1,3 +1,5 @@
+@reference '../../tailwind.css';
+
 .desktop-layout {
   .blog-view {
     @apply h-full;
@@ -33,7 +35,7 @@
     }
 
     >.user-profile-details {
-      @apply flex-grow;
+      @apply grow;
       grid-row: start / end;
     }
   }

@@ -2,9 +2,9 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes } from "react-router";
 
-import { ReactComponent as SpinnerIcon } from '../../components/atoms/icons/16/Spinner.svg';
+import SpinnerIcon from '../../components/atoms/icons/16/Spinner.svg?react';
 
 import config from "common/config";
 import { useSafeProfileContext } from "context/ProfileProvider";

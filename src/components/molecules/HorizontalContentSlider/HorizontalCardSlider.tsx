@@ -3,14 +3,13 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React from 'react'
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
 
 import Button from "../../../components/atoms/Button/Button";
-import { ReactComponent as ArrowLeftIcon } from '../../../components/atoms/icons/24/ArrowLeft.svg';
+import ArrowLeftIcon from '../../../components/atoms/icons/24/ArrowLeft.svg?react';
 
 import "./HorizontalCardSlider.css";
-import { useEcosystemContext } from 'context/EcosystemProvider';
 import { getUrl } from 'common/util';
 
 export type PositionData = {
@@ -20,7 +19,7 @@ export type PositionData = {
 
 type Props = {
   mode: 'limited' | 'unlimited';
-  title?: JSX.Element;
+  title?: React.JSX.Element;
   className?: string;
   positionCallback?: (data: PositionData) => void;
 }
@@ -28,7 +27,6 @@ type Props = {
 export default function HorizontalCardSlider(props: React.PropsWithChildren<Props>) {
   const { mode, title, className, positionCallback, children } = props;
   const navigate = useNavigate();
-  const { ecosystem } = useEcosystemContext();
   const { isMobile, isTablet, isSmallTablet } = useWindowSizeContext();
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [isLeftMost, setIsLeftMost] = React.useState(true);

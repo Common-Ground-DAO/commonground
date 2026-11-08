@@ -7,11 +7,12 @@ import './GenericArticle.css';
 import Button from '../../../components/atoms/Button/Button';
 import UserTag from '../../atoms/UserTag/UserTag';
 import { useSignedUrl } from '../../../hooks/useSignedUrl';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import useLocalStorage, { ReadArticlesState } from '../../../hooks/useLocalStorage';
 import dayjs from 'dayjs';
 import ShareButton from '../../../components/atoms/ShareButton/ShareButton';
 import { AllContentRenderer } from '../../../components/molecules/MesssageBodyRenderer/MessageBodyRenderer';
+import MarkdownContent, { toMarkdownSource } from '../../../components/molecules/MesssageBodyRenderer/MarkdownContent';
 import ContentSlider from '../../../components/molecules/ContentSlider/ContentSlider';
 
 import { ArrowLeftCircleIcon, ArrowLeftIcon, PencilIcon } from '@heroicons/react/20/solid';
@@ -19,11 +20,13 @@ import { useUserData } from 'context/UserDataProvider';
 import LoginBanner from 'components/molecules/LoginBanner/LoginBanner';
 import { useOwnUser } from 'context/OwnDataProvider';
 import GatedDialogModal, { CalculatedPermission } from '../GatedDialogModal/GatedDialogModal';
-import { ArrowsOutSimple, Chat, Spinner } from '@phosphor-icons/react';
+import { ArrowsOutSimple, Chat, Flag, Spinner } from '@phosphor-icons/react';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import Tag, { TagIcon } from 'components/atoms/Tag/Tag';
 import { tagStringToPredefinedTag } from 'components/molecules/inputs/TagInputField/TagInputField';
 import ArticleCommentSection from '../ArticleCommentSection/ArticleCommentSection';
+import { useReportModalContext } from 'context/ReportModalProvider';
+import { ReportType } from 'common/enums';
 
 const RELATED_ARTICLE_LIMIT = 3;
 
@@ -50,6 +53,7 @@ function formatDate(date: Date): string {
 const GenericArticle: React.FC<Props> = ({ article, itemArticle, url, isLoading, error, canEdit, moreArticles, sidebarMode, goBack, gatedState, showGatedDialog, setShowGatedDialog }) => {
   const navigate = useNavigate();
   const ownUser = useOwnUser();
+  const { showReportModal } = useReportModalContext();
   const { isMobile } = useWindowSizeContext();
   const [, setContentReadState] = useLocalStorage<ReadArticlesState>({}, 'content-read-state');
   const imageUrl = useSignedUrl(article?.headerImageId);
@@ -75,7 +79,7 @@ const GenericArticle: React.FC<Props> = ({ article, itemArticle, url, isLoading,
     });
   }, [article, setContentReadState]);
 
-  let content: JSX.Element;
+  let content: React.JSX.Element;
   // Loading
   if (isLoading) {
     content = <div className='articleViewLoading'>
@@ -96,7 +100,7 @@ const GenericArticle: React.FC<Props> = ({ article, itemArticle, url, isLoading,
     // Actual article
     const publishedDate = itemArticle?.published;
 
-    let sectionEnd: JSX.Element | null = null;
+    let sectionEnd: React.JSX.Element | null = null;
 
     if (!sidebarMode) {
       sectionEnd = <Button role='secondary' className='section-end-button' onClick={goBack} text='Back' />;
@@ -159,6 +163,12 @@ const GenericArticle: React.FC<Props> = ({ article, itemArticle, url, isLoading,
                 buttonText='Share' contentTitle={article?.title || ''}
                 contentText={`Read "${article?.title}" on Common Ground`}
               />
+              {ownUser && article && ownUser.id !== article.creatorId && <Button
+                iconLeft={<Flag weight='duotone' className='w-5 h-5' />}
+                role='chip'
+                text='Report'
+                onClick={() => showReportModal({ type: ReportType.ARTICLE, targetId: article.articleId })}
+              />}
               {canEdit && <Button
                 iconLeft={<PencilIcon className='w-5 h-5' />}
                 role='chip'
@@ -171,7 +181,7 @@ const GenericArticle: React.FC<Props> = ({ article, itemArticle, url, isLoading,
           <div className='articleViewDivider' />
         </div>
         <div className='articleViewText'>
-          {article?.content.version === '1' && article?.content.text}
+          {article?.content.version === '1' && <MarkdownContent source={toMarkdownSource(article.content.text.split('\n'))} />}
           {article?.content.version === '2' && <AllContentRenderer content={article?.content.content} showMidwayLoginBanner renderInternalLinks />}
         </div>
         <div className='articleViewDivider long' />

@@ -1,3 +1,5 @@
+@reference '../../../../../tailwind.css';
+
 .area-item {
     @apply flex flex-col gap-2 cg-border-l;
     border: 1px solid var(--cardBorder);

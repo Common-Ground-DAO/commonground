@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef } from "react";
 
 // Updates the height of a <textarea> when the value changes.
 const useAutosizeTextArea = (
-  textAreaRef: React.RefObject<HTMLTextAreaElement> | null,
+  textAreaRef: React.RefObject<HTMLTextAreaElement | null> | null,
   value: string
 ) => {
   const textArea = textAreaRef?.current;

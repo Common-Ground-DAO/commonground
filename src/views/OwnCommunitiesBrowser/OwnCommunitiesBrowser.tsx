@@ -2,8 +2,9 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import './OwnCommunitiesBrowser.css';
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import EmptyState from "../../components/molecules/EmptyState/EmptyState";
 import OwnCommunityCard from "./OwnCommunityCard";
 import CreateCommunityCircleButton from "../../components/molecules/CreateCommunityButton/CreateCommunityCircleButton";
@@ -13,30 +14,30 @@ import { useCommunitySidebarContext } from "components/organisms/CommunityViewSi
 
 import { UserGroupIcon } from '@heroicons/react/24/outline';
 
-import { useOwnCommunities, useOwnUser } from "context/OwnDataProvider";
+import { useSortableOwnCommunities } from "hooks/useSortableOwnCommunities";
 import { getUrl } from 'common/util';
-import { DragDropContext, Draggable, DropResult, Droppable } from "react-beautiful-dnd";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import data from "data";
+import { DndContext, DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { dragAnnouncements, listCollisionDetection, useDragSensors } from "hooks/useDragSensors";
+import { useCallback, useMemo, useState } from "react";
 import Scrollable from 'components/molecules/Scrollable/Scrollable';
-import { Bell, Brain, ChatsTeardrop, CoinVertical, Compass, HouseSimple, Plus, Storefront } from '@phosphor-icons/react';
+import { Bell, ChatsTeardrop, CoinVertical, Compass, HouseSimple, Plus, Storefront } from '@phosphor-icons/react';
 import { isActiveButton } from 'components/organisms/Menu/ExpandedMenu/ExpandedMenu';
-import config from 'common/config';
 
 type Properties = {
   isExpanded: boolean;
-  contentRef: React.RefObject<HTMLDivElement>;
+  contentRef: React.RefObject<HTMLDivElement | null>;
 }
 
 export default function OwnCommunitiesBrowser(props: Properties) {
-  const delayedSaveTimeoutRef = useRef<any>(null);
-  const ownUser = useOwnUser();
-  const ownCommunities = useOwnCommunities();
   const { isExpanded, contentRef } = props;
   const { isMobile } = useWindowSizeContext();
   const { setVisible } = useCreateCommunityModalContext();
   const { setCommunitySidebarIsOpen } = useCommunitySidebarContext();
-  const [sortedCommunities, setSortedCommunities] = useState(ownCommunities);
+  const { sortedCommunities, communityIds, moveCommunity } = useSortableOwnCommunities(200);
+  const [draggingOver, setDraggingOver] = useState(false);
+  const sensors = useDragSensors();
   const navigate = useNavigate();
 
   const navigateToHome = useCallback(() => {
@@ -48,117 +49,62 @@ export default function OwnCommunitiesBrowser(props: Properties) {
     }
   }, [navigate, setCommunitySidebarIsOpen]);
 
-  const sortCommunities = useCallback((orderedCommunityIds: string[]) => {
-    const sortedCommunities: Models.Community.DetailView[] = [];
-    orderedCommunityIds.forEach(communityId => {
-      const foundCommunity = ownCommunities?.find(community => community.id === communityId);
-      if (foundCommunity) {
-        sortedCommunities.push(foundCommunity);
-      }
-    });
-    return sortedCommunities;
-  }, [ownCommunities]);
-
-  useEffect(() => {
-    const orderedCommunityIds = ownUser?.communityOrder || [];
-    const sortedCommunities = sortCommunities(orderedCommunityIds);
-    setSortedCommunities(sortedCommunities);
-  }, [ownUser?.communityOrder, sortCommunities]);
-
-  const updateCommunityOrder = useCallback((draggedCommunityId: string, sourceIndex: number, destinationIndex: number) => {
-    const delayDebouncedSave = (orderedCommunityIds: string[], timeout: number) => {
-      if (delayedSaveTimeoutRef.current) {
-        clearTimeout(delayedSaveTimeoutRef.current);
-      }
-      delayedSaveTimeoutRef.current = setTimeout(() => {
-        (async () => {
-          if (!!ownUser) {
-            await data.user.updateOwnData({ communityOrder: orderedCommunityIds });
-          }
-        })();
-        delayedSaveTimeoutRef.current = null;
-      }, timeout);
+  const onDragEnd = useCallback((event: DragEndEvent) => {
+    setDraggingOver(false);
+    const { active, over } = event;
+    if (!over || active.id === over.id) {
+      return;
     }
-
-    const communityOrder = ownUser?.communityOrder || [];
-    const index = communityOrder.findIndex(communityId => communityId === draggedCommunityId);
-    const orderedCommunityIds = [...communityOrder];
-    orderedCommunityIds.splice(index, 1);
-    orderedCommunityIds.splice(destinationIndex, 0, draggedCommunityId);
-
-    const sortedCommunities = sortCommunities(orderedCommunityIds);
-    setSortedCommunities(sortedCommunities);
-    delayDebouncedSave(orderedCommunityIds, 200);
-  }, [ownUser?.communityOrder]);
-
-  const onDragEnd = useCallback(async (result: DropResult) => {
-    const { draggableId, type, destination, source } = result;
-    if (type === 'communities') {
-      const changedLocation = !!source && !!destination && destination.droppableId === source.droppableId && destination.index !== source.index;
-      if (changedLocation) {
-        const draggedCommunity = ownCommunities.find(community => community.id === draggableId);
-        if (draggedCommunity) {
-          updateCommunityOrder(draggedCommunity.id, source.index, destination.index);
-        }
-      }
+    const sourceIndex = communityIds.indexOf(String(active.id));
+    const destinationIndex = communityIds.indexOf(String(over.id));
+    if (sourceIndex < 0 || destinationIndex < 0 || sourceIndex === destinationIndex) {
+      return;
     }
-  }, [ownCommunities, updateCommunityOrder]);
+    moveCommunity(sourceIndex, destinationIndex);
+  }, [communityIds, moveCommunity]);
 
   const communitiesMemo = useMemo(() => {
     if (!!sortedCommunities && sortedCommunities.length > 0) {
-      return <Droppable
-        droppableId="communities"
-        type="communities"
-      >
-        {(provided, snapshot) => (
-          <div
-            {...provided.droppableProps}
-            ref={provided.innerRef}
-            className={[
-              'own-communities-content column-view',
-              snapshot.isDraggingOver ? 'dragging-over' : ''
-            ].join(' ').trim()}
-          >
-            {sortedCommunities.map((community, index) => {
-              // FIXME: unread should reflect the real value
-              return <Draggable
-                key={community.id}
-                draggableId={community.id}
-                index={index}
-              >
-                {(provided, snapshot) => (
-                  <div
-                    {...provided.draggableProps}
-                    {...provided.dragHandleProps}
-                    ref={provided.innerRef}
-                    className={snapshot.isDragging ? 'draggable-container dragging' : 'draggable-container'}
-                  >
-                    <OwnCommunityCard
-                      key={community.id}
-                      community={community}
-                      size='small'
-                      hideNewTag
-                      collapsed={!isExpanded}
-                    />
-                  </div>
-                )}
-              </Draggable>
-            })}
-            {provided.placeholder}
-          </div>
-        )}
-      </Droppable>;
+      // `column-view` is a single flex column of variable-height cards.
+      return <SortableContext items={communityIds} strategy={verticalListSortingStrategy}>
+        <div
+          className={[
+            'own-communities-content column-view',
+            draggingOver ? 'dragging-over' : ''
+          ].join(' ').trim()}
+        >
+          {sortedCommunities.map(community => {
+            // FIXME: unread should reflect the real value
+            return <SortableCommunityCard
+              key={community.id}
+              community={community}
+              collapsed={!isExpanded}
+            />
+          })}
+        </div>
+      </SortableContext>;
     }
     else {
       return null;
     }
-  }, [sortedCommunities, isExpanded])
+  }, [sortedCommunities, communityIds, draggingOver, isExpanded])
 
   if (isMobile) {
     return (
       <Scrollable className='community-icons' hideOnNoScroll>
         <div className='own-communities' ref={contentRef}>
-          <DragDropContext onDragEnd={onDragEnd}>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={listCollisionDetection}
+            accessibility={{ announcements: dragAnnouncements }}
+            onDragStart={() => setDraggingOver(true)}
+            // rbd's isDraggingOver was on only while hovering the list, not
+            // for the whole drag — with the cancel-outside collision rule,
+            // `over` tracks it.
+            onDragOver={event => setDraggingOver(!!event.over)}
+            onDragCancel={() => setDraggingOver(false)}
+            onDragEnd={onDragEnd}
+          >
             <div className='own-communities-content-container'>
               <MobileMenuOption
                 icon={<Compass weight='duotone' className='h-6 w-6' />}
@@ -168,7 +114,7 @@ export default function OwnCommunitiesBrowser(props: Properties) {
               />
               <MobileMenuOption
                 icon={<CoinVertical weight='duotone' className='h-6 w-6' />}
-                text='Token Sale'
+                text='Stake'
                 active={isActiveButton(window.location.pathname, getUrl({type: 'token'}))}
                 onClick={() => {
                   setCommunitySidebarIsOpen(false);
@@ -184,15 +130,6 @@ export default function OwnCommunitiesBrowser(props: Properties) {
                   navigate(getUrl({ type: 'chats' }));
                 }}
               />
-              {config.PERSONAL_ASSISTANT_ENABLED && <MobileMenuOption
-                icon={<Brain weight='duotone' className='h-6 w-6' />}
-                text='Assistant'
-                active={isActiveButton(window.location.pathname, getUrl({type: 'assistant'}))}
-                onClick={() => {
-                  setCommunitySidebarIsOpen(false);
-                  navigate(getUrl({ type: 'assistant' }));
-                }}
-              />}
               <MobileMenuOption
                 icon={<Bell weight='duotone' className='h-6 w-6' />}
                 text='Notifications'
@@ -233,7 +170,7 @@ export default function OwnCommunitiesBrowser(props: Properties) {
                 )}
               </div>
             </div>
-          </DragDropContext>
+          </DndContext>
         </div>
       </Scrollable>
     );
@@ -244,8 +181,46 @@ export default function OwnCommunitiesBrowser(props: Properties) {
   }
 }
 
+type SortableCommunityCardProps = {
+  community: Models.Community.DetailView;
+  collapsed: boolean;
+};
+
+/** The whole card is the drag handle, as it was under react-beautiful-dnd. */
+function SortableCommunityCard(props: SortableCommunityCardProps) {
+  const { community, collapsed } = props;
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
+    useSortable({ id: community.id, data: { label: `community ${community.title}` } });
+
+  return (
+    <div
+      // Node and keyboard activator in one: registering the activator restores
+      // dnd-kit's `event.target` guard, so Space on a focused descendant is
+      // not hijacked into a drag lift.
+      ref={element => { setNodeRef(element); setActivatorNodeRef(element); }}
+      {...attributes}
+      {...listeners}
+      style={{
+        // Translate only — a scale component distorts cards of different sizes.
+        transform: CSS.Translate.toString(transform),
+        transition,
+        position: 'relative',
+        zIndex: isDragging ? 5000 : undefined,
+      }}
+      className={isDragging ? 'draggable-container dragging' : 'draggable-container'}
+    >
+      <OwnCommunityCard
+        community={community}
+        size='small'
+        hideNewTag
+        collapsed={collapsed}
+      />
+    </div>
+  );
+}
+
 type MobileMenuOptionProps = {
-  icon: JSX.Element;
+  icon: React.JSX.Element;
   text: string;
   active?: boolean;
   onClick: () => void;

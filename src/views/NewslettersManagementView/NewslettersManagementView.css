@@ -1,3 +1,5 @@
+@reference '../../tailwind.css';
+
 .desktop-layout {
   .newsletters-management-view {
     @apply h-full;

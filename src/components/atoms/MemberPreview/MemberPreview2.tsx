@@ -10,7 +10,7 @@ type Props = {
   memberIds: string[];
   memberCount: number;
   limit?: number;
-  rightElement?: JSX.Element | string;
+  rightElement?: React.JSX.Element | string;
   vertical?: boolean;
   forceShowRightElement?: boolean;
 };

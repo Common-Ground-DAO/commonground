@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import signatureHelper, { MetamaskData } from '../../../util/signatureHelper';
 import { useWindowSizeContext } from '../../../context/WindowSizeProvider';
@@ -12,8 +12,8 @@ import Button from '../../../components/atoms/Button/Button';
 import { isLocalUrl } from '../../../components/atoms/SimpleLink/SimpleLink';
 import Tag from '../../../components/atoms/Tag/Tag';
 
-import { ReactComponent as CloseIcon } from '../../../components/atoms/icons/16/Close.svg';
-import { ReactComponent as GreenStatusIcon } from '../../../components/atoms/icons/24/GreenStatus.svg';
+import CloseIcon from '../../../components/atoms/icons/16/Close.svg?react';
+import GreenStatusIcon from '../../../components/atoms/icons/24/GreenStatus.svg?react';
 import FractalLogoSrc from '../../../static/fractal.png';
 import { useOwnUser } from 'context/OwnDataProvider';
 

@@ -9,7 +9,7 @@ import MobileVoiceCallManager from "../../components/organisms/MobileVoiceCallMa
 import UserOnboarding from '../../components/organisms/UserOnboarding/UserOnboarding';
 import CommunityViewSidebar from "../../components/organisms/CommunityViewSidebar/CommunityViewSidebar";
 import { MobileProvider } from "../../context/MobileContext";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 import { getMobileOperatingSystem } from "components/organisms/MobileMenu/util";
 import { useCallContext } from "context/CallProvider";
 import { useNotificationContext } from "context/NotificationProvider";

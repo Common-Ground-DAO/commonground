@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import { PropsWithChildren, useMemo } from "react";
 // import Menu from "../../components/organisms/Menu/Menu";
 import ExpandedMenu from "components/organisms/Menu/ExpandedMenu/ExpandedMenu";
@@ -9,7 +10,7 @@ import Scrollable from "../../components/molecules/Scrollable/Scrollable";
 import UserOnboarding from '../../components/organisms/UserOnboarding/UserOnboarding';
 import './DesktopLayout.css';
 import config from "common/config";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 
 type Props = {
   useScrollbar?: boolean;
@@ -29,7 +30,7 @@ export default function DesktopLayout(props: PropsWithChildren<Props>) {
     isMenuExpanded ? '' : 'menu-collapsed'
   ].join(' ').trim();
 
-  let content: JSX.Element = (
+  let content: React.JSX.Element = (
     <div className="content">
       {props.children}
     </div>

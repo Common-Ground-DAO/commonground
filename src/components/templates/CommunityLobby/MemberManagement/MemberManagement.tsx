@@ -3,8 +3,8 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
-import { FloatingDelayGroup } from "@floating-ui/react-dom-interactions";
+import { useNavigate } from "react-router";
+import { FloatingDelayGroup } from "@floating-ui/react";
 
 import { useLoadedCommunityContext } from "../../../../context/CommunityProvider";
 import { useCommunitySidebarContext } from "../../../../components/organisms/CommunityViewSidebar/CommunityViewSidebarContext";
@@ -22,6 +22,12 @@ import Button from "components/atoms/Button/Button";
 import { getDisplayName } from "../../../../util";
 import communityApi from "data/api/community";
 import ManagementHeader2 from "components/molecules/ManagementHeader2/ManagementHeader2";
+import BotBadge from "components/atoms/BotBadge/BotBadge";
+import { cssBackgroundImage } from 'util/cssBackground';
+import { isMemberListRefusal, pollChannelMemberList } from 'util/channelMemberListPolling';
+import JoinCommunityButton from "components/atoms/JoinCommunityButton/JoinCommunityButton";
+import { useOwnUser } from "context/OwnDataProvider";
+import { memberListRefusalPrompt } from 'util/memberListRefusalPrompt';
 
 const WINDOW_SIZE = 80;
 const MEMBER_ITEM_HEIGHT = 81;
@@ -30,7 +36,8 @@ export default function MemberManagement() {
   const navigate = useNavigate();
   const { isMobile } = useWindowSizeContext();
   const { showLeaveGroupModal, setShowLeaveGroupModal } = useCommunitySidebarContext();
-  const { community, rolesById, roles } = useLoadedCommunityContext();
+  const { community, rolesById, roles, ownRoles } = useLoadedCommunityContext();
+  const isCommunityMember = ownRoles.length > 0;
   const [search, setSearch] = useState<string | undefined>();
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [memberListData, setMemberListData] = useState<{
@@ -38,37 +45,47 @@ export default function MemberManagement() {
     offset: number;
   }>();
   const [offset, setOffset] = useState<number>(0);
+  // the full member list is for members of the community; anyone else is
+  // refused, and asking again does not help until they join
+  const [refusal, setRefusal] = useState<{ error: unknown }>();
+  const refused = !!refusal;
+  const ownUser = useOwnUser();
+  const isLoggedIn = !!ownUser;
   const visibleIndicesRef = React.useRef<Set<number>>(new Set());
   const retrievalDebouceRef = React.useRef<any>(undefined);
   const nextOffsetRef = React.useRef<number | undefined>(undefined);
 
-  const updateMemberList = useCallback(() => {
-    if (!community) {
-      return;
-    }
-    communityApi.getMemberList({
-      communityId: community.id,
-      offset,
-      limit: WINDOW_SIZE,
-      search: search || undefined,
-      roleId: roleFilter === 'all' ? undefined : roleFilter,
-    }).then(res => {
-      setMemberListData({
-        memberList: res,
-        offset,
-      });
-    }).catch(err => {
-      setMemberListData(undefined);
-      console.log(err);
-    });
-  }, [community, search, roleFilter, offset]);
-
+  const communityId = community.id;
   useEffect(() => {
-    let interval: any;
-    updateMemberList();
-    interval = setInterval(updateMemberList, 5000);
-    return () => clearInterval(interval);
-  }, [updateMemberList]);
+    setRefusal(undefined);
+    // polls every few seconds, and stops after a refusal; joining the
+    // community (isCommunityMember) or logging in starts it again
+    return pollChannelMemberList({
+      canRead: true,
+      load: () => communityApi.getMemberList({
+        communityId,
+        offset,
+        limit: WINDOW_SIZE,
+        search: search || undefined,
+        roleId: roleFilter === 'all' ? undefined : roleFilter,
+      }),
+      onResult: res => {
+        setMemberListData({
+          memberList: res,
+          offset,
+        });
+      },
+      onError: err => {
+        setMemberListData(undefined);
+        if (isMemberListRefusal(err)) {
+          setRefusal({ error: err });
+        }
+        else {
+          console.log(err);
+        }
+      },
+    });
+  }, [communityId, search, roleFilter, offset, isCommunityMember, ownUser?.id]);
 
   useEffect(() => {
     visibleIndicesRef.current = new Set();
@@ -134,7 +151,7 @@ export default function MemberManagement() {
   }, [roles, memberListData]);
 
   const memberItems = useMemo(() => {
-    const items: JSX.Element[] = [];
+    const items: React.JSX.Element[] = [];
     if (!memberListData) return items;
     const { memberList, offset } = memberListData;
 
@@ -196,7 +213,26 @@ export default function MemberManagement() {
     return items;
   }, [memberListData, memberListConcat, rolesById, userData]);
 
-  const memberManagementContent = useMemo(() => <div className="members-list cg-text-main">
+  const memberManagementContent = useMemo(() => refused ? <div className="members-list cg-text-main">
+    <div className="flex flex-col items-center gap-4 py-8 text-center">
+      <p className="section-title">Members of {community.title}</p>
+      {(() => {
+        switch (memberListRefusalPrompt({ error: refusal?.error, isLoggedIn, community })) {
+          case 'pending':
+            return <p className="cg-text-secondary">The member list is shown once your request to join is approved.</p>;
+          case 'banned':
+            return <p className="cg-text-secondary">The member list is shown to members of the community.</p>;
+          case 'login':
+            return <p className="cg-text-secondary">Log in again to see the members of the community.</p>;
+          case 'join':
+            return <>
+              <p className="cg-text-secondary">Join the community to see its members.</p>
+              <JoinCommunityButton community={community} className="w-full max-w-xs" />
+            </>;
+        }
+      })()}
+    </div>
+  </div> : <div className="members-list cg-text-main">
     <div className="flex flex-col gap-4">
       <p className="section-title">{memberListData?.memberList.totalCount} Members of {community.title}</p>
       <div
@@ -239,7 +275,7 @@ export default function MemberManagement() {
         {memberItems}
       </FloatingDelayGroup>
     </div>
-  </div>, [memberListData, community.title, isMobile, roleFilter, roleFilterItems, search, memberItems]);
+  </div>, [refused, refusal, isLoggedIn, community, memberListData, isMobile, roleFilter, roleFilterItems, search, memberItems]);
 
   if (isMobile) {
     return (
@@ -295,7 +331,7 @@ const MemberItem: React.FC<MemberItemProps> = ({ data, index }) => {
       return null;
     }
     return <div className="flex gap-0.5 items-center flex-nowrap overflow-x-hidden">
-      {data.roles.reduce<(JSX.Element | string)[]>(
+      {data.roles.reduce<(React.JSX.Element | string)[]>(
         (agg, role) => {
           agg.push(
             <span className={`member-list-role`} key={role.id}>
@@ -323,7 +359,7 @@ const MemberItem: React.FC<MemberItemProps> = ({ data, index }) => {
           height: `${height}px`,
           minHeight: `${height}px`,
           padding: "8px 12px 8px 4px",
-          backgroundImage: `url("${svg}")`,
+          backgroundImage: cssBackgroundImage(svg),
           backgroundRepeat: "repeat-y",
           backgroundSize: "5000px 81px",
           backgroundPosition: "0 0",
@@ -350,7 +386,10 @@ const MemberItem: React.FC<MemberItemProps> = ({ data, index }) => {
         <div className="flex gap-2">
           <Jdenticon userId={data.user.id} />
           <div className='member-item-text'>
-            <span className="member-display-name">{getDisplayName(data.user)}</span>
+            <span className="member-display-name flex items-center gap-1">
+              {getDisplayName(data.user)}
+              {data.user.isBot && <BotBadge />}
+            </span>
             {roleElement}
           </div>
         </div>

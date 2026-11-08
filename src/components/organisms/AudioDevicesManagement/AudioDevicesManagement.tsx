@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 
-import { ReactComponent as CheckmarkIcon } from '../../../components/atoms/icons/16/Checkmark.svg';
+import CheckmarkIcon from '../../../components/atoms/icons/16/Checkmark.svg?react';
 import { VideoCameraIcon } from '@heroicons/react/20/solid';
 import { MicrophoneIcon } from '@heroicons/react/20/solid';
 import { useCallDevicesContext } from 'context/CallDevicesProvider';

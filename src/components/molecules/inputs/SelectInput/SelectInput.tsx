@@ -2,12 +2,13 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import Select, { Options, SingleValue } from "react-select";
 import "./SelectInput.css";
 
 type Props<T> = {
-    selectedValue: SingleValue<{value: T, label: string | JSX.Element}> | undefined;
-    options: Options<{value: T, label: string | JSX.Element}>;
+    selectedValue: SingleValue<{value: T, label: string | React.JSX.Element}> | undefined;
+    options: Options<{value: T, label: string | React.JSX.Element}>;
     onChange: (newValue:  any) => void;
     placeholder?: string;
     label?: string;

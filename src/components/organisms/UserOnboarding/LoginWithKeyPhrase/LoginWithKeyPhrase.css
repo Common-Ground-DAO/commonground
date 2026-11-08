@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 
 
 .keyphrase-login {
@@ -23,7 +25,7 @@
         }
     
         .key-string-container {
-            @apply flex flex-row items-start p-2 gap-2 flex-none order-none flex-grow;
+            @apply flex flex-row items-start p-2 gap-2 flex-none order-none grow;
             background: var(--inputBg);
             border-radius: 6px;
     

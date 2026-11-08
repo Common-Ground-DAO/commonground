@@ -2,29 +2,46 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { ReactComponent as SyncIcon } from '../../../components/atoms/icons/16/Sync.svg';
+import SyncIcon from '../../../components/atoms/icons/16/Sync.svg?react';
 
 import "./ConnectionStatusIndicator.css";
 import { useConnectionContext } from '../../../context/ConnectionProvider';
 import { ArrowPathIcon, CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/20/solid';
 import { useNavigationContext } from 'components/SuspenseRouter/SuspenseRouter';
 import { useCallContext } from 'context/CallProvider';
+import { useSecurityStepRequired } from 'hooks/useSecurityStepRequired';
+import { indicatorStateFor, isDelayedState, type IndicatorState } from './indicatorState';
 
 const DELAY_BEFORE_SHOW = 3000;
 const DELAY_BEFORE_HIDE = 1200;
+/**
+ * After a (re)load the socket starts out "disconnected" until the tab is
+ * connected and logged in. That is no outage: "Disconnected" is only shown
+ * once the first connection had a fair chance.
+ */
+const INITIAL_CONNECT_GRACE = 10000;
 
 export default function ConnectionStatusIndicator() {
   const { webSocketState, serviceWorkerState, onlineState, finishInstallation, visibilityState } = useConnectionContext();
   const { setUpdateOnNavigate } = useNavigationContext();
   const { call } = useCallContext();
-  const visibilityTimeoutRef = useRef<any>();
+  const securityStepRequired = useSecurityStepRequired();
+  const visibilityTimeoutRef = useRef<any>(undefined);
 
-  const [ state, _setState ] = useState<"hidden" | "offline" | "updated" | "updating" | "connecting" | "connected" | "disconnected">("hidden");
-  const preRenderState = useRef<typeof state>(state);
+  const [ state, _setState ] = useState<IndicatorState>("hidden");
+  const preRenderState = useRef<IndicatorState>(state);
   const [ isVisible, _setIsVisible ] = useState<boolean>(false);
   const preRenderVisible = useRef<boolean>(false);
+  const [ initialGrace, setInitialGrace ] = useState(true);
+  const everConnected = useRef(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setInitialGrace(false), INITIAL_CONNECT_GRACE);
+    return () => clearTimeout(timer);
+  }, []);
 
   const clearTimeouts = useCallback(() => {
     if (!!visibilityTimeoutRef.current) {
@@ -40,69 +57,85 @@ export default function ConnectionStatusIndicator() {
     }
   }, []);
 
-  useEffect(() => {
-    if (visibilityState === "visible") {
-      clearTimeouts();
+  /**
+   * (Re)arms the timer for the current state: "connected" hides after
+   * DELAY_BEFORE_HIDE, "connecting"/"disconnected" show after
+   * DELAY_BEFORE_SHOW, and only while the page is visible (a hidden tab
+   * closes its socket on purpose; nobody should come back to a stale
+   * "Disconnected" banner).
+   */
+  const armTimer = useCallback((current: IndicatorState) => {
+    clearTimeouts();
+    if (current === "connected") {
       visibilityTimeoutRef.current = setTimeout(() => {
-        if (preRenderState.current !== 'connected') {
-          setIsVisible(true);
-        }
-      }, DELAY_BEFORE_SHOW);
+        visibilityTimeoutRef.current = undefined;
+        setIsVisible(false);
+      }, DELAY_BEFORE_HIDE);
     }
-  }, [clearTimeouts, setIsVisible, visibilityState]);
+    else if (isDelayedState(current)) {
+      if (document.visibilityState === "visible") {
+        visibilityTimeoutRef.current = setTimeout(() => {
+          visibilityTimeoutRef.current = undefined;
+          if (document.visibilityState === "visible") {
+            setIsVisible(true);
+          }
+        }, DELAY_BEFORE_SHOW);
+      }
+    }
+  }, [clearTimeouts, setIsVisible]);
 
-  const setState = useCallback((newState: typeof state) => {
+  useEffect(() => {
+    const current = preRenderState.current;
+    if (visibilityState === "visible") {
+      // re-arm instead of only clearing: a pending "hide" must not be lost
+      armTimer(current);
+    }
+    else if (isDelayedState(current)) {
+      clearTimeouts();
+      setIsVisible(false);
+    }
+  }, [armTimer, clearTimeouts, setIsVisible, visibilityState]);
+
+  const setState = useCallback((newState: IndicatorState) => {
     if (newState === 'updated' && !call) {
       setUpdateOnNavigate(true);
     }
 
     if (preRenderState.current !== newState) {
-      clearTimeouts();
+      preRenderState.current = newState;
       _setState(newState);
       if (newState === "offline" || newState === "updated" || newState === "updating") {
+        clearTimeouts();
         setIsVisible(true);
       }
-      else if (newState === "connected") {
-        visibilityTimeoutRef.current = setTimeout(() => {
-          visibilityTimeoutRef.current = undefined;
-          setIsVisible(false);
-        }, DELAY_BEFORE_HIDE);
+      else if (newState === "hidden") {
+        clearTimeouts();
+        setIsVisible(false);
       }
-      else if (newState === "connecting") {
-        visibilityTimeoutRef.current = setTimeout(() => {
-          visibilityTimeoutRef.current = undefined;
-          setIsVisible(true);
-        }, DELAY_BEFORE_SHOW);
+      else {
+        armTimer(newState);
       }
-      else if (newState === "disconnected") {
-        visibilityTimeoutRef.current = setTimeout(() => {
-          visibilityTimeoutRef.current = undefined;
-          setIsVisible(true);
-        }, DELAY_BEFORE_SHOW);
-      }
-      preRenderState.current = newState;
       return true;
     }
     return false;
-  }, [call, clearTimeouts, setIsVisible, setUpdateOnNavigate]);
+  }, [armTimer, call, clearTimeouts, setIsVisible, setUpdateOnNavigate]);
 
   useEffect(() => {
-    if (onlineState === "offline") {
-      if (state !== onlineState) setState("offline");
-    } else if (serviceWorkerState === "updated") {
-      if (state !== serviceWorkerState) setState("updated");
-    } else if (serviceWorkerState === "updating") {
-      if (state !== serviceWorkerState) setState("updating");
-    } else if (webSocketState === "connected") {
-      if (state !== webSocketState) setState("connected");
-    } else if (webSocketState === "connecting") {
-      if (state !== webSocketState) setState("connecting");
-    } else if (webSocketState === "disconnected") {
-      if (state !== webSocketState) setState("disconnected");
+    if (webSocketState === "connected") {
+      everConnected.current = true;
     }
-  }, [webSocketState, onlineState, serviceWorkerState, clearTimeouts, setState, state]);
+    const next = indicatorStateFor({
+      webSocketState,
+      serviceWorkerState,
+      onlineState,
+      initialGrace,
+      everConnected: everConnected.current,
+      securityStepRequired,
+    });
+    if (state !== next) setState(next);
+  }, [webSocketState, onlineState, serviceWorkerState, setState, state, initialGrace, securityStepRequired]);
 
-  let content: JSX.Element;
+  let content: React.JSX.Element;
   if (state === "connected") {
     content = (
       <div className="cg-connection-indicator-content">

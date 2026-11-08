@@ -35,10 +35,21 @@ declare namespace Events {
       data: Pick<Models.Wallet.Wallet, "id">;
     });
 
+    /**
+     * Sent to the devices of an account that were just signed out from
+     * elsewhere (another device's "Sign out other devices", or a change of
+     * the account's password, email or sign-in methods): this device is
+     * signed out now; its socket is disconnected right after.
+     */
+    type SignedOut = {
+      type: 'cliSignedOut';
+    };
+
     type Event = (
       Data |
       OwnData |
-      Wallet
+      Wallet |
+      SignedOut
     );
   }
 }

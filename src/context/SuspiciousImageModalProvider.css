@@ -1,0 +1,41 @@
+/*
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Additional terms: see LICENSE-ADDITIONAL-TERMS.md
+ */
+
+/*
+ * Own backdrop, own stacking level — see the comment in
+ * SuspiciousImageModalProvider.tsx. The z-index has to clear everything this
+ * dialog can be opened on top of:
+ *   #modal-root-anchor    10000   (src/index.css)
+ *   .modal-root           10100   (Modal.css) / 10101 (modalRootStyle overrides)
+ *   .snackbar / .dialog   10200
+ * The BottomSliderModal sheet sits at 1000, far below all of these, which is
+ * exactly why this dialog must not be one.
+ */
+.suspicious-image-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background-color: rgba(0, 0, 0, 0.8);
+}
+
+.suspicious-image-dialog {
+  width: 100%;
+  max-width: 420px;
+  max-height: calc(100% - 2rem);
+  overflow: auto;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  border-radius: 16px;
+  background: var(--surface-global-background);
+  color: var(--modalText);
+  animation: fadeIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}

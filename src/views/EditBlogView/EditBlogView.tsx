@@ -3,17 +3,17 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import "./EditBlogView.css";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router";
 import { useWindowSizeContext } from "../../context/WindowSizeProvider";
 import BlogManagement from "../../components/organisms/BlogManagement/BlogManagement";
 import Scrollable from "../../components/molecules/Scrollable/Scrollable";
 import { useLoadedProfileContext } from 'context/ProfileProvider';
 import { getUrl } from "common/util";
 import { shortUuidRegex } from "views/ArticleView/ArticleView";
-import shortUUID from "short-uuid";
+import { createTranslator } from "short-uuid";
 import UserProfileDetails from "components/organisms/UserProfileDetails/UserProfileDetails";
 
-const t = shortUUID();
+const t = createTranslator();
 
 export default function EditBlogView() {
     const navigate = useNavigate();

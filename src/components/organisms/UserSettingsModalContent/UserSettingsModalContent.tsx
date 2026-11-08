@@ -19,9 +19,8 @@ import EmailPage from './EmailPage/EmailPage';
 import WalletPage from './WalletPage/WalletPage';
 import { UserWidgetContent } from 'components/molecules/UserWidget/UserWidget';
 import SignWalletPage from './SignWalletPage/SignWalletPage';
-import SignWalletPageFuel from './SignWalletPage/SignWalletPageFuel';
-import SignWalletPageAeternity from './SignWalletPage/SignWalletPageAeternity';
 import ExternalAccountPage from './ExternalAccountPage/ExternalAccountPage';
+import { ExternalAccountType } from './AccountsPage/AccountsPage';
 import SignWithUniversalProfile from './SignWalletPage/SignWithUniversalProfile';
 import AnimatedTabPageContainer from 'components/atoms/AnimatedTabPage/AnimatedTabPageContainer';
 import AnimatedTabPage from 'components/atoms/AnimatedTabPage/AnimatedTabPage';
@@ -39,6 +38,8 @@ import SupporterPurchaseSuccess from './SupporterPurchaseSuccess/SupporterPurcha
 import { usePremiumTier } from 'hooks/usePremiumTier';
 import PasskeySettings from './PasskeySettings/PasskeySettings';
 import { SignWithFarcaster } from './SignWalletPage/SignWithFarcaster';
+import BotsPage from './BotsPage/BotsPage';
+import BotEditor from './BotsPage/BotEditor';
 
 export const allPageTypes = [
   'home',
@@ -65,9 +66,9 @@ export const allPageTypes = [
   'sign-with-universal-profile',
   'sign-with-farcaster',
   'sign-wallet',
-  'sign-wallet-fuel',
-  'sign-wallet-aeternity',
-  'passkey-settings'
+  'passkey-settings',
+  'bots',
+  'bot-editor'
 ] as const;
 
 export type PageType = typeof allPageTypes[number];
@@ -107,20 +108,22 @@ const screenOrder: Record<PageType, number> = {
   wallet: 3,
   "external-account": 3,
   "sign-wallet": 4,
-  "sign-wallet-fuel": 4,
-  "sign-wallet-aeternity": 4,
   "sign-with-universal-profile": 4,
   "sign-with-farcaster": 4,
   "give-spark": 1,
   "passkey-settings": 2,
+  bots: 1,
+  "bot-editor": 2,
 };
 
 const UserSettingsModalContent: React.FC<Props> = (props) => {
   const { setIsClosed } = props;
   const { isMobile } = useWindowSizeContext();
   const { currentPage, setCurrentPage } = useUserSettingsContext();
-  const [currentAccount, setCurrentAccount] = useState<Models.User.ProfileItemType>('twitter');
+  const [currentAccount, setCurrentAccount] = useState<ExternalAccountType>('twitter');
   const [currentWallet, setCurrentWallet] = useState('');
+  const [currentBot, setCurrentBot] = useState<API.Bot.BotView | null>(null);
+  const [currentBotOwner, setCurrentBotOwner] = useState<API.Bot.Owner>({ ownerType: 'user', ownerId: null });
   const [currentHeight, setCurrentHeight] = useState(0);
   const lockModal = useMemo(() => props.lockModal || (() => { }), [props.lockModal]);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -175,12 +178,12 @@ const UserSettingsModalContent: React.FC<Props> = (props) => {
         case 'how-spark-works': return 'Spark';
         case 'profile': return 'Profile';
         case 'sign-wallet': return 'Wallet';
-        case 'sign-wallet-fuel': return 'Fuel Wallet';
-        case 'sign-wallet-aeternity': return 'Aeternity Wallet';
         case 'sign-with-universal-profile': return 'Universal Profile';
         case 'sign-with-farcaster': return 'Farcaster';
         case 'give-spark': return 'Give Spark to Community';
         case 'passkey-settings': return 'Passkeys';
+        case 'bots': return 'Bots';
+        case 'bot-editor': return currentBot ? `@${currentBot.username}` : 'New Bot';
         default: return 'Settings';
       }
     }
@@ -198,7 +201,11 @@ const UserSettingsModalContent: React.FC<Props> = (props) => {
         case 'pay-spark-success':
         case 'how-spark-works':
         case 'supporter-purchase-success':
+        case 'bots':
           setCurrentPage('home');
+          break;
+        case 'bot-editor':
+          setCurrentPage('bots');
           break;
         case 'pay-spark':
           setCurrentPage('get-spark');
@@ -219,8 +226,6 @@ const UserSettingsModalContent: React.FC<Props> = (props) => {
           break;
         case 'email-account-available-providers':
         case 'sign-wallet':
-        case 'sign-wallet-fuel':
-        case 'sign-wallet-aeternity':
         case 'sign-with-farcaster':
           setCurrentPage('available-providers');
           break;
@@ -234,7 +239,7 @@ const UserSettingsModalContent: React.FC<Props> = (props) => {
     }
 
     return <UserSettingsTitle title={renderTitle()} goBack={goBack} />
-  }, [currentPage, premiumTier.type, setCurrentPage]);
+  }, [currentPage, premiumTier.type, setCurrentPage, currentBot]);
 
   const content = useMemo(() => {
     return <AnimatedTabPageContainer currentScreen={currentPage} screenOrder={screenOrder}>
@@ -254,7 +259,7 @@ const UserSettingsModalContent: React.FC<Props> = (props) => {
         <CommunityNotificationsPage />
       </AnimatedTabPage>
       <AnimatedTabPage visible={currentPage === 'accounts'} className='' >
-        <AccountsPage setCurrentWallet={setCurrentWallet} setCurrentAccount={setCurrentAccount} setPage={setCurrentPage} />
+        <AccountsPage setCurrentWallet={setCurrentWallet} setCurrentAccount={setCurrentAccount} setPage={setCurrentPage} lockModal={lockModal} />
       </AnimatedTabPage>
       <AnimatedTabPage visible={currentPage === 'become-supporter'} className='' >
         <BecomeSupporter setCurrentPage={setCurrentPage} />
@@ -289,12 +294,6 @@ const UserSettingsModalContent: React.FC<Props> = (props) => {
       <AnimatedTabPage visible={currentPage === 'sign-wallet'} className='' >
         <SignWalletPage setCurrentWallet={setCurrentWallet} setPage={setCurrentPage} lockModal={lockModal} />
       </AnimatedTabPage>
-      <AnimatedTabPage visible={currentPage === 'sign-wallet-fuel'} className='' >
-        <SignWalletPageFuel setCurrentWallet={setCurrentWallet} setPage={setCurrentPage} lockModal={lockModal} />
-      </AnimatedTabPage>
-      <AnimatedTabPage visible={currentPage === 'sign-wallet-aeternity'} className='' >
-        <SignWalletPageAeternity setCurrentWallet={setCurrentWallet} setPage={setCurrentPage} lockModal={lockModal} />
-      </AnimatedTabPage>
       <AnimatedTabPage visible={currentPage === 'sign-with-universal-profile'} className='' >
         <SignWithUniversalProfile setPage={setCurrentPage}/>
       </AnimatedTabPage>
@@ -319,8 +318,22 @@ const UserSettingsModalContent: React.FC<Props> = (props) => {
       <AnimatedTabPage visible={currentPage === 'passkey-settings'} className='' >
         <PasskeySettings setPage={setCurrentPage} lockModal={lockModal} closeModal={() => setIsClosed?.(true)} />
       </AnimatedTabPage>
+      <AnimatedTabPage visible={currentPage === 'bots'} className='' >
+        <BotsPage
+          setPage={setCurrentPage}
+          selectBot={(bot, owner) => { setCurrentBot(bot); setCurrentBotOwner(owner); }}
+        />
+      </AnimatedTabPage>
+      <AnimatedTabPage visible={currentPage === 'bot-editor'} className='' >
+        <BotEditor
+          bot={currentBot}
+          owner={currentBotOwner}
+          onSaved={setCurrentBot}
+          setPage={setCurrentPage}
+        />
+      </AnimatedTabPage>
     </AnimatedTabPageContainer>;
-  }, [currentAccount, currentPage, currentWallet, lockModal, setCurrentPage, setIsClosed]);
+  }, [currentAccount, currentPage, currentWallet, currentBot, currentBotOwner, lockModal, setCurrentPage, setIsClosed]);
 
   const className = [
     'user-setting-modal-content cg-content-stack',

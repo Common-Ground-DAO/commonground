@@ -1,0 +1,796 @@
+# Self-hosted, single-server production deployment of Common Ground.
+#
+# Differences from the dev compose file (docker-compose.yml):
+#   - caddy (docker/caddy, Caddyfile.selfhost) is the edge: TLS for the app
+#     and mediasoup call signalling — Let's Encrypt by default, or its own
+#     local CA with CG_TLS_MODE=internal (LAN/test instances without public
+#     DNS) — plus the frontend, the routing and the instance config
+#   - call signalling (:4443) is added by docker-compose.selfhost.calls.yml,
+#     which selfhost.sh includes only when calls are enabled
+#   - DEPLOYMENT=prod: full production semantics on any domain
+#   - no hardhat dev chain, no test contracts
+#   - postgres actually loads the tuned postgresql.conf
+#   - Valkey memory tuned for a small single machine: REDIS_MAXMEMORY for the
+#     state instance (redis), REDIS_CACHE_MAXMEMORY for the cache instance
+#     (redis-cache)
+#   - the mediasoup (calls) and onchain (blockchain) services sit behind the
+#     compose profiles "calls" and "blockchain"; selfhost.sh derives
+#     COMPOSE_PROFILES from CG_ENABLE_CALLS / CG_ENABLE_BLOCKCHAIN, both of
+#     which default to true
+#   - the send-only mail relay (mail) sits behind the profile "mail",
+#     switched by CG_ENABLE_MAIL (init.sh writes true; unset = off, so an
+#     older .env.selfhost does not start sending mail on its own)
+#   - rotating container logs and a memory limit for every service (below)
+#   - the gateway of a moved instance (gateway-api, gateway-wsapi) sits
+#     behind the profile "gateway", switched by CG_ENABLE_GATEWAY (default
+#     off; SELFHOST.md, "Gateway for a moved instance")
+#   - every backend process caps its PostgreSQL pool (PG_POOL_MAX); the sum
+#     over all of them, the gateway included, stays well below the server's
+#     max_connections (docker/db/postgresql.conf has the arithmetic)
+#   - the build helper (cg-builder) is on a network of its own, not on the
+#     stack's; secret files stay mode 600 (seaweed copies its config in)
+#
+# Usage: see docker/SELFHOST.md. Never run this with the dev docker/.env —
+# use docker/selfhost/init.sh to generate .env.selfhost with fresh secrets.
+
+# distinct project name: containers and volumes stay separate from the dev
+# stack (docker-compose.yml) even when both live in the same directory
+name: cg-selfhost
+
+# Container logs (`selfhost.sh logs`, `docker logs`) rotate: every service
+# keeps at most CG_LOG_MAX_FILE files of CG_LOG_MAX_SIZE each (default 5 x
+# 20 MB, older files compressed), so a chatty or failing service cannot fill
+# the disk. Applied to every service below (`logging: *logging`).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${CG_LOG_MAX_SIZE:-20m}
+    max-file: ${CG_LOG_MAX_FILE:-5}
+    compress: "true"
+
+# Memory limits: every service has one (`mem_limit`), overridable per service
+# with CG_MEM_LIMIT_<SERVICE> in .env.selfhost (e.g. CG_MEM_LIMIT_API=3g).
+# The defaults fit a 16 GB server and leave room for a frontend build next to
+# the running stack; the measurements behind them are in
+# docs/deployment/README.md ("Memory limits"). A Node process sizes its heap
+# from its limit (about half of it), so raise the limit — not NODE_OPTIONS —
+# for a process that needs more heap. The Go services (caddy, seaweed) get
+# GOMEMLIMIT at about 85% of their limit (CG_GOMEMLIMIT_<SERVICE>; selfhost.sh
+# derives it from an overridden CG_MEM_LIMIT_<SERVICE>).
+
+services:
+  caddy:
+    build:
+      context: ./caddy
+    image: cryptogram/caddy-selfhost
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      - CG_DOMAIN=${CG_DOMAIN}
+      - CG_ACME_EMAIL=${CG_ACME_EMAIL}
+      - CG_TLS_MODE=${CG_TLS_MODE:-acme}
+      # on: docker-compose.selfhost.calls.yml (calls enabled)
+      - CG_CALLS_EDGE=off
+      # the legacy CG ID mini-app's vhost and API route; selfhost.sh sets
+      # CG_CGID_VHOST=on only when CG_LEGACY_CGID=true and CG_ID_DOMAIN is set
+      - CG_CGID_VHOST=${CG_CGID_VHOST:-off}
+      - CG_ID_DOMAIN=${CG_ID_DOMAIN:-}
+      # instance config served as /instance-config.js
+      # (docker/caddy/instance-config.js): passkeys on this origin unless
+      # CG_LEGACY_CGID=true; CG_CGID_URL is only emitted in legacy mode
+      - CG_DEPLOYMENT=prod
+      - CG_APP_URL=https://${CG_DOMAIN}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
+      - CG_PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_CGID_URL=${CG_ID_DOMAIN:+https://${CG_ID_DOMAIN}/#}
+      - CG_RECAPTCHA_SITE_KEY=${CG_RECAPTCHA_SITE_KEY}
+      - CG_CAPTCHA_PROVIDER=${CAPTCHA_PROVIDER:-}
+      - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
+      - CG_FEATURE_EMAIL=${SMTP_HOST:+true}
+      - CG_FEATURE_TWITTER=${TWITTER_API_KEY:+true}
+      - CG_ENABLE_CALLS=${CG_ENABLE_CALLS:-true}
+      - CG_ENABLE_IMAGE_FILTER=${CG_ENABLE_IMAGE_FILTER:-true}
+      - CG_IMAGE_FILTER_THRESHOLD=${CG_IMAGE_FILTER_THRESHOLD:-}
+      - CG_GIPHY_API_KEY=${CG_GIPHY_API_KEY}
+      - CG_WALLETCONNECT_PROJECT_ID=${CG_WALLETCONNECT_PROJECT_ID}
+      # Go runtime: collect harder before the memory limit (about 85% of it;
+      # selfhost.sh derives it from CG_MEM_LIMIT_CADDY when that is set)
+      - GOMEMLIMIT=${CG_GOMEMLIMIT_CADDY:-435MiB}
+      # the gateway's sites (CG_GATEWAY_DOMAIN, CG_GATEWAY_ID_DOMAIN);
+      # selfhost.sh sets CG_GATEWAY_EDGE=on with CG_ENABLE_GATEWAY=true. Their
+      # /instance-config.js is rendered from the GATEWAY_CG_* values: legacy
+      # CG ID passkeys, no calls, and the instance it moved to (this one)
+      - CG_GATEWAY_EDGE=${CG_GATEWAY_EDGE:-off}
+      - CG_GATEWAY_DOMAIN=${CG_GATEWAY_DOMAIN:-}
+      - CG_GATEWAY_ID_DOMAIN=${CG_GATEWAY_ID_DOMAIN:-}
+      - GATEWAY_CG_DEPLOYMENT=prod
+      - GATEWAY_CG_APP_URL=${CG_GATEWAY_DOMAIN:+https://${CG_GATEWAY_DOMAIN}}
+      - GATEWAY_CG_LEGACY_CGID=true
+      - GATEWAY_CG_CGID_URL=${CG_GATEWAY_ID_DOMAIN:+https://${CG_GATEWAY_ID_DOMAIN}/#}
+      - GATEWAY_CG_GATEWAY_TARGET_URL=https://${CG_DOMAIN}
+      - GATEWAY_CG_CAPTCHA_PROVIDER=${CAPTCHA_PROVIDER:-}
+      - GATEWAY_CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
+      - GATEWAY_CG_FEATURE_EMAIL=${SMTP_HOST:+true}
+      - GATEWAY_CG_FEATURE_TWITTER=${TWITTER_API_KEY:+true}
+      - GATEWAY_CG_ENABLE_CALLS=false
+      - GATEWAY_CG_ENABLE_IMAGE_FILTER=false
+      - GATEWAY_CG_WALLETCONNECT_PROJECT_ID=${CG_GATEWAY_WALLETCONNECT_PROJECT_ID:-${CG_WALLETCONNECT_PROJECT_ID}}
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+    networks:
+      - cryptogram
+    restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_CADDY:-512m}
+    logging: *logging
+
+  db:
+    build:
+      context: ./db
+    # tag = Postgres major, so a leftover 14 image (cryptogram/db:latest) is
+    # never started on the 18 mount path below — it would initialize an
+    # empty cluster in an anonymous volume
+    image: cryptogram/db:18
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${PG_SU_PASSWORD}
+      - PG_WRITER_PASSWORD=${PG_WRITER_PASSWORD}
+      - PG_READER_PASSWORD=${PG_READER_PASSWORD}
+      - PG_MEDIASOUP_PASSWORD=${PG_MEDIASOUP_PASSWORD}
+    volumes:
+      # Postgres 18 keeps its cluster in <volume>/18/docker. A volume from
+      # Postgres 14 (cluster at the volume root) is refused at startup —
+      # see "Postgres major upgrades" in docs/infrastructure/README.md
+      - pgdata:/var/lib/postgresql
+      - ./db/postgresql.conf:/etc/postgresql/postgresql.conf
+    networks:
+      - cryptogram
+    shm_size: '256m'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -h 127.0.0.1"]
+      interval: 1m
+      timeout: 5s
+      retries: 5
+      # fast probing during startup so dependents aren't held for the full
+      # 1m interval on first boot (fresh cluster init takes several seconds)
+      start_period: 2m
+      start_interval: 2s
+    stop_signal: SIGINT
+    stop_grace_period: 1m
+    restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_DB:-4g}
+    logging: *logging
+
+  # Valkey (Redis-protocol compatible), two instances split by what may be
+  # lost — see docs/infrastructure/README.md#redis-and-redis-cache-valkey.
+  # `redis` holds state: sessions, the Socket.IO pub/sub, rate-limit windows,
+  # replay guards, the shared captcha key, presence. No eviction (a full
+  # instance refuses writes instead of silently dropping a session) and RDB
+  # snapshots in a volume, so a restart or update does not log everyone out.
+  # A failed background save must not stop writes: losing the last minutes of
+  # state on a crash is better than refusing every login. Not published on
+  # the host.
+  redis:
+    image: valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+    command: valkey-server --requirepass ${REDIS_PASSWORD} --maxmemory ${REDIS_MAXMEMORY:-1024mb} --maxmemory-policy noeviction --save "900 1 300 100" --stop-writes-on-bgsave-error no --appendonly no
+    environment:
+      # lets valkey-cli in the healthcheck authenticate without a command-line password
+      - REDISCLI_AUTH=${REDIS_PASSWORD}
+    healthcheck:
+      # healthy once the server answers an authenticated PING
+      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 1m
+      start_interval: 2s
+    volumes:
+      - valkey-data:/data
+    networks:
+      - cryptogram
+    # time for the final RDB save on shutdown
+    stop_grace_period: 1m
+    restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_REDIS:-2g}
+    logging: *logging
+
+  # `redis-cache` holds only data that can be rebuilt (the URL-preview
+  # cache): own memory budget, least-recently-used eviction, no persistence,
+  # so a filling cache can never push `redis` into out-of-memory errors
+  redis-cache:
+    image: valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+    command: valkey-server --requirepass ${REDIS_PASSWORD} --maxmemory ${REDIS_CACHE_MAXMEMORY:-256mb} --maxmemory-policy allkeys-lru --save "" --appendonly no
+    environment:
+      # lets valkey-cli in the healthcheck authenticate without a command-line password
+      - REDISCLI_AUTH=${REDIS_PASSWORD}
+    healthcheck:
+      # healthy once the server answers an authenticated PING
+      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 1m
+      start_interval: 2s
+    networks:
+      - cryptogram
+    restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_REDIS_CACHE:-512m}
+    logging: *logging
+
+  # one all-in-one `weed server` process instead of separate master/volume/filer
+  # containers: -s3 implies -filer, so this single service serves master 9333,
+  # volume 8080, filer 8888 and the S3 gateway on 8333. Only 8333 (alias
+  # s3.local) is consumed by anything else in the stack.
+  # -s3.port.iceberg=0 turns off the Iceberg REST catalog that 4.40+ otherwise
+  # starts on 8181 — nothing here speaks Iceberg.
+  # Volume blobs and the filer leveldb (filerldb2/) share one /data volume, so a
+  # filesystem snapshot of it is atomic across blobs and metadata — see
+  # SELFHOST.md for the backup and the 3-to-1 upgrade procedure.
+  # s3.selfhost.json holds the S3 admin secret and stays readable by its owner
+  # only (mode 600, whoever ran init.sh). The container starts as root, copies
+  # it to where weed reads it, owned by the image's own user, and then runs
+  # the image's entrypoint, which drops to that user as before.
+  seaweed:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    entrypoint: ["/bin/sh", "-c", "install -m 600 -o seaweed -g seaweed /run/cg/s3.json /etc/seaweedfs/s3.json && exec /entrypoint.sh \"$$@\"", "seaweed-entrypoint"]
+    command: "server -dir=/data -ip=seaweed -master.volumeSizeLimitMB=${SEAWEED_VOLUME_LIMIT_MB:-1024} -volume.max=0 -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.port.iceberg=0"
+    restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_SEAWEED:-1g}
+    logging: *logging
+    networks:
+      cryptogram:
+        aliases:
+          - s3.local
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
+      # Go runtime: collect harder before the memory limit (about 85% of it;
+      # selfhost.sh derives it from CG_MEM_LIMIT_SEAWEED when that is set)
+      GOMEMLIMIT: ${CG_GOMEMLIMIT_SEAWEED:-870MiB}
+    volumes:
+      - ./s3_config/s3.selfhost.json:/run/cg/s3.json:ro
+      - seaweedfs-data:/data
+
+  migrate-db:
+    image: cryptogram/backend
+    environment:
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the CG_DOMAIN host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
+      - PG_SU_PASSWORD=${PG_SU_PASSWORD}
+      - PG_MEDIASOUP_PASSWORD=${PG_MEDIASOUP_PASSWORD}
+      - PG_SU_NAME=postgres
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - S3_SECRET=${S3_SECRET}
+      - DEPLOYMENT=prod
+      - BASE_URL=https://${CG_DOMAIN}
+    # Gate on a HEALTHY db: on first boot the postgres cluster initializes
+    # for several seconds, and a migrate attempt in that window dies with
+    # ECONNREFUSED. The `deploy.restart_policy` retry alone does not cover
+    # that window: compose maps it to a plain `on-failure:N` restart and
+    # ignores its delay, so the few retries can all fire before postgres is
+    # up, leaving a fresh install without a schema.
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - cryptogram
+    restart: on-failure:3
+    mem_limit: ${CG_MEM_LIMIT_MIGRATE_DB:-2g}
+    logging: *logging
+    command: node /dist/migrateDb.js
+    # a one-shot run: the image's health check (the report of a long-running
+    # process, srv/healthcheck.ts) does not apply
+    healthcheck:
+      disable: true
+    stop_grace_period: 1m
+
+  wsapi:
+    image: cryptogram/backend
+    environment:
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the CG_DOMAIN host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
+      - DB_TYPE=writer
+      - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      - PG_POOL_MAX=${PG_POOL_MAX_WSAPI:-10}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_SECRET=${REDIS_SECRET}
+      - DEPLOYMENT=prod
+      - BASE_URL=https://${CG_DOMAIN}
+      - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
+    depends_on:
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+    networks:
+      - cryptogram
+    command: ["node", "/dist/wsapi.js"]
+    stop_grace_period: 1m
+    restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_WSAPI:-1536m}
+    logging: *logging
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile_dev_stage_1
+    image: cryptogram/backend
+    environment:
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the CG_DOMAIN host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
+      - DB_TYPE=writer
+      - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      - PG_POOL_MAX=${PG_POOL_MAX_API:-20}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_SECRET=${REDIS_SECRET}
+      # per-address mail limits, shared with the gateway (empty: REDIS_SECRET)
+      - CG_MAIL_LIMIT_SECRET=${CG_MAIL_LIMIT_SECRET:-}
+      - DEPLOYMENT=prod
+      - BASE_URL=https://${CG_DOMAIN}
+      # read only with CG_LEGACY_CGID=true (the CG ID app's RP and CORS origin)
+      - CGID_URL=${CG_ID_DOMAIN:+https://${CG_ID_DOMAIN}}
+      - S3_SECRET=${S3_SECRET}
+      - STAKING_CHAIN=${STAKING_CHAIN:-}
+      - STAKING_TOKEN_ADDRESS=${STAKING_TOKEN_ADDRESS:-}
+      - STAKING_CONTRACT_ADDRESS=${STAKING_CONTRACT_ADDRESS:-}
+      - STAKING_BASE_RATE=${STAKING_BASE_RATE:-}
+      - STAKING_MIN_LOCK_DAYS=${STAKING_MIN_LOCK_DAYS:-}
+      - STAKING_MAX_LOCK_DAYS=${STAKING_MAX_LOCK_DAYS:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_SECURITY=${SMTP_SECURITY:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL_FROM=${EMAIL_FROM:-}
+      - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-}
+      - CG_ENABLE_NEWSLETTERS=${CG_ENABLE_NEWSLETTERS:-true}
+      - CG_RECAPTCHA_SITE_KEY=${CG_RECAPTCHA_SITE_KEY}
+      - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
+      - CG_ENABLE_CALLS=${CG_ENABLE_CALLS:-true}
+      - CG_ENABLE_BLOCKCHAIN=${CG_ENABLE_BLOCKCHAIN:-true}
+      - GOOGLE_RECAPTCHA_SECRET_KEY=${GOOGLE_RECAPTCHA_SECRET_KEY}
+      - CAPTCHA_PROVIDER=${CAPTCHA_PROVIDER:-}
+      - ALTCHA_HMAC_KEY=${ALTCHA_HMAC_KEY:-}
+      - IMAGE_MODERATION_ENABLED=${CG_ENABLE_IMAGE_FILTER:-true}
+      - IMAGE_MODERATION_THRESHOLD=${CG_IMAGE_FILTER_THRESHOLD:-}
+      - IMAGE_MODERATION_MODEL_PATH=${CG_IMAGE_FILTER_MODEL_PATH:-}
+      - TWITTER_CALLBACK_URL=${TWITTER_CALLBACK_URL}
+      - TWITTER_OAUTH2_CLIENT_ID=${TWITTER_OAUTH2_CLIENT_ID}
+      - TWITTER_OAUTH2_CLIENT_SECRET=${TWITTER_OAUTH2_CLIENT_SECRET}
+      - TWITTER_API_KEY=${TWITTER_API_KEY}
+      - TWITTER_API_SECRET=${TWITTER_API_SECRET}
+      - CG_GIPHY_API_KEY=${CG_GIPHY_API_KEY}
+      - CG_WALLETCONNECT_PROJECT_ID=${CG_WALLETCONNECT_PROJECT_ID}
+      - PLATFORM_OPERATOR_USER_IDS=${PLATFORM_OPERATOR_USER_IDS:-}
+      - BOT_USER_OWNER_LIMIT=${BOT_USER_OWNER_LIMIT:-5}
+      - BOT_COMMUNITY_OWNER_LIMIT=${BOT_COMMUNITY_OWNER_LIMIT:-10}
+      - BOT_PLATFORM_OWNER_LIMIT=${BOT_PLATFORM_OWNER_LIMIT:-10}
+      - BOT_ACTIVE_TOKEN_LIMIT=${BOT_ACTIVE_TOKEN_LIMIT:-10}
+      - BOT_API_RATE_LIMIT_PER_MINUTE=${BOT_API_RATE_LIMIT_PER_MINUTE:-120}
+      - BOT_MESSAGE_RATE_LIMIT_PER_MINUTE=${BOT_MESSAGE_RATE_LIMIT_PER_MINUTE:-30}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
+    depends_on:
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+      redis-cache:
+        condition: service_started
+      seaweed:
+        condition: service_started
+      memberlist:
+        condition: service_started
+    networks:
+      - cryptogram
+      - mail-relay
+    volumes:
+      - "./vapid_keys.json:/run/secrets/vapid_keys_json:ro"
+      - "./api_data:/api_data:ro"
+    command: ["node", "/dist/api.js"]
+    stop_grace_period: 1m
+    restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_API:-2g}
+    logging: *logging
+
+  memberlist:
+    image: cryptogram/backend
+    environment:
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the CG_DOMAIN host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
+      - DB_TYPE=writer
+      - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      - PG_POOL_MAX=${PG_POOL_MAX_MEMBERLIST:-6}
+      - DEPLOYMENT=prod
+      - BASE_URL=https://${CG_DOMAIN}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
+    depends_on:
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+    networks:
+      - cryptogram
+    command: ["node", "/dist/memberlist.js"]
+    stop_grace_period: 1m
+    restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_MEMBERLIST:-4g}
+    logging: *logging
+
+  job-runner:
+    image: cryptogram/backend
+    environment:
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the CG_DOMAIN host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
+      - DB_TYPE=writer
+      - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      # per worker thread (up to 9 of them, each with its own pool)
+      - PG_POOL_MAX=${PG_POOL_MAX_JOBS:-3}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_SECRET=${REDIS_SECRET}
+      - DEPLOYMENT=prod
+      - BASE_URL=https://${CG_DOMAIN}
+      - S3_SECRET=${S3_SECRET}
+      - STAKING_CHAIN=${STAKING_CHAIN:-}
+      - STAKING_TOKEN_ADDRESS=${STAKING_TOKEN_ADDRESS:-}
+      - STAKING_CONTRACT_ADDRESS=${STAKING_CONTRACT_ADDRESS:-}
+      - STAKING_BASE_RATE=${STAKING_BASE_RATE:-}
+      - STAKING_MIN_LOCK_DAYS=${STAKING_MIN_LOCK_DAYS:-}
+      - STAKING_MAX_LOCK_DAYS=${STAKING_MAX_LOCK_DAYS:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_SECURITY=${SMTP_SECURITY:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL_FROM=${EMAIL_FROM:-}
+      - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-}
+      - CG_ENABLE_NEWSLETTERS=${CG_ENABLE_NEWSLETTERS:-true}
+      # receive the mail relay's bounce reports on port 2525 (mail-relay
+      # network; same login as SMTP_USER/SMTP_PASSWORD)
+      - MAIL_BOUNCE_RECEIVER=${CG_ENABLE_MAIL:-false}
+      # heap cap per worker thread (srv/jobs.ts, default 384 MB)
+      - JOB_WORKER_MAX_OLD_SPACE_MB=${JOB_WORKER_MAX_OLD_SPACE_MB:-}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
+    depends_on:
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+      seaweed:
+        condition: service_started
+    networks:
+      - cryptogram
+      - mail-relay
+    command: ["node", "/dist/jobs.js"]
+    stop_grace_period: 1m
+    restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_JOB_RUNNER:-4g}
+    logging: *logging
+
+  # voice/video calls — disable with CG_ENABLE_CALLS=false in .env.selfhost
+  mediasoup:
+    image: cryptogram/backend
+    profiles: ["calls"]
+    environment:
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the CG_DOMAIN host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
+      - BASE_URL=https://${CG_DOMAIN}
+      - DB_TYPE=mediasoup
+      - PG_PASSWORD=${PG_MEDIASOUP_PASSWORD}
+      - PG_POOL_MAX=${PG_POOL_MAX_MEDIASOUP:-4}
+      - DEPLOYMENT=prod
+      - HTTPS_CERT_FULLCHAIN=/dist/mediasoup/certs/selfhost/server.crt
+      - HTTPS_CERT_PRIVKEY=/dist/mediasoup/certs/selfhost/server.key
+      - MEDIASOUP_ANNOUNCED_IP=${CG_PUBLIC_IP}
+      - DOMAIN=${CG_DOMAIN}
+      - INTERACTIVE=false
+      - MEDIASOUP_DISABLE_LIBURING=${MEDIASOUP_DISABLE_LIBURING:-true}
+      # signalling (4443) is only reachable through Caddy, which sets X-Forwarded-For
+      - MEDIASOUP_TRUST_PROXY=true
+    volumes:
+      - "./selfhost/certs:/dist/mediasoup/certs/selfhost:ro"
+    # the `mediasoup` DB role (and its password) is created by a migration, so
+    # on a fresh database the first connection fails until migrate-db is done
+    depends_on:
+      migrate-db:
+        condition: service_completed_successfully
+    networks:
+      - cryptogram
+    command: ["node", "/dist/mediasoup.js"]
+    # WebRTC media (srv/mediasoup/config.ts): worker n's WebRtcServer listens
+    # on 40000+n over UDP *and* TCP — TCP is the ICE fallback for clients
+    # whose network blocks UDP. With MEDIASOUP_USE_WEBRTC_SERVER=false each
+    # transport takes its own port from the whole 40000-40099 range instead.
+    ports:
+      - "40000-40099:40000-40099/udp"
+      - "40000-40099:40000-40099/tcp"
+    stop_grace_period: 30s
+    restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_MEDIASOUP:-2g}
+    logging: *logging
+
+  # blockchain indexing/token gating — disable with CG_ENABLE_BLOCKCHAIN=false
+  onchain:
+    image: cryptogram/backend
+    profiles: ["blockchain"]
+    environment:
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the CG_DOMAIN host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
+      - DB_TYPE=writer
+      - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      - PG_POOL_MAX=${PG_POOL_MAX_ONCHAIN:-10}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DEPLOYMENT=prod
+      - S3_SECRET=${S3_SECRET}
+      - BASE_URL=https://${CG_DOMAIN}
+      - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
+      - QUIKNODE_ETH=${QUIKNODE_ETH}
+      - QUIKNODE_BSC=${QUIKNODE_BSC}
+      - QUIKNODE_MATIC=${QUIKNODE_MATIC}
+      - QUIKNODE_XDAI=${QUIKNODE_XDAI}
+      - QUIKNODE_FANTOM=${QUIKNODE_FANTOM}
+      - QUIKNODE_AVAX=${QUIKNODE_AVAX}
+      - QUIKNODE_ARBITRUM=${QUIKNODE_ARBITRUM}
+      - QUIKNODE_OPTIMISM=${QUIKNODE_OPTIMISM}
+      - QUIKNODE_BASE=${QUIKNODE_BASE}
+      - INFURA_LINEA=${INFURA_LINEA}
+      - QUIKNODE_ARBITRUM_NOVA=${QUIKNODE_ARBITRUM_NOVA}
+      - QUIKNODE_CELO=${QUIKNODE_CELO}
+      - QUIKNODE_POLYGON_ZKEVM=${QUIKNODE_POLYGON_ZKEVM}
+      - QUIKNODE_SCROLL=${QUIKNODE_SCROLL}
+      - QUIKNODE_ZKSYNC=${QUIKNODE_ZKSYNC}
+      - QUIKNODE_LUKSO=${QUIKNODE_LUKSO}
+      - STAKING_CHAIN=${STAKING_CHAIN:-}
+      - STAKING_TOKEN_ADDRESS=${STAKING_TOKEN_ADDRESS:-}
+      - STAKING_CONTRACT_ADDRESS=${STAKING_CONTRACT_ADDRESS:-}
+      - STAKING_BASE_RATE=${STAKING_BASE_RATE:-}
+      - STAKING_MIN_LOCK_DAYS=${STAKING_MIN_LOCK_DAYS:-}
+      - STAKING_MAX_LOCK_DAYS=${STAKING_MAX_LOCK_DAYS:-}
+      - RECALCULATE_BALANCES_AND_ROLES=${RECALCULATE_BALANCES_AND_ROLES:-false}
+      - IMAGE_MODERATION_ENABLED=${CG_ENABLE_IMAGE_FILTER:-true}
+      - IMAGE_MODERATION_THRESHOLD=${CG_IMAGE_FILTER_THRESHOLD:-}
+      - IMAGE_MODERATION_MODEL_PATH=${CG_IMAGE_FILTER_MODEL_PATH:-}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
+    depends_on:
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+    networks:
+      - cryptogram
+    command: ["node", "/dist/onchain.js"]
+    stop_grace_period: 1m
+    restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_ONCHAIN:-1536m}
+    logging: *logging
+
+  # send-only mail relay (maddy) — disable with CG_ENABLE_MAIL=false and point
+  # SMTP_* at an external server instead (SELFHOST.md, "Email"). The app
+  # submits with its relay login over the internal mail-relay network; the
+  # relay DKIM-signs (key generated on first start, kept in mail-data only),
+  # queues and delivers to the recipients' MX over port 25 via mail-egress.
+  # No published port: inbound mail is not handled.
+  mail:
+    image: foxcpp/maddy:0.9.6@sha256:e1074e92a452b84d1135ebe8ab831c5f541d33dcbd39e38fab740a53bbf2f97c
+    profiles: ["mail"]
+    entrypoint: ["/bin/sh", "/etc/maddy/entrypoint.sh"]
+    command: []
+    environment:
+      - MAIL_DOMAIN=${MAIL_DOMAIN:-${CG_DOMAIN}}
+      - MAIL_HOSTNAME=${MAIL_HOSTNAME:-${CG_DOMAIN}}
+      - MAIL_DKIM_SELECTOR=${MAIL_DKIM_SELECTOR:-cg}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+    volumes:
+      - ./mail:/etc/maddy:ro
+      # queue, DKIM keys, MTA-STS cache (the image's sample /data/maddy.conf
+      # is copied in on creation and unused)
+      - mail-data:/data
+    networks:
+      - mail-relay
+      - mail-egress
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 1m
+    restart: unless-stopped
+    mem_limit: ${CG_MEM_LIMIT_MAIL:-256m}
+    logging: *logging
+
+  # --- The gateway of a moved instance (compose profile "gateway",
+  # CG_ENABLE_GATEWAY=true; docs/auth-identity §12, SELFHOST.md "Gateway for
+  # a moved instance"). The same backend image a second time, for the old
+  # domain (CG_GATEWAY_DOMAIN, e.g. app.cg) and its CG ID app
+  # (CG_GATEWAY_ID_DOMAIN, e.g. id.app.cg), on this instance's database and
+  # Valkey (no storage credentials). It serves sign-in with the old methods and transfer
+  # links to this instance (TRANSFER_TARGET_URL), nothing else (its route
+  # and socket-event allowlists). Own session secret
+  # (CG_GATEWAY_SESSION_SECRET) and own Valkey key prefix (CG_GATEWAY=true):
+  # its sessions and cookies are worthless here and the other way round. Only
+  # api and wsapi: job-runner, onchain, memberlist, mediasoup and migrate-db
+  # run once, for this instance, and refuse to start in gateway mode. Health:
+  # the image's check, with the same probes as api and wsapi (database,
+  # Valkey, the listener on :4000).
+  gateway-api:
+    image: cryptogram/backend
+    profiles: ["gateway"]
+    environment:
+      - CG_GATEWAY=true
+      # the old passkeys (rpId = the CG ID domain) and the old sign-in surface;
+      # the gateway's allowlist decides what of it is served
+      - CG_LEGACY_CGID=true
+      - PASSKEY_RP_ID=
+      - BASE_URL=https://${CG_GATEWAY_DOMAIN:-gateway.invalid}
+      - CGID_URL=https://${CG_GATEWAY_ID_DOMAIN:-id.gateway.invalid}
+      - TRANSFER_TARGET_URL=https://${CG_DOMAIN}
+      - DB_TYPE=writer
+      - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      - PG_POOL_MAX=${PG_POOL_MAX_GATEWAY_API:-5}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_SECRET=${CG_GATEWAY_SESSION_SECRET:-}
+      # shared with the instance: one per-address budget for login-code mails
+      - CG_MAIL_LIMIT_SECRET=${CG_MAIL_LIMIT_SECRET:-}
+      - DEPLOYMENT=prod
+      # no S3_SECRET: no allowlisted route reads or writes storage (LUKSO and
+      # Farcaster refuse an unknown account before any profile image fetch)
+      # email-code sign-in sends codes like this instance does
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_SECURITY=${SMTP_SECURITY:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL_FROM=${EMAIL_FROM:-no-reply@${CG_DOMAIN}}
+      - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-}
+      - CG_ENABLE_NEWSLETTERS=${CG_ENABLE_NEWSLETTERS:-true}
+      - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
+      - CG_ENABLE_CALLS=false
+      # LUKSO sign-in checks the signature through the instance's onchain service
+      - CG_ENABLE_BLOCKCHAIN=${CG_ENABLE_BLOCKCHAIN:-true}
+      - IMAGE_MODERATION_ENABLED=false
+      - CAPTCHA_PROVIDER=${CAPTCHA_PROVIDER:-}
+      - ALTCHA_HMAC_KEY=${ALTCHA_HMAC_KEY:-}
+      # X sign-in: the X app must list this callback as well
+      - TWITTER_CALLBACK_URL=${CG_GATEWAY_TWITTER_CALLBACK_URL:-https://${CG_GATEWAY_DOMAIN:-gateway.invalid}/twitter-callback}
+      - TWITTER_API_KEY=${TWITTER_API_KEY}
+      - TWITTER_API_SECRET=${TWITTER_API_SECRET}
+      - CG_WALLETCONNECT_PROJECT_ID=${CG_GATEWAY_WALLETCONNECT_PROJECT_ID:-${CG_WALLETCONNECT_PROJECT_ID}}
+    # like api: only on a current schema (migrate-db exited 0)
+    depends_on:
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+    networks:
+      - cryptogram
+      - mail-relay
+    command: ["node", "/dist/api.js"]
+    stop_grace_period: 1m
+    restart: unless-stopped
+    # half of api's: sign-in routes only — no NSFW model
+    # (IMAGE_MODERATION_ENABLED=false), no social preview images
+    mem_limit: ${CG_MEM_LIMIT_GATEWAY_API:-1g}
+    logging: *logging
+
+  gateway-wsapi:
+    image: cryptogram/backend
+    profiles: ["gateway"]
+    environment:
+      - CG_GATEWAY=true
+      - CG_LEGACY_CGID=true
+      - PASSKEY_RP_ID=
+      - BASE_URL=https://${CG_GATEWAY_DOMAIN:-gateway.invalid}
+      - CGID_URL=https://${CG_GATEWAY_ID_DOMAIN:-id.gateway.invalid}
+      - DB_TYPE=writer
+      - PG_PASSWORD=${PG_WRITER_PASSWORD}
+      # one held LISTEN connection (typing cache) plus room for queries
+      - PG_POOL_MAX=${PG_POOL_MAX_GATEWAY_WSAPI:-3}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_SECRET=${CG_GATEWAY_SESSION_SECRET:-}
+      - DEPLOYMENT=prod
+    # like wsapi: only on a current schema (migrate-db exited 0)
+    depends_on:
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+    networks:
+      - cryptogram
+    command: ["node", "/dist/wsapi.js"]
+    stop_grace_period: 1m
+    restart: unless-stopped
+    # a third of wsapi's: no logged-in sockets, only the short-lived ones
+    # that watch a CG ID popup's result
+    mem_limit: ${CG_MEM_LIMIT_GATEWAY_WSAPI:-512m}
+    logging: *logging
+
+  cg-builder:
+    build:
+      context: ./node
+      args:
+        - BUILDER_UID=${BUILDER_UID:-1000}
+        - BUILDER_GID=${BUILDER_GID:-1000}
+    image: commonground/node
+    user: "${BUILDER_UID:-1000}:${BUILDER_GID:-1000}"
+    environment:
+      - YARN_CACHE_FOLDER=/builder-cache
+      - YARN_ENABLE_GLOBAL_CACHE=false
+      - BUILDER_UID=${BUILDER_UID:-1000}
+      - BUILDER_GID=${BUILDER_GID:-1000}
+    restart: "no"
+    mem_limit: ${CG_MEM_LIMIT_CG_BUILDER:-6g}
+    logging: *logging
+    volumes:
+      - ../:/cg
+      - builder-cache:/builder-cache
+    # its own network: the build needs the package registry, never the
+    # stack's services (database, Valkey, storage, onchain)
+    networks:
+      - builder
+    command: ["echo", "Not running interactive, exiting..."]
+
+volumes:
+  pgdata:
+  valkey-data:
+  seaweedfs-data:
+  builder-cache:
+  caddy-data:
+  caddy-config:
+  mail-data:
+
+networks:
+  cryptogram:
+    attachable: true
+  # cg-builder only: a way out to the package registry, no stack service on it
+  builder:
+  # app (api, job-runner) -> mail relay; no route to the outside
+  mail-relay:
+    internal: true
+  # the mail relay's own way out (SMTP to the recipients' MX, port 25). Its
+  # bridge has a fixed name, so a host firewall rule can let tcp/25 out of
+  # this network only (harden.sh, part mail25); every other Docker bridge is
+  # named br-<id>.
+  mail-egress:
+    driver_opts:
+      com.docker.network.bridge.name: cg-mail-out
+

@@ -4,12 +4,12 @@
 
 import { User } from "../entities/users";
 import errors from "../common/errors";
-import { UserProfileTypeEnum, PredefinedRole, PremiumRenewal, RoleType, UserPremiumFeatureName, WalletType, WalletVisibility } from "../common/enums";
+import { BotOwnerType, BotPlatformPresenceMode, UserProfileTypeEnum, PredefinedRole, PremiumRenewal, RoleType, UserPremiumFeatureName, WalletType, WalletVisibility } from "../common/enums";
 import format from "pg-format";
 import * as bcrypt from "bcrypt";
-import mailchimpClient from '@mailchimp/mailchimp_marketing';
-import serverconfig from "../serverconfig";
+import { randomUUID, webcrypto } from "node:crypto";
 import eventHelper from "./event";
+import { userWithNotifyIdsQuery as __userWithNotifyIdsQuery, emitOfflineUpdates, type UserWithNotifyIds } from "./userPresence";
 import pool from "../util/postgres";
 import { type Pool, type PoolClient } from "pg";
 import { UserAccount } from "../entities/user-accounts";
@@ -18,6 +18,11 @@ import { getDisplayNameString } from "../util";
 import walletHelper from "./wallets";
 import config from "../common/config";
 import { addressRegex, calculateSupporterUpgradeCost } from "../common/util";
+import { passkeyInsertParams, type NewPasskey } from "./passkeys";
+import { assertLoginMethodRemains, LOGIN_ACCOUNT_TYPES } from "./loginMethods";
+import { getProcessRpIdOrNull } from "../util/passkeyConfig";
+import { passwordMeetsPolicy } from "../common/passwordPolicy";
+import { bumpSecurityStepVersion } from "../util/securityStepVersion";
 
 export type CreateUserAccountData = {
   displayName: string;
@@ -38,26 +43,120 @@ export type CreateUserAccountData = {
   type: Extract<Models.User.ProfileItemType, "farcaster">;
   data: Models.User.UserAccountData_Farcaster;
   extraData: Models.User.UserAccountExtraData_Farcaster;
+} | {
+  type: Extract<Models.User.ProfileItemType, "bot">;
+  data: null;
+  extraData: null;
 });
+
+type CreateHumanUserAccountData = Exclude<CreateUserAccountData, { type: "bot" }>;
 
 type CreateUserData = {
   devicePublicKey: any;
   email: string | null;
+  /** the address was verified before the account was created */
+  emailVerified?: boolean;
   activateNewsletter: boolean;
   password: string | null;
-  passkeyId?: string;
-  displayAccount: Models.User.ProfileItemType;
+  /** passkey registered during sign-up, inserted together with the user */
+  passkey?: NewPasskey;
+  displayAccount: Exclude<Models.User.ProfileItemType, "bot">;
   wallet?: {
     walletIdentifier: Models.Wallet.Wallet['walletIdentifier'];
     type: Models.Wallet.Wallet["type"];
     signatureData: Models.Wallet.Wallet["signatureData"];
   };
-  accounts: CreateUserAccountData[];
+  accounts: CreateHumanUserAccountData[];
 };
 
+type InternalCreateUserData = Omit<CreateUserData, "displayAccount" | "accounts"> & {
+  displayAccount: Models.User.ProfileItemType;
+  accounts: CreateUserAccountData[];
+  isBot: boolean;
+  bot?: {
+    ownerType: Models.User.BotOwnerType;
+    ownerId: string | null;
+    platformPresenceMode: Models.User.BotPlatformPresenceMode | null;
+    description: string | null;
+  };
+};
+
+type CreateBotUserProfileData = {
+  displayName: string;
+  imageId: string | null;
+  description: string | null;
+};
+
+export type CreateBotUserData = CreateBotUserProfileData & ({
+  ownerType: 'community' | 'user';
+  ownerId: string;
+  platformPresenceMode?: never;
+} | {
+  ownerType: 'platform';
+  ownerId: null;
+  platformPresenceMode: Models.User.BotPlatformPresenceMode;
+});
+
+let dummyPasswordHash: Promise<string> | undefined;
+
+/**
+ * bcrypt cost factor for new hashes. Hashes with a lower cost are replaced
+ * with one of this cost after the next successful check (rehash on login).
+ */
+export const BCRYPT_COST = 12;
+
+/**
+ * Advisory lock key: held exclusively by a sign-out of other devices until
+ * its commit, shared by each login start (nextSessionGeneration).
+ */
+const SESSION_GENERATION_LOCK = 7312001;
+/** how long a sign-out of other devices waits for a lock before it gives up */
+const BUMP_LOCK_TIMEOUT = '5s';
+
 async function _hashPassword(password: string) {
-  const generatedSalt = await bcrypt.genSalt(8);
+  const generatedSalt = await bcrypt.genSalt(BCRYPT_COST);
   return await bcrypt.hash(password, generatedSalt);
+}
+
+/** compare against a throwaway hash, so unknown accounts take as long as known ones */
+async function _compareWithDummy(password: string) {
+  dummyPasswordHash ??= _hashPassword(randomUUID());
+  await bcrypt.compare(password, await dummyPasswordHash);
+}
+
+/**
+ * A failed check against a cheaper (older) hash: spend the time of a full-cost
+ * check as well, so the answer's timing tells nothing about the hash.
+ */
+async function _padFailedCheck(password: string, hash: string) {
+  if (_needsRehash(hash)) {
+    await _compareWithDummy(password);
+  }
+}
+
+function _needsRehash(hash: string): boolean {
+  try {
+    return bcrypt.getRounds(hash) < BCRYPT_COST;
+  }
+  catch {
+    return false;
+  }
+}
+
+/** Replaces a still-matching hash of a lower cost (best effort, never throws). */
+async function _rehashIfNeeded(userId: string, password: string, hash: string) {
+  if (!_needsRehash(hash)) {
+    return;
+  }
+  try {
+    await pool.query(`
+      UPDATE users SET "password" = $3
+      WHERE "id" = $1 AND "password" = $2
+    `, [userId, hash, await _hashPassword(password)]);
+  }
+  catch (e) {
+    console.error("Could not rehash a password", e instanceof Error ? e.message : e);
+  }
 }
 
 async function _getSocialPreviewData(
@@ -130,6 +229,7 @@ async function _getUserData(
   const query = `
     SELECT
       u."id",
+      u.is_bot AS "isBot",
       u."createdAt",
       u."updatedAt",
       u."onlineStatus",
@@ -138,6 +238,30 @@ async function _getUserData(
       u."followingCount",
       u."followerCount",
       u."tags",
+      CASE WHEN u.is_bot THEN (
+        SELECT CASE
+          WHEN b."ownerType" = 'user' THEN json_build_object(
+            'type', 'user',
+            'id', b."ownerId",
+            'username', owner_account."displayName"
+          )
+          WHEN b."ownerType" = 'community' THEN json_build_object(
+            'type', 'community',
+            'id', b."ownerId",
+            'title', owner_community.title
+          )
+          ELSE json_build_object('type', 'platform')
+        END
+        FROM bots b
+        LEFT JOIN user_accounts owner_account
+          ON owner_account."userId" = b."ownerId"
+          AND owner_account.type = 'cg'
+          AND owner_account."deletedAt" IS NULL
+        LEFT JOIN communities owner_community
+          ON owner_community.id = b."ownerId"
+          AND owner_community."deletedAt" IS NULL
+        WHERE b."userId" = u.id
+      ) ELSE NULL END AS "botOwner",
       coalesce((SELECT json_agg(
         json_build_object(
           'type', ua."type",
@@ -177,6 +301,8 @@ async function _getUserData(
   const result = await db.query(query, data.params);
   return result.rows as {
     id: string;
+    isBot: boolean;
+    botOwner: Models.User.BotOwnerSummary | null;
     verified: boolean;
     isFollower: boolean;
     isFollowed: boolean;
@@ -224,13 +350,20 @@ async function _getUserProfileDetails(
   const query = `
     WITH ${callerCte}, select_profiles AS (
       SELECT
-        "type",
-        "displayName",
-        "imageId",
-        "extraData"
-      FROM user_accounts
-      WHERE "userId" = $1
-        AND "deletedAt" IS NULL
+        ua."type",
+        ua."displayName",
+        ua."imageId",
+        CASE
+          WHEN ua."type" = 'bot' THEN jsonb_build_object(
+            'type', 'bot',
+            'description', b.description
+          )
+          ELSE ua."extraData"
+        END AS "extraData"
+      FROM user_accounts ua
+      LEFT JOIN bots b ON b."userId" = ua."userId" AND ua."type" = 'bot'
+      WHERE ua."userId" = $1
+        AND ua."deletedAt" IS NULL
     ), select_wallets AS (
       SELECT
         "type",
@@ -294,6 +427,7 @@ async function _getOwnData(
     ${data.CTE ? data.CTE : ''}
     SELECT
       u."id",
+      u.is_bot AS "isBot",
       u."communityOrder",
       u."finishedTutorials",
       u."newsletter",
@@ -333,6 +467,7 @@ async function _getOwnData(
         SELECT "createdAt", "updatedAt", "data"
         FROM passkeys
         WHERE "userId" = u."id"
+          AND "rpId" = ${format('%L', getProcessRpIdOrNull())}
           AND "deletedAt" IS NULL
         ORDER BY "updatedAt" DESC
       ) AS upk), '[]'::json) AS "passkeys",
@@ -352,6 +487,7 @@ async function _getOwnData(
   if (result.rows.length > 0) {
     return result.rows[0] as {
       id: string;
+      isBot: boolean;
       communityOrder: string[];
       finishedTutorials: Models.User.TutorialName[];
       newsletter: boolean;
@@ -392,9 +528,31 @@ async function _getOwnData(
 
 async function _createUser(
   db: PoolClient,
-  data: CreateUserData,
+  data: InternalCreateUserData,
 ) {
-  const { password, wallet, accounts, passkeyId } = data;
+  const botAccounts = data.accounts.filter(account => account.type === 'bot');
+  if (data.isBot) {
+    if (
+      !data.bot ||
+      data.displayAccount !== 'bot' ||
+      botAccounts.length !== 1 ||
+      data.accounts.length !== 1 ||
+      data.email !== null ||
+      data.password !== null ||
+      data.activateNewsletter ||
+      data.passkey !== undefined ||
+      data.wallet !== undefined
+    ) {
+      console.error("Error creating bot user, bot invariants not satisfied");
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
+  }
+  else if (data.bot || data.displayAccount === 'bot' || botAccounts.length > 0) {
+    console.error("Error creating human user with bot-only data");
+    throw new Error(errors.server.INVALID_REQUEST);
+  }
+
+  const { password, wallet, accounts, passkey } = data;
   let passwordHash: string | null = null;
   if (password !== null) {
     passwordHash = await _hashPassword(password);
@@ -404,6 +562,8 @@ async function _createUser(
     data.activateNewsletter,
     passwordHash,
     data.displayAccount,
+    data.isBot,
+    data.email !== null && data.emailVerified === true,
   ];
   let query = `
     WITH create_user AS (
@@ -411,21 +571,25 @@ async function _createUser(
         "email",
         "newsletter",
         "password",
-        "displayAccount"
+        "displayAccount",
+        "is_bot",
+        "emailVerified"
       )
-      VALUES ($1, $2, $3, $4)
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING "id", "updatedAt"
     )
   `;
-  if (passkeyId) {
+  if (passkey) {
     const baseParamsLength = params.length;
-    params.push(passkeyId);
+    params.push(...passkeyInsertParams(passkey));
     query += `,
       update_passkey AS (
-        UPDATE passkeys
-        SET "userId" = (SELECT "id" FROM create_user)
-        WHERE "id" = $${baseParamsLength + 1}
-          AND "userId" IS NULL
+        INSERT INTO passkeys ("userId", "rpId", "origin", "name", "data", "counter")
+        VALUES (
+          (SELECT "id" FROM create_user),
+          $${baseParamsLength + 1}, $${baseParamsLength + 2}, $${baseParamsLength + 3},
+          $${baseParamsLength + 4}::jsonb, $${baseParamsLength + 5}
+        )
         RETURNING json_build_object(
           'credentialID', "data"->>'credentialID',
           'credentialBackedUp', "data"->>'credentialBackedUp',
@@ -449,7 +613,7 @@ async function _createUser(
     params.push(
       wallet.type,
       true,
-      wallet.type === 'aeternity' ? wallet.walletIdentifier : wallet.walletIdentifier.toLowerCase(),
+      wallet.walletIdentifier.toLowerCase(),
       JSON.stringify(wallet.signatureData),
     );
     query += `,
@@ -553,25 +717,58 @@ async function _createUser(
     }
   }
   if (
+    !data.isBot &&
     !("wallet" in data) &&
     !data.password &&
     !data.accounts.find(a => a.type !== 'cg') &&
     !data.email &&
-    !data.passkeyId
+    !data.passkey
   ) {
-    console.error("Error creating user, no wallet, password, accounts, email or passkeyId", data);
+    console.error("Error creating user, no wallet, password, accounts, email or passkey");
     throw new Error(errors.server.INVALID_REQUEST);
   }
 
   params.push(data.devicePublicKey);
+  const devicePublicKeyParam = params.length;
   query += `
-    INSERT INTO devices ("userId", "publicKey")
-    VALUES ((SELECT "id" FROM create_user), $${params.length})
-    RETURNING
-      "id" AS "deviceId",
+    , create_device AS (
+      INSERT INTO devices ("userId", "publicKey")
+      VALUES ((SELECT "id" FROM create_user), $${devicePublicKeyParam})
+      RETURNING "id" AS "deviceId"
+    )
+  `;
+  if (data.isBot && data.bot) {
+    params.push(data.bot.ownerType, data.bot.ownerId, data.bot.platformPresenceMode, data.bot.description);
+    const ownerTypeParam = devicePublicKeyParam + 1;
+    query += `,
+      create_bot AS (
+        INSERT INTO bots (
+          "userId",
+          "deviceId",
+          "ownerType",
+          "ownerId",
+          "platformPresenceMode",
+          "description"
+        )
+        VALUES (
+          (SELECT "id" FROM create_user),
+          (SELECT "deviceId" FROM create_device),
+          $${ownerTypeParam},
+          $${ownerTypeParam + 1},
+          $${ownerTypeParam + 2},
+          $${ownerTypeParam + 3}
+        )
+        RETURNING "userId"
+      )
+    `;
+  }
+  query += `
+    SELECT
+      (SELECT "deviceId" FROM create_device) AS "deviceId",
       (SELECT "id" FROM create_user) AS "userId",
       (SELECT "updatedAt" FROM create_user) AS "updatedAt",
       (SELECT "passkeyData" FROM update_passkey) AS "passkeyData"
+    ${data.isBot ? 'WHERE EXISTS (SELECT 1 FROM create_bot)' : ''}
   `;
   const result = await db.query<{
     deviceId: string;
@@ -586,43 +783,16 @@ async function _createUser(
     } | null;
   }>(query, params);
   if (result.rows.length === 1) {
-    if (passkeyId && !result.rows[0].passkeyData) {
-      console.error("Error creating user, passkeyId provided but no passkey result data", data);
+    if (passkey && !result.rows[0].passkeyData) {
+      console.error("Error creating user, passkey provided but no passkey result data");
       throw new Error(errors.server.INVALID_REQUEST);
     }
     return result.rows[0];
   }
-  console.error("Error creating user, no result rows", data);
+  console.error("Error creating user: no result rows");
   throw new Error(errors.server.INVALID_REQUEST);
 }
 
-function __userWithNotifyIdsQuery(cteName: string) {
-  return `
-    SELECT
-      u.id AS "userId",
-      now() AS "updatedAt",
-      COALESCE(
-        (
-          SELECT json_agg(r."communityId")
-          FROM roles_users_users ruu
-          INNER JOIN roles r
-            ON ruu."roleId" = r."id"
-            AND r."type" = ${format("%L", RoleType.PREDEFINED)}
-            AND r."title" = ${format("%L", PredefinedRole.Member)}
-          WHERE ruu."userId" = u."id"
-        ),
-        '[]'::json
-      ) AS "communityIds"
-    FROM users u
-    WHERE u.id = ANY((SELECT id FROM ${cteName}))
-  `;
-}
-
-type UserWithNotifyIds = {
-  userId: string;
-  updatedAt: string;
-  communityIds: string[];
-};
 
 async function _updateUser(
   db: Pool | PoolClient,
@@ -697,7 +867,7 @@ async function _updateUser(
 async function _addUserAccount(
   db: Pool | PoolClient,
   userId: string,
-  account: CreateUserAccountData,
+  account: CreateHumanUserAccountData,
 ): Promise<Pick<UserAccount, "type" | "displayName" | "imageId" | "extraData">[]> {
   const query = `
     WITH insert_account AS (
@@ -936,7 +1106,7 @@ async function _isCgProfileNameAvailable(
 ): Promise<boolean> {
   const query = `
     SELECT 1 FROM user_accounts
-    WHERE "type" = 'cg'
+    WHERE "type" = ANY(ARRAY['cg', 'bot']::public.user_accounts_type_enum[])
       AND LOWER("displayName") = LOWER($1)
   `;
   const result = await db.query(query, [displayName]);
@@ -1023,13 +1193,62 @@ async function _unfollowUser(
   throw new Error(errors.server.NOT_FOUND);
 }
 
+async function _validateBotOwner(
+  db: PoolClient,
+  ownerType: Models.User.BotOwnerType,
+  ownerId: string | null,
+) {
+  if (!Object.values(BotOwnerType).includes(ownerType as BotOwnerType)) {
+    throw new Error(errors.server.INVALID_REQUEST);
+  }
+  if (ownerType === BotOwnerType.PLATFORM) {
+    if (ownerId !== null) {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
+    return;
+  }
+  if (ownerId === null) {
+    throw new Error(errors.server.INVALID_REQUEST);
+  }
+
+  const result = ownerType === BotOwnerType.COMMUNITY
+    ? await db.query(`
+        SELECT 1
+        FROM communities
+        WHERE "id" = $1
+          AND "deletedAt" IS NULL
+      `, [ownerId])
+    : await db.query(`
+        SELECT 1
+        FROM users
+        WHERE "id" = $1
+          AND "is_bot" = FALSE
+          AND "deletedAt" IS NULL
+      `, [ownerId]);
+  if (result.rowCount !== 1) {
+    throw new Error(errors.server.INVALID_REQUEST);
+  }
+}
+
+async function _createBotDevicePublicKey(): Promise<JsonWebKey> {
+  const keyPair = await webcrypto.subtle.generateKey(
+    {
+      name: 'ECDSA',
+      namedCurve: 'P-384',
+    },
+    true,
+    ['sign', 'verify'],
+  );
+  return await webcrypto.subtle.exportKey('jwk', keyPair.publicKey);
+}
+
 class UserHelper {
   public async createUser(data: CreateUserData, awaitBeforeCommit?: () => Promise<void>) {
     if (data.accounts) {
       for(const account of data.accounts) {
         if (account.type === 'twitter') {
           if (!account.data?.id) {
-            console.error("Error creating user with twitter account, no id", account);
+            console.error("Error creating user with twitter account: no id");
             throw new Error(errors.server.INVALID_REQUEST);
           }
           await this._checkUniqueTwitter(pool, account.data.id);
@@ -1037,7 +1256,7 @@ class UserHelper {
 
         if (account.type === 'lukso') {
           if (!account.data?.id) {
-            console.error("Error creating user with lukso account, no id", account);
+            console.error("Error creating user with lukso account: no id");
             throw new Error(errors.server.INVALID_REQUEST);
           }
           await this._checkUniqueUniversalProfile(pool, account.data.id);
@@ -1048,7 +1267,10 @@ class UserHelper {
     const client = await pool.connect();
     await client.query("BEGIN");
     try {
-      const result = await _createUser(client, data);
+      const result = await _createUser(client, {
+        ...data,
+        isBot: false,
+      });
       if (awaitBeforeCommit) {
         await awaitBeforeCommit();
       }
@@ -1064,38 +1286,116 @@ class UserHelper {
     }
   }
 
-  public async getOwnDataByCgProfileNameOrEmailAndPassword(cgProfileNameOrEmail: string, password: string): Promise<Models.User.OwnData> {
-    let options: Parameters<typeof _getOwnData>[1];
-    if (cgProfileNameOrEmail.indexOf('@') > -1) {
-      options = {
-        where: 'u."email" = $1',
-        extraFields: ['u."password"'],
-        params: [cgProfileNameOrEmail],
-      };
+  private async _createBotUserInTransaction(client: PoolClient, data: CreateBotUserData) {
+    if (
+      data.displayName.trim().length === 0 ||
+      data.displayName.length > 255 ||
+      (data.description !== null && data.description.length > 2000) ||
+      (data.ownerType === BotOwnerType.PLATFORM
+        && !Object.values(BotPlatformPresenceMode).includes(data.platformPresenceMode as BotPlatformPresenceMode))
+    ) {
+      throw new Error(errors.server.INVALID_REQUEST);
     }
-    else {
-      options = {
-        CTE: `
-          WITH user_id AS (
-            SELECT "userId"
-            FROM user_accounts
-            WHERE "type" = 'cg'
-              AND LOWER("displayName") = ${format("LOWER(%L)", cgProfileNameOrEmail)}
-              AND "deletedAt" IS NULL
-          )
-        `,
-        where: 'u."id" = (SELECT "userId" FROM user_id)',
-        extraFields: ['u."password"'],
-      };
-    }
-    const result = await _getOwnData(pool, options);
-    const passwordHash: string = (result as any).password;
-    const passwordCorrect = await bcrypt.compare(password, passwordHash);
-    if (passwordCorrect) {
-      delete (result as any).password;
+    const devicePublicKey = await _createBotDevicePublicKey();
+    await _validateBotOwner(client, data.ownerType, data.ownerId);
+    return await _createUser(client, {
+      devicePublicKey,
+      email: null,
+      activateNewsletter: false,
+      password: null,
+      displayAccount: UserProfileTypeEnum.BOT,
+      accounts: [{
+        type: UserProfileTypeEnum.BOT,
+        displayName: data.displayName,
+        imageId: data.imageId,
+        data: null,
+        extraData: null,
+      }],
+      isBot: true,
+      bot: {
+        ownerType: data.ownerType,
+        ownerId: data.ownerId,
+        platformPresenceMode: data.ownerType === BotOwnerType.PLATFORM ? data.platformPresenceMode : null,
+        description: data.description,
+      },
+    });
+  }
+
+  public async createBotUserInTransaction(client: PoolClient, data: CreateBotUserData) {
+    return await this._createBotUserInTransaction(client, data);
+  }
+
+  public async createBotUser(data: CreateBotUserData) {
+    const client = await pool.connect();
+    await client.query("BEGIN");
+    try {
+      const result = await this._createBotUserInTransaction(client, data);
+      await client.query("COMMIT");
       return result;
     }
-    throw new Error(errors.server.NOT_ALLOWED);
+    catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    }
+    finally {
+      client.release();
+    }
+  }
+
+  /**
+   * The account a password login names (email address or cg profile name),
+   * or null. Lets the caller apply per-account limits before the password
+   * is checked (checkPasswordLogin).
+   */
+  public async findPasswordLoginUserId(cgProfileNameOrEmail: string): Promise<string | null> {
+    const byEmail = cgProfileNameOrEmail.indexOf('@') > -1;
+    const result = await pool.query<{ id: string }>(byEmail
+      ? `
+        SELECT u."id" FROM users u
+        WHERE LOWER(u."email") = LOWER($1) AND u."deletedAt" IS NULL AND u.is_bot = FALSE
+      `
+      : `
+        SELECT u."id" FROM users u
+        JOIN user_accounts ua ON ua."userId" = u."id"
+        WHERE ua."type" = 'cg'
+          AND LOWER(ua."displayName") = LOWER($1)
+          AND ua."deletedAt" IS NULL
+          AND u."deletedAt" IS NULL AND u.is_bot = FALSE
+      `, [cgProfileNameOrEmail]);
+    return result.rows.length === 1 ? result.rows[0].id : null;
+  }
+
+  /**
+   * Password login: checks `password` for `userId` (null: unknown account —
+   * compared against a throwaway hash, same answer). On success an old hash
+   * is replaced by one of BCRYPT_COST, and a password that does not meet the
+   * policy marks the account (passwordChangeRequired: the account-security
+   * step asks for a new one). Throws NOT_ALLOWED otherwise.
+   */
+  public async checkPasswordLogin(userId: string | null, password: string): Promise<Models.User.OwnData> {
+    const hash = userId === null ? null : (await pool.query<{ password: string | null }>(`
+      SELECT "password" FROM users WHERE "id" = $1 AND "deletedAt" IS NULL
+    `, [userId])).rows[0]?.password;
+    if (!userId || !hash) {
+      await _compareWithDummy(password);
+      throw new Error(errors.server.NOT_ALLOWED);
+    }
+    if (!(await bcrypt.compare(password, hash))) {
+      await _padFailedCheck(password, hash);
+      throw new Error(errors.server.NOT_ALLOWED);
+    }
+    await _rehashIfNeeded(userId, password, hash);
+    if (!passwordMeetsPolicy(password)) {
+      const flagged = await pool.query(`
+        UPDATE users SET "passwordChangeRequired" = TRUE
+        WHERE "id" = $1 AND "passwordChangeRequired" = FALSE
+      `, [userId]);
+      if (flagged.rowCount) {
+        // other sessions of the account must notice the account-security step
+        await bumpSecurityStepVersion([userId]);
+      }
+    }
+    return await this.getOwnDataById(userId);
   }
 
   public async getOwnDataById(userId: string): Promise<Models.User.OwnData> {
@@ -1106,7 +1406,141 @@ class UserHelper {
     return result;
   }
 
-  public async getUserByAccount(accountType: Exclude<Models.User.ProfileItemType, "cg">, accountId: string): Promise<Models.User.OwnData> {
+  /**
+   * A login starts (docs/auth-identity §2, "Signing out other devices"): the
+   * next session generation, taken before any credential is checked. It waits
+   * while a sign-out of other devices is being committed (they hold the lock
+   * exclusively until their commit), so a value above that sign-out's
+   * generation is only handed out once its change is visible.
+   */
+  public async nextSessionGeneration(): Promise<number> {
+    const result = await pool.query<{ gen: string }>(`
+      WITH lock AS MATERIALIZED (SELECT pg_advisory_xact_lock_shared($1))
+      SELECT nextval('session_generation_seq') AS gen FROM lock
+    `, [SESSION_GENERATION_LOCK]);
+    return Number(result.rows[0].gen);
+  }
+
+  /** the user's session generation (0: never signed out other devices) */
+  public async getSessionGeneration(userId: string): Promise<number> {
+    const result = await pool.query<{ gen: string }>(`
+      SELECT "sessionGeneration" AS gen FROM users WHERE "id" = $1
+    `, [userId]);
+    return Number(result.rows[0]?.gen ?? 0);
+  }
+
+  /**
+   * Signs the user out of every other session, device key and transfer link,
+   * inside the caller's transaction (`client`, together with the change that
+   * caused it, right before its COMMIT): raises the user's generation to the
+   * next sequence value and gives the caller's own device that generation.
+   * Refused (LOGIN_REQUIRED) when the calling session's generation is below
+   * the user's — a session that was signed out itself cannot sign out
+   * anyone. Locks the user row first, then — for the last statement only —
+   * the advisory lock that logins wait on; a lock that is not granted within
+   * BUMP_LOCK_TIMEOUT fails the transaction (SERVICE_UNAVAILABLE, retryable)
+   * instead of making logins wait. Returns the new generation.
+   */
+  public async bumpSessionGeneration(client: PoolClient, userId: string, callerGeneration: number, keepDeviceId: string): Promise<number> {
+    try {
+      await client.query(`SET LOCAL lock_timeout = '${BUMP_LOCK_TIMEOUT}'`);
+      const current = await client.query<{ gen: string }>(`
+        SELECT "sessionGeneration" AS gen FROM users WHERE "id" = $1 FOR UPDATE
+      `, [userId]);
+      if (current.rows.length !== 1) {
+        throw new Error(errors.server.NOT_FOUND);
+      }
+      if (callerGeneration < Number(current.rows[0].gen)) {
+        throw new Error(errors.server.LOGIN_REQUIRED);
+      }
+      // from here to the COMMIT, logins that start wait (nextSessionGeneration)
+      await client.query(`SELECT pg_advisory_xact_lock($1)`, [SESSION_GENERATION_LOCK]);
+      const bumped = await client.query<{ gen: string }>(`
+        WITH bumped AS (
+          UPDATE users SET "sessionGeneration" = nextval('session_generation_seq')
+          WHERE "id" = $1
+          RETURNING "sessionGeneration"
+        ), kept AS (
+          UPDATE devices SET "generation" = (SELECT "sessionGeneration" FROM bumped)
+          WHERE "id" = $2 AND "userId" = $1 AND "deletedAt" IS NULL
+        )
+        SELECT "sessionGeneration" AS gen FROM bumped
+      `, [userId, keepDeviceId]);
+      return Number(bumped.rows[0].gen);
+    }
+    catch (e) {
+      if ((e as { code?: string }).code === '55P03') {
+        // lock_not_available: the caller rolls back; the client may retry
+        throw new Error(errors.server.SERVICE_UNAVAILABLE);
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * The users whose generation changed since `after` (a value of the
+   * sequence), for copying to Valkey, and the sequence value up to which the
+   * answer is complete: read while holding the advisory lock shared, so no
+   * sign-out is between its new generation and its COMMIT — every generation
+   * up to that value is committed or will never be a user's.
+   */
+  public async sessionGenerationsSince(after: number): Promise<{ upTo: number; rows: { userId: string; gen: number }[] }> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SELECT pg_advisory_xact_lock_shared($1)`, [SESSION_GENERATION_LOCK]);
+      // separate statements: in READ COMMITTED each sees what was committed when it started
+      const sequence = await client.query<{ upTo: string }>(`SELECT CASE WHEN is_called THEN last_value ELSE last_value - 1 END AS "upTo" FROM session_generation_seq`);
+      const result = await client.query<{ userId: string; gen: string }>(`
+        SELECT "id" AS "userId", "sessionGeneration" AS gen
+        FROM users
+        WHERE "sessionGeneration" > 0 AND "sessionGeneration" > $1
+        ORDER BY "sessionGeneration"
+      `, [after]);
+      await client.query('COMMIT');
+      return {
+        upTo: Number(sequence.rows[0].upTo),
+        rows: result.rows.map(row => ({ userId: row.userId, gen: Number(row.gen) })),
+      };
+    }
+    catch (e) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw e;
+    }
+    finally {
+      client.release();
+    }
+  }
+
+  /** bumpSessionGeneration in a transaction of its own (a sign-out without a change) */
+  public async bumpSessionGenerationAlone(userId: string, callerGeneration: number, keepDeviceId: string): Promise<number> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const gen = await this.bumpSessionGeneration(client, userId, callerGeneration, keepDeviceId);
+      await client.query('COMMIT');
+      return gen;
+    }
+    catch (e) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw e;
+    }
+    finally {
+      client.release();
+    }
+  }
+
+  /** the provider id of the user's live account of that type (X, LUKSO, Farcaster), or null */
+  public async getLinkedAccountId(userId: string, accountType: Exclude<Models.User.ProfileItemType, "cg" | "bot">): Promise<string | null> {
+    const result = await pool.query<{ id: string | null }>(`
+      SELECT ua."data"->>'id' AS "id"
+      FROM user_accounts ua
+      WHERE ua."userId" = $1 AND ua."type" = $2 AND ua."deletedAt" IS NULL
+    `, [userId, accountType]);
+    return result.rows[0]?.id ?? null;
+  }
+
+  public async getUserByAccount(accountType: Exclude<Models.User.ProfileItemType, "cg" | "bot">, accountId: string): Promise<Models.User.OwnData> {
     const query = `
       SELECT "userId"
       FROM user_accounts ua WHERE
@@ -1126,25 +1560,68 @@ class UserHelper {
     throw new Error(errors.server.TWITTER_LOGIN_FAILED);
   }
 
-  public async getOwnDataByEmailAndVerificationCode(email: string, code: string): Promise<Models.User.OwnData> {
-    const options = {
-      where: 'u."email" = $1 AND u."verificationCode" = $2 AND u."verificationCodeExpiration" > now()',
-      params: [email, code],
-    };
-    const user = await _getOwnData(pool, options);
-    // if no error is thrown, then otp is correct
-    await pool.query(`
-      UPDATE users
-      SET "verificationCode" = NULL, "verificationCodeExpiration" = NULL ${!user.emailVerified ? ', "emailVerified" = TRUE' : ''}
-      WHERE id = $1
-    `, [user.id]);
-    if (!user.emailVerified) { 
-      user.emailVerified = true;
+  /**
+   * An email-verification code came back: `email` becomes the account's
+   * verified address (it may differ from the current one — that is how the
+   * address changes on an instance that sends mail). Another account that
+   * holds the same address UNVERIFIED loses it in the same transaction (an
+   * unconfirmed claim never blocks the owner); `clearedFrom` names those
+   * accounts. EXISTS_ALREADY when another account has it verified.
+   */
+  public async setVerifiedEmail(
+    userId: string,
+    email: string,
+    /** the caller's own step in the same transaction, given whether a verified address was replaced */
+    beforeCommit?: (client: PoolClient, replaced: { previousEmail: string | null; previousVerified: boolean }) => Promise<void>,
+  ): Promise<{ previousEmail: string | null; previousVerified: boolean; clearedFrom: string[] }> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const cleared = await client.query<{ id: string }>(`
+        UPDATE users SET "email" = NULL, "updatedAt" = now()
+        WHERE LOWER("email") = LOWER($2) AND "id" <> $1 AND "emailVerified" = FALSE
+        RETURNING "id"
+      `, [userId, email]);
+      const result = await client.query<{ previousEmail: string | null; previousVerified: boolean }>(`
+        WITH previous AS (
+          SELECT "email", "emailVerified" FROM users WHERE "id" = $1 FOR UPDATE
+        )
+        UPDATE users u
+        SET "email" = $2, "emailVerified" = TRUE, "updatedAt" = now()
+        FROM previous
+        WHERE u."id" = $1 AND u."deletedAt" IS NULL
+        RETURNING previous."email" AS "previousEmail", previous."emailVerified" AS "previousVerified"
+      `, [userId, email]);
+      if (result.rows.length !== 1) {
+        throw new Error(errors.server.NOT_FOUND);
+      }
+      await beforeCommit?.(client, result.rows[0]);
+      await client.query('COMMIT');
+      return { ...result.rows[0], clearedFrom: cleared.rows.map(row => row.id) };
     }
-    return user;
+    catch (e) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      if ((e as { code?: string }).code === '23505') {
+        throw new Error(errors.server.EXISTS_ALREADY);
+      }
+      throw e;
+    }
+    finally {
+      client.release();
+    }
   }
 
-  public async getUserAccount(accountType: Exclude<Models.User.ProfileItemType, "cg">, accountId: string) {
+  /** The live human account that has this address VERIFIED (case-insensitive), or null. */
+  public async getVerifiedUserIdByEmail(email: string): Promise<string | null> {
+    const result = await pool.query<{ id: string }>(`
+      SELECT "id"
+      FROM users
+      WHERE LOWER("email") = LOWER($1) AND "emailVerified" = TRUE AND "deletedAt" IS NULL AND is_bot = FALSE
+    `, [email]);
+    return result.rows.length === 1 ? result.rows[0].id : null;
+  }
+
+  public async getUserAccount(accountType: Exclude<Models.User.ProfileItemType, "cg" | "bot">, accountId: string) {
     const query = `
       SELECT "type", "userId", "displayName", "imageId", "data", "extraData"
       FROM user_accounts ua WHERE
@@ -1189,8 +1666,72 @@ class UserHelper {
     });
   }
 
-  public async setPassword(userId: string, password: string): Promise<void> {
-    await _updateUser(pool, { id: userId, password });
+  /** Re-authentication: does `password` match the account's password? */
+  public async isPasswordCorrect(userId: string, password: string): Promise<boolean> {
+    const result = await pool.query<{ password: string | null }>(`
+      SELECT "password" FROM users WHERE "id" = $1 AND "deletedAt" IS NULL
+    `, [userId]);
+    const hash = result.rows[0]?.password;
+    if (!hash) {
+      // no password set: compare anyway so both cases take similar time
+      await _compareWithDummy(password);
+      return false;
+    }
+    if (!(await bcrypt.compare(password, hash))) {
+      await _padFailedCheck(password, hash);
+      return false;
+    }
+    await _rehashIfNeeded(userId, password, hash);
+    return true;
+  }
+
+  /** Sets (or replaces) the password; a pending password change is done with it. */
+  /** `beforeCommit`: the caller's own step in the same transaction */
+  public async setPassword(userId: string, password: string, beforeCommit?: (client: PoolClient) => Promise<void>): Promise<void> {
+    const hash = await _hashPassword(password);
+    const update = async (db: Pool | PoolClient) => {
+      const result = await db.query(`
+        UPDATE users
+        SET "password" = $2, "passwordChangeRequired" = FALSE, "updatedAt" = now()
+        WHERE "id" = $1 AND "deletedAt" IS NULL
+      `, [userId, hash]);
+      if (result.rowCount !== 1) {
+        throw new Error(errors.server.NOT_FOUND);
+      }
+    };
+    if (!beforeCommit) {
+      await update(pool);
+      return;
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await update(client);
+      await beforeCommit(client);
+      await client.query('COMMIT');
+    }
+    catch (e) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw e;
+    }
+    finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Sets the account's first password: only while it has none, in the same
+   * statement (two concurrent requests cannot both add one). false: the
+   * account has a password by now (or is gone) — nothing was written.
+   */
+  public async setFirstPassword(userId: string, password: string): Promise<boolean> {
+    const hash = await _hashPassword(password);
+    const result = await pool.query(`
+      UPDATE users
+      SET "password" = $2, "passwordChangeRequired" = FALSE, "updatedAt" = now()
+      WHERE "id" = $1 AND "deletedAt" IS NULL AND "password" IS NULL
+    `, [userId, hash]);
+    return result.rowCount === 1;
   }
 
   public async updateUser(
@@ -1199,19 +1740,44 @@ class UserHelper {
       previewImageId?: string
     } & {
       bannerImageId?: string | null
-    }>
+    }>,
+    /** the caller's own step in the same transaction */
+    beforeCommit?: (client: PoolClient) => Promise<void>,
   ): Promise<void> {
+    if (data.displayAccount === UserProfileTypeEnum.BOT) {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
     if (data.email) {
       data.emailVerified = false;
     }
     if ("updatedAt" in data || "id" in data || "extraData" in data) {
       throw new Error(errors.server.INVALID_REQUEST);
     }
-    const result = await _updateUser(pool, {
+    const update = (db: Pool | PoolClient) => _updateUser(db, {
       // type-safe override of displayAccount (enum vs type)
       ...data,
       id: userId,
     });
+    let result: Awaited<ReturnType<typeof update>>;
+    if (!beforeCommit) {
+      result = await update(pool);
+    }
+    else {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        result = await update(client);
+        await beforeCommit(client);
+        await client.query('COMMIT');
+      }
+      catch (e) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw e;
+      }
+      finally {
+        client.release();
+      }
+    }
 
     // preview image should not be delivered as an update
     delete data.previewImageId;
@@ -1336,8 +1902,13 @@ class UserHelper {
 
   public async addUserAccount(
     userId: string,
-    data: CreateUserAccountData
+    data: CreateHumanUserAccountData,
+    /** the caller's own step in the same transaction */
+    beforeCommit?: (client: PoolClient) => Promise<void>,
   ): Promise<void> {
+    if ((data as CreateUserAccountData).type === UserProfileTypeEnum.BOT) {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
     if (data.type === 'twitter') {
       if (!data.data?.id) throw new Error(errors.server.INVALID_REQUEST);
       await this._checkUniqueTwitter(pool, data.data.id);
@@ -1363,6 +1934,7 @@ class UserHelper {
       await eventHelper.emit(event, {
         userIds: [userId],
       });
+      await beforeCommit?.(client);
       await client.query('COMMIT');
     } catch (e) {
       await client.query('ROLLBACK');
@@ -1379,15 +1951,29 @@ class UserHelper {
     throw new Error(errors.server.NOT_IMPLEMENTED);
   }
 
+  /**
+   * `keepLoginMethod`: an account that can sign in (X, LUKSO, Farcaster) is
+   * only removed if the user keeps a sign-in method of this instance
+   * (srv/repositories/loginMethods.ts), else LAST_LOGIN_METHOD.
+   */
   public async removeUserAccount(
     userId: string,
-    type: UserProfileTypeEnum
+    type: UserProfileTypeEnum,
+    keepLoginMethod?: { rpId: string | null },
+    /** the caller's own step in the same transaction */
+    beforeCommit?: (client: PoolClient) => Promise<void>,
   ): Promise<void> {
+    if (type === UserProfileTypeEnum.BOT) {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
     let deletedWalletId: string | undefined;
 
     const client = await pool.connect();
     await client.query("BEGIN");
     try {
+      if (keepLoginMethod && LOGIN_ACCOUNT_TYPES.has(type)) {
+        await assertLoginMethodRemains(client, userId, keepLoginMethod.rpId);
+      }
       const result = await _removeUserAccount(client, userId, type);
 
       if (type === 'lukso' && result.data !== null) {
@@ -1412,6 +1998,7 @@ class UserHelper {
           deletedWalletId = deleteWalletResult.rows[0].id;
         }
       }
+      await beforeCommit?.(client);
       await client.query("COMMIT");
     }
     catch (e) {
@@ -1423,7 +2010,12 @@ class UserHelper {
     }
 
     if (deletedWalletId) {
-      await walletHelper.fixRolesAndBalancesAfterWalletDelete(userId, deletedWalletId);
+      // best-effort: the account removal is already committed, and the
+      // cliUserOwnData emit below must happen even if the onchain service is
+      // unavailable (or not deployed at all)
+      await walletHelper.fixRolesAndBalancesAfterWalletDelete(userId, deletedWalletId).catch(e => {
+        console.error("Error re-checking role claimability after lukso account removal", e);
+      });
     }
 
     const accounts = await _getUserDetailledAccounts(pool, userId);
@@ -1578,17 +2170,9 @@ class UserHelper {
     return await _isEmailAvailable(pool, email);
   }
 
-  public async subscribeNewsletter(userId: string, email: string) {
-    try {
-      await mailchimpClient.lists.setListMember(
-        serverconfig.MAILCHIMP_DEFAULT_LIST_ID,
-        email,
-        { email_address: email, status_if_new: 'subscribed', status: 'subscribed' }
-      );
-    } catch (e) {
-      console.log(e);
-      throw new Error(errors.server.UNKNOWN);
-    }
+  // the general "newsletter" opt-in is a local preference flag only (it used
+  // to be mirrored into a Mailchimp list)
+  public async subscribeNewsletter(userId: string) {
     await _updateUser(pool, { id: userId, newsletter: true });
     
     const event: Events.User.OwnData = {
@@ -1601,17 +2185,7 @@ class UserHelper {
     });
   }
 
-  public async unsubscribeNewsletter(userId: string, email: string) {
-    try {
-      await mailchimpClient.lists.updateListMember(
-        serverconfig.MAILCHIMP_DEFAULT_LIST_ID,
-        email,
-        { email_address: email, status: 'unsubscribed' }
-      );
-    } catch (e) {
-      console.log(e);
-      throw new Error(errors.server.UNKNOWN);
-    }
+  public async unsubscribeNewsletter(userId: string) {
     await _updateUser(pool, { id: userId, newsletter: false });
 
     const event: Events.User.OwnData = {
@@ -1622,21 +2196,6 @@ class UserHelper {
     await eventHelper.emit(event, {
       userIds: [userId],
     });
-  }
-
-  public async addContactEmail(userId: string, email: string, withNewCommunitycreatedTag?: boolean): Promise<void> {
-    await this.subscribeNewsletter(userId, email);
-
-    const tags = [{ name: 'New Member', status: 'active' }];
-    if (withNewCommunitycreatedTag) {
-      tags.push({ name: 'New Community created', status: 'active' });
-    }
-
-    await mailchimpClient.lists.updateListMemberTags(
-      serverconfig.MAILCHIMP_DEFAULT_LIST_ID,
-      email,
-      { tags }
-    );
   }
 
   public async getSocialPreviewData(options: { userId: string } | { cgProfileName: string }) {
@@ -2056,7 +2615,10 @@ class UserHelper {
       ${__userWithNotifyIdsQuery('update_status')}
     `, [userId, status]);
 
-    if (status !== "offline") {
+    // Only a real change is emitted: the UPDATE returns no row when the
+    // status was already set (no own-data event on every socket login).
+    const updates = result.rows as UserWithNotifyIds[];
+    if (status !== "offline" && updates.length > 0) {
       eventHelper.emit({
         type: 'cliUserOwnData',
         data: {
@@ -2066,7 +2628,6 @@ class UserHelper {
         userIds: [userId],
       });
     }
-    const updates = result.rows as UserWithNotifyIds[];
     for (const update of updates) {
       eventHelper.emit({
         type: 'cliUserData',
@@ -2082,40 +2643,54 @@ class UserHelper {
     }
   }
 
-  public async setUsersToOffline(userIds: string[]): Promise<void> {
+  /**
+   * Sets these users offline in one statement (presence decisions of a wsapi
+   * process). Emits `cliUserData` only for users whose status changed.
+   */
+  public async setUsersOffline(userIds: string[]): Promise<void> {
+    if (userIds.length === 0) {
+      return;
+    }
     const result = await pool.query(`
-      WITH set_to_offline AS (
+      WITH set_offline AS (
         UPDATE users
         SET
           "onlineStatus" = 'offline',
           "updatedAt" = now(),
           "onlineStatusUpdatedAt" = now()
-        WHERE id = ANY(ARRAY[${format("%L", userIds)}]::uuid[])
+        WHERE id = ANY($1::uuid[])
           AND "onlineStatus" <> 'offline'
         RETURNING id
       )
-      ${__userWithNotifyIdsQuery('set_to_offline')}
-    `);
-
-    const updates = result.rows as UserWithNotifyIds[];
-    const promises: Promise<any>[] = [];
-    for (const update of updates) {
-      promises.push(eventHelper.emit({
-        type: 'cliUserData',
-        data: {
-          id: update.userId,
-          onlineStatus: 'offline',
-          updatedAt: update.updatedAt,
-        },
-      }, {
-        communityIds: update.communityIds,
-        userIds: [update.userId]
-      }));
-    }
-    await Promise.allSettled(promises);
+      ${__userWithNotifyIdsQuery('set_offline')}
+    `, [userIds]);
+    await emitOfflineUpdates(result.rows as UserWithNotifyIds[]);
   }
 
-  public async touchUserOnlineStatus(userIds: string[]) {
+  /**
+   * Refreshes only `onlineStatusUpdatedAt` (users in their offline grace
+   * period): never changes a status, emits nothing.
+   */
+  public async refreshOnlineStatusTimestamps(userIds: string[]): Promise<void> {
+    if (userIds.length === 0) {
+      return;
+    }
+    await pool.query(`
+      UPDATE users
+      SET "onlineStatusUpdatedAt" = now()
+      WHERE id = ANY($1::uuid[])
+        AND "onlineStatus" <> 'offline'
+    `, [userIds]);
+  }
+
+  /**
+   * Refreshes `onlineStatusUpdatedAt` of connected users and flips only
+   * `offline` ones to `online` (a status other than online/offline is left
+   * alone). Events go out for users whose status actually changed;
+   * `emitOwnData` also sends them `cliUserOwnData` (human users; bots do not
+   * use own data).
+   */
+  public async touchUserOnlineStatus(userIds: string[], options?: { emitOwnData?: boolean }) {
     if (userIds.length === 0) {
       return;
     }
@@ -2144,6 +2719,16 @@ class UserHelper {
 
     const updates = result.rows as UserWithNotifyIds[];
     for (const update of updates) {
+      if (options?.emitOwnData) {
+        eventHelper.emit({
+          type: 'cliUserOwnData',
+          data: {
+            onlineStatus: 'online',
+          },
+        }, {
+          userIds: [update.userId],
+        });
+      }
       eventHelper.emit({
         type: 'cliUserData',
         data: {
@@ -2272,180 +2857,6 @@ class UserHelper {
       return result.rows[0].extraData;
     }
     throw new Error(errors.server.NOT_FOUND);
-  }
-
-  public async registerForTokenSale({ email, referredBy, userId }: { email: string, referredBy?: string, userId?: string }): Promise<void> {
-    const query = `
-      INSERT INTO tokensale_registrations ("email", "referredBy", "userId")
-      VALUES ($1, $2, $3)
-      ON CONFLICT (LOWER("email")) DO NOTHING
-      RETURNING id
-    `;
-    const result = await pool.query<{ id: string }>(query, [email, referredBy || null, userId || null]);
-  }
-
-  public async getUserIdByEmail(email: string): Promise<string> {
-    const result = await pool.query(`
-      SELECT "id"
-      FROM users
-      WHERE "email" = $1
-    `, [email]);
-    if (result.rows.length === 1) {
-      return result.rows[0].id;
-    }
-    throw new Error(errors.server.NOT_FOUND);
-  }
-
-  public async setReferredBy({ userId, tokenSaleId, referredByUserId }: { userId: string, tokenSaleId: string, referredByUserId: string }) {
-    await pool.query(`
-      INSERT INTO tokensale_userdata ("userId", "tokenSaleId", "referredByUserId")
-      VALUES ($1, $2, $3)
-      ON CONFLICT ("userId", "tokenSaleId") DO UPDATE SET "referredByUserId" = $3, "updatedAt" = now()
-    `, [userId, tokenSaleId, referredByUserId]);
-  }
-
-  public async getTokenSaleData(tokenSaleId: string, userId?: string): Promise<{
-    tokenSaleData: Models.TokenSale.SaleData,
-    userSaleData?: Models.TokenSale.UserSaleData
-  }> {
-    const tokenSaleData = await pool.query<{
-      id: string;
-      name: string;
-      saleContractChain: Models.Contract.ChainIdentifier;
-      saleContractAddress: Common.Address;
-      saleContractType: Models.Contract.SaleContractType;
-      targetTokenChain: Models.Contract.ChainIdentifier;
-      targetTokenAddress: Common.Address;
-      targetTokenDecimals: number;
-      totalInvested: string;
-      startDate: string;
-      endDate: string;
-    }>(`
-      SELECT
-        "id",
-        "name",
-        "saleContractChain",
-        "saleContractAddress",
-        "saleContractType",
-        "targetTokenChain",
-        "targetTokenAddress",
-        "targetTokenDecimals",
-        "totalInvested",
-        "startDate",
-        "endDate"
-      FROM tokensales
-      WHERE "id" = $1
-    `, [tokenSaleId]);
-    if (tokenSaleData.rows.length === 1) {
-      let userSaleData: Models.TokenSale.UserSaleData | undefined;
-      if (!!userId) {
-        const result = await pool.query<{
-          tokenSaleId: string;
-          referredByUserId: string | null;
-          totalInvested: string;
-          totalTokensBought: string;
-          referralBonus: string;
-          referredUsersDirectCount: number;
-          referredUsersIndirectCount: number;
-          rewardProgram: Models.TokenSale.UserSaleData['rewardProgram'];
-          rewardClaimedTimestamp: string | null;
-          targetAddress: Common.Address | null;
-        }>(`
-          SELECT
-            "tokenSaleId",
-            "referredByUserId",
-            "totalInvested",
-            "totalTokensBought",
-            "referralBonus",
-            "referredUsersDirectCount",
-            "referredUsersIndirectCount",
-            "rewardProgram",
-            "rewardClaimedTimestamp",
-            "targetAddress"
-          FROM tokensale_userdata
-          WHERE "tokenSaleId" = $1
-            AND "userId" = $2
-        `, [tokenSaleId, userId]);
-        if (result.rows.length === 1) {
-          userSaleData = result.rows[0];
-        }
-        else {
-          await pool.query(`
-            INSERT INTO tokensale_userdata ("userId", "tokenSaleId")
-            VALUES ($1, $2)
-          `, [userId, tokenSaleId]);
-          userSaleData = {
-            tokenSaleId,
-            referredByUserId: null,
-            totalInvested: '0',
-            totalTokensBought: '0',
-            referralBonus: '0',
-            referredUsersDirectCount: 0,
-            referredUsersIndirectCount: 0,
-            rewardProgram: {},
-            rewardClaimedTimestamp: null,
-            targetAddress: null,
-          };
-        }
-      }
-      return {
-        tokenSaleData: tokenSaleData.rows[0],
-        userSaleData,
-      };
-    }
-    throw new Error(errors.server.NOT_FOUND);
-  }
-
-  public async getTokenSaleEvents(tokenSaleId: string): Promise<Models.Contract.SaleInvestmentEventJson[]> {
-    const result = await pool.query<{
-      event: Models.Contract.SaleInvestmentEventJson;
-    }>(`
-      SELECT "event"
-      FROM tokensale_investments
-      WHERE "tokenSaleId" = $1
-    `, [tokenSaleId]);
-    const events = result.rows.map(row => row.event);
-    events.sort((a, b) => a.investmentId - b.investmentId);
-    return events;
-  }
-
-  public async claimTokenSaleReward(tokenSaleId: string, userId: string, rewardClaimedSecurityData: any) {
-    const tokenSaleDates = await pool.query(`
-      SELECT "startDate", "endDate"
-      FROM tokensales
-      WHERE "id" = $1
-    `, [tokenSaleId]);
-    if (tokenSaleDates.rows.length === 1) {
-      const { startDate, endDate } = tokenSaleDates.rows[0];
-      if (new Date(startDate) > new Date() || new Date(endDate) < new Date()) {
-        throw new Error(errors.server.NOT_ALLOWED);
-      }
-    }
-    else {
-      throw new Error(errors.server.NOT_FOUND);
-    }
-    await pool.query(`
-      INSERT INTO tokensale_userdata ("userId", "tokenSaleId", "rewardClaimedTimestamp", "rewardClaimedSecurityData") 
-      VALUES ($1, $2, now(), $3::jsonb)
-      ON CONFLICT ("userId", "tokenSaleId") DO UPDATE 
-      SET "rewardClaimedTimestamp" = CASE 
-        WHEN tokensale_userdata."rewardClaimedTimestamp" IS NULL THEN EXCLUDED."rewardClaimedTimestamp"
-        ELSE tokensale_userdata."rewardClaimedTimestamp"
-      END,
-      "rewardClaimedSecurityData" = CASE
-        WHEN tokensale_userdata."rewardClaimedSecurityData" IS NULL THEN EXCLUDED."rewardClaimedSecurityData"
-        ELSE tokensale_userdata."rewardClaimedSecurityData"
-      END
-    `, [userId, tokenSaleId, JSON.stringify(rewardClaimedSecurityData)]);
-  }
-
-  public async saveTokenSaleTargetAddress(userId: string, data: API.User.saveTokenSaleTargetAddress.Request) {
-    await pool.query(`
-      UPDATE tokensale_userdata
-      SET "targetAddress" = $2, "updatedAt" = now()
-      WHERE "userId" = $1
-        AND "tokenSaleId" = $3
-    `, [userId, data.targetAddress, data.tokenSaleId]);
   }
 }
 

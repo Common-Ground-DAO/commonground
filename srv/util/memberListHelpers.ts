@@ -60,3 +60,23 @@ export function convertBinaryMemberListToUuid(memberList: Models.Community.Chann
     return result;
   }
 }
+/**
+ * Merges two member id lists, each sorted by `compare`, into one list sorted
+ * by `compare` (for a total order the result equals sorting both together).
+ */
+export function mergeSortedMemberIds(a: string[], b: string[], compare: (x: string, y: string) => number): string[] {
+  const result: string[] = new Array(a.length + b.length);
+  let i = 0;
+  let j = 0;
+  let k = 0;
+  while (i < a.length && j < b.length) {
+    result[k++] = compare(a[i], b[j]) <= 0 ? a[i++] : b[j++];
+  }
+  while (i < a.length) {
+    result[k++] = a[i++];
+  }
+  while (j < b.length) {
+    result[k++] = b[j++];
+  }
+  return result;
+}

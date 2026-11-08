@@ -98,7 +98,7 @@ const HistoryPayment: React.FC<HistoryPaymentProps> = ({ transaction }) => {
 
   const user = useUserData(data.type === 'user-donate-community' ? (userId || undefined) : undefined);
 
-  let content: JSX.Element;
+  let content: React.JSX.Element;
   let sign: '+' | '-' | '' = '';
   let datePrefix = '';
   if (data.type === 'user-donate-community') {

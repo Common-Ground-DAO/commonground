@@ -115,6 +115,7 @@ declare global {
                     "official" |
                     "tokens" |
                     "premium" |
+                    "allowUserBots" |
                     "enablePersonalNewsletter" |
                     "pointBalance" |
                     "plugins">;
@@ -131,6 +132,7 @@ declare global {
                         "url" |
                         "memberCount" |
                         "blockState" |
+                        "allowUserBots" |
                         "official">>
                     & Pick<Models.Community.DetailView, "id">;
                 type Response = void;
@@ -349,8 +351,15 @@ declare global {
             namespace getArticleList {
                 type Request = {
                     communityId?: string;
+                    // Article-level tag filters (articles.tags).
                     tags?: string[];
                     anyTags?: string[];
+                    // Containing-community topic filters (communities.tags): the
+                    // article's community must include all (communityTags) or any
+                    // (anyCommunityTags) of the selected tags. Composes with the
+                    // article-tag filters above.
+                    communityTags?: string[];
+                    anyCommunityTags?: string[];
                 } & API.BaseArticle.getArticleListRequest;
                 type Response = {
                     communityArticle: Models.Community.CommunityArticle;
@@ -644,15 +653,6 @@ declare global {
                 type Response = Models.Premium.TransactionFromApi[];
             }
 
-            namespace getCommunityCount {
-                type Request = {
-                    channel: string;
-                }
-                type Response = {
-                    count: number;
-                };
-            }
-
             namespace updateNotificationState {
                 type Request = {
                     data: {
@@ -723,100 +723,6 @@ declare global {
                 }[];
             }
 
-            namespace Wizard {
-                namespace getWizardData {
-                    type Request = {
-                        wizardId: string;
-                    };
-                    type Response = {
-                        wizardData: Models.Wizard.Wizard;
-                        userData?: Models.Wizard.WizardUserData;
-                    };
-                }
-
-                namespace consumeReferralCode {
-                    type Request = {
-                        code: string;
-                        wizardId: string;
-                    };
-                    type Response = void;
-                }
-
-                namespace wizardVerifyCode {
-                    type Request = {
-                        wizardId: string;
-                        code: string;
-                    };
-                    type Response = boolean;
-                }
-
-                namespace wizardVerifyWallet {
-                    type Request = {
-                        wizardId: string;
-                        data: any;
-                    };
-                    type Response = Models.Wizard.WizardStep;
-                }
-
-                namespace wizardFinished {
-                    type Request = {
-                        wizardId: string;
-                        tryResult: "success" | "failure";
-                    };
-                    type Response = void;
-                }
-
-                namespace claimInvestmentTransaction {
-                    type Request = {
-                        wizardId: string;
-                        txHash: string;
-                    };
-                    type Response = {
-                        success: boolean;
-                        message?: string;
-                        newInvestmentAmount?: string;
-                    };
-                }
-
-                namespace getMyReferralCodes {
-                    type Request = {
-                        wizardId: string;
-                    };
-                    type Response = {
-                        referralCodes: {
-                            code: string;
-                            used: boolean;
-                        }[];
-                    };
-                }
-
-                namespace setWizardStepData {
-                    type Request = {
-                        wizardId: string;
-                        stepId: number;
-                        value: Models.Wizard.WizardStepData & { serverTimestamp?: never };
-                    };
-                    type Response = Models.Wizard.WizardUserData;
-                }
-
-                namespace getInvestmentTargetBeneficiaryBalance {
-                    type Request = {
-                        target: Models.Wizard.ValidInvestmentTarget;
-                    };
-                    type Response = {
-                        balance: string;
-                    };
-                }
-
-                namespace getInvestmentTargetPersonalContribution {
-                    type Request = {
-                        target: Models.Wizard.ValidInvestmentTarget;
-                    };
-                    type Response = {
-                        contribution: string;
-                    };
-                }
-            }
         }
     }
 }

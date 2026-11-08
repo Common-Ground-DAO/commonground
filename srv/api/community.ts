@@ -14,18 +14,74 @@ import eventHelper from "../repositories/event";
 import onchainHelper from "../repositories/onchain";
 import { CallPermission, CallType, ChannelPermission, CommunityApprovalState, CommunityEventPermission, CommunityPermission, PredefinedRole, RoleType, UserBlockState } from "../common/enums";
 import callHelper from "../repositories/calls";
-import shortUUID from "short-uuid";
+import { requestSockets, senderExcept } from "../util/requestSocket";
+import { createTranslator } from "short-uuid";
 import fileHelper from "../repositories/files";
 import axios from "../util/axios";
 import { convertBinaryMemberListToUuid, convertBinaryToUuid, convertUuidToBinary } from "../util/memberListHelpers";
+import { channelMemberListOrEmpty, memberListOrEmpty } from "../common/memberLists";
 import newsletterHelper from "../repositories/newsletter";
 import dayjs from "dayjs";
-import emailUtils from "./emails";
+import emailUtils, { requireNewsletterDelivery } from "./emails";
+import { reserveEventMailRound } from "../util/eventMailBudget";
 import userHelper from "../repositories/users";
-import { investmentTargets } from "../common/investmentTargets";
+import messageHelper from "../repositories/messages";
 
 const communityRouter = express.Router();
-const t = shortUUID();
+const t = createTranslator();
+
+/**
+ * `cliCallEvent new` to the given role rooms plus the call's present members
+ * and, when the Public role may see the call, the community room (nobody
+ * joins a Public role room). One emit, so every socket gets it once. If the
+ * extra targets cannot be read, the role rooms still get it.
+ */
+async function emitCallNew(callData: Models.Calls.Call, roleIds: string[]) {
+  let extra: Awaited<ReturnType<typeof callHelper.getCallEventExtraTargets>> = { activeMemberUserIds: [], publicCommunityId: null };
+  try {
+    extra = await callHelper.getCallEventExtraTargets(callData.id);
+  }
+  catch (e) {
+    console.error("Error reading the call's event targets", e);
+  }
+  eventHelper.emit({
+    type: 'cliCallEvent',
+    action: 'new',
+    data: callData,
+  }, {
+    roleIds,
+    userIds: extra.activeMemberUserIds,
+    communityIds: extra.publicCommunityId !== null ? [extra.publicCommunityId] : [],
+  });
+}
+
+/** the most members a caller outside the community sees in the preview */
+const MEMBER_LIST_PREVIEW_LIMIT = 6;
+
+function isMemberListPreviewRequest(data: API.Community.getMemberList.Request): boolean {
+  return data.offset === 0
+    && data.limit <= MEMBER_LIST_PREVIEW_LIMIT
+    && data.search === undefined
+    && data.roleId === undefined;
+}
+
+/**
+ * The preview of a member list as the memberlist service selects it (the
+ * first members by name, independent of presence), kept to its shape: the
+ * counts and at most `limit` member ids in the service's order, without
+ * their roles, the presence split or the per-role counts.
+ */
+function toMemberListPreview(memberList: Models.Community.MemberList, limit: number): Models.Community.MemberList {
+  return {
+    totalCount: memberList.totalCount,
+    resultCount: memberList.resultCount,
+    online: [],
+    offline: memberList.offline
+      .slice(0, Math.min(limit, MEMBER_LIST_PREVIEW_LIMIT))
+      .map(([userId]) => [userId, []]),
+    roles: [],
+  };
+}
 
 registerPostRoute<
   API.Community.getCommunityList.Request,
@@ -90,9 +146,7 @@ registerPostRoute<
     };
     eventHelper.emit(event, {
       userIds: [user.id],
-    }, {
-      deviceIds: [user.deviceId],
-    });
+    }, senderExcept(requestSockets(request, user.deviceId)));
 
     return result;
   }
@@ -197,6 +251,40 @@ API.Community.getMemberList.Response
   '/getMemberList',
   validators.API.Community.getMemberList,
   async (request, response, data) => {
+    // members of the community get the full list (windows, search, role
+    // filter, presence, roles); everyone else only a short preview of the
+    // first members by name, without roles or presence
+    const { user } = request.session;
+    const isMember = !!user && await permissionHelper.isMemberOfActiveCommunity(user.id, data.communityId);
+    if (!isMember) {
+      // nothing at all for a deleted community, whoever asks (a member of a
+      // deleted community is no member, see isMemberOfActiveCommunity), the
+      // same answer as /getChannelMemberList; logging in would not help
+      if (!(await permissionHelper.isActiveCommunity(data.communityId))) {
+        throw new Error(errors.server.NOT_ALLOWED);
+      }
+      if (!isMemberListPreviewRequest(data)) {
+        throw new Error(!user ? errors.server.LOGIN_REQUIRED : errors.server.NOT_ALLOWED);
+      }
+      const preview = await axios.post<API.Community.getMemberList.Response>(
+        'http://memberlist:4000/getMemberListPreview',
+        JSON.stringify({
+          communityId: convertUuidToBinary(data.communityId),
+          limit: Math.min(data.limit, MEMBER_LIST_PREVIEW_LIMIT),
+        }),
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        },
+      );
+      // memberlist answers an empty list for a community it does not know yet
+      // (memberListOrEmpty guards against an empty body all the same). A
+      // memberlist without this route answers 404, i.e. the generic error;
+      // compose restarts api and memberlist together, and falling back to the
+      // window would bring back a presence-dependent preview
+      return toMemberListPreview(convertBinaryMemberListToUuid(memberListOrEmpty(preview.data)), data.limit);
+    }
     const memberList = await axios.post<API.Community.getMemberList.Response>(
       'http://memberlist:4000/getMemberListWindow',
       JSON.stringify({
@@ -211,7 +299,8 @@ API.Community.getMemberList.Response
       },
     );
 
-    return convertBinaryMemberListToUuid(memberList.data);
+    // memberlist answered an empty body for a community it does not know yet
+    return convertBinaryMemberListToUuid(memberListOrEmpty(memberList.data));
   }
 );
 
@@ -223,6 +312,26 @@ API.Community.getChannelMemberList.Response
   '/getChannelMemberList',
   validators.API.Community.getChannelMemberList,
   async (request, response, data) => {
+    // the member list of a channel is visible to whoever may read the channel
+    // (the same rule as loading its messages; the Public role covers visitors),
+    // and only while the channel and its community exist (the access-scope
+    // check of message loading)
+    const { user } = request.session;
+    if (!(await messageHelper.isChannelInActiveCommunity(data.communityId, data.channelId))) {
+      throw new Error(errors.server.NOT_ALLOWED);
+    }
+    const canRead = await permissionHelper.hasPermissions({
+      userId: user?.id,
+      communityId: data.communityId,
+      channelId: data.channelId,
+      permissions: [
+        ChannelPermission.CHANNEL_EXISTS,
+        ChannelPermission.CHANNEL_READ,
+      ],
+    });
+    if (!canRead) {
+      throw new Error(!user ? errors.server.LOGIN_REQUIRED : errors.server.NOT_ALLOWED);
+    }
     const memberList = await axios.post<API.Community.getChannelMemberList.Response>(
       'http://memberlist:4000/getChannelMemberListWindow',
       JSON.stringify({
@@ -237,7 +346,8 @@ API.Community.getChannelMemberList.Response
       },
     );
 
-    return convertBinaryMemberListToUuid(memberList.data);
+    // memberlist answered an empty body for a channel it does not know yet
+    return convertBinaryMemberListToUuid(channelMemberListOrEmpty(memberList.data));
   }
 );
 
@@ -272,6 +382,15 @@ API.Community.getUserCommunityRoleIds.Response
   '/getUserCommunityRoleIds',
   validators.API.Community.getUserCommunityRoleIds,
   async (request, response, data) => {
+    // a user's roles in a community are visible to the user themself and to
+    // the members of that community
+    const { user } = request.session;
+    if (!user) {
+      throw new Error(errors.server.LOGIN_REQUIRED);
+    }
+    if (user.id !== data.userId && !(await permissionHelper.isMemberOfActiveCommunity(user.id, data.communityId))) {
+      throw new Error(errors.server.NOT_ALLOWED);
+    }
     const roleIdsBinary = await axios.post<API.Community.getUserCommunityRoleIds.Response>(
       'http://memberlist:4000/getUserCommunityRoleIds',
       JSON.stringify({
@@ -306,7 +425,7 @@ registerPostRoute<
     const result = await communityHelper.createCommunity(data, user.id);
 
     const roleIds = result.roles.filter(r => {
-      return (
+      return r.type === RoleType.PREDEFINED && (
         r.title === PredefinedRole.Admin ||
         r.title === PredefinedRole.Member
       )
@@ -323,9 +442,7 @@ registerPostRoute<
     };
     eventHelper.emit(event, {
       userIds: [user.id],
-    }, {
-      deviceIds: [user.deviceId],
-    });
+    }, senderExcept(requestSockets(request, user.deviceId)));
 
     if (result.logoLargeId !== null) {
       fileHelper.scheduleCommunityPreviewUpdate(user.id, result.id, result.logoLargeId);
@@ -1039,7 +1156,7 @@ registerPostRoute<
     const communityArticle: Models.Community.CommunityArticle = {
       ...data.communityArticle,
       articleId: result.articleId,
-      published: null,
+      published: result.published,
       updatedAt: result.updatedAt,
       sentAsNewsletter: null,
       markAsNewsletter: false,
@@ -1125,6 +1242,7 @@ registerPostRoute<
     if(!isCommunityWhitelisted) {
       throw new Error(errors.server.NOT_ALLOWED);
     } else {
+      requireNewsletterDelivery();
       return await articleHelper.registerCommunityArticleForEmails(data.articleId, data.communityId);
     }
   }
@@ -1215,13 +1333,7 @@ registerPostRoute<
       }
     }
 
-    eventHelper.emit({
-      type: 'cliCallEvent',
-      action: 'new',
-      data: callData,
-    }, {
-      roleIds: targetRoleIds,
-    });
+    await emitCallNew(callData, targetRoleIds);
     return callData;
   }
 );
@@ -1291,13 +1403,7 @@ registerPostRoute<
       }
     }
 
-    eventHelper.emit({
-      type: 'cliCallEvent',
-      action: 'new',
-      data: callData,
-    }, {
-      roleIds: targetRoleIds,
-    });
+    await emitCallNew(callData, targetRoleIds);
     return callData;
   }
 );
@@ -1371,9 +1477,7 @@ registerPostRoute<
     };
     eventHelper.emit(event, {
       userIds: [user.id],
-    }, {
-      deviceIds: [user.deviceId],
-    });
+    }, senderExcept(requestSockets(request, user.deviceId)));
   }
 );
 
@@ -1472,6 +1576,8 @@ registerPostRoute<
     if (data.duration > 8 * 60) {
       throw new Error(errors.server.EVENT_TOO_LONG);
     }
+    // every role id, before the event's call is created
+    await communityEventHelper.checkEventRolePermissions(data.communityId, data.rolePermissions);
 
     if (data.type !== "reminder") {
       const communityCallTier = await communityHelper.getCommunityPremiumTier(data.communityId);
@@ -1526,6 +1632,8 @@ registerPostRoute<
     if (new Date(data.scheduleDate).getTime() < new Date().getTime()) {
       throw new Error(errors.server.EVENT_SCHEDULE_IN_THE_PAST);
     }
+    // every role id, before the event or its call is changed
+    await communityEventHelper.checkEventRolePermissions(eventData.communityId, data.rolePermissions);
 
     // // Can't go for something that would delete a call
     // if (eventData.type !== 'external' && data.type === 'external') {
@@ -1572,10 +1680,19 @@ registerPostRoute<
     }
 
     // Todo: If event ever creates notifications, emit them here
-    const eventOptions = await communityEventHelper.prepareEventToSendEmail(result.id, user.id, "changed", result);
-    const userEmails = await communityEventHelper.getUserEmailsToNotify({eventId: result.id});
-    for (const userEmail of userEmails) {
-      await emailUtils.sendEventEmail(userEmail, eventOptions);
+    // email failures must not fail the update itself
+    // capped per event, per acting account and per instance
+    // (srv/util/eventMailBudget.ts): over budget, the change mails no one
+    try {
+      const userEmails = await communityEventHelper.getUserEmailsToNotify({eventId: result.id});
+      if (await reserveEventMailRound({ eventId: result.id, actorId: user.id, recipients: userEmails.length })) {
+        const eventOptions = await communityEventHelper.prepareEventToSendEmail(result.id, user.id, "changed", result);
+        for (const userEmail of userEmails) {
+          await emailUtils.sendEventEmail(userEmail, eventOptions);
+        }
+      }
+    } catch (e) {
+      console.error("Error sending event update emails", e);
     }
     return result;
   }
@@ -1606,11 +1723,19 @@ registerPostRoute<
     }
     const existingEvent = await communityEventHelper.getCommunityEvent({ id: data.eventId }, user.id);
     await communityEventHelper.deleteCommunityEvent(data.eventId);
-  
-    const eventOptions = await communityEventHelper.prepareEventToSendEmail(data.eventId, user.id, "cancelled", existingEvent);
-    const userEmails = await communityEventHelper.getUserEmailsToNotify({eventId: data.eventId});
-    for (const userEmail of userEmails) {
-      await emailUtils.sendEventEmail(userEmail, eventOptions);
+
+    // email failures must not fail the deletion itself
+    // capped like the change mails (srv/util/eventMailBudget.ts)
+    try {
+      const userEmails = await communityEventHelper.getUserEmailsToNotify({eventId: data.eventId});
+      if (await reserveEventMailRound({ eventId: data.eventId, actorId: user.id, recipients: userEmails.length })) {
+        const eventOptions = await communityEventHelper.prepareEventToSendEmail(data.eventId, user.id, "cancelled", existingEvent);
+        for (const userEmail of userEmails) {
+          await emailUtils.sendEventEmail(userEmail, eventOptions);
+        }
+      }
+    } catch (e) {
+      console.error("Error sending event cancellation emails", e);
     }
   }
 );
@@ -1640,10 +1765,15 @@ registerPostRoute<
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
     await communityEventHelper.insertEventParticipant(user.id, data);
-    const eventOptions = await communityEventHelper.prepareEventToSendEmail(data.eventId, user.id, "attending");
-    const userEmail = await userHelper.getUserEmail(user.id);
-    if (!!userEmail) {
-      await emailUtils.sendEventEmail(userEmail, eventOptions);
+    // email failures must not fail the registration itself
+    try {
+      const eventOptions = await communityEventHelper.prepareEventToSendEmail(data.eventId, user.id, "attending");
+      const userEmail = await userHelper.getUserEmail(user.id);
+      if (!!userEmail) {
+        await emailUtils.sendEventEmail(userEmail, eventOptions);
+      }
+    } catch (e) {
+      console.error("Error sending event attendance email", e);
     }
   }
 );
@@ -1700,18 +1830,6 @@ registerPostRoute<
       userId: user.id
     });
     return await communityHelper.getTransactionData(data.communityId);
-  }
-);
-
-registerPostRoute<
-  API.Community.getCommunityCount.Request,
-  API.Community.getCommunityCount.Response
->(
-  communityRouter,
-  '/getCommunityCount',
-  validators.API.Community.getCommunityCount,
-  async (request, response, data) => {
-    return await communityHelper.getCommunityCount(data.channel);
   }
 );
 
@@ -1861,222 +1979,6 @@ registerPostRoute<
   async (request, response, data) => {
     const result = await communityHelper.getAirdropCommunities(data.status, request.session.user?.id);
     return result;
-  }
-);
-
-registerPostRoute<
-  API.Community.Wizard.getWizardData.Request,
-  API.Community.Wizard.getWizardData.Response
->(
-  communityRouter,
-  '/Wizard/getWizardData',
-  validators.API.Community.Wizard.getWizardData,
-  async (request, response, data) => {
-    const { user } = request.session;
-    return communityHelper.getWizardData(data.wizardId, user?.id);
-  }
-);
-
-registerPostRoute<
-  API.Community.Wizard.consumeReferralCode.Request,
-  API.Community.Wizard.consumeReferralCode.Response
->(
-  communityRouter,
-  '/Wizard/consumeReferralCode',
-  validators.API.Community.Wizard.consumeReferralCode,
-  async (request, response, data) => {
-    let user: typeof request.session.user = request.session.user;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-    await communityHelper.redeemAndInvalidateWizardCode({ code: data.code, wizardId: data.wizardId, userId: user.id });
-  }
-);
-
-registerPostRoute<
-  API.Community.Wizard.wizardVerifyCode.Request,
-  API.Community.Wizard.wizardVerifyCode.Response
->(
-  communityRouter,
-  '/Wizard/wizardVerifyCode',
-  validators.API.Community.Wizard.wizardVerifyCode,
-  async (request, response, data) => {
-    return communityHelper.isWizardCodeAvailable({wizardId: data.wizardId, code: data.code});
-  }
-);
-
-registerPostRoute<
-  API.Community.Wizard.wizardVerifyWallet.Request,
-  API.Community.Wizard.wizardVerifyWallet.Response
->(
-  communityRouter,
-  '/Wizard/wizardVerifyWallet',
-  validators.API.Community.Wizard.wizardVerifyWallet,
-  async (request, response, data) => {
-    let user: typeof request.session.user = request.session.user;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-    //todo
-    return communityHelper.wizardVerifyWallet({wizardId: data.wizardId, wallet: data.data});
-  }
-);
-
-registerPostRoute<
-  API.Community.Wizard.wizardFinished.Request,
-  API.Community.Wizard.wizardFinished.Response
-  >(
-  communityRouter,
-  '/Wizard/wizardFinished',
-  validators.API.Community.Wizard.wizardFinished,
-  async (request, response, data) => {
-    let user: typeof request.session.user = request.session.user;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-    if (data.tryResult === 'failure') {
-      await communityHelper.wizardFinishedFailure(data.wizardId, user.id);
-    } else {
-      await communityHelper.wizardFinishedSuccess(data.wizardId, user.id);
-    }
-  }
-);
-
-registerPostRoute<
-  API.Community.Wizard.claimInvestmentTransaction.Request,
-  API.Community.Wizard.claimInvestmentTransaction.Response
->(
-  communityRouter,
-  '/Wizard/claimInvestmentTransaction',
-  validators.API.Community.Wizard.claimInvestmentTransaction,
-  async (request, response, data) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-
-    const {
-      wizardData,
-      userData,
-    } = await communityHelper.getWizardData(data.wizardId, user.id);
-    if (!wizardData) {
-      throw new Error('Wizard not found');
-    }
-
-    const investmentData = wizardData.steps.find(c => c.type === 'invest') as (Models.Wizard.WizardStep & { type: 'invest' }) | undefined;
-    if (!investmentData) {
-      return { success: false, message: 'You are not allowed to claim investments in this wizard' };
-    }
-
-    const investmentTarget = investmentTargets[investmentData.target];
-    const { found, transfers, initiatorAddress } = await onchainHelper.getSingleTransactionData(investmentTarget.chain, data.txHash);
-
-    if (!found || !initiatorAddress) {
-      return { success: false, message: 'Transaction not found' };
-    }
-
-    const relevantTransfers = transfers.filter(t => (
-      t.to.toLowerCase() === investmentTarget.beneficiaryAddress.toLowerCase() &&
-      (
-        (investmentTarget.token.type === 'erc20' && t.type === 'erc20' && t.contractAddress?.toLowerCase() === investmentTarget.token.address.toLowerCase()) ||
-        (investmentTarget.token.type === 'native' && t.type === 'native' && t.contractAddress === undefined)
-      )
-    ));
-
-    const bAmount = relevantTransfers.reduce((acc, t) => acc + BigInt(t.amount), BigInt(0));
-    if (bAmount === 0n) {
-      return { success: false, message: 'No relevant value transfers found in that transaction' };
-    }
-
-    try {
-      const { newInvestmentAmount } = await communityHelper.wizardClaimInvestmentTransaction({
-        wizardId: data.wizardId,
-        userId: user.id,
-        chain: investmentTarget.chain,
-        fromAddress: initiatorAddress,
-        toAddress: investmentTarget.beneficiaryAddress,
-        amount: bAmount.toString(),
-        txHash: data.txHash.toLowerCase(),
-        target: investmentData.target,
-      });
-
-      return { success: true, newInvestmentAmount };
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('duplicate')) {
-        return { success: false, message: 'Transaction already claimed' };
-      }
-      return { success: false, message: 'Error claiming investment transaction' };
-    }
-  }
-);
-
-registerPostRoute<
-  API.Community.Wizard.getMyReferralCodes.Request,
-  API.Community.Wizard.getMyReferralCodes.Response
->(
-  communityRouter,
-  '/Wizard/getMyReferralCodes',
-  validators.API.Community.Wizard.getMyReferralCodes,
-  async (request, response, data) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-
-    const referralCodes = await communityHelper.getMyReferralCodes(data.wizardId, user.id);
-
-    return { referralCodes };
-  }
-);
-
-registerPostRoute<
-  API.Community.Wizard.setWizardStepData.Request,
-  API.Community.Wizard.setWizardStepData.Response
->(
-  communityRouter,
-  '/Wizard/setWizardStepData',
-  validators.API.Community.Wizard.setWizardStepData,
-  async (request, response, data) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-
-    return communityHelper.setWizardStepData(data.wizardId, user.id, data.stepId, data.value);
-  }
-);
-
-registerPostRoute<
-  API.Community.Wizard.getInvestmentTargetBeneficiaryBalance.Request,
-  API.Community.Wizard.getInvestmentTargetBeneficiaryBalance.Response
->(
-  communityRouter,
-  '/Wizard/getInvestmentTargetBeneficiaryBalance',
-  validators.API.Community.Wizard.getInvestmentTargetBeneficiaryBalance,
-  async (request, response, data) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-
-    return await communityHelper.wizardGetInvestmentTargetBeneficiaryBalance(data.target);
-  }
-);
-
-registerPostRoute<
-  API.Community.Wizard.getInvestmentTargetPersonalContribution.Request,
-  API.Community.Wizard.getInvestmentTargetPersonalContribution.Response
->(
-  communityRouter,
-  '/Wizard/getInvestmentTargetPersonalContribution',
-  validators.API.Community.Wizard.getInvestmentTargetPersonalContribution,
-  async (request, response, data) => {
-    const { user } = request.session;
-    if (!user) {
-      throw new Error(errors.server.LOGIN_REQUIRED);
-    }
-
-    return await communityHelper.wizardGetInvestmentTargetPersonalContribution(data.target, user.id);
   }
 );
 

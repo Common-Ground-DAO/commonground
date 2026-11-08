@@ -49,12 +49,37 @@ const baseArticleApi = {
     updatedBefore: common.DateString,
     publishedAfter: common.DateString,
     publishedBefore: common.DateString,
+    // Cursor tiebreakers; the pairing with a timestamp bound is enforced by
+    // articleCursorPairing on the composed request object.
+    beforeId: common.Uuid,
+    afterId: common.Uuid,
     limit: Joi.number().integer().min(1).max(30).required(),
     tags: common.Tags,
     drafts: Joi.equal(true),
     verification: Joi.string().valid('verified', 'unverified', 'both', 'following'),
     ids: Joi.array().items(common.Uuid).unique(),
   },
+}
+
+// A cursor id is only meaningful with the matching timestamp bound (it is the
+// tiebreaker for rows sharing that timestamp). Reject the unpaired combination
+// with VALIDATION rather than silently ignoring the id. Apply with
+// `.custom(articleCursorPairing)` on the composed getArticleList validator.
+export function articleCursorPairing<T extends {
+  beforeId?: string;
+  afterId?: string;
+  publishedBefore?: string;
+  updatedBefore?: string;
+  publishedAfter?: string;
+  updatedAfter?: string;
+}>(value: T, helpers: Joi.CustomHelpers): T {
+  if (value.beforeId && !value.publishedBefore && !value.updatedBefore) {
+    return helpers.error('any.invalid') as unknown as T;
+  }
+  if (value.afterId && !value.publishedAfter && !value.updatedAfter) {
+    return helpers.error('any.invalid') as unknown as T;
+  }
+  return value;
 }
 
 export default baseArticleApi;

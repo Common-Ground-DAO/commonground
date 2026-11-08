@@ -9,12 +9,12 @@ import CheckboxBase from 'components/atoms/CheckboxBase/CheckboxBase';
 type Props = {
   title: string;
   description: string;
-  icon: JSX.Element;
+  icon: React.JSX.Element;
   active: boolean;
   onToggle: (newActive: boolean) => void;
-  customElement?: JSX.Element;
+  customElement?: React.JSX.Element;
   hideToggle?: boolean;
-  extraBottomElement?: JSX.Element;
+  extraBottomElement?: React.JSX.Element;
 };
 
 const ToggleText: React.FC<Props> = (props) => {

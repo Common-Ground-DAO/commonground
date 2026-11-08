@@ -5,9 +5,34 @@
 import { Worker } from 'worker_threads';
 import cron from "node-cron";
 import path from 'path';
-import config from './common/config';
+import { postgresProbe, startHealthcheck } from './healthcheck';
+import { valkeyProbe } from './redis/healthProbe';
+import pool from './util/postgres';
+import { refuseInGatewayMode } from './util/gateway';
+import { requireSessionSecret } from './util/sessionSecret';
+
+// runs once, for the main instance only: never as part of a gateway
+// (srv/util/gateway.ts)
+refuseInGatewayMode('job-runner');
+// the notification mails' unsubscribe links are signed with the session
+// secret: a missing one stops the process here
+requireSessionSecret();
 
 let processIsExiting = false;
+
+/**
+ * Heap cap of every worker thread. Without it each worker sizes its heap like
+ * the main thread — about half of the container's memory limit — so a few
+ * busy workers together could pass the limit long before V8 collects. With
+ * it, the workers' sum stays below the job-runner's limit: at most nine run
+ * at once (four permanent ones, five scheduled ones, each at most once), 9 x
+ * 384 MB = 3.4 GB of the default 4 GB (docker-compose.selfhost.yml, docs/
+ * deployment §5). JOB_WORKER_MAX_OLD_SPACE_MB overrides it; a worker that hits
+ * it ends with ERR_WORKER_OUT_OF_MEMORY and is restarted like any crashed one.
+ */
+const WORKER_RESOURCE_LIMITS = {
+  maxOldGenerationSizeMb: Number(process.env.JOB_WORKER_MAX_OLD_SPACE_MB) || 384,
+};
 
 const allWorkers: Map<string, Worker> = new Map();
 
@@ -21,7 +46,7 @@ async function createCronOrIntervalWorker(filename: string, options: ({ cronExpr
       console.log(`=== Spawning ${type} ${filename} Worker... ===`);
       const existingWorker = allWorkers.get(filename);
       if (!existingWorker) {
-        const worker = new Worker(path.join(__dirname, 'jobs', `${filename}.js`));
+        const worker = new Worker(path.join(__dirname, 'jobs', `${filename}.js`), { resourceLimits: WORKER_RESOURCE_LIMITS });
         allWorkers.set(filename, worker);
         worker.on("error", (error) => {
           console.error(`An error occurred in ${filename} Worker`, error);
@@ -50,7 +75,7 @@ async function createPermanentWorker(filename: string, restart = true, sleepBefo
     await new Promise<void>(resolve => setTimeout(resolve, sleepBefore));
 
   console.log(`=== Spawning Permanent ${filename} Worker... ===`);
-  const worker = new Worker(path.join(__dirname, 'jobs', `${filename}.js`));
+  const worker = new Worker(path.join(__dirname, 'jobs', `${filename}.js`), { resourceLimits: WORKER_RESOURCE_LIMITS });
   allWorkers.set(filename, worker);
   worker.on("error", (error) => {
     console.error(`An error occurred in ${filename} Worker`, error);
@@ -63,12 +88,15 @@ async function createPermanentWorker(filename: string, restart = true, sleepBefo
   });
 }
 
+// Kept for future one-shot migrations/backfills (together with the `oneshot_jobs`
+// table that such jobs use to guard against re-running). Currently no one-shot job
+// is scheduled — the historical backfills were removed after they had run everywhere.
 async function createOneshotWorker(filename: string, sleepBefore?: number) {
   if (sleepBefore !== undefined)
     await new Promise<void>(resolve => setTimeout(resolve, sleepBefore));
 
   console.log(`=== Spawning Oneshot ${filename} Worker... ===`);
-  const worker = new Worker(path.join(__dirname, 'jobs', `${filename}.js`));
+  const worker = new Worker(path.join(__dirname, 'jobs', `${filename}.js`), { resourceLimits: WORKER_RESOURCE_LIMITS });
   worker.on("error", (error) => {
     console.error(`An error occurred in ${filename} Worker`, error);
   });
@@ -81,26 +109,32 @@ async function createOneshotWorker(filename: string, sleepBefore?: number) {
 
 createPermanentWorker('premiumRenewal', true, 30000);
 createPermanentWorker('callUpdateEmitter', true);
-createPermanentWorker('trackTokenSales', true, 30000);
 createPermanentWorker('handleCommunityAirdrops', true, 30000);
-
-if (config.DEPLOYMENT === 'prod') {
-  createPermanentWorker('tokenSaleNotifications', true, 30000);
+// receives the selfhost mail relay's bounce reports (selfhost compose sets
+// MAIL_BOUNCE_RECEIVER from CG_ENABLE_MAIL); needs the relay login
+if (process.env.MAIL_BOUNCE_RECEIVER === 'true') {
+  if (process.env.SMTP_USER && process.env.SMTP_PASSWORD) {
+    createPermanentWorker('bounceReceiver', true);
+  } else {
+    console.error('MAIL_BOUNCE_RECEIVER=true, but SMTP_USER/SMTP_PASSWORD are not set: bounce handling is off');
+  }
 }
 
+// healthy: the database and the Valkey state instance (the workers publish
+// their events through it) answer; the job-runner has no listener. The main
+// thread uses its pool for this probe only (the workers have their own): an
+// idle connection the database drops (a restart) is logged, not thrown — by
+// the pool's error listeners (util/postgres.ts), without which that `error`
+// event would end the whole job-runner.
+startHealthcheck([postgresProbe(pool), valkeyProbe()]);
+
 createCronOrIntervalWorker('onlineStatusCheck', { interval: 30000 });
+// staking Spark drip: the pro-rata target math makes cadence cosmetic —
+// totals are exact regardless — 6-hourly keeps balances feeling alive
+createCronOrIntervalWorker('stakingAccrual', { cronExpression: '17 */6 * * *' });
 createCronOrIntervalWorker('activityScore', { cronExpression: '*/10 * * * *' });
 createCronOrIntervalWorker('newsletterDelivery', { cronExpression: '0 12 * * 6' });
 createCronOrIntervalWorker('emailNotifications', { cronExpression: '*/1 * * * *' });
-
-createOneshotWorker('previewImageUpdate', 30000);
-createOneshotWorker('erc20decimalFix', 30000);
-createOneshotWorker('fileMetadataFix', 30000);
-createOneshotWorker('luksoProfileImageFix', 30000);
-createOneshotWorker('calculateTokenRewardProgram', 30000);
-createOneshotWorker('calculateTokenRewardProgramSecond', 30000);
-createOneshotWorker('calculateTokenRewardProgramSecondFix', 30000);
-createOneshotWorker('erc1155nameAndMetadataFix', 30000);
 
 process.on('SIGTERM', async () => {
   processIsExiting = true;
@@ -112,7 +146,6 @@ process.on('SIGTERM', async () => {
   allWorkers.get('callUpdateEmitter')?.terminate();
   allWorkers.get('newsletterDelivery')?.terminate();
   allWorkers.get('emailNotifications')?.terminate();
-  allWorkers.get('trackTokenSales')?.terminate();
   await new Promise<void>(resolve => setTimeout(resolve, 1000));
   process.exit(allWorkers.get('activityScore') === undefined ? 0 : 1);
 });

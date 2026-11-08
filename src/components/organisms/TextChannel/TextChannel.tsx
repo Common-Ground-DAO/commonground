@@ -3,10 +3,10 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ReactComponent as ChatIcon } from '../../../components/atoms/icons/16/Chat.svg';
+import ChatIcon from '../../../components/atoms/icons/16/Chat.svg?react';
 import Modal from '../../atoms/Modal/Modal';
 import { useWindowSizeContext } from '../../../context/WindowSizeProvider';
-import { createSearchParams, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { createSearchParams, useLocation, useNavigate, useSearchParams } from 'react-router';
 import MemberListPreview from '../../../components/molecules/MemberListPreview/MemberListPreview';
 import TextChannelNotificationHeader from './TextChannelNotificationHeader';
 
@@ -20,6 +20,7 @@ import { BellAlertIcon as BellAlertIconOutline } from '@heroicons/react/24/outli
 import { BellAlertIcon as BellAlertIconSolid } from '@heroicons/react/24/solid';
 import PinnedChatOptionsModal from 'components/molecules/PinnedChatOptionsModal/PinnedChatOptionsModal';
 import data from 'data';
+import { chat } from 'data/chat/runtime';
 import { PopoverHandle } from 'components/atoms/Tooltip/Tooltip';
 import { getUrl } from 'common/util';
 import { useLoadedCommunityContext, useSafeCommunityContext } from 'context/CommunityProvider';
@@ -28,6 +29,7 @@ import { JOINCOMMUNITY_MUTED_MESSAGE } from 'components/molecules/GenericMessage
 import communityApi from 'data/api/community';
 import { calculateChannelPermissions } from '../ChannelList/ChannelList';
 import GatedDialogModal from '../GatedDialogModal/GatedDialogModal';
+import { pollChannelMemberList } from 'util/channelMemberListPolling';
 import { PushPin } from '@phosphor-icons/react';
 import { useUserData } from 'context/UserDataProvider';
 import { convertContentToPlainText } from 'common/converters';
@@ -35,6 +37,8 @@ import Jdenticon from 'components/atoms/Jdenticon/Jdenticon';
 import { getDisplayName } from '../../../util';
 import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal';
 import Button from 'components/atoms/Button/Button';
+import BotBadge from 'components/atoms/BotBadge/BotBadge';
+import { isPredefinedRolePermission } from "util/predefinedRoles";
 
 type Props = {
   community: Models.Community.DetailView;
@@ -60,7 +64,7 @@ export default function TextChannel(props: Props) {
 
   const membersCanWrite = useMemo(() => {
     if (!channel) return false;
-    const memberPermission = channel.rolePermissions.find(permission => permission.roleTitle === PredefinedRole.Member);
+    const memberPermission = channel.rolePermissions.find(permission => isPredefinedRolePermission(permission, PredefinedRole.Member));
     return memberPermission?.permissions.includes('CHANNEL_WRITE');
   }, [channel]);
 
@@ -202,35 +206,30 @@ function TextChannelHeader(props: {
   const [showModalDescription, setShowModalDescription] = useState<boolean>(false);
   const popoverHandle = useRef<PopoverHandle>(null);
   const [memberList, setMemberList] = React.useState<Models.Community.ChannelMemberList>();
-  const intervalRef = React.useRef<any>(undefined);
+  // gated preview channels (visible, not readable) have no member list
+  const canRead = useMemo(() => calculateChannelPermissions(community, channel) === null, [community, channel]);
 
-  const updateMemberList = useCallback(async () => {
-    if (!channel || !community) return;
-    communityApi.getChannelMemberList({
-      channelId: channel.channelId,
-      communityId: community.id,
-      offset: 0,
-      limit: 3,
-    }).then(res => {
-      setMemberList(res);
-    }).catch(err => {
-      setMemberList(undefined);
-      console.log(err);
-    });
-  }, [community.id, channel.channelId]);
-
+  const channelId = channel.channelId;
+  const communityId = community.id;
   useEffect(() => {
-    if (intervalRef.current !== undefined) {
-      clearInterval(intervalRef.current);
+    if (!canRead) {
+      setMemberList(undefined);
     }
-    updateMemberList();
-    intervalRef.current = setInterval(updateMemberList, 5000);
-    return () => {
-      if (intervalRef.current !== undefined) {
-        clearInterval(intervalRef.current);
-      }
-    }
-  }, [updateMemberList]);
+    return pollChannelMemberList({
+      canRead,
+      load: () => communityApi.getChannelMemberList({
+        channelId,
+        communityId,
+        offset: 0,
+        limit: 3,
+      }),
+      onResult: setMemberList,
+      onError: err => {
+        setMemberList(undefined);
+        console.log(err);
+      },
+    });
+  }, [communityId, channelId, canRead]);
 
   const channelIsPinned = (
     channel.pinType === 'permapin' ||
@@ -371,17 +370,11 @@ const PinnedMessage: React.FC<{
   const { isMobile } = useWindowSizeContext();
   const creator = useUserData(message?.creatorId);
 
+  // watched in the store: works before the channel's message list is mounted
+  // (the header renders first) and follows edits and deletion
   useEffect(() => {
-    const resultPromise = data.channelManager.getMessageById(channelId, messageId, (updatedMessage) => {
-      setMessage(updatedMessage);
-    }).then(result => {
-      setMessage(result.item);
-      return result;
-    });
-
-    return () => {
-      resultPromise.then(result => result.unsubscribe());
-    };
+    setMessage(null);
+    return chat.channels.watchMessage(channelId, messageId, setMessage);
   }, [channelId, messageId]);
 
   const onUnpin = async (ev: React.MouseEvent) => {
@@ -444,6 +437,7 @@ const PinnedMessage: React.FC<{
           predefinedSize='20'
         />
         {getDisplayName(creator)}
+        {creator.isBot && <BotBadge />}
       </div>}
       {!!message && <span
         className='cg-text-lg-400 cg-text-main overflow-hidden whitespace-nowrap text-ellipsis'

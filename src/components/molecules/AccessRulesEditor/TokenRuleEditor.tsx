@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import config from '../../../common/config';
 import TextInputField from "../../molecules/inputs/TextInputField/TextInputField";
-import { ethers, BigNumber } from "ethers";
+import { parseUnits } from "viem";
 import { RuleData } from "../RoleAccessEditor/RoleAccessEditor";
 
 import { useNavigationContext } from "components/SuspenseRouter/SuspenseRouter";
@@ -84,8 +84,8 @@ export default function TokenRuleEditor(props: Props) {
       ) {
         switch (contract.data.type) {
           case "ERC20": {
-            const parsedAmount = ethers.utils.parseUnits(_amount, contract.data.decimals);
-            if (parsedAmount <= BigNumber.from(0)) {
+            const parsedAmount = parseUnits(_amount, contract.data.decimals);
+            if (parsedAmount <= BigInt(0)) {
               throw new Error();
             }
             const rule: Models.Community.GatingRuleERC20 = {
@@ -124,8 +124,8 @@ export default function TokenRuleEditor(props: Props) {
             break;
           }
           case "LSP7": {
-            const parsedAmount = ethers.utils.parseUnits(_amount, contract.data.decimals);
-            if (parsedAmount <= BigNumber.from(0)) {
+            const parsedAmount = parseUnits(_amount, contract.data.decimals);
+            if (parsedAmount <= BigInt(0)) {
               throw new Error();
             }
             const rule: Models.Community.GatingRuleLSP7 = {

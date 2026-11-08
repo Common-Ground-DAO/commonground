@@ -1,0 +1,20 @@
+# Edge of the disposable conformance instance (docker-compose.conformance.yml,
+# sdk/conformance/tools/disposable-instance.sh): the self-host routing as
+# plain HTTP for any host name, published on loopback only.
+#
+# Test-only difference: X-Forwarded-For from private addresses (the host,
+# through Docker's port publishing) is kept and the peer address appended,
+# because the suite gives each fixture client its own address to keep the
+# backend's per-address limits apart (sdk/conformance/src/fixtures.ts). A real
+# instance never trusts client-supplied forwarding headers (Caddyfile.selfhost).
+{
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+import /etc/caddy/common.caddy
+
+http:// {
+	import cg_app "https://{$CG_DOMAIN}:* wss://{$CG_DOMAIN}:*" "https:" https off off
+}

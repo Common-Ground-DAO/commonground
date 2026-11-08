@@ -72,8 +72,6 @@ export enum WalletVisibility {
 export enum WalletType {
   CG_EVM = "cg_evm",
   EVM = "evm",
-  FUEL = "fuel",
-  AETERNITY = "aeternity",
   CONTRACT_EVM = "contract_evm",
 }
 
@@ -81,10 +79,6 @@ export enum RoleType {
   PREDEFINED = "PREDEFINED",
   CUSTOM_MANUAL_ASSIGN = "CUSTOM_MANUAL_ASSIGN",
   CUSTOM_AUTO_ASSIGN = "CUSTOM_AUTO_ASSIGN",
-}
-
-export enum FeedItemType {
-  ARTICLE = 'article'
 }
 
 export enum DurationOption {
@@ -147,6 +141,18 @@ export enum UserProfileTypeEnum {
   LUKSO = 'lukso',
   CG = 'cg',
   FARCASTER = 'farcaster',
+  BOT = 'bot',
+}
+
+export enum BotOwnerType {
+  COMMUNITY = 'community',
+  USER = 'user',
+  PLATFORM = 'platform',
+}
+
+export enum BotPlatformPresenceMode {
+  ALL = 'all',
+  SELECTED = 'selected',
 }
 
 export enum CallType {

@@ -15,8 +15,9 @@ import EmptyState from 'components/molecules/EmptyState/EmptyState';
 import { useSidebarDataDisplayContext } from 'context/SidebarDataDisplayProvider';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import { useSentinelLoadMore } from 'hooks/useSentinelLoadMore';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { usePluginDetailsModalContext } from 'context/PluginDetailsModalProvider';
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
 
@@ -140,8 +141,8 @@ const HeroElementArticleCard = ({ articleUrl, large }: {
   const imageUrl = useSignedUrl(article?.article.headerImageId);
 
   return <div
-    className={`flex flex-col justify-end bg-gray-100 rounded-lg bg-center bg-no-repeat bg-cover relative overflow-hidden cursor-pointer p-4 ${large ? 'aspect-3' : 'h-40'}`}
-    style={{ backgroundImage: `url(${imageUrl})` }}
+    className={`flex flex-col justify-end bg-gray-100 rounded-lg bg-center bg-no-repeat bg-cover relative overflow-hidden cursor-pointer p-4 ${large ? 'aspect-3/1' : 'h-40'}`}
+    style={{ backgroundImage: cssBackgroundImage(imageUrl) }}
     onClick={() => {
       if (article) {
         showTooltip({
@@ -152,7 +153,7 @@ const HeroElementArticleCard = ({ articleUrl, large }: {
       }
     }}
   >
-    <div className="absolute inset-x-0 bottom-0 h-full bg-gradient-to-t from-black/70 to-transparent rounded-lg" />
+    <div className="absolute inset-x-0 bottom-0 h-full bg-linear-to-t from-black/70 to-transparent rounded-lg" />
     {large ? <h2 className='cg-text-white z-10'>{article?.article.title}</h2> : <h3 className='cg-text-white z-10'>{article?.article.title}</h3>}
   </div>
 }

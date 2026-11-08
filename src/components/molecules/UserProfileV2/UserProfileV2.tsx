@@ -18,6 +18,7 @@ import TextAreaField from '../inputs/TextAreaField/TextAreaField';
 import { CheckIcon, XMarkIcon } from '@heroicons/react/20/solid';
 import userApi from 'data/api/user';
 import MultiEntryField from '../inputs/MultiEntryField/MultiEntryField';
+import { securityActionErrorMessage } from 'data/auth/authErrors';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import { validateTagTextInput } from 'common/validators';
 import ScreenAwareDropdown from 'components/atoms/ScreenAwareDropdown/ScreenAwareDropdown';
@@ -32,14 +33,19 @@ import SimpleLink from 'components/atoms/SimpleLink/SimpleLink';
 import config from 'common/config';
 import errors from 'common/errors';
 import fileApi from 'data/api/file';
+import { checkImageBeforeUpload } from 'moderation/checkImageBeforeUpload';
+import { imageUploadErrorText, notifyIfImageRejected } from 'moderation/imageUploadError';
 import { useAsyncMemo } from 'hooks/useAsyncMemo';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 import { useSafeCommunityContext } from 'context/CommunityProvider';
 import communityApi from 'data/api/community';
+import { mayLoadUserCommunityRoleIds, shouldWarnAboutRoleIdsError } from 'util/userCommunityRoleIds';
 import { PredefinedRole } from 'common/enums';
+import { isPredefinedRole } from 'util/predefinedRoles';
 import TagInputField, { tagStringToPredefinedTag } from '../inputs/TagInputField/TagInputField';
 import Tag, { TagIcon } from 'components/atoms/Tag/Tag';
+import BotBadge from 'components/atoms/BotBadge/BotBadge';
 
 type Props = {
   user: Omit<Models.User.Data, 'isFollowed' | 'isFollower'>;
@@ -56,6 +62,7 @@ type Props = {
 };
 
 const accountOrder: Record<Models.User.ProfileItemType, number> = {
+  bot: 0,
   cg: 1,
   farcaster: 2,
   twitter: 3,
@@ -157,14 +164,29 @@ const UserProfileV2: React.FC<Props> = (props) => {
 
   const handleImageChange = async (ev: React.ChangeEvent<HTMLInputElement>) => {
     ev.stopPropagation();
-    if (ev.target.files && ev.target.files.length === 1) {
-      if (ev.target.files[0].size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
+    // Read the file and clear the input *before* any await: `ev.target` is not
+    // safe to touch afterwards, and leaving the value set would make re-picking
+    // the same file after a "Cancel" in the pre-check dialog fire no change
+    // event at all.
+    const input = ev.target;
+    const files = input.files;
+    const file = files && files.length === 1 ? files[0] : undefined;
+    input.value = '';
+    if (file) {
+      if (file.size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
         showSnackbar({ type: 'warning', text: errors.client.UPLOAD_SIZE_LIMIT });
       } else {
+        if (!await checkImageBeforeUpload(file)) return;
         try {
-          await fileApi.uploadImage({ type: 'userProfileImage' }, ev.target.files[0]);
+          await fileApi.uploadImage({ type: 'userProfileImage' }, file);
         } catch (err) {
           console.error(err);
+          if (!notifyIfImageRejected(err)) {
+            showSnackbar({
+              type: 'warning',
+              text: imageUploadErrorText(err, 'Could not upload your profile picture'),
+            });
+          }
         }
       }
     }
@@ -198,7 +220,11 @@ const UserProfileV2: React.FC<Props> = (props) => {
       setCurrentPage('profile');
     } catch (e) {
       console.error(e);
-      showSnackbar({ type: 'warning', text: 'Failed to add account, please try again later' });
+      // nothing to report when "Confirm it's you" was cancelled
+      const message = securityActionErrorMessage(e, 'Failed to add account, please try again later');
+      if (message) {
+        showSnackbar({ type: 'warning', text: message });
+      }
     }
   }, [setCurrentPage, showSnackbar]);
   const { attemptConnectTwitter, buttonDisabled } = useTwitterAuth(onTwitterLogin);
@@ -253,6 +279,7 @@ const UserProfileV2: React.FC<Props> = (props) => {
     switch (account?.extraData?.type) {
       case 'farcaster': return account.extraData.bio;
       case 'cg': return account.extraData.description;
+      case 'bot': return account.extraData.description || '';
       default: return '';
     }
   }, [detailedData?.detailledProfiles, user.displayAccount]);
@@ -269,8 +296,8 @@ const UserProfileV2: React.FC<Props> = (props) => {
   }, [cgAccount, detailedData?.detailledProfiles, selectedAccount]);
 
   const chipActions = useMemo(() => {
-    const result: JSX.Element[] = [];
-    if (!isEditMode && isSelf && showEditControls && selectedAccount !== user.displayAccount) {
+    const result: React.JSX.Element[] = [];
+    if (!user.isBot && !isEditMode && isSelf && showEditControls && selectedAccount !== user.displayAccount) {
       result.push(<Button
         key='setAsMain'
         role='chip'
@@ -278,7 +305,7 @@ const UserProfileV2: React.FC<Props> = (props) => {
         onClick={updateDisplayAccount}
       />);
     }
-    if (!isEditMode && isSelf && showEditControls && selectedAccount === 'cg') {
+    if (!user.isBot && !isEditMode && isSelf && showEditControls && selectedAccount === 'cg') {
       result.push(<Button
         key='edit'
         role='chip'
@@ -305,10 +332,10 @@ const UserProfileV2: React.FC<Props> = (props) => {
     }
 
     return result;
-  }, [isEditMode, isSelf, selectedAccount, showEditControls, updateCgData, updateDisplayAccount, user.displayAccount]);
+  }, [isEditMode, isSelf, selectedAccount, showEditControls, updateCgData, updateDisplayAccount, user.displayAccount, user.isBot]);
 
   const addAccountOptions = useMemo(() => {
-    const result: JSX.Element[] = [];
+    const result: React.JSX.Element[] = [];
 
     if (!user.accounts.find(acc => acc.type === 'cg')) {
       result.push(<ListItem
@@ -354,8 +381,10 @@ const UserProfileV2: React.FC<Props> = (props) => {
     return result;
   }, [attemptConnectTwitter, buttonDisabled, onConnectUniversalProfileClick, setCurrentPage, setIsOpen, user.accounts]);
 
+  const isCommunityMember = commContext.state === 'loaded' && commContext.ownRoles.length > 0;
   const roleIds = useAsyncMemo(async () => {
     if (!communityId) return;
+    if (!mayLoadUserCommunityRoleIds({ ownUserId: ownUser?.id, userId: user.id, isCommunityMember })) return;
 
     try {
       return await communityApi.getUserCommunityRoleIds({
@@ -363,9 +392,11 @@ const UserProfileV2: React.FC<Props> = (props) => {
         communityId: communityId
       });
     } catch (e) {
-      showSnackbar({ type: 'warning', text: 'Could not load user roles' });
+      if (shouldWarnAboutRoleIdsError(e)) {
+        showSnackbar({ type: 'warning', text: 'Could not load user roles' });
+      }
     }
-  }, [user.id, communityId]);
+  }, [user.id, communityId, ownUser?.id, isCommunityMember]);
 
   const { roles, isAdmin } = useMemo(() => {
     if (commContext.state !== 'loaded') return {
@@ -375,8 +406,8 @@ const UserProfileV2: React.FC<Props> = (props) => {
     const { rolesById } = commContext;
     const roles = roleIds?.map(roleId => rolesById.get(roleId));
     return {
-      roles: roles?.map(role => role?.title).filter(title => !!title && title !== PredefinedRole.Admin) || [],
-      isAdmin: roles?.some(role => role?.title === PredefinedRole.Admin)
+      roles: roles?.filter(role => !!role && !!role.title && !isPredefinedRole(role, PredefinedRole.Admin)).map(role => role!.title) || [],
+      isAdmin: roles?.some(role => !!role && isPredefinedRole(role, PredefinedRole.Admin))
     }
   }, [commContext, roleIds]);
 
@@ -391,7 +422,7 @@ const UserProfileV2: React.FC<Props> = (props) => {
         >
           <ExternalIcon type={acc.type === 'lukso' ? 'universalProfile' : acc.type} className='w-4 h-4 cg-text-brand' />
         </div>)}
-        {isSelf && addAccountOptions.length > 0 && <ScreenAwareDropdown
+        {isSelf && !user.isBot && addAccountOptions.length > 0 && <ScreenAwareDropdown
           ref={addAccountsDropdownRef}
           triggerContent={<div
             className={`user-profile-acc-btn cursor-pointer p-2 cg-border-xl flex items-center justify-center h-9 w-9`}
@@ -439,7 +470,7 @@ const UserProfileV2: React.FC<Props> = (props) => {
             name='username'
             autoComplete='username'
             onBlur={checkUsernameUniqueness}
-          /> : <h3 className='cg-text-main'>{getDisplayName(user, false, selectedAccount)}</h3>
+          /> : <h3 className='cg-text-main flex items-center gap-1'>{getDisplayName(user, false, selectedAccount)}{user.isBot && <BotBadge />}</h3>
         }
         <div className='flex gap-4 cg-text-secondary'>
           <div className='flex items-center gap-1'>
@@ -457,7 +488,7 @@ const UserProfileV2: React.FC<Props> = (props) => {
         </div>
       </div>
     </div>
-    {!isSelf && <FollowButtons {...props} toggleFollow={toggleFollow} />}
+    {!isSelf && !user.isBot && <FollowButtons {...props} toggleFollow={toggleFollow} />}
     {(isEditMode || !!bioText?.length) && <div className='cg-text-md-400 cg-text-secondary'>
       {isEditMode ? <TextAreaField
         value={cgBio}

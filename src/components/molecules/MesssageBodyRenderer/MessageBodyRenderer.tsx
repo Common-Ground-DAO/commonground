@@ -18,12 +18,90 @@ import { useMultipleUserData } from 'context/UserDataProvider';
 import MessageTimestamp from '../Message/MessageTimestamp/MessageTimestamp';
 import MiniLoginBanner from '../LoginBanner/MiniLoginBanner';
 import LinkPreviewLoader from '../LinkPreview/LinkPreviewLoader';
-import { useAsyncMemo } from 'hooks/useAsyncMemo';
-import WizardImage from './WizardImage/WizardImage';
-import { useCommunityWizardContext } from 'context/CommunityWizardProvider';
-import urlConfig from '../../../data/util/urls';
-import Button from 'components/atoms/Button/Button';
 import YoutubeIframe from 'components/atoms/YoutubeIframe/YoutubeIframe';
+import MarkdownContent, { toMarkdownSource } from './MarkdownContent';
+import SendStatusNotice from '../SendStatusNotice/SendStatusNotice';
+
+type RenderableElement = Models.BaseArticle.ContentElementV2 | Models.Message.BodyContentV1 | Common.Content.ModerationSpecial;
+
+/** Synthetic element produced by groupMarkdownRuns, never part of stored content. */
+type MarkdownRun = { type: 'markdownRun'; value: string };
+
+function isPlainText(element: RenderableElement): element is Common.Content.Text {
+  if (element.type !== 'text') return false;
+  const text = element as Common.Content.Text;
+  return !text.bold && !text.italic && !text.className && !text.divClassname;
+}
+
+function isPlainLink(element: RenderableElement): element is Common.Content.Link {
+  return element.type === 'link' && !element.bold && !element.italic;
+}
+
+function elementToMarkdown(element: RenderableElement): string {
+  if (isPlainLink(element)) {
+    // The composer turns bare URLs into link elements; emit them as markdown
+    // links so the rest of the line keeps its markdown formatting. The
+    // angle-bracket destination tolerates parentheses in URLs.
+    const url = element.value.startsWith('http') ? element.value : 'https://' + element.value;
+    const label = element.value.replace(/([\\[\]])/g, '\\$1');
+    return `[${label}](<${url.replace(/([<>\\])/g, '\\$1')}>)`;
+  }
+  return (element as Common.Content.Text).value;
+}
+
+/**
+ * Collapses maximal runs of lines that consist only of plain text elements
+ * into single markdown elements, so their content renders as markdown.
+ * Lines containing mentions, parsed links/tags/tickers, toolbar formatting
+ * (bold/italic/className) or media keep the classic element rendering.
+ */
+function groupMarkdownRuns(content: RenderableElement[]): (RenderableElement | MarkdownRun)[] {
+  type Line = { elements: RenderableElement[]; hasNewline: boolean };
+  const lines: Line[] = [];
+  let currentLine: RenderableElement[] = [];
+  for (const element of content) {
+    if (element.type === 'newline') {
+      lines.push({ elements: currentLine, hasNewline: true });
+      currentLine = [];
+    } else {
+      currentLine.push(element);
+    }
+  }
+  lines.push({ elements: currentLine, hasNewline: false });
+
+  const isMarkdownLine = (line: Line) => line.elements.every(element => isPlainText(element) || isPlainLink(element));
+
+  const result: (RenderableElement | MarkdownRun)[] = [];
+  const pushRaw = (line: Line) => {
+    result.push(...line.elements);
+    if (line.hasNewline) result.push({ type: 'newline' });
+  };
+
+  let i = 0;
+  while (i < lines.length) {
+    if (!isMarkdownLine(lines[i])) {
+      pushRaw(lines[i]);
+      i++;
+      continue;
+    }
+    const textLines: string[] = [];
+    let j = i;
+    while (j < lines.length && isMarkdownLine(lines[j])) {
+      textLines.push(lines[j].elements.map(elementToMarkdown).join(''));
+      j++;
+    }
+    const source = toMarkdownSource(textLines);
+    if (source.trim().length === 0) {
+      // A run of only blank lines: keep the classic empty-line rendering.
+      for (let k = i; k < j; k++) pushRaw(lines[k]);
+    } else {
+      result.push({ type: 'markdownRun', value: source });
+      if (lines[j - 1].hasNewline) result.push({ type: 'newline' });
+    }
+    i = j;
+  }
+  return result;
+}
 
 const MediaImageRenderer: React.FC<Common.Content.ArticleImage> = (props) => {
   const [showModal, setShowModal] = React.useState(false);
@@ -38,7 +116,7 @@ const MediaImageRenderer: React.FC<Common.Content.ArticleImage> = (props) => {
 
 const MediaEmbedRenderer: React.FC<Common.Content.ArticleEmbed> = (props) => {
   return <div className={`mediaEmbedVideoContainer ${props.size}`}>
-    {/** Note: https://www.youtube.com is the only allowed frame-src, configured in nginx.conf */}
+    {/** Note: frames are subject to the edge's CSP frame-src (docker/caddy/common.caddy) */}
     {/** Also note: Iframes always need sandbox="allow-forms allow-scripts" for security reasons */}
     <YoutubeIframe
       embedId={props.embedId}
@@ -47,19 +125,7 @@ const MediaEmbedRenderer: React.FC<Common.Content.ArticleEmbed> = (props) => {
   </div>;
 };
 
-const NativeVideoRenderer: React.FC<Common.Content.NativeVideoEmbed> = (props) => {
-  return <div className={`mediaEmbedVideoContainer ${props.size}`}>
-    <div className='mediaEmbedVideo'>
-      <video
-        src={`${urlConfig.API_BASE_URL}/gated-videos/${encodeURIComponent(props.filename)}`}
-        controls
-        style={{ width: '100%', height: 'auto' }}
-      />
-    </div>
-  </div>;
-};
-
-function extractMentionedUserIds(content: (Models.BaseArticle.ContentElementV2 | Models.Message.BodyContentV1 | Common.Content.ModerationSpecial | Models.Wizard.WizardElement)[]) {
+function extractMentionedUserIds(content: (Models.BaseArticle.ContentElementV2 | Models.Message.BodyContentV1 | Common.Content.ModerationSpecial)[]) {
   return Array.from(content.reduce<Set<string>>((agg, val) => {
     if (val.type === "mention") {
       agg.add(val.userId);
@@ -74,7 +140,7 @@ function extractMentionedUserIds(content: (Models.BaseArticle.ContentElementV2 |
 
 
 export function AllContentRenderer(props: {
-  content: (Models.BaseArticle.ContentElementV2 | Models.Message.BodyContentV1 | Common.Content.ModerationSpecial | Models.Wizard.WizardElement)[];
+  content: (Models.BaseArticle.ContentElementV2 | Models.Message.BodyContentV1 | Common.Content.ModerationSpecial)[];
   messageKeyBase?: string;
   messageTimestamp?: string;
   lastUpdateTimestamp?: string;
@@ -100,13 +166,13 @@ export function AllContentRenderer(props: {
 
   const mentionedUsers = useMultipleUserData(mentionedUserIds);
 
-  const resultContent: JSX.Element[] = [];
-  let currentBlock: JSX.Element[] = [];
+  const resultContent: React.JSX.Element[] = [];
+  let currentBlock: React.JSX.Element[] = [];
   let skipNextDivEncasing = true;
   let nextClassName: string[] = [];
   let hasRenderedMidLoginBanner = false;
 
-  let timestamp: JSX.Element | null = null
+  let timestamp: React.JSX.Element | null = null
   if (!props.hideTimestamp) {
     timestamp = <MessageTimestamp
       key='message-timestamp'
@@ -137,9 +203,11 @@ export function AllContentRenderer(props: {
 
   let links: string[] = [];
 
-  content.forEach((c, index) => {
+  const processedContent = groupMarkdownRuns(content);
+
+  processedContent.forEach((c, index) => {
     const messageKey = `${messageKeyBase}${c.type}-${index}`;
-    let currentElement: JSX.Element | undefined = undefined;
+    let currentElement: React.JSX.Element | undefined = undefined;
     switch (c.type) {
       case 'tag':
         currentElement = (<span className="message-content-tag" key={messageKey}>#{c.value}</span>);
@@ -176,7 +244,7 @@ export function AllContentRenderer(props: {
       case 'header': {
         const headerElements = c.value.map((textEl, index) => {
           const internalMessageKey = 'text-' + index;
-          let internalElement: string | JSX.Element = textEl.value;
+          let internalElement: string | React.JSX.Element = textEl.value;
           if (textEl.bold) {
             internalElement = <strong key={internalMessageKey}>{internalElement}</strong>;
           }
@@ -201,36 +269,14 @@ export function AllContentRenderer(props: {
         nextClassName.push('mediaElement');
         break;
       }
-      case 'nativeVideoEmbed': {
-        currentElement = <NativeVideoRenderer key={messageKey} {...c} />;
-        nextClassName.push('mediaElement');
-        break;
-      }
-      case 'nativeDownloadEmbed': {
-        if (c.renderType === 'button') {
-          currentElement = <Button
-            key={messageKey}
-            text={c.title || c.filename}
-            role="primary"
-            className={c.className}
-            onClick={() => {
-              window.open(`${urlConfig.API_BASE_URL}/gated-files/${encodeURIComponent(c.filename)}`, '_blank', 'noopener,noreferrer');
-            }}
-          />;
-        } else {
-          currentElement = <a
-            href={`${urlConfig.API_BASE_URL}/gated-files/${encodeURIComponent(c.filename)}`}
-            target="_blank"
-            rel="noopener,noreferrer"
-            className={`text-link ${c.className || ''}`}
-            key={messageKey}
-          >{c.title || c.filename}</a>;
-        }
-        break;
-      }
       case 'text': {
         currentElement = (<span key={messageKey} className={c.className}>{c.value}</span>);
         if (!!c.divClassname) nextClassName.push(c.divClassname);
+        break;
+      }
+      case 'markdownRun': {
+        currentElement = <MarkdownContent key={messageKey} source={c.value} />;
+        skipNextDivEncasing = true;
         break;
       }
       case 'newline': {
@@ -274,29 +320,6 @@ export function AllContentRenderer(props: {
           >
             <span key={messageKey} className="message-body-mention">@{user ? getDisplayNameString(user) : c.alias || c.userId}</span>
           </UserTooltip>
-        );
-        break;
-      }
-      case 'dynamicTextFunction': {
-        currentElement = <DynamicTextFunction key={messageKey} {...c} />;
-        break;
-      }
-      case 'dynamicTextRequest': {
-        currentElement = <DynamicTextRequest key={messageKey} {...c} />;
-        break;
-      }
-      case 'wizardImage': {
-        currentElement = <WizardImage key={messageKey} {...c} />;
-        break;  
-      }
-      case 'inlineImage': {
-        currentElement = (
-          <img
-            key={messageKey}
-            src={c.imageDataUri}
-            alt=''
-            className={c.className}
-          />
         );
         break;
       }
@@ -417,8 +440,12 @@ const MessageBodyRenderer = (props: {
   message: Models.Message.Message,
   truncate?: boolean,
   hideTimestamp?: boolean,
+  /** retry a failed send or edit (shown with `sendStatus` error-send / error-update) */
+  onRetry?: () => void;
+  /** discard a failed send or revert a failed edit */
+  onDiscard?: () => void;
 }) => {
-  const { message, truncate, hideTimestamp } = props;
+  const { message, truncate, hideTimestamp, onRetry, onDiscard } = props;
 
   const className = [
     truncate ? "message-body-truncated" : "",
@@ -434,45 +461,15 @@ const MessageBodyRenderer = (props: {
         isEdited={message.editedAt !== null}
         hideTimestamp={hideTimestamp}
       />
-      {message.sendStatus === "error-send" && <span className="text-xs text-red-500">error sending</span>}
-      {message.sendStatus === "error-update" && <span className="text-xs text-red-500">error updating</span>}
+      {(message.sendStatus === "error-send" || message.sendStatus === "error-update") && <SendStatusNotice
+        messageId={message.id}
+        content={message.body.content}
+        sendStatus={message.sendStatus}
+        onRetry={onRetry}
+        onDiscard={onDiscard}
+      />}
     </div>
   )
-}
-
-const DynamicTextRequest = (props: Common.Content.DynamicTextRequest) => {
-  const response = useAsyncMemo(async () => {
-    switch (props.requestName) {
-      case 'wizardInvitedBy': {
-        return 'IMPLEMENT ME';
-      }
-      case 'wizardPauseTimeRemaining': {
-        return 'IMPLEMENT ME';
-      }
-      default: return ''; 
-    }
-  }, [props.requestName]);
-
-  return (<span className={props.className}>{response || ''}</span>);
-}
-
-const DynamicTextFunction = (props: Common.Content.DynamicTextFunction) => {
-  const { wizard } = useCommunityWizardContext();
-
-  const response = useAsyncMemo(async () => {
-    switch (props.functionName) {
-      case 'wizardRemainingSlots': {
-        if (wizard?.successLimit === undefined) return 'infinite';
-        const remaining = wizard.successLimit - (wizard.successfulUsers || 0);
-
-        if (remaining > 100) return 'a little over 100';
-        else return `only ${remaining}`;
-      }
-      default: return ''; 
-    }
-  }, [props.functionName]);
-
-  return (<span className={props.className}>{response || ''}</span>);
 }
 
 export default React.memo(MessageBodyRenderer);

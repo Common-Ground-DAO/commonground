@@ -3,46 +3,43 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import app from './util/express';
-import userRouter from './api/user';
-import communityRouter from './api/community';
-import messageRouter from './api/messages';
-import fileRouter from './api/files';
-import chatRouter from './api/chats';
-import contractRouter from './api/contracts';
-import notificationRouter from './api/notifications';
-import getRoutes from './api/getRoutes';
-import luksoUniversalProfileRouter from './api/luksoUniversalProfile';
-import twitterRouter from './api/twitter';
-import cgIdRouter from './api/cgid';
-import accountsRouter from './api/accounts';
-import sumsubRouter from './api/sumsub';
-import { fakeHealthcheck } from './healthcheck';
-import pluginRouter from './api/plugins';
-import searchRouter from './api/search';
-import reportRouter from './api/report';
+import { listenerProbe, postgresProbe, startHealthcheck } from './healthcheck';
+import { valkeyProbe } from './redis/healthProbe';
+import pool from './util/postgres';
+import imageFilter from './moderation/imageFilter';
+import { apiErrorHandler } from './api/util';
+import { mountApiRouters } from './api/mountRouters';
+import { validateTransferConfigAtStartup } from './util/transferLink';
+import { validateGatewayConfig } from './util/gateway';
 
-app.use('/Chat', chatRouter);
-app.use('/Community', communityRouter);
-app.use('/File', fileRouter);
-app.use('/Message', messageRouter);
-app.use('/User', userRouter);
-app.use('/Contract', contractRouter);
-app.use('/Notification', notificationRouter);
-app.use('/Twitter', twitterRouter);
-app.use('/Lukso', luksoUniversalProfileRouter);
-app.use('/CgId', cgIdRouter);
-app.use('/Accounts', accountsRouter);
-app.use('/Sumsub', sumsubRouter);
-app.use('/Plugins', pluginRouter);
-app.use('/Search', searchRouter);
-app.use('/Report', reportRouter);
-app.use('/', getRoutes);
+// A misconfigured transfer-link target (TRANSFER_TARGET_URL) stops the process.
+validateTransferConfigAtStartup();
+// A gateway (CG_GATEWAY=true) needs legacy CG ID mode and a transfer target;
+// what it serves is decided by its allowlist (srv/util/express.ts).
+validateGatewayConfig({ needsTransferTarget: true });
+
+// every router and page route (srv/api/mountRouters.ts); the account-security
+// step runs in front of the API routers
+mountApiRouters(app);
+
+// Errors handed to next() by middleware — e.g. the session store failing while
+// the Valkey state instance is unreachable, or body-parser rejecting a
+// malformed/oversized body — get the API's JSON error format instead of
+// Express' default HTML error page. Keeps a 4xx status set by the middleware.
+app.use(apiErrorHandler);
 
 const shutdown = async (code = 0) => {
   process.exit(code);
 }
 
-fakeHealthcheck();
+// healthy: the database and the Valkey state instance (sessions) answer, and
+// the HTTP listener (util/express.ts) accepts connections
+startHealthcheck([postgresProbe(pool), valkeyProbe(), listenerProbe(4000)]);
+
+// Fire-and-forget: reports a broken NSFW model in the startup log rather than
+// letting it surface as failing uploads later (it never rejects, and every
+// upload path waits on the same cached load anyway).
+void imageFilter.warmUp();
 
 process.on("SIGTERM", () => shutdown());
 process.on("unhandledRejection", (reason, promise) => {

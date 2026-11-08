@@ -2,12 +2,13 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import EndImg from '../../../static/home-cta-end.png';
 import "./SectionEnd.css";
 
 type Props = {
     text: string;
-    footer?: JSX.Element
+    footer?: React.JSX.Element
 }
 
 export default function SectionEnd(props: Props) {

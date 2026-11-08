@@ -2,20 +2,21 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import Button from "../../atoms/Button/Button";
-import { ReactComponent as AddEmojiIcon } from '../../../components/atoms/icons/20/AddEmoji.svg';
+import AddEmojiIcon from '../../../components/atoms/icons/20/AddEmoji.svg?react';
 import "./EmojiPickerTooltip.css";
 import ScreenAwarePopover from "components/atoms/ScreenAwarePopover/ScreenAwarePopover";
 import EmojiPicker, { EmojiClickData, EmojiStyle, Theme } from "emoji-picker-react";
 import { useDarkModeContext } from "context/DarkModeProvider";
 import { useWindowSizeContext } from "context/WindowSizeProvider";
-import { Placement } from "@floating-ui/react-dom-interactions";
+import { Placement } from "@floating-ui/react";
 
 type Props = {
     onEmojiClick: (value: string) => void;
     isTooltipOpen?: (isSticky: boolean) => void;
     placement?: Placement;
-    triggerContent?: JSX.Element;
+    triggerContent?: React.JSX.Element;
 }
 
 export default function EmojiPickerTooltip(props: Props) {

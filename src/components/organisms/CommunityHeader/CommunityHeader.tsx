@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useMemo } from "react";
-import { createSearchParams, useLocation, useNavigate } from "react-router-dom";
+import { createSearchParams, useLocation, useNavigate } from "react-router";
 import { useSignedUrl } from '../../../hooks/useSignedUrl';
 
 import CommunitySettings from "../CommunitySettings/CommunitySettings";
@@ -21,20 +21,22 @@ import { useLoadedCommunityContext } from "context/CommunityProvider";
 import { useCommunitySidebarContext } from "../CommunityViewSidebar/CommunityViewSidebarContext";
 import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
 
-import { ReactComponent as NotAllowedIcon } from '../../../components/atoms/icons/16/NotAllowed.svg';
-import { ReactComponent as ChevronDownIcon } from '../../../components/atoms/icons/16/ChevronDown.svg';
-import { ReactComponent as SparkIcon } from '../../../components/atoms/icons/misc/spark.svg';
-import { PredefinedRole, RoleType } from "common/enums";
+import NotAllowedIcon from '../../../components/atoms/icons/16/NotAllowed.svg?react';
+import ChevronDownIcon from '../../../components/atoms/icons/16/ChevronDown.svg?react';
+import SparkIcon from '../../../components/atoms/icons/misc/spark.svg?react';
+import { PredefinedRole } from "common/enums";
 import { getUrl } from 'common/util';
 
 import './CommunityHeader.css';
 import BottomSliderModal from "components/atoms/BottomSliderModal/BottomSliderModal";
 import { ShareListItem } from "components/atoms/ShareButton/ShareButton";
 import { getCommunityDisplayName } from "../../../util";
-import { Asterisk, ChatsTeardrop, DoorOpen, Envelope, EnvelopeSimple, HandWaving, HouseSimple, Plug, PokerChip, Prohibit, UserCircle, UserCirclePlus, Users } from "@phosphor-icons/react";
+import { Asterisk, ChatsTeardrop, DoorOpen, Envelope, EnvelopeSimple, HandWaving, HouseSimple, Plug, PokerChip, Prohibit, Robot, UserCircle, UserCirclePlus, Users } from "@phosphor-icons/react";
 import { useOwnUser } from "context/OwnDataProvider";
 import communityApi from "data/api/community";
 import { useEmailConfirmationContext } from "context/EmailConfirmationProvider";
+import { cssBackgroundImage } from 'util/cssBackground';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 type Props = {
   onHeaderClick?: () => void;
@@ -176,11 +178,11 @@ const CommunityHeader: React.FC<Props> = ({ onHeaderClick, banned, collapsed }) 
 
   const menuItems = useMemo(() => {
     if (!isMobile) {
-      const menuItems: JSX.Element[] = [];
+      const menuItems: React.JSX.Element[] = [];
       if (communityPermissions.has('COMMUNITY_MANAGE_INFO')) {
         menuItems.push(<ManagementContentModalMenuItem leftElement={<HouseSimple weight="duotone" className="w-5 h-5"/>} key="General" text="General" url="manage-community" />);
       }
-      if (ownRoles.some(role => role.title === PredefinedRole.Admin && role.type === RoleType.PREDEFINED)) {
+      if (ownRoles.some(role => isPredefinedRole(role, PredefinedRole.Admin))) {
         menuItems.push(<ManagementContentModalMenuItem key="Premium" leftElement={<SparkIcon className="w-5 h-5" />} text="Premium" url="premium-management" />);
       }
       if (communityPermissions.has('COMMUNITY_MANAGE_ROLES')) {
@@ -204,7 +206,10 @@ const CommunityHeader: React.FC<Props> = ({ onHeaderClick, banned, collapsed }) 
       if (communityPermissions.has('COMMUNITY_MANAGE_ROLES')) {
         menuItems.push(<ManagementContentModalMenuItem key="Token" leftElement={<PokerChip weight="duotone" className="w-5 h-5"/>} text="Token" url="token-management" />);
       }
-      if (ownRoles.some(role => role.title === PredefinedRole.Admin && role.type === RoleType.PREDEFINED)) {
+      if (communityPermissions.has('COMMUNITY_MANAGE_ROLES')) {
+        menuItems.push(<ManagementContentModalMenuItem key="Bots" leftElement={<Robot weight="duotone" className="w-5 h-5"/>} text="Bots" url="bot-management" />);
+      }
+      if (ownRoles.some(role => isPredefinedRole(role, PredefinedRole.Admin))) {
         menuItems.push(<ManagementContentModalMenuItem key="Plugins" leftElement={<Plug weight="duotone" className="w-5 h-5" />} text="Plugins" url="plugins" />);
       }
       return menuItems;
@@ -268,10 +273,10 @@ const CommunityHeader: React.FC<Props> = ({ onHeaderClick, banned, collapsed }) 
       className={`community-header${location.pathname === `/community/${community.id}` ? " community-header-active" : ""}${collapsed ? ' collapsed' : ''}`}
       onClick={handleHeaderClick}
     >
-      {collapsed && <div style={{ backgroundImage: `url(${imageUrl})` }} className='community-header-background-blurred' />}
+      {collapsed && <div style={{ backgroundImage: cssBackgroundImage(imageUrl) }} className='community-header-background-blurred' />}
       <div className={`community-container`}>
         {settingsModal}
-        <div style={imageUrl ? { backgroundImage: `url(${imageUrl})` } : undefined} className='community-header-group-image' />
+        <div style={imageUrl ? { backgroundImage: cssBackgroundImage(imageUrl) } : undefined} className='community-header-group-image' />
         <div className="lobby-title-container">
           {!!banned ? (
             <div className="you-are-banned">

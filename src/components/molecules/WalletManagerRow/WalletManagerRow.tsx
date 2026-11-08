@@ -9,8 +9,8 @@ import { getTruncatedId } from '../../../util';
 import Tag from "components/atoms/Tag/Tag";
 import Button from "components/atoms/Button/Button";
 
-import { ReactComponent as CheckmarkIcon } from 'components/atoms/icons/16/Checkmark.svg';
-import { ReactComponent as MetamaskIcon } from 'components/atoms/icons/24/MetamaskIcon.svg';
+import CheckmarkIcon from 'components/atoms/icons/16/Checkmark.svg?react';
+import MetamaskIcon from 'components/atoms/icons/24/MetamaskIcon.svg?react';
 
 import './WalletManagerRow.css';
 import userApi from "data/api/user";

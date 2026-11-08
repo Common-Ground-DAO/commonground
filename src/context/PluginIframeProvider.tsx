@@ -15,8 +15,8 @@ type PluginIframeContextState = {
   unloadIframe: () => void;
   isDocked: boolean;
   setIsDocked: (isDocked: boolean) => void;
-  dockRef: React.RefObject<HTMLDivElement> | null;
-  iframeRef: React.RefObject<HTMLIFrameElement> | null;
+  dockRef: React.RefObject<HTMLDivElement | null> | null;
+  iframeRef: React.RefObject<HTMLIFrameElement | null> | null;
   iframeUrl: string | null;
   iframeOrigin: string | null;
   pluginData: Models.Plugin.Plugin | null;

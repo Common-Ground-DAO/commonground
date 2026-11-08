@@ -14,6 +14,13 @@ type RolePermission<T extends ChannelPermission | ArticlePermission | CommunityP
   permissions: T[],
 }
 
+/**
+ * SQL condition on the role `r`: it is the predefined Public role (the
+ * queries below also bind `r` to the community of the channel, article, call
+ * or event). A custom role with the same title is an ordinary role.
+ */
+const PUBLIC_ROLE_CONDITION = `(r."type" = ${format('%L', RoleType.PREDEFINED)} AND r."title" = ${format('%L', PredefinedRole.Public)})`;
+
 class PermissionHelper {
   public async getRolePermissions(options: { communityId: string, channelId: string }): Promise<RolePermission<ChannelPermission>[]>
   public async getRolePermissions(options: { callId: string, channelId: string }): Promise<RolePermission<CallPermission>[]>
@@ -36,6 +43,7 @@ class PermissionHelper {
             AND r."deletedAt" IS NULL
           INNER JOIN calls c
             ON cp."callId" = c."id"
+            AND c."communityId" = r."communityId"
           WHERE
             cp."callId" = $1 AND
             c."channelId" = $2
@@ -58,7 +66,8 @@ class PermissionHelper {
             AND r."deletedAt" IS NULL
           WHERE
             ccrp."communityId" = $1 AND
-            ccrp."channelId" = $2
+            ccrp."channelId" = $2 AND
+            r."communityId" = $1
         `;
         params = [
           options.communityId,
@@ -83,7 +92,8 @@ class PermissionHelper {
             AND r."deletedAt" IS NULL
           WHERE
             carp."communityId" = $1 AND
-            carp."articleId" = $2
+            carp."articleId" = $2 AND
+            r."communityId" = $1
         `;
         params = [
           options.communityId,
@@ -116,6 +126,9 @@ class PermissionHelper {
         FROM roles r
         INNER JOIN communities_events_permissions cep
           ON r."id" = cep."roleId"
+        INNER JOIN communities_events ce
+          ON ce."id" = cep."communityEventId"
+          AND ce."communityId" = r."communityId"
         WHERE cep."communityEventId" = $1
           AND r."deletedAt" IS NULL
       `;
@@ -144,12 +157,15 @@ class PermissionHelper {
         FROM roles r
         INNER JOIN callpermissions cp
           ON r."id" = cp."roleId"
+        INNER JOIN calls c
+          ON c."id" = cp."callId"
+          AND c."communityId" = r."communityId"
         LEFT JOIN roles_users_users ruu
-          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)
+          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ${!!options.userId ? 'ruu."userId" = $2' : 'FALSE'})
         WHERE r."deletedAt" IS NULL
           AND (
             ${!!options.userId ? 'ruu."userId" = $2 OR' : ''}
-            r."title" = ${format('%L', PredefinedRole.Public)}
+            ${PUBLIC_ROLE_CONDITION}
           )
           AND cp."callId" = $1
       `;
@@ -165,14 +181,15 @@ class PermissionHelper {
           INNER JOIN communities_channels_roles_permissions ccrp
             ON r."id" = ccrp."roleId"
           LEFT JOIN roles_users_users ruu
-            ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)
+            ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ${!!options.userId ? 'ruu."userId" = $3' : 'FALSE'})
           WHERE r."deletedAt" IS NULL
             AND (
               ${!!options.userId ? 'ruu."userId" = $3 OR' : ''}
-              r."title" = ${format('%L', PredefinedRole.Public)}
+              ${PUBLIC_ROLE_CONDITION}
             )
             AND ccrp."communityId" = $1
             AND ccrp."channelId" = $2
+            AND r."communityId" = $1
         `;
         params = [
           options.communityId,
@@ -186,14 +203,15 @@ class PermissionHelper {
           INNER JOIN communities_articles_roles_permissions carp
             ON r."id" = carp."roleId"
           LEFT JOIN roles_users_users ruu
-            ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)
+            ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ${!!options.userId ? 'ruu."userId" = $3' : 'FALSE'})
           WHERE r."deletedAt" IS NULL
             AND (
               ${!!options.userId ? 'ruu."userId" = $3 OR' : ''}
-              r."title" = ${format('%L', PredefinedRole.Public)}
+              ${PUBLIC_ROLE_CONDITION}
             )
             AND carp."communityId" = $1
             AND carp."articleId" = $2
+            AND r."communityId" = $1
         `;
         params = [
           options.communityId,
@@ -205,11 +223,11 @@ class PermissionHelper {
           SELECT array_to_json(r."permissions") AS "permissions"
           FROM roles r
           LEFT JOIN roles_users_users ruu
-            ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)
+            ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ${!!options.userId ? 'ruu."userId" = $2' : 'FALSE'})
           WHERE r."deletedAt" IS NULL
             AND (
               ${!!options.userId ? 'ruu."userId" = $2 OR' : ''}
-              r."title" = ${format('%L', PredefinedRole.Public)}
+              ${PUBLIC_ROLE_CONDITION}
             )
             AND r."communityId" = $1
         `;
@@ -224,12 +242,15 @@ class PermissionHelper {
         FROM roles r
         INNER JOIN communities_events_permissions cep
           ON r."id" = cep."roleId"
+        INNER JOIN communities_events ce
+          ON ce."id" = cep."communityEventId"
+          AND ce."communityId" = r."communityId"
         LEFT JOIN roles_users_users ruu
-          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE)
+          ON (r."id" = ruu."roleId" AND ruu.claimed = TRUE AND ${!!options.userId ? 'ruu."userId" = $2' : 'FALSE'})
         WHERE r."deletedAt" IS NULL
           AND (
             ${!!options.userId ? 'ruu."userId" = $2 OR' : ''}
-            r."title" = ${format('%L', PredefinedRole.Public)}
+            ${PUBLIC_ROLE_CONDITION}
           )
           AND cep."communityEventId" = $1
       `;
@@ -279,6 +300,42 @@ class PermissionHelper {
     if (!hasPermissions) {
       throw new Error(errors.server.NOT_ALLOWED);
     }
+  }
+
+  /**
+   * Whether `userId` is a member of the community `communityId`: holds at
+   * least one claimed, live role of it other than the predefined Public role
+   * (which stands for everyone, visitors included), and the community is not
+   * deleted.
+   */
+  public async isMemberOfActiveCommunity(userId: string, communityId: string): Promise<boolean> {
+    const result = await pool.query(`
+      SELECT 1
+      FROM roles_users_users ruu
+      INNER JOIN roles r
+        ON r."id" = ruu."roleId"
+      INNER JOIN communities c
+        ON c."id" = r."communityId"
+      WHERE ruu."userId" = $1
+        AND r."communityId" = $2
+        AND ruu.claimed = TRUE
+        AND r."deletedAt" IS NULL
+        AND NOT (r."type" = ${format('%L', RoleType.PREDEFINED)} AND r."title" = ${format('%L', PredefinedRole.Public)})
+        AND c."deletedAt" IS NULL
+      LIMIT 1
+    `, [userId, communityId]);
+    return result.rows.length > 0;
+  }
+
+  /** Whether the community `communityId` exists and is not deleted. */
+  public async isActiveCommunity(communityId: string): Promise<boolean> {
+    const result = await pool.query(`
+      SELECT 1
+      FROM communities c
+      WHERE c."id" = $1
+        AND c."deletedAt" IS NULL
+    `, [communityId]);
+    return result.rows.length > 0;
   }
 
   public async hasTrustOrThrow(options: { userId: string, trust: string }): Promise<void> {

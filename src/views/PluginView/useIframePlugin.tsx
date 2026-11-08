@@ -11,7 +11,7 @@ import { useRoleClaimedContext } from 'context/RoleClaimedProvider';
 import communityDatabase from 'data/databases/community';
 import { useDarkModeContext } from 'context/DarkModeProvider';
 import { isLocalUrl } from 'components/atoms/SimpleLink/SimpleLink';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useExternalModalContext } from 'context/ExternalModalProvider';
 import { requestedPermissionToPermission  } from 'context/PluginIframeProvider';
 

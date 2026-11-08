@@ -16,9 +16,11 @@ import communityApi from 'data/api/community';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';
 import ImageUploadField from 'components/molecules/inputs/ImageUploadField/ImageUploadField';
 import fileApi from 'data/api/file';
+import { isUploadTemporarilyRefused, notifyIfImageRejected } from 'moderation/imageUploadError';
+import errors from 'common/errors';
 import ToggleInputField from 'components/molecules/inputs/ToggleInputField/ToggleInputField';
 import RolePermissionToggle, { PermissionType } from 'components/molecules/RolePermissionToggle/RolePermissionToggle';
-import { PredefinedRole } from 'common/enums';
+import { PredefinedRole, RoleType } from 'common/enums';
 import { useOwnUser } from 'context/OwnDataProvider';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import { convertContentToPlainText } from 'common/converters';
@@ -27,6 +29,8 @@ import { Globe, Headphones } from "@phosphor-icons/react";
 import { linkRegexGenerator } from 'common/validators';
 import CallConfigurationToggle, { IConfig } from '../StartCallModal/CallConfigurationToggle/CallConfigurationToggle';
 import { useCommunityPremiumTier } from 'hooks/usePremiumTier';
+import config from 'common/config';
+import { isPredefinedRole, isPredefinedRolePermission } from "util/predefinedRoles";
 
 const onlyLinkRegex = linkRegexGenerator();
 
@@ -48,7 +52,7 @@ export function toPermissionType(permissions: Common.CommunityEventPermission[])
 export function eventPermissionsToPermissionType(eventPermissions: Models.Community.Event['rolePermissions']): Record<string, PermissionType> {
   return eventPermissions.reduce((acc, permission) => {
     // Don't convert admin, we won't modify it and won't send it either
-    if (permission.roleTitle === PredefinedRole.Admin) return acc;
+    if (isPredefinedRolePermission(permission, PredefinedRole.Admin)) return acc;
 
     return {
       ...acc,
@@ -74,6 +78,7 @@ function permissionTypeToEventPermissions(
     return {
       roleId: roleId,
       roleTitle: role?.title || '',
+      roleType: role?.type,
       permissions: newPermissions
     }
   });
@@ -100,7 +105,9 @@ const ScheduleEventModal: React.FC<Props> = (props) => {
   const [showLocationInput, setShowLocationInput] = useState(false);
   const [location, setLocation] = useState('');
   const [banner, setBanner] = useState<File | undefined | null>(null);
-  const [eventType, setEventType] = useState<Models.Community.EventType>('call');
+  // 'call' and 'broadcast' both need the media server; without it an external
+  // event (a plain link) is the only type that can actually happen
+  const [eventType, setEventType] = useState<Models.Community.EventType>(config.CALLS_ENABLED ? 'call' : 'external');
   const [startDatetime, setStartDatetime] = useState<dayjs.Dayjs>(dayjs());
   const [endDatetime, setEndDatetime] = useState<dayjs.Dayjs>(dayjs());
   const [enableCustomRoles, setEnableCustomRoles] = useState(false);
@@ -130,13 +137,15 @@ const ScheduleEventModal: React.FC<Props> = (props) => {
   const defaultPermission = useMemo(() => {
     return [
       {
-        roleId: roles.find(role => role.title === PredefinedRole.Public)?.id,
+        roleId: roles.find(role => isPredefinedRole(role, PredefinedRole.Public))?.id,
         roleTitle: PredefinedRole.Public,
+        roleType: RoleType.PREDEFINED,
         permissions: ['EVENT_PREVIEW']
       },
       {
-        roleId: roles.find(role => role.title === PredefinedRole.Member)?.id,
+        roleId: roles.find(role => isPredefinedRole(role, PredefinedRole.Member))?.id,
         roleTitle: PredefinedRole.Member,
+        roleType: RoleType.PREDEFINED,
         permissions: ['EVENT_PREVIEW', 'EVENT_ATTEND']
       },
     ] as Models.Community.Event['rolePermissions'];
@@ -235,7 +244,16 @@ const ScheduleEventModal: React.FC<Props> = (props) => {
         onClose();
       }
     } catch (e: any) {
-      showSnackbar({ type: 'warning', text: `Something went wrong, code error: ${e.message}` });
+      if (!notifyIfImageRejected(e)) {
+        showSnackbar({
+          type: 'warning',
+          // a rate-limited or shed banner upload is a plain "try again", not a
+          // code error the user should be shown
+          text: isUploadTemporarilyRefused(e)
+            ? errors.client.UPLOAD_BUSY
+            : `Something went wrong, code error: ${e.message}`,
+        });
+      }
     } finally {
       setIsSending(false);
     }
@@ -306,20 +324,20 @@ const ScheduleEventModal: React.FC<Props> = (props) => {
     return <div className='flex flex-col gap-2'>
       <span className='cg-text-main cg-text-lg-500'>Event Type</span>
       <div className='flex flex-wrap gap-2'>
-        <Button
+        {config.CALLS_ENABLED && <Button
           iconLeft={<Headphones weight='fill' className='w-5 h-5' />}
           text='Group Call'
           role='chip'
           className={eventType === 'call' ? 'active' : undefined}
           onClick={() => setEventType('call')}
-        />
-        <Button
+        />}
+        {config.CALLS_ENABLED && <Button
           iconLeft={<MicrophoneIcon className='w-5 h-5' />}
           text='Broadcast'
           role='chip'
           className={eventType === 'broadcast' ? 'active' : undefined}
           onClick={() => setEventType('broadcast')}
-        />
+        />}
         <Button
           iconLeft={<Globe className='w-5 h-5' />}
           text='External'
@@ -338,7 +356,9 @@ const ScheduleEventModal: React.FC<Props> = (props) => {
         <InformationCircleIcon className='w-5 h-5' />
         {eventType === 'call' && <span>In Group Calls, anyone can speak</span>}
         {eventType === 'broadcast' && <span>In Broadcasts, you decide who can speak</span>}
-        {eventType === 'external' && <span>In external events, no call will be created</span>}
+        {eventType === 'external' && <span>{config.CALLS_ENABLED
+          ? 'In external events, no call will be created'
+          : 'Calls are disabled on this instance, so events can only link to an external location'}</span>}
       </div>
     </div>
   }, [eventType]);

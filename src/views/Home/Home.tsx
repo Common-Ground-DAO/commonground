@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import './Home.css';
-import { Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Route, Routes, useLocation, useNavigate } from 'react-router';
 import Scrollable from "../../components/molecules/Scrollable/Scrollable";
 import LiveCallExplorer from '../../components/organisms/LiveCallExplorer/LiveCallExplorer';
 import { useWindowSizeContext } from '../../context/WindowSizeProvider';
@@ -11,7 +11,6 @@ import { useWindowSizeContext } from '../../context/WindowSizeProvider';
 import Button from '../../components/atoms/Button/Button';
 import { isLocalUrl } from '../../components/atoms/SimpleLink/SimpleLink';
 
-import WhatsNewModal from 'components/organisms/WhatsNewModal/WhatsNewModal';
 import LoginBanner from 'components/molecules/LoginBanner/LoginBanner';
 import { useOwnUser } from 'context/OwnDataProvider';
 import NotificationBanner from 'components/molecules/NotificationBanner/NotificationBanner';
@@ -22,32 +21,28 @@ import EventExplorer from 'components/organisms/EventExplorer/EventExplorer';
 import ArticleExplorer from 'components/organisms/ArticleExplorer/ArticleExplorer';
 import Tag from 'components/atoms/Tag/Tag';
 import { Compass, HouseSimple, Storefront } from '@phosphor-icons/react';
-import { SimpleChannel } from 'components/organisms/EcosystemMenu/EcosystemMenu';
 import useLocalStorage from 'hooks/useLocalStorage';
-import { EcosystemType } from 'context/EcosystemProvider';
-import EcosystemHomeHeader from 'components/organisms/EcosystemHomeHeader/EcosystemHomeHeader';
 import { getUrl } from 'common/util';
 import { useEmailConfirmationContext } from 'context/EmailConfirmationProvider';
 import userApi from 'data/api/user';
 import { useUserOnboardingContext } from 'context/UserOnboarding';
-import TokenSaleBanner from 'components/molecules/LoginBanner/TokenSaleBanner';
 import { removeInitialSlash } from 'App';
 import CommunityExplorer from 'components/organisms/CommunityExplorer/CommunityExplorer';
+import config from 'common/config';
 import PluginAppstore from 'components/organisms/PluginAppstore/PluginAppstore';
 import Search from 'components/organisms/Search/Search';
 import TagHeader from 'components/organisms/TagHeader/TagHeader';
-import { ecosystemTagList, PredefinedTag, predefinedTagList } from 'components/molecules/inputs/TagInputField/predefinedTags';
-import { tagStringToPredefinedTag } from 'components/molecules/inputs/TagInputField/TagInputField';
+import { PredefinedTag } from 'components/molecules/inputs/TagInputField/predefinedTags';
 import EmptyState from 'components/molecules/EmptyState/EmptyState';
 import ScreenAwareDropdown from 'components/atoms/ScreenAwareDropdown/ScreenAwareDropdown';
 import ListItem from 'components/atoms/ListItem/ListItem';
+import { getAuthMode } from 'data/auth/authMode';
+import securityStepState from 'data/auth/securityStep';
 import SearchInputField from 'components/molecules/inputs/SearchInputField/SearchInputField';
 
 const privacyPolicyLink = 'https://app.cg/c/commonground/article/privacy-policy-4vhHTcaUHQnDfmCDdQcNFf/';
 const termsOfUseLink = 'https://app.cg/c/commonground/article/terms-of-use-tuVcsrBtEkM441vv3GdeM8/';
 const helpLink = 'https://app.cg/c/commonground/article/help-13Pqw7xeDHRXnRoQWvwxhg/';
-
-export type HomeChannelTypes = 'following' | SimpleChannel | EcosystemType | '';
 
 export default function Home() {
   const [search, _setSearch] = useState('');
@@ -61,7 +56,11 @@ export default function Home() {
   const { pathname } = useLocation();
 
   useEffect(() => {
-    if (emailConfirmationOpened === "opened") return;
+    // An instance without mail cannot confirm addresses. Where the
+    // account-security step runs (every instance but a legacy CG ID gateway),
+    // an unconfirmed address IS that step: it asks for the address itself,
+    // and nothing here may send mail or open a dialog over it.
+    if (emailConfirmationOpened === "opened" || !config.EMAIL_ENABLED || !getAuthMode().legacyCgid || securityStepState.required) return;
 
     if (!ownUser || !!isUserOnboardingVisible) return;
 
@@ -141,16 +140,6 @@ export default function Home() {
     >
       <div className="inner-content">
         {!ownUser && <LoginBanner stickyMode />}
-        {!!ownUser && <TokenSaleBanner />}
-        {/* {isMobile && !!ownUser && <div className='flex flex-col px-4 gap-4 self-stretch cg-text-main items-center relative'>
-          <MobileUserPhotoBg />
-          <div className='self-start'>
-            <EcosystemPicker expanded />
-          </div>
-          <div className='home-user-widget-container'>
-            <UserWidget collapsed={false} />
-          </div>
-        </div>} */}
         <div className='flex flex-col gap-4 home-explorer-header'>
           <div className={`flex gap-4 ${isMobile ? 'flex-col px-4' : 'flex-wrap justify-between'}`}>
             {!!isMobile && <SearchInputField
@@ -195,7 +184,7 @@ export default function Home() {
                 }}
               />
             </div>
-            {!isMobile && <div className='flex-shrink'>
+            {!isMobile && <div className='shrink'>
               <SearchInputField
                 value={search}
                 onChange={setSearch}
@@ -237,30 +226,14 @@ export default function Home() {
   );
 }
 
-const getTagFromEcosystem = (ecosystem: string): PredefinedTag[] => {
-  const allTags = [...predefinedTagList, ...ecosystemTagList];
-
-  // Try to find ecosystem in allTags ignoring case
-  const tag = allTags.find(tag => tag.name.toLowerCase() === ecosystem.toLowerCase());
-  if (tag) {
-    return [tag];
-  }
-
-  return tagStringToPredefinedTag([ecosystem]);
-}
-
 const tabOptions: { text: string, value: 'all' | 'following' }[] = [
   { text: 'See all content', value: 'all' },
   { text: 'From communities and people you follow', value: 'following' },
 ];
 
 const Feed: React.FC<{}> = (props) => {
-  const { isMobile } = useWindowSizeContext();
   const ownUser = useOwnUser();
-  // const [availableChannels] = useLocalStorage<HomeChannelTypes[]>([], SELECTED_CHANNELS_LOCAL_STORAGE);
-  const { ecosystem } = useParams<'ecosystem'>();
-  const currentChannel = ecosystem as HomeChannelTypes;
-  const [activeTags, setActiveTags] = useState<PredefinedTag[]>(!!currentChannel ? getTagFromEcosystem(currentChannel) : []);
+  const [activeTags, setActiveTags] = useState<PredefinedTag[]>([]);
   const [mode, setMode] = useState<'all' | 'following'>('all');
 
   const amounts = {
@@ -285,9 +258,7 @@ const Feed: React.FC<{}> = (props) => {
       setActiveTags={setActiveTags}
     />
 
-    <EcosystemHomeHeader channel={currentChannel || ''} />
     {!!ownUser && <NotificationBanner />}
-    {isMobile && <WhatsNewModal />}
     <div className="home-main-content">
       <LiveCallExplorer mode="limited" />
       {/* <MyCommunitiesExplorer /> */}
@@ -336,7 +307,7 @@ const PostsAndEvents: React.FC<{ articleAmount: number; mode: 'all' | 'following
 }
 
 export const PostAndEventsButton: React.FC<{
-  icon: JSX.Element;
+  icon: React.JSX.Element;
   text: string;
   active: boolean;
   onClick: () => void;

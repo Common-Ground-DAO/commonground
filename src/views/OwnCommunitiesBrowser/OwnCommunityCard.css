@@ -1,3 +1,5 @@
+@reference '../../tailwind.css';
+
 .community-card-container {
     @apply flex flex-col items-center p-4 rounded-md relative;
     transition: background-color 0.1s ease-out;

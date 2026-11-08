@@ -13,13 +13,14 @@ import data from 'data';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { calculateArticleAgeString, isArticleGated } from '../ArticleCardV2/ArticleCardV2.helper';
 import dayjs from 'dayjs';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useExternalModalContext } from 'context/ExternalModalProvider';
 import GatedDialogModal, { calculatePermissions } from 'components/organisms/GatedDialogModal/GatedDialogModal';
 import { getUrl } from 'common/util';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import EventCard from '../EventCard/EventCard';
 import { useCommunityListView } from 'context/CommunityListViewProvider';
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = Omit<Models.Message.LinkPreviewAttachment, "type"> & {
   onRemove?: () => void;
@@ -109,7 +110,7 @@ const ExternalLinkPreview: React.FC<Props> = (props) => {
     }
     else {
       if (!imageUrl) return null;
-      return <div style={{ backgroundImage: `url(${imageUrl})` }} className='external-link-image' />;
+      return <div style={{ backgroundImage: cssBackgroundImage(imageUrl) }} className='external-link-image' />;
     }
   }, [imageUrl, props.imageData?.size.width, props.imageData?.size.height]);
 

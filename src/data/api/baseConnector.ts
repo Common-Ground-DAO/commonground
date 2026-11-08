@@ -4,11 +4,31 @@
 
 import urlConfig from "../util/urls";
 import errors from "common/errors";
+import stepUpManager, { stepUpRequestForRoute } from "../auth/stepUp";
+import securityStepState from "../auth/securityStep";
+import { ApiRequestError } from "./apiError";
+import { SOCKET_ID_HEADER } from "../appstate/transport";
+import { getRequestSocketId } from "../appstate/requestSocketId";
+
+function unwrapResult<T>(result: API.AjaxResponse<T> | undefined, fallbackError: string): T {
+  if (result && result.status === "OK") {
+    if ('data' in result) {
+      return result.data as T;
+    }
+    return undefined as unknown as T;
+  }
+  if (result && result.status === "ERROR" && result.error) {
+    throw new ApiRequestError(result.error, result.retryAfterSeconds, result.limit);
+  }
+  throw new Error(fallbackError);
+}
 
 export default class BaseApiConnector {
   protected baseUrl: string;
+  private baseUri: string;
 
   constructor(baseUri: string) {
+    this.baseUri = baseUri;
     this.baseUrl = `${urlConfig.API_URL}${baseUri}`;
   }
 
@@ -44,6 +64,9 @@ export default class BaseApiConnector {
       oReq.open(method, `${this.baseUrl}${uri}`);
       oReq.withCredentials = true;
       oReq.setRequestHeader('Accept', 'application/json');
+      // read per request (it changes on reconnect): the server leaves only
+      // this socket out of the echo of the request's own events
+      oReq.setRequestHeader(SOCKET_ID_HEADER, getRequestSocketId());
       if (sendBuffer) {
         oReq.setRequestHeader('Content-Type', 'application/octet-stream');
         oReq.send(data);
@@ -57,32 +80,44 @@ export default class BaseApiConnector {
       }
     });
 
-    const result = await getData();
-    if (result && result.status === "OK") {
-      if ('data' in result) {
-        return result.data as T;
+    let result = await getData();
+    let retried = false;
+    let reloggedIn = false;
+    let steppedUp = false;
+    for (;;) {
+      if (result && result.status === "OK") {
+        return unwrapResult<T>(result, "Unknown API Response Error");
       }
-      else {
-        return undefined as unknown as T;
+      if (!result || result.status !== "ERROR" || !result.error) {
+        throw new Error(retried ? "Unknown API Retry Response Error" : "Unknown API Error");
       }
-    } else if (result && result.status === "ERROR" && result.error) {
-      if (result.error === errors.server.LOGIN_REQUIRED) {
+      if (result.error === errors.server.LOGIN_REQUIRED && !reloggedIn) {
+        // silent device-key re-login, then the same request once more
+        reloggedIn = true;
         const loginManager = (await import("data/appstate/login")).default;
         await loginManager.loginRequiredErrorHandler();
-        const retryResult = await getData();
-        if (retryResult && retryResult.status === "OK") {
-          if ('data' in retryResult) {
-            return retryResult.data as T;
-          }
-          else {
-            return undefined as unknown as T;
-          }
-        }
-        throw new Error(retryResult.error || "Unknown API Retry Response Error");
       }
-      throw new Error(result.error || "Unknown API Response Error");
-    } else {
-      throw new Error("Unknown API Error");
+      else if (result.error === errors.server.REAUTH_REQUIRED && !steppedUp && stepUpManager.hasHandler) {
+        // a sensitive action: the server checks the session's last
+        // authentication before any side effect, so after the user confirmed
+        // it's them (ReauthDialog) the same request is sent once more — also
+        // when it follows a re-login above (at most once each)
+        steppedUp = true;
+        const confirmed = await stepUpManager.request(stepUpRequestForRoute(`${this.baseUri}${uri}`));
+        if (!confirmed) {
+          throw new Error(errors.server.REAUTH_REQUIRED);
+        }
+      }
+      else {
+        if (result.error === errors.server.SECURITY_STEP_REQUIRED) {
+          // the account has to finish the account-security step first: the
+          // app shows that step instead of the page (SecurityStepView)
+          securityStepState.set(true);
+        }
+        throw new ApiRequestError(result.error, result.retryAfterSeconds, result.limit);
+      }
+      retried = true;
+      result = await getData();
     }
   }
 }

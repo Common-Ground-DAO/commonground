@@ -9,8 +9,9 @@ import { useLoadedCommunityContext } from "context/CommunityProvider";
 import { useCallback, useMemo, useState } from "react";
 import { StartCallModal } from "components/organisms/StartCallModal/StartCallModal";
 import ScheduleEventModal from "components/organisms/ScheduleEventModal/ScheduleEventModal";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { getUrl } from "common/util";
+import config from "common/config";
 
 type StartCallButtonProps = {};
 
@@ -20,7 +21,8 @@ export default function StartCallButton(props: StartCallButtonProps) {
   const [isStartCallOpen, setIsStartCallOpen] = useState(false);
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
 
-  const canCreateCalls = communityPermissions.has('WEBRTC_CREATE');
+  // instances deployed without the mediasoup service cannot host calls at all
+  const canCreateCalls = config.CALLS_ENABLED && communityPermissions.has('WEBRTC_CREATE');
   const canCreateEvents = communityPermissions.has('COMMUNITY_MANAGE_EVENTS');
 
   const openStartCall = useCallback(() => setIsStartCallOpen(true), []);

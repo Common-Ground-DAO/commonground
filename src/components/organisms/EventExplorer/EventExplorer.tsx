@@ -70,6 +70,8 @@ const EventExplorer: React.FC<Props> = (props) => {
           setIsDone(true);
         };
         setEvents(old => [...old, ...result]);
+      }).catch(e => {
+        console.warn("Could not load upcoming events", e instanceof Error ? e.message : e);
       }).finally(() => {
         isFetching.current = false;
       });

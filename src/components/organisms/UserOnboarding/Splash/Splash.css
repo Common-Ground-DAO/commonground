@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 @property --splashBgCircleCy {
     syntax: "<length-percentage>";
     inherits: false;
@@ -25,7 +27,9 @@
 @property --splashButtonsHeight {
     syntax: "<length>";
     inherits: false;
-    initial-value: 0%;
+    /* not 0%: a percentage is no <length>, so browsers dropped the whole
+       registration (and Lightning CSS refuses to minify it) */
+    initial-value: 0px;
 }
 
 .uob-splash {
@@ -46,10 +50,10 @@
     transition: --splashBgCircleCy 0.4s ease-out, --splashBgCircleCx 0.4s ease-out, --splashBgCircleStop1 0.4s ease-out, --splashBgCircleStop2 0.4s ease-out, --splashButtonsHeight 0.4s ease-out;
     background: radial-gradient(circle farthest-corner at var(--splashBgCircleCx) var(--splashBgCircleCy), color(display-p3 0.251 0.447 0.745) 0%, color(display-p3 0.251 0.447 0.745) 3.8%, color(display-p3 0.882 0.933 0.973) var(--splashBgCircleStop1), color(display-p3 1 1 1) var(--splashBgCircleStop2));
 
-    &.uob-start, &.uob-enable-newsletter, &.uob-enable-push, &.uob-install-pwa {
+    &.uob-enable-newsletter, &.uob-enable-push, &.uob-install-pwa {
         --splashButtonsHeight: 140px;
     }
-    &.uob-login-other, &.uob-login-other-option, &.uob-login-finished, &.uob-create-other, &.uob-create-other-option, &.uob-create-finished, &.uob-create-profile-setup {
+    &.uob-login-finished, &.uob-create-finished {
         --splashButtonsHeight: 80px;
     }
 
@@ -95,38 +99,7 @@
         transition: none;
     }
 
-    .uob-splash-back-button {
-        @apply absolute p-1 cursor-pointer top-6 left-6;
-        transition: transform 0.4s ease-out;
-        transform: scale(1);
-        color: var(--cardTextMain);
-        z-index: 10;
-
-        &.uob-splash-back-button-hidden {
-            transform: scale(0);
-        }
-
-        > svg {
-            width: 40px;
-            height: 40px;
-        }
-    }
-
-    .uob-splash-start {
-        @apply w-full h-full grid justify-items-center justify-center content-center items-center;
-        display: grid;
-        grid-auto-flow: row;
-        grid-column: 1;
-        grid-row: 1;
-        transform: translate(0, 0);
-        transition: color 0.4s, background-color 0.15s, top 0.4s ease-out, transform 0.4s ease-out;
-
-        &.uob-splash-start-step-1 {
-            transform: translate(0, -100%);
-        }
-    }
-
-    .uob-splash-start, .uob-splash-end {
+    .uob-splash-end {
         .uob-splash-logo {
             padding: var(--splashLogoPadding);
             transform: translate(0, 0);
@@ -147,33 +120,6 @@
                 background-color: rgba(255, 255, 255, 1);
                 border: 1px solid var(--border-panels);
             }
-        }
-    }
-
-    .uob-splash-start-text {
-        @apply absolute w-full pt-4;
-        transition: opacity 0.2s 0.2s, top 0.4s ease-out; /* delay hidden -> visible */
-        opacity: 1;
-
-        &.uob-splash-start-text-hidden {
-            transition: opacity 0.2s, top 0.4s ease-out; /* no delay visible -> hidden */
-            opacity: 0;
-        }
-    }
-
-    .uob-splash-login-or-create {
-        @apply h-full w-full grid grid-flow-row gap-4 justify-items-center justify-center content-center items-center;
-        transition: opacity 0.4s ease-out, transform 0.4s ease-out, top 0.4s ease-out;
-
-        &.uob-splash-login-or-create-step-0 {
-            opacity: 0;
-        }
-        &.uob-splash-login-or-create-step-1 {
-            opacity: 1;
-        }
-        &.uob-splash-login-or-create-step-2 {
-            opacity: 0;
-            transform: translate(-100%, 0);
         }
     }
 
@@ -242,28 +188,6 @@
         position: absolute;
         right: 16px;
     }
-}
-
-.splash-login-button {
-    @apply py-3 px-4 flex-grow-0 flex-shrink-0 justify-start cg-text-sm-400;
-    flex-basis: calc(50% - 4px);
-
-    .btnIconLeft {
-        position: absolute;
-        left: 16px;
-    }
-
-    .btnIconRight {
-        position: absolute;
-        right: 16px;
-    }
-}
-
-.si3-text {
-    background: linear-gradient(180deg, #CBBAFF 0%, #431FFD 100%);
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
 }
 
 .uob-image {

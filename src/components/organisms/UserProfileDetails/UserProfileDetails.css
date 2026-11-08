@@ -1,5 +1,7 @@
+@reference '../../../tailwind.css';
+
 .user-profile-details {
-  @apply flex flex-col items-center self-stretch gap-4 flex-none order-none flex-grow-0 overflow-hidden;
+  @apply flex flex-col items-center self-stretch gap-4 flex-none order-none grow-0 overflow-hidden;
   background: var(--surface-background-2nd);
 
   > .user-profile-header {
@@ -8,7 +10,7 @@
   }
 
   > .user-profile-content {
-    @apply flex flex-col w-full items-start px-4 gap-4 flex-none flex-grow;
+    @apply flex flex-col w-full items-start px-4 gap-4 flex-none grow;
 
     > .interfaction-buttons-container {
       @apply mx-auto py-2 px-4 flex items-center gap-2;
@@ -24,24 +26,24 @@
     }
 
     > .user-display-name {
-      @apply flex flex-col items-start p-0 gap-1 self-stretch flex-none order-none flex-grow-0;
+      @apply flex items-center justify-center p-0 gap-2 self-stretch flex-none order-none grow-0;
       > .user-alias {
-        @apply flex p-0 overflow-hidden w-full text-ellipsis cg-heading-2 text-center justify-center;
+        @apply flex p-0 overflow-hidden text-ellipsis cg-heading-2 text-center;
       }
     }
 
     > .user-description {
-      @apply flex flex-col w-full items-start flex-grow h-0;
+      @apply flex flex-col w-full items-start grow h-0;
       .user-about-box {
-        @apply flex flex-col items-start self-stretch p-0 mb-4 gap-1 flex-none flex-grow-0;
+        @apply flex flex-col items-start self-stretch p-0 mb-4 gap-1 flex-none grow-0;
   
         > label {
-          @apply flex items-start flex-none order-none flex-grow-0 cg-text-lg-500;
+          @apply flex items-start flex-none order-none grow-0 cg-text-lg-500;
           color: var(--cardTextMain);
         }
   
         > span {
-          @apply flex items-start self-stretch flex-none order-1 flex-grow-0 whitespace-pre-line;
+          @apply flex items-start self-stretch flex-none order-1 grow-0 whitespace-pre-line;
   
           color: var(--cardTextMain);
   
@@ -58,7 +60,7 @@
           color: var(--cardTextMain);
   
           > div {
-            @apply min-w-0 text-ellipsis overflow-hidden whitespace-nowrap flex-grow flex-shrink basis-0;
+            @apply min-w-0 text-ellipsis overflow-hidden whitespace-nowrap grow shrink basis-0;
           }
   
           svg > path {

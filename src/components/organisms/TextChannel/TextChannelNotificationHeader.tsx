@@ -5,7 +5,7 @@
 import React from 'react'
 import CommunityPhoto from 'components/atoms/CommunityPhoto/CommunityPhoto';
 import Button from 'components/atoms/Button/Button';
-import { createSearchParams, useNavigate } from 'react-router-dom';
+import { createSearchParams, useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 
 type Props = {

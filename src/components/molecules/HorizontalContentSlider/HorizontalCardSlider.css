@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .horizontal-card-slider {
     @apply w-full flex flex-col gap-4;
 
@@ -5,7 +7,7 @@
         @apply flex justify-between items-center;
 
         > .slider-title-container {
-            @apply flex flex-row items-end self-stretch p-0 gap-2 flex-none order-none flex-grow-0;
+            @apply flex flex-row items-end self-stretch p-0 gap-2 flex-none order-none grow-0;
             font-size: 20px;
             line-height: 24px;
         }

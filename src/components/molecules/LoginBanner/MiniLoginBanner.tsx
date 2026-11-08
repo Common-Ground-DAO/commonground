@@ -4,19 +4,17 @@
 
 import Button from 'components/atoms/Button/Button';
 import './LoginBanner.css';
-import React, { useMemo } from 'react'
+import React from 'react'
 import { useUserOnboardingContext } from 'context/UserOnboarding';
 import { useOwnUser } from 'context/OwnDataProvider';
-import { useEcosystemContext } from 'context/EcosystemProvider';
 import bannerBg from './bannerbg.webp';
-import { getEcosystemIcon, getEcosystemNameString } from '../EcosystemPicker/EcosystemPicker';
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
 };
 
 const MiniLoginBanner: React.FC<Props> = () => {
   const ownUser = useOwnUser();
-  const { ecosystem } = useEcosystemContext();
   const { setUserOnboardingVisibility, setStep } = useUserOnboardingContext();
 
   const onJoin = () => {
@@ -35,9 +33,8 @@ const MiniLoginBanner: React.FC<Props> = () => {
   if (ownUser) return null;
 
   return (<div className={className}>
-    <div className='absolute inset-0 bg-center bg-cover bg-no-repeat opacity-50' style={{ backgroundImage: `url(${bannerBg})` }} />
+    <div className='absolute inset-0 bg-center bg-cover bg-no-repeat opacity-50' style={{ backgroundImage: cssBackgroundImage(bannerBg) }} />
     <div className='flex flex-row items-center gap-4 w-full z-10'>
-      {getEcosystemIcon(ecosystem, 10)}
       <span className='cg-heading-5'>Enjoying the post? There’s a whole world to discover 🥳</span>
     </div>
     <Button className='w-full' role='primary' text={getButtonText()} onClick={onJoin} />

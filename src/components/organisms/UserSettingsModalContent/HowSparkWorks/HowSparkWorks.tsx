@@ -5,7 +5,7 @@
 import ExternalIcon from 'components/atoms/ExternalIcon/ExternalIcon';
 import './HowSparkWorks.css';
 import Button from 'components/atoms/Button/Button';
-import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
+import SparkIcon from 'components/atoms/icons/misc/spark.svg?react';
 import { useUserSettingsContext } from 'context/UserSettingsProvider';
 import React from 'react';
 import SparkFireBg from './SparkFireBg';

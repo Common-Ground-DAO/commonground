@@ -1,8 +1,10 @@
+@reference '../../../../tailwind.css';
+
 .groups-menu {
   @apply flex flex-col gap-2;
 
   &.dragging-over {
-    background: theme('colors.palette.transparent');
+    background: var(--color-palette-transparent);
 
     .group-item {
       transition: opacity 300ms;

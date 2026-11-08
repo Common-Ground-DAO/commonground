@@ -8,11 +8,21 @@ import { farcasterApi, registerPostRoute } from "./util";
 import errors from "../common/errors";
 import walletHelper from "../repositories/wallets";
 import userHelper from "../repositories/users";
-import axios from "../util/axios";
+import { fetchRemoteImage } from "../util/safeFetch";
 import fileHelper from "../repositories/files";
 import ipRateLimitHandler from "../util/rateLimit";
+import { AUTH_LIMITS } from "../util/authLimits";
+import { assertSiweForThisInstance } from "../repositories/wallets";
+import { farcasterIdOf } from "../util/siweMessage";
+import { isGatewayMode } from "../util/gateway";
 
 const accountsRouter = express.Router();
+
+// the check asks the Farcaster registry (srv/util/authLimits.ts "preLogin")
+const farcasterSignatureLimiter = ipRateLimitHandler({
+  bucket: 'accounts:farcaster:verify-login',
+  ...AUTH_LIMITS.preLogin.signatureCheck,
+});
 
 registerPostRoute<
   API.Accounts.Farcaster.verifyLogin.Request,
@@ -22,6 +32,8 @@ registerPostRoute<
   '/Farcaster/verifyLogin',
   validators.API.Accounts.Farcaster.verifyLogin,
   async (request, response, data) => {
+    await farcasterSignatureLimiter(request, response);
+    // parsed by its structure, signature checked (srv/util/siweMessage.ts)
     const siweData = walletHelper.parseAndVerifySiweData(data);
     const issuedAt = new Date(siweData.issuedAt);
     if (Math.abs(Date.now() - issuedAt.getTime()) > 60_000) {
@@ -30,16 +42,24 @@ registerPostRoute<
     if (request.session.signSecret !== siweData.nonce) {
       throw new Error(errors.server.INVALID_SECRET);
     }
-    const lines = data.message.split('\n');
-    if (lines[10].startsWith('Resources:') && lines[11].startsWith('- farcaster://fid/')) {
-      const farcasterIdString = lines[11].substring(18).match(/^\d+$/)?.[0];
-      const farcasterId = !!farcasterIdString ? parseInt(farcasterIdString) : null;
+    // made for this instance, like a wallet sign-in message: its domain and
+    // URI name this instance's web app, so a message signed for another
+    // site is worthless here
+    assertSiweForThisInstance(siweData.headerLine, siweData.uri);
+    {
+      // exactly one farcaster://fid/<fid> resource
+      const farcasterId = farcasterIdOf(siweData);
       const userRegistry = await farcasterApi('onChainIdRegistryEventByAddress', { address: siweData.address });
-      console.log("Farcaster user registry result", userRegistry, farcasterIdString);
-      if (farcasterId === null || userRegistry.fid !== farcasterId) {
+      console.log(`Farcaster login: registry fid ${userRegistry?.fid}, claimed fid ${farcasterId}`);
+      if (userRegistry?.fid !== farcasterId) {
         throw new Error("Farcaster ID mismatch");
       }
       const existingAccount = await userHelper.getUserAccount("farcaster", farcasterId.toString());
+      if (!existingAccount && isGatewayMode()) {
+        // a gateway (srv/util/gateway.ts) signs in existing accounts only: no
+        // profile lookup, no image fetched or stored, no sign-up prepared
+        throw new Error(errors.server.ACCOUNT_DOES_NOT_EXIST);
+      }
 
       let username: string | undefined;
       let displayName: string | undefined;
@@ -57,13 +77,13 @@ registerPostRoute<
           imageId = existingAccount.imageId;
         }
         else {
-          console.error("Existing account does not have the correct farcaster fields", existingAccount);
+          console.error(`Existing farcaster account of fid ${farcasterId} lacks profile fields`);
           throw new Error(errors.server.INVALID_REQUEST);
         }
       }
       else {
         const userData = await farcasterApi('userDataByFid', { fid: farcasterId });
-        console.log("create farcaster user data: ", userData);
+
         
         for (const message of userData.messages) {
           const { type, fid, userDataBody } = message.data;
@@ -87,18 +107,17 @@ registerPostRoute<
           }
         }
         if (!displayName || !username) {
-          console.error("Farcaster user data missing", userData);
+          console.error(`Farcaster profile data missing for fid ${farcasterId}`);
           throw new Error(errors.server.INVALID_REQUEST);
         }
         if (!!pfp) {
           try {
-            const response = await axios.get(pfp, { responseType: 'arraybuffer' });
-            const buffer = Buffer.from(response.data, "utf-8");
+            const buffer = await fetchRemoteImage(pfp);
             const image = await fileHelper.saveImage(null, { type: 'userProfileImage' }, buffer, { width: 110, height: 110 });
             imageId = image.fileId;
           }
           catch (e) {
-            console.error("Could not retrieve farcaster profile image for fid " + farcasterId, e);
+            console.error("Could not retrieve farcaster profile image for fid " + farcasterId, e instanceof Error ? e.message : e);
           }
         }
       }
@@ -122,37 +141,7 @@ registerPostRoute<
 
       return fullResult;
     }
-    else {
-      throw new Error(errors.server.INVALID_REQUEST);
-    }
   }
-);
-
-const registerForSaleRateLimiter = ipRateLimitHandler({
-  windowMs: 1000 * 60 * 60, // 1h
-  limit_v4_v6_64: 10,
-  limit_v6_56: 30,
-  limit_v6_48: 50,
-});
-
-registerPostRoute<
-  API.Accounts.TokenSale.registerForSale.Request,
-  API.Accounts.TokenSale.registerForSale.Response
->(
-  accountsRouter,
-  '/TokenSale/registerForSale',
-  validators.API.Accounts.TokenSale.registerForSale,
-  async (request, response, data) => {
-    const { user } = request.session;
-
-    await registerForSaleRateLimiter(request, response);
-
-    await userHelper.registerForTokenSale({
-      email: data.email,
-      referredBy: data.referredBy,
-      userId: user?.id,
-    });
-  },
 );
 
 export default accountsRouter;

@@ -34,7 +34,10 @@ const QUIKNODE_CELO = dockerSecret("quiknode_celo") || process.env.QUIKNODE_CELO
 const QUIKNODE_POLYGON_ZKEVM = dockerSecret("quiknode_polygon_zkevm") || process.env.QUIKNODE_POLYGON_ZKEVM || "";
 const QUIKNODE_SCROLL = dockerSecret("quiknode_scroll") || process.env.QUIKNODE_SCROLL || "";
 const QUIKNODE_ZKSYNC = dockerSecret("quiknode_zksync") || process.env.QUIKNODE_ZKSYNC || "";
-const LUKSO = 'https://rpc.mainnet.lukso.network/';
+// Unlike the other chains, LUKSO falls back to the official public RPC when
+// unconfigured: it predates configurability here, and existing deployments
+// rely on it working without a dedicated endpoint.
+const QUIKNODE_LUKSO = dockerSecret("quiknode_lukso") || process.env.QUIKNODE_LUKSO || 'https://rpc.mainnet.lukso.network/';
 
 const BETWEEN_REQUESTS_COOLDOWN = 35;
 
@@ -186,7 +189,7 @@ const chains: {
   // LUKSO
   lukso: {
     PROVIDER_COOLDOWN: BETWEEN_REQUESTS_COOLDOWN,
-    PROVIDER_URL: LUKSO,
+    PROVIDER_URL: QUIKNODE_LUKSO,
     UPDATE_INTERVAL: 15000,
     CHAIN_ID: BigInt(chainIds.lukso),
     BLOCK_BATCHSIZE: 8,

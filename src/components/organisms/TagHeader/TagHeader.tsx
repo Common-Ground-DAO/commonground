@@ -6,7 +6,7 @@ import Button from 'components/atoms/Button/Button';
 import Tag, { TagIcon } from 'components/atoms/Tag/Tag';
 import { PredefinedTag } from 'components/molecules/inputs/TagInputField/predefinedTags';
 import React from 'react'
-import EcosystemMenu from '../EcosystemMenu/EcosystemMenu';
+import TagFilterMenu from '../TagFilterMenu/TagFilterMenu';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import { ChevronDownIcon } from '@heroicons/react/20/solid';
 import { Funnel, X } from '@phosphor-icons/react';
@@ -61,8 +61,8 @@ const TagHeader: React.FC<Props> = (props) => {
       </div>
 
       <div className='flex gap-2 items-center shrink-0 h-fit'>
-        <div className='flex-shrink-0'>
-          <EcosystemMenu
+        <div className='shrink-0'>
+          <TagFilterMenu
             activeTags={activeTags}
             setActiveTags={setActiveTags}
             triggerContent={<Button

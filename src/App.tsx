@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useMemo } from 'react';
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router';
 import ConnectionStatusIndicator from './components/molecules/ConnectionStatusIndicator/ConnectionStatusIndicator';
 import { CommunityProvider } from './context/CommunityProvider';
 import { ProfileProvider } from './context/ProfileProvider';
@@ -31,12 +31,24 @@ import { DarkModeProvider, useDarkModeContext } from 'context/DarkModeProvider';
 
 import '@rainbow-me/rainbowkit/styles.css';
 import {
-  getDefaultWallets,
+  getDefaultConfig,
   RainbowKitProvider,
   darkTheme,
   lightTheme,
 } from '@rainbow-me/rainbowkit';
-import { WagmiConfig, createConfig, configureChains } from 'wagmi';
+import {
+  braveWallet,
+  coinbaseWallet,
+  injectedWallet,
+  metaMaskWallet,
+  rabbyWallet,
+  rainbowWallet,
+  safeWallet,
+  walletConnectWallet,
+} from '@rainbow-me/rainbowkit/wallets';
+import { WagmiProvider } from 'wagmi';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fallback, http, type Chain } from 'viem';
 import {
   mainnet,
   polygon,
@@ -50,9 +62,6 @@ import {
   hardhat,
   base,
 } from 'wagmi/chains';
-// import { createPublicClient, http } from 'viem';
-import { publicProvider } from 'wagmi/providers/public';
-import { alchemyProvider } from 'wagmi/providers/alchemy';
 import config from 'common/config';
 import CommunityRouter from 'views/CommunityRouter/CommunityRouter';
 import ProfileRouter from 'views/ProfileRouter/ProfileRouter';
@@ -61,11 +70,8 @@ import { CallDevicesProvider } from 'context/CallDevicesProvider';
 import DesktopLayout from 'views/Layout/DesktopLayout';
 import TabletLayout from 'views/Layout/TabletLayout';
 import { SnackbarContextProvider } from 'context/SnackbarContext';
-import { SumsubContextProvider } from 'context/SumsubContext';
 import { getUrl } from 'common/util';
 import { SidebarDataDisplayProvider } from 'context/SidebarDataDisplayProvider';
-import AeternityWalletProvider from 'context/AeternityWalletProvider';
-import { EcosystemParamSetter, EcosystemProvider } from 'context/EcosystemProvider';
 import { UniversalProfileProvider } from 'context/UniversalProfileProvider';
 import { TwitterLoginProvider } from 'context/TwitterLoginProvider';
 import { CommunityModerationProvider } from 'context/CommunityModerationContext';
@@ -78,15 +84,20 @@ import { UserOnchainProvider } from 'context/UserOnchainProvider';
 import { CommunityListViewProvider } from 'context/CommunityListViewProvider';
 import { CommunityOnboardingProvider } from 'context/CommunityOnboardingProvider';
 import { PasskeyProvider } from 'context/PasskeyProvider';
+import { StepUpProvider } from 'context/StepUpProvider';
 import { EmailConfirmationProvider } from 'context/EmailConfirmationProvider';
 import { PluginIframeProvider } from 'context/PluginIframeProvider';
 import "@farcaster/auth-kit/styles.css";
 import { AuthKitProvider } from "@farcaster/auth-kit";
 import UserInfoManager from 'components/atoms/UserInfoManager/UserInfoManager';
-import AssistantView from 'views/AssistantView/AssistantView';
+import SignedOutNotice from 'components/organisms/SignedOutNotice/SignedOutNotice';
 import { PluginDetailsModalProvider } from 'context/PluginDetailsModalProvider';
 import { IsolationModeProvider } from 'context/IsolationModeProvider';
 import { ReportModalProvider } from 'context/ReportModalProvider';
+import { SuspiciousImageModalProvider } from 'context/SuspiciousImageModalProvider';
+import { useSecurityStepRequired } from 'hooks/useSecurityStepRequired';
+import { showSecurityStep } from 'data/auth/securityStep';
+import { getInstanceConfig } from 'common/instance';
 
 dayjs.extend(utc);
 dayjs.extend(isToday);
@@ -98,57 +109,109 @@ dayjs.extend(advancedFormat);
 // const AreaChannelManagementView = React.lazy(() => import('views/AreaChannelManagementView/AreaChannelManagementView'));
 // const ArticleView = React.lazy(() => import('views/ArticleView/ArticleView'));
 // const BlogView = React.lazy(() => import('views/BlogView/BlogView'));
-const AppsView = React.lazy(() => import('./views/AppsView/AppsView'));
 const CgUpdate = React.lazy(() => import('./views/CgUpdate/CgUpdate'));
 // const CommunityView = React.lazy(() => import('views/CommunityView/CommunityView'));
 // const CommunityManagementView = React.lazy(() => import('views/CommunityManagementView/CommunityManagementView'));
-const BlogBrowser = React.lazy(() => import('views/BlogBrowser/BlogBrowser'));
 const ContentBrowser = React.lazy(() => import('views/ContentBrowser/ContentBrowser'));
 const ConversationsBrowser = React.lazy(() => import('views/ConversationsBrowser/ConversationsBrowser'));
 // const CreateArticleView = React.lazy(() => import('views/CreateArticleView/CreateArticleView'));
 const CreateUserPostView = React.lazy(() => import('views/CreateUserPostView/CreateUserPostView'));
 // const EditArticleView = React.lazy(() => import('views/EditArticleView/EditArticleView'));
 // const EditBlogView = React.lazy(() => import('views/EditBlogView/EditBlogView'));
-const GroupBrowser = React.lazy(() => import('./views/GroupBrowser/GroupBrowser'));
 const Home = React.lazy(() => import('./views/Home/Home'));
 const TokenSale = React.lazy(() => import('./views/TokenSale/TokenSale'));
-const TokenSaleRedirect = React.lazy(() => import('./views/TokenSale/TokenSaleRedirect'));
-const IdVerification = React.lazy(() => import('./views/IdVerificationView/IdVerificationView'));
 const LearnMore = React.lazy(() => import('./views/LearnMore/LearnMore'));
 // const MemberManagementView = React.lazy(() => import('views/MemberManagementView/MemberManagementView'));
 const ChatView = React.lazy(() => import('./views/ChatView/ChatView'));
 const NotificationsBrowser = React.lazy(() => import('views/NotificationsBrowser/NotificationsBrowser'));
-const ProfileView = React.lazy(() => import('views/ProfileView/ProfileView'));
 const AudioDevicesManagementView = React.lazy(() => import('views/AudioDevicesManagementView/AudioDevicesManagementView'));
 const ProfileManagementView = React.lazy(() => import('views/ProfileManagementView/ProfileManagementView'));
-// const SwapAccountView = React.lazy(() => import('views/SwapAccountView/SwapAccountView'));
 const WalletManagementView = React.lazy(() => import('views/WalletManagementView/WalletManagementView'));
 const TwitterCallbackView = React.lazy(() => import('views/TwitterCallbackView/TwitterCallbackView'));
 const VerifyEmailView = React.lazy(() => import('views/VerifyEmailView/VerifyEmailView'));
+const LoginView = React.lazy(() => import('views/LoginView/LoginView'));
+const TransferView = React.lazy(() => import('views/TransferView/TransferView'));
+const SecurityStepView = React.lazy(() => import('views/SecurityStepView/SecurityStepView'));
 const IsolationModeToggle = React.lazy(() => import('views/IsolationModeToggle/IsolationModeToggle'));
+const GatewayView = React.lazy(() => import('views/GatewayView/GatewayView'));
 
-const activeChains: any[] = [mainnet, polygon, optimism, arbitrum, gnosis, bsc, fantom, avalanche, zkSync, base];
-if (config.DEPLOYMENT === 'dev') {;
-  activeChains.push(hardhat);
-}
+const activeChains = (config.DEPLOYMENT === 'dev'
+  ? [mainnet, polygon, optimism, arbitrum, gnosis, bsc, fantom, avalanche, zkSync, base, hardhat]
+  : [mainnet, polygon, optimism, arbitrum, gnosis, bsc, fantom, avalanche, zkSync, base]
+) as unknown as readonly [Chain, ...Chain[]];
 
-const { chains, publicClient, webSocketPublicClient } = configureChains(
-  activeChains,
-  [alchemyProvider({ apiKey: '_sIiYKLDy9V9dQChacf2G5Nz7mxxghqZ' }), publicProvider()],
-);
+// self-hosted instances (identified by an injected instance config) can't use
+// CG's domain-locked Alchemy key — their requests fail CORS. They use each
+// chain's default public RPC instead; operators can front their own RPCs.
+const isSelfHosted = !!(window as any).__CG_INSTANCE__;
 
-const { connectors } = getDefaultWallets({
-  appName: 'My RainbowKit App',
-  projectId: 'a58ac26ec0960773dad148a0585ef011',
-  chains
+// Keyless RPCs matching the backend defaults (docker/selfhost/init.sh, keyed
+// by numeric chain id). viem's built-in public RPCs (e.g. cloudflare-eth.com
+// for mainnet) are too flaky for balance reads and transaction simulation —
+// they intermittently answer "Internal error", which made wallet actions
+// fail silently on self-hosted instances.
+const selfhostRpcByChainId: Record<number, string> = {
+  1: 'https://eth.drpc.org',
+  137: 'https://polygon.drpc.org',
+  100: 'https://rpc.gnosischain.com',
+  42161: 'https://arb1.arbitrum.io/rpc',
+  8453: 'https://mainnet.base.org',
+  42: 'https://rpc.mainnet.lukso.network',
+};
+
+// wagmi 2 has no provider chain — `configureChains` is gone and each chain gets
+// its own transport. This table reproduces what wagmi 1's `alchemyProvider()`
+// resolved to: it only handled chains whose viem-1 definition carried an
+// `rpcUrls.alchemy` entry (exactly these five), and every other chain fell
+// through to `publicProvider()`. viem 2 dropped those per-chain alchemy URLs,
+// so they are spelled out here.
+const ALCHEMY_API_KEY = '_sIiYKLDy9V9dQChacf2G5Nz7mxxghqZ';
+const alchemyRpcByChainId: Record<number, string> = {
+  [mainnet.id]: 'https://eth-mainnet.g.alchemy.com/v2',
+  [polygon.id]: 'https://polygon-mainnet.g.alchemy.com/v2',
+  [optimism.id]: 'https://opt-mainnet.g.alchemy.com/v2',
+  [arbitrum.id]: 'https://arb-mainnet.g.alchemy.com/v2',
+  [base.id]: 'https://base-mainnet.g.alchemy.com/v2',
+};
+
+// `fallback([preferred, http()])` is wagmi 1's provider-list semantics: try the
+// configured endpoint, fall back to the chain's default public RPC.
+const transports = Object.fromEntries(activeChains.map((chain) => {
+  const preferred = isSelfHosted
+    ? selfhostRpcByChainId[chain.id]
+    : (alchemyRpcByChainId[chain.id] && `${alchemyRpcByChainId[chain.id]}/${ALCHEMY_API_KEY}`);
+  return [chain.id, preferred ? fallback([http(preferred), http()]) : http()];
+}));
+
+const wagmiConfig = getDefaultConfig({
+  appName: 'Common Ground',
+  // WalletConnect Cloud project ids are origin-allowlisted upstream, so
+  // self-hosted instances configure their own (CG_WALLETCONNECT_PROJECT_ID)
+  projectId: config.WALLETCONNECT_PROJECT_ID,
+  chains: activeChains,
+  transports,
+  // Spelled out rather than left to RainbowKit 2's default set, which differs
+  // from RainbowKit 1's: it drops Coinbase Wallet (replacing it with Base
+  // Account) and the generic injected/Brave entries. This list is the wallets
+  // RainbowKit 1's `getDefaultWallets` offered, plus Rabby and Brave: the
+  // modal only lists wallets that have an entry here, so an extension that is
+  // not listed does not appear in it.
+  wallets: [{
+    groupName: 'Recommended',
+    wallets: [
+      injectedWallet,
+      safeWallet,
+      rainbowWallet,
+      coinbaseWallet,
+      metaMaskWallet,
+      rabbyWallet,
+      braveWallet,
+      walletConnectWallet,
+    ],
+  }],
 });
 
-const wagmiConfig = createConfig({
-  autoConnect: true,
-  connectors,
-  publicClient,
-  webSocketPublicClient,
-});
+const queryClient = new QueryClient();
 
 export function removeInitialSlash(value: string) {
   if (value[0] === "/") {
@@ -161,23 +224,29 @@ const farcasterConfig = {
   // For a production app, replace this with an Optimism Mainnet
   // RPC URL from a provider like Alchemy or Infura.
   rpcUrl: "https://mainnet.optimism.io",
-  domain: window.location.hostname,
+  // the SIWE domain is the authority (host with port): the server checks it
+  // against this instance's origin, like a wallet sign-in message
+  domain: window.location.host,
   siweUri: window.location.href,
   relay: 'https://relay.farcaster.xyz',
 };
 
 const RoutedContent = () => {
   const { isMobile, isTablet } = useWindowSizeContext();
+  const { loginState } = useConnectionContext();
+  // the account has to finish the account-security step: nothing else is
+  // shown (the server refuses everything else anyway)
+  // also while the automatic re-login after a reload is still running: the
+  // flag is remembered per account (data/auth/securityStep.ts), so the
+  // normal app never mounts first
+  const securityStepRequired = showSecurityStep(useSecurityStepRequired(), loginState);
 
   const routesWithLayout = useMemo(() => {
     const routes = <Routes>
-      <Route path={'/token-sale'} element={<TokenSaleRedirect />} />
-      {(config.TOKEN_SALE_ENABLED || config.DEPLOYMENT !== 'prod') && <Route path={removeInitialSlash(getUrl({ type: 'token' }))} element={<TokenSale />} />}
-      {<Route path={removeInitialSlash(getUrl({ type: 'id-verification' }))} element={<IdVerification />} />}
-      <Route path="e/:ecosystem" element={<EcosystemParamSetter>
-        <Home />
-      </EcosystemParamSetter>} />
-      {/*<Route path="blog-browser" element={<BlogBrowser />} />*/}
+      <Route path={removeInitialSlash(getUrl({ type: 'token' }))} element={<TokenSale />} />
+      {/* Legacy ecosystem URLs (removed 2026-08-01) — send them home. Reachable one
+          segment deep only: the edge's shell rule matches `e/[^/]+`. */}
+      <Route path="e/*" element={<Navigate to="/" replace />} />
       <Route path={removeInitialSlash(getUrl({ type: 'feed' }))} element={<ContentBrowser />} />
       <Route path={`${config.URL_COMMUNITY}/:communityUrl/*`} element={
         <CommunityRouter />
@@ -191,7 +260,6 @@ const RoutedContent = () => {
       <Route path={removeInitialSlash(getUrl({ type: 'notifications' }))} element={<NotificationsBrowser />} />
       <Route path={`${removeInitialSlash(getUrl({ type: 'notifications' }))}:notificationShortUuid/`} element={<NotificationsBrowser />} />
       <Route path="learn-more" element={<LearnMore />} />
-      <Route path={removeInitialSlash(getUrl({ type: 'assistant' }))} element={<AssistantView />} />
       <Route path={`${config.URL_CHATS}/:chatShortUuid/`} element={<ChatView />} />
       <Route path={removeInitialSlash(getUrl({ type: 'profile-settings' }))} element={<ProfileManagementView />} />
       <Route path={removeInitialSlash(getUrl({ type: 'profile-settings-account-and-wallets' }))} element={<WalletManagementView />} />
@@ -221,7 +289,9 @@ const RoutedContent = () => {
 return <Routes>
   <Route path={'twitter-login'} element={<TwitterCallbackView />} />
   <Route path={'verify-email'} element={<VerifyEmailView />} />
-  <Route path="*" element={routesWithLayout} />
+  <Route path={'login'} element={<LoginView />} />
+  <Route path={'transfer'} element={<TransferView />} />
+  <Route path="*" element={securityStepRequired ? <SecurityStepView /> : routesWithLayout} />
 </Routes>
 }
 
@@ -231,19 +301,19 @@ function Inner() {
   return (
     <>
       <IsolationModeProvider>
-      <WagmiConfig config={wagmiConfig}>
+      <WagmiProvider config={wagmiConfig}>
+      <QueryClientProvider client={queryClient}>
       <RainbowKitProvider
-        chains={chains}
         theme={mode.isDarkMode ? darkTheme() : lightTheme()}
         modalSize='compact'
         // appInfo={{learnMoreUrl: 'https://app.cg'}} // define our own learn more url
       >
-      <SumsubContextProvider>
       <AuthKitProvider config={farcasterConfig}>
       <WindowSizeProvider>
       <SnackbarContextProvider>
       <OwnDataProvider>
       <PasskeyProvider>
+      <StepUpProvider>
       <MobileLayoutProvider>
       <NotificationProvider>
       <CommunitySidebarProvider>
@@ -254,15 +324,14 @@ function Inner() {
       <CopiedToClipboardDialogProvider>
       <CallDevicesProvider>
       <CallProvider>
-      <EcosystemProvider>
       <CommunityProvider>
       <CommunityListViewProvider>
       <UserSettingsProvider>
       <CommunityModerationProvider>
-      <SidebarDataDisplayProvider>
       <ReportModalProvider>
+      <SuspiciousImageModalProvider>
+      <SidebarDataDisplayProvider>
       <PluginDetailsModalProvider>
-      <AeternityWalletProvider>
       <UniversalProfileProvider>
       <TwitterLoginProvider>
       <RoleClaimedProvider>
@@ -274,6 +343,7 @@ function Inner() {
       <PluginIframeProvider>
         <UserInfoManager />
         <ConnectionStatusIndicator />
+        <SignedOutNotice />
         <RoutedContent />
       </PluginIframeProvider>
       </UserOnchainProvider>
@@ -284,15 +354,14 @@ function Inner() {
       </RoleClaimedProvider>
       </TwitterLoginProvider>
       </UniversalProfileProvider>
-      </AeternityWalletProvider>
       </PluginDetailsModalProvider>
-      </ReportModalProvider>
       </SidebarDataDisplayProvider>
+      </SuspiciousImageModalProvider>
+      </ReportModalProvider>
       </CommunityModerationProvider>
       </UserSettingsProvider>
       </CommunityListViewProvider>
       </CommunityProvider>
-      </EcosystemProvider>
       </CallProvider>
       </CallDevicesProvider>
       </CopiedToClipboardDialogProvider>
@@ -303,24 +372,72 @@ function Inner() {
       </CommunitySidebarProvider>
       </NotificationProvider>
       </MobileLayoutProvider>
+      </StepUpProvider>
       </PasskeyProvider>
       </OwnDataProvider>
       </SnackbarContextProvider>
       </WindowSizeProvider>
       </AuthKitProvider>
-      </SumsubContextProvider>
       </RainbowKitProvider>
-      </WagmiConfig>
+      </QueryClientProvider>
+      </WagmiProvider>
       </IsolationModeProvider>
     </>
+  );
+}
+
+/**
+ * A gateway (docs/auth-identity §12) shows nothing but sign-in and the move
+ * to the instance it moved to: only the providers the sign-in methods need
+ * (no own-data provider: a gateway keeps no local data), and every path (old
+ * deep links included) leads to the gateway page — the X sign-in popup's page
+ * aside. Its server serves nothing else either.
+ */
+function GatewayInner() {
+  const mode = useDarkModeContext();
+
+  return (
+    <WagmiProvider config={wagmiConfig}>
+    <QueryClientProvider client={queryClient}>
+    <RainbowKitProvider
+      theme={mode.isDarkMode ? darkTheme() : lightTheme()}
+      modalSize='compact'
+    >
+    <AuthKitProvider config={farcasterConfig}>
+    <WindowSizeProvider>
+    <SnackbarContextProvider>
+    <PasskeyProvider>
+    <LoginWithKeyphraseProvider>
+    <UniversalProfileProvider>
+    <TwitterLoginProvider>
+      <Routes>
+        <Route path={'twitter-login'} element={<TwitterCallbackView />} />
+        <Route path="*" element={<GatewayView />} />
+      </Routes>
+    </TwitterLoginProvider>
+    </UniversalProfileProvider>
+    </LoginWithKeyphraseProvider>
+    </PasskeyProvider>
+    </SnackbarContextProvider>
+    </WindowSizeProvider>
+    </AuthKitProvider>
+    </RainbowKitProvider>
+    </QueryClientProvider>
+    </WagmiProvider>
   );
 }
 
 function App() {
   const { showReleaseNotes } = useConnectionContext();
 
-  let content: JSX.Element;
-  if (showReleaseNotes === true) {
+  let content: React.JSX.Element;
+  if (getInstanceConfig()?.gatewayTargetUrl) {
+    content = (
+      <DarkModeProvider>
+        <GatewayInner />
+      </DarkModeProvider>
+    );
+  } else if (showReleaseNotes === true) {
     content = (
       <CgUpdate view="releaseNotes" />
     );

@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useMemo, useState, useEffect, useReducer, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import Button from "../../atoms/Button/Button";
 import ContentSlider from '../../molecules/ContentSlider/ContentSlider';
@@ -25,7 +25,6 @@ import { getUrl } from 'common/util';
 import { useConnectionContext } from 'context/ConnectionProvider';
 import { RectangleStackIcon } from '@heroicons/react/20/solid';
 import { Spinner } from '@phosphor-icons/react';
-import { HomeChannelTypes } from 'views/Home/Home';
 import _ from 'lodash';
 
 type Props = {
@@ -37,7 +36,7 @@ type Props = {
     communityPermissions: Readonly<Set<Common.CommunityPermission>>;
   };
   hideEndButton?: boolean;
-  emptyState?: JSX.Element;
+  emptyState?: React.JSX.Element;
   showCount?: boolean;
   useLargeHeader?: boolean;
   hideHeader?: boolean;
@@ -90,12 +89,12 @@ const ArticleExplorer: React.FC<Props> = (props) => {
   const [contentReadState,] = useLocalStorage<ReadArticlesState>({}, 'content-read-state');
   const dataStateState = activeContentFilter === 'draft' ? dataState.draftState : dataState.state;
   const endOfListRef = useRef<HTMLDivElement>(null);
-  const communityIdRef = useRef<string | undefined>();
-  const tagsRef = useRef<string[] | undefined>();
-  const followingRef = useRef<boolean | undefined>();
+  const communityIdRef = useRef<string | undefined>(undefined);
+  const tagsRef = useRef<string[] | undefined>(undefined);
+  const followingRef = useRef<boolean | undefined>(undefined);
   const { loginState } = useConnectionContext();
   const lastLoginStateRef = useRef<Common.LoginState>(loginState);
-  const fetchTimeoutRef = useRef<any>();
+  const fetchTimeoutRef = useRef<any>(undefined);
 
   const isEditor = useMemo(() => {
     return communityData?.communityPermissions.has('COMMUNITY_MANAGE_ARTICLES') || false;
@@ -277,9 +276,6 @@ const ArticleExplorer: React.FC<Props> = (props) => {
       />
       <div ref={endOfListRef} />
       {dataStateState === 'LOADING' && <Spinner className="spinner" />}
-      {/* {!isLimitedMode && !hideEndButton && (activeContentFilter === 'all' || dataStateState === 'DONE') && <div className='cta-buttons'>
-        <Button role='secondary' text='Home' onClick={() => navigate(getUrl({ type: 'home', ecosystem }))} />
-      </div>} */}
     </div>
   );
 }

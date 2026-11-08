@@ -7,7 +7,7 @@
 
 import React, { useCallback } from 'react';
 import { useLayoutEffect, useRef, useState, useTransition } from 'react';
-import { Router } from 'react-router-dom';
+import { Router } from 'react-router';
 import { BrowserHistory, createBrowserHistory, Update } from 'history';
 import { useConnectionContext } from 'context/ConnectionProvider';
 
@@ -30,7 +30,7 @@ const NavigationContext = React.createContext<NavigationContextState>({
 });
 
 export function SuspenseRouter({ basename, children, window: propsWindow }: BrowserRouterProps) {
-  let historyRef = useRef<BrowserHistory>();
+  let historyRef = useRef<BrowserHistory>(undefined);
   const { finishInstallation } = useConnectionContext();
   const [isPending, startTransition] = useTransition();
   const [isDirty, setDirty] = useState(false);

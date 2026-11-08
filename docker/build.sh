@@ -1,20 +1,14 @@
 #!/bin/bash
 cd ${0%/*}
+./ensureEnv.sh || exit 1
+export CG_ENV_ENSURED=1
 source .env
 
 docker_compose() {
   if docker compose version >/dev/null 2>&1; then
-    if [ "$AI_USE_GPU" = "true" ]; then
-      docker compose -f docker-compose.yml -f docker-compose.gpu.yml "$@"
-    else
-      docker compose -f docker-compose.yml "$@"
-    fi
+    docker compose -f docker-compose.yml "$@"
   elif docker-compose version >/dev/null 2>&1; then
-    if [ "$AI_USE_GPU" = "true" ]; then
-      docker-compose -f docker-compose.yml -f docker-compose.gpu.yml "$@"
-    else
-      docker-compose -f docker-compose.yml "$@"
-    fi
+    docker-compose -f docker-compose.yml "$@"
   else
     echo "Neither docker compose nor docker-compose is available."
     exit 1
@@ -33,71 +27,30 @@ printf "\n---\n--- Stopping containers & cleaning build environment\n---\n"
 docker_compose down --remove-orphans
 docker_compose build cg-builder
 
-if [ ! -d ../.yarn ]
-then
-  printf "\n---\n--- Missing .yarn directory, setting yarn to version 4.1.0 \n---\n"
-  docker_compose run --rm cg-builder bash -c "sed -i 's/yarnPath: .*//g' .yarnrc.yml && yarn set version 4.1.0"
-  checkError
-fi
+# Browser-facing certificates come from caddy's local CA (created on its
+# first start); only the internal caddy->mediasoup hop needs one of its own
+mediasoup/ensureInternalCert.sh
+checkError
 
-if [ ! -d ../srv/.yarn ]
-then
-  printf "\n---\n--- Missing srv/.yarn directory, setting yarn to version 4.1.0 \n---\n"
-  docker_compose run --rm cg-builder bash -c "sed -i 's/yarnPath: .*//g' srv/.yarnrc.yml && cd srv && yarn set version 4.1.0"
-  checkError
-fi
-
-printf "\n---\n--- Generating certificates\n---\n"
-if [ -f nginx/certs/nginx_certs/certificate_ip ]
-then
-  CERT_IP=$(cat nginx/certs/nginx_certs/certificate_ip)
-else
-  CERT_IP="different than LOCAL_CERTIFICATE_IP"
-fi
-
-if [ "$LOCAL_CERTIFICATE_IP" != "$CERT_IP" ]
-then
-  nginx/certs/recreate_root_cert.sh &&
-  nginx/certs/recreate_server_certs.sh
-  checkError
-  printf "$LOCAL_CERTIFICATE_IP" > nginx/certs/nginx_certs/certificate_ip
-else
-  printf "Local ip did not change, skipping..."
-fi
-
-printf "\n---\n--- Building frontend and nginx image\n---\n"
+printf "\n---\n--- Building frontend and caddy image\n---\n"
 rm -rf backend/dist/* && \
-rm -rf nginx/dist/* && \
-docker_compose run --rm cg-builder yarn
+mkdir -p caddy/dist && rm -rf caddy/dist/* && \
+docker_compose run --rm cg-builder yarn install --immutable
 checkError
 
-buildId=$(dd if=/dev/random bs=1 count=10 status=none | base64)
-
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  sed -i '' 's#^const buildId =.*$#const buildId = "'$buildId'";#' ../src/common/random_build_id.ts
-else
-  sed -i 's#^const buildId =.*$#const buildId = "'$buildId'";#' ../src/common/random_build_id.ts
-fi
+# Type-check and lint are separate steps now: the webpack build used to run
+# ForkTsChecker + ESLintPlugin inline, and a Vite build does neither, so
+# without these two a type or lint error would ship silently.
+# `--max-old-space-size` is still needed — a plain `vite build` OOMs at 2048 MB
+# and peaks at ~4 GB container RSS (≈3.9 GiB docker stats, ≈4.1 GiB cgroup peak;
+# Node 24 + Vite 7); 4096 caps only the V8 heap and is the measured floor with
+# thin headroom.
+docker_compose run --rm -e NODE_OPTIONS="--max-old-space-size=4096" -e DEPLOYMENT=prod cg-builder \
+  bash -c "yarn typecheck && yarn lint && yarn build && yarn check:html-rewrite" && \
+rsync -a ../build/* caddy/dist/
 checkError
 
-docker_compose run --rm -e NODE_OPTIONS="--max-old-space-size=8192" -e DEPLOYMENT=prod -e GENERATE_SOURCEMAP=true -e IMAGE_INLINE_SIZE_LIMIT=5000 cg-builder yarn craco --openssl-legacy-provider build && \
-rsync -a ../build/* nginx/dist/
-checkError
-
-for f in nginx/dist/static/media/*.svg
-do
-  size=$(wc -c "$f" | awk '{print $1}')
-  if [ "$size" -le "5000" ]
-  then
-    # this only happens in local development environment,
-    # to make sure files which should be inline cannot be
-    # loaded in another way
-    printf "Deleting small svg file with size $size: $f\n"
-    rm "$f"
-  fi
-done
-
-docker_compose build --no-cache nginx
+docker_compose build --no-cache caddy
 checkError
 
 if [ ! -f vapid_keys.json ];
@@ -105,22 +58,20 @@ then
   printf "Generating vapid_keys.json for web push...\n"
   if [ ! -d srv/node_modules/web-push ]
   then
-    docker_compose run --rm -T cg-builder bash -c "cd srv && yarn"
+    docker_compose run --rm -T cg-builder bash -c "cd srv && yarn install --immutable"
   fi
-  docker_compose run --rm -T cg-builder bash -c "cd srv && npx web-push generate-vapid-keys --json > ../docker/vapid_keys.json"
+  docker_compose run --rm -T cg-builder bash -c "cd srv && npx --no web-push generate-vapid-keys --json > ../docker/vapid_keys.json"
 fi
 
 printf "\n---\n--- Building backend\n---\n"
+# the build ID of the frontend just built (vite/buildId.ts) goes into the
+# backend image, so clients notice when a new version is deployed
 rm -rf backend/dist/{*,.??*} && \
 rsync -aL --exclude=node_modules --exclude=.yarn ../srv/ backend/dist/ && \
 cp ../build/index.html backend/dist/ && \
 docker build --tag commonground/backend_stage_0 -f backend/Dockerfile_dev_stage_0 ./backend/ && \
-docker_compose build --no-cache api
+docker_compose build --no-cache --build-arg CG_BUILD_ID="$(cat ../build/build-id.txt)" api
 checkError
-
-# printf "\n---\n--- Building llama\n---\n"
-# docker_compose build llama
-# checkError
 
 printf "\n---\n--- Setting up database\n---\n"
 docker_compose build --no-cache db && \
@@ -134,6 +85,6 @@ checkError
 
 printf "\n---\n--- Deploying contracts\n---\n"
 sleep 3
-docker_compose run --rm -T cg-builder bash -c "cd contracts && yarn && npx hardhat run --network cgstack scripts/deploy.ts"
+docker_compose run --rm -T cg-builder bash -c "cd contracts && yarn install --immutable && npx --no hardhat run --network cgstack scripts/deploy.ts"
 
 ./logs.sh

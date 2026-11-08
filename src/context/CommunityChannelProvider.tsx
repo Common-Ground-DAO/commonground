@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useEffect, useMemo, useRef } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router";
 import { parseIdOrUrl } from "../util";
 import { useLoadedCommunityContext } from "./CommunityProvider";
 import { getUrl } from "common/util";

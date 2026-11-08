@@ -6,7 +6,7 @@ import React, { useMemo } from 'react'
 import dayjs from 'dayjs';
 import useLocalStorage, { VisitedCommunitiesState } from '../../hooks/useLocalStorage';
 import { useWindowSizeContext } from '../../context/WindowSizeProvider';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import CommunityPhoto from '../../components/atoms/CommunityPhoto/CommunityPhoto';
 import NotificationDot from 'components/atoms/NotificationDot/NotificationDot';

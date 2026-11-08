@@ -16,7 +16,7 @@ import Button from "components/atoms/Button/Button";
 import TextInputField from "components/molecules/inputs/TextInputField/TextInputField";
 import { useCallContext } from "context/CallProvider";
 import ScreenAwareModal from "components/atoms/ScreenAwareModal/ScreenAwareModal";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { getUrl } from "common/util";
 import RolePermissionToggle, {
   PermissionType,
@@ -26,6 +26,7 @@ import { CallType, PredefinedRole } from "common/enums";
 import CallConfigurationToggle, { IConfig } from "./CallConfigurationToggle/CallConfigurationToggle";
 import { useWindowSizeContext } from "context/WindowSizeProvider";
 import { useCommunityPremiumTier } from "hooks/usePremiumTier";
+import { isPredefinedRole } from "util/predefinedRoles";
 
 type Props = {
   title: string;
@@ -73,7 +74,7 @@ export const StartCallModal = (props: React.PropsWithChildren<Props>) => {
   useEffect(() => {
     canCreateCustomCalls &&
       ownRoles.forEach((role) => {
-        if (role.title === "Admin") {
+        if (isPredefinedRole(role, PredefinedRole.Admin)) {
           return;
         } else {
           setCallPermissions((prev) => ({
@@ -147,7 +148,7 @@ export const StartCallModal = (props: React.PropsWithChildren<Props>) => {
   );
 
   const visibleRoles = useMemo(() => {
-    if (ownRoles.some((role) => role.title === PredefinedRole.Admin))
+    if (ownRoles.some((role) => isPredefinedRole(role, PredefinedRole.Admin)))
       return roles;
     return ownRoles;
   }, [ownRoles, roles]);

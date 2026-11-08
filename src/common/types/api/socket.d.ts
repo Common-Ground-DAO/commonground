@@ -16,7 +16,8 @@ declare global {
                     deviceId: string,
                     base64Signature: string;
                 };
-                type Response = "OK" | "ERROR";
+                /** SECURITY_STEP_REQUIRED: the account must finish the account-security step first */
+                type Response = "OK" | "ERROR" | "SECURITY_STEP_REQUIRED";
             }
 
             namespace logout {
@@ -24,9 +25,24 @@ declare global {
                 type Response = void;
             }
 
+            namespace watchCgIdRequest {
+                type Request = {
+                    frontendRequestId: string;
+                };
+                type Response = void;
+            }
+
             namespace joinCommunityVisitorRoom {
                 type Request = {
                     communityId: string;
+                };
+                type Response = void;
+            }
+
+            namespace setTyping {
+                type Request = {
+                    access: API.Messages.MessageAccess;
+                    isTyping: boolean;
                 };
                 type Response = void;
             }

@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .wallet-select-modal {
     max-width: 310px;
   

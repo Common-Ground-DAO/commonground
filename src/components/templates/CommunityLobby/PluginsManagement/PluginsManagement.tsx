@@ -6,8 +6,8 @@ import './PluginsManagement.css';
 import React, { useCallback, useMemo, useState } from 'react'
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';
-import { ReactComponent as SpinnerIcon } from '../../../atoms/icons/16/Spinner.svg';
-import { useNavigate } from 'react-router-dom';
+import SpinnerIcon from '../../../atoms/icons/16/Spinner.svg?react';
+import { useNavigate } from 'react-router';
 import Scrollable from 'components/molecules/Scrollable/Scrollable';
 import { useNavigationContext } from 'components/SuspenseRouter/SuspenseRouter';
 import { useSnackbarContext } from 'context/SnackbarContext';

@@ -2,40 +2,57 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import config from './common/config';
 import serverconfig from './serverconfig';
 import {
   randomString,
+  realRandomHexString,
   userRoomKey,
   roleRoomKey,
   communityRoomKey,
   deviceRoomKey,
   expressSessionRoomKey,
-  dockerSecret,
+  cgIdRequestRoomKey,
+  articleRoomKey,
+  botTokenRoomKey,
 } from './util';
-import cors from "cors";
-import { Server } from "socket.io";
+import { Server, type Socket } from "socket.io";
+import { BOT_PROTOCOL_VERSION } from "./common/botProtocol";
 import { createAdapter } from "@socket.io/redis-adapter";
+import { installSocketRequestChecks, socketAdapterKey, socketServerOriginOptions } from "./util/socketServer";
+import { requireSessionSecret } from "./util/sessionSecret";
 import deviceHelper from "./repositories/device";
+import { isSecurityStepRequiredForRealtime } from "./util/securityStep";
 import validators from './validators';
 import userHelper from './repositories/users';
 import redisManager from './redis';
-import { fakeHealthcheck } from './healthcheck';
-import buildId from './common/random_build_id';
+import { startWsapiHealthcheck } from './healthcheck/wsapi';
+import buildId from './common/buildId';
+import botTokenHelper from './repositories/botTokens';
+import botHelper from './repositories/bots';
+import * as typingCache from './repositories/typingCache';
+import { PresenceTracker, type ClusterProbe } from './util/presence';
+import { finishSocketLogin } from './util/socketLogin';
+import { deviceSocketRoomKey } from './util/requestSocket';
 
 import cookieParser from 'cookie-parser';
+// The manual-unsign alternative below needs `cookie-signature`, which was
+// removed from package.json in 2026-08 (nothing imported it; express-session
+// and cookie-parser each bundle their own copy). Re-add it before reviving.
 // import signature from 'cookie-signature';
 import cookie from 'cookie';
-const secret = dockerSecret('redis_secret') || process.env.REDIS_SECRET as string;
+// a missing session secret stops the process at startup
+const secret = requireSessionSecret();
 
-function decodeSessionId(cookieHeader: string) {
+/** the session id of a validly signed session cookie, else undefined */
+function decodeSessionId(cookieHeader: string): string | undefined {
   // Parse the cookies
   const cookies = cookieParser.signedCookies(cookie.parse(cookieHeader), secret);
 
-  // `connect.sid` is the default name for the session cookie
-  const sessionCookie = cookies[serverconfig.SESSION_COOKIE_NAME] as string;
+  // `connect.sid` is the default name for the session cookie; a missing or
+  // unsigned cookie is absent here, a bad signature is `false`
+  const sessionCookie = cookies[serverconfig.SESSION_COOKIE_NAME];
 
-  return sessionCookie;
+  return typeof sessionCookie === 'string' && sessionCookie ? sessionCookie : undefined;
   /* if (sessionCookie && sessionCookie.startsWith('s:')) {
     // Remove the 's:' prefix and try to unsign it
     const unsignedSessionId = signature.unsign(sessionCookie.slice(2), secret);
@@ -49,43 +66,41 @@ function decodeSessionId(cookieHeader: string) {
   } */
 }
 
-const localOnlineUsers = new Set<string>();
+const localOnlineBotUsers = new Set<string>();
 let shuttingDown = false;
 
-const allowedOrigins = [ process.env.BASE_URL ];
-if (config.DEPLOYMENT === 'dev') {
-  allowedOrigins.push('http://localhost:3000');
-  allowedOrigins.push('https://localhost:3000');
-  allowedOrigins.push('http://localhost:8000');
-  allowedOrigins.push('https://localhost:8001');
-  allowedOrigins.push('http://app.cg.local:3000');
-  allowedOrigins.push('https://app.cg.local:3000');
-  allowedOrigins.push('http://app.cg.local:8000');
-  allowedOrigins.push('https://app.cg.local:8001');
-  allowedOrigins.push('https://bs-local.com:3000');
-  allowedOrigins.push('https://bs-local.com:8001');
-  if (!!process.env.LOCAL_CERTIFICATE_IP) {
-    allowedOrigins.push(`http://${process.env.LOCAL_CERTIFICATE_IP}:3000`);
-    allowedOrigins.push(`https://${process.env.LOCAL_CERTIFICATE_IP}:3000`);
-    allowedOrigins.push(`http://${process.env.LOCAL_CERTIFICATE_IP}:8000`);
-    allowedOrigins.push(`https://${process.env.LOCAL_CERTIFICATE_IP}:8001`);
-  }
-}
-const corsOptions: cors.CorsOptions = {
-  origin: function (origin, callback) {
-    // allow requests with no origin 
-    // (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) === -1) {
-      var msg = 'The CORS policy for this site does not ' +
-        'allow access from the specified Origin.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
-  credentials: true,
-  preflightContinue: false,
-};
+const BOT_PRESENCE_LEASE_MS = 90_000;
+const BOT_PRESENCE_SCRIPT = `
+  local instance_id = ARGV[1]
+  local local_count = tonumber(ARGV[2])
+  local redis_time = redis.call('TIME')
+  local now_ms = tonumber(redis_time[1]) * 1000 + math.floor(tonumber(redis_time[2]) / 1000)
+
+  if local_count > 0 then
+    redis.call('HSET', KEYS[1], instance_id, local_count)
+    redis.call('ZADD', KEYS[2], now_ms + tonumber(ARGV[3]), instance_id)
+  else
+    redis.call('HDEL', KEYS[1], instance_id)
+    redis.call('ZREM', KEYS[2], instance_id)
+  end
+
+  local expired = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', now_ms)
+  if #expired > 0 then
+    redis.call('HDEL', KEYS[1], unpack(expired))
+    redis.call('ZREM', KEYS[2], unpack(expired))
+  end
+
+  local total = 0
+  local counts = redis.call('HVALS', KEYS[1])
+  for _, count in ipairs(counts) do
+    total = total + tonumber(count)
+  end
+  return total
+`;
+
+// one origin list for the api and the wsapi, checked for every handshake,
+// polling request and WebSocket upgrade (srv/util/socketServer.ts)
+const { cors: corsOptions, allowRequest } = socketServerOriginOptions();
 
 const io = new Server<
   API.Server.ServerToClientEvents,
@@ -95,18 +110,333 @@ const io = new Server<
 >({
   transports: ["polling", "websocket"],
   cors: corsOptions,
+  allowRequest,
   path: "/api/ws/",
   pingInterval: 15000,
   pingTimeout: 15000,
   perMessageDeflate: false,
 });
 
-redisManager.isReady.then(async () => {
+const hasLocalUserSocket = (userId: string) => !!io.sockets.adapter.rooms.get(userRoomKey(userId))?.size;
+
+/**
+ * Which of these users have a logged-in socket on another wsapi process. One
+ * `presenceProbe` server-side emit through the Redis adapter: every other
+ * process answers with the subset it holds, so only user ids travel (unlike
+ * fetchSockets, which ships handshake and socket data). A process that does
+ * not answer within the adapter's requestsTimeout (5 s) makes the result
+ * incomplete; the answers received so far still count.
+ */
+async function probeClusterPresence(userIds: string[]): Promise<ClusterProbe> {
+  const collect = (responses: unknown) => (Array.isArray(responses) ? responses : [])
+    .flatMap(response => Array.isArray(response) ? response : [])
+    .filter((userId): userId is string => typeof userId === 'string');
+  try {
+    const responses = await io.serverSideEmitWithAck("presenceProbe", userIds);
+    return { present: collect(responses), complete: true };
+  }
+  catch (error) {
+    return { present: collect((error as { responses?: unknown })?.responses), complete: false, error };
+  }
+}
+
+// Human presence (srv/util/presence.ts): online on login, offline only after
+// the grace period without a logged-in socket anywhere in the cluster.
+const presence = new PresenceTracker({
+  hasLocalSocket: hasLocalUserSocket,
+  probeCluster: probeClusterPresence,
+  markOnline: (userId) => userHelper.touchUserOnlineStatus([userId], { emitOwnData: true }),
+  markOffline: (userIds) => userHelper.setUsersOffline(userIds),
+  isShuttingDown: () => shuttingDown,
+});
+
+type AppSocket = Socket<
+  API.Server.ServerToClientEvents,
+  API.Server.ClientToServerEvents,
+  API.Server.InterServerEvents,
+  API.Server.SocketData
+>;
+
+async function setBotConnectionPresence(
+  userId: string,
+  localConnectedSocketCount: number,
+  markConnectedAt = false,
+) {
+  const presenceKey = `bot-presence:${userId}`;
+  const connectedSocketCount = await redisManager.getClient('data').eval(BOT_PRESENCE_SCRIPT, {
+    keys: [`${presenceKey}:counts`, `${presenceKey}:expirations`],
+    arguments: [
+      redisManager.instanceId,
+      localConnectedSocketCount.toString(),
+      BOT_PRESENCE_LEASE_MS.toString(),
+    ],
+  }) as number;
+
+  // Keep the shared user presence compatible with the existing member-list
+  // pipeline, but store bot-only transport details separately. Ordering
+  // prevents the stale-presence worker from resetting a newly connected bot
+  // between the two writes.
+  if (connectedSocketCount > 0) {
+    await userHelper.touchUserOnlineStatus([userId]);
+    await botHelper.setConnectionPresence(userId, connectedSocketCount, markConnectedAt);
+  }
+  else {
+    await botHelper.setConnectionPresence(userId, 0);
+    await userHelper.setUserOnlineStatus(userId, 'offline');
+  }
+}
+
+async function syncBotConnectionPresence(userId: string, markConnectedAt = false) {
+  const localSocketIds = io.sockets.adapter.rooms.get(userRoomKey(userId)) || new Set<string>();
+  let localConnectedSocketCount = 0;
+  for (const socketId of localSocketIds) {
+    const connectedSocket = io.sockets.sockets.get(socketId);
+    if (connectedSocket?.data.userId === userId && connectedSocket.data.botTokenId) {
+      localConnectedSocketCount++;
+    }
+  }
+  await setBotConnectionPresence(userId, localConnectedSocketCount, markConnectedAt);
+}
+
+async function joinAuthenticatedRooms(
+  socket: AppSocket,
+  identity: {
+    userId: string;
+    deviceId: string;
+    roleIds: string[];
+    communityIds: string[];
+    tokenId?: string;
+  },
+) {
+  socket.data.userId = identity.userId;
+  socket.data.deviceId = identity.deviceId;
+  const rooms = [
+    deviceRoomKey(identity.deviceId),
+    // the socket's own room under the device it proved: what socket-scoped
+    // targeting addresses (srv/util/requestSocket.ts)
+    deviceSocketRoomKey(identity.deviceId, socket.id),
+    userRoomKey(identity.userId),
+    ...identity.roleIds.map(roleRoomKey),
+    ...identity.communityIds.map(communityRoomKey),
+  ];
+  if (identity.tokenId) {
+    socket.data.botTokenId = identity.tokenId;
+    rooms.push(botTokenRoomKey(identity.tokenId));
+  }
+  await socket.join(rooms);
+}
+
+/**
+ * The socket `logout`: the socket leaves every room but its own and the
+ * temporary community visitor room, forgets its identity and releases its
+ * presence. Also run before a second `login` of the socket with another
+ * device or user, so it keeps no rooms of the previous login.
+ */
+async function leaveAuthenticatedRooms(socket: AppSocket) {
+  const { userId } = socket.data;
+  flushTypingStops(socket);
+  delete socket.data.userId;
+  delete socket.data.deviceId;
+  const leavePromises: (void | Promise<void>)[] = [];
+  const temporaryCommunityKey = communityRoomKey(socket.data.temporaryCommunityId || '');
+  for (const roomId of Array.from(socket.rooms)) {
+    // Skip the socket's own room (roomId === socket.id) and potential temporary rooms (like a community public room)
+    if (
+      roomId !== socket.id &&
+      temporaryCommunityKey !== roomId
+    ) {
+      leavePromises.push(socket.leave(roomId));
+    }
+  }
+  await Promise.all(leavePromises);
+  if (!!userId) {
+    presence.socketGone(userId);
+  }
+}
+
+// --- Typing presence ---------------------------------------------------------
+// Ephemeral, connection-scoped. The server holds no authoritative typing state:
+// it authorizes + throttles + relays, and receivers apply a local expiry so a
+// dropped stop self-heals. Authorization and delivery scoping reuse the cached
+// channel/chat mapping (see typingCache) and the socket's live room membership,
+// so a typing event costs a Map lookup + a set check + one room emit — no DB.
+
+const TYPING_THROTTLE_MS = 2_000;
+
+type RoomSpec = {
+  userIds?: string[];
+  roleIds?: string[];
+  communityIds?: string[];
+  articleIds?: string[];
+};
+
+type TypingScope = {
+  target: RoomSpec;
+  except?: RoomSpec;
+};
+
+type TypingActiveEntry = { access: API.Messages.MessageAccess; scope: TypingScope };
+
+// Per-socket state; WeakMaps so it is collected with the socket, no manual sweep.
+const typingLastEmit = new WeakMap<AppSocket, Map<string, number>>();
+const typingActive = new WeakMap<AppSocket, Map<string, TypingActiveEntry>>();
+
+async function resolveTypingScope(
+  socket: AppSocket,
+  access: API.Messages.MessageAccess,
+  userId: string,
+): Promise<TypingScope | null> {
+  // Calls (callId) intentionally have no typing surface.
+  if ('callId' in access) {
+    return null;
+  }
+  // The authorization below is for the community, chat or article named in
+  // the access object; the channel in the event must be that one's channel.
+  if (!(await typingCache.isChannelInAccessScope(access))) {
+    return null;
+  }
+  if ('communityId' in access) {
+    const perms = await typingCache.getChannelTypingPerms(access.communityId, access.channelId);
+    // Gate on WRITE: only broadcast "composing" where the user could actually send.
+    // The sender's roles are read live from room membership (kept current by the
+    // role-change machinery), so this half of the check has no staleness.
+    const authorized = perms.writerRoleIds.some((roleId) => socket.rooms.has(roleRoomKey(roleId)));
+    if (!authorized) {
+      return null;
+    }
+    const target = perms.isPublic
+      ? { communityIds: [access.communityId] }
+      : { roleIds: perms.readerRoleIds };
+    return { target, except: { userIds: [userId] } };
+  }
+  if ('chatId' in access) {
+    const userIds = await typingCache.getChatUserIds(access.chatId);
+    if (!userIds.includes(userId)) {
+      return null;
+    }
+    const others = userIds.filter((id) => id !== userId);
+    if (others.length === 0) {
+      return null;
+    }
+    return { target: { userIds: others } };
+  }
+  if ('articleId' in access) {
+    // Membership in the article event room is the authorization: clients join it
+    // via joinArticleEventRoom, which performs the access check.
+    if (!socket.rooms.has(articleRoomKey(access.articleId))) {
+      return null;
+    }
+    return { target: { articleIds: [access.articleId] }, except: { userIds: [userId] } };
+  }
+  return null;
+}
+
+function typingRooms(spec: RoomSpec): string[] {
+  const rooms: string[] = [];
+  for (const id of spec.userIds ?? []) rooms.push(userRoomKey(id));
+  for (const id of spec.roleIds ?? []) rooms.push(roleRoomKey(id));
+  for (const id of spec.communityIds ?? []) rooms.push(communityRoomKey(id));
+  for (const id of spec.articleIds ?? []) rooms.push(articleRoomKey(id));
+  return rooms;
+}
+
+// Emitted from inside the socket server, so we broadcast via the local `io`
+// instance (the redis adapter still fans out cluster-wide) rather than the
+// external redis emitter, which is for out-of-process senders like the API.
+function emitTyping(access: API.Messages.MessageAccess, userId: string, isTyping: boolean, scope: TypingScope) {
+  const targetRooms = typingRooms(scope.target);
+  if (targetRooms.length === 0) return;
+  const exceptRooms = scope.except ? typingRooms(scope.except) : [];
+  const payload: Omit<Events.Typing.Typing, "type"> = { access, userId, isTyping };
+  const channel = exceptRooms.length > 0
+    ? io.to(targetRooms).except(exceptRooms)
+    : io.to(targetRooms);
+  channel.emit("cliTypingEvent", payload);
+}
+
+// Emit a stop for every context the socket was actively typing in. Used on
+// disconnect/logout so indicators clear promptly instead of waiting for the
+// receiver-side expiry. Scopes were captured at start, so no cache lookup here.
+function flushTypingStops(socket: AppSocket) {
+  const active = typingActive.get(socket);
+  const userId = socket.data.userId;
+  if (!active || !userId) {
+    return;
+  }
+  for (const entry of active.values()) {
+    emitTyping(entry.access, userId, false, entry.scope);
+  }
+  active.clear();
+  typingLastEmit.get(socket)?.clear();
+}
+
+// origin checks of every engine request; in gateway mode no token handshakes
+// and only the gateway's events (srv/util/gateway.ts) — before anything else
+installSocketRequestChecks(io);
+
+io.use(async (socket, next) => {
+  const token = socket.handshake.auth?.token;
+  if (token === undefined) {
+    next();
+    return;
+  }
+  if (typeof token !== 'string' || token.length === 0 || socket.handshake.headers.cookie) {
+    next(new Error('unauthorized'));
+    return;
+  }
+  try {
+    const requestedVersion = socket.handshake.auth?.protocolVersion;
+    if (requestedVersion !== BOT_PROTOCOL_VERSION) {
+      next(new Error('unsupported_bot_protocol'));
+      return;
+    }
+    const principal = await botTokenHelper.authenticate(token);
+    if (!principal) {
+      next(new Error('unauthorized'));
+      return;
+    }
+    const ids = await botHelper.getActiveSocketRoomIds(principal.user.id, principal.tokenId);
+    await joinAuthenticatedRooms(socket, {
+      userId: principal.user.id,
+      deviceId: principal.user.deviceId,
+      tokenId: principal.tokenId,
+      roleIds: ids.roleIds,
+      communityIds: ids.communityIds,
+    });
+    socket.data.botProtocolVersion = BOT_PROTOCOL_VERSION;
+    next();
+  } catch {
+    next(new Error('unauthorized'));
+  }
+});
+
+// wsapi never reads the session store (it only unsigns the session cookie)
+// or the cache instance, so only these three connections are opened
+redisManager.ready('socketIOPub', 'socketIOSub', 'data').then(async () => {
   io.adapter(createAdapter(
     redisManager.getClient('socketIOPub'),
     redisManager.getClient('socketIOSub'),
-    { key: 'v2:' }
+    // the gateway's own channels (srv/util/gateway.ts)
+    { key: socketAdapterKey() }
   ));
+
+  // presence probe from another wsapi process: answer with the users that
+  // have a logged-in socket here
+  io.on("presenceProbe", (userIds, callback) => {
+    try {
+      const ids = Array.isArray(userIds) ? userIds.filter(userId => typeof userId === 'string') : [];
+      callback(ids.filter(hasLocalUserSocket));
+    }
+    catch (error) {
+      console.error("Error answering presenceProbe", error);
+      callback([]);
+    }
+  });
+
+  // Event-driven busting for the typing-presence caches (falls back to TTL).
+  typingCache.initTypingCacheInvalidation().catch((error) => {
+    console.error("Failed to start typing cache invalidation", error);
+  });
 
   io.on("connection", async (socket) => {
     if (shuttingDown) {
@@ -116,19 +446,79 @@ redisManager.isReady.then(async () => {
 
     socket.emit("buildId", buildId, Date.now());
 
-    const { cookie } = socket.handshake.headers;
-    if (cookie) {
-      const sessionId = decodeSessionId(cookie);
-      socket.join(expressSessionRoomKey(sessionId));
-    }
-    else {
-      socket.disconnect(true);
-      console.error("No express sessionId cookie found, closing socket...");
+    if (socket.data.botTokenId) {
+      const { userId } = socket.data;
+      if (!userId) {
+        socket.disconnect(true);
+        return;
+      }
+      localOnlineBotUsers.add(userId);
+      socket.on("cgPing", (callback) => {
+        try {
+          callback(Date.now());
+        } catch {
+          socket.disconnect(true);
+        }
+      });
+      socket.on("disconnect", async () => {
+        if (!io.sockets.adapter.rooms.get(userRoomKey(userId))?.size) {
+          localOnlineBotUsers.delete(userId);
+        }
+        if (!shuttingDown) {
+          try {
+            await syncBotConnectionPresence(userId);
+          }
+          catch (error) {
+            console.error("Error updating disconnected bot presence", { userId, error });
+          }
+        }
+      });
+      try {
+        await syncBotConnectionPresence(userId, true);
+      }
+      catch (error) {
+        console.error("Error updating connected bot presence", { userId, error });
+      }
       return;
     }
 
+    // Anonymous visitors have no session (and no cookie) until something is
+    // stored in one, so a socket without a session cookie is normal. With one,
+    // the socket joins its session's room (kept for legacy CG ID clients that
+    // predate watchCgIdRequest). Login on the socket is by device key, not by
+    // session.
+    const { cookie } = socket.handshake.headers;
+    const sessionId = cookie ? decodeSessionId(cookie) : undefined;
+    if (sessionId) {
+      socket.join(expressSessionRoomKey(sessionId));
+    }
+
+    // Legacy CG ID: the main window watches the popup request it opened; the
+    // popup's result (cliCgIdSignResponse) is emitted to this room. Unlike
+    // the session room it does not depend on which session cookie the socket
+    // connected with. One request per socket.
+    socket.on("watchCgIdRequest", async (rawData) => {
+      let data: API.Socket.watchCgIdRequest.Request;
+      try {
+        data = await validators.API.Socket.watchCgIdRequest.validateAsync(rawData);
+      }
+      catch (e) {
+        console.error("Error during watchCgIdRequest", e);
+        return;
+      }
+      // no await between reading and replacing the watched id: concurrent
+      // events cannot leave the socket in two request rooms
+      const previous = socket.data.cgIdRequestId;
+      socket.data.cgIdRequestId = data.frontendRequestId;
+      const logError = (e: unknown) => console.error("Error during watchCgIdRequest", e);
+      if (previous && previous !== data.frontendRequestId) {
+        Promise.resolve(socket.leave(cgIdRequestRoomKey(previous))).catch(logError);
+      }
+      Promise.resolve(socket.join(cgIdRequestRoomKey(data.frontendRequestId))).catch(logError);
+    });
+
     socket.on("getSignableSecret", (callback) => {
-      const signableSecret = randomString(20);
+      const signableSecret = realRandomHexString(32);
       socket.data.signableSecret = signableSecret;
       try {
         callback(signableSecret);
@@ -200,69 +590,120 @@ redisManager.isReady.then(async () => {
       try {
         const { signableSecret } = socket.data;
         data = await validators.API.Socket.login.validateAsync(data);
-        if (!!signableSecret && signableSecret === data.secret) {
-          const { userId } = await deviceHelper.verifyDeviceAndGetUserId(data.deviceId, signableSecret, data.base64Signature);
-          const ids = await userHelper.getUserRoleAndCommunityIds(userId);
+        // A missing or mismatched challenge means the socket is not authenticated.
+        // Never acknowledge "OK" here: doing so leaves the client believing it is
+        // logged in while the socket stays anonymous (no userId, no room joins,
+        // no presence) — silently breaking inbound events and setTyping.
+        if (!signableSecret || signableSecret !== data.secret) {
           delete socket.data.signableSecret;
-          localOnlineUsers.add(userId);
-          socket.data.userId = userId;
-          socket.data.deviceId = data.deviceId;
-          let promises: any[] = [];
-          promises.push(socket.join(deviceRoomKey(data.deviceId)));
-          promises.push(socket.join(userRoomKey(userId)));
-          for (const roleId of ids.roleIds) {
-            promises.push(socket.join(roleRoomKey(roleId)));
-          }
-          for (const communityId of ids.communityIds) {
-            promises.push(socket.join(communityRoomKey(communityId)));
-          }
-          await Promise.all(promises.filter(p => p !== undefined));
-          await userHelper.setUserOnlineStatus(userId, 'online');
+          callback("ERROR");
+          return;
         }
-        callback("OK");
+        const { userId } = await deviceHelper.verifyDeviceAndGetUserId(data.deviceId, signableSecret, data.base64Signature);
+        delete socket.data.signableSecret;
+        // a second login of this socket as another device or user: the
+        // rooms of the previous login go first
+        if (
+          (socket.data.deviceId !== undefined && socket.data.deviceId !== data.deviceId) ||
+          (socket.data.userId !== undefined && socket.data.userId !== userId)
+        ) {
+          await leaveAuthenticatedRooms(socket);
+        }
+        if (await isSecurityStepRequiredForRealtime(userId)) {
+          // the account must finish the account-security step first
+          // (docs/auth-identity §11): no rooms, no events
+          callback("SECURITY_STEP_REQUIRED");
+          return;
+        }
+        const ids = await userHelper.getUserRoleAndCommunityIds(userId);
+        presence.socketAuthenticated(userId);
+        await joinAuthenticatedRooms(socket, {
+          userId,
+          deviceId: data.deviceId,
+          roleIds: ids.roleIds,
+          communityIds: ids.communityIds,
+        });
+        // a device key revoked meanwhile, a socket gone meanwhile: see
+        // finishSocketLogin
+        const { deviceId } = data;
+        await finishSocketLogin(socket, userId, {
+          isLiveDevice: () => deviceHelper.isLiveDevice(deviceId),
+          presence,
+          ack: callback,
+        });
       } catch (e) {
         console.error("Error during login", e);
         callback("ERROR");
       }
     });
 
-    socket.on("logout", () => {
-      const { userId } = socket.data;
-      delete socket.data.userId;
-      delete socket.data.deviceId;
-      const leavePromises: (void | Promise<void>)[] = [];
-      const temporaryCommunityKey = communityRoomKey(socket.data.temporaryCommunityId || '');
-      for (const roomId of Array.from(socket.rooms)) {
-        // Skip the socket's own room (roomId === socket.id) and potential temporary rooms (like a community public room)
-        if (
-          roomId !== socket.id &&
-          temporaryCommunityKey !== roomId
-        ) {
-          leavePromises.push(socket.leave(roomId));
+    socket.on("setTyping", async (rawData) => {
+      const userId = socket.data.userId;
+      if (!userId) {
+        return;
+      }
+      let data: API.Socket.setTyping.Request;
+      try {
+        data = await validators.API.Socket.setTyping.validateAsync(rawData);
+      }
+      catch {
+        // Malformed payload: ignore silently, this is a fire-and-forget signal.
+        return;
+      }
+      try {
+        const { access, isTyping } = data;
+        const channelId = access.channelId;
+        if (isTyping) {
+          const now = Date.now();
+          let lastEmit = typingLastEmit.get(socket);
+          if (!lastEmit) {
+            lastEmit = new Map();
+            typingLastEmit.set(socket, lastEmit);
+          }
+          const alreadyActive = typingActive.get(socket)?.has(channelId) ?? false;
+          // Collapse refresh spam: once active, re-emit at most once per window.
+          if (alreadyActive && now - (lastEmit.get(channelId) ?? 0) < TYPING_THROTTLE_MS) {
+            return;
+          }
+          const scope = await resolveTypingScope(socket, access, userId);
+          if (!scope) {
+            return;
+          }
+          lastEmit.set(channelId, now);
+          let active = typingActive.get(socket);
+          if (!active) {
+            active = new Map();
+            typingActive.set(socket, active);
+          }
+          active.set(channelId, { access, scope });
+          emitTyping(access, userId, true, scope);
+        }
+        else {
+          const active = typingActive.get(socket);
+          const entry = active?.get(channelId);
+          typingLastEmit.get(socket)?.delete(channelId);
+          if (!entry) {
+            // Wasn't typing here; nothing to stop.
+            return;
+          }
+          active!.delete(channelId);
+          emitTyping(entry.access, userId, false, entry.scope);
         }
       }
-      Promise.all(leavePromises).then(() => {
-        if (!!userId) {
-          const ownRoomSize = io.sockets.adapter.rooms.get(userRoomKey(userId))?.size;
-          if (!ownRoomSize) {
-            console.log(`User ${userId} has logged out the last socket and is offline`);
-            userHelper.setUserOnlineStatus(userId, 'offline');
-            localOnlineUsers.delete(userId);
-          }
-        }
-      });
+      catch (e) {
+        console.error("Error during setTyping", e);
+      }
+    });
+
+    socket.on("logout", () => {
+      void leaveAuthenticatedRooms(socket);
     });
 
     socket.on("disconnect", () => {
       const { userId } = socket.data;
-      if (!!userId) {
-        const ownRoomSize = io.sockets.adapter.rooms.get(userRoomKey(userId))?.size;
-        if (!ownRoomSize) {
-          if (!shuttingDown) {
-            userHelper.setUserOnlineStatus(userId, 'offline');
-          }
-          localOnlineUsers.delete(userId);
-        }
+      flushTypingStops(socket);
+      if (!!userId && !socket.data.botTokenId) {
+        presence.socketGone(userId);
       }
     });
   });
@@ -273,10 +714,17 @@ redisManager.isReady.then(async () => {
 setInterval(async () => {
   if (!shuttingDown) {
     try {
-      const userIds = Array.from(localOnlineUsers);
-      if (userIds.length > 0) {
-        await userHelper.touchUserOnlineStatus(userIds);
+      // users in their offline grace period only get the timestamp: a flip
+      // back to online would undo another process's offline decision
+      const { connected, grace } = presence.touchSets();
+      const botUserIds = Array.from(localOnlineBotUsers);
+      if (connected.length > 0) {
+        await userHelper.touchUserOnlineStatus(connected, { emitOwnData: true });
       }
+      if (grace.length > 0) {
+        await userHelper.refreshOnlineStatusTimestamps(grace);
+      }
+      await Promise.all(botUserIds.map(userId => syncBotConnectionPresence(userId)));
     }
     catch (e) {
       console.error("Error touching own connected users onlineStatus", e);
@@ -287,22 +735,21 @@ setInterval(async () => {
 const shutdown = async (code = 0) => {
   shuttingDown = true;
   try {
+    // Human users are not set offline here: their clients reconnect (to
+    // another process, or to this one after a restart), and the login there
+    // refreshes their status. Users who do not come back are set offline by
+    // the onlineStatusCheck job once their status is 90 s stale.
+    presence.dispose();
     const sockets = await io.local.fetchSockets();
-    const offlineUserIds = sockets.reduce<string[]>((agg, socket) => {
+    const botUserIds = new Set<string>();
+    for (const socket of sockets) {
       const { userId } = socket.data;
-      if (!!userId) {
-        const ownRoomSize = io.sockets.adapter.rooms.get(userRoomKey(userId))?.size;
-        if (ownRoomSize === 1) {
-          console.log(`User ${userId} will disconnect the last socket and then be offline`);
-          agg.push(userId);
-        }
+      if (!!userId && socket.data.botTokenId) {
+        botUserIds.add(userId);
       }
       socket.disconnect(true);
-      return agg;
-    }, []);
-    if (offlineUserIds.length > 0) {
-      await userHelper.setUsersToOffline(offlineUserIds);
     }
+    await Promise.all(Array.from(botUserIds).map(userId => setBotConnectionPresence(userId, 0)));
     io.close();
   } catch (e) {
     console.error("Error while shutting down", e);
@@ -311,7 +758,7 @@ const shutdown = async (code = 0) => {
   }
 };
 
-fakeHealthcheck();
+startWsapiHealthcheck();
 
 process.on("SIGTERM", () => shutdown());
 process.on("unhandledRejection", (reason, promise) => {

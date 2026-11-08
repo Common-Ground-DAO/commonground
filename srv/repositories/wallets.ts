@@ -8,19 +8,16 @@ import format from "pg-format";
 import pool from "../util/postgres";
 import { type Pool, type PoolClient } from "pg";
 import { ethers } from "ethers";
-import { Signer, hashMessage } from "fuels";
-import { decode, verifyMessage } from "@aeternity/aepp-sdk";
 import onchainHelper from "./onchain";
+import stakingHelper from "./staking";
 import { OnchainPriority } from "../onchain/scheduler";
+import { assertWalletIsNotLastLoginMethod } from "./loginMethods";
+import { assertSiweForThisInstance, assertSiweMessageCurrent, parseSiweMessage } from "../util/siweMessage";
 
-type TypeMapping = {
-  fuel: Models.Wallet.Wallet & { type: "fuel" };
-  evm: Models.Wallet.Wallet & { type: "evm" };
-  cg_evm: Models.Wallet.Wallet & { type: "cg_evm" };
-  contract_evm: Models.Wallet.Wallet & { type: "contract_evm" };
-}
+// the instance binding of a sign-in message lives with the parser
+export { assertSiweForThisInstance } from "../util/siweMessage";
 
-type ToObjectType<T> = T extends keyof TypeMapping ? TypeMapping[T] : never;
+type ToObjectType<T extends Models.Wallet.Type> = Models.Wallet.Wallet & { type: T };
 
 export async function getExistingWalletData(dataSource: Pool | PoolClient, walletIdentifier: Models.Wallet.Wallet['walletIdentifier'], type: Models.Wallet.Wallet['type']) {
   const query = `
@@ -40,7 +37,7 @@ export async function getExistingWalletData(dataSource: Pool | PoolClient, walle
   `;
 
   const result = await dataSource.query(query, [
-    type === 'aeternity' ? walletIdentifier : walletIdentifier.toLowerCase(),
+    walletIdentifier.toLowerCase(),
     type,
   ]);
   return (result.rows[0] as {
@@ -63,7 +60,7 @@ async function _createWallet(
   const params: any[] = [
     data.userId,
     data.type,
-    data.type === 'aeternity' ? data.walletIdentifier : data.walletIdentifier.toLowerCase(),
+    data.walletIdentifier.toLowerCase(),
     data.signatureData,
     data.chain,
   ];
@@ -158,25 +155,6 @@ async function _deleteWallet(
   }
 }
 
-async function _getLoginWalletByIdentifier(
-  dataSource: Pool | PoolClient,
-  walletIdentifier: string
-): Promise<{ userId: string }> {
-  const query = `
-    SELECT "userId", "loginEnabled" FROM wallets
-    WHERE "walletIdentifier" = $1 AND "deletedAt" IS NULL
-  `;
-  const result = await dataSource.query(query, [walletIdentifier]);
-  if (result.rows.length === 1) {
-    const resultWallet = result.rows[0] as { userId: string, loginEnabled: boolean };
-    if (!resultWallet.loginEnabled) {
-      throw new Error(errors.server.WALLET_NOT_ALLOWED_FOR_LOGIN);
-    }
-    return { userId: resultWallet.userId };
-  }
-  throw new Error(errors.server.NOT_FOUND);
-}
-
 async function _getAllWalletsByUserId<T extends Models.Wallet.Type>(
   dataSource: Pool | PoolClient,
   userId: string,
@@ -197,19 +175,8 @@ async function _getAllWalletsByUserId<T extends Models.Wallet.Type>(
       AND "deletedAt" IS NULL
       AND "type" = ANY(${format('ARRAY[%L]::"public"."wallets_type_enum"[]', walletTypes)})
   `;
-  const result = await dataSource.query(query, [userId]);
-  return result.rows as any[];
-  // Todo: Fixme later
-
-  // return result.rows as {
-  //   id: string;
-  //   userId: string;
-  //   type: WalletType;
-  //   walletIdentifier: Common.Address;
-  //   loginEnabled: boolean;
-  //   visibility: Models.Wallet.Visibility,
-  //   signatureData: Models.Wallet.Wallet["signatureData"]
-  // }[];
+  const result: { rows: ToObjectType<T>[] } = await dataSource.query(query, [userId]);
+  return result.rows;
 }
 
 class WalletHelper {
@@ -229,39 +196,32 @@ class WalletHelper {
     if (result.address !== data.address.toLowerCase() || result.nonce !== data.secret) {
       throw new Error(errors.server.INVALID_SIGNATURE);
     }
+    // the message must have been made for this instance (domain and URI):
+    // a signature collected by another site is worthless here
+    assertSiweForThisInstance(result.headerLine, result.uri);
     return result;
   }
 
+  /**
+   * Parses a SIWE message by its structure (srv/util/siweMessage.ts) and
+   * checks that `signature` is the named address's signature of it, that it
+   * is version 1 and not expired or not yet valid. The caller checks what it
+   * is for: the nonce, and the domain and URI (assertSiweForThisInstance).
+   */
   public parseAndVerifySiweData({ message, signature } : {
     message: string;
     signature: string;
   }) {
+    const parsed = parseSiweMessage(message);
+    if (parsed.version !== '1') {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
     const signer = ethers.verifyMessage(message, signature).toLowerCase() as Common.Address;
-    const lines = message.split('\n');
-    if (lines.length < 10) {
-      throw new Error(errors.server.INVALID_REQUEST);
-    }
-    const address = lines[1].match(/^0x[0-9a-fA-F]{40}$/)?.[0]?.toLowerCase() as Common.Address | undefined;
-    const uri = lines[5].split('URI: ')[1];
-    const version = lines[6].split('Version: ')[1];
-    const chainId = lines[7].split('Chain ID: ')[1];
-    const nonce = lines[8].split('Nonce: ')[1];
-    const issuedAt = lines[9].split('Issued At: ')[1];
-
-    if (!address || !uri || !version || !chainId || !nonce || !issuedAt) {
-      throw new Error(errors.server.INVALID_REQUEST);
-    }
-    if (signer !== address) {
+    if (signer !== parsed.address) {
       throw new Error(errors.server.INVALID_SIGNATURE);
     }
-    return {
-      address,
-      uri,
-      version,
-      chainId,
-      nonce,
-      issuedAt,
-    };
+    assertSiweMessageCurrent(parsed);
+    return parsed;
   }
 
   public async prepareWalletAction(data: API.User.prepareWalletAction.Request, sessionUserId: string | null): Promise<Models.Server.Session.PreparedCredential> {
@@ -283,24 +243,6 @@ class WalletHelper {
         parsedSiweData = this.parseAndVerifySiweWalletData({ data: data.data, signature: data.signature });
         walletValid = true;
         walletIdentifier = parsedSiweData.address;
-
-      } else if (data.data.type === WalletType.FUEL) {
-        const signer = Signer.recoverAddress(hashMessage(data.data.secret), data.signature).toString();
-        if (signer !== data.data.address) {
-          throw new Error(errors.server.INVALID_SIGNATURE);
-        }
-        walletValid = true;
-        walletIdentifier = data.data.address;
-
-      } else if (data.data.type === WalletType.AETERNITY) {
-        const signer = decode(data.signature as any);
-        const uint8Array = Uint8Array.from(signer);
-        const verifiedSignature = verifyMessage(data.data.secret, uint8Array , data.data.address);
-        if (!verifiedSignature) {
-          throw new Error(errors.server.INVALID_SIGNATURE);
-        }
-        walletValid = true;
-        walletIdentifier = data.data.address;
 
       } else {
         requestValid = false;
@@ -344,6 +286,8 @@ class WalletHelper {
       type: "wallet",
       preWallet,
       ownerId,
+      walletIdentifier: walletIdentifier?.toLowerCase(),
+      walletType: data.type,
       result: {
         walletExists,
         walletValid,
@@ -358,6 +302,9 @@ class WalletHelper {
 
   public async createWallet(userId: string, preWallet: Omit<Models.Wallet.Wallet, "id" | "userId">): Promise<Models.Wallet.Wallet> {
     const { id } = await _createWallet(pool, { ...preWallet, userId });
+    await stakingHelper.syncClaimsForUser(userId).catch(e => {
+      console.error("Error claiming staking positions after wallet link", e);
+    });
     return {
       ...preWallet,
       userId,
@@ -365,17 +312,25 @@ class WalletHelper {
     } as Models.Wallet.Wallet;
   }
 
-  public async updateWallet(userId: string, data: API.User.updateWallet.Request): Promise<void> {
-    await _updateWallet(pool, userId, data);
-  }
-
-  public async deleteWallet(userId: string, data: API.User.deleteWallet.Request): Promise<void> {
+  /**
+   * `keepLoginMethod`: refuse (LAST_LOGIN_METHOD) to switch off the account's
+   * last sign-in method (srv/repositories/loginMethods.ts); `rpId` is the
+   * passkey relying party whose passkeys count.
+   */
+  public async updateWallet(userId: string, data: API.User.updateWallet.Request, keepLoginMethod?: { rpId: string | null }, beforeCommit?: (client: PoolClient) => Promise<void>): Promise<void> {
+    if ((!keepLoginMethod || data.loginEnabled !== false) && !beforeCommit) {
+      await _updateWallet(pool, userId, data);
+      return;
+    }
     const client = await pool.connect();
-    let roleData: Awaited<ReturnType<typeof this._walletDeleted_clearBalancesAndGetAffectedRoles>> | undefined;
     await client.query("BEGIN");
     try {
-      await _deleteWallet(client, userId, data);
-      roleData = await this._walletDeleted_clearBalancesAndGetAffectedRoles(client, userId, data.id);
+      if (keepLoginMethod && data.loginEnabled === false) {
+        await assertWalletIsNotLastLoginMethod(client, userId, keepLoginMethod.rpId, data.id);
+      }
+      await _updateWallet(client, userId, data);
+      // the caller's own step in the same transaction
+      await beforeCommit?.(client);
       await client.query("COMMIT");
     }
     catch (e) {
@@ -385,8 +340,40 @@ class WalletHelper {
     finally {
       client.release();
     }
+  }
+
+  /** `keepLoginMethod`: as for updateWallet — the account's last sign-in method cannot be deleted. */
+  public async deleteWallet(userId: string, data: API.User.deleteWallet.Request, keepLoginMethod?: { rpId: string | null }, beforeCommit?: (client: PoolClient) => Promise<void>): Promise<void> {
+    const client = await pool.connect();
+    let roleData: Awaited<ReturnType<typeof this._walletDeleted_clearBalancesAndGetAffectedRoles>> | undefined;
+    await client.query("BEGIN");
+    try {
+      if (keepLoginMethod) {
+        await assertWalletIsNotLastLoginMethod(client, userId, keepLoginMethod.rpId, data.id);
+      }
+      await _deleteWallet(client, userId, data);
+      roleData = await this._walletDeleted_clearBalancesAndGetAffectedRoles(client, userId, data.id);
+      // the caller's own step in the same transaction
+      await beforeCommit?.(client);
+      await client.query("COMMIT");
+    }
+    catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    }
+    finally {
+      client.release();
+    }
+    await stakingHelper.syncClaimsForUser(userId).catch(e => {
+      console.error("Error unclaiming staking positions after wallet delete", e);
+    });
     if (roleData !== undefined && roleData.length > 0) {
-      await onchainHelper.checkMultiRoleClaimability({ userId, roleData, priority: OnchainPriority.HIGH });
+      // best-effort: the wallet row is already committed, so a failing
+      // onchain call (service down or deliberately not deployed) must not
+      // turn a successful delete into an error response
+      await onchainHelper.checkMultiRoleClaimability({ userId, roleData, priority: OnchainPriority.HIGH }).catch(e => {
+        console.error("Error re-checking role claimability after wallet delete", e);
+      });
     }
   }
 
@@ -427,34 +414,6 @@ class WalletHelper {
       id: row.roleId,
       assignmentRules: row.assignmentRules as Models.Community.AssignmentRules & { type: "token" },
     }));
-  }
-
-  public async getLoginWalletUserId(
-    data: API.User.SignableWalletData,
-    signature: string
-  ): Promise<{ userId: string }> {
-    if(data.type === "fuel"){
-      const signer = Signer.recoverAddress(hashMessage(data.secret), signature).toString();
-      if (signer !== data.address) {
-        throw new Error(errors.server.INVALID_SIGNATURE);
-      }
-      return await _getLoginWalletByIdentifier(pool, signer);
-    } else if (data.type === "aeternity"){
-      const signer = decode(signature as any);
-      const uint8Array = Uint8Array.from(signer);
-      const verifiedSignature = verifyMessage(data.secret, uint8Array , data.address);
-      if (!verifiedSignature) {
-        throw new Error(errors.server.INVALID_SIGNATURE);
-      }
-      return await _getLoginWalletByIdentifier(pool, data.address);
-    }
-    else {
-      const parsedSiweData = this.parseAndVerifySiweWalletData({ data, signature });
-      if (parsedSiweData.address.toLowerCase() !== data.address.toLowerCase()) {
-        throw new Error(errors.server.INVALID_SIGNATURE);
-      }
-      return await _getLoginWalletByIdentifier(pool, parsedSiweData.address);
-    }
   }
 
   public async getWalletOwnerId(walletIdentifier: string) {
@@ -618,6 +577,31 @@ class WalletHelper {
     }[];
   }
 
+  /**
+   * Whether the wallet is (still) a live, login-enabled wallet of `userId`:
+   * checked again when a prepared signature is used, since the wallet may
+   * have been removed or its sign-in switched off since.
+   */
+  public async isSignInWallet(userId: string, walletIdentifier: string, type: Models.Wallet.Type): Promise<boolean> {
+    const result = await pool.query(`
+      SELECT 1
+      FROM wallets
+      WHERE "walletIdentifier" = $1 AND "type" = $2 AND "userId" = $3
+        AND "loginEnabled" = TRUE AND "deletedAt" IS NULL
+    `, [walletIdentifier.toLowerCase(), type, userId]);
+    return result.rows.length === 1;
+  }
+
+  /** loginEnabled flag of one of the user's live wallets, or null if it is not theirs. */
+  public async getOwnWalletLoginEnabled(userId: string, walletId: string): Promise<boolean | null> {
+    const result = await pool.query<{ loginEnabled: boolean }>(`
+      SELECT "loginEnabled"
+      FROM wallets
+      WHERE "id" = $1 AND "userId" = $2 AND "deletedAt" IS NULL
+    `, [walletId, userId]);
+    return result.rows.length === 1 ? result.rows[0].loginEnabled : null;
+  }
+
   public async _getAllContractWalletsByChain(chain: Models.Contract.ChainIdentifier) {
     const query = `
       SELECT
@@ -635,99 +619,6 @@ class WalletHelper {
       signatureData: Models.Wallet.Wallet["signatureData"];
     }>(query, [chain]);
     return result.rows;
-  }
-
-  public async addPasskey(userId: string | null, passkeyData: Models.Passkey.FullData, counter: number) {
-    const query = `
-      INSERT INTO passkeys ("userId", "data", "counter")
-      VALUES ($1, $2::jsonb, $3)
-      RETURNING id
-    `;
-    const result = await pool.query(query, [userId, JSON.stringify(passkeyData), counter]);
-    return result.rows[0].id as string;
-  }
-
-  public async updatePasskeyCounter(passkeyId: string, counter: number) {
-    const query = `
-      UPDATE passkeys
-      SET counter = $1, "updatedAt" = now()
-      WHERE id = $2
-    `;
-    const result = await pool.query(query, [counter, passkeyId]);
-    if (result.rowCount !== 1) {
-      throw new Error(errors.server.NOT_ALLOWED);
-    }
-  }
-
-  public async getUserPasskeys(userId: string) {
-    const query = `
-      SELECT id, "createdAt", "updatedAt", data, counter
-      FROM passkeys
-      WHERE "userId" = $1
-        AND "deletedAt" IS NULL
-      ORDER BY "updatedAt" DESC
-    `;
-    const result = await pool.query<{
-      id: string;
-      createdAt: string;
-      updatedAt: string;
-      data: Models.Passkey.FullData;
-      counter: number;
-    }>(query, [userId]);
-    return result.rows;
-  }
-
-  public async getPasskeyById(id: string) {
-    const query = `
-      SELECT
-        id,
-        "userId",
-        data,
-        counter,
-        "updatedAt",
-        "deletedAt"
-      FROM passkeys
-      WHERE id = $1
-    `;
-    const result = await pool.query<{
-      id: string;
-      userId: string | null;
-      data: Models.Passkey.FullData;
-      counter: number;
-      updatedAt: string;
-      deletedAt: string | null;
-    }>(query, [id]);
-    if (result.rows.length !== 1) {
-      throw new Error(errors.server.NOT_FOUND);
-    }
-    return result.rows[0];
-  }
-
-  public async getPasskeyByCredentialIdAndWebAuthnUserId({ credentialID, webAuthnUserID }: {
-    credentialID: string;
-    webAuthnUserID: string;
-  }) {
-    const query = `
-      SELECT
-        id,
-        "userId",
-        data,
-        counter,
-        "updatedAt",
-        "deletedAt"
-      FROM passkeys
-      WHERE data->>'credentialID' = $1
-        AND data->>'webAuthnUserID' = $2
-    `;
-    const result = await pool.query<{
-      id: string;
-      userId: string | null;
-      data: Models.Passkey.FullData;
-      counter: number;
-      updatedAt: string;
-      deletedAt: string | null;
-    }>(query, [credentialID, webAuthnUserID]);
-    return result.rows.length > 0 ? result.rows[0] : null;
   }
 }
 

@@ -2,16 +2,18 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { useLocation } from 'react-router-dom';
+import React from 'react';
+import { useLocation } from 'react-router';
 
 import "./CommunityPhoto.css";
 import { getUrl } from 'common/util';
 import { useLiveQuery } from 'dexie-react-hooks';
 import data from 'data';
-import { ReactComponent as OfficialIcon } from "../../../components/atoms/icons/20/OfficialIcon.svg";
+import OfficialIcon from "../../../components/atoms/icons/20/OfficialIcon.svg?react";
 import { useMemo } from 'react';
 import dayjs from 'dayjs';
 import { getTierElementIcon } from 'util/index';
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
     community: Pick<Models.Community.ListView, 'logoSmallId' | 'logoLargeId' | 'official' | 'premium' | 'url'>;
@@ -41,7 +43,7 @@ export default function CommunityPhoto(props: Props) {
     ), [size, noHover, location.pathname, community?.url]);
 
     return useMemo(() => {
-        let extraIcon: JSX.Element | undefined = undefined;
+        let extraIcon: React.JSX.Element | undefined = undefined;
         if (showExtraIcon) {
             if (!!community.official) {
                 extraIcon = <OfficialIcon className="community-photo-official-icon w-4 h-4 absolute -right-1 -bottom-1"/>;
@@ -51,7 +53,7 @@ export default function CommunityPhoto(props: Props) {
             }
         }
 
-        return <div className={className} style={!!signedUrl ? { backgroundImage: `url(${signedUrl.url})` } : undefined}>
+        return <div className={className} style={!!signedUrl ? { backgroundImage: cssBackgroundImage(signedUrl.url) } : undefined}>
             {extraIcon}
         </div>;
     }, [className, signedUrl?.url, showExtraIcon, community.official]);

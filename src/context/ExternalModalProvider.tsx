@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 import ExternalLinkModal from "components/molecules/ExternalLinkModal/ExternalLinkModal";
 
 type MobileUserTooltipState = {

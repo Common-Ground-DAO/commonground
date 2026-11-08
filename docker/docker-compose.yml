@@ -1,56 +1,92 @@
-version: "3.1"
 services:
   db:
     build:
       context: ./db
-    image: cryptogram/db
+    # tag = Postgres major, so a leftover 14 image (cryptogram/db:latest) is
+    # never started on the 18 mount path below — it would initialize an
+    # empty cluster in an anonymous volume
+    image: cryptogram/db:18
+    # without an explicit config_file, postgres ignores the mounted
+    # postgresql.conf and runs on image defaults
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     environment:
       - POSTGRES_DB=postgres
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=${PG_SU_PASSWORD}
       - PG_WRITER_PASSWORD=${PG_WRITER_PASSWORD}
       - PG_READER_PASSWORD=${PG_READER_PASSWORD}
+      - PG_MEDIASOUP_PASSWORD=${PG_MEDIASOUP_PASSWORD}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # Postgres 18 keeps its cluster in <volume>/18/docker. A volume from
+      # Postgres 14 (cluster at the volume root) is refused at startup —
+      # see "Postgres major upgrades" in docs/infrastructure/README.md
+      - pgdata:/var/lib/postgresql
       - ./db/postgresql.conf:/etc/postgresql/postgresql.conf
     networks:
       - cryptogram
     shm_size: '256m'
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -h 127.0.0.1"]
       interval: 1m
       timeout: 5s
       retries: 5
+      # fast probing during startup so dependents aren't held for the full
+      # 1m interval on first boot (fresh cluster init takes several seconds)
+      start_period: 2m
+      start_interval: 2s
     ports:
       - 127.0.0.1:5432:5432
     stop_signal: SIGINT
     stop_grace_period: 1m
     restart: unless-stopped
 
-  redis-sessions:
-    image: redis:6.2.7-alpine
-    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 2GB --save ""
+  # Valkey (Redis-protocol compatible), two instances split by what may be
+  # lost — see docs/infrastructure/README.md#redis-and-redis-cache-valkey.
+  # `redis` holds state: sessions, the Socket.IO pub/sub, rate-limit windows,
+  # replay guards, the shared captcha key, presence. No eviction (a full
+  # instance refuses writes instead of silently dropping a session) and RDB
+  # snapshots in a volume, so a restart does not log everyone out. A failed
+  # background save must not stop writes: losing the last minutes of state on
+  # a crash is better than refusing every login.
+  redis:
+    image: valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+    command: valkey-server --requirepass ${REDIS_PASSWORD} --maxmemory 1gb --maxmemory-policy noeviction --save "900 1 300 100" --stop-writes-on-bgsave-error no --appendonly no
+    environment:
+      # lets valkey-cli in the healthcheck authenticate without a command-line password
+      - REDISCLI_AUTH=${REDIS_PASSWORD}
+    healthcheck:
+      # healthy once the server answers an authenticated PING
+      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 1m
+      start_interval: 2s
+    volumes:
+      - valkey-data:/data
     networks:
       - cryptogram
+    # time for the final RDB save on shutdown
+    stop_grace_period: 1m
     restart: unless-stopped
 
-  redis-socketio:
-    image: redis:6.2.7-alpine
-    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 2GB --save ""
-    networks:
-      - cryptogram
-    restart: unless-stopped
-
-  redis-data:
-    image: redis:6.2.7-alpine
-    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 2GB --save ""
-    networks:
-      - cryptogram
-    restart: unless-stopped
-
-  redis-blockscout:
-    image: redis:6.2.7-alpine
-    command: redis-server --maxmemory 2GB --save ""
+  # `redis-cache` holds only data that can be rebuilt (the URL-preview
+  # cache): own memory budget, least-recently-used eviction, no persistence,
+  # so a filling cache can never push `redis` into out-of-memory errors
+  redis-cache:
+    image: valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+    command: valkey-server --requirepass ${REDIS_PASSWORD} --maxmemory 256mb --maxmemory-policy allkeys-lru --save "" --appendonly no
+    environment:
+      # lets valkey-cli in the healthcheck authenticate without a command-line password
+      - REDISCLI_AUTH=${REDIS_PASSWORD}
+    healthcheck:
+      # healthy once the server answers an authenticated PING
+      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 1m
+      start_interval: 2s
     networks:
       - cryptogram
     restart: unless-stopped
@@ -58,64 +94,62 @@ services:
   wsapi:
     image: cryptogram/backend
     environment:
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the BASE_URL host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SECRET=${REDIS_SECRET}
       - DEPLOYMENT=${DEPLOYMENT}
       - BASE_URL=${BASE_URL}
-      - CGID_URL=${BASE_URL}/index_cgid.html
       - LOCAL_CERTIFICATE_IP=${LOCAL_CERTIFICATE_IP}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
     depends_on:
-      - db
-      - redis-sessions
-      - redis-socketio
-      - redis-data
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
     networks:
       - cryptogram
     command: ["node", "/dist/wsapi.js"]
     stop_grace_period: 1m
     restart: unless-stopped
 
-  seaweedmaster:
-    image: chrislusf/seaweedfs
-    command: "master -ip=seaweedmaster -volumeSizeLimitMB=16"
-    restart: unless-stopped
-    networks:
-      - cryptogram
-    environment:
-      WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
-      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
-  
-  seaweedvolume:
-    image: chrislusf/seaweedfs
-    command: "volume -mserver=seaweedmaster:9333 -port=8080 -ip=seaweedvolume -preStopSeconds=1"
-    restart: unless-stopped
-    volumes:
-      - seaweedfs-volume:/data
-    networks:
-      - cryptogram
-    depends_on:
-      - seaweedmaster
-
-  s3:
-    image: chrislusf/seaweedfs
-    command: 'filer -master="seaweedmaster:9333" -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333'
+  # one all-in-one `weed server` process instead of separate master/volume/filer
+  # containers: -s3 implies -filer, so this single service serves master 9333,
+  # volume 8080, filer 8888 and the S3 gateway on 8333. Only 8333 (alias
+  # s3.local) is consumed by anything else in the stack.
+  # -s3.port.iceberg=0 turns off the Iceberg REST catalog that 4.40+ otherwise
+  # starts on 8181 — nothing here speaks Iceberg.
+  # Volume blobs and the filer leveldb (filerldb2/) share one /data volume, so a
+  # filesystem snapshot of it is atomic across blobs and metadata.
+  seaweed:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    command: "server -dir=/data -ip=seaweed -master.volumeSizeLimitMB=16 -volume.max=0 -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.port.iceberg=0"
     restart: unless-stopped
     networks:
       cryptogram:
         aliases:
           - s3.local
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
     volumes:
       - ./s3_config/s3.json:/etc/seaweedfs/s3.json:ro
-      - seaweedfs-buckets:/data
-    depends_on:
-      - seaweedmaster
-      - seaweedvolume
+      - seaweedfs-data:/data
 
   migrate-db:
     image: cryptogram/backend
     environment: 
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the BASE_URL host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - PG_SU_PASSWORD=${PG_SU_PASSWORD}
       - PG_MEDIASOUP_PASSWORD=${PG_MEDIASOUP_PASSWORD}
       - PG_SU_NAME=postgres
@@ -123,8 +157,13 @@ services:
       - S3_SECRET=${S3_SECRET}
       - DEPLOYMENT=${DEPLOYMENT}
       - BASE_URL=${BASE_URL}
+    # Gate on a HEALTHY db (same as docker-compose.selfhost.yml): on a fresh
+    # volume postgres initializes for several seconds, migrateDb.js does not
+    # retry, and the restart policy's immediate retries are spent before the
+    # db accepts connections — leaving no schema and no `mediasoup` role.
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     networks:
       - cryptogram
     deploy:
@@ -134,6 +173,10 @@ services:
         max_attempts: 2
         window: 60s
     command: node /dist/migrateDb.js
+    # a one-shot run: the image's health check (the report of a long-running
+    # process, srv/healthcheck.ts) does not apply
+    healthcheck:
+      disable: true
     stop_grace_period: 1m
 
   api:
@@ -142,31 +185,67 @@ services:
       dockerfile: Dockerfile_dev_stage_1
     image: cryptogram/backend
     environment: 
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the BASE_URL host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SECRET=${REDIS_SECRET}
-      - REDIS_LEGACY_MODE=true
       - DEPLOYMENT=${DEPLOYMENT}
       - BASE_URL=${BASE_URL}
+      # read only with CG_LEGACY_CGID=true (the CG ID app's RP and CORS origin)
       - CGID_URL=${BASE_URL}/index_cgid.html
       - S3_SECRET=${S3_SECRET}
+      - STAKING_CHAIN=${STAKING_CHAIN:-}
+      - STAKING_TOKEN_ADDRESS=${STAKING_TOKEN_ADDRESS:-}
+      - STAKING_CONTRACT_ADDRESS=${STAKING_CONTRACT_ADDRESS:-}
+      - STAKING_BASE_RATE=${STAKING_BASE_RATE:-}
+      - STAKING_MIN_LOCK_DAYS=${STAKING_MIN_LOCK_DAYS:-}
+      - STAKING_MAX_LOCK_DAYS=${STAKING_MAX_LOCK_DAYS:-}
       - LOCAL_CERTIFICATE_IP=${LOCAL_CERTIFICATE_IP}
       - TWITTER_CALLBACK_URL=${TWITTER_CALLBACK_URL}
       - TWITTER_OAUTH2_CLIENT_ID=${TWITTER_OAUTH2_CLIENT_ID}
       - TWITTER_OAUTH2_CLIENT_SECRET=${TWITTER_OAUTH2_CLIENT_SECRET}
       - GOOGLE_RECAPTCHA_SECRET_KEY=${GOOGLE_RECAPTCHA_SECRET_KEY}
-      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
-      - SUMSUB_SECRET_KEY=${SUMSUB_SECRET_KEY}
-      - SUMSUB_APP_TOKEN=${SUMSUB_APP_TOKEN}
+      - CAPTCHA_PROVIDER=${CAPTCHA_PROVIDER:-}
+      - IMAGE_MODERATION_ENABLED=${IMAGE_MODERATION_ENABLED:-true}
+      - IMAGE_MODERATION_THRESHOLD=${IMAGE_MODERATION_THRESHOLD:-}
+      - IMAGE_MODERATION_MODEL_PATH=${IMAGE_MODERATION_MODEL_PATH:-}
+      - ALTCHA_HMAC_KEY=${ALTCHA_HMAC_KEY:-}
+      # outgoing mail; unset = the mailpit catcher below, empty SMTP_HOST =
+      # email disabled (docs/email-notifications)
+      - SMTP_HOST=${SMTP_HOST-mailpit}
+      - SMTP_PORT=${SMTP_PORT-1025}
+      - SMTP_SECURITY=${SMTP_SECURITY-none}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL_FROM=${EMAIL_FROM:-}
+      - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-}
+      - CG_ENABLE_NEWSLETTERS=${CG_ENABLE_NEWSLETTERS:-true}
+      - PLATFORM_OPERATOR_USER_IDS=${PLATFORM_OPERATOR_USER_IDS:-}
+      - BOT_USER_OWNER_LIMIT=${BOT_USER_OWNER_LIMIT:-5}
+      - BOT_COMMUNITY_OWNER_LIMIT=${BOT_COMMUNITY_OWNER_LIMIT:-10}
+      - BOT_PLATFORM_OWNER_LIMIT=${BOT_PLATFORM_OWNER_LIMIT:-10}
+      - BOT_ACTIVE_TOKEN_LIMIT=${BOT_ACTIVE_TOKEN_LIMIT:-10}
+      - BOT_API_RATE_LIMIT_PER_MINUTE=${BOT_API_RATE_LIMIT_PER_MINUTE:-120}
+      - BOT_MESSAGE_RATE_LIMIT_PER_MINUTE=${BOT_MESSAGE_RATE_LIMIT_PER_MINUTE:-30}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
     depends_on:
-      - db
-      - redis-sessions
-      - redis-socketio
-      - redis-data
-      - seaweedmaster
-      - s3
-      - memberlist
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+      redis-cache:
+        condition: service_started
+      seaweed:
+        condition: service_started
+      memberlist:
+        condition: service_started
     networks:
       - cryptogram
     volumes:
@@ -179,13 +258,21 @@ services:
   memberlist:
     image: cryptogram/backend
     environment: 
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the BASE_URL host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - DEPLOYMENT=${DEPLOYMENT}
       - BASE_URL=${BASE_URL}
-      - CGID_URL=${BASE_URL}/index_cgid.html
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
     depends_on:
-      - db
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
     networks:
       - cryptogram
     command: ["node", "/dist/memberlist.js"]
@@ -195,22 +282,42 @@ services:
   job-runner:
     image: cryptogram/backend
     environment: 
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the BASE_URL host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SECRET=${REDIS_SECRET}
       - DEPLOYMENT=${DEPLOYMENT}
       - BASE_URL=${BASE_URL}
-      - CGID_URL=${BASE_URL}/index_cgid.html
       - S3_SECRET=${S3_SECRET}
-      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
+      - STAKING_CHAIN=${STAKING_CHAIN:-}
+      - STAKING_TOKEN_ADDRESS=${STAKING_TOKEN_ADDRESS:-}
+      - STAKING_CONTRACT_ADDRESS=${STAKING_CONTRACT_ADDRESS:-}
+      - STAKING_BASE_RATE=${STAKING_BASE_RATE:-}
+      - STAKING_MIN_LOCK_DAYS=${STAKING_MIN_LOCK_DAYS:-}
+      - STAKING_MAX_LOCK_DAYS=${STAKING_MAX_LOCK_DAYS:-}
+      - SMTP_HOST=${SMTP_HOST-mailpit}
+      - SMTP_PORT=${SMTP_PORT-1025}
+      - SMTP_SECURITY=${SMTP_SECURITY-none}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL_FROM=${EMAIL_FROM:-}
+      - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-}
+      - CG_ENABLE_NEWSLETTERS=${CG_ENABLE_NEWSLETTERS:-true}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
     depends_on:
-      - db
-      - redis-sessions
-      - redis-socketio
-      - redis-data
-      - seaweedmaster
-      - s3
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+      seaweed:
+        condition: service_started
     networks:
       - cryptogram
     command: ["node", "/dist/jobs.js"]
@@ -220,30 +327,49 @@ services:
   mediasoup:
     image: cryptogram/backend
     environment: 
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the BASE_URL host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
+      - BASE_URL=${BASE_URL}
       - DB_TYPE=mediasoup
       - PG_PASSWORD=${PG_MEDIASOUP_PASSWORD}
       - DEPLOYMENT=${DEPLOYMENT}
-      - HTTPS_CERT_FULLCHAIN=/dist/mediasoup/certs/nginx_certs/server-complete.pem
-      - HTTPS_CERT_PRIVKEY=/dist/mediasoup/certs/nginx_certs/key.pem
+      # self-signed certificate for the hop from caddy (which terminates the
+      # browser's wss on :4443) to mediasoup; generated by
+      # docker/mediasoup/ensureInternalCert.sh, never seen by a browser
+      - HTTPS_CERT_FULLCHAIN=/run/mediasoup-certs/server.crt
+      - HTTPS_CERT_PRIVKEY=/run/mediasoup-certs/server.key
       - MEDIASOUP_ANNOUNCED_IP=${MEDIASOUP_ANNOUNCED_IP}
       - DOMAIN=${MEDIASOUP_ANNOUNCED_IP}
-      - DEBUG=mediasoup*
       - INTERACTIVE=false
       - LOCAL_CERTIFICATE_IP=${LOCAL_CERTIFICATE_IP}
       - MEDIASOUP_DISABLE_LIBURING=${MEDIASOUP_DISABLE_LIBURING}
+      # signalling (4443) is only reachable through caddy, which sets X-Forwarded-For
+      - MEDIASOUP_TRUST_PROXY=true
     volumes:
-      - "./nginx/certs:/dist/mediasoup/certs"
+      - "./mediasoup/certs:/run/mediasoup-certs:ro"
+    # the `mediasoup` DB role (and its password) is created by a migration, so
+    # on a fresh database the first connection fails until migrate-db is done
+    # — and with restart "no" the container would stay dead
+    depends_on:
+      migrate-db:
+        condition: service_completed_successfully
     networks:
       - cryptogram
     command: ["node", "/dist/mediasoup.js"]
+    # call signalling (4443) is published by caddy
     ports:
-      - "${EXTERNAL_LISTEN_IP}:4443:4443/tcp"
       - "${EXTERNAL_LISTEN_IP}:40000-40099:40000-40099/udp"
     restart: "no"
 
   onchain:
     image: cryptogram/backend
     environment: 
+      # passkeys (docs/auth-identity §7): PASSKEY_RP_ID empty = the BASE_URL host;
+      # CG_LEGACY_CGID=true only on a legacy CG ID (gateway) instance
+      - PASSKEY_RP_ID=${PASSKEY_RP_ID:-}
+      - CG_LEGACY_CGID=${CG_LEGACY_CGID:-false}
       - DB_TYPE=writer
       - PG_PASSWORD=${PG_WRITER_PASSWORD}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
@@ -264,31 +390,103 @@ services:
       - QUIKNODE_POLYGON_ZKEVM=${QUIKNODE_POLYGON_ZKEVM}
       - QUIKNODE_SCROLL=${QUIKNODE_SCROLL}
       - QUIKNODE_ZKSYNC=${QUIKNODE_ZKSYNC}
+      - QUIKNODE_LUKSO=${QUIKNODE_LUKSO}
+      - STAKING_CHAIN=${STAKING_CHAIN:-}
+      - STAKING_TOKEN_ADDRESS=${STAKING_TOKEN_ADDRESS:-}
+      - STAKING_CONTRACT_ADDRESS=${STAKING_CONTRACT_ADDRESS:-}
+      - STAKING_BASE_RATE=${STAKING_BASE_RATE:-}
+      - STAKING_MIN_LOCK_DAYS=${STAKING_MIN_LOCK_DAYS:-}
+      - STAKING_MAX_LOCK_DAYS=${STAKING_MAX_LOCK_DAYS:-}
       - RECALCULATE_BALANCES_AND_ROLES=${RECALCULATE_BALANCES_AND_ROLES}
       - BASE_URL=${BASE_URL}
+      - IMAGE_MODERATION_ENABLED=${IMAGE_MODERATION_ENABLED:-true}
+      - IMAGE_MODERATION_THRESHOLD=${IMAGE_MODERATION_THRESHOLD:-}
+      - IMAGE_MODERATION_MODEL_PATH=${IMAGE_MODERATION_MODEL_PATH:-}
+    # the schema must be current before any query: migrate-db has to exit 0
+    # first (on a fresh install and after every update that brings migrations)
     depends_on:
-      - db
-      - redis-sessions
-      - redis-socketio
-      - redis-data
+      migrate-db:
+        condition: service_completed_successfully
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
     networks:
       - cryptogram
     command: ["node", "/dist/onchain.js"]
     stop_grace_period: 1m
     restart: unless-stopped
 
-  nginx:
+  # the edge (docker/caddy, Caddyfile.dev): the built frontend and the
+  # routing to the backend on :8000 (HTTP) and :8001 (HTTPS), call signalling
+  # on :4443. Certificates come from Caddy's local CA in the caddy-data volume;
+  # ./run.sh export_ca writes its root for importing into a browser.
+  caddy:
     build:
-      context: ./nginx
-      dockerfile: Dockerfile_dev
-      args:
-        - NGINX_EXPOSED_ON=${LOCAL_CERTIFICATE_IP}
+      context: ./caddy
+    image: cryptogram/caddy
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile.dev", "--adapter", "caddyfile"]
+    environment:
+      # the LAN address as an extra certificate name, and the certificate
+      # for connections without SNI (IP addresses) — see Caddyfile.dev
+      - CG_DEV_LAN_IP=${LOCAL_CERTIFICATE_IP:-}
+      - CG_DEV_LAN=${LOCAL_CERTIFICATE_IP:+_on}
+      - CG_DEV_DEFAULT_SNI=${LOCAL_CERTIFICATE_IP:-127.0.0.1}
     ports:
-      - ${EXTERNAL_LISTEN_IP}:8000:80
-      - ${EXTERNAL_LISTEN_IP}:8001:443
-    image: cryptogram/nginx
+      - ${EXTERNAL_LISTEN_IP}:8000:8000
+      - ${EXTERNAL_LISTEN_IP}:8001:8001
+      - ${EXTERNAL_LISTEN_IP}:4443:4443
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    # healthy once the local CA exists (vite-tls waits for that, so the two
+    # never create a CA each on a fresh volume) and the HTTP site answers
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /data/caddy/pki/authorities/local/root.crt && wget -q -O /dev/null http://127.0.0.1:8000/robots.txt"]
+      interval: 1m
+      timeout: 5s
+      retries: 3
+      start_period: 1m
+      start_interval: 2s
     depends_on:
       - api
+    networks:
+      - cryptogram
+    restart: unless-stopped
+
+  # TLS for the Vite dev server, started and stopped by `./run.sh start_https`
+  # (docker/caddy/Caddyfile.vite). Stock Caddy image with the config
+  # bind-mounted; shares caddy-data, so it uses the caddy service's local CA —
+  # and starts only once caddy has created it.
+  vite-tls:
+    image: caddy:2.11.6-alpine@sha256:d44355d3c2149dc580ce2cac735955d1c08d3d00882c30489c241aa51a5c10d9
+    profiles: ["vite-tls"]
+    depends_on:
+      caddy:
+        condition: service_healthy
+    environment:
+      - CG_DEV_LAN_IP=${LOCAL_CERTIFICATE_IP:-}
+      - CG_DEV_LAN=${LOCAL_CERTIFICATE_IP:+_on}
+      - CG_DEV_DEFAULT_SNI=${LOCAL_CERTIFICATE_IP:-127.0.0.1}
+    ports:
+      - ${EXTERNAL_LISTEN_IP}:3000:3000
+    volumes:
+      - ./caddy/Caddyfile.vite:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    networks:
+      - cryptogram
+    restart: "no"
+
+  # catches every mail the dev stack sends (nothing leaves the machine); web
+  # UI on http://<EXTERNAL_LISTEN_IP>:8025, SMTP on mailpit:1025 inside the
+  # network only
+  mailpit:
+    image: axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498
+    ports:
+      # careful with EXTERNAL_LISTEN_IP=0.0.0.0: the web UI has no login and
+      # shows every caught mail, login codes and verification links included —
+      # anyone on the network could log in as any account that uses them
+      - ${EXTERNAL_LISTEN_IP}:8025:8025
     networks:
       - cryptogram
     restart: unless-stopped
@@ -297,7 +495,7 @@ services:
     build:
       context: ./hardhat
     image: cryptogram/hardhat
-    command: npx hardhat node
+    command: npx --no hardhat node
     user: hardhat
     ports:
       - ${EXTERNAL_LISTEN_IP}:8545:8545
@@ -305,53 +503,6 @@ services:
       - cryptogram
     stop_grace_period: 5s
     restart: unless-stopped
-
-  # llama:
-  #   image: ghcr.io/ggml-org/llama.cpp:server-cuda-b5618
-  #   command: >
-  #     --hf-repo unsloth/Qwen3-4B-GGUF:q4_k_m
-  #     --port 8000
-  #     --threads 6
-  #     --ctx-size 4096
-  #     --flash-attn
-  #     --batch-size 512
-  #     --gpu-layers 999
-  #     --host 0.0.0.0
-  #     --cache-type-k q8_0
-  #     --cache-type-v q8_0
-  #     --jinja
-  #     --reasoning-format deepseek
-  #     --alias "Qwen3 4B"
-  #     --api-key ${AI_API_KEY}
-  #   environment:
-  #     - HOME=/data
-  #   networks:
-  #     - cryptogram
-  #   volumes:
-  #     - ./llama/data:/data
-  #   restart: unless-stopped
-  #   user: "${BUILDER_UID}"
-
-  # assistant:
-  #   image: cryptogram/backend
-  #   environment: 
-  #     - DB_TYPE=writer
-  #     - PG_PASSWORD=${PG_WRITER_PASSWORD}
-  #     - REDIS_PASSWORD=${REDIS_PASSWORD}
-  #     - REDIS_SECRET=${REDIS_SECRET}
-  #     - DEPLOYMENT=${DEPLOYMENT}
-  #     - BASE_URL=${BASE_URL}
-  #     - CGID_URL=${BASE_URL}/index_cgid.html
-  #     - AI_API_KEY=${AI_API_KEY}
-  #   depends_on:
-  #     - db
-  #     - redis-socketio
-  #     - redis-data
-  #   networks:
-  #     - cryptogram
-  #   command: ["node", "/dist/assistant.js"]
-  #   stop_grace_period: 1m
-  #   restart: unless-stopped
 
   # pgadmin:
   #   container_name: pgadmin4_container
@@ -368,84 +519,19 @@ services:
   #   volumes:
   #     - pgadmin-data:/var/lib/pgadmin
 
-  # blockscout-db:
-  #   image: postgres:14-alpine
-  #   environment:
-  #     - POSTGRES_DB=postgres
-  #     - POSTGRES_USER=postgres
-  #     - POSTGRES_PASSWORD=${PG_SU_PASSWORD}
-  #   networks:
-  #     - cryptogram
-  #   shm_size: '256m'
-  #   stop_signal: SIGINT
-  #   stop_grace_period: 1m
-  #   restart: unless-stopped
-
-  # blockscout:
-  #   depends_on:
-  #     - blockscout-db
-  #     - smart-contract-verifier
-  #     - redis-blockscout
-  #     - hardhat
-  #   image: blockscout/blockscout:4.1.8
-  #   container_name: 'blockscout'
-  #   command: bash -c "bin/blockscout eval \"Elixir.Explorer.ReleaseTasks.create_and_migrate()\" && bin/blockscout start"
-  #   env_file:
-  #     -  ./envs/common-blockscout.env
-  #   environment:
-  #     ETHEREUM_JSONRPC_VARIANT: 'hardhat'
-  #     ETHEREUM_JSONRPC_HTTP_URL: http://hardhat:8545/
-  #     ETHEREUM_JSONRPC_WS_URL: ws://hardhat:8545/
-  #     INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: 'true'
-  #     INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER: 'true'
-  #     DATABASE_URL: postgresql://postgres:${PG_SU_PASSWORD}@blockscout-db:5432/blockscout?ssl=false
-  #     ECTO_USE_SSL: 'false'
-  #     SECRET_KEY_BASE: '56NtB48ear7+wMSf0IQuWDAAazhpb31qyc7GiyspBP2vh7t5zlCsF5QDv76chXeN'
-  #     CHAIN_ID: '31337'
-  #   ports:
-  #     - 127.0.0.1:4000:4000
-  #   #volumes:
-  #     #- ./logs/:/app/logs/
-  #   networks:
-  #     - cryptogram
-  #   restart: unless-stopped
-
-  # smart-contract-verifier:
-  #   image: ghcr.io/blockscout/smart-contract-verifier:${SMART_CONTRACT_VERIFIER_DOCKER_TAG:-latest}
-  #   restart: unless-stopped
-  #   container_name: 'smart-contract-verifier'
-  #   env_file:
-  #     -  ./envs/common-smart-contract-verifier.env
-  #   ports:
-  #     - 127.0.0.1:8043:8043
-  #   networks:
-  #     - cryptogram
-
-  # visualizer:
-  #   image: ghcr.io/blockscout/visualizer:${VISUALIZER_DOCKER_TAG:-latest}
-  #   restart: unless-stopped
-  #   container_name: 'visualizer'
-  #   env_file:
-  #     -  ./envs/common-visualizer.env
-  #   ports:
-  #     - 127.0.0.1:8050:8050
-  #   networks:
-  #     - cryptogram
-
   cg-builder:
     build:
-      context: ./node20
+      context: ./node
       args:
         - BUILDER_UID=${BUILDER_UID}
         - BUILDER_GID=${BUILDER_GID}
-    image: commonground/node20
+    image: commonground/node
     user: "${BUILDER_UID}:${BUILDER_GID}"
     environment:
       - PG_SU_PASSWORD=${PG_SU_PASSWORD}
       - PG_SU_NAME=postgres
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SECRET=${REDIS_SECRET}
-      - REDIS_LEGACY_MODE=true
       - BASE_URL=${BASE_URL}
       - CGID_URL=${BASE_URL}/index_cgid.html
       - S3_SECRET=${S3_SECRET}
@@ -463,10 +549,12 @@ services:
 
 volumes:
   pgdata:
+  valkey-data:
   pgadmin-data:
-  seaweedfs-volume:
-  seaweedfs-buckets:
+  seaweedfs-data:
   builder-cache:
+  caddy-data:
+  caddy-config:
 
 networks:
   cryptogram:

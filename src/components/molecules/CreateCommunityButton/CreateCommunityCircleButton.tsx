@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { useCreateCommunityModalContext } from '../../../context/CreateCommunityModalProvider';
-import { ReactComponent as PlusIcon } from '../../../components/atoms/icons/24/Plus.svg';
+import PlusIcon from '../../../components/atoms/icons/24/Plus.svg?react';
 
 import './CreateCommunityCircleButton.css';
 

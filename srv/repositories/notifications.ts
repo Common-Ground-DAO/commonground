@@ -28,6 +28,10 @@ if (!!vapidKeyData) {
   );
 }
 
+function toIsoString(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
 class NotificationHelper {
   public async createNotifications(
     data: (Omit<Models.Notification.Notification, "id" | "read" | "createdAt" | "updatedAt"> & { userId: string })[],
@@ -241,45 +245,106 @@ class NotificationHelper {
     }[];
   }
 
-  public async getUnreadCount(userId: string) {
-    const query = `
-      SELECT COUNT(*) AS "unreadCount"
-      FROM notifications
-      WHERE "userId" = $1 AND "read" = FALSE
-    `;
-    const params: any[] = [userId];
-    const result = await pool.query(query, params);
-    return result.rows[0].unreadCount as number;
+  /**
+   * The user's unread notification count, as a number (pg returns COUNT as
+   * int8, which node-postgres hands over as a string).
+   */
+  public async getUnreadCount(userId: string): Promise<number> {
+    return (await this.getUnreadCountWithTime(userId)).unreadCount;
   }
 
-  public async markAsRead(userId: string, data: API.Notification.markAsRead.Request) {
-    const query = `
-      UPDATE notifications
-      SET "read" = TRUE, "updatedAt" = now()
-      WHERE "userId" = $1 AND "id" = $2
-      RETURNING "updatedAt"
-    `;
-    const params: any[] = [userId, data.notificationId];
-    const result = await pool.query(query, params);
-    if (result.rows.length !== 1) {
-      throw new Error(errors.server.NOT_FOUND);
-    }
-    return result.rows[0] as {
-      updatedAt: string;
+  /**
+   * The unread count together with the database `now()` of the statement it
+   * was read in. Clients keep the count with the newest time, so every count
+   * that travels in an event or a response carries the time it is valid at.
+   */
+  public async getUnreadCountWithTime(userId: string): Promise<{ unreadCount: number; unreadCountAt: string }> {
+    const result = await pool.query<{ unreadCount: number | string; unreadCountAt: Date | string }>(`
+      SELECT COUNT(*)::int AS "unreadCount", now() AS "unreadCountAt"
+      FROM notifications
+      WHERE "userId" = $1 AND "read" = FALSE
+    `, [userId]);
+    const row = result.rows[0];
+    return {
+      unreadCount: Number(row.unreadCount),
+      unreadCountAt: toIsoString(row.unreadCountAt),
     };
   }
 
-  public async markAllAsRead(userId: string) {
+  /**
+   * The event with the user's current unread count attached. The count is
+   * best effort: if it cannot be read, the event goes out without it and
+   * clients refresh the count with `getUnreadCount`, as for older servers.
+   */
+  public async withUnreadCount<E extends Events.Notification.Notification>(userId: string, event: E): Promise<E> {
+    try {
+      const { unreadCount, unreadCountAt } = await this.getUnreadCountWithTime(userId);
+      return { ...event, unreadCount, unreadCountAt };
+    } catch (e) {
+      console.error('Could not read the unread notification count', e);
+      return event;
+    }
+  }
+
+  /**
+   * Marks one notification as read. Only an unread notification is written:
+   * `changed` is false (and `updatedAt` null) when it was read already, so
+   * callers emit an update only for a real change. Throws NOT_FOUND when the
+   * user has no such notification.
+   */
+  public async markAsRead(
+    userId: string,
+    data: API.Notification.markAsRead.Request,
+  ): Promise<{ changed: true; updatedAt: string } | { changed: false; updatedAt: null }> {
     const query = `
-      UPDATE notifications
-      SET "read" = TRUE, "updatedAt" = now()
-      WHERE "userId" = $1
-      RETURNING "updatedAt"
+      WITH updated AS (
+        UPDATE notifications
+        SET "read" = TRUE, "updatedAt" = now()
+        WHERE "userId" = $1 AND "id" = $2 AND "read" = FALSE
+        RETURNING "updatedAt"
+      )
+      SELECT
+        (SELECT "updatedAt" FROM updated) AS "updatedAt",
+        (
+          EXISTS (SELECT 1 FROM updated)
+          OR EXISTS (SELECT 1 FROM notifications WHERE "userId" = $1 AND "id" = $2)
+        ) AS "found"
+    `;
+    const params: any[] = [userId, data.notificationId];
+    const result = await pool.query<{ updatedAt: Date | string | null; found: boolean }>(query, params);
+    const row = result.rows[0];
+    if (!row?.found) {
+      throw new Error(errors.server.NOT_FOUND);
+    }
+    if (row.updatedAt === null) {
+      return { changed: false, updatedAt: null };
+    }
+    return { changed: true, updatedAt: toIsoString(row.updatedAt) };
+  }
+
+  /**
+   * Marks every unread notification of the user as read. Read rows are left
+   * alone; `changed` is the number of rows written and `updatedAt` their new
+   * time (null when nothing was unread).
+   */
+  public async markAllAsRead(userId: string): Promise<{ changed: number; updatedAt: string | null }> {
+    const query = `
+      WITH updated AS (
+        UPDATE notifications
+        SET "read" = TRUE, "updatedAt" = now()
+        WHERE "userId" = $1 AND "read" = FALSE
+        RETURNING "updatedAt"
+      )
+      SELECT COUNT(*)::int AS "changed", MAX("updatedAt") AS "updatedAt"
+      FROM updated
     `;
     const params: any[] = [userId];
-    const result = await pool.query(query, params);
+    const result = await pool.query<{ changed: number | string; updatedAt: Date | string | null }>(query, params);
+    const row = result.rows[0];
+    const changed = Number(row?.changed ?? 0);
     return {
-      updatedAt: result.rows[0]?.updatedAt || new Date().toISOString(),
+      changed,
+      updatedAt: changed > 0 && row.updatedAt !== null ? toIsoString(row.updatedAt) : null,
     };
   }
 
@@ -295,6 +360,9 @@ class NotificationHelper {
       UPDATE devices
       SET "webPushSubscription" = ${format("%L::JSONB", JSON.stringify(data))}
       WHERE "id" = ${format("%L::UUID", deviceId)}
+        AND "deletedAt" IS NULL
+        -- not a key the account signed out (docs/auth-identity §2)
+        AND "generation" >= session_generation_of("userId")
     `);
     if (result.rowCount !== 1) {
       throw new Error(errors.server.NOT_FOUND);
@@ -353,6 +421,8 @@ class NotificationHelper {
           ON d."userId" = ucs."userId"
           AND d."deletedAt" IS NULL
           AND d."webPushSubscription" IS NOT NULL
+          -- not a key the account signed out (docs/auth-identity §2)
+          AND d."generation" >= session_generation_of(d."userId")
 
         WHERE ucs."communityId" = $1
           AND ucs."userId" = $2
@@ -395,6 +465,8 @@ class NotificationHelper {
         WHERE d."userId" = ${format("%L::UUID", userId)}
           AND d."webPushSubscription" IS NOT NULL
           AND d."deletedAt" IS NULL
+          -- not a key the account signed out (docs/auth-identity §2)
+          AND d."generation" >= u."sessionGeneration"
       `);
       devicesWithPush = result.rows;
     }
@@ -442,7 +514,7 @@ class NotificationHelper {
       event.data.type === 'ChannelMessage' ||
       event.data.type === 'Call'
     )) {
-      await eventHelper.emit(event, {
+      await eventHelper.emit(await this.withUnreadCount(userId, event), {
         userIds: [userId],
       });
     }

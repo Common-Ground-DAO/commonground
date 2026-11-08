@@ -2,12 +2,13 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import Button from "../../../components/atoms/Button/Button";
 import HexagonalIconButton from "../HexagonalIconButton/HexagonalIconButton";
 import './MenuNftButton.css';
 
 type Props = {
-  icon: JSX.Element;
+  icon: React.JSX.Element;
   onClick: () => void;
   isNFT: boolean;
   isActive?: boolean;

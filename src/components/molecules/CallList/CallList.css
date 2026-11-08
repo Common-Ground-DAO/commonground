@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .call-list-container {
     @apply p-2 sticky bottom-0 mt-auto;
 }

@@ -7,6 +7,7 @@ import { PredefinedRole } from "common/enums";
 import communityApi from "data/api/community";
 import { Dexie } from "dexie";
 import _ from "lodash";
+import { isPredefinedRolePermission } from "util/predefinedRoles";
 
 class CommunityArticleManager {
   public async getArticleList(data: API.Community.getArticleList.Request) {
@@ -53,7 +54,7 @@ class CommunityArticleManager {
     }
     // Don't update admin role NEVER
     if (newData.communityArticle.rolePermissions) {
-      newData.communityArticle.rolePermissions = newData.communityArticle.rolePermissions.filter(role => role.roleTitle !== PredefinedRole.Admin);
+      newData.communityArticle.rolePermissions = newData.communityArticle.rolePermissions.filter(role => !isPredefinedRolePermission(role, PredefinedRole.Admin));
     }
     return await communityApi.updateArticle(newData);
   }

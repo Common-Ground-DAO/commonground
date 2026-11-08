@@ -7,8 +7,8 @@ import React from 'react'
 import './CreateCommunityBanner.css';
 import Button from 'components/atoms/Button/Button';
 
-import { ReactComponent as Detail1 } from './detail1.svg';
-import { ReactComponent as Detail2 } from './detail2.svg';
+import Detail1 from './detail1.svg?react';
+import Detail2 from './detail2.svg?react';
 import { useCreateCommunityModalContext } from 'context/CreateCommunityModalProvider';
 
 const CreateCommunityBanner: React.FC = () => {

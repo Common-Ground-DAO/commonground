@@ -8,7 +8,7 @@ import config from "common/config";
 import ToggleInputField from "components/molecules/inputs/ToggleInputField/ToggleInputField";
 import Tag from "components/atoms/Tag/Tag";
 import dayjs from "dayjs";
-import { ReactComponent as SparkIcon } from '../../../atoms/icons/misc/spark.svg';
+import SparkIcon from '../../../atoms/icons/misc/spark.svg?react';
 import { useCommunityPremiumTier } from "hooks/usePremiumTier";
 import "./UpgradesTab.css";
 import Button from "components/atoms/Button/Button";
@@ -211,7 +211,7 @@ const UpgradesTab: React.FC = () => {
               <span className="cg-text-md-400 cg-text">Must be unique</span>
             </div>
             <div className="flex flex-wrap gap-2 items-center">
-              <span className="cg-text-md-400">app.cg/c/</span>
+              <span className="cg-text-md-400">{window.location.host}/c/</span>
               <TextInputField
                 placeholder="your-url"
                 value={pickedUrl}

@@ -136,10 +136,20 @@ const messageApi = {
   setChannelLastRead: Joi.object<API.Messages.setChannelLastRead.Request>({
     access: messageAccessValidator.required(),
     lastRead: common.DateString.required(),
+    messageId: common.Uuid,
+  }).strict(true).required(),
+
+  // A cursor the server does not understand (another format version, a
+  // malformed value) is answered with a reset, not rejected, so only its
+  // length is bounded here; see messageHelper.getChanges.
+  getChanges: Joi.object<API.Messages.getChanges.Request>({
+    access: messageAccessValidator.required(),
+    cursor: Joi.alternatives().try(Joi.string().max(64), Joi.equal(null)).required(),
+    limit: Joi.number().integer().min(1).max(200),
   }).strict(true).required(),
 
   getUrlPreview: Joi.object({
-    url: Joi.string().required(),
+    url: Joi.string().max(2048).required(),
   }).strict(true).required(),
 
   joinArticleEventRoom: Joi.object<API.Messages.joinArticleEventRoom.Request>({

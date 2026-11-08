@@ -19,6 +19,7 @@ import TextAreaField from "../../molecules/inputs/TextAreaField/TextAreaField";
 import { useMobileLayoutContext } from "../../../views/Layout/MobileLayout";
 
 import fileApi from "data/api/file";
+import { imageUploadErrorText, notifyIfImageRejected } from "moderation/imageUploadError";
 import { useSnackbarContext } from "context/SnackbarContext";
 import ArticleBackupModal, { useArticleBackup } from "../../templates/CommunityLobby/ArticleManagement/ArticleBackupModal";
 import dayjs from "dayjs";
@@ -31,6 +32,7 @@ import { XMarkIcon } from "@heroicons/react/20/solid";
 import { PredefinedRole } from "common/enums";
 import config from "common/config";
 import communityApi from "data/api/community";
+import { isPredefinedRolePermission } from "util/predefinedRoles";
 
 const MIN_SCROLL_UP_DELTA = 20;
 const MIN_SCROLL_DOWN_DELTA = 100;
@@ -176,8 +178,8 @@ const GenericArticleManagement: React.FC<Props> = (props) => {
       return [];
     }
 
-    const publicRole = articleRoles.find(r => r.roleTitle === PredefinedRole.Public);
-    const memberRole = articleRoles.find(r => r.roleTitle === PredefinedRole.Member);
+    const publicRole = articleRoles.find(r => isPredefinedRolePermission(r, PredefinedRole.Public));
+    const memberRole = articleRoles.find(r => isPredefinedRolePermission(r, PredefinedRole.Member));
     if (publicRole?.permissions.includes('ARTICLE_READ') || memberRole?.permissions.includes('ARTICLE_READ')) {
       if (memberRole) return [PredefinedRole.Member];
     }
@@ -384,7 +386,17 @@ const GenericArticleManagement: React.FC<Props> = (props) => {
 
   const handleImageChange = async (file?: File) => {
     if (file) {
-      const imageId = await fileApi.uploadImage({ type: 'articleImage' }, file);
+      let imageId: API.Files.UploadResponse<'articleImage'>;
+      try {
+        imageId = await fileApi.uploadImage({ type: 'articleImage' }, file);
+      } catch (err) {
+        // `ImageUploadField` calls this without awaiting, so an uncaught
+        // rejection here would be invisible to the user.
+        if (!notifyIfImageRejected(err)) {
+          showSnackbar({ type: 'warning', text: imageUploadErrorText(err, 'Could not upload the image') });
+        }
+        return;
+      }
       if (!!imageId) {
         try {
           articleDataRef.current.headerImageId = imageId.largeImageId;

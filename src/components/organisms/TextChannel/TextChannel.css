@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .content-message-list {
   @apply w-full h-full relative;
   user-select: text;
@@ -22,7 +24,7 @@
   background: var(--surface-background-2nd);
 
   .text-channel-name {
-    @apply flex flex-shrink-0 items-center justify-start cg-text-lg-500 cursor-pointer whitespace-nowrap;
+    @apply flex shrink-0 items-center justify-start cg-text-lg-500 cursor-pointer whitespace-nowrap;
     color: var(--cardTextMain);
     gap: 4px;
   }

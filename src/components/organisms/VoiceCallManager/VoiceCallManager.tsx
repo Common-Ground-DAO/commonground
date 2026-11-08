@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import "./VoiceCallManager.css";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import VoiceChannelDescription from "../../../components/molecules/VoiceChannelDescription/VoiceChannelDescription";
 import VoiceChannelTalkers from "../../../components/molecules/VoiceChannelTalkers/VoiceChannelTalkers";
 import { useWindowSizeContext } from "../../../context/WindowSizeProvider";

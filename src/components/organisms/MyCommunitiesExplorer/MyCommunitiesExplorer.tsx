@@ -6,7 +6,7 @@ import React, { useState, useMemo, useCallback, useRef } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks';
 import data from 'data';
 import { EmptyCommunityCard } from 'components/molecules/CommunityCard/EmptyCommunityCard';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import GroupSlider from 'components/molecules/GroupSlider/GroupSlider';
 
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/20/solid';

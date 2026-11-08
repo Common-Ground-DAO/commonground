@@ -4,7 +4,7 @@
 
 import React from 'react'
 import { useCallback } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router";
 
 import config from "../../../../common/config";
 
@@ -18,9 +18,8 @@ import { useChats, useOwnUser } from 'context/OwnDataProvider';
 import './../Menu.css';
 import './ExpandedMenu.css';
 import { getUrl } from 'common/util';
-import WhatsNewModal from 'components/organisms/WhatsNewModal/WhatsNewModal';
-import { ReactComponent as CircleLogo } from "components/atoms/icons/misc/Logo/logo.svg";
-import { Bell, ChatsTeardrop, Compass, Plus, CoinVertical, HouseSimple, IdentificationCard, Brain, Storefront } from '@phosphor-icons/react';
+import CircleLogo from "components/atoms/icons/misc/Logo/logo.svg?react";
+import { Bell, ChatsTeardrop, Compass, Plus, CoinVertical, HouseSimple, Storefront } from '@phosphor-icons/react';
 import { useCreateCommunityModalContext } from 'context/CreateCommunityModalProvider';
 
 type Props = {
@@ -68,7 +67,6 @@ const ExpandedMenu: React.FC<Props> = ({ expanded }) => {
       <Scrollable>
         <div className='menu-expanded-top'>
           <CircleLogo className={`w-8 h-8 cg-text-brand ${!expanded ? 'm-auto' : 'ml-1'}`} onClick={onHomeClick}/>
-          {/* <EcosystemPicker expanded={expanded} /> */}
           <div className='menu-content'>
             <div className="menu-buttons">
               <ExpandedMenuButton
@@ -77,24 +75,18 @@ const ExpandedMenu: React.FC<Props> = ({ expanded }) => {
                 isActive={homeActive}
                 onClick={onHomeClick}
               />
-              {(config.TOKEN_SALE_ENABLED || config.DEPLOYMENT !== 'prod') && <ExpandedMenuButton
-                text={expanded ? 'Token' : undefined}
+              <ExpandedMenuButton
+                text={expanded ? 'Stake' : undefined}
                 icon={<CoinVertical weight='duotone' className='h-6 w-6' />}
                 isActive={isActiveButton(location.pathname, getUrl({type: 'token'}))}
                 onClick={() => navigate(getUrl({type: 'token'}))}
-              />}
+              />
               {!!ownUser && <ExpandedMenuButton
                 text={expanded ? 'Chats' : undefined}
                 icon={<ChatsTeardrop weight='duotone' className='h-6 w-6' />}
                 isActive={isActiveButton(location.pathname, getUrl({ type: 'chats' }))}
                 onClick={() => navigate(getUrl({ type: 'chats' }))}
                 notificationCount={unreadChats}
-              />}
-              {!!ownUser && config.PERSONAL_ASSISTANT_ENABLED && <ExpandedMenuButton
-                text={expanded ? 'Assistant' : undefined}
-                icon={<Brain weight='duotone' className='h-6 w-6' />}
-                isActive={isActiveButton(location.pathname, getUrl({ type: 'assistant' }))}
-                onClick={() => navigate(getUrl({ type: 'assistant' }))}
               />}
               {!!ownUser && <ExpandedMenuButton
                 text={expanded ? 'Notifications' : undefined}
@@ -104,12 +96,6 @@ const ExpandedMenu: React.FC<Props> = ({ expanded }) => {
                   if (config.NOTIFICATIONS_PAGE_ENABLED) { navigate(getUrl({ type: 'notifications' })) }
                 }}
                 notificationCount={unreadCount}
-              />}
-              {!!ownUser && config.DEPLOYMENT === 'dev' && <ExpandedMenuButton
-                text={expanded ? 'ID Verification' : undefined}
-                icon={<IdentificationCard weight='duotone' className='h-6 w-6' />}
-                isActive={isActiveButton(location.pathname, getUrl({ type: 'id-verification' }))}
-                onClick={() => navigate(getUrl({ type: 'id-verification' }))}
               />}
               <ExpandedMenuButton
                 text={expanded ? 'Apps' : undefined}
@@ -152,7 +138,6 @@ const ExpandedMenu: React.FC<Props> = ({ expanded }) => {
         </div>
       </Scrollable>
       <div className='menu-user-container'>
-        {expanded && <WhatsNewModal />}
         <AudioWidget isActive={isActiveButton(location.pathname, '/profile')} isCollapsed={!expanded} />
       </div>
     </div>
@@ -161,13 +146,13 @@ const ExpandedMenu: React.FC<Props> = ({ expanded }) => {
 
 type ExpandedMenuButtonProps = {
   text?: string;
-  icon?: JSX.Element;
+  icon?: React.JSX.Element;
   onClick?: (ev: React.MouseEvent<HTMLElement, MouseEvent>) => void;
   className?: string;
   isActive?: boolean;
   disabled?: boolean;
   notificationCount?: number;
-  buttonRef?: React.RefObject<HTMLButtonElement>;
+  buttonRef?: React.RefObject<HTMLButtonElement | null>;
 }
 
 function ExpandedMenuButton(props: ExpandedMenuButtonProps) {

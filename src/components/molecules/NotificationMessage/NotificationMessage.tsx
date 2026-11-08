@@ -12,16 +12,17 @@ import UserTooltip from '../../organisms/UserTooltip/UserTooltip';
 import Timestamp from '../../../components/atoms/Timestamp/Timestamp';
 
 import { getDisplayName, getDisplayNameString } from '../../../util';
-import { ReactComponent as ReplyIcon } from '../../../components/atoms/icons/16/Reply.svg';
-import { ReactComponent as ModIcon } from '../../../components/atoms/icons/16/Mod.svg';
-import { ReactComponent as MentionIcon } from '../../../components/atoms/icons/16/Mention.svg';
-import { ReactComponent as FollowIcon } from '../../../components/atoms/icons/16/Follow.svg';
+import ReplyIcon from '../../../components/atoms/icons/16/Reply.svg?react';
+import ModIcon from '../../../components/atoms/icons/16/Mod.svg?react';
+import MentionIcon from '../../../components/atoms/icons/16/Mention.svg?react';
+import FollowIcon from '../../../components/atoms/icons/16/Follow.svg?react';
 
 import data from 'data';
 import NotificationDot from 'components/atoms/NotificationDot/NotificationDot';
 import { useUserData } from 'context/UserDataProvider';
 import { UserTooltipHandle } from 'components/atoms/Tooltip/UserProfilePopover';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
+import BotBadge from 'components/atoms/BotBadge/BotBadge';
 
 type Props = {
   notification: Models.Notification.Notification;
@@ -109,7 +110,10 @@ const NotificationMessage: React.FC<Props> = ({ notification, selected, onClick 
           >
             <div className='notificationMessageSubject'>
               <Jdenticon userId={user.id} onlineStatus={user.onlineStatus} iconStyle={iconStyle} />
-              <span className='notificationMessageSubjectName'>{getDisplayName(user)}</span>
+              <span className='notificationMessageSubjectName flex items-center gap-1'>
+                {getDisplayName(user)}
+                {user.isBot && <BotBadge />}
+              </span>
             </div>
           </UserTooltip>
         );
@@ -118,7 +122,10 @@ const NotificationMessage: React.FC<Props> = ({ notification, selected, onClick 
         return (
           <div className='notificationMessageSubject'>
             <Jdenticon userId={user.id} onlineStatus={user.onlineStatus} iconStyle={iconStyle} />
-            <span className='notificationMessageSubjectName'>{getDisplayName(user)}</span>
+            <span className='notificationMessageSubjectName flex items-center gap-1'>
+              {getDisplayName(user)}
+              {user.isBot && <BotBadge />}
+            </span>
           </div>
         );
       }
@@ -135,7 +142,7 @@ const NotificationMessage: React.FC<Props> = ({ notification, selected, onClick 
     return <span className='unknown-subject'>Unknown subject</span>;
   }, [community, notification.subjectCommunityId, notification.subjectUserId, notification.type, user, isMobile]);
 
-  const extraInfo: (JSX.Element | null) = useMemo(() => {
+  const extraInfo: (React.JSX.Element | null) = useMemo(() => {
     switch (notification.type) {
       case 'Mention':
       case 'Reply': {

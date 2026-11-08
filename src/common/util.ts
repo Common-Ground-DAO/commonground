@@ -3,28 +3,26 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import config from "./config";
-import short from 'short-uuid';
+import { createTranslator } from 'short-uuid';
 import { UserPremiumFeatureName } from "./enums";
 import errors from "./errors";
 import dayjs from "dayjs";
 import slugify from "slugify";
+import { icsJoin, icsParam, icsText } from "./ics";
 
 // mirrored in srv/validators/common.ts, change in both places
 export const itemUrlRegex = /^[a-z0-9-]{3,50}$/i;
 export const addressRegex = /^0x[a-f0-9]{40}$/i;
 
-const t = short();
+const t = createTranslator();
 
 type GetUrlOptions = {
   type: 'home';
-  channel?: string;
 } | {
   type: 'chats';
 } | {
   type: 'chat';
   chat: Pick<Models.Chat.Chat, "id">;
-} | {
-  type: 'assistant';
 } | {
   type: 'notifications';
 } | {
@@ -41,7 +39,6 @@ type GetUrlOptions = {
   'community-members' |
   'community-roles' |
   'community-events' |
-  'community-assistant' |
   'community-token' |
   'community-settings' |
   'community-settings-info' |
@@ -54,6 +51,7 @@ type GetUrlOptions = {
   'community-settings-onboarding' |
   'community-settings-verify' |
   'community-settings-plugins' |
+  'community-settings-bots' |
   'community-create-article';
   community: Pick<Models.Community.ListView, "url"> & Partial<Models.Community.ListView>;
 } | {
@@ -68,10 +66,6 @@ type GetUrlOptions = {
   type: 'community-call';
   community: Pick<Models.Community.ListView, "url">;
   call: Pick<Models.Calls.Call, "id"> & Partial<Models.Calls.Call>;
-} | {
-  type: 'community-wizard';
-  community: Pick<Models.Community.ListView, "url">;
-  wizardId: string;
 } | {
   type: 'community-plugin';
   community: Pick<Models.Community.ListView, "url">;
@@ -104,8 +98,6 @@ type GetUrlOptions = {
 } | {
   type: 'token';
 } | {
-  type: 'id-verification';
-} | {
   type: 'appstore';
 } | {
   type: 'search';
@@ -116,9 +108,6 @@ type GetUrlOptions = {
 
 const Helper: Record<GetUrlOptions['type'], (options: any) => string> = {
   'home': (options: GetUrlOptions & { type: 'home' }) => {
-    if (options.channel) {
-      return `/${config.URL_ECOSYSTEM}/${options.channel}`;
-    }
     return '/';
   },
   'chats': (options: GetUrlOptions & { type: 'chats' }) => {
@@ -126,9 +115,6 @@ const Helper: Record<GetUrlOptions['type'], (options: any) => string> = {
   },
   'chat': (options: GetUrlOptions & { type: 'chat' }) => {
     return `/${config.URL_CHATS}/${t.fromUUID(options.chat.id)}/`;
-  },
-  'assistant': (options: GetUrlOptions & { type: 'assistant' }) => {
-    return `/assistant/`;
   },
   'notifications': (options: GetUrlOptions & { type: 'notifications' }) => {
     return `/${config.URL_NOTIFICATIONS}/`;
@@ -147,9 +133,6 @@ const Helper: Record<GetUrlOptions['type'], (options: any) => string> = {
   },
   'community-events': (options: GetUrlOptions & { type: 'community-events' }) => {
     return `/${config.URL_COMMUNITY}/${options.community.url}/events/`;
-  },
-  'community-assistant': (options: GetUrlOptions & { type: 'community-assistant' }) => {
-    return `/${config.URL_COMMUNITY}/${options.community.url}/assistant/`;
   },
   'community-token': (options: GetUrlOptions & { type: 'community-token' }) => {
     return `/${config.URL_COMMUNITY}/${options.community.url}/token/`;
@@ -193,6 +176,9 @@ const Helper: Record<GetUrlOptions['type'], (options: any) => string> = {
   'community-settings-plugins': (options: GetUrlOptions & { type: 'community-settings-plugins' }) => {
     return `/${config.URL_COMMUNITY}/${options.community.url}/settings/plugins/`;
   },
+  'community-settings-bots': (options: GetUrlOptions & { type: 'community-settings-bots' }) => {
+    return `/${config.URL_COMMUNITY}/${options.community.url}/settings/bots/`;
+  },
   'community-settings-verify': (options: GetUrlOptions & { type: 'community-settings-verify' }) => {
     return `/${config.URL_COMMUNITY}/${options.community.url}/settings/verify/`;
   },
@@ -212,9 +198,6 @@ const Helper: Record<GetUrlOptions['type'], (options: any) => string> = {
   },
   'community-call': (options: GetUrlOptions & { type: 'community-call' }) => {
     return `/${config.URL_COMMUNITY}/${options.community.url}/${config.URL_CALL}/${t.fromUUID(options.call.id)}/`;
-  },
-  'community-wizard': (options: GetUrlOptions & { type: 'community-wizard' }) => {
-    return `/${config.URL_COMMUNITY}/${options.community.url}/${config.URL_WIZARD}/${options.wizardId}/`;
   },
   'community-plugin': (options: GetUrlOptions & { type: 'community-plugin' }) => {
     return `/${config.URL_COMMUNITY}/${options.community.url}/plugin/${options.plugin.id}/`;
@@ -250,9 +233,6 @@ const Helper: Record<GetUrlOptions['type'], (options: any) => string> = {
   },
   'token': (options: GetUrlOptions & { type: 'token' }) => {
     return `/token/`;
-  },
-  'id-verification': (options: GetUrlOptions & { type: 'id-verification' }) => {
-    return `/id-verification/`;
   },
   'appstore': (options: GetUrlOptions & { type: 'appstore' }) => {
     return `/store/`;
@@ -412,37 +392,38 @@ export function checkCommunityRequirements(
   return null;
 }
 
-const icsTemplate = `BEGIN:VCALENDAR
-PRODID:CommonGround
-VERSION:2.0
-BEGIN:VEVENT
-SUMMARY:$title
-DTSTART:$timeStart
-DTEND:$timeEnd
-DTSTAMP:$timeStart
-UID:$uid
-DESCRIPTION:$description
-LOCATION:$url
-ORGANIZER;CN=$communityName:mailto:events-no-reply@app.cg
-END:VEVENT
-END:VCALENDAR`;
-
 export function dayJsToUrlFormat(time: dayjs.Dayjs) {
   // return time.toISOString();
   return time.utc().format('YYYYMMDDTHHmmss[Z]');
 }
 
 export function generateEventICSFile(baseUrl: string, community: Pick<Models.Community.ListView, "title" | "id" | "url">, event: Models.Community.Event) {
-  const eventUrl = `${baseUrl}${getUrl({ type: 'event', community, event })}`;
+  const eventUrl = encodeURI(`${baseUrl}${getUrl({ type: 'event', community, event })}`);
+  const start = dayJsToUrlFormat(dayjs(event.scheduleDate));
+  const end = dayJsToUrlFormat(dayjs(event.scheduleDate).add(event.duration, 'minutes'));
+  const host = new URL(baseUrl).hostname;
 
-  return icsTemplate
-    .replaceAll('$title', event.title)
-    .replaceAll('$timeStart', dayJsToUrlFormat(dayjs(event.scheduleDate)))
-    .replaceAll('$timeEnd', dayJsToUrlFormat(dayjs(event.scheduleDate).add(event.duration, 'minutes')))
-    .replaceAll('$uid', event.id)
-    .replaceAll('$description', encodeURI(`To see more details: ${eventUrl}`))
-    .replaceAll('$url', encodeURI(eventUrl))
-    .replaceAll('$communityName', community.title);
+  // every value is escaped where it is put into its line, so no event or
+  // community title can add, end or alter a property. METHOD:PUBLISH: the
+  // file only informs (no attendee list to reply to); the UID is globally
+  // unique via the instance host; DTSTAMP is when this file was made.
+  return icsJoin([
+    'BEGIN:VCALENDAR',
+    'PRODID:CommonGround',
+    'VERSION:2.0',
+    'METHOD:PUBLISH',
+    'BEGIN:VEVENT',
+    `SUMMARY:${icsText(event.title)}`,
+    `DTSTART:${start}`,
+    `DTEND:${end}`,
+    `DTSTAMP:${dayJsToUrlFormat(dayjs())}`,
+    `UID:${icsText(`${event.id}@${host}`)}`,
+    `DESCRIPTION:${icsText(`To see more details: ${eventUrl}`)}`,
+    `LOCATION:${icsText(eventUrl)}`,
+    `ORGANIZER;CN=${icsParam(community.title)}:mailto:events-no-reply@${host}`,
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ]);
 }
 
 const letters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";

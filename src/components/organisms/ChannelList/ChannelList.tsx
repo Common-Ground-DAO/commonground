@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import "./ChannelList.css";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { getChannelDisplayName, parseIdOrUrl } from "../../../util";
 import { getUrl } from "common/util";
 import NotificationDot from "components/atoms/NotificationDot/NotificationDot";
@@ -13,6 +13,7 @@ import { useMemo, useState } from "react";
 import { LockClosedIcon } from "@heroicons/react/20/solid";
 import { PredefinedRole } from "common/enums";
 import GatedDialogModal, { CalculatedPermission } from "../GatedDialogModal/GatedDialogModal";
+import { isPredefinedRolePermission } from "util/predefinedRoles";
 
 type Props = {
   channels: Models.Community.Channel[];
@@ -21,7 +22,7 @@ type Props = {
 
 export function calculateChannelPermissions(community: Models.Community.DetailView, channel: Models.Community.Channel): CalculatedPermission {
   const { rolePermissions } = channel;
-  const publicPermission = rolePermissions.find(permission => permission.roleTitle === PredefinedRole.Public);
+  const publicPermission = rolePermissions.find(permission => isPredefinedRolePermission(permission, PredefinedRole.Public));
   const publicCanRead = publicPermission?.permissions.find(permission => permission === 'CHANNEL_READ');
   if (publicCanRead) return null;
 
@@ -30,7 +31,7 @@ export function calculateChannelPermissions(community: Models.Community.DetailVi
     return null;
   }
 
-  const memberPermission = rolePermissions.find(permission => permission.roleTitle === PredefinedRole.Member);
+  const memberPermission = rolePermissions.find(permission => isPredefinedRolePermission(permission, PredefinedRole.Member));
   const memberCanRead = memberPermission?.permissions.find(permission => permission === 'CHANNEL_READ');
   // Also ask for community join if not part of the community
   if (!community || memberCanRead) return {

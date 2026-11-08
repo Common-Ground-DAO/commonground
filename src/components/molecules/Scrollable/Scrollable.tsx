@@ -2,16 +2,11 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef } from "react";
 import "./Scrollable.css";
+import { scrollPositionData, shouldStickToBottom, type PositionData } from "./scrollPosition";
 
-export type PositionData = {
-  scrollTop: number;
-  visibleHeight: number;
-  contentHeight: number;
-  isTop: boolean;
-  isBottom: boolean;
-};
+export type { PositionData };
 
 type ScrollLockType = 'expandingTop' | 'expandingBottom' | 'lockByVisibleItemDate' | 'scrollToItemDate' | 'scrollToElementId' | 'scrollToBottom' | 'scrollToTop';
 
@@ -39,7 +34,7 @@ export type ScrollableHandle = {
   scrollToElementId: (elementId: string) => void;
   lockScrollForNextUpdate: (options: ScrollLockOptions) => void;
   forceUpdate: () => void;
-  contentRef: React.RefObject<HTMLDivElement>;
+  contentRef: React.RefObject<HTMLDivElement | null>;
 };
 
 type ScrollableProps = React.PropsWithChildren<{
@@ -57,7 +52,7 @@ type ScrollableProps = React.PropsWithChildren<{
   topAndBottomThreshold?: number;
   positionCallback?: (data: PositionData) => void;
   innerId?: string;
-  rootDivRef?: React.RefObject<HTMLDivElement>;
+  rootDivRef?: React.RefObject<HTMLDivElement | null>;
   alwaysVisible?: boolean;
 }>;
 
@@ -99,25 +94,29 @@ const Scrollable: React.ForwardRefRenderFunction<ScrollableHandle, ScrollablePro
   const mouseOccurredRef = useRef<boolean>(false);
 
   const visibleRef = useRef<boolean>(!hideOnNoScroll);
-  const hideTimeoutRef = useRef<any>();
-  const barRectRef = useRef<{ top: number, left: number, width: number, height: number }>();
+  const hideTimeoutRef = useRef<any>(undefined);
+  const barRectRef = useRef<{ top: number, left: number, width: number, height: number }>(undefined);
   const proximityRef = useRef<boolean>(false);
   const grabbedRef = useRef<boolean>(false);
   const grabbedReleasedRef = useRef<boolean>(false);
   const resetHideTimeoutRef = useRef<boolean>(false);
-  const previousYRef = useRef<number>();
-  const nextYRef = useRef<number>();
+  const previousYRef = useRef<number>(undefined);
+  const nextYRef = useRef<number>(undefined);
   const lastKnownContentHeightRef = useRef<number>(0);
+  const lastKnownOuterHeightRef = useRef<number>(0);
   const lastKnownScrollTopRef = useRef<number>(0);
   const nextMutationScrollLockedRef = useRef<ScrollLockOptions | undefined>(undefined);
   const scrollIsAtBottomRef = useRef<boolean>(true);
   const executeAutoScrollRef = useRef<boolean>(autoScroll);
   const dateLockScrollRef = useRef<{ timestamp: string, top: number, element: HTMLElement } | undefined>(undefined);
-  const updateBarFnRef = useRef<(time: number) => void>();
+  const updateBarFnRef = useRef<(time: number) => void>(undefined);
   const animationFrameScheduledRef = useRef<boolean>(false);
   const preventScrollRef = useRef<boolean>(false);
   const mountedRef = useRef<boolean>(true);
-  useEffect(() => {
+  // layout effect: a deleted tree is marked unmounted synchronously in its
+  // commit, before a pending position report (setTimeout) of it can run
+  useLayoutEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };
@@ -385,6 +384,14 @@ const Scrollable: React.ForwardRefRenderFunction<ScrollableHandle, ScrollablePro
 
           // scroll if necessary
           let contentTop = content.scrollTop;
+          // see shouldStickToBottom (scrollPosition.ts)
+          const stickToBottom = shouldStickToBottom({
+            autoScroll,
+            executeAutoScroll,
+            sizeChanged: contentHeight !== lastKnownContentHeightRef.current || outerHeight !== lastKnownOuterHeightRef.current,
+            wasAtBottom: scrollIsAtBottom,
+            scrolledUp: scrollOccurred && content.scrollTop < lastKnownScrollTopRef.current - 1,
+          });
           if (nextMutationScrollLockedRef.current && mutationOccurred === true) {
             // Set correct next top position
             if (nextMutationScrollLockedRef.current.type === 'expandingTop') {
@@ -498,9 +505,9 @@ const Scrollable: React.ForwardRefRenderFunction<ScrollableHandle, ScrollablePro
               });
               previousYRef.current = nextY;
             }
-          } else if (executeAutoScroll) {
+          } else if (executeAutoScroll || stickToBottom) {
             executeAutoScrollRef.current = false;
-            if (scrollIsAtBottom) {
+            if (stickToBottom) {
               contentTop = contentHeight - outerHeight;
               setPreventScroll(true);
               content.scrollTo({
@@ -510,20 +517,22 @@ const Scrollable: React.ForwardRefRenderFunction<ScrollableHandle, ScrollablePro
             }
           }
 
-          lastKnownScrollTopRef.current = contentTop;
+          // From here on the position the content really has: a lock's target
+          // can lie outside the scroll range (an element near the top of a
+          // short list, a date anchor that moved), and the browser clamps it.
+          // Reporting the target instead would show "not at the bottom" for
+          // a list that is (scroll-down helper, read marking).
+          const scrollTop = content.scrollTop;
+          lastKnownScrollTopRef.current = scrollTop;
           lastKnownContentHeightRef.current = contentHeight;
-          const handleTopPx = Math.floor((contentTop / (contentHeight - outerHeight)) * (outerHeight - handleHeightPx));
-          scrollIsAtBottomRef.current = contentTop + outerHeight > contentHeight - topAndBottomThreshold;
+          lastKnownOuterHeightRef.current = outerHeight;
+          const handleTopPx = Math.floor((scrollTop / (contentHeight - outerHeight)) * (outerHeight - handleHeightPx));
+          const positionData = scrollPositionData(scrollTop, outerHeight, contentHeight, topAndBottomThreshold);
+          scrollIsAtBottomRef.current = positionData.isBottom;
           if (positionCallback) {
-            const positionData = {
-              scrollTop: contentTop,
-              visibleHeight: outerHeight,
-              contentHeight,
-              isTop: contentTop < topAndBottomThreshold,
-              isBottom: scrollIsAtBottomRef.current
-            };
             setTimeout(() => {
-              positionCallback(positionData)
+              // a list unmounted meanwhile (channel switch) must not report
+              if (mountedRef.current) positionCallback(positionData);
             }, 0);
           }
 
@@ -600,7 +609,7 @@ const Scrollable: React.ForwardRefRenderFunction<ScrollableHandle, ScrollablePro
         }
       }
     }
-  }, [topAndBottomThreshold, defaultWidth, hideOnNoScroll, hideOnNoScrollDelay, proximityWidth, updateBarLayout, defaultWidthPx, positionCallback, getElementVerticalData]);
+  }, [topAndBottomThreshold, defaultWidth, hideOnNoScroll, hideOnNoScrollDelay, proximityWidth, updateBarLayout, defaultWidthPx, positionCallback, getElementVerticalData, autoScroll]);
 
   // attach mutation observer and child element resize observer
   useEffect(() => {

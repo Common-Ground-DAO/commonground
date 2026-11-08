@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .start-call-button {
     @apply flex items-center justify-center gap-1 p-3 cursor-pointer cg-border-xl;
     color: var(--cardTextMain);

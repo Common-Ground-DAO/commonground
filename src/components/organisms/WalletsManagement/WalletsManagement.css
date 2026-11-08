@@ -1,16 +1,18 @@
+@reference '../../../tailwind.css';
+
 .wallets-management {
-  @apply flex flex-col items-start self-stretch py-4 gap-4 flex-none order-1 flex-grow;
+  @apply flex flex-col items-start self-stretch py-4 gap-4 flex-none order-1 grow;
 
   > .wallets-management-title {
-    @apply flex flex-col items-start self-stretch p-0 gap-2 flex-none order-none flex-grow-0;
+    @apply flex flex-col items-start self-stretch p-0 gap-2 flex-none order-none grow-0;
 
     h3 {
-      @apply flex items-center flex-none order-none flex-grow-0 cg-heading-2;
+      @apply flex items-center flex-none order-none grow-0 cg-heading-2;
       color: var(--headerText);
     }
 
     > .subtitle {
-      @apply flex items-center flex-none order-1 flex-grow-0 mb-6;
+      @apply flex items-center flex-none order-1 grow-0 mb-6;
 
       font-size: 16px;
       line-height: 24px;
@@ -20,15 +22,15 @@
   }
 
   > .wallets-management-added-wallets-and-identities {
-    @apply w-full flex flex-col items-start p-0 gap-4 flex-none order-1 flex-grow-0;
+    @apply w-full flex flex-col items-start p-0 gap-4 flex-none order-1 grow-0;
   }
 
   .wallet-settings-section {
-    @apply w-full flex flex-col items-start p-4 gap-2 flex-none flex-grow-0;
+    @apply w-full flex flex-col items-start p-4 gap-2 flex-none grow-0;
     border-radius: 12px;
 
     .wallet-settings-section-title {
-      @apply flex flex-row justify-start items-center self-stretch p-0 gap-2 flex-none flex-grow-0;
+      @apply flex flex-row justify-start items-center self-stretch p-0 gap-2 flex-none grow-0;
 
       h3 {
         @apply text-center cg-heading-2;

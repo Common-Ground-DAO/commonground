@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import CommunityLinks from "../../../molecules/CommunityLinksInput/CommunityLinks";
 import LeaveCommunityModal from "../../../../components/organisms/LeaveCommunityModal/LeaveCommunityModal";
@@ -20,18 +20,20 @@ import data from "data";
 import fileApi from "data/api/file";
 import Scrollable from "components/molecules/Scrollable/Scrollable";
 import { getUrl } from 'common/util';
-import EcosystemPickerField from "components/molecules/inputs/EcosystemPickerField/EcosystemPickerField";
 
 import './CommunityManagement.css';
 import ImageUploadField from "components/molecules/inputs/ImageUploadField/ImageUploadField";
 import ManagementHeader2 from "components/molecules/ManagementHeader2/ManagementHeader2";
 import { useNavigationContext } from "components/SuspenseRouter/SuspenseRouter";
 import FloatingSaveOptions from "../FloatingSaveOptions/FloatingSaveOptions";
+import { useSnackbarContext } from "context/SnackbarContext";
+import { imageUploadErrorText, notifyIfImageRejected } from "moderation/imageUploadError";
 
 type Props = {
 };
 
 const CommunityManagement: React.FC<Props> = (props: Props) => {
+  const { showSnackbar } = useSnackbarContext();
   const navigate = useNavigate();
   const { isMobile } = useWindowSizeContext();
   const { community } = useLoadedCommunityContext();
@@ -138,28 +140,39 @@ const CommunityManagement: React.FC<Props> = (props: Props) => {
     }
     await data.community.updateCommunity(community.id, communityUpdates);
 
-    if (selectedImage) {
-      await fileApi.uploadImage({
-        type: 'communityLogoSmall',
-        communityId: community.id
-      }, selectedImage);
-    }
+    // `FloatingSaveOptions` wires this straight to an onClick without awaiting,
+    // so an upload rejection (e.g. the NSFW filter's IMAGE_CONTENT_REJECTED)
+    // would otherwise escape as an unhandled rejection and tell the user
+    // nothing.
+    try {
+      if (selectedImage) {
+        await fileApi.uploadImage({
+          type: 'communityLogoSmall',
+          communityId: community.id
+        }, selectedImage);
+      }
 
-    if (selectedSidebarImage) {
-      await fileApi.uploadImage({
-        type: 'communityLogoLarge',
-        communityId: community.id
-      }, selectedSidebarImage);
-    }
+      if (selectedSidebarImage) {
+        await fileApi.uploadImage({
+          type: 'communityLogoLarge',
+          communityId: community.id
+        }, selectedSidebarImage);
+      }
 
-    if (selectedHeader) {
-      await fileApi.uploadImage({
-        type: 'communityHeaderImage',
-        communityId: community.id
-      }, selectedHeader);
+      if (selectedHeader) {
+        await fileApi.uploadImage({
+          type: 'communityHeaderImage',
+          communityId: community.id
+        }, selectedHeader);
+      }
+    } catch (e) {
+      if (!notifyIfImageRejected(e)) {
+        showSnackbar({ type: 'warning', text: imageUploadErrorText(e, 'Could not upload the image') });
+      }
+      return;
     }
     setDirty(false);
-  }, [community.id, descError, description, links, nameError, selectedHeader, selectedImage, selectedSidebarImage, setDirty, shortDescription, tags, title]);
+  }, [community.id, descError, description, links, nameError, selectedHeader, selectedImage, selectedSidebarImage, setDirty, shortDescription, showSnackbar, tags, title]);
 
   const updateTags = React.useCallback((newTags: string[]) => {
     setDirty(true);
@@ -222,10 +235,6 @@ const CommunityManagement: React.FC<Props> = (props: Props) => {
         onChange={handleImageChange}
         imagePreviewStyle={{width: '75px', height: '75px'}}
       />
-      {/* <EcosystemPickerField
-        tags={tags || []}
-        onChange={updateTags}
-      /> */}
       <CommunityLinks
         links={links || []}
         onChange={updateLinks}

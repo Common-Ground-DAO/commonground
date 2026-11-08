@@ -9,18 +9,19 @@ import React from 'react'
 import { Transforms } from 'slate';
 import { RenderElementProps, useFocused, useSelected, useSlate } from 'slate-react';
 import { ImageElement } from '../EditField.helpers';
-import { ReactComponent as CameraPlusIcon } from "../../../atoms/icons/24/CameraPlusIcon.svg";
+import CameraPlusIcon from "../../../atoms/icons/24/CameraPlusIcon.svg?react";
 import { matchNodeRule, validateAndUpdateImage } from './FieldMediaImage.projections';
 import MediaControl from '../MediaControl/MediaControl';
 import Tag from '../../../atoms/Tag/Tag';
 import config from 'common/config';
+import { checkImageBeforeUpload } from 'moderation/checkImageBeforeUpload';
 
 import './FieldMediaImage.css';
 import { Spinner } from '@phosphor-icons/react';
 
 const FieldMediaImage: React.FC<RenderElementProps & { element: ImageElement }> = (props) => {
   const editor = useSlate();
-  const selected = useSelected();
+  const selected = useSelected({ suppressThrow: true });
   const focused = useFocused();
 
   const imageUrl = useSignedUrl(props.element.imageId);
@@ -55,12 +56,20 @@ const FieldMediaImage: React.FC<RenderElementProps & { element: ImageElement }> 
     });
   }, [editor, props.element.id]);
 
+  // "Replace" is a `File` entering upload state just like the insert path in
+  // `addImageMedia`, so it goes through the same NSFW pre-check. Read the file
+  // and clear the input before the first await: `ev.target` is not safe to
+  // touch afterwards, and leaving the value set would make re-picking the same
+  // file after a "Cancel" in the dialog fire no change event at all.
   const handleMediaUpdate = React.useCallback(async (ev: React.ChangeEvent<HTMLInputElement>) => {
-    if (!ev.target.files || ev.target.files.length === 0) {
-      return;
-    }
-    
-    const errorResult = await validateAndUpdateImage(editor, ev.target.files[0], props.element.id);
+    const input = ev.target;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+
+    if (!await checkImageBeforeUpload(file)) return;
+
+    const errorResult = await validateAndUpdateImage(editor, file, props.element.id);
     setError(errorResult);
   }, [editor, props]);
 

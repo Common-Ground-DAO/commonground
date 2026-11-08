@@ -10,6 +10,8 @@ import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
 
 type Props = {
   label?: string;
+  /** no visible label: `label` (default "Password") becomes the input's accessible name */
+  hideLabel?: boolean;
   sublabel?: string;
   placeholder?: string;
   password: string;
@@ -19,10 +21,11 @@ type Props = {
   onBlur?: (e: React.FocusEvent<Element>) => void;
   onEnterPressed?: () => void;
   maxLetters?: number;
+  autoFocus?: boolean;
 }
 
 const PasswordField: React.FC<Props> = (props) => {
-  const { label, sublabel, placeholder, password, passwordError, autoComplete, setPassword, onBlur, onEnterPressed, maxLetters } = props;
+  const { label, hideLabel, sublabel, placeholder, password, passwordError, autoComplete, setPassword, onBlur, onEnterPressed, maxLetters, autoFocus } = props;
   const [isPasswordVisible, setIsPasswordVisible] = React.useState<boolean>(false);
 
   const onKeyPress = useCallback((ev: React.KeyboardEvent) => {
@@ -33,7 +36,8 @@ const PasswordField: React.FC<Props> = (props) => {
 
   return <TextInputField
     type={isPasswordVisible ? "text" : "password"}
-    label={label || 'Password*'}
+    label={hideLabel ? undefined : (label || 'Password*')}
+    ariaLabel={hideLabel ? (label || 'Password') : undefined}
     subLabel={sublabel ?? 'Requires 8+ characters'}
     iconLeft={<KeyIcon className='w-5 h-5' />}
     placeholder={placeholder ?? '********'}
@@ -47,6 +51,7 @@ const PasswordField: React.FC<Props> = (props) => {
     onBlur={onBlur}
     onKeyPress={onKeyPress}
     maxLetters={maxLetters}
+    autoFocus={autoFocus}
   />
 }
 

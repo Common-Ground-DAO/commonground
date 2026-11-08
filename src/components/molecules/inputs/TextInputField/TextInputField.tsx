@@ -12,14 +12,16 @@ type Props = {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
-  label?: string | JSX.Element;
+  label?: string | React.JSX.Element;
+  /** the input's accessible name when no visible label is shown */
+  ariaLabel?: string;
   subLabel?: string;
   inputClassName?: string;
   labelClassName?: string;
   error?: string;
   hideErrorText?: boolean;
   disabled?: boolean;
-  inputRef?: React.RefObject<HTMLInputElement>;
+  inputRef?: React.RefObject<HTMLInputElement | null>;
   inlineToast?: InlineToastType;
   toastSuccessText?: string;
   forceShowToast?: true;
@@ -34,11 +36,13 @@ type Props = {
   maxLetters?: number;
   autoCapitalize?: string;
   autoFocus?: boolean;
-  iconLeft?: JSX.Element;
-  iconRight?: JSX.Element;
+  iconLeft?: React.JSX.Element;
+  iconRight?: React.JSX.Element;
   autoComplete?: string;
   name?: string;
   pattern?: string;
+  /** keyboard hint for touch devices, e.g. "numeric" for codes */
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
   backgroundColor?: string;
 
   showEmojiButton?: boolean;
@@ -51,6 +55,7 @@ export default function TextInputField(props: Props) {
     onChange,
     placeholder,
     label,
+    ariaLabel,
     subLabel,
     inputClassName,
     labelClassName,
@@ -77,6 +82,7 @@ export default function TextInputField(props: Props) {
     autoFocus,
     name,
     pattern,
+    inputMode,
     backgroundColor,
     showEmojiButton,
     currentEmoji,
@@ -136,6 +142,8 @@ export default function TextInputField(props: Props) {
           tabIndex={tabIndex}
           maxLength={maxLetters}
           autoComplete={autoComplete}
+          inputMode={inputMode}
+          aria-label={ariaLabel}
           name={name}
           style={style}
         />

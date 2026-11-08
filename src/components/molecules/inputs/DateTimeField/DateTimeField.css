@@ -1,5 +1,7 @@
+@reference '../../../../tailwind.css';
+
 .date-time-field {
-    @apply cg-border-xl !important;
+    @apply cg-border-xl!;
     background: var(--surface-subtleoverlay) !important;
     border: 1px solid var(--border-secondary, #3C425E) !important;
     color: var(--text-primary) !important;

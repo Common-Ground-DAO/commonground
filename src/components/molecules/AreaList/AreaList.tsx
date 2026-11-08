@@ -4,7 +4,7 @@
 
 import React, { useEffect, useState } from 'react';
 
-import { ethers } from 'ethers';
+import { formatUnits } from 'viem';
 import config from '../../../common/config';
 import { CommunityPermission } from 'common/enums';
 import contractApi from '../../../data/api/contract';
@@ -58,7 +58,7 @@ export function AreaList(props: Props) {
     </div>}
     */
 
-    const areaElements = areas.reduce<JSX.Element[]>((agg, area) => {
+    const areaElements = areas.reduce<React.JSX.Element[]>((agg, area) => {
       const areaChannels = channels.filter(ch => ch.areaId === area.id);
       // Check if area contains channels. If not, then
       // only show the (empty) area if the user has permissions
@@ -119,7 +119,7 @@ function AccessRuleModal(props: { accessrules: Models.Community.AccessRules, are
     load();
   }, [accessrules]);
 
-  const ruleData: JSX.Element[] = [];
+  const ruleData: React.JSX.Element[] = [];
   if (!!contractData) {
     ruleData.push(
       <ContractDetails rule={accessrules.rule1} contracts={contractData} />
@@ -144,7 +144,7 @@ function AccessRuleModal(props: { accessrules: Models.Community.AccessRules, are
         {ruleData}
         <div className="flex justify-center mt-4">
           <Button
-            className='btnSecondary accessrule-modal-close-btn w-full py-3 rounded'
+            className='btnSecondary accessrule-modal-close-btn w-full py-3 rounded-sm'
             onClick={close}
             text='Close'
           />
@@ -165,7 +165,7 @@ const ContractDetails = (props: { contracts: Record<string, Models.Contract.Data
             <div>
               {contract.data.name}
             </div>
-            <div className="p-1 rounded text-sm" style={{ backgroundColor: '#FFFFFF18' }}>
+            <div className="p-1 rounded-sm text-sm" style={{ backgroundColor: '#FFFFFF18' }}>
               {contract.data.symbol}
             </div>
           </>
@@ -174,9 +174,9 @@ const ContractDetails = (props: { contracts: Record<string, Models.Contract.Data
             ERC1155
           </div>
         )}
-        <div className="flex-grow" />
-        <div className="py-1 px-2 rounded" style={{ backgroundColor: '#F9F9F9', color: '#242424', fontWeight: '500' }}>
-          {ethers.utils.formatUnits(rule.amount, contract.data.type === "ERC20" ? contract.data.decimals : 0)}
+        <div className="grow" />
+        <div className="py-1 px-2 rounded-sm" style={{ backgroundColor: '#F9F9F9', color: '#242424', fontWeight: '500' }}>
+          {formatUnits(BigInt(rule.amount), contract.data.type === "ERC20" ? contract.data.decimals : 0)}
         </div>
       </div>
       <div className="mb-1">

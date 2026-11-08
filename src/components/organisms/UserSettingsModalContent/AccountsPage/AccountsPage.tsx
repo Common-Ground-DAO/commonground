@@ -9,18 +9,25 @@ import { ChevronRightIcon, EnvelopeIcon, IdentificationIcon } from '@heroicons/r
 import { Key as PasskeyIcon } from '@phosphor-icons/react';
 import { PageType } from '../UserSettingsModalContent';
 import { getTruncatedId } from '../../../../util';
-import { ReactComponent as XIcon } from '../../../atoms/icons/24/X.svg';
-import { ReactComponent as FuelIcon } from '../../../atoms/icons/24/Fuel.svg';
-import { ReactComponent as AeternityIcon } from '../../../atoms/icons/24/Aeternity.svg';
-import { ReactComponent as EthereumIcon } from '../../../atoms/icons/24/Ethereum.svg';
-import { ReactComponent as LuksoIcon } from '../../../atoms/icons/24/Lukso.svg';
-import { ReactComponent as FarcasterIcon } from '../../../atoms/icons/24/Farcaster.svg';
+import XIcon from '../../../atoms/icons/24/X.svg?react';
+import EthereumIcon from '../../../atoms/icons/24/Ethereum.svg?react';
+import LuksoIcon from '../../../atoms/icons/24/Lukso.svg?react';
+import FarcasterIcon from '../../../atoms/icons/24/Farcaster.svg?react';
+import SignOutOtherDevices from './SignOutOtherDevices';
+
+export type ExternalAccountType = Exclude<Models.User.ProfileItemType, 'cg' | 'bot'>;
 
 type Props = {
   setPage: (pageType: PageType) => void;
   setCurrentWallet: (walletId: string) => void;
-  setCurrentAccount: (account: Models.User.ProfileItemType) => void;
+  setCurrentAccount: (account: ExternalAccountType) => void;
+  lockModal: (lock: boolean) => void;
 };
+
+const isExternalAccount = (
+  account: Models.User.ProfileItemWithDetails,
+): account is Models.User.ProfileItemWithDetails & { type: ExternalAccountType } =>
+  account.type !== 'cg' && account.type !== 'bot';
 
 export const getAccountIcon = (accountType: Models.User.ProfileItemType) => {
   switch(accountType) {
@@ -45,17 +52,13 @@ const getWalletIcon = (type: Models.Wallet.Type) => {
     case 'cg_evm':
     case 'evm':
       return <EthereumIcon className='w-5 h-5' />;
-    case 'fuel':
-      return <FuelIcon className='w-5 h-5' />;
-    case 'aeternity':
-      return <AeternityIcon className='w-5 h-5' />;
     default:
       return <></>;
   }
 }
 
 const AccountsPage: React.FC<Props> = (props) => {
-  const { setCurrentWallet, setCurrentAccount, setPage } = props;
+  const { setCurrentWallet, setCurrentAccount, setPage, lockModal } = props;
   const ownUser = useOwnUser();
   const wallets = useOwnWallets();
   return (<div className='flex flex-col px-4 gap-4 cg-text-main'>
@@ -66,7 +69,7 @@ const AccountsPage: React.FC<Props> = (props) => {
       rightElement={<ChevronRightIcon className='w-5 h-5' />}
       onClick={() => setPage('email-account-accounts')}
     />}
-    {ownUser?.accounts.filter(acc => acc.type !== "cg").map(acc => <UserSettingsButton
+    {ownUser?.accounts.filter(isExternalAccount).map(acc => <UserSettingsButton
       key={acc.type}
       leftElement={getAccountIcon(acc.type)}
       text={acc.displayName}
@@ -100,6 +103,8 @@ const AccountsPage: React.FC<Props> = (props) => {
     rightElement={<ChevronRightIcon className='w-5 h-5' />}
     onClick={() => setPage('passkey-settings')}
   />
+  <div className='cg-separator' />
+  <SignOutOtherDevices lockModal={lockModal} />
 </div>);
 }
 

@@ -186,7 +186,6 @@ export const web3TagList: PredefinedTag[] = [
 
   // Added SimpleChannels as regular predefined tags
   { name: 'Arbitrum', externalIcon: 'arbitrum' },
-  { name: 'Aeternity', externalIcon: 'aeternity' },
   { name: 'Avalanche', externalIcon: 'avalanche' },
   { name: 'Base', externalIcon: 'base' },
   { name: 'Binance Smart Chain', externalIcon: 'binance smart chain' },
@@ -194,23 +193,16 @@ export const web3TagList: PredefinedTag[] = [
   { name: 'Fantom', externalIcon: 'fantom' },
   { name: 'Gnosis', externalIcon: 'gnosis' },
   { name: 'Linea', externalIcon: 'linea' },
+  { name: 'LUKSO', externalIcon: 'lukso' },
   { name: 'Optimism', externalIcon: 'optimism' },
   { name: 'Polygon', externalIcon: 'polygon' },
   { name: 'Scroll', externalIcon: 'scroll' },
   { name: 'zkSync', externalIcon: 'zksync' },
   { name: 'Cardano', externalIcon: 'cardano' },
   { name: 'Solana', externalIcon: 'solana' },
-  { name: 'Powershift', externalIcon: 'powershift' },
 ];
 
 export const predefinedTagList: PredefinedTag[] = [
   ...generalTagList,
   ...web3TagList,
 ];
-
-export const ecosystemTagList: PredefinedTag[] = [
-  { name: 'Fuel', externalIcon: 'fuel' }, // Example with imageId placeholder
-  { name: 'LUKSO', externalIcon: 'lukso' },
-  { name: 'SI3', externalIcon: 'si3' },
-  { name: 'Cannabis Social Clubs', externalIcon: 'cannabis-social-clubs' },
-]; 

@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .call-peer-card {
     @apply flex items-center justify-center w-full relative overflow-hidden;
     aspect-ratio: 16 / 9;

@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import UAParser from 'ua-parser-js';
+import { UAParser } from 'ua-parser-js';
 import React from 'react';
 
 export function useUserAgent() {

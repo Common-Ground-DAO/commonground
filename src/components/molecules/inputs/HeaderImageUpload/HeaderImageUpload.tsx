@@ -4,10 +4,11 @@
 
 import { createRef, useState } from "react";
 import errors from "../../../../common/errors";
-import { ReactComponent as CameraPlusIcon } from "../../../atoms/icons/24/CameraPlusIcon.svg";
-import { ReactComponent as ToastErrorIcon } from "../../../atoms/icons/16/ToastErrorIcon.svg";
+import CameraPlusIcon from "../../../atoms/icons/24/CameraPlusIcon.svg?react";
+import ToastErrorIcon from "../../../atoms/icons/16/ToastErrorIcon.svg?react";
 import Button from "../../../atoms/Button/Button";
 import config from "../../../../common/config";
+import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
 
 import "./HeaderImageUpload.css";
 
@@ -25,15 +26,23 @@ export default function HeaderImageUpload(props: Props) {
     const inputRef = createRef<HTMLInputElement>();
     const [ error, setError ] = useState<string>();
 
-    const handleImageChange = (ev: React.ChangeEvent<HTMLInputElement>) => {
+    const handleImageChange = async (ev: React.ChangeEvent<HTMLInputElement>) => {
+        // Read the file and clear the input *before* any await: `ev.target` is
+        // not safe to touch afterwards, and leaving the value set would make
+        // re-picking the same file after a "Cancel" in the pre-check dialog
+        // fire no change event at all.
+        const input = ev.target;
+        const file = input.files?.[0];
+        input.value = '';
         if (onChange) {
-            if (!ev.target.files || ev.target.files.length === 0) {
+            if (!file) {
                 onChange(undefined);
-            } else if (ev.target.files[0].size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
+            } else if (file.size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
                 setError(errors.client.UPLOAD_SIZE_LIMIT);
             } else {
+                if (!await checkImageBeforeUpload(file)) return;
                 try {
-                    onChange(ev.target.files[0]);
+                    onChange(file);
                     setError(undefined);
                 } catch (err){
                     setError("An unknown error has occurred");

@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .image-upload-field-image {
     @apply cg-border-xl relative flex items-center justify-center cursor-pointer;
     border: 1px solid var(--border-secondary, #3C425E);

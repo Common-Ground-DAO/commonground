@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import config from "../../../common/config";
@@ -22,7 +22,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import data from "data";
 import { getUrl } from 'common/util';
 import { Bars3Icon } from "@heroicons/react/24/solid";
-import { Bell, Brain, ChatsTeardrop, CoinVertical, Compass, Storefront } from "@phosphor-icons/react";
+import { Bell, ChatsTeardrop, Compass, Storefront } from "@phosphor-icons/react";
 
 export default function MobileMenu() {
   const navigate = useNavigate();
@@ -37,7 +37,7 @@ export default function MobileMenu() {
   const communities = useOwnCommunities();
   const ownUser = useOwnUser();
 
-  const communityIdsRef = useRef<string[]>();
+  const communityIdsRef = useRef<string[]>(undefined);
   const communityIds = useMemo(() => {
     const oldCommunityIds = communityIdsRef.current;
     if (!oldCommunityIds) {
@@ -168,13 +168,6 @@ export default function MobileMenu() {
       showDot={areNews}
     />
   ), [homeActive, areNews, onHomeClick]);
-  // const tokenSaleBtn = useMemo(() => (
-  //   <MenuButton
-  //     icon={<CoinVertical weight='duotone' className='h-6 w-6' />}
-  //     isActive={isActiveButton(getUrl({type: 'token'}))}
-  //     onClick={() => navigate(getUrl({type: 'token'}))}
-  //   />
-  // ), [isActiveButton]);
   const appStoreBtn = useMemo(() => (
       <MenuButton
         icon={<Storefront weight='duotone' className='h-6 w-6' />}
@@ -191,14 +184,6 @@ export default function MobileMenu() {
       disabled={!ownUser?.id}
     />
   ), [unreadConversations, ownUser?.id, isActiveButton]);
-  const assistantBtn = useMemo(() => (
-    <MenuButton
-      icon={<Brain weight="duotone" className="w-6 h-6" />}
-      isActive={isActiveButton(getUrl({ type: 'assistant' }))}
-      onClick={() => navigate(getUrl({ type: 'assistant' }))}
-      disabled={!ownUser?.id}
-    />
-  ), [ownUser?.id, isActiveButton]);
   const notificationBtn = useMemo(() => (
     <MenuButton
       icon={<Bell weight="duotone" className="w-6 h-6"/>}
@@ -219,10 +204,8 @@ export default function MobileMenu() {
     <div className={`mobile-menu ${operatingSystem === "Android" ? "mobile-menu-android" : pwaStatus === "InMobilePWA" ? "mobile-menu-ios-pwa" : 'mobile-menu-ios-web'}`}>
       {homeBtn}
       {browseBtn}
-      {/* {tokenSaleBtn} */}
       {appStoreBtn}
       {chatBtn}
-      {config.PERSONAL_ASSISTANT_ENABLED && assistantBtn}
       {notificationBtn}
       {profileBtn}
     </div>

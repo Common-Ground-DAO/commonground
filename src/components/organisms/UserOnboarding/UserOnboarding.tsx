@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import { useCallback } from "react";
 import { useUserOnboardingContext } from "context/UserOnboarding";
 import { useWindowSizeContext } from "context/WindowSizeProvider";
 import Modal from "components/atoms/Modal/Modal";
@@ -10,12 +11,16 @@ import { useOwnUser } from "context/OwnDataProvider";
 import { XMarkIcon } from "@heroicons/react/24/solid";
 import './UserOnboarding.css';
 import Splash from "./Splash/Splash";
-import { useEcosystemContext } from "context/EcosystemProvider";
+import AuthFlow from "../AuthFlow/AuthFlow";
 
+/**
+ * The onboarding modal, opened by every "log in / sign up" entry point
+ * (`setUserOnboardingVisibility(true)`): the login / sign-up flow (AuthFlow),
+ * then the tail steps (Splash).
+ */
 const UserOnboarding = () => {
-  const { luksoData, isUserOnboardingVisible, setUserOnboardingVisibility, step, createUserData, profileLockedIn } = useUserOnboardingContext();
+  const { isUserOnboardingVisible, setUserOnboardingVisibility, step, setStep, continueAfterSignup } = useUserOnboardingContext();
   const { isMobile } = useWindowSizeContext();
-  const { ecosystem } = useEcosystemContext();
   const ownUser = useOwnUser();
 
   const closeOnboardingModal = () => {
@@ -28,21 +33,16 @@ const UserOnboarding = () => {
     }
   };
 
-  let extendedHeightClassName = '';
-  if (step === 'create-profile-setup' && !profileLockedIn) {
-    if (createUserData.useCgProfile !== undefined) {
-      extendedHeightClassName = 'create-profile-with-cg-profile';
-    }
-    else if (createUserData.displayAccount === 'lukso' && (!luksoData || !luksoData.universalProfileValid)) {
-      extendedHeightClassName = 'create-profile-with-universal-profile';
-    }
-  }
+  const onLoggedIn = useCallback(() => {
+    setStep('login-finished');
+    setTimeout(() => {
+      setUserOnboardingVisibility(false);
+    }, 1400);
+  }, [setStep, setUserOnboardingVisibility]);
 
   const className = [
     'user-onboarding',
     step,
-    extendedHeightClassName,
-    ecosystem !== null ? 'ecosystem-onboarding' : '',
     isMobile ? 'mobile-layout' : ''
   ].join(' ').trim();
 
@@ -52,7 +52,9 @@ const UserOnboarding = () => {
         {(step !== "create-finished" && step !== "login-finished") &&
           <div className="onboarding-x"><XMarkIcon className="w-6 h-6" onClick={closeOnboardingModal}/></div>
         }
-        <Splash />
+        {step === 'start'
+          ? <AuthFlow variant='modal' onLoggedIn={onLoggedIn} onSignedUp={({ email }) => continueAfterSignup(email)} />
+          : <Splash />}
       </Modal>
     )
   }

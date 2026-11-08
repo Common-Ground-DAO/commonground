@@ -3,10 +3,11 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import config from 'common/config';
 import Button from '../Button/Button';
 import { CheckIcon, ChevronDownIcon, LockClosedIcon } from '@heroicons/react/20/solid';
 import { useCallContext } from 'context/CallProvider';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { getUrl } from 'common/util';
 import communityApi from 'data/api/community';
 import { useOwnUser } from 'context/OwnDataProvider';
@@ -22,6 +23,7 @@ import { PredefinedRole } from 'common/enums';
 import { useSnackbarContext } from 'context/SnackbarContext';
 import { useExternalModalContext } from 'context/ExternalModalProvider';
 import { useEmailConfirmationContext } from 'context/EmailConfirmationProvider';
+import { isPredefinedRolePermission } from "util/predefinedRoles";
 
 type Props = {
   onUpdateEvent: (eventId: string, eventChanges: Partial<Models.Community.Event>) => void;
@@ -35,7 +37,7 @@ type Props = {
 
 export function calculateEventPermissions(community: Models.Community.DetailView, event: Models.Community.Event): CalculatedPermission {
   const { rolePermissions } = event;
-  const publicPermission = rolePermissions.find(permission => permission.roleTitle === PredefinedRole.Public);
+  const publicPermission = rolePermissions.find(permission => isPredefinedRolePermission(permission, PredefinedRole.Public));
   const publicCanAttend = publicPermission?.permissions.find(permission => permission === 'EVENT_ATTEND');
   if (publicCanAttend) return null;
 
@@ -44,7 +46,7 @@ export function calculateEventPermissions(community: Models.Community.DetailView
     return null;
   }
 
-  const memberPermission = rolePermissions.find(permission => permission.roleTitle === PredefinedRole.Member);
+  const memberPermission = rolePermissions.find(permission => isPredefinedRolePermission(permission, PredefinedRole.Member));
   const memberCanAttend = memberPermission?.permissions.find(permission => permission === 'EVENT_ATTEND');
   // Also ask for community join if not part of the community
   if (!community || memberCanAttend) return {
@@ -147,6 +149,8 @@ const AttendEventButton: React.FC<Props> = (props) => {
     ev.stopPropagation();
     if (event?.type === 'external' && event.externalUrl) {
       showModal(event.externalUrl);
+    } else if (!config.CALLS_ENABLED) {
+      showSnackbar({ type: 'warning', text: 'Calls are disabled on this instance' });
     } else if (call && community) {
       if (call.slots >= call.callMembers) {
         showSnackbar({type: 'warning', text: 'This call is full'});
@@ -172,9 +176,12 @@ const AttendEventButton: React.FC<Props> = (props) => {
       joinCall(scheduledCall);
       navigate(getUrl({ type: 'community-call', community, call: scheduledCall }));
     } catch (error) {
+      // the backend rejects with SERVICE_UNAVAILABLE when no call server is
+      // reachable — say so instead of leaving a button that does nothing
       console.error('Error starting event:', error);
+      showSnackbar({ type: 'warning', text: 'The event could not be started because no call server is available' });
     }
-  }, [community, event, joinCall, navigate]);
+  }, [community, event, joinCall, navigate, showSnackbar]);
 
   const attendEvent = useCallback(async (ev?: React.MouseEvent) => {
     ev?.stopPropagation();
@@ -185,7 +192,9 @@ const AttendEventButton: React.FC<Props> = (props) => {
       return;
     }
 
-    if (!ownUser.emailVerified) {
+    // on instances without email delivery, verification is impossible —
+    // don't gate attendance on it
+    if (!ownUser.emailVerified && config.EMAIL_ENABLED) {
       openModal('signup');
       return;
     }
@@ -235,7 +244,7 @@ const AttendEventButton: React.FC<Props> = (props) => {
     </>;
   }
 
-  if (isLive || (event?.type === 'external' && externalIsLive)) {
+  if ((isLive && config.CALLS_ENABLED) || (event?.type === 'external' && externalIsLive)) {
     return <Button
       role='primary'
       text='Join now'
@@ -243,7 +252,7 @@ const AttendEventButton: React.FC<Props> = (props) => {
       onClick={onJoinCall}
       disabled={event?.type !== 'external' && (call?.slots || 0) >= (call?.callMembers || 0)}
     />;
-  } else if (isOnTime && hasPermission && event?.type !== 'external') {
+  } else if (isOnTime && hasPermission && event?.type !== 'external' && config.CALLS_ENABLED) {
     return <Button
       role='primary'
       text='Start Event'

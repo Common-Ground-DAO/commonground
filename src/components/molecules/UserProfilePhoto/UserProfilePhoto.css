@@ -1,5 +1,7 @@
+@reference '../../../tailwind.css';
+
 .user-profile-photo-with-blurred-background {
-  @apply flex items-center flex-none flex-grow-0 order-none relative overflow-hidden;
+  @apply flex items-center flex-none grow-0 order-none relative overflow-hidden;
   height: 150px;
 
   > .blurred-background {

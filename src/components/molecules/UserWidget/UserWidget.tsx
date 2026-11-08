@@ -15,8 +15,9 @@ import { useWindowSizeContext } from 'context/WindowSizeProvider';
 import { createPortal } from "react-dom";
 import { getDisplayName } from '../../../util';
 import { useUserSettingsContext } from 'context/UserSettingsProvider';
-import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
+import SparkIcon from 'components/atoms/icons/misc/spark.svg?react';
 import { useSnackbarContext } from 'context/SnackbarContext';
+import { cssBackgroundImage } from 'util/cssBackground';
 
 type Props = {
   collapsed: boolean;
@@ -53,6 +54,7 @@ const DesktopUserWidgetContainer: React.FC<Props> = (props) => {
   const { showSnackbar } = useSnackbarContext();
 
   const selfRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
   const setIsClosed = useCallback((closed: boolean) => {
@@ -78,9 +80,19 @@ const DesktopUserWidgetContainer: React.FC<Props> = (props) => {
 
   const repositionWidget = useCallback(() => {
     const boundingBox = selfRef.current?.getBoundingClientRect();
-    let left = (boundingBox?.left || 0);
-    let bottom = document.body.clientHeight - (boundingBox?.bottom || 0);
-    let width = boundingBox?.width || 0;
+    if (!boundingBox) {
+      return;
+    }
+    // The widget is rendered into `#user-settings-root` and placed with
+    // `left`/`bottom` relative to *that* box, so measure against it. The old
+    // `document.body.clientHeight - rect.bottom` mixed coordinate systems: it
+    // assumed the root's bottom edge sits exactly at body height and the
+    // document is unscrolled, and any difference left the overlay floating
+    // off its in-flow slot (the slot's own box peeking out underneath).
+    const rootBox = portalRoot.getBoundingClientRect();
+    let left = boundingBox.left - rootBox.left;
+    let bottom = rootBox.bottom - boundingBox.bottom;
+    let width = boundingBox.width;
 
     // Undo parent padding
     if (isConnected) {
@@ -98,14 +110,46 @@ const DesktopUserWidgetContainer: React.FC<Props> = (props) => {
       bottom,
     });
     setClosedWidth(width);
-  }, [isConnected, props.collapsed]);
+  }, [isConnected, props.collapsed, portalRoot]);
 
-  // Reposition on connected with delay
+  // The slot can move without changing size (viewport height changes, e.g. a
+  // tablet's on-screen keyboard, and visual-viewport scrolls, which
+  // WindowSizeProvider answers by shifting the layout), which the
+  // ResizeObserver below won't see.
   useEffect(() => {
-    if (isConnected) {
-      setTimeout(repositionWidget, 120);
-    }
+    window.addEventListener('resize', repositionWidget);
+    window.visualViewport?.addEventListener('resize', repositionWidget);
+    window.visualViewport?.addEventListener('scroll', repositionWidget);
+    return () => {
+      window.removeEventListener('resize', repositionWidget);
+      window.visualViewport?.removeEventListener('resize', repositionWidget);
+      window.visualViewport?.removeEventListener('scroll', repositionWidget);
+    };
+  }, [repositionWidget]);
+
+  // Joining or leaving a call animates the container's padding (100 ms,
+  // UserWidget.css): the slot moves without changing size, which the
+  // ResizeObserver below won't see. Measure again once the animation is over,
+  // in both directions; the timeout covers a transition that never runs
+  // (reduced motion, nothing changed).
+  useEffect(() => {
+    const timeout = setTimeout(repositionWidget, 120);
+    return () => clearTimeout(timeout);
   }, [isConnected, repositionWidget]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const listener = (ev: TransitionEvent) => {
+      // one event per animated property (hover animates the background):
+      // only the padding moves the slot
+      if (ev.target === container && ev.propertyName.startsWith('padding')) {
+        repositionWidget();
+      }
+    };
+    container.addEventListener('transitionend', listener);
+    return () => container.removeEventListener('transitionend', listener);
+  }, [repositionWidget]);
 
   // Resize listener
   useEffect(() => {
@@ -170,7 +214,7 @@ const DesktopUserWidgetContainer: React.FC<Props> = (props) => {
     }
   }, [isOpen, isConnected, ownUser, setIsClosed, setStep, setUserOnboardingVisibility])
 
-  return <div className={containerClassname} onClick={onContainerClick}>
+  return <div className={containerClassname} onClick={onContainerClick} ref={containerRef}>
     {isConnected && <AudioManagerButtons />}
     <div className={portalContainerClassName} ref={selfRef}>
       {createPortal(<div className='absolute' style={style} ref={modalRef}>
@@ -205,7 +249,7 @@ export const UserWidgetContent = React.memo((props: {
   ].join(' ').trim();
 
   return <div className={className} onClick={props.onClick}>
-    {!props.callMode && <div className="user-widget-content-bg" style={{ backgroundImage: `url(${imageUrl})` }} />}
+    {!props.callMode && <div className="user-widget-content-bg" style={{ backgroundImage: cssBackgroundImage(imageUrl) }} />}
     <div className={`user-widget-content${props.standalone ? ' standalone-widget' : ''}`}>
       <Jdenticon userId={ownUser?.id || ''} predefinedSize='40' onlineStatus={ownUser?.onlineStatus} hideStatus />
       {!props.collapsed && <div className='flex-1 cg-text-lg-500 flex flex-wrap justify-between items-center overflow-hidden'>

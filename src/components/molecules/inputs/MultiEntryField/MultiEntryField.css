@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .entry-field-content {
     @apply flex py-2 px-4 items-center gap-2 self-stretch cg-border-l w-full;
     border: 1px solid var(--border-subtle, rgba(25, 27, 38, 0.03));
@@ -5,7 +7,7 @@
 }
 
 .multi-entry-field-container.dragging-over {
-    background: theme('colors.palette.transparent');
+    background: var(--color-palette-transparent);
 }
 
 .multi-entry-text-input {

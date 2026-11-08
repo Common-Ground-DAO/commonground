@@ -6,7 +6,13 @@ declare namespace Models {
   namespace User {
     type OnlineStatus = 'online' | 'away' | 'dnd' | 'invisible' | 'offline';
     type TutorialName = 'onboarding';
-    type ProfileItemType = 'twitter' | 'lukso' | 'cg' | 'farcaster';
+    type ProfileItemType = 'twitter' | 'lukso' | 'cg' | 'farcaster' | 'bot';
+    type BotOwnerType = 'community' | 'user' | 'platform';
+    type BotPlatformPresenceMode = 'all' | 'selected';
+    type BotOwnerSummary =
+      | { type: 'user'; id: string; username: string }
+      | { type: 'community'; id: string; title: string }
+      | { type: 'platform' };
 
     type PremiumFeatureName =
       'SUPPORTER_1' |
@@ -48,6 +54,11 @@ declare namespace Models {
       url?: string;
     }
 
+    type UserAccountExtraData_Bot = {
+      type: "bot";
+      description: string | null;
+    }
+
     type UserAccountData_Lukso = {
       type: "lukso";
       id: string;
@@ -69,10 +80,12 @@ declare namespace Models {
     };
 
     type UserAccountData = UserAccountData_Twitter | UserAccountData_Lukso | UserAccountData_Farcaster;
-    type UserAccountExtraData = UserAccountExtraData_CG | UserAccountExtraData_Lukso | UserAccountExtraData_Farcaster;
+    type UserAccountExtraData = UserAccountExtraData_CG | UserAccountExtraData_Lukso | UserAccountExtraData_Farcaster | UserAccountExtraData_Bot;
 
     type Data = {
       id: string;
+      isBot: boolean;
+      botOwner?: BotOwnerSummary | null;
       onlineStatus: OnlineStatus;
       isFollowed: boolean;
       isFollower: boolean;
@@ -94,21 +107,11 @@ declare namespace Models {
 
     type ExtraData = {
       // these fields can be set through setOwnExtraDataField
-      registeredForTokenSale?: boolean;
       installedPWA?: boolean;
-      agreedToTokenSaleTermsTimestamp?: string; // ISO date string, set by server
-      investsFromSwitzerland?: {
-        value: boolean;
-        serverTimestamp: string; // ISO date string, set by server
-      };
 
       // these fields cannot be set through setOwnExtraDataField
       usesMobileDevice?: boolean;
       usesDesktopDevice?: boolean;
-      kycLivenessSuccess?: boolean;
-      kycFullSuccess?: boolean;
-      kycCgTokensaleSuccess?: boolean;
-      kycRejectReason?: string;
       desktopPushWorking?: boolean;
       mobilePushWorking?: boolean;
     };

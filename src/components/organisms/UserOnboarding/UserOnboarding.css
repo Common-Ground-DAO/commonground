@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .user-onboarding {
     --onboardingModalWidth: 400px;
     --onboardingModalHeight: 600px;
@@ -6,15 +8,6 @@
     background: var(--surface-background-2nd, #222432);
     --errorColor: var(--warningColor);
     width: auto;
-
-    &.ecosystem-onboarding.splash {
-        height: auto;
-
-        .onboarding-x {
-            background: var(--surface-subtleoverlay-eco, var(--surface-subtleoverlay));
-            color: var(--text-primary-eco, var(--text-primary));
-        }
-    }
 
     &.mobile-layout {
         height: var(--visualHeight);
@@ -51,28 +44,25 @@
 
         height: min(var(--onboardingModalHeight), 95vh);
         min-height: min(var(--onboardingModalHeight), 95vh);
-        max-height: min(var(--onboardingModalHeight), 95vh);;
+        max-height: min(var(--onboardingModalHeight), 95vh);
         width: min(var(--onboardingModalWidth), 100vw);
         min-width: min(var(--onboardingModalWidth), 100vw);
         max-width: min(var(--onboardingModalWidth), 100vw);
     }
 
-    &.create-profile-with-cg-profile {
-        --onboardingModalHeight: 915px;
-    }
+    /* the login / sign-up flow (AuthFlow) on desktop: at least the usual
+       height, taller when its content needs it (up to 95vh, then it scrolls),
+       so the whole login step fits without scrolling */
+    &.start:not(.mobile-layout) .modal-content {
+        @apply flex flex-col;
+        height: auto;
+        /* .modal-centered caps the dialog at the visual height minus 2rem */
+        max-height: min(95vh, calc(var(--visualHeight) - 2rem));
 
-    &.create-profile-with-universal-profile {
-        --onboardingModalHeight: 860px;
-    }
-}
-
-.user-onboarding-logo {
-    width: 100px;
-    height: 100px;
-    padding: 15px;
-
-    &.dark-bg {
-        background: var(--colours-dark-950);
+        > .auth-flow {
+            flex: 1 1 auto;
+            min-height: 0;
+        }
     }
 }
 

@@ -31,7 +31,7 @@ async function main() {
       '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266', // owner
       '0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199', // allowance signer
       Math.floor(new Date().getTime() / 1000), // start timestamp
-      Math.floor(new Date("2025-12-30T18:00:00Z").getTime() / 1000), // end timestamp
+      Math.floor(new Date().getTime() / 1000) + 10 * 365 * 24 * 3600, // end timestamp: 10 years from now (local dev chain)
       ethers.parseEther('3000'), // 3000 ETH hardcap
     ]);
 

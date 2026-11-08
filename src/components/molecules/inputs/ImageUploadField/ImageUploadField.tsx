@@ -5,11 +5,13 @@
 import React, { useRef, useState } from "react";
 import './ImageUploadField.css';
 import errors from "../../../../common/errors";
-import { ReactComponent as CameraPlusIcon } from "../../../atoms/icons/24/CameraPlusIcon.svg";
-import { ReactComponent as ToastErrorIcon } from "../../../atoms/icons/16/ToastErrorIcon.svg";
+import CameraPlusIcon from "../../../atoms/icons/24/CameraPlusIcon.svg?react";
+import ToastErrorIcon from "../../../atoms/icons/16/ToastErrorIcon.svg?react";
 import Button from "../../../atoms/Button/Button";
 import config from "../../../../common/config";
 import { ArrowUpTrayIcon } from "@heroicons/react/20/solid";
+import { checkImageBeforeUpload } from "moderation/checkImageBeforeUpload";
+import { cssBackgroundImage } from 'util/cssBackground';
 
 
 type Props = {
@@ -26,15 +28,23 @@ export default function ImageUploadField(props: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string>();
 
-  const handleImageChange = (ev: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (ev: React.ChangeEvent<HTMLInputElement>) => {
+    // Read the file and clear the input *before* any await: `ev.target` is not
+    // safe to touch afterwards, and leaving the value set would make re-picking
+    // the same file after a "Cancel" in the pre-check dialog fire no change
+    // event at all.
+    const input = ev.target;
+    const file = input.files?.[0];
+    input.value = '';
     if (onChange) {
-      if (!ev.target.files || ev.target.files.length === 0) {
+      if (!file) {
         onChange(undefined);
-      } else if (ev.target.files[0].size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
+      } else if (file.size > config.IMAGE_UPLOAD_SIZE_LIMIT) {
         setError(errors.client.UPLOAD_SIZE_LIMIT);
       } else {
+        if (!await checkImageBeforeUpload(file)) return;
         try {
-          onChange(ev.target.files[0]);
+          onChange(file);
           setError(undefined);
         } catch (err) {
           setError("An unknown error has occurred");
@@ -64,7 +74,7 @@ export default function ImageUploadField(props: Props) {
     <span className="cg-text-lg-500 cg-text-main">{label}</span>
     {subLabels?.map(sublabel => <span key={sublabel} className="cg-text-md-400 cg-text-secondary">{sublabel}</span>)}
     </div>
-    <div className="image-upload-field-image" onClick={handleClick} style={{...imagePreviewStyle, backgroundImage: `url(${imageURL})`}}>
+    <div className="image-upload-field-image" onClick={handleClick} style={{...imagePreviewStyle, backgroundImage: cssBackgroundImage(imageURL)}}>
       <input type="file" ref={inputRef} onChange={handleImageChange} style={{ display: "none" }} accept={config.ACCEPTED_IMAGE_FORMATS} />
       {!imageURL && <ArrowUpTrayIcon className="w-5 h-5" />}
       {!!imageURL && onRemove && (

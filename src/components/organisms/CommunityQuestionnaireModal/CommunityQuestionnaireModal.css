@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .questionnaire-options {
     @apply overflow-hidden;
     >*:not(:last-child) {

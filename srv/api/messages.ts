@@ -4,7 +4,7 @@
 
 import express from "express";
 import errors from "../common/errors";
-import { ArticlePermission, CallPermission, ChannelPermission, CommunityPermission, PredefinedRole } from "../common/enums";
+import { ArticlePermission, CallPermission, ChannelPermission, CommunityPermission, PredefinedRole, RoleType } from "../common/enums";
 import chatHelper from "../repositories/chats";
 import communityHelper from "../repositories/communities";
 import eventHelper from "../repositories/event";
@@ -13,25 +13,159 @@ import permissionHelper from "../repositories/permissions";
 import validators from "../validators";
 import { registerPostRoute } from "./util";
 import notificationHelper from "../repositories/notifications";
-import shortUUID from "short-uuid";
+import { createTranslator } from "short-uuid";
 import { User } from "../util/express";
 import ogs from 'open-graph-scraper';
 import fileHelper from "../repositories/files";
-import axios from "../util/axios";
+import safeFetch from "../util/safeFetch";
+import ipRateLimitHandler from "../util/rateLimit";
+import redisManager from "../redis";
+import { createHash } from "crypto";
 import articleHelper from "../repositories/articles";
+import botHelper from "../repositories/bots";
+import { allowBotRoute } from "../util/botPrincipal";
+import { enforceBotRateLimit } from "../util/botRateLimit";
+import { requestSockets, senderExcept, type RequestSockets } from "../util/requestSocket";
+import callHelper from "../repositories/calls";
 
-const t = shortUUID();
+const t = createTranslator();
+
+/** Caps for what `/getUrlPreview` will buffer from a caller-supplied URL. */
+const URL_PREVIEW_MAX_BYTES = 1_000_000;
+const URL_PREVIEW_MAX_IMAGE_BYTES = 8_000_000;
+/** Cap for the title and description returned (and cached) per preview. */
+const URL_PREVIEW_MAX_TEXT = 2_000;
+/** Previews are cached per URL so repeated requests do not refetch. */
+const URL_PREVIEW_CACHE_SECONDS = 60 * 60;
+/** Longest URL a preview links to; matches the request validator. */
+const URL_PREVIEW_MAX_URL = 2048;
+/** Serialized previews above this size are returned but not cached. */
+const URL_PREVIEW_MAX_CACHED_BYTES = 8 * 1024;
+
+/**
+ * The page's `og:url` if it is a usable http(s) link, otherwise the URL the
+ * preview was requested for.
+ */
+function previewLink(ogUrl: string | undefined, requestUrl: string): string {
+  if (!ogUrl || ogUrl.length > URL_PREVIEW_MAX_URL) {
+    return requestUrl;
+  }
+  try {
+    const parsed = new URL(ogUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return requestUrl;
+    }
+    const href = parsed.toString();
+    return href.length <= URL_PREVIEW_MAX_URL ? href : requestUrl;
+  } catch {
+    return requestUrl;
+  }
+}
+
+/**
+ * Previews that miss the cache fetch a page and possibly an image, which then
+ * runs through image processing; the budget sits well above what typing and
+ * pasting links in the composer produces.
+ */
+const urlPreviewRateLimiter = ipRateLimitHandler({
+  windowMs: 1000 * 60, // 1 min
+  identity: (req) => req.session?.user?.id,
+  limit_identity: 30,
+  limit_v4_v6_64: 30,
+  limit_v6_56: 60,
+  limit_v6_48: 120,
+});
 
 const messagingRouter = express.Router();
 
+for (const route of [
+  '/loadMessages',
+  '/messagesById',
+  '/loadUpdates',
+  '/createMessage',
+  '/setReaction',
+  '/unsetReaction',
+] as const) {
+  allowBotRoute('POST', `/BotV1/messages${route}`);
+}
+
 const ARTICLE_ROOM_LIMIT = 5;
+/**
+ * Socket-scoped article rooms (`session.socketArticleRooms`): at most
+ * ARTICLE_ROOM_LIMIT per socket, and at most this many entries per session
+ * (entries of closed tabs are never left explicitly). Both are soft bounds:
+ * concurrent requests of one session write the session last-write-wins, so
+ * an entry can be lost while its socket stays in the room (until it
+ * disconnects).
+ */
+const SESSION_SOCKET_ARTICLE_ROOM_LIMIT = 50;
+
+function isExactCommunityChannelAccess(
+  access: API.Messages.MessageAccess,
+): access is { communityId: string; channelId: string } {
+  const keys = Object.keys(access).sort();
+  return keys.length === 2
+    && keys[0] === 'channelId'
+    && keys[1] === 'communityId'
+    && typeof (access as { channelId?: unknown }).channelId === 'string'
+    && typeof (access as { communityId?: unknown }).communityId === 'string';
+}
+
+async function getMessageRequestUser(
+  request: express.Request,
+  access: API.Messages.MessageAccess,
+  countAsMessage = false,
+): Promise<User | undefined> {
+  const principal = request.botPrincipal;
+  if (!principal) return request.session.user;
+  if (!isExactCommunityChannelAccess(access)) {
+    throw new Error(errors.server.NOT_ALLOWED);
+  }
+  await enforceBotRateLimit(principal.tokenId, 'api');
+  if (countAsMessage) {
+    await enforceBotRateLimit(principal.tokenId, 'message');
+  }
+  await botHelper.assertActiveCommunityAccess(
+    principal.user.id,
+    principal.tokenId,
+    access.communityId,
+  );
+  return principal.user;
+}
+
+async function checkMessageReadAccess(access: API.Messages.MessageAccess, userId?: string) {
+  if ('communityId' in access) {
+    await _checkAccessOrThrow(access, [
+      ChannelPermission.CHANNEL_EXISTS,
+      ChannelPermission.CHANNEL_READ,
+    ], userId);
+  }
+  else if ('callId' in access) {
+    await _checkAccessOrThrow(access, [
+      CallPermission.CALL_EXISTS,
+      CallPermission.CHANNEL_READ,
+    ], userId);
+  }
+  else if ('articleId' in access) {
+    await _checkAccessOrThrow(access, [ArticlePermission.ARTICLE_READ], userId);
+  }
+  else {
+    await _checkAccessOrThrow(access, userId);
+  }
+}
 
 export async function _checkAccessOrThrow(access: { channelId: string, communityId: string }, permissions: ChannelPermission[], userId?: string): Promise<void>;
 export async function _checkAccessOrThrow(access: { channelId: string, callId: string }, permissions: CallPermission[], userId?: string): Promise<void>;
 export async function _checkAccessOrThrow(access: { channelId: string, articleId: string, articleUserId: string } | { channelId: string, articleId: string, articleCommunityId: string }, permissions: ArticlePermission[], userId?: string): Promise<void>;
 export async function _checkAccessOrThrow(access: { channelId: string, chatId: string }, userId?: string): Promise<void>;
 export async function _checkAccessOrThrow(access: API.Messages.MessageAccess, userIdOrPermissions?: ArticlePermission[] | ChannelPermission[] | CallPermission[] | string, userId?: string) {
-  console.log('checkAccessOrThrow', access);
+  // Every permission below is evaluated for the community, chat, call or
+  // article in the access object, while the message queries use
+  // `access.channelId`; both must refer to the same channel.
+  const requestingUserId = typeof userIdOrPermissions === 'string' ? userIdOrPermissions : userId;
+  if (!(await messageHelper.isChannelInAccessScope(access, requestingUserId))) {
+    throw new Error(errors.server.NOT_ALLOWED);
+  }
 
   if ('communityId' in access && Array.isArray(userIdOrPermissions)) {
     const hasPermissions = await permissionHelper.hasPermissions({
@@ -112,39 +246,75 @@ export async function _checkAccessOrThrow(access: API.Messages.MessageAccess, us
   }
 }
 
-async function emitMessageEvents(events: Events.Message.Message[], access: API.Messages.MessageAccess, excludeObject?: {
+type MessageEventExcept = {
   userIds?: string[];
   deviceIds?: string[];
-}) {
+  deviceSockets?: { deviceId: string; socketId: string }[];
+};
+
+/**
+ * Emits message events to everyone who may read the channel. Callers do not
+ * wait for it, so it never rejects: a failed target query is logged (the
+ * events of that call are lost to live delivery; clients catch up through
+ * `getChanges`).
+ */
+function emitMessageEvents(events: Events.Message.Message[], access: API.Messages.MessageAccess, excludeObject?: MessageEventExcept): Promise<void> {
+  return emitMessageEventsToReaders(events, access, excludeObject).catch(e => {
+    console.error("Error emitting message events", e);
+  });
+}
+
+async function emitMessageEventsToReaders(events: Events.Message.Message[], access: API.Messages.MessageAccess, excludeObject?: MessageEventExcept) {
   if ('communityId' in access) {
     const channelRolePermissions = await communityHelper.getCommunityChannelRolePermissions(access.communityId, access.channelId);
     const notifyRoles = channelRolePermissions.filter(d => (
       d.permissions.includes("CHANNEL_EXISTS") &&
       d.permissions.includes("CHANNEL_READ")
     ));
-    const publicRole = notifyRoles.find(d => d.roleTitle === PredefinedRole.Public);
+    const publicRole = notifyRoles.find(d => d.roleType === RoleType.PREDEFINED && d.roleTitle === PredefinedRole.Public);
     for (const event of events) {
+      const scopedEvent: Events.Message.Message = {
+        ...event,
+        data: { ...event.data, communityId: access.communityId },
+      } as Events.Message.Message;
       if (!!publicRole) {
-        eventHelper.emit(event, {
+        eventHelper.emit(scopedEvent, {
           communityIds: [access.communityId],
         }, excludeObject);
       } else {
-        eventHelper.emit(event, {
+        eventHelper.emit(scopedEvent, {
           roleIds: notifyRoles.map(d => d.roleId),
         }, excludeObject);
       }
     }
   }
   else if ('callId' in access) {
-    // Todo: only send to call participants
-    const callRolePermissions = await communityHelper.getCallRolePermissions(access.callId, access.channelId);
+    // the reader roles, the call's present members who may read its chat
+    // (also when that comes from Public) and, when Public may read, the
+    // community room (members and visitors): nobody joins a Public role
+    // room. One emit, so a socket in several of these rooms gets each event
+    // once. Either query may fail on its own: the other targets still get
+    // the event.
+    const [callRolePermissions, activeMemberUserIds] = await Promise.all([
+      communityHelper.getCallRolePermissions(access.callId, access.channelId).catch(e => {
+        console.error("Error reading the call's reader roles", e);
+        return [] as Awaited<ReturnType<typeof communityHelper.getCallRolePermissions>>;
+      }),
+      callHelper.getActiveMemberUserIds(access.callId, [CallPermission.CALL_EXISTS, CallPermission.CHANNEL_READ]).catch(e => {
+        console.error("Error reading the call's present members", e);
+        return [] as string[];
+      }),
+    ]);
     const notifyRoles = callRolePermissions.filter(d => (
       d.permissions.includes("CALL_EXISTS") &&
       d.permissions.includes("CHANNEL_READ")
     ));
+    const publicRole = notifyRoles.find(d => d.roleType === RoleType.PREDEFINED && d.roleTitle === PredefinedRole.Public);
     for (const event of events) {
       eventHelper.emit(event, {
         roleIds: notifyRoles.map(d => d.roleId),
+        userIds: activeMemberUserIds,
+        communityIds: publicRole ? [publicRole.communityId] : [],
       }, excludeObject);
     }
   }
@@ -168,7 +338,54 @@ async function emitMessageEvents(events: Events.Message.Message[], access: API.M
   }
 }
 
-async function createMessage(user: User, data: API.Messages.createMessage.Request, isModerationMessage: boolean) {
+/**
+ * The events of a (soft) delete: one `delete` with every deleted id, its
+ * highest `syncSeq` and all of them in `syncSeqs` (a multi-row delete bumps
+ * the channel sequence once per row), plus an `update` for every reply whose
+ * parent was deleted (`parentMessageId: null`, with its own `syncSeq`).
+ */
+export function deleteResultEvents(
+  channelId: string,
+  result: Awaited<ReturnType<typeof messageHelper.deleteMessage>>,
+): Events.Message.Message[] {
+  const events: Events.Message.Message[] = [];
+  if (result.deletedIds.length > 0) {
+    events.push({
+      type: "cliMessageEvent",
+      action: "delete",
+      data: {
+        channelId,
+        deletedIds: result.deletedIds,
+        ...(result.deletedSyncSeqs.length > 0 ? {
+          syncSeq: result.deletedSyncSeqs.reduce((max, seq) => Math.max(max, seq)),
+          syncSeqs: result.deletedSyncSeqs,
+        } : {}),
+      },
+    });
+  }
+  for (const parent of result.updatedParents) {
+    events.push({
+      type: "cliMessageEvent",
+      action: "update",
+      data: {
+        id: parent.id,
+        channelId,
+        parentMessageId: null,
+        updatedAt: result.dbNow,
+        syncSeq: parent.syncSeq,
+      },
+    });
+  }
+  return events;
+}
+
+async function createMessage(
+  user: User,
+  sender: RequestSockets,
+  data: API.Messages.createMessage.Request,
+  isModerationMessage: boolean,
+  creatorIsBot = false,
+) {
   let channelMessageNotificationData: Awaited<ReturnType<typeof messageHelper.getChannelMessageNotifyData>> = [];
   const { access } = data;
   if ('callId' in access) {
@@ -256,19 +473,29 @@ async function createMessage(user: User, data: API.Messages.createMessage.Reques
       messageIds: [data.parentMessageId],
     }))[0];
     if (!parentMessage) {
+      // a retry of a create whose parent was deleted in the meantime
+      const stored = await messageHelper.getOwnStoredMessage(user.id, access.channelId, data.id);
+      if (stored) {
+        return stored;
+      }
       throw new Error(errors.server.NOT_FOUND);
     }
   }
 
-  const { message, userAlias } = await messageHelper.createMessage(user.id, data);
+  const { message, userAlias, created } = await messageHelper.createMessage(user.id, data);
+  if (!created) {
+    // a retry of a create that is stored already: its events and
+    // notifications went out with the first one
+    return message;
+  }
 
   const event: Events.Message.Message = {
     type: "cliMessageEvent",
     action: "new",
-    data: message,
+    data: { ...message, creatorIsBot },
   };
 
-  emitMessageEvents([event], access, { deviceIds: [user.deviceId] });
+  emitMessageEvents([event], access, senderExcept(sender));
 
   let notifications: (Omit<Models.Notification.ApiNotification, "id" | "createdAt" | "updatedAt" | "read"> & { userId: string })[] = [];
   const previewText = message.body.content.reduce<string[]>((agg, val) => {
@@ -495,13 +722,13 @@ registerPostRoute<
   '/createMessage',
   validators.API.Message.createMessage,
   async (request, response, data) => {
-    const { user } = request.session;
+    const user = await getMessageRequestUser(request, data.access, true);
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
     await permissionHelper.hasTrustOrThrow({ userId: user.id, trust: '1.0' });
 
-    return createMessage(user, data, false);
+    return createMessage(user, requestSockets(request, user.deviceId), data, false, !!request.botPrincipal);
   }
 );
 
@@ -519,7 +746,7 @@ registerPostRoute<
     }
     await permissionHelper.hasTrustOrThrow({ userId: user.id, trust: '1.0' });
 
-    return createMessage(user, data, true);
+    return createMessage(user, requestSockets(request, user.deviceId), data, true);
   }
 );
 
@@ -569,13 +796,17 @@ registerPostRoute<
         id,
         channelId: access.channelId,
         updatedAt: result.updatedAt,
+        editedAt: result.editedAt,
+        syncSeq: result.syncSeq,
       },
     };
 
-    emitMessageEvents([event], data.access, { deviceIds: [user.deviceId] });
+    emitMessageEvents([event], data.access, senderExcept(requestSockets(request, user.deviceId)));
 
     const returnVal: API.Messages.editMessage.Response = {
       editedAt: result.editedAt,
+      updatedAt: result.updatedAt,
+      syncSeq: result.syncSeq,
     }
     if (updateData.attachments) {
       returnVal.attachments = updateData.attachments;
@@ -598,13 +829,20 @@ registerPostRoute<
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
     const { access } = data;
+    // Creator and channel come from the stored message, not from the
+    // request; the permission checks below run against that channel.
+    const message = await messageHelper.getMessageOwnership(data.messageId);
+    if (!message || message.channelId !== access.channelId) {
+      throw new Error(errors.server.NOT_FOUND);
+    }
+    const isOwnMessage = message.creatorId === user.id;
     if ('communityId' in access) {
       const permissions = [
         ChannelPermission.CHANNEL_EXISTS,
         ChannelPermission.CHANNEL_READ,
         ChannelPermission.CHANNEL_WRITE,
       ];
-      if (data.creatorId !== user.id) {
+      if (!isOwnMessage) {
         // user wants to delete another user's message
         permissions.push(ChannelPermission.CHANNEL_MODERATE);
       }
@@ -616,14 +854,14 @@ registerPostRoute<
         CallPermission.CHANNEL_READ,
         CallPermission.CHANNEL_WRITE,
       ];
-      if (data.creatorId !== user.id) {
+      if (!isOwnMessage) {
         // user wants to delete another user's message
         permissions.push(CallPermission.CALL_MODERATE);
       }
       await _checkAccessOrThrow(access, permissions, user.id);
     }
     else if ('articleId' in access) {
-      if (data.creatorId !== user.id) {
+      if (!isOwnMessage) {
         // user wants to delete another user's message
         throw new Error(errors.server.NOT_ALLOWED);
       }
@@ -633,39 +871,22 @@ registerPostRoute<
       ], user.id);
     }
     else {
-      if (data.creatorId !== user.id) {
+      if (!isOwnMessage) {
         // user wants to delete another user's message
         throw new Error(errors.server.NOT_ALLOWED);
       }
       await _checkAccessOrThrow(access, user.id);
     }
 
-    const result = await messageHelper.deleteMessage(user.id, data);
-    const events: Events.Message.Message[] = [{
-      type: "cliMessageEvent",
-      action: "delete",
-      data: {
-        channelId: access.channelId,
-        deletedIds: [data.messageId],
-      },
-    }];
-
-    if (!!result && result.updatedParentIdToNull.length > 0) {
-      result.updatedParentIdToNull.forEach(messageId => {
-        events.push({
-          type: "cliMessageEvent",
-          action: "update",
-          data: {
-            id: messageId,
-            channelId: access.channelId,
-            parentMessageId: null,
-            updatedAt: result.dbNow,
-          },
-        });
-      })
+    const result = await messageHelper.deleteMessage({
+      messageId: data.messageId,
+      channelId: access.channelId,
+      creatorId: message.creatorId,
+    });
+    const events = deleteResultEvents(access.channelId, result);
+    if (events.length > 0) {
+      emitMessageEvents(events, data.access);
     }
-
-    emitMessageEvents(events, data.access);
   }
 );
 
@@ -697,29 +918,10 @@ registerPostRoute<
 
     const result = await messageHelper.deleteAllUserMessages(data);
 
-    const events: Events.Message.Message[] = [];
-    events.push({
-      type: "cliMessageEvent",
-      action: "delete",
-      data: {
-        channelId: data.access.channelId,
-        deletedIds: result.deletedIds,
-      },
-    });
-    for (const updatedMessageId of result.updatedParentIdToNull) {
-      events.push({
-        type: "cliMessageEvent",
-        action: "update",
-        data: {
-          channelId: data.access.channelId,
-          id: updatedMessageId,
-          updatedAt: result.dbNow,
-          parentMessageId: null,
-        },
-      });
+    const events = deleteResultEvents(data.access.channelId, result);
+    if (events.length > 0) {
+      emitMessageEvents(events, access);
     }
-
-    emitMessageEvents(events, access);
   }
 );
 
@@ -731,27 +933,9 @@ registerPostRoute<
   '/loadMessages',
   validators.API.Message.loadMessages,
   async (request, response, data) => {
-    const { user } = request.session;
+    const user = await getMessageRequestUser(request, data.access);
     const { access } = data;
-    if ('communityId' in access) {
-      await _checkAccessOrThrow(access, [
-        ChannelPermission.CHANNEL_EXISTS,
-        ChannelPermission.CHANNEL_READ
-      ], user?.id);
-    }
-    else if ('callId' in access) {
-      await _checkAccessOrThrow(access, [
-        CallPermission.CALL_EXISTS,
-        CallPermission.CHANNEL_READ,
-      ], user?.id);
-    }
-    else if ('articleId' in access) {
-      await _checkAccessOrThrow(access, [
-        ArticlePermission.ARTICLE_READ,
-      ], user?.id);
-    } else {
-      await _checkAccessOrThrow(access, user?.id);
-    }
+    await checkMessageReadAccess(access, user?.id);
 
     return await messageHelper.loadMessages(user?.id, data);
   }
@@ -765,28 +949,9 @@ registerPostRoute<
   '/messagesById',
   validators.API.Message.messagesById,
   async (request, response, data) => {
-    const { user } = request.session;
+    const user = await getMessageRequestUser(request, data.access);
     const { access } = data;
-    if ('communityId' in access) {
-      await _checkAccessOrThrow(access, [
-        ChannelPermission.CHANNEL_EXISTS,
-        ChannelPermission.CHANNEL_READ
-      ], user?.id);
-    }
-    else if ('callId' in access) {
-      await _checkAccessOrThrow(access, [
-        CallPermission.CALL_EXISTS,
-        CallPermission.CHANNEL_READ,
-      ], user?.id);
-    }
-    else if ('articleId' in access) {
-      await _checkAccessOrThrow(access, [
-        ArticlePermission.ARTICLE_READ,
-      ], user?.id);
-    }
-    else {
-      await _checkAccessOrThrow(access, user?.id);
-    }
+    await checkMessageReadAccess(access, user?.id);
 
     return await messageHelper.loadMessagesById(user?.id, data);
   }
@@ -800,28 +965,9 @@ registerPostRoute<
   '/loadUpdates',
   validators.API.Message.loadUpdates,
   async (request, response, data) => {
-    const { user } = request.session;
+    const user = await getMessageRequestUser(request, data.access);
     const { access } = data;
-    if ('communityId' in access) {
-      await _checkAccessOrThrow(access, [
-        ChannelPermission.CHANNEL_EXISTS,
-        ChannelPermission.CHANNEL_READ
-      ], user?.id);
-    }
-    else if ('callId' in access) {
-      await _checkAccessOrThrow(access, [
-        CallPermission.CALL_EXISTS,
-        CallPermission.CHANNEL_READ,
-      ], user?.id);
-    }
-    else if ('articleId' in access) {
-      await _checkAccessOrThrow(access, [
-        ArticlePermission.ARTICLE_READ,
-      ], user?.id);
-    }
-    else {
-      await _checkAccessOrThrow(access, user?.id);
-    }
+    await checkMessageReadAccess(access, user?.id);
 
     return await messageHelper.loadMessageUpdates(user?.id, data);
   }
@@ -835,33 +981,14 @@ registerPostRoute<
   '/setReaction',
   validators.API.Message.setReaction,
   async (request, response, data) => {
-    const { user } = request.session;
+    const user = await getMessageRequestUser(request, data.access);
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
     await permissionHelper.hasTrustOrThrow({ userId: user.id, trust: '1.0' });
 
     const { access } = data;
-    if ('communityId' in access) {
-      await _checkAccessOrThrow(access, [
-        ChannelPermission.CHANNEL_EXISTS,
-        ChannelPermission.CHANNEL_READ,
-      ], user.id);
-    }
-    else if ('callId' in access) {
-      await _checkAccessOrThrow(access, [
-        CallPermission.CALL_EXISTS,
-        CallPermission.CHANNEL_READ,
-      ], user.id);
-    }
-    else if ('articleId' in access) {
-      await _checkAccessOrThrow(access, [
-        ArticlePermission.ARTICLE_READ,
-      ], user.id);
-    }
-    else {
-      await _checkAccessOrThrow(access, user.id);
-    }
+    await checkMessageReadAccess(access, user.id);
 
     const result = await messageHelper.setReaction(user.id, data);
 
@@ -874,6 +1001,7 @@ registerPostRoute<
           id: data.messageId,
           updatedAt: result.updatedAt,
           reactions: result.reactions,
+          syncSeq: result.syncSeq,
         },
       };
       emitMessageEvents([event], access, { userIds: [user.id] });
@@ -899,11 +1027,12 @@ registerPostRoute<
   '/unsetReaction',
   validators.API.Message.unsetReaction,
   async (request, response, data) => {
-    const { user } = request.session;
+    const user = await getMessageRequestUser(request, data.access);
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
     const { access } = data;
+    await checkMessageReadAccess(access, user.id);
     const result = await messageHelper.unsetReaction(user.id, data);
 
     if (!!result) {
@@ -915,6 +1044,7 @@ registerPostRoute<
           id: data.messageId,
           updatedAt: result.updatedAt,
           reactions: result.reactions,
+          syncSeq: result.syncSeq,
         },
       };
       emitMessageEvents([event], access, { userIds: [user.id] });
@@ -944,16 +1074,48 @@ registerPostRoute<
     if (!user) {
       throw new Error(errors.server.LOGIN_REQUIRED);
     }
-    await messageHelper.setChannelLastRead(user.id, data);
+    const { access } = data;
+    await checkMessageReadAccess(access, user.id);
+    // the stored value: newer than the posted one if another tab got further
+    const { lastRead, unread, syncSeq } = await messageHelper.setChannelLastRead(user.id, data);
 
     const event: Events.Channel.LastRead = {
       type: 'cliChannelLastRead',
-      channelId: data.access.channelId,
-      lastRead: data.lastRead,
+      channelId: access.channelId,
+      lastRead,
+      unread,
+      syncSeq,
     };
+    if ('communityId' in access) {
+      event.communityId = access.communityId;
+    }
+    else if ('chatId' in access) {
+      event.chatId = access.chatId;
+    }
     eventHelper.emit(event, {
       userIds: [user.id],
     });
+
+    return { lastRead, unread, syncSeq };
+  }
+);
+
+/**
+ * chat-sync catch-up of one channel (contract: API.Messages.getChanges).
+ * Same read access as `loadMessages`; not on the bot allowlist.
+ */
+registerPostRoute<
+  API.Messages.getChanges.Request,
+  API.Messages.getChanges.Response
+>(
+  messagingRouter,
+  '/getChanges',
+  validators.API.Message.getChanges,
+  async (request, response, data) => {
+    const userId = request.session.user?.id;
+    await checkMessageReadAccess(data.access, userId);
+
+    return await messageHelper.getChanges(userId, data);
   }
 );
 
@@ -965,42 +1127,95 @@ registerPostRoute<
   '/getUrlPreview',
   validators.API.Message.getUrlPreview,
   async (request, response, data) => {
+    const { user } = request.session;
+    if (!user) {
+      throw new Error(errors.server.LOGIN_REQUIRED);
+    }
     const { url } = data;
-    const metadataResult = await ogs({ url });
+
+    const cacheKey = `urlpreview:${createHash('sha256').update(url).digest('hex')}`;
+    // the cache instance is optional: while it is unreachable, previews are
+    // simply built uncached instead of waiting for it
+    const cached = await redisManager.connectedClient('cache')?.get(cacheKey).catch(() => null);
+    if (cached) {
+      try {
+        return JSON.parse(cached) as API.Messages.getUrlPreview.Response;
+      } catch {
+        // unreadable entry: rebuild it below
+      }
+    }
+
+    await urlPreviewRateLimiter(request, response);
+
+    // The page is fetched here rather than by open-graph-scraper, because v6
+    // dropped v5's `downloadLimit` (1 MB by default) without a replacement: it
+    // buffers the whole response body and runs cheerio over it *before* looking
+    // at the content type. safeFetch caps the buffered body instead, and ogs
+    // runs on the HTML string.
+    let html: string;
+    let finalUrl = url;
+    try {
+      const page = await safeFetch(url, {
+        maxBytes: URL_PREVIEW_MAX_BYTES,
+        headers: { Accept: 'text/html' },
+        acceptContentType: (type) => type === '' || type.startsWith('text/') || type === 'application/xhtml+xml',
+      });
+      html = page.body.toString('utf-8');
+      finalUrl = page.url;
+    }
+    catch (e) {
+      throw new Error(errors.server.INVALID_REQUEST);
+    }
+
+    // ogs rejects `html` together with `url`, so relative URLs in the document
+    // are resolved here instead of by the library.
+    const metadataResult = await ogs({ html });
     if (metadataResult.error) {
       throw new Error(errors.server.INVALID_REQUEST);
     }
 
-    let imageUrl: string;
-    const { ogImage } = metadataResult.result;
-    if (typeof ogImage === 'string') {
-      imageUrl = ogImage;
-    } else if (Array.isArray(ogImage)) {
-      imageUrl = ogImage[0].url;
-    } else {
-      imageUrl = ogImage?.url || '';
+    // open-graph-scraper 6 normalises `ogImage` to an `ImageObject[]` — v5
+    // could also hand back a bare string or a single object, which is what the
+    // removed branches covered. The array can still be empty or absent.
+    const rawImageUrl = metadataResult.result.ogImage?.[0]?.url || '';
+    let imageUrl = '';
+    if (rawImageUrl) {
+      try {
+        imageUrl = new URL(rawImageUrl, finalUrl).toString();
+      }
+      catch (e) {
+        imageUrl = '';
+      }
     }
 
     let imageId = '';
     if (imageUrl) {
       try {
-        const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
-        if (imageResponse.status === 200) {
-          const buffer = Buffer.from(imageResponse.data, "utf-8");
-          const image = await fileHelper.saveImage(null, { type: 'urlPreviewImage' }, buffer, { width: 250, height: 167 }, { withoutEnlargement: true });
-          imageId = image.fileId;
-        }
+        const image = await safeFetch(imageUrl, {
+          maxBytes: URL_PREVIEW_MAX_IMAGE_BYTES,
+          headers: { Accept: 'image/*' },
+          acceptContentType: (type) => type.startsWith('image/') || type === 'application/octet-stream',
+        });
+        const stored = await fileHelper.saveImage(null, { type: 'urlPreviewImage' }, image.body, { width: 250, height: 167 }, { withoutEnlargement: true });
+        imageId = stored.fileId;
       } catch (e) {
         console.error('Failed to fetch image preview');
       }
     }
 
-    return {
-      title: metadataResult.result.ogTitle || '',
-      description: metadataResult.result.ogDescription || metadataResult.result.twitterDescription || '',
+    const result: API.Messages.getUrlPreview.Response = {
+      title: (metadataResult.result.ogTitle || '').slice(0, URL_PREVIEW_MAX_TEXT),
+      description: (metadataResult.result.ogDescription || metadataResult.result.twitterDescription || '').slice(0, URL_PREVIEW_MAX_TEXT),
       imageId,
-      url: metadataResult.result.ogUrl || url
+      url: previewLink(metadataResult.result.ogUrl, url),
+    };
+    const serialized = JSON.stringify(result);
+    if (Buffer.byteLength(serialized) <= URL_PREVIEW_MAX_CACHED_BYTES) {
+      await redisManager.connectedClient('cache')
+        ?.set(cacheKey, serialized, { EX: URL_PREVIEW_CACHE_SECONDS })
+        .catch((e) => console.error('Could not cache url preview', e));
     }
+    return result;
   }
 );
 
@@ -1017,12 +1232,44 @@ registerPostRoute<
       await _checkAccessOrThrow(data.access, [
         ArticlePermission.ARTICLE_READ,
       ], user.id);
+      const { articleId } = data.access;
+      const sockets = requestSockets(request, user.deviceId);
+
+      if (sockets.socketId !== null) {
+        // only the requesting socket: another tab of the device keeps (or
+        // never gets) its own article rooms
+        const { socketId } = sockets;
+        let rooms = (request.session.socketArticleRooms || [])
+          .filter(r => r.articleId !== articleId || r.socketId !== socketId);
+        const evict = (old: { articleId: string; socketId: string }) => {
+          rooms = rooms.filter(r => r !== old);
+          eventHelper.requestSocketsLeaveRooms({ deviceId: user.deviceId, socketId: old.socketId }, {
+            articleIds: [old.articleId],
+          });
+        };
+        // the limit per socket: the oldest room of this socket goes, other
+        // tabs keep theirs
+        const own = rooms.filter(r => r.socketId === socketId);
+        while (own.length >= ARTICLE_ROOM_LIMIT) {
+          evict(own.shift()!);
+        }
+        // the session's bound: the oldest entries (mostly closed tabs) go
+        while (rooms.length >= SESSION_SOCKET_ARTICLE_ROOM_LIMIT) {
+          evict(rooms[0]);
+        }
+        rooms.push({ articleId, socketId });
+        request.session.socketArticleRooms = rooms;
+        eventHelper.requestSocketsJoinRooms(sockets, {
+          articleIds: [articleId],
+        });
+        return;
+      }
 
       if (request.session.temporaryArticleIds && request.session.temporaryArticleIds.length >= ARTICLE_ROOM_LIMIT) {
         const oldArticleId = request.session.temporaryArticleIds.shift();
         if (oldArticleId) {
           // TODO: Emit leave event for the old article room
-          eventHelper.deviceLeaveRooms(user.deviceId, {
+          eventHelper.requestSocketsLeaveRooms(sockets, {
             articleIds: [oldArticleId],
           });
         }
@@ -1031,9 +1278,9 @@ registerPostRoute<
       if (!request.session.temporaryArticleIds) {
         request.session.temporaryArticleIds = [];
       }
-      request.session.temporaryArticleIds.push(data.access.articleId);
-      eventHelper.deviceJoinRooms(user.deviceId, {
-        articleIds: [data.access.articleId],
+      request.session.temporaryArticleIds.push(articleId);
+      eventHelper.requestSocketsJoinRooms(sockets, {
+        articleIds: [articleId],
       });
     }
   }
@@ -1055,9 +1302,17 @@ registerPostRoute<
         ArticlePermission.ARTICLE_READ,
       ], user.id);
       const articleId = data.access.articleId;
-      request.session.temporaryArticleIds = request.session.temporaryArticleIds?.filter(id => id !== articleId);
-      eventHelper.deviceLeaveRooms(user.deviceId, {
-        articleIds: [data.access.articleId],
+      const sockets = requestSockets(request, user.deviceId);
+      if (sockets.socketId !== null) {
+        const { socketId } = sockets;
+        request.session.socketArticleRooms = request.session.socketArticleRooms
+          ?.filter(r => r.articleId !== articleId || r.socketId !== socketId);
+      }
+      else {
+        request.session.temporaryArticleIds = request.session.temporaryArticleIds?.filter(id => id !== articleId);
+      }
+      eventHelper.requestSocketsLeaveRooms(sockets, {
+        articleIds: [articleId],
       });
     }
   }

@@ -2,12 +2,13 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import './CgUpdate.css';
 import { useConnectionContext } from "../../context/ConnectionProvider";
 
 import Scrollable from '../../components/molecules/Scrollable/Scrollable';
 
-import { ReactComponent as ColoredLogoIcon } from '../../components/atoms/icons/misc/Logo/logo.svg';
+import ColoredLogoIcon from '../../components/atoms/icons/misc/Logo/logo.svg?react';
 
 export default function CgUpdate(props: { view: "reload" | "releaseNotes", finishInstallation?: () => Promise<void> }) {
   const { view, finishInstallation } = props;
@@ -19,7 +20,7 @@ export default function CgUpdate(props: { view: "reload" | "releaseNotes", finis
     }
   }
 
-  let content: JSX.Element | undefined;
+  let content: React.JSX.Element | undefined;
   if (view === "reload") {
     content = (
       <>

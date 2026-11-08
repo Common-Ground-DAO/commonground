@@ -14,19 +14,20 @@ import { useSafeCommunityContext } from 'context/CommunityProvider';
 import { useChats } from 'context/OwnDataProvider';
 import communityApi from 'data/api/community';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import Dropdown from '../Dropdown/Dropdown';
 import { useUserSettingsContext } from 'context/UserSettingsProvider';
 import { useCopiedToClipboardContext } from 'context/CopiedToClipboardDialogContext';
 import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal';
 import { useWindowSizeContext } from 'context/WindowSizeProvider';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 type Props = {
   user: Omit<Models.User.Data, 'isFollowed' | 'isFollower'>;
   isSelf: boolean;
   isFollower: boolean;
   isFollowed: boolean;
-  addAccountsDropdownRef: React.RefObject<PopoverHandle>;
+  addAccountsDropdownRef: React.RefObject<PopoverHandle | null>;
   toggleFollow: () => void;
   showEditControls?: boolean;
   channelId?: string;
@@ -168,7 +169,7 @@ const UserProfileV2OtherOptions: React.FC<Props> = (props) => {
       />);
     }
 
-    if (!isSelf) {
+    if (!isSelf && !user.isBot) {
       result.push(
         <ListItem
           key='follow'
@@ -315,14 +316,14 @@ const UserProfileRoles: React.FC<{
   return <>
     {commContext.roles.map(role => {
       const hasRole = userRoleIds.includes(role.id) || false;
-      const canModify = !role.assignmentRules && role.title !== PredefinedRole.Public && role.title !== PredefinedRole.Member;
+      const canModify = !role.assignmentRules && !isPredefinedRole(role, PredefinedRole.Public) && !isPredefinedRole(role, PredefinedRole.Member);
 
       return <ListItem
         key={role.id}
         title={role.title}
         onClick={async () => {
           if (canModify) {
-            if (role.title === PredefinedRole.Admin) {
+            if (isPredefinedRole(role, PredefinedRole.Admin)) {
               onModifyAdminRole(role.id, !hasRole);
               return;
             }

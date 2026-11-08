@@ -147,12 +147,13 @@ class SearchHelper {
                   JSON_BUILD_OBJECT(
                     'roleId', r2."id",
                     'roleTitle', r2."title",
+                    'roleType', r2."type",
                     'permissions', carp2."permissions"
                   )
                 ), '[]'::json)
                 FROM communities_articles_roles_permissions carp2
                 INNER JOIN roles r2
-                  ON r2."id" = carp2."roleId" AND r2."deletedAt" IS NULL
+                  ON r2."id" = carp2."roleId" AND r2."deletedAt" IS NULL AND r2."communityId" = carp2."communityId"
                 WHERE carp2."communityId" = ca."communityId" AND carp2."articleId" = ca."articleId"
               )
             )
@@ -175,9 +176,9 @@ class SearchHelper {
       LEFT JOIN communities_articles_roles_permissions carp
         ON ca."communityId" = carp."communityId" AND ca."articleId" = carp."articleId"
       LEFT JOIN roles r
-        ON r."id" = carp."roleId" AND r."deletedAt" IS NULL
+        ON r."id" = carp."roleId" AND r."deletedAt" IS NULL AND r."communityId" = ca."communityId"
       ${!!userId ? `LEFT JOIN roles_users_users ruu
-        ON r."id" = ruu."roleId" AND ruu."claimed" = TRUE` : ''}
+        ON r."id" = ruu."roleId" AND ruu."claimed" = TRUE AND ruu."userId" = ${format('%L::UUID', userId)}` : ''}
       LEFT JOIN users_articles ua
         ON a."id" = ua."articleId" AND ua."deletedAt" IS NULL
       WHERE a."deletedAt" IS NULL
@@ -199,7 +200,7 @@ class SearchHelper {
       ))
       -- check if published
       AND (ua."userId" IS NOT NULL OR ca."published" IS NOT NULL)
-      AND (ca."communityId" IS NOT NULL OR ua."published" IS NOT NULL)
+      AND (ca."communityId" IS NOT NULL OR ua."published" < now())
       ORDER BY COALESCE(ca."published", ua."published") DESC
       LIMIT $1 OFFSET $2
     `;

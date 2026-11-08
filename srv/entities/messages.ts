@@ -19,6 +19,10 @@ import { Channel } from "./channels";
 
 @Entity({ name: 'messages' })
 @Unique(['channelId', 'createdAt'])
+// partial ("syncSeq" IS NOT NULL), see migration 1793635200000-chatSyncSeq
+@Index('idx_messages_channelId_syncSeq', { synchronize: false })
+// ("channelId", "createdAt") INCLUDE ("creatorId") WHERE "deletedAt" IS NULL, same migration
+@Index('idx_messages_channelId_createdAt_live', { synchronize: false })
 export class Message {
     @PrimaryGeneratedColumn('uuid')
     id!: string;
@@ -82,4 +86,13 @@ export class Message {
     @Index()
     @DeleteDateColumn({ type: 'timestamptz', precision: 3, select: false })
     deletedAt!: Date | null;
+
+    /**
+     * Channel change sequence of this row's last write (chat-sync). Set only
+     * by the `messages_sync_seq_*` triggers (from channel_sync_state); NULL
+     * for rows not written since the migration. bigint: node-postgres returns
+     * it as a string.
+     */
+    @Column({ type: 'bigint', nullable: true, select: false })
+    syncSeq!: string | null;
 }

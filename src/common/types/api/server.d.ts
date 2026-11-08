@@ -17,10 +17,16 @@ declare global {
                     callback: (data: API.Socket.login.Response) => void,
                 ) => Promise<void>,
                 "logout": () => void,
+                "watchCgIdRequest": (
+                    data: API.Socket.watchCgIdRequest.Request,
+                ) => void,
                 "joinCommunityVisitorRoom": (
                     data: { communityId: string },
                 ) => void,
                 "leaveCommunityVisitorRoom": () => void,
+                "setTyping": (
+                    data: API.Socket.setTyping.Request,
+                ) => void,
                 "prepareWalletRequest": (
                     callback: (requestId: string) => void,
                 ) => void,

@@ -15,13 +15,14 @@ import communityApi from 'data/api/community';
 import dayjs from 'dayjs';
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { ItemArticleType } from '../GenericArticleManagement/GenericArticleManagement';
+import { isPredefinedRole, isPredefinedRolePermission } from "util/predefinedRoles";
 
 type Props = {
   isOpen: boolean;
   onClose: () => void;
   roles: Models.Community.CommunityArticlePermission[];
   scheduleArticle: (scheduleDate: dayjs.Dayjs | null, markAsNewsletter: boolean) => Promise<void>;
-  itemArticleRef: React.RefObject<ItemArticleType>;
+  itemArticleRef: React.RefObject<ItemArticleType | null>;
   sentAsNewsletter: boolean;
 };
 
@@ -43,11 +44,11 @@ const SchedulePostModal: React.FC<Props> = (props) => {
   const relevantRoles = useMemo(() => {
     if (commContext.state !== 'loaded') return [];
 
-    const publicRole = roles.find(r => r.roleTitle === PredefinedRole.Public);
-    const memberRole = roles.find(r => r.roleTitle === PredefinedRole.Member);
+    const publicRole = roles.find(r => isPredefinedRolePermission(r, PredefinedRole.Public));
+    const memberRole = roles.find(r => isPredefinedRolePermission(r, PredefinedRole.Member));
     if (publicRole?.permissions.includes('ARTICLE_READ') || memberRole?.permissions.includes('ARTICLE_READ')) {
-      const fullMemberRole = commContext.roles.find(role => role.title === PredefinedRole.Member);
-      if (fullMemberRole) return [{ roleId: fullMemberRole.id, roleTitle: PredefinedRole.Member }];
+      const fullMemberRole = commContext.roles.find(role => isPredefinedRole(role, PredefinedRole.Member));
+      if (fullMemberRole) return [{ roleId: fullMemberRole.id, roleTitle: PredefinedRole.Member, roleType: fullMemberRole.type }];
     }
 
     return roles.filter(r => r.permissions.includes('ARTICLE_READ'));

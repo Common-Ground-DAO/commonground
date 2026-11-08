@@ -6,30 +6,60 @@ import fs from 'fs';
 import https from 'https';
 import protoo from 'protoo-server';
 import express from "express";
-import bodyParser from 'body-parser';
-import url from 'url';
 import cors from 'cors';
 import { AwaitQueue } from 'awaitqueue';
 import { createWorker } from "mediasoup";
 
 import { httpsConf, mediasoupConfig } from "./mediasoup/config";
 import { clone } from "./mediasoup/utils";
-import { TransportListenIp } from 'mediasoup/node/lib/Transport';
+import { TransportListenInfo } from 'mediasoup/types';
 import Room from "./mediasoup/room";
-import * as types from "mediasoup/node/lib/types";
-import { fakeHealthcheck } from './mediasoup/mediasoupHealthcheck';
+import * as types from "mediasoup/types";
+import { listenerProbe, postgresProbe, startHealthcheck } from './healthcheck';
 import callHelper from './repositories/calls';
-import { CallType } from './common/enums';
 import { exec } from 'child_process';
 import config from './common/config';
 import errors from './common/errors';
 import pool from './util/postgres';
 import format from 'pg-format';
 import { type PoolClient } from 'pg';
+import validators from './validators';
+import deviceHelper from './repositories/device';
+import { isSecurityStepRequiredForRealtime } from './util/securityStep';
+import { uuidRe } from './util';
+import { authenticateProtooTransport, connectionSourceKey, PendingConnectionLimiter } from './mediasoup/connectionGate';
+import { refuseInGatewayMode } from './util/gateway';
+import { describeErrorForLog } from './util/errorLog';
+
+// runs once, for the main instance only: never as part of a gateway
+// (srv/util/gateway.ts)
+refuseInGatewayMode('mediasoup');
 
 const rooms: Map<string, Room> = new Map();
 const mediasoupWorkers: Array<types.Worker> = [];
-const queue: AwaitQueue = new AwaitQueue();
+// Room creation and joining are serialized per room, so two peers connecting
+// at the same time with the same roomId do not create two rooms.
+const roomQueues: Map<string, AwaitQueue> = new Map();
+
+/** Time a new connection gets to complete the protoo login. */
+const PROTOO_LOGIN_TIMEOUT_MS = 5_000;
+/**
+ * Connections in the login phase: in total, and per source (an IPv4 address
+ * or an IPv6 /64).
+ */
+const pendingConnections = new PendingConnectionLimiter(500, 10);
+/**
+ * Set when the call server is only reachable through a reverse proxy that
+ * sets X-Forwarded-For (the selfhost profile's Caddy). Otherwise the header is
+ * client-controlled and ignored.
+ */
+const TRUST_PROXY = process.env.MEDIASOUP_TRUST_PROXY === 'true';
+/** Errors a failed join is reported with; anything else becomes UNKNOWN. */
+const JOIN_ERROR_CODES: ReadonlySet<string> = new Set([
+    errors.server.CALL_LIMIT_EXCEEDED,
+    errors.server.NOT_ALLOWED,
+    errors.server.NOT_FOUND,
+]);
 let webServer: https.Server;
 let protooWebSocketServer: protoo.WebSocketServer;
 let expressApp: express.Express;
@@ -44,6 +74,12 @@ let pgClient: PoolClient | null = null;
 async function registerCallUpdateListener(listener: (event: Events.PgNotify.CallServerCallUpdate) => void) {
     if (!pgClient) {
         pgClient = await pool.connect();
+        // the database restarted or closed the LISTEN connection: the restart
+        // of the call server registers LISTEN again (srv/util/postgres.ts)
+        pgClient.on("error", (e) => {
+            console.error(`LISTEN connection failed (${describeErrorForLog(e)}), exiting`);
+            process.exit(1);
+        });
     }
     else {
         throw new Error("Listener already registered");
@@ -119,8 +155,12 @@ async function getTrafficSinceLastCall(): Promise<{
 }
 let traffic = 0;
 setInterval(async () => {
-    const result = await getTrafficSinceLastCall();
-    traffic = result.received + result.sent;
+    try {
+        const result = await getTrafficSinceLastCall();
+        traffic = result.received + result.sent;
+    } catch (error) {
+        console.error('traffic sampling failed', error);
+    }
 }, config.CALLSERVER_UPDATE_TRAFFIC_INTERVAL);
 
 (async () => {
@@ -129,11 +169,31 @@ setInterval(async () => {
         await runWebServer();
         await runProtooWebSocketServer();
         await runMediasoupWorkers();
-        fakeHealthcheck();
+        // healthy: the database (call server heartbeat) answers, the
+        // signalling listener accepts connections and every worker runs
+        startHealthcheck([
+            postgresProbe(pool),
+            listenerProbe(httpsConf.listenPort),
+            {
+                name: 'mediasoup workers',
+                check: async () => {
+                    const closed = mediasoupWorkers.filter(worker => worker.closed).length;
+                    if (mediasoupWorkers.length === 0 || closed > 0) {
+                        throw new Error(`${closed} of ${mediasoupWorkers.length} closed`);
+                    }
+                },
+            },
+        ]);
         await updateServerStatus();
 
-        // clear database state
-        await callHelper.resetCallServer(domain, false);
+        // clear database state (calls left over from this server's previous
+        // run). A failure is logged and must not keep the call update
+        // listener below from being registered.
+        try {
+            await callHelper.resetCallServer(domain, false);
+        } catch (e) {
+            console.error("Error resetting call server at startup", e);
+        }
         await registerCallUpdateListener((event: Events.PgNotify.CallServerCallUpdate) => {
             // Todo: handle call update
             // It should not happen that events for stale calls are received, but still make sure that
@@ -174,6 +234,14 @@ async function updateServerStatus() {
 async function runMediasoupWorkers() {
     const { numWorkers } = mediasoupConfig;
 
+    // mediasoup >= 3.16 dropped its own `disableLiburing` worker setting and now
+    // relies on libuv's built-in io_uring, which is toggled via the UV_USE_IO_URING
+    // environment variable inherited by the spawned worker process. Preserve the
+    // existing MEDIASOUP_DISABLE_LIBURING deployment contract by translating it.
+    if (process.env.MEDIASOUP_DISABLE_LIBURING === 'true' && process.env.UV_USE_IO_URING === undefined) {
+        process.env.UV_USE_IO_URING = '0';
+    }
+
     console.info('running %d mediasoup Workers...', numWorkers);
 
     for (let i = 0; i < numWorkers; ++i) {
@@ -183,7 +251,6 @@ async function runMediasoupWorkers() {
                 logTags: mediasoupConfig.workerSettings.logTags,
                 rtcMinPort: Number(mediasoupConfig.workerSettings.rtcMinPort),
                 rtcMaxPort: Number(mediasoupConfig.workerSettings.rtcMaxPort),
-                disableLiburing: mediasoupConfig.workerSettings.disableLiburing,
             });
 
         worker.on('died', () => {
@@ -234,9 +301,10 @@ async function runWebServer(): Promise<void> {
     await new Promise<void>((resolve) => {
         const { listenIp, listenPort } = httpsConf;
         webServer.listen(listenPort, listenIp, () => {
-            if (mediasoupConfig?.webRtcTransportOptions?.listenIps?.[0]) {
-                const listenIps: TransportListenIp = mediasoupConfig.webRtcTransportOptions.listenIps[0] as TransportListenIp;
-                const ip = listenIps.announcedIp || listenIps.ip;
+            const listenInfos = (mediasoupConfig?.webRtcTransportOptions as { listenInfos?: TransportListenInfo[] })?.listenInfos;
+            if (listenInfos?.[0]) {
+                const info: TransportListenInfo = listenInfos[0];
+                const ip = info.announcedAddress || info.ip;
                 console.log('server is running');
                 console.log(`open https://${ip}:${listenPort} in your web browser`);
             }
@@ -248,34 +316,7 @@ async function runWebServer(): Promise<void> {
 async function runExpressApp() {
     console.info('creating Express app...');
     expressApp = express();
-    expressApp.use(bodyParser.json());
-    expressApp.use(express.static(__dirname));
-
-    /**
-     * For every API request, verify that the roomId in the path matches and
-     * existing room.
-     */
-    expressApp.param(
-        'roomId', (req: any, res: any, next, roomId: string) => {
-            // The room must exist for all API requests.
-            if (!rooms.has(roomId)) {
-                const error: any = new Error(`room with id "${roomId}" not found`);
-
-                error.status = 404;
-                throw error;
-            }
-
-            req.room = rooms.get(roomId);
-
-            next();
-        });
-    expressApp.get(
-        '/rooms/:roomId', (req: any, res: any) => {
-            const data = req.room.getRouterRtpCapabilities();
-
-            res.status(200).json(data);
-        });
-
+    expressApp.use(express.json());
 
     expressApp.use(cors());
 
@@ -294,10 +335,6 @@ async function runExpressApp() {
             }
         });
 
-
-    expressApp.get('/hello', (req, res) => {
-        res.send('Hello World!');
-    });
 }
 
 async function runProtooWebSocketServer() {
@@ -315,90 +352,113 @@ async function runProtooWebSocketServer() {
     // Handle connections from clients.
     protooWebSocketServer.on('connectionrequest', (info: any, accept, reject) => {
         // The client indicates the roomId and peerId in the URL query.
-        const u = url.parse(info.request.url, true);
-        const roomId: string = u.query['roomId'] as string;
-        const peerId: string = u.query['peerId'] as string;
-        const callType: CallType = u.query['callType'] as CallType;
+        const u = new URL(info.request.url, 'http://localhost').searchParams;
+        const roomId: string = u.get('roomId') as string;
+        const peerId: string = u.get('peerId') as string;
 
-        if (!roomId || !peerId) {
-            reject(400, 'Connection request without roomId and/or peerId');
+        if (!roomId || !peerId || !uuidRe.test(roomId) || !uuidRe.test(peerId)) {
+            reject(400, 'Connection request without valid roomId and/or peerId');
 
             return;
         }
 
-        let consumerReplicas = Number(u.query['consumerReplicas']);
+        // consumerReplicas is a debugging aid inherited from the mediasoup demo
+        // that multiplies the consumers created per producer, and it is fixed
+        // room-wide by whoever connects first. Clamp it hard so a single client
+        // cannot force the worker to allocate an unbounded number of consumers.
+        let consumerReplicas = Number(u.get('consumerReplicas'));
 
-        if (isNaN(consumerReplicas)) {
+        if (isNaN(consumerReplicas) || consumerReplicas < 0) {
             consumerReplicas = 0;
+        } else {
+            consumerReplicas = Math.min(4, Math.floor(consumerReplicas));
+        }
+
+        const source = connectionSourceKey(
+            info.socket.remoteAddress, info.request.headers['x-forwarded-for'], TRUST_PROXY);
+        const releasePending = pendingConnections.tryAcquire(source);
+        if (!releasePending) {
+            reject(429, 'Too many pending connections');
+
+            return;
         }
 
         console.info(
             'protoo connection request [roomId:%s, peerId:%s, address:%s, origin:%s]',
-            roomId, peerId, info.socket.remoteAddress, info.origin);
+            roomId, peerId, source, info.origin);
 
-        // Serialize this code into the queue to avoid that two peers connecting at
-        // the same time with the same roomId create two separate rooms with same
-        // roomId.
-        queue.push(async () => {
-            const existingCall = await callHelper.getCallState(roomId);
-            let { callCreator, callSlots, stageSlots, audioOnly, highQuality } = initializeCallParameters(peerId, callType, existingCall);
-            const room = await getOrCreateRoom({ roomId, consumerReplicas, callType, callCreator, callSlots, stageSlots, audioOnly, highQuality });
+        // Accept the WebSocket, then require the protoo login before the
+        // connection touches any room state.
+        let protooWebSocketTransport: protoo.WebSocketTransport;
+        try {
+            protooWebSocketTransport = accept();
+        } catch (error) {
+            releasePending();
+            console.error('accepting the protoo connection failed:%o', error);
 
-            // Accept the protoo WebSocket connection.
-            const protooWebSocketTransport = accept();
-            const consume = true;
+            return;
+        }
 
-            await room.handleProtooConnection({ peerId, consume, protooWebSocketTransport });
+        authenticateProtooTransport(protooWebSocketTransport, peerId, {
+            timeoutMs: PROTOO_LOGIN_TIMEOUT_MS,
+            verify: verifyProtooLogin,
         })
-            .catch((error: any) => {
-                console.error('room creation or room joining failed:%o', error);
+            .finally(releasePending)
+            .then(async (connection) => {
+                try {
+                    await runInRoomQueue(roomId, async () => {
+                        if (protooWebSocketTransport.closed) {
+                            throw new Error('connection closed');
+                        }
+                        const room = await getOrCreateRoom({ roomId, peerId, consumerReplicas });
+                        try {
+                            await room.handleProtooConnection({ peerId, consume: true, protooWebSocketTransport });
+                        } catch (error) {
+                            room.closeIfEmpty();
+                            throw error;
+                        }
+                    });
+                    connection.confirm();
+                }
+                catch (error: any) {
+                    console.error('room creation or room joining failed:%o', error);
 
-                reject(error);
+                    connection.refuse(JOIN_ERROR_CODES.has(error?.message) ? error.message : errors.server.UNKNOWN);
+                }
+            }, (error: any) => {
+                console.info(
+                    'protoo login failed [roomId:%s, peerId:%s, address:%s]: %s',
+                    roomId, peerId, source, error?.message);
             });
     });
 }
 
-function initializeCallParameters(
-    peerId: string, 
-    callType: CallType,
-    existingCall?: {
-        callCreator: string, 
-        slots: number, 
-        stageSlots: number, 
-        audioOnly: boolean, 
-        highQuality: boolean, 
+/** Checks a protoo `login` payload; resolves to the device owner's user id. */
+async function verifyProtooLogin(data: unknown, secret: string): Promise<string> {
+    const login: API.Socket.login.Request = await validators.API.Socket.login.validateAsync(data);
+    if (login.secret !== secret) {
+        throw new Error(errors.server.INVALID_SECRET);
     }
-) {
-    let callCreator;
-    let callSlots;
-    let stageSlots;
-    let audioOnly = false;
-    let highQuality = false;
-    if (existingCall) {
-        callCreator = existingCall.callCreator;
-        callSlots = existingCall.slots;
-        stageSlots = existingCall.stageSlots;
-        audioOnly = existingCall.audioOnly;
-        highQuality = existingCall.highQuality;
-    } else {
-        callCreator = peerId;
-        switch (callType) {
-            case CallType.BROADCAST:
-                stageSlots = config.PREMIUM.COMMUNITY_FREE.BROADCASTERS_SLOTS;
-                callSlots = config.PREMIUM.COMMUNITY_FREE.BROADCAST_STANDARD;
-                break;
-            case CallType.DEFAULT:
-                stageSlots = config.PREMIUM.COMMUNITY_FREE.BROADCASTERS_SLOTS;
-                callSlots = config.PREMIUM.COMMUNITY_FREE.CALL_STANDARD;
-                break;
+    const { userId } = await deviceHelper.verifyDeviceAndGetUserId(login.deviceId, secret, login.base64Signature);
+    if (await isSecurityStepRequiredForRealtime(userId, { useApiRecord: false })) {
+        // the account must finish the account-security step first
+        throw new Error(errors.server.SECURITY_STEP_REQUIRED);
+    }
+    return userId;
+}
 
-            default:
-                stageSlots = config.PREMIUM.COMMUNITY_FREE.BROADCASTERS_SLOTS;
-                callSlots = config.PREMIUM.COMMUNITY_FREE.CALL_STANDARD;
-                break;
-        }
+function runInRoomQueue<T>(roomId: string, task: () => Promise<T>): Promise<T> {
+    let roomQueue = roomQueues.get(roomId);
+    if (!roomQueue) {
+        roomQueue = new AwaitQueue();
+        roomQueues.set(roomId, roomQueue);
     }
-    return { callCreator, callSlots, stageSlots, audioOnly, highQuality };
+    const queue = roomQueue;
+    return queue.push(task).finally(() => {
+        if (queue.size === 0 && roomQueues.get(roomId) === queue) {
+            roomQueues.delete(roomId);
+        }
+    });
 }
 
 /**
@@ -413,30 +473,58 @@ function getMediasoupWorker() {
     return worker;
 }
 
+// delays before the retries of a failed call end (ms)
+const END_CALL_RETRY_DELAYS = [1000, 5000, 15000];
+
 /**
- * Get a Room instance (or create one if it does not exist).
+ * Runs the database update that ends a call when its room closed, retrying a
+ * few times: a transient database error would otherwise leave the call open
+ * on a live call server. Never throws.
  */
-async function getOrCreateRoom({ 
-        roomId, 
-        consumerReplicas, 
-        callType, 
-        callCreator, 
-        stageSlots, 
-        callSlots, 
-        audioOnly, 
-        highQuality 
-    }: { 
-        roomId: string, 
-        consumerReplicas: number, 
-        callType: CallType, 
-        callCreator?: string, 
-        stageSlots: number, 
-        callSlots: number, 
-        audioOnly: boolean, 
-        highQuality: boolean 
+async function endCallWithRetry(name: string, roomId: string, endCall: () => Promise<unknown>) {
+    for (let attempt = 0; ; attempt++) {
+        try {
+            await endCall();
+            return;
+        } catch (error) {
+            if (attempt >= END_CALL_RETRY_DELAYS.length) {
+                console.error(`${name} failed, giving up [roomId:${roomId}]`, error);
+                return;
+            }
+            console.error(`${name} failed, retrying [roomId:${roomId}]`, error);
+            await new Promise(resolve => setTimeout(resolve, END_CALL_RETRY_DELAYS[attempt]));
+        }
+    }
+}
+
+/**
+ * Get a Room instance (or create one if it does not exist) for a call that
+ * exists and has not ended. The room's parameters come from the stored call.
+ */
+async function getOrCreateRoom({
+        roomId,
+        peerId,
+        consumerReplicas,
+    }: {
+        roomId: string,
+        peerId: string,
+        consumerReplicas: number,
     }) {
+    const callState = await callHelper.getCallState(roomId);
+    if (!callState || callState.endedAt) {
+        console.info('no ongoing call for this room [roomId:%s]', roomId);
+        throw new Error(errors.server.NOT_FOUND);
+    }
+    // Same rule as the `join` request: only users who may join the call get a
+    // peer in its room.
+    // (the call creator included, unless banned from the community)
+    if (!(await callHelper.hasPermissionToJoinCall(peerId, roomId))) {
+        throw new Error(errors.server.NOT_ALLOWED);
+    }
+    const { callCreator, slots: callSlots, stageSlots, audioOnly, highQuality, callType } = callState;
+
     let room = rooms.get(roomId);
-    
+
     const peerLenght = room ? room._getJoinedPeers().length : 0;
 
     if (peerLenght >= callSlots) {
@@ -452,23 +540,22 @@ async function getOrCreateRoom({
         console.info('creating a new Room [roomId:%s]', roomId);
 
         const mediasoupWorker = getMediasoupWorker();
-        room = await Room.create({ mediasoupWorker, roomId, consumerReplicas, callType, callCreator, stageSlots, callSlots, audioOnly, highQuality });
+        const newRoom = await Room.create({ mediasoupWorker, roomId, consumerReplicas, callType, callCreator, stageSlots, callSlots, audioOnly, highQuality });
 
-        rooms.set(roomId, room);
-        room.on('close', () => {
-            callHelper.softEndCall(roomId);
-            rooms.delete(roomId);
+        rooms.set(roomId, newRoom);
+        newRoom.on('close', async () => {
+            await endCallWithRetry('softEndCall', roomId, () => callHelper.softEndCall(roomId));
+            if (rooms.get(roomId) === newRoom) {
+                rooms.delete(roomId);
+            }
         });
-        room.on('forceClose', () => {
-            callHelper.endCallForEveryone(roomId);
-            rooms.delete(roomId);
+        newRoom.on('forceClose', async () => {
+            await endCallWithRetry('endCallForEveryone', roomId, () => callHelper.endCallForEveryone(roomId));
+            if (rooms.get(roomId) === newRoom) {
+                rooms.delete(roomId);
+            }
         });
-    }
-    
-    const callState = await callHelper.getCallState(roomId);
-    if (callState.endedAt) {
-        rooms.delete(roomId);
-        throw new Error('Call has already ended');
+        room = newRoom;
     }
 
     return room;

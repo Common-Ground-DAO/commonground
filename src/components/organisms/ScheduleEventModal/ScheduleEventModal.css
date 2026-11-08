@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .schedule-modal-image-bg {
     @apply cg-border-l;
     background: var(--surface-subtleoverlay);

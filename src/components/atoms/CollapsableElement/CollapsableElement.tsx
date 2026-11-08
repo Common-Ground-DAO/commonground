@@ -10,8 +10,8 @@ export type CollapsableState = 'expanded' | 'collapsed';
 
 type Props = {
   state: CollapsableState;
-  trigger: JSX.Element;
-  view?: JSX.Element;
+  trigger: React.JSX.Element;
+  view?: React.JSX.Element;
 }
 
 const CollapsableElement = (props: Props) => {

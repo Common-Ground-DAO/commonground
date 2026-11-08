@@ -60,6 +60,8 @@ declare namespace Models {
     type CommunityChannelPermission = {
       roleId: string;
       roleTitle: string;
+      /** the role's type; absent in lists from older servers and in lists the client builds */
+      roleType?: Common.RoleType;
       permissions: Common.ChannelPermission[];
     };
 
@@ -107,6 +109,8 @@ declare namespace Models {
     type CommunityArticlePermission = {
       roleId: string;
       roleTitle: string;
+      /** the role's type; absent in lists from older servers and in lists the client builds */
+      roleType?: Common.RoleType;
       permissions: Common.ArticlePermission[];
     };
 
@@ -170,6 +174,7 @@ declare namespace Models {
       memberCount: number;
       tags: string[];
       official: boolean;
+      allowUserBots: boolean;
       createdAt: string;
       updatedAt: string;
       premium: Premium | null;
@@ -240,6 +245,8 @@ declare namespace Models {
     type EventPermission = {
       roleId: string;
       roleTitle: string;
+      /** the role's type; absent in lists from older servers and in lists the client builds */
+      roleType?: Common.RoleType;
       permissions: Common.CommunityEventPermission[];
     };
 

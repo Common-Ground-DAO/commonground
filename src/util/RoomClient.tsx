@@ -12,7 +12,7 @@ import {
   Device,
   RtpEncodingParameters,
   ConnectionState,
-} from "mediasoup-client/lib/types";
+} from "mediasoup-client/types";
 import {
   Action,
   RECENT_REACTIONS_WINDOW_SECONDS,
@@ -22,6 +22,7 @@ import {
 import { signApiSecret } from "data/util/device";
 import loginManager from "data/appstate/login";
 import { CallType } from "common/enums";
+import { isMediaRefusal, RefusedMediaKind } from "./mediaRefusal";
 
 export class RoomClient {
   private _closed: boolean;
@@ -53,6 +54,9 @@ export class RoomClient {
   private _highQuality: boolean;
   private _onNewPeer: () => void;
   private _onPeerLeft: () => void;
+  private _onMediaRefused: (kind: RefusedMediaKind) => void;
+  private _sendTransportRestartAttempts = 0;
+  private _sendTransportRestarting = false;
   broadcasters: Map<string, string>;
   handsRaised: Map<string, string>;
 
@@ -71,6 +75,7 @@ export class RoomClient {
     callCreator,
     onNewPeer,
     onPeerLeft,
+    onMediaRefused,
     audioOnly,
     highQuality
   }: {
@@ -88,6 +93,8 @@ export class RoomClient {
     callCreator: string;
     onNewPeer: () => void;
     onPeerLeft: () => void;
+    /** the call server refused to take media of this kind from us */
+    onMediaRefused?: (kind: RefusedMediaKind) => void;
     audioOnly: boolean;
     highQuality: boolean;
   }) {
@@ -142,6 +149,7 @@ export class RoomClient {
     }
 
     this._dispatch = dispatch;
+    this._onMediaRefused = onMediaRefused ?? (() => {});
 
     if (this._callType === CallType.DEFAULT) {
       this._onNewPeer = onNewPeer;
@@ -621,6 +629,7 @@ export class RoomClient {
       }
     } catch (error) {
       console.error("enableMic() | failed:%o", error);
+      if (isMediaRefusal(error)) this._onMediaRefused("audio");
 
       if (track) track.stop();
     }
@@ -895,7 +904,7 @@ export class RoomClient {
       (
         { dtlsParameters },
         callback,
-        errback // eslint-disable-line no-shadow
+        errback
       ) => {
         this._protoo
           ?.request("connectWebRtcTransport", {
@@ -911,7 +920,6 @@ export class RoomClient {
       "produce",
       async ({ kind, rtpParameters, appData }, callback, errback) => {
         try {
-          // eslint-disable-next-line no-shadow
           const { id } = await this._protoo?.request("produce", {
             transportId: this._sendTransport?.id,
             kind,
@@ -926,12 +934,49 @@ export class RoomClient {
       }
     );
 
-    this._sendTransport.on("connectionstatechange", async (connectionState: ConnectionState) => {
-      if (connectionState === "failed" || connectionState === "disconnected") {
-        this._sendTransport?.close();
-        this.enableProducing();
+    this._sendTransport.on("connectionstatechange", (connectionState: ConnectionState) => {
+      if (connectionState === "connected") {
+        // A healthy connection resets the backoff.
+        this._sendTransportRestartAttempts = 0;
+      } else if (connectionState === "failed") {
+        // Only "failed" is terminal. "disconnected" is frequently transient in
+        // ICE and often recovers on its own, so don't tear the transport down
+        // for it — doing so used to spin an unthrottled create/fail/close loop.
+        this._scheduleSendTransportRestart();
       }
     });
+  }
+
+  // Recreate the send transport after a failure, with capped exponential
+  // backoff and a guard against concurrent recreation, so a client with a
+  // persistent connectivity problem cannot flood the call server with
+  // createWebRtcTransport requests.
+  private _scheduleSendTransportRestart() {
+    if (this._closed || this._sendTransportRestarting) {
+      return;
+    }
+    if (this._sendTransportRestartAttempts >= 5) {
+      console.error("send transport failed repeatedly, giving up");
+      return;
+    }
+
+    this._sendTransportRestarting = true;
+    const delay = Math.min(30000, 1000 * 2 ** this._sendTransportRestartAttempts);
+    this._sendTransportRestartAttempts++;
+
+    setTimeout(async () => {
+      try {
+        if (this._closed) {
+          return;
+        }
+        this._sendTransport?.close();
+        await this.enableProducing();
+      } catch (error) {
+        console.error("send transport restart failed", error);
+      } finally {
+        this._sendTransportRestarting = false;
+      }
+    }, delay);
   }
 
   private async enableConsuming() {
@@ -976,7 +1021,7 @@ export class RoomClient {
       (
         { dtlsParameters },
         callback,
-        errback // eslint-disable-line no-shadow
+        errback
       ) => {
         this._protoo
           ?.request("connectWebRtcTransport", {
@@ -1136,6 +1181,7 @@ export class RoomClient {
       }
     } catch (error) {
       console.error("enableWebcam() | failed:%o", error);
+      if (isMediaRefusal(error)) this._onMediaRefused("video");
 
       if (track) track.stop();
     }
@@ -1331,6 +1377,7 @@ export class RoomClient {
       }
     } catch (error) {
       console.error("enableShare() | failed:%o", error);
+      if (isMediaRefusal(error)) this._onMediaRefused("share");
 
       if (track) track.stop();
     }

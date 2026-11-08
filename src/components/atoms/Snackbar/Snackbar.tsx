@@ -14,7 +14,7 @@ export type SnackbarType = 'info' | 'warning' | 'updating' | 'success';
 export type Props = {
   type: SnackbarType;
   text: string;
-  rightElement?: JSX.Element;
+  rightElement?: React.JSX.Element;
   durationSeconds?: number;
 };
 

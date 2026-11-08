@@ -64,7 +64,7 @@ export class initdb1648214442313 implements MigrationInterface {
         }
 
         // update permissions for new created tables
-        const connectionOptions = queryRunner.manager.connection.options;
+        const connectionOptions = queryRunner.dataSource.options;
         const database = connectionOptions.database;
         try {
             await queryRunner.query(`GRANT CONNECT on DATABASE ${database} TO writer`);

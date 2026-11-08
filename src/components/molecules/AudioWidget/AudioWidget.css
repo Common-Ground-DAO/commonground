@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .audio-widget {
   @apply flex flex-col-reverse items-center;
   background-color: var(--audioActiveBg);

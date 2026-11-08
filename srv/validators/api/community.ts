@@ -7,7 +7,6 @@ import {
   CommunityPermission,
   ChannelPermission,
   ArticlePermission,
-  PredefinedRole,
   RoleType,
   CallPermission,
   UserBlockState,
@@ -18,7 +17,8 @@ import {
   CommunityApprovalState,
 } from "../../common/enums";
 import common from "../common";
-import baseArticleApi from "./basearticle";
+import { isReservedRoleTitle } from "../../util/roleTitles";
+import baseArticleApi, { articleCursorPairing } from "./basearticle";
 
 const title = Joi.string().max(255);
 const imageId = Joi.alternatives().try(
@@ -39,6 +39,9 @@ const createRolePermissionsValidator = (
 ) => Joi.array().items(
   Joi.object({
     roleTitle: Joi.string().required(),
+    // optional, carried by the lists the server sends and the web client
+    // builds; the server names the role by roleId and does not store it
+    roleType: Joi.string().valid(...Object.values(RoleType)).optional(),
     roleId: common.Uuid.required(),
     permissions: Joi.array().items(
       Joi.string().valid(...allowedPermissions)
@@ -62,6 +65,9 @@ const createCommunityEventRolePermissionsValidator = (
 ) => Joi.array().items(
   Joi.object({
     roleTitle: Joi.string().required(),
+    // optional, carried by the lists the server sends and the web client
+    // builds; the server names the role by roleId and does not store it
+    roleType: Joi.string().valid(...Object.values(RoleType)).optional(),
     roleId: common.Uuid.required(),
     permissions: Joi.array().items(
       Joi.string().valid(...allowedPermissions)
@@ -87,14 +93,17 @@ const callsCommunityEventPermissionsValidator = createCommunityEventRolePermissi
   Object.values(CommunityEventPermission)
 );
 
-const roleTitleValidator = Joi.string().trim().custom((value, helpers) => {
-  if (
-    PredefinedRole.Admin.toLowerCase() === value.toLowerCase()
-  ) {
+// The titles of the predefined roles (Admin, Member, Public) are reserved:
+// a new role cannot take one, in any letter case. On update a role may keep
+// the reserved title it already carries; communityHelper.updateRole refuses
+// a change to a reserved title, since that needs the stored role.
+const newRoleTitleValidator = Joi.string().trim().custom((value, helpers) => {
+  if (isReservedRoleTitle(value)) {
     return helpers.error("any.invalid");
   }
   return value;
 });
+const roleTitleValidator = Joi.string().trim();
 
 const allowedRoleTypes = new Set(Object.values(RoleType).filter(v => v !== RoleType.PREDEFINED));
 const roleTypeValidator = Joi.string().custom((value, helpers) => {
@@ -262,7 +271,7 @@ const communityApi = {
 
   createRole: Joi.object<API.Community.createRole.Request>({
     communityId: common.Uuid.required(),
-    title: roleTitleValidator.required(),
+    title: newRoleTitleValidator.required(),
     type: roleTypeValidator.required(),
     assignmentRules: assignmentRulesValidator.required(),
     permissions: communityRolePermissionsValidator.required(),
@@ -413,7 +422,9 @@ const communityApi = {
     communityId: common.Uuid,
     tags: common.Tags,
     anyTags: common.Tags,
-  }).strict(true).required(),
+    communityTags: common.Tags,
+    anyCommunityTags: common.Tags,
+  }).strict(true).custom(articleCursorPairing).required(),
 
   getArticleDetailView: Joi.object<API.Community.getArticleDetailView.Request>({
     communityId: common.Uuid.required(),
@@ -506,6 +517,10 @@ const communityApi = {
 
   getMyEvents: Joi.object<API.Community.getMyEvents.Request>({
     scheduledBefore: common.DateString.allow(null),
+    // Second cursor field: tiebreaker for events sharing a scheduleDate. The
+    // public type and repository already support it; it was missing here, so a
+    // strict validator rejected any client that paginated per the contract.
+    beforeId: common.Uuid.allow(null),
   }).strict(true).required(),
 
   getUpcomingEvents: Joi.object<API.Community.getUpcomingEvents.Request>({
@@ -611,10 +626,6 @@ const communityApi = {
     communityId: common.Uuid.required(),
   }).strict(true).required(),
 
-  getCommunityCount: Joi.object<API.Community.getCommunityCount.Request>({
-    channel: Joi.string().required(),
-  }).strict(true).required(),
-
   updateNotificationState: Joi.object<API.Community.updateNotificationState.Request>({
     data: Joi.array().items(Joi.object<API.Community.updateNotificationState.Request['data'][number]>({
       communityId: common.Uuid.required(),
@@ -651,73 +662,6 @@ const communityApi = {
   getAirdropCommunities: Joi.object<API.Community.getAirdropCommunities.Request>({
     status: Joi.string().valid('ongoing', 'finished').required(),
   }).strict(true).required(),
-
-  Wizard: {
-    getWizardData: Joi.object<API.Community.Wizard.getWizardData.Request>({
-      wizardId: common.Uuid.required(),
-    }).strict(true).required(),
-
-    consumeReferralCode: Joi.object<API.Community.Wizard.consumeReferralCode.Request>({
-      code: Joi.string().required(),
-      wizardId: common.Uuid.required(),
-    }).strict(true).required(),
-
-    wizardVerifyCode: Joi.object<API.Community.Wizard.wizardVerifyCode.Request>({
-      code: Joi.string().required(),
-      wizardId: common.Uuid.required(),
-    }).strict(true).required(),
-
-    wizardVerifyWallet: Joi.object<API.Community.Wizard.wizardVerifyWallet.Request>({
-      data: Joi.any().required(),
-      wizardId: common.Uuid.required(),
-    }).strict(true).required(),
-
-    wizardFinished: Joi.object<API.Community.Wizard.wizardFinished.Request>({
-      wizardId: common.Uuid.required(),
-      tryResult: Joi.string().valid('success', 'failure').required(),
-    }).strict(true).required(),
-
-    claimInvestmentTransaction: Joi.object<API.Community.Wizard.claimInvestmentTransaction.Request>({
-      wizardId: common.Uuid.required(),
-      txHash: Joi.string().required(),
-    }).strict(true).required(),
-
-    getMyReferralCodes: Joi.object<API.Community.Wizard.getMyReferralCodes.Request>({
-      wizardId: common.Uuid.required(),
-    }).strict(true).required(),
-
-    setWizardStepData: Joi.object<API.Community.Wizard.setWizardStepData.Request>({
-      wizardId: common.Uuid.required(),
-      stepId: Joi.number().required(),
-      value: Joi.alternatives().try(Joi.object<Models.Wizard.WizardStepData & { type: 'ndaAccepted', serverTimestamp?: never }>({
-        type: Joi.string().valid('ndaAccepted').required(),
-        name: Joi.string().max(200).required(),
-        ndaAcceptedChecked: Joi.boolean().truthy().required(),
-      }), Joi.object<Models.Wizard.WizardStepData & { type: 'investorDetailsFilled', serverTimestamp?: never }>({
-        type: Joi.string().valid('investorDetailsFilled').required(),
-        name: Joi.string().max(200).required(),
-        address: Joi.string().max(200).required(),
-        isLegalEntity: Joi.boolean().required(),
-      }), Joi.object<Models.Wizard.WizardStepData & { type: 'americanSelfCertification', serverTimestamp?: never }>({
-        type: Joi.string().valid('americanSelfCertification').required(),
-        isAmerican: Joi.boolean().required(),
-        isAccredited: Joi.boolean().required(),
-      }).custom((value, helpers) => {
-        if (!(value.isAmerican && !value.isAccredited)) {
-          return value;
-        }
-        return helpers.error("any.invalid");
-      })),
-    }).strict(true).required(),
-
-    getInvestmentTargetBeneficiaryBalance: Joi.object<API.Community.Wizard.getInvestmentTargetBeneficiaryBalance.Request>({
-      target: Joi.string().valid("sale01").required(),
-    }).strict(true).required(),
-
-    getInvestmentTargetPersonalContribution: Joi.object<API.Community.Wizard.getInvestmentTargetPersonalContribution.Request>({
-      target: Joi.string().valid("sale01").required(),
-    }).strict(true).required(),
-  }
 }
 
 export default communityApi;

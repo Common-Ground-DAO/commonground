@@ -2,6 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import React from 'react';
 import Button from "../../../components/atoms/Button/Button";
 import NotificationCount from "../../../components/atoms/NotificationCount/NotificationCount";
 import NotificationDot from 'components/atoms/NotificationDot/NotificationDot';
@@ -9,21 +10,23 @@ import NotificationDot from 'components/atoms/NotificationDot/NotificationDot';
 import './MenuButton.css';
 
 type Props = {
-  icon?: JSX.Element;
+  icon?: React.JSX.Element;
   onClick?: (ev: React.MouseEvent<HTMLButtonElement, MouseEvent>) => void;
   className?: string;
   isActive?: boolean;
   disabled?: boolean;
   showDot?: boolean;
   notificationCount?: number;
-  buttonRef?: React.RefObject<HTMLButtonElement>;
+  buttonRef?: React.RefObject<HTMLButtonElement | null>;
 }
 
 export default function MenuButton(props: Props) {
   const { icon, onClick, className, isActive, disabled, showDot, notificationCount, buttonRef } = props;
 
-  // if showDot and notificationCount are both true, only the notificationCount is shown
-  const showStatusIcon = showDot && !notificationCount;
+  // numeric on purpose: a count of 0 (or a stray "0") shows neither count nor
+  // hides the dot; if showDot and a count > 0 are both set, only the count is shown
+  const count = Number(notificationCount) || 0;
+  const showStatusIcon = showDot && count <= 0;
 
   return (
     <div className={`menu-button-container ${isActive ? 'active' : ''} ${disabled ? 'disabled' : ''}`}>
@@ -32,7 +35,7 @@ export default function MenuButton(props: Props) {
         className={`${className || ''} ${isActive ? 'active' : ''}`}
         iconLeft={
           <div className="menu-icon-container">
-            {!!notificationCount && <NotificationCount notificationCount={notificationCount || 4} />}
+            {count > 0 && <NotificationCount notificationCount={count} />}
             {showStatusIcon && <NotificationDot className="menu-button-dot-icon" />}
             {icon}
           </div>

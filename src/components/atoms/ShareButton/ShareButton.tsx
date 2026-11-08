@@ -19,7 +19,7 @@ type Props = {
   relativeUrl: string;
 
   role?: ButtonRole;
-  iconLeft?: JSX.Element;
+  iconLeft?: React.JSX.Element;
   className?: string;
   shareLinkOnly?: boolean;
 }
@@ -63,7 +63,7 @@ type ShareListItemProps = {
   contentText: string;
   relativeUrl: string;
   onClick?: () => void;
-  icon?: JSX.Element | null;
+  icon?: React.JSX.Element | null;
 }
 
 export const ShareListItem: React.FC<ShareListItemProps> = React.memo((props) => {

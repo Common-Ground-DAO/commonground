@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useEffect, useMemo, useReducer, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import Button from '../../../components/atoms/Button/Button';
 import FrontPageSectionHeader from '../../../components/molecules/FrontPageSectionHeader/FrontPageSectionHeader';
@@ -14,7 +14,6 @@ import { useWindowSizeContext } from 'context/WindowSizeProvider';
 
 import './BlogExplorer.css';
 import { getUrl } from 'common/util';
-import { useEcosystemContext } from 'context/EcosystemProvider';
 
 type Props = {
   mode: 'limited' | 'unlimited';
@@ -39,7 +38,6 @@ const options: BlogOption[] = [
 const BlogExplorer: React.FC<Props> = ({ mode, loadingAmount, loadMore, onFinishedLoading, gridOnMobile }) => {
   const isLimitedMode = mode === 'limited';
   const navigate = useNavigate();
-  const { ecosystem } = useEcosystemContext();
   const [ dataState, dispatch ] = useReducer(blogsReducer, initialState);
   const [ activeContentFilter, setActiveContentFilter ] = useState<BlogType>("blog");
   const { isMobile } = useWindowSizeContext();

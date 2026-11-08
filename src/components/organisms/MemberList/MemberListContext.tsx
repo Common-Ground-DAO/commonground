@@ -7,7 +7,7 @@ import React, { createContext, useContext, useRef, useState } from "react";
 type MemberListContextState = {
     memberListIsOpen: boolean;
     setShowMemberList: React.Dispatch<React.SetStateAction<boolean>>;
-    memberListDrawerRef: React.RefObject<HTMLDivElement> | undefined;
+    memberListDrawerRef: React.RefObject<HTMLDivElement | null> | undefined;
 }
 
 export const MemberListContext = createContext<MemberListContextState>({

@@ -1,0 +1,64 @@
+# Edge of the dev stack (docker-compose.yml, service caddy): the same routing
+# as the self-host profile (common.caddy) on the dev ports, with certificates
+# from Caddy's own local CA (`tls internal`). Trust its root once to get rid
+# of the browser warnings: ./run.sh export_ca.
+#
+#   :8000  plain HTTP, any host name
+#   :8001  HTTPS for localhost, 127.0.0.1, app.cg.local, bs-local.com and,
+#          when set, the LAN address
+#   :4443  call signalling (wss) in front of mediasoup, same names
+#
+# The container listens on the same port numbers as the host, so the URLs the
+# frontend derives (src/data/util/urls.ts) match what Caddy sees.
+#
+# Environment (docker-compose.yml, from LOCAL_CERTIFICATE_IP in docker/.env):
+#   CG_DEV_LAN_IP       the address other devices reach this machine at
+#   CG_DEV_LAN          "_on" when CG_DEV_LAN_IP is set, else empty
+#   CG_DEV_DEFAULT_SNI  CG_DEV_LAN_IP, or 127.0.0.1 without one
+# Browsers send no SNI for an IP address, so Caddy answers such connections
+# with one default certificate: the LAN address's when it is set (other
+# devices only reach the machine by it), else 127.0.0.1's. With a LAN
+# address set, open the stack on this machine as https://localhost:… —
+# https://127.0.0.1:… then gets the LAN address's certificate.
+{
+	local_certs
+	skip_install_trust
+	# HTTPS only where a site says so; no redirect listener on :80
+	auto_https disable_redirects
+	default_sni {$CG_DEV_DEFAULT_SNI:127.0.0.1}
+}
+
+import /etc/caddy/common.caddy
+
+# connect-src for the own host: every port and scheme (the frontend on :3000
+# talks to :8000/:8001, calls to :4443), plus the hardhat dev chain. frame-src
+# * : dev plugins are served from other localhost ports over plain HTTP.
+(dev_app) {
+	import cg_app "ws://{host}:* wss://{host}:* http://{host}:* https://{host}:* http://127.0.0.1:8545" "*" auto samehost off
+}
+
+http://:8000 {
+	import dev_app
+}
+
+https://localhost:8001, https://127.0.0.1:8001, https://app.cg.local:8001, https://bs-local.com:8001 {
+	import dev_app
+}
+
+https://localhost:4443, https://127.0.0.1:4443, https://app.cg.local:4443, https://bs-local.com:4443 {
+	import cg_calls_edge
+}
+
+# the LAN address, only when one is set (a second site with the same name
+# would be refused)
+(dev_lan) {
+}
+(dev_lan_on) {
+	https://{$CG_DEV_LAN_IP}:8001 {
+		import dev_app
+	}
+	https://{$CG_DEV_LAN_IP}:4443 {
+		import cg_calls_edge
+	}
+}
+import dev_lan{$CG_DEV_LAN}

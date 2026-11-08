@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .community-content {
     @apply flex items-center flex-col;
 

@@ -1,0 +1,40 @@
+@reference '../../../tailwind.css';
+
+.security-step {
+  .security-step-tasks {
+    @apply flex flex-col gap-2 w-full;
+
+    > li {
+      @apply flex items-center gap-2;
+      color: var(--text-secondary);
+
+      &.active {
+        color: var(--text-primary);
+      }
+
+      &.done {
+        color: var(--text-secondary);
+        text-decoration: line-through;
+
+        > svg {
+          color: var(--colours-brand-800);
+        }
+      }
+    }
+  }
+
+  .security-step-dot {
+    @apply inline-block rounded-full;
+    width: 0.75rem;
+    height: 0.75rem;
+    margin: 0 0.25rem;
+    border: 2px solid currentColor;
+  }
+}
+
+.security-step-view,
+.transfer-view {
+  @apply flex flex-col items-center justify-center w-full px-4 py-8;
+  min-height: var(--visualHeight, 100vh);
+  background: var(--surface-background);
+}

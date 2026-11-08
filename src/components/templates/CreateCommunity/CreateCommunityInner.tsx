@@ -9,7 +9,7 @@ import { useNavigate } from "react-router";
 import { CommunityLink } from "common/types";
 import { validateGenericTextInput } from "../../../common/validators";
 
-import { ReactComponent as CloseIcon } from '../../../components/atoms/icons/16/Close-1.svg';
+import CloseIcon from '../../../components/atoms/icons/16/Close-1.svg?react';
 
 import Button from "../../../components/atoms/Button/Button";
 import Modal from "../../atoms/Modal/Modal";
@@ -21,9 +21,9 @@ import { useLoggedInOwnUser } from "context/OwnDataProvider";
 import { useSnackbarContext } from "context/SnackbarContext";
 import data from "data";
 import fileApi from "data/api/file";
+import { imageUploadErrorText, notifyIfImageRejected } from "moderation/imageUploadError";
 import { getUrl } from 'common/util';
 import Tag from "components/atoms/Tag/Tag";
-import EcosystemPickerField from "components/molecules/inputs/EcosystemPickerField/EcosystemPickerField";
 import ImageUploadField from "components/molecules/inputs/ImageUploadField/ImageUploadField";
 
 type Props = {
@@ -173,13 +173,16 @@ const CreateCommunityInner: React.FC<Props> = ({ onCancel, onSuccess }) => {
         onSuccess?.();
       }
       catch (e) {
-        setError(e instanceof Error ? e.message : 'An unknown error occurred');
+        // A rejected image is reported by the shared modal, so the inline error
+        // tag is cleared rather than doubling up on the same message.
+        if (notifyIfImageRejected(e)) setError('');
+        else setError(imageUploadErrorText(e, 'An unknown error occurred'));
         setSaving(false);
       }
     }
   }
 
-  let errorEl: JSX.Element | undefined;
+  let errorEl: React.JSX.Element | undefined;
   if (error !== '') {
     errorEl = (
       <Tag variant="error" label={error} />
@@ -261,11 +264,6 @@ const CreateCommunityInner: React.FC<Props> = ({ onCancel, onSuccess }) => {
           onChange={setSelectedLogo}
           imagePreviewStyle={{width: '75px', height: '75px'}}
         />
-
-        {/* <EcosystemPickerField
-          tags={tags}
-          onChange={setTags}
-        /> */}
         {/* <CommunityLinks
           links={links}
           onChange={setLinks}

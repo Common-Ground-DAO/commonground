@@ -2,274 +2,269 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+/*
+ * The tab's Socket.IO connection: one socket per tab, no tab roles (chat-sync
+ * decision [1], contract: ./transport.ts).
+ *
+ * - Visible tabs keep (or re-open) their socket. A hidden tab closes it after
+ *   HIDDEN_DISCONNECT_AFTER_MS unless a SocketHold is active (a call); on
+ *   `freeze` and `pagehide` it closes it at once, holds or not. After such a
+ *   policy close it reconnects only on visible, `pageshow`, `resume` or
+ *   `online` while visible — never on a timer while hidden.
+ * - `live` = connected AND the socket login acked "OK" (rooms joined), or for
+ *   an anonymous tab: connected and the socket-scoped joins re-sent.
+ *   `Common.WebSocketState` is `connected` only while live.
+ * - A reconnect performs the socket login only; the HTTP device login is the
+ *   login manager's business (once per page load).
+ * - A newer server build sets `updateAvailable`; the socket keeps working.
+ */
+
 import urlConfig from '../util/urls';
 import config from '../../common/config';
 
 import { io, type Socket } from 'socket.io-client';
-import buildId from 'common/random_build_id';
+import buildId from 'common/buildId';
+import { isGatewayInstance } from 'common/gateway';
 
-import type { WorkerToTabMessage, TabToWorkerMessage } from 'service-worker';
-import { randomString } from '../../util';
-import { type ConnectionManager } from './connection'; 
-import cgIdApi from 'data/api/cgid';
+import userApi from 'data/api/user';
+import securityStepState from 'data/auth/securityStep';
+import {
+  HIDDEN_DISCONNECT_AFTER_MS,
+  RESUME_MIN_HIDDEN_MS,
+  type LiveKind,
+  type ResumeReason,
+  type SocketHold,
+  type Transport,
+  type Unsubscribe,
+} from './transport';
+import { fallbackSocketId, setRequestSocketIdProvider } from './requestSocketId';
 
-const LOCAL_STORAGE_KEY = "CG_LAST_KNOWN_WS_CONNCETION";
-const _localStorageLastEventTime = parseInt(localStorage.getItem(LOCAL_STORAGE_KEY) || '0') || Date.now();
+type CgSocket = Socket<
+  API.Server.ClientToServerEvents,
+  API.Server.ServerToClientEvents
+>;
+
+/** Timeout of each ack of the socket login (`getSignableSecret`, `login`) and of the device signature. */
+export const SOCKET_LOGIN_ACK_TIMEOUT_MS = 20_000;
+/**
+ * Backoff of socket-login retries (after "ERROR", a failed signature or an
+ * ack timeout; visible tabs only), each randomised by
+ * ±SOCKET_LOGIN_RETRY_RANDOMIZATION so clients do not retry in step.
+ */
+export const SOCKET_LOGIN_RETRY_MS = [5_000, 15_000, 60_000] as const;
+export const SOCKET_LOGIN_RETRY_RANDOMIZATION = 0.5;
+/** Consecutive ack timeouts before the retry restarts the connection instead of only the login. */
+export const SOCKET_LOGIN_TIMEOUTS_BEFORE_RECONNECT = 2;
+const PING_INTERVAL_MS = 59_000;
+/** A pong older than this means the connection is dead although it looks open. */
+const PONG_STALE_MS = 110_000;
+const CONNECT_ERRORS_BEFORE_DISCONNECTED = 5;
+/** Every disconnect may have lost events since this long before it (server ping timeout is 15 s). */
+const DISCONNECT_SAFETY_MS = 30_000;
 
 const debugLog = (...args: any[]) => {
   // console.log(...args);
+};
+
+class SocketLoginError extends Error { }
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-class WebSocketManager {
-  private _state: Common.WebSocketState = "disconnected";
-  private _socket?: Socket<
-    API.Server.ClientToServerEvents,
-    API.Server.ServerToClientEvents
-  > & {
-    cg_loggedin?: 0 | 1 | 2;
+function emitAll<A extends unknown[]>(listeners: Set<(...args: A) => void>, ...args: A) {
+  for (const listener of Array.from(listeners)) {
+    try {
+      listener(...args);
+    } catch (e) {
+      console.error('Error in WebSocketManager listener', e);
+    }
+  }
+}
+
+function subscribe<T>(set: Set<T>, listener: T): Unsubscribe {
+  set.add(listener);
+  return () => {
+    set.delete(listener);
   };
+}
+
+export class WebSocketManager implements Transport {
+  private _socket?: CgSocket;
+  private _state: Common.WebSocketState = 'disconnected';
   private _onStateChange: (state: Common.WebSocketState) => (void | Promise<void>) = () => undefined;
-  private _onTabStateChange: (tabState: Common.TabState) => void = () => undefined;
   private _onError: (error: unknown) => void = (error) => console.error("Uncaught error in WebSocketManager", error);
-  private _appUpdateTriggered = false;
-  private _lastEventTime: number = _localStorageLastEventTime;
-  private _deviceId?: string;
   private _clientEventHandler: (((name: string, event: any) => void) | undefined);
-  private _connectionManager?: ConnectionManager;
-  private webSocketStateBroadcast = new BroadcastChannel('CG_WEBSOCKET_STATE');
-  private skipNextDisconnectHandler = false;
-  private tabId: string = randomString(20);
-  private _tabState: Common.TabState = 'unknown';
-  private __fastInterval: any = undefined;
-  public sendStateBroadcastUpdates = true;
+  private _started = false;
+
+  // live state
+  private _live = false;
+  private _everLive = false;
+  /** ++ on every socket `connect` */
+  private _connectionEpoch = 0;
+  /** connection epoch of the last transition to live */
+  private _liveEpoch = 0;
+  /** device the current connection is logged in as (null: anonymous) */
+  private _socketDeviceId: string | null = null;
+  /** device the tab wants the socket logged in as (undefined: anonymous) */
+  private _deviceId?: string;
+  private _loginSync?: Promise<void>;
+  private _loginRetryTimer?: ReturnType<typeof setTimeout>;
+  private _loginRetryCount = 0;
+  /** consecutive socket-login ack timeouts (reset when live) */
+  private _ackTimeouts = 0;
+  /** `<epoch>:<deviceId>` of a socket login answered SECURITY_STEP_REQUIRED: not retried on that connection */
+  private _securityStepLogin?: string;
+
+  // policy
+  private _holds = new Set<object>();
+  private _hiddenTimer?: ReturnType<typeof setTimeout>;
+  private _hiddenSince?: number;
+  /** closed by policy (hidden timeout, freeze, pagehide): no reconnect until the tab returns */
+  private _policyClosed = false;
+  /** socket.io is waiting in its reconnect backoff (a nudge reconnects at once) */
+  private _awaitingBackoff = false;
+  private _consecutiveConnectErrors = 0;
+
+  // liveness
+  private _pingInterval?: ReturnType<typeof setInterval>;
+  private _lastPong = 0;
+  private _lastPongLocalTimeDelta = 0;
+  private _lastEventTime = Date.now();
+
+  private _updateAvailable = false;
+
+  private _liveListeners = new Set<(kind: LiveKind) => void>();
+  private _liveChangeListeners = new Set<(live: boolean) => void>();
+  private _resumeListeners = new Set<(reason: ResumeReason) => void>();
+  private _updateAvailableListeners = new Set<() => void>();
+  private _socketConnectedListeners = new Set<() => void>();
+
+  /** legacy CG ID popup requests this tab's socket watches (re-sent on reconnect) */
+  private cgIdRequestIds = new Set<string>();
 
   constructor() {
-    // keep the session alive
+    setRequestSocketIdProvider(() => this.getRequestSocketId());
+  }
+
+  /**
+   * Starts the transport: page lifecycle listeners, session keepalive, and the
+   * first connect. Called once by connectionManager after the login manager
+   * is loaded (so a stored device is known before the first socket login).
+   */
+  public start() {
+    if (this._started) {
+      return;
+    }
+    this._started = true;
+
+    // keep the session alive (it stores nothing and creates no session)
     setInterval(() => {
-      cgIdApi.ensureSession().catch(e => {
+      userApi.ensureSession().catch(e => {
         console.error('Error during ensureSession call in WebSocketManager', e);
       });
     }, 60_000 * 29);
 
-    window.addEventListener('storage', (event: StorageEvent) => {
-      if (event.key === LOCAL_STORAGE_KEY && !!event.newValue) {
-        this._lastEventTime = parseInt(event.newValue);
+    document.addEventListener('visibilitychange', () => this.onVisibilityChange());
+    document.addEventListener('freeze', () => this.policyClose('freeze'));
+    document.addEventListener('resume', () => this.onReturn('resume', true));
+    window.addEventListener('pagehide', () => this.policyClose('pagehide'));
+    window.addEventListener('pageshow', (event) => {
+      if ((event as PageTransitionEvent).persisted) {
+        this.onReturn('pageshow', true);
       }
     });
-
-    window.addEventListener('beforeunload', () => {
-      let lastDisconnect: number | undefined;
-      let socketState: 'disconnected' | undefined;
-      if (
-        (this.tabState === 'active' || this.tabState === 'active-throttled') &&
-        (!!this._socket && this._socket.connected)
-      ) {
-        lastDisconnect = Math.max(this._lastEventTime, Date.now() - 15000);
-        socketState = 'disconnected';
-        this.setLastEventTimeWithLocalStorage(lastDisconnect);
-      }
-      this.sendBroadcast({
-        type: 'TabToWorker',
-        tabId: this.tabId,
-        tabState: 'tabClosed',
-        socketState,
-        lastDisconnect,
-      });
+    window.addEventListener('online', () => {
+      this.updateState();
+      this.onReturn('online', true);
     });
+    window.addEventListener('offline', () => this.updateState());
 
-    (async () => {
-      const [
-        serviceWorkerManager,
-        connectionManager,
-      ] = await Promise.all([
-        (await import('./serviceWorker')).default,
-        (await import('./connection')).default,
-        cgIdApi.ensureSession(),
-      ]);
-
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
-          if (this.tabState === 'unknown') {
-            this.sendStateUpdate();
-          }
-          if (
-            (this.tabState === 'active' || this.tabState === 'active-throttled') &&
-            this.lastPong !== 0 &&
-            this.lastPong + 110_000 < Date.now() - this.lastPongLocalTimeDelta
-          ) {
-            console.warn("DISCONNECT DETECTED!");
-            this.disconnect();
-            this.connect();
-          }
-        }
-      });
-
-      this.webSocketStateBroadcast.onmessage = this.onBroadcastMessage.bind(this);
-
-      this._connectionManager = connectionManager;
-      const swState = serviceWorkerManager.state;
-      if (swState === 'none') {
-        this.tabState = 'active';
-        console.warn("ONLY ONE TAB IS SUPPORTED IN DEV ENV (on port 3000)!");
-        console.warn("CHANNELS AND STUFF CAN BREAK OTHERWISE!");
-        this.connect();
-      }
-      else {
-        this.sendStateUpdate();
-        clearInterval(this.__fastInterval);
-        this.__fastInterval = setInterval(this.sendStateUpdate.bind(this), 500);
-      }
-    })();
+    if (document.visibilityState === 'hidden') {
+      this._hiddenSince = Date.now();
+      this.armHiddenTimer();
+    }
+    this.connect();
   }
 
-  private sendBroadcast(message: TabToWorkerMessage) {
-    if (this.sendStateBroadcastUpdates) {
-      this.webSocketStateBroadcast.postMessage(message);
-    }
+  // ------------------------------------------------------------------ Transport
+
+  get live(): boolean {
+    return this._live;
   }
 
-  private sendStateUpdate() {
-    const message: TabToWorkerMessage = {
-      type: 'TabToWorker',
-      tabId: this.tabId,
-      tabState: this.tabState,
-    }
-    if (this.tabState === 'active' || this.tabState === 'active-throttled') {
-      message.socketState = this.state;
-      message.lastEventTime = this.lastEventTime;
-      if (!!this._connectionManager) {
-        message.lastDisconnect = this._connectionManager.lastDisconnect.getTime();
-      } 
-    }
-    this.sendBroadcast(message);
+  public onLive(listener: (kind: LiveKind) => void): Unsubscribe {
+    return subscribe(this._liveListeners, listener);
   }
 
-  private onBroadcastMessage(ev: MessageEvent<TabToWorkerMessage | WorkerToTabMessage>) {
-    const { data } = ev;
-    debugLog('(Client ' + this.tabId + ') TabMessage', data);
-    
-    if (data.lastDisconnect !== undefined) {
-      debugLog('Last disconnect changed', new Date(data.lastDisconnect))
-      if (!!this._connectionManager) {
-        if (data.lastDisconnect !== this._connectionManager.lastDisconnect.getTime()) {
-          this._connectionManager.lastDisconnect = new Date(data.lastDisconnect);
-        }
-      }
-      else {
-        (async () => {
-          const connectionManager = (await import('./connection')).default;
-          this._connectionManager = connectionManager;
-          if (!!data.lastDisconnect && data.lastDisconnect !== connectionManager.lastDisconnect.getTime()) {
-            connectionManager.lastDisconnect = new Date(data.lastDisconnect);
-          }
-        })();
-      }
-    }
-    else {
-      debugLog('Last disconnect unchanged', new Date(this._connectionManager?.lastDisconnect || 0))
-    }
-
-    if (
-      data.lastEventTime !== undefined &&
-      data.lastEventTime !== this._lastEventTime
-    ) {
-      this._lastEventTime = data.lastEventTime;
-    }
-
-    if (data.socketState !== undefined) {
-      this.state = data.socketState;
-    }
-
-    if (data.type === "TabToWorker" && data.tabId !== this.tabId) {
-      if (
-        (this.tabState === 'active' || this.tabState === 'active-throttled') &&
-        (data.tabState === 'active' || data.tabState === 'active-throttled')
-      ) {
-        // if another tab is active, disconnect here
-        this.tabState =
-          this.tabState === 'active' ? 'passive' : 'passive-throttled';
-
-        if (!!this._socket && this._socket.connected) {
-          this.skipNextDisconnectHandler = true;
-          this._socket.disconnect();
-        }
-
-        this.sendBroadcast({
-          type: 'TabToWorker',
-          tabId: this.tabId,
-          tabState: this.tabState,
-        });
-      }
-    }
-    else if (data.type === 'WorkerToTab' && data.tabId === this.tabId) {
-      if (!!this.__fastInterval) {
-        clearInterval(this.__fastInterval);
-        this.__fastInterval = undefined;
-        setInterval(this.sendStateUpdate.bind(this), 2000);
-      }
-      if (this.tabState === 'unknown' && data.tabState === 'active') {
-        // no other tab exist, this is the first one => send initial values
-        this.sendBroadcast({
-          type: 'TabToWorker',
-          tabId: this.tabId,
-          tabState: data.tabState,
-          lastDisconnect: this.lastEventTime,
-          lastEventTime: this.lastEventTime,
-          socketState: this.state,
-        });
-      }
-
-      this.tabState = data.tabState;
-      if (
-        (this.tabState === 'active' || this.tabState === 'active-throttled') &&
-        (!this._socket || this._socket.disconnected)
-      ) {
-        this.connect();
-      }
-      else if (this.tabState === 'passive' || this.tabState === 'passive-throttled' || this.tabState === 'unknown') {
-        if (!!this._socket && this._socket.connected) {
-          // if the tabState has explicitly been set to
-          // "unknown", this is an intended disconnect
-          if (this.tabState === 'unknown') {
-            this.skipNextDisconnectHandler = false;
-          } else {
-            this.skipNextDisconnectHandler = true;
-          }
-          this._socket.disconnect();
-        }
-      }
-    }
+  public onLiveChange(listener: (live: boolean) => void): Unsubscribe {
+    return subscribe(this._liveChangeListeners, listener);
   }
+
+  public onResume(listener: (reason: ResumeReason) => void): Unsubscribe {
+    return subscribe(this._resumeListeners, listener);
+  }
+
+  get updateAvailable(): boolean {
+    return this._updateAvailable;
+  }
+
+  public onUpdateAvailable(listener: () => void): Unsubscribe {
+    return subscribe(this._updateAvailableListeners, listener);
+  }
+
+  public holdSocket(reason: 'call'): SocketHold {
+    const token = { reason };
+    this._holds.add(token);
+    this.clearHiddenTimer();
+    let released = false;
+    return {
+      release: () => {
+        if (released) return;
+        released = true;
+        this._holds.delete(token);
+        if (this._holds.size === 0) {
+          // a hidden tab's timer starts at the last release
+          this.armHiddenTimer();
+        }
+      },
+    };
+  }
+
+  public getRequestSocketId(): string {
+    const socket = this._socket;
+    if (!!socket && socket.connected && !!socket.id) {
+      return socket.id;
+    }
+    return fallbackSocketId;
+  }
+
+  // ------------------------------------------------------------- internal hooks
+
+  /** Raw socket `connect` (before the socket login). connectionManager starts the page's HTTP login on the first one. */
+  public onSocketConnected(listener: () => void): Unsubscribe {
+    return subscribe(this._socketConnectedListeners, listener);
+  }
+
+  // --------------------------------------------------------- state & callbacks
 
   get lastEventTime() {
     return this._lastEventTime;
-  }
-  private setLastEventTimeWithLocalStorage(value: number) {
-    this._lastEventTime = value;
-    localStorage.setItem(LOCAL_STORAGE_KEY, value.toString());
   }
 
   get state() {
     return this._state;
   }
-  set state(state: Common.WebSocketState) {
-    const oldState = this._state;
-    if (oldState !== state && oldState !== "version-update") {
-      this._state = state;
-      this._onStateChange(state);
-    }
-  }
+
   get onStateChange() {
     return this._onStateChange;
   }
   set onStateChange(fn: (state: Common.WebSocketState) => (void | Promise<void>)) {
     this._onStateChange = fn;
-  }
-  get onTabStateChange() {
-    return this._onTabStateChange;
-  }
-  set onTabStateChange(fn: (tabState: Common.TabState) => void) {
-    this._onTabStateChange = fn;
   }
   get onError() {
     return this._onError;
@@ -283,282 +278,513 @@ class WebSocketManager {
   set clientEventHandler(handler: ((name: string, event: any) => void) | undefined) {
     this._clientEventHandler = handler;
   }
-  get tabState() {
-    return this._tabState;
+
+  private computeState(): Common.WebSocketState {
+    if (this._live) return 'connected';
+    const socket = this._socket;
+    if (!socket || !socket.active) return 'disconnected';
+    if (!navigator.onLine) return 'disconnected';
+    if (!socket.connected && this._consecutiveConnectErrors >= CONNECT_ERRORS_BEFORE_DISCONNECTED) return 'disconnected';
+    return 'connecting';
   }
-  set tabState(newState: Common.TabState) {
-    if (newState !== this._tabState) {
-      this._tabState = newState;
-      this.onTabStateChange(newState);
+
+  private updateState() {
+    const state = this.computeState();
+    if (state !== this._state) {
+      this._state = state;
+      try {
+        const result = this._onStateChange(state);
+        if (result instanceof Promise) {
+          result.catch(e => this._onError(e));
+        }
+      } catch (e) {
+        this._onError(e);
+      }
     }
   }
 
-  private pingInterval: any;
-  private lastPong = 0;
-  private lastPongLocalTimeDelta = 0;
+  private setNotLive() {
+    if (this._live) {
+      this._live = false;
+      this.updateState();
+      emitAll(this._liveChangeListeners, false);
+    } else {
+      this.updateState();
+    }
+  }
+
+  private becomeLive() {
+    if (this._live) return;
+    const kind: LiveKind = !this._everLive
+      ? 'established'
+      : (this._liveEpoch !== this._connectionEpoch ? 'restored' : 'user');
+    this._everLive = true;
+    this._liveEpoch = this._connectionEpoch;
+    this._live = true;
+    this._loginRetryCount = 0;
+    this._ackTimeouts = 0;
+    debugLog('WebSocketManager live', kind);
+    this.updateState();
+    emitAll(this._liveChangeListeners, true);
+    emitAll(this._liveListeners, kind);
+  }
+
+  // ----------------------------------------------------------------- policy
+
+  private onVisibilityChange() {
+    if (document.visibilityState === 'hidden') {
+      this._hiddenSince = Date.now();
+      this.armHiddenTimer();
+    } else {
+      const hiddenFor = this._hiddenSince === undefined ? 0 : Date.now() - this._hiddenSince;
+      this._hiddenSince = undefined;
+      this.clearHiddenTimer();
+      this.onReturn('visible', hiddenFor >= RESUME_MIN_HIDDEN_MS);
+    }
+  }
+
+  private armHiddenTimer() {
+    this.clearHiddenTimer();
+    if (document.visibilityState !== 'hidden' || this._holds.size > 0) {
+      return;
+    }
+    this._hiddenTimer = setTimeout(() => {
+      this._hiddenTimer = undefined;
+      this.policyClose('hidden');
+    }, HIDDEN_DISCONNECT_AFTER_MS);
+  }
+
+  private clearHiddenTimer() {
+    if (this._hiddenTimer !== undefined) {
+      clearTimeout(this._hiddenTimer);
+      this._hiddenTimer = undefined;
+    }
+  }
+
+  /** Closes the socket without auto-reconnect (hidden timeout, freeze, pagehide). */
+  private policyClose(reason: 'hidden' | 'freeze' | 'pagehide') {
+    debugLog('WebSocketManager policy close', reason);
+    this.clearHiddenTimer();
+    this.clearLoginRetry();
+    this._policyClosed = true;
+    this._awaitingBackoff = false;
+    const socket = this._socket;
+    if (!!socket && (socket.active || socket.connected)) {
+      socket.disconnect();
+    }
+    this.updateState();
+  }
+
+  /**
+   * The tab may have been away (visible again, bfcache restore, resume after
+   * freeze, back online): a visible tab reconnects if its socket is not
+   * live; with a live socket it asks for a catch-up (`onResume`) when
+   * `wantResume`. Hidden tabs do nothing here.
+   */
+  private onReturn(reason: ResumeReason, wantResume: boolean) {
+    if (document.visibilityState !== 'visible') {
+      return;
+    }
+    if (this._live) {
+      if (this.pongIsStale()) {
+        console.warn("DISCONNECT DETECTED!");
+        this.forceReconnect();
+        return;
+      }
+      if (wantResume) {
+        emitAll(this._resumeListeners, reason);
+      }
+      return;
+    }
+    if (this._socket?.connected) {
+      // connected but not logged in (a failed or pending socket login): try
+      // again — unless the server asked for the security step on this
+      // connection and nothing changed
+      if (this._securityStepLogin !== `${this._connectionEpoch}:${this._deviceId}`) {
+        this.syncSocketLogin().catch(() => undefined);
+      }
+      return;
+    }
+    this.connect();
+  }
+
+  private pongIsStale() {
+    return this._lastPong !== 0 && this._lastPong + PONG_STALE_MS < Date.now() - this._lastPongLocalTimeDelta;
+  }
+
+  private forceReconnect() {
+    const socket = this._socket;
+    this._policyClosed = false;
+    if (!socket) {
+      this.connect();
+      return;
+    }
+    socket.disconnect();
+    this._awaitingBackoff = false;
+    socket.connect();
+    this.updateState();
+  }
+
+  // ------------------------------------------------------------- connection
+
+  /**
+   * Opens the socket (or re-opens it after a policy close). If socket.io is
+   * waiting in its reconnect backoff, it reconnects at once.
+   */
+  public connect() {
+    this._policyClosed = false;
+    const socket = this._socket;
+    if (!socket) {
+      this.createSocket();
+    } else if (socket.connected) {
+      return;
+    } else if (!socket.active) {
+      socket.connect();
+    } else if (this._awaitingBackoff) {
+      this._awaitingBackoff = false;
+      socket.disconnect();
+      socket.connect();
+    }
+    this.updateState();
+  }
+
+  private createSocket() {
+    // the one place the data socket is created: a gateway (docs/auth-identity
+    // §12) has none — no socket login, no live/resume signals, so no chat
+    // catch-up either (its CG ID popup result has a socket of its own)
+    if (isGatewayInstance()) return;
+    const transports = ['websocket'];
+    if (config.DEPLOYMENT !== 'dev') {
+      transports.unshift('polling');
+    }
+
+    const socket: CgSocket = io(`${urlConfig.WS_URL}`, {
+      transports,
+      reconnectionDelayMax: 10000,
+      reconnection: true,
+      path: "/api/ws/",
+    });
+    this._socket = socket;
+
+    socket.on("connect", () => {
+      this._connectionEpoch++;
+      this._consecutiveConnectErrors = 0;
+      this._awaitingBackoff = false;
+      this._socketDeviceId = null;
+      this._lastPong = 0;
+
+      socket.emit("cgPing", (timestamp) => {
+        this._lastPong = timestamp;
+        this._lastPongLocalTimeDelta = Date.now() - timestamp;
+      });
+      // socket-scoped state of an anonymous socket, re-sent on every connection
+      for (const frontendRequestId of this.cgIdRequestIds) {
+        socket.emit("watchCgIdRequest", { frontendRequestId });
+      }
+
+      if (this._pingInterval !== undefined) clearInterval(this._pingInterval);
+      this._pingInterval = setInterval(() => this.pingIntervalHandler(), PING_INTERVAL_MS);
+
+      this.updateState();
+      emitAll(this._socketConnectedListeners);
+      this.syncSocketLogin().catch(e => {
+        debugLog('Socket login after connect failed', e);
+      });
+    });
+
+    socket.on("connect_error", (error) => {
+      // socket.io keeps retrying (reconnection: true) unless middleware
+      // refused; the displayed state must not claim "connecting" forever
+      this._consecutiveConnectErrors++;
+      this._awaitingBackoff = socket.active;
+      debugLog(`Socket.io connect_error (${this._consecutiveConnectErrors})`, error?.message);
+      this.updateState();
+    });
+
+    socket.on("disconnect", reason => {
+      debugLog(`Socket.io disconnected (${reason})`);
+      this._socketDeviceId = null;
+      this.clearLoginRetry();
+      if (this._pingInterval !== undefined) {
+        clearInterval(this._pingInterval);
+        this._pingInterval = undefined;
+      }
+      // the server-side ping timeout is 15 s: events after (now - 30 s) may be lost
+      this._lastEventTime = Math.max(this._lastEventTime, Date.now() - DISCONNECT_SAFETY_MS);
+
+      if (reason === "io server disconnect") {
+        // socket.io does not reconnect by itself here (reconnecting first
+        // keeps the state at "connecting", as for any other lost connection)
+        if (!this._policyClosed) {
+          socket.connect();
+        }
+      } else if (reason !== "io client disconnect") {
+        // socket.io reconnects with its backoff
+        this._awaitingBackoff = true;
+      }
+      this.setNotLive();
+    });
+
+    socket.on("buildId", (backendBuildId, time) => {
+      this._lastEventTime = Date.now();
+      if (Math.abs(time - Date.now()) > 10000) {
+        // Todo: build better drift / delay detection
+        // check with more events
+        console.error("Server and client time are more than 10 seconds apart, this will lead to problems with timings");
+      }
+      if (
+        backendBuildId !== buildId &&
+        this._updateAvailable === false &&
+        !window.location.href.match(/^https?:\/\/(localhost|bs-local\.com):3000/)
+      ) {
+        debugLog(`=== App update available: ${buildId} -> ${backendBuildId} ===`);
+        this._updateAvailable = true;
+        emitAll(this._updateAvailableListeners);
+      }
+    });
+
+    socket.onAny((name: string, event: any) => {
+      this._lastEventTime = Date.now();
+      debugLog("Socket.io event received", name, event);
+      if (name.startsWith("cli")) {
+        if (!!this._clientEventHandler) {
+          this._clientEventHandler(name, event);
+        }
+        else {
+          console.warn(`Client Event received, but no listener registered yet: `, { ...event, type: name });
+        }
+      }
+    });
+  }
 
   private pingIntervalHandler() {
-    if (this.state === "connected" && (this.tabState === 'active' || this.tabState === 'active-throttled')) {
-      if (this.lastPong !== 0 && this.lastPong + 110_000 < Date.now() - this.lastPongLocalTimeDelta) {
-        console.warn("DISCONNECT DETECTED!");
-        this.disconnect();
-        this.connect();
-      }
-      else if (!!this._socket) {
-        this._socket.emit("cgPing", (timestamp) => {
-          this.lastPong = timestamp;
-          this.lastPongLocalTimeDelta = Date.now() - timestamp;
-        });
-      }
+    const socket = this._socket;
+    if (!socket?.connected) {
+      return;
     }
+    if (this.pongIsStale()) {
+      console.warn("DISCONNECT DETECTED!");
+      this.forceReconnect();
+      return;
+    }
+    socket.emit("cgPing", (timestamp) => {
+      this._lastPong = timestamp;
+      this._lastPongLocalTimeDelta = Date.now() - timestamp;
+    });
   }
 
-  public connect() {
-    if (
-      !this._socket &&
-      (this.tabState === 'active' || this.tabState === 'active-throttled')
-    ) {
-      const transports = ['websocket'];
-      if (config.DEPLOYMENT !== 'dev') {
-        transports.unshift('polling');
-      }
+  // ------------------------------------------------------------- socket login
 
-      const socket: Socket<
-        API.Server.ClientToServerEvents,
-        API.Server.ServerToClientEvents
-      > = io(`${urlConfig.WS_URL}`, {
-        transports,
-        reconnectionDelayMax: 10000,
-        reconnection: true,
-        path: "/api/ws/",
-      });
-      this._socket = socket;
-      this._socket.cg_loggedin = 0;
-      this.state = "connecting";
-      this.sendStateUpdate();
-
-      socket.on("connect", () => {
-        if (this.tabState === 'active' || this.tabState === 'active-throttled') {
-          if (!!this._socket) {
-            this._socket.cg_loggedin = 0;
-          }
-          this.state = "connected";
-          this.sendStateUpdate();
-
-          socket.emit("cgPing", (timestamp) => {
-            this.lastPong = timestamp;
-            this.lastPongLocalTimeDelta = Date.now() - timestamp;
-          });
-
-          clearInterval(this.pingInterval)
-          this.pingInterval = setInterval(() => {
-            this.pingIntervalHandler();
-          }, 59_000);
-
-          if (!!this._deviceId) {
-            this._login(this._deviceId)
-              .catch(e => {
-                console.error(`Error during websocket login`, e);
-              });
-          }
-        }
-        else {
-          this.skipNextDisconnectHandler = false;
-          socket.disconnect();
-        }
-      });
-
-      socket.on("disconnect", reason => {
-        if (this.skipNextDisconnectHandler === true) {
-          delete this._socket;
-          this.skipNextDisconnectHandler = false;
-          return;
-        }
-        // server-side pingTimeout is 15000, so (now - 30000) should be a safe value
-        this.setLastEventTimeWithLocalStorage(Math.max(this._lastEventTime, Date.now() - 30000));
-        if (!!this._connectionManager) {
-          this._connectionManager.lastDisconnect = new Date(this._lastEventTime);
-        }
-        debugLog(`Socket.io disconnected (${reason})`);
-        if (reason === "io server disconnect") {
-          this.state = "disconnected";
-          this.sendStateUpdate();
-          if (this._socket === socket) delete this._socket;
-          this.connect();
-        } else if (reason === "io client disconnect") {
-          this.state = "disconnected";
-          this.sendStateUpdate();
-          if (this._socket === socket) delete this._socket;
-        } else if (reason === "transport close" || reason === "transport error") {
-          if (navigator.onLine) {
-            this.state = "connecting";
-            this.sendStateUpdate();
-          } else {
-            this.state = "disconnected";
-            this.sendStateUpdate();
-            if (this._socket === socket) delete this._socket;
-          }
-        } else {
-          this.state = "connecting";
-          this.sendStateUpdate();
-        }
-      });
-      
-      socket.on("buildId", (backendBuildId, time) => {
-        this.setLastEventTimeWithLocalStorage(Date.now());
-        if (Math.abs(time - Date.now()) > 10000) {
-          // Todo: build better drift / delay detection
-          // check with more events
-          console.error("Server and client time are more than 10 seconds apart, this will lead to problems with timings");
-        }
-        if (
-          backendBuildId !== buildId &&
-          this._appUpdateTriggered === false &&
-          !window.location.href.match(/^https?:\/\/(localhost|bs-local\.com):3000/)
-        ) {
-          debugLog(`=== App update available ===`);
-          debugLog(`Currently installed buildId: ${buildId}`);
-          debugLog(`Available buildId: ${backendBuildId}`);
-          debugLog(`=== Installing... ===`);
-          this._appUpdateTriggered = true;
-          this.state = "version-update";
-          this.sendStateUpdate();
-        }
-      });
-
-      socket.onAny((name: string, event: any) => {
-        // only handle events if this tab is the active tab
-        if (this.tabState === 'active' || this.tabState === 'active-throttled') {
-          this.setLastEventTimeWithLocalStorage(Date.now());
-          debugLog("Socket.io event received", name, event);
-          if (name.startsWith("cli")) {
-            if (!!this._clientEventHandler) {
-              this._clientEventHandler(name, event);
-            }
-            else {
-              console.warn(`Client Event received, but no listener registered yet: `, {...event, type: name});
-            }
-          }
-        }
-        else {
-          console.warn('Received event through WebSocket although tab is not active, skipped.', event);
-        }
-      });
-    }
-  }
-
-  public disconnect() {
-    this.lastPong = 0;
-    if (!!this._socket) {
-      if (this._socket.connected) {
-        this._socket.disconnect();
-      } else {
-        delete this._socket;
-        this.state = "disconnected";
-        this.sendStateUpdate();
-      }
-    } else {
-      this.state = "disconnected";
-      this.sendStateUpdate();
-    }
-  };
-
-  public checkConnectionStatus() {
-    if (
-      navigator.onLine &&
-      (
-        this.state === "disconnected" ||
-        !this._socket ||
-        this._socket.disconnected
-      )
-    ) {
-      if (this._socket?.disconnected) {
-        delete this._socket;
-      }
-      if (!!this._socket) {
-        delete this._socket;
-      }
-      this.connect();
-    }
-    else if (!navigator.onLine && this.state !== "disconnected") {
-      this.disconnect();
-    }
-  }
-
-  private loginPromise: Promise<void> | undefined;
-  public async login(deviceId: string) {
+  /**
+   * Logs the socket in as `deviceId` and resolves once the server acked "OK"
+   * (rooms joined, the tab is live). Rejects on "ERROR",
+   * "SECURITY_STEP_REQUIRED", an ack timeout or a disconnect in between.
+   * Without a connected socket it only remembers the device and resolves:
+   * the socket logs in on its next connect.
+   */
+  public login(deviceId: string): Promise<void> {
     if (this._deviceId !== deviceId) {
       this._deviceId = deviceId;
+      this._loginRetryCount = 0;
     }
-    if (!this.loginPromise) {
-      this.loginPromise = new Promise<void>(async (resolve, reject) => {
-        let rejected = false;
-        const susTimeout = setTimeout(() => {
-          console.log("WebSocketManager.login is taking longer than 7s, cancelling...");
-          rejected = true;
-          reject(new Error("WebSocketManager.login timed out"));
-        }, 7_000);
-
-        try {
-          await this._login(this._deviceId!);
-        }
-        catch (e) {
-          clearTimeout(susTimeout);
-          rejected = true;
-          reject(e);
-        }
-        finally {
-          if (!rejected) {
-            clearTimeout(susTimeout);
-            resolve();
-          }
-          delete this.loginPromise;
-        }
-      });
+    this.clearLoginRetry();
+    if (!this._socket?.connected) {
+      return Promise.resolve();
     }
-    return this.loginPromise;
+    return this.syncSocketLogin();
   }
 
-  private async _login(deviceId: string) {
-    if (
-      this.state === "connected" &&
-      !!this._socket &&
-      this._socket.connected &&
-      this._socket.cg_loggedin === 0
-    ) {
-      this._socket.cg_loggedin = 1;
-      this._socket.emit("getSignableSecret", async (secret: string) => {
-        try {
-          const signApiSecret = (await import('data/util/device')).signApiSecret;
-          const signedData = await signApiSecret(deviceId, secret);
-          if (!!this._socket) {
-            this._socket?.emit("login", signedData, (result) => {
-              if (result === 'OK') {
-                if (!!this._socket) {
-                  this._socket.cg_loggedin = 2;
-                }
-              } else if (result === 'ERROR') {
-                if (!!this._socket) {
-                  this._socket.cg_loggedin = 0;
-                }
-                console.error('Todo: Error handling for failed socket.io authentication');
-              }
-            });
-          }
-        } catch (e) {
-          if (!!this._socket) {
-            this._socket.cg_loggedin = 0;
-          }
-        }
-      });
-    }
-  }
-
+  /** The socket leaves its user rooms and stays connected as anonymous. */
   public logout() {
     this._deviceId = undefined;
-    this._socket?.emit("logout");
-    if (!!this._socket) {
-      this._socket.cg_loggedin = 0;
+    this.clearLoginRetry();
+    if (!this._socket?.connected) {
+      return;
+    }
+    this.syncSocketLogin().catch(e => {
+      debugLog('Socket logout failed', e);
+    });
+  }
+
+  /**
+   * The device this connection's socket login was acked for (null:
+   * anonymous, or a login still waiting for its ack). A device-addressed
+   * server event (`cliSignedOut`) that arrives now refers to it. During a
+   * pending login it is unknown which device such an event meant (a late one
+   * for the previous device is possible): null, so it is not acted on — a
+   * device that is really gone shows up at its next HTTP device login
+   * (NOT_FOUND).
+   */
+  public get socketDeviceId(): string | null {
+    return this._socketDeviceId;
+  }
+
+  /**
+   * The server signed `deviceId` out (its session and device key are gone):
+   * no socket login with it any more — neither on the reconnect after the
+   * server's disconnect nor on a return of the tab. The socket stays (or
+   * comes back) connected as anonymous; the rest of the logout is the login
+   * manager's business. A no-op when the socket already wants another device.
+   */
+  public deviceSignedOut(deviceId: string) {
+    if (this._deviceId === deviceId) {
+      this.logout();
+    }
+  }
+
+  /**
+   * Brings the current connection's login in line with `_deviceId`, one step
+   * at a time (the server runs socket handlers concurrently, so logins never
+   * overlap: a later call waits for the running one).
+   */
+  private syncSocketLogin(): Promise<void> {
+    const previous = this._loginSync ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(() => this.runSocketLogin());
+    this._loginSync = run;
+    void run.catch(() => undefined).finally(() => {
+      if (this._loginSync === run) {
+        this._loginSync = undefined;
+      }
+    });
+    return run;
+  }
+
+  private async runSocketLogin(): Promise<void> {
+    for (;;) {
+      const socket = this._socket;
+      if (!socket?.connected) {
+        throw new SocketLoginError('socket not connected');
+      }
+      const epoch = this._connectionEpoch;
+      const desired = this._deviceId ?? null;
+      if (this._live && this._socketDeviceId === desired) {
+        return;
+      }
+      // live is false from the start of every socket login until its ack
+      this.setNotLive();
+      if (this._socketDeviceId !== null) {
+        socket.emit("logout");
+        this._socketDeviceId = null;
+      }
+      if (desired === null) {
+        this.becomeLive();
+        continue;
+      }
+
+      let result: API.Socket.login.Response;
+      try {
+        const secret = await socket.timeout(SOCKET_LOGIN_ACK_TIMEOUT_MS).emitWithAck("getSignableSecret");
+        this.throwIfStale(epoch);
+        const { signApiSecret } = await import('data/util/device');
+        const signedData = await withTimeout(signApiSecret(desired, secret), SOCKET_LOGIN_ACK_TIMEOUT_MS, 'device signature timed out');
+        this.throwIfStale(epoch);
+        result = await socket.timeout(SOCKET_LOGIN_ACK_TIMEOUT_MS).emitWithAck("login", signedData);
+        this.throwIfStale(epoch);
+      } catch (e) {
+        if (e instanceof SocketLoginError || epoch !== this._connectionEpoch || !socket.connected) {
+          throw e instanceof SocketLoginError ? e : new SocketLoginError('socket disconnected during login');
+        }
+        if (e instanceof Error && e.message === 'operation has timed out') {
+          // the server answers no acks (overloaded, or the connection is not
+          // usable): retry with a backoff; after repeated timeouts start the
+          // connection over
+          this._ackTimeouts++;
+          const reconnect = this._ackTimeouts >= SOCKET_LOGIN_TIMEOUTS_BEFORE_RECONNECT;
+          console.warn(`Socket login timed out (${this._ackTimeouts}), retrying${reconnect ? ' with a new connection' : ''}`);
+          this.scheduleLoginRetry(reconnect ? 'reconnect' : 'login');
+          throw new SocketLoginError('socket login timed out');
+        }
+        // signing failed (device key gone): the login manager finds out on its HTTP login
+        this.scheduleLoginRetry('login');
+        throw e;
+      }
+
+      if (result === 'OK') {
+        this._socketDeviceId = desired;
+        if ((this._deviceId ?? null) === desired) {
+          this.becomeLive();
+        }
+        continue;
+      }
+      if (result === 'SECURITY_STEP_REQUIRED') {
+        // no realtime until the account finished the step: show it
+        this._securityStepLogin = `${epoch}:${desired}`;
+        securityStepState.set(true);
+        throw new SocketLoginError('SECURITY_STEP_REQUIRED');
+      }
+      if ((this._deviceId ?? null) !== desired) {
+        // the device was dropped or switched while its login ran (e.g. it was
+        // signed out): the answer is moot, sync to the current one
+        debugLog('Socket login of a device no longer wanted failed (ERROR)');
+        continue;
+      }
+      console.error('Socket login failed (ERROR)');
+      this.scheduleLoginRetry('login');
+      throw new SocketLoginError('ERROR');
+    }
+  }
+
+  private throwIfStale(epoch: number) {
+    if (epoch !== this._connectionEpoch || !this._socket?.connected) {
+      throw new SocketLoginError('socket disconnected during login');
+    }
+  }
+
+  private scheduleLoginRetry(action: 'login' | 'reconnect') {
+    this.clearLoginRetry();
+    if (this._deviceId === undefined) return;
+    const base = SOCKET_LOGIN_RETRY_MS[Math.min(this._loginRetryCount, SOCKET_LOGIN_RETRY_MS.length - 1)];
+    const delay = base * (1 - SOCKET_LOGIN_RETRY_RANDOMIZATION + Math.random() * 2 * SOCKET_LOGIN_RETRY_RANDOMIZATION);
+    this._loginRetryCount++;
+    this._loginRetryTimer = setTimeout(() => {
+      this._loginRetryTimer = undefined;
+      // hidden tabs retry when they become visible (onReturn)
+      if (document.visibilityState !== 'visible' || !this._socket?.connected || this._live) {
+        return;
+      }
+      if (action === 'reconnect' && !this._policyClosed) {
+        this._ackTimeouts = 0;
+        this.forceReconnect();
+      } else {
+        this.syncSocketLogin().catch(() => undefined);
+      }
+    }, delay);
+  }
+
+  private clearLoginRetry() {
+    if (this._loginRetryTimer !== undefined) {
+      clearTimeout(this._loginRetryTimer);
+      this._loginRetryTimer = undefined;
+    }
+  }
+
+  // ------------------------------------------------------------------ misc
+
+  /**
+   * Legacy CG ID: receive the result of the CG ID popup request
+   * `frontendRequestId` (cliCgIdSignResponse) on this socket. The server keeps
+   * one watched request per socket.
+   */
+  public watchCgIdRequest(frontendRequestId: string) {
+    this.cgIdRequestIds.clear();
+    this.cgIdRequestIds.add(frontendRequestId);
+    if (!!this._socket && this._socket.connected) {
+      this._socket.emit("watchCgIdRequest", { frontendRequestId });
+    }
+  }
+
+  public unwatchCgIdRequest(frontendRequestId: string) {
+    this.cgIdRequestIds.delete(frontendRequestId);
+  }
+
+  /**
+   * Ephemeral typing presence. Fire-and-forget (no ack); the server authorizes,
+   * throttles, and relays a `cliTypingEvent` to the other participants. Only
+   * emitted while the socket is live and logged in.
+   */
+  public setTyping(access: API.Messages.MessageAccess, isTyping: boolean) {
+    if (!!this._socket && this._socket.connected && this._live && this._socketDeviceId !== null) {
+      this._socket.emit("setTyping", { access, isTyping });
     }
   }
 }

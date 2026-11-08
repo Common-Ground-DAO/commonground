@@ -26,7 +26,7 @@ jobs:
   - task: NodeTool@0
     displayName: Install node
     inputs:
-      versionSpec: 20.11.1
+      versionSpec: 24.x
 
   - task: Npm@1
     displayName: Install yarn
@@ -54,13 +54,25 @@ jobs:
       script: |
         echo Copying $(yarnrc.secureFilePath) to .yarnrc.yml
         cp $(yarnrc.secureFilePath) .yarnrc.yml
+        # The secure file REPLACES the repository's .yarnrc.yml, so the two
+        # supply-chain controls the repo configures (2026-08-04) would be
+        # silently dropped in CI. Re-append them here rather than depending on
+        # the contents of a file that lives in Azure DevOps:
+        #   enableScripts     - no dependency may run install/build scripts; the
+        #                       per-package allowlist lives in package.json
+        #                       (dependenciesMeta), which the secure file cannot
+        #                       affect.
+        #   npmMinimalAgeGate - refuse versions published less than a week ago.
+        # Both require Yarn >= ~4.2; `corepack enable` below provisions the
+        # 4.17.1 that package.json's packageManager field pins.
+        # If the secure file is ever updated to carry these itself, drop this.
+        printf '\nenableScripts: false\nnpmMinimalAgeGate: 1w\n' >> .yarnrc.yml
 
   - task: CmdLine@2
     displayName: Run yarn on source directories
     inputs:
       script: |
         corepack enable
-        yarn set version 4.1.0
         yarn
 
   - task: CopyFiles@2
@@ -77,17 +89,26 @@ jobs:
     displayName: Generate random buildId
     inputs:
       script: |
+        # a pipeline variable, so the following steps see it as the
+        # environment variable CG_BUILD_ID: the frontend build embeds it
+        # (vite/buildId.ts) and the backend image gets it as a build arg
         buildId=$(dd if=/dev/random bs=1 count=10 | base64)
-        sed -i 's#^const buildId =.*$#const buildId = "'$buildId'";#' src/common/random_build_id.ts
-        sed -i 's#^const buildId =.*$#const buildId = "'$buildId'";#' docker/backend/dist/common/random_build_id.ts
+        echo "##vso[task.setvariable variable=CG_BUILD_ID]$buildId"
 
   - task: CmdLine@2
     displayName: Run yarn build
     inputs:
       script: |
         corepack enable
-        yarn set version 4.1.0
-        DEPLOYMENT=prod GENERATE_SOURCEMAP=false IMAGE_INLINE_SIZE_LIMIT=5000 PUBLIC_URL="https://app.cg" yarn craco --openssl-legacy-provider build
+        # The webpack build used to type-check and lint inline; a Vite build does
+        # neither, so both are explicit steps. PUBLIC_URL keeps the default social
+        # preview meta absolute (vite/absoluteSocialMeta.ts) — it no longer affects
+        # asset URLs, which are root-relative on every build path now.
+        # NODE_OPTIONS is not a tuning knob: `vite build` OOMs at 2048 MB and
+        # peaks at ~4 GB RSS (Node 24 + Vite 7 measurement), and node derives
+        # its default heap from machine RAM — 2 GB on an 8 GB agent, which
+        # would fail.
+        yarn typecheck && yarn lint && NODE_OPTIONS="--max-old-space-size=4096" DEPLOYMENT=prod PUBLIC_URL="https://app.cg" yarn build && node tools/checkHtmlRewriteCompat.mjs
 
   - task: CopyFiles@2
     displayName: copy generated index.html to backend/dist
@@ -120,6 +141,7 @@ jobs:
       command: build
       containerRegistry: 'commonground prod registry'
       Dockerfile: docker/backend/Dockerfile
+      arguments: '--build-arg CG_BUILD_ID=$(CG_BUILD_ID)'
       repository: 'backend'
       tags: |
         0.1

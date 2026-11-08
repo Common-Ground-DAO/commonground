@@ -1,0 +1,52 @@
+# Edge of the disposable e2e instance (e2e/docker-compose.e2e.yml): the
+# self-host site (Caddyfile.selfhost with CG_TLS_MODE=internal and the call
+# signalling edge) plus one test-only difference.
+#
+# Test-only: per-browser client addresses. The backend keys its per-address
+# limits on the first X-Forwarded-For entry — sign-up allows 20 accounts per
+# address and hour, and repeated runs of the suite create dozens. Every browser context of
+# the suite carries a `cg_e2e_client=<private IPv4>` cookie; this edge turns
+# it into the X-Forwarded-For the backend sees, and the private ranges (the
+# runner container) are trusted proxies so Caddy keeps that entry first. A
+# real instance never trusts client-supplied forwarding information
+# (Caddyfile.selfhost).
+#
+# Keep the site blocks in sync with Caddyfile.selfhost (CG_TLS_MODE=internal,
+# CG_CALLS_EDGE=on): this file replaces it for the e2e instance.
+{
+	servers {
+		trusted_proxies static private_ranges
+	}
+	local_certs
+	skip_install_trust
+}
+
+import /etc/caddy/common.caddy
+
+{$CG_DOMAIN} {
+	@e2eclient header_regexp e2eclient Cookie cg_e2e_client=(10\.[0-9]+\.[0-9]+\.[0-9]+)
+	request_header @e2eclient X-Forwarded-For {re.e2eclient.1}
+	import cg_app "https://{$CG_DOMAIN}:* wss://{$CG_DOMAIN}:*" "https:" https off on
+}
+
+{$CG_DOMAIN}:4443 {
+	import cg_calls_edge
+}
+
+# the gateway's sites (E2E_GATEWAY=1; Caddyfile.selfhost, gateway_edge_on),
+# with the same per-browser client addresses
+(e2e_gateway_on) {
+	{$CG_GATEWAY_DOMAIN} {
+		@e2eclient header_regexp e2eclient Cookie cg_e2e_client=(10\.[0-9]+\.[0-9]+\.[0-9]+)
+		request_header @e2eclient X-Forwarded-For {re.e2eclient.1}
+		vars cg_env_prefix GATEWAY_
+		import cg_gateway_app "https://{$CG_GATEWAY_DOMAIN}:* wss://{$CG_GATEWAY_DOMAIN}:*" "https:" on
+	}
+	{$CG_GATEWAY_ID_DOMAIN} {
+		vars cg_env_prefix GATEWAY_
+		import cg_cgid_site {$CG_GATEWAY_DOMAIN}
+	}
+}
+(e2e_gateway_off) {
+}
+import e2e_gateway_{$CG_GATEWAY_EDGE:off}

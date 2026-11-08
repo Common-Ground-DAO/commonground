@@ -9,7 +9,7 @@ import fileHelper from "./files";
 import articleHelper from "./articles";
 import urlConfig from '../util/urls';
 import { PredefinedRole, RoleType } from "../common/enums";
-import { getUrl, getRandomReadableString } from "../common/util";
+import { getUrl } from "../common/util";
 
 export type EmailPost = {
     title: string;
@@ -126,7 +126,7 @@ class EmailHelper {
     }
 
     public async prepareArticleToSendViaEmail(articleId: string, communityId: string): Promise<{
-        recipients: string[];
+        recipients: { email: string, userId: string }[];
         emailPost: EmailPost | null;
     }> {
         const result = await pool.query<{
@@ -204,7 +204,7 @@ class EmailHelper {
         if (article.length === 0) {
             throw new Error(errors.server.NOT_FOUND);
         }
-        const recipients = usersEmailsToSent.rows.map((user) => user.email);
+        const recipients = usersEmailsToSent.rows.map((user) => ({ email: user.email, userId: user.id }));
         const emailPost: EmailPost = {
             title: article[0].communityArticle.articleTitle,
             community: article[0].communityArticle.communityTitle,
@@ -234,74 +234,6 @@ class EmailHelper {
         });
         const result = await pool.query<{ count: number }>(query);
         return Number(result.rows[0]?.count) || 0;
-    }
-
-    public async updateVerifiedStatusesFromBouncedEmails(bouncedEmails: string[]): Promise<void> {
-        await pool.query(
-            format(`
-                UPDATE users
-                SET email_verified = false
-                WHERE email = ANY(%L)
-            `, bouncedEmails)
-        );
-    }
-
-    public async generateVerificationEmailToken(userId: string): Promise<string> {
-        let query = `
-            SELECT "verificationCode"
-            FROM users
-            WHERE id = $1 AND "verificationCodeExpiration" > NOW()
-        `;
-        let result = await pool.query(query, [userId]);
-
-        if (result.rowCount > 0) {
-            return result.rows[0].verificationCode;
-        }
-
-        const expireDate = new Date(Date.now() + 48 * 60 * 60 * 1000);
-        const token = getRandomReadableString(10);
-        query = `
-            UPDATE users
-            SET "verificationCode" = $2, "verificationCodeExpiration" = $3
-            WHERE id = $1
-            RETURNING "verificationCode"
-        `;
-        result = await pool.query(query, [userId, token, expireDate]);
-
-        if (result.rowCount === 0) {
-            throw new Error(errors.server.VERIFY_EMAIL_TOKEN_GENERATION_FAILED);
-        }
-
-        return token;
-    }
-
-    public async verifyEmail(email: string, verificationToken: string): Promise<string> {
-        const query = `
-            SELECT id, "verificationCodeExpiration"
-            FROM users
-            WHERE "verificationCode" = $1 AND "email" = $2
-        `;
-        const values = [verificationToken, email];
-
-        const result = await pool.query(query, values);
-        if (result.rowCount === 0) {
-            throw new Error(errors.server.VERIFY_EMAIL_INVALID_TOKEN);
-        } else {
-            const userId = result.rows[0].id;
-            const expirationDate = result.rows[0].verificationCodeExpiration;
-            if (expirationDate <= new Date()) {
-                throw new Error(errors.server.VERIFY_EMAIL_EXPIRED_TOKEN);
-            }
-            const userUpdated = await pool.query<{ userId: string }>(
-                format(`
-                    UPDATE users
-                    SET "emailVerified" = true, "verificationCode" = NULL, "verificationCodeExpiration" = NULL
-                    WHERE id = %L
-                    RETURNING id as "userId"
-                `, userId)
-            );
-            return userUpdated.rows[0].userId;
-        }
     }
 }
 

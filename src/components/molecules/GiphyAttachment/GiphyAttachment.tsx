@@ -5,7 +5,7 @@
 import React from 'react'
 import './GiphyAttachment.css';
 import { InMemoryAttachment } from 'components/organisms/EditField/useAttachments/useAttachments';
-import { ReactComponent as CloseIcon } from '../../../components/atoms/icons/16/Close.svg';
+import CloseIcon from '../../../components/atoms/icons/16/Close.svg?react';
 import { useAsyncMemo } from 'hooks/useAsyncMemo';
 import { gf } from 'util/giphy';
 import { Gif } from '@giphy/react-components';

@@ -1,3 +1,18 @@
+@reference '../../../../tailwind.css';
+
 .passkey-settings-root {
-    @apply px-4;
+    @apply flex flex-col gap-4 px-4;
+}
+
+.passkey-settings-list {
+    @apply flex flex-col gap-2;
+}
+
+.passkey-settings-item {
+    @apply flex flex-col gap-2 p-3 cg-border-l;
+    border: 1px solid var(--border-subtle);
+}
+
+.passkey-settings-meta {
+    @apply flex flex-col gap-0.5;
 }

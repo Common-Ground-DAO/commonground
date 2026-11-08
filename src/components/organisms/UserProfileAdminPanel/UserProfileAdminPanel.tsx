@@ -3,14 +3,14 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { useCallback, useMemo, useState } from 'react';
-import { createSearchParams, useLocation, useNavigate } from "react-router-dom";
+import { createSearchParams, useLocation, useNavigate } from "react-router";
 import Button from "../../../components/atoms/Button/Button";
 import { Tooltip } from "../../../components/atoms/Tooltip/Tooltip";
 import { useWindowSizeContext } from "../../../context/WindowSizeProvider";
 import UserSettingsList from '../UserSettingsList/UserSettingsList';
 
-import { ReactComponent as CogIcon } from '../../../components/atoms/icons/24/Cog.svg';
-import { ReactComponent as NewIcon } from '../../../components/atoms/icons/24/New.svg';
+import CogIcon from '../../../components/atoms/icons/24/Cog.svg?react';
+import NewIcon from '../../../components/atoms/icons/24/New.svg?react';
 
 import "./UserProfileAdminPanel.css";
 import { useOwnUser } from 'context/OwnDataProvider';

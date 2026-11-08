@@ -1,3 +1,5 @@
+@reference '../../tailwind.css';
+
 .content-browser-view {
     .content-browser-inner {
         @apply w-full p-4;

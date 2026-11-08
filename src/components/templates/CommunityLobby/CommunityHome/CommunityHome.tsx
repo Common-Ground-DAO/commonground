@@ -4,7 +4,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import "./CommunityHome.css";
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import useLocalStorage, { VisitedCommunitiesState } from '../../../../hooks/useLocalStorage';
 import { useSignedUrl } from '../../../../hooks/useSignedUrl';
@@ -20,7 +20,7 @@ import LoginBanner from 'components/molecules/LoginBanner/LoginBanner';
 import { useOwnUser } from 'context/OwnDataProvider';
 import LiveCallExplorer from 'components/organisms/LiveCallExplorer/LiveCallExplorer';
 import CommunityInput from 'components/molecules/CommunityInput/CommunityInput';
-import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
+import SparkIcon from 'components/atoms/icons/misc/spark.svg?react';
 import { useUserSettingsContext } from 'context/UserSettingsProvider';
 import JoinNewsletterBanner from 'components/molecules/JoinNewsletterBanner/JoinNewsletterBanner';
 import { useCommunityPremiumTier } from 'hooks/usePremiumTier';
@@ -131,7 +131,7 @@ function CommunityHome(props: Props) {
         });
     }, [community.id, setVisitedState]);
 
-    const CommunityLink = (props: { link: Common.Link }): JSX.Element => {
+    const CommunityLink = (props: { link: Common.Link }): React.JSX.Element => {
         const { link } = props;
         const url = useMemo(() => {
             if (!link.url.match(/^http(s)?:\/\//i)) {

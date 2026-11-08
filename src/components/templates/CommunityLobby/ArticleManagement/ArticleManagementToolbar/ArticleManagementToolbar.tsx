@@ -10,9 +10,9 @@ import { useSafeCommunityContext } from "context/CommunityProvider";
 import Button from "../../../../../components/atoms/Button/Button";
 import Modal from "../../../../atoms/Modal/Modal";
 
-import { ReactComponent as CheckmarkIcon } from '../../../../../components/atoms/icons/16/Checkmark.svg';
-import { ReactComponent as CloseIcon } from '../../../../../components/atoms/icons/16/Close.svg';
-import { ReactComponent as CloseIcon1 } from '../../../../../components/atoms/icons/16/Close-1.svg';
+import CheckmarkIcon from '../../../../../components/atoms/icons/16/Checkmark.svg?react';
+import CloseIcon from '../../../../../components/atoms/icons/16/Close.svg?react';
+import CloseIcon1 from '../../../../../components/atoms/icons/16/Close-1.svg?react';
 import { Popover } from "components/atoms/Tooltip/Tooltip";
 import OptionToggle from "components/molecules/OptionToggle/OptionToggle";
 import RolePermissionToggle, { PermissionType } from "components/molecules/RolePermissionToggle/RolePermissionToggle";
@@ -28,13 +28,14 @@ import { Clock, IdentificationBadge, Trash } from "@phosphor-icons/react";
 import { useSnackbarContext } from "context/SnackbarContext";
 import { ItemArticleType } from "components/organisms/GenericArticleManagement/GenericArticleManagement";
 import { ChevronLeftIcon } from "@heroicons/react/20/solid";
+import { isPredefinedRole } from "util/predefinedRoles";
 
 type ArticleData = Omit<Models.BaseArticle.DetailView, "articleId" | "creatorId">;
 
 type Props = {
     saveState: 'init' | 'saving' | 'saved' | 'deleting' | 'deleted' | 'published' | 'unpublished' | 'error';
-    articleDataRef: React.RefObject<ArticleData>;
-    itemArticleRef: React.RefObject<ItemArticleType>;
+    articleDataRef: React.RefObject<ArticleData | null>;
+    itemArticleRef: React.RefObject<ItemArticleType | null>;
     setRolePermissions: (rolePermissions: Models.Community.CommunityArticlePermission[]) => void;
     publishArticle: () => Promise<void>;
     unpublishArticle: () => Promise<void>;
@@ -186,12 +187,13 @@ const VisibilityDropdown: React.FC<VisibilityDropdownProps> = ({ permissions, se
     const { roles, ownRoles } = commContext.state === 'loaded' ? commContext : { roles: [], ownRoles: [] };
 
     const defaultPermission = useMemo(() => {
-        const publicRole = roles.find(role => role.title === PredefinedRole.Public);
+        const publicRole = roles.find(role => isPredefinedRole(role, PredefinedRole.Public));
         const result: Models.Community.CommunityArticlePermission[] = [];
         if (publicRole) {
             result.push({
                 roleId: publicRole.id,
                 roleTitle: publicRole.title,
+                roleType: publicRole.type,
                 permissions: ['ARTICLE_PREVIEW', 'ARTICLE_READ']
             });
         }
@@ -231,7 +233,7 @@ const VisibilityDropdown: React.FC<VisibilityDropdownProps> = ({ permissions, se
     }, [isMobile, isPrivate]);
 
     const visibleRoles = useMemo(() => {
-        if (ownRoles.some(role => role.title === PredefinedRole.Admin)) return roles;
+        if (ownRoles.some(role => isPredefinedRole(role, PredefinedRole.Admin))) return roles;
         return ownRoles;
     }, [ownRoles, roles]);
 
@@ -250,7 +252,7 @@ const VisibilityDropdown: React.FC<VisibilityDropdownProps> = ({ permissions, se
                     setIsPrivate(value);
 
                     if (!value) {
-                        const publicRole = roles.find(role => role.title === PredefinedRole.Public);
+                        const publicRole = roles.find(role => isPredefinedRole(role, PredefinedRole.Public));
                         if (publicRole) {
                             setAndApplyRolesPermissions({
                                 [publicRole.id]: 'full'

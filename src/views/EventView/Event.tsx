@@ -13,9 +13,9 @@ import Tag from 'components/atoms/Tag/Tag';
 import Button from 'components/atoms/Button/Button';
 import dayjs from 'dayjs';
 import { useUserData } from 'context/UserDataProvider';
-import { ReactComponent as AppleIcon } from '../../components/atoms/icons/20/AppleIcon.svg';
-import { ReactComponent as GoogleIcon } from '../../components/atoms/icons/20/GoogleIcon.svg';
-import { useNavigate } from 'react-router-dom';
+import AppleIcon from '../../components/atoms/icons/20/AppleIcon.svg?react';
+import GoogleIcon from '../../components/atoms/icons/20/GoogleIcon.svg?react';
+import { useNavigate } from 'react-router';
 import communityApi from 'data/api/community';
 import { useCall, useSafeCommunityContext } from 'context/CommunityProvider';
 import MemberPreview2 from 'components/atoms/MemberPreview/MemberPreview2';
@@ -26,7 +26,7 @@ import ScheduleEventModal from 'components/organisms/ScheduleEventModal/Schedule
 import AttendEventButton from 'components/atoms/AttendEventButton/AttendEventButton';
 import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal';
 import { useSnackbarContext } from 'context/SnackbarContext';
-import { ReactComponent as SpinnerIcon } from '../../components/atoms/icons/16/Spinner.svg';
+import SpinnerIcon from '../../components/atoms/icons/16/Spinner.svg?react';
 import ShareButton from 'components/atoms/ShareButton/ShareButton';
 import UserTag from 'components/atoms/UserTag/UserTag';
 import MicClayIcon from '../../components/atoms/icons/40/micClay.png';
@@ -40,7 +40,7 @@ import { ArrowsOutSimple, Globe, Headphones, Link, MapPin, SignIn, SignOut } fro
 import SimpleLink from 'components/atoms/SimpleLink/SimpleLink';
 import { useCommunityListView } from 'context/CommunityListViewProvider';
 import MessageViewInner from 'views/MessageViewInner/MessageViewInner';
-import channelDatabaseManager from 'data/databases/channel';
+import { chat } from 'data/chat/runtime';
 import Jdenticon from 'components/atoms/Jdenticon/Jdenticon';
 import UserTooltip from 'components/organisms/UserTooltip/UserTooltip';
 import { getDisplayName } from '../../util';
@@ -212,7 +212,7 @@ const Event: React.FC<Props> = (props) => {
       communityApi.getCall({ id: event.callId, communityId: event.communityId })
       .then(data => {
         if (mounted) {
-          channelDatabaseManager.registerAccessForChannel({
+          chat.channels.registerAccessForChannel({
             channelId: data.channelId,
             communityId: data.communityId,
             callId: data.id,
@@ -291,7 +291,7 @@ const Event: React.FC<Props> = (props) => {
   }, [event, community, navigate]);
 
   const content = useMemo(() => {
-    let header: JSX.Element | null = null;
+    let header: React.JSX.Element | null = null;
     if (isLive || gatedState) header = <div className='flex items-center gap-2'>
       {isLive && <Tag
         variant='live'
@@ -455,7 +455,7 @@ const Event: React.FC<Props> = (props) => {
       </div>
     </div>;
 
-    let agenda: JSX.Element | null = null;
+    let agenda: React.JSX.Element | null = null;
     const isAgendaEmpty = event?.description.content.length === 0 ||
       (event?.description.content.length === 1 && event.description.content[0].type === 'text' && event.description.content[0].value.length === 0);
 

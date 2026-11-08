@@ -17,7 +17,6 @@ import {
 } from "typeorm";
 import { Area } from "./areas";
 import { CommunityChannel } from "./communities-channels";
-// import { CommunityFeed } from "./communities-feeds";
 import { Role } from "./roles";
 import { User } from "./users";
 import { CommunityPremium } from "./communities-premium";
@@ -104,10 +103,9 @@ export class Community {
     @ManyToMany(() => CommunityChannel, (communityChannel) => communityChannel.community)
     communityChannels!: CommunityChannel[];
 
-    // @ManyToMany(() => CommunityFeed, (communityFeed) => communityFeed.community)
-    // communityFeeds!: CommunityFeed[];
-
-    @Index('idx_groups_tsv_description', { fulltext: true })
+    // a GIN index in the database (migration 1656085644390); TypeORM 1.x
+    // compares index types, so the entity names it
+    @Index('idx_groups_tsv_description', { fulltext: true, type: 'gin' })
     @Column({ type: 'tsvector', nullable: true, select: false, default: () => `to_tsvector('simple', '')` })
     tsv_description!: string;
 
@@ -116,6 +114,9 @@ export class Community {
 
     @Column({ type: 'boolean', nullable: false, default: false })
     enablePersonalNewsletter!: boolean;
+
+    @Column({ type: 'boolean', nullable: false, default: false })
+    allowUserBots!: boolean;
 
     @CreateDateColumn({ type: 'timestamptz', precision: 3, select: false })
     createdAt!: Date;

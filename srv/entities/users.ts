@@ -64,6 +64,9 @@ export class User {
     @Column({ type: 'enum', enum: UserProfileTypeEnum, nullable: false, select: false })
     displayAccount!: Models.User.ProfileItemType;
 
+    @Column({ name: 'is_bot', type: 'boolean', nullable: false, default: false })
+    isBot!: boolean;
+
     @OneToMany(() => UserAccount, (userAccount) => userAccount.user)
     userAccounts!: UserAccount[];
 
@@ -112,12 +115,24 @@ export class User {
     @Column({ type: 'jsonb', nullable: false, default: {} })
     extraData!: Models.User.ExtraData;
 
-    @Index('idx_users_verification_codes', { synchronize: false })
-    @Column({ type: 'varchar', length: 32, nullable: true, select: false })
-    verificationCode!: string | null;
+    /**
+     * The password signed in but does not meet the password policy: the
+     * account has to choose a new one (account-security step,
+     * srv/util/securityStep.ts). Cleared when a password is set.
+     */
+    @Column({ type: 'boolean', nullable: false, default: false, select: false })
+    passwordChangeRequired!: boolean;
 
-    @Column({ type: 'timestamptz', precision: 3, nullable: true, select: false })
-    verificationCodeExpiration!: Date | null;
+    /**
+     * The account's session generation (docs/auth-identity §2, "Signing out
+     * other devices"): raised to the next `session_generation_seq` value when
+     * the account signs out its other devices. Sessions, device keys and
+     * transfer links of a lower generation are no longer valid.
+     */
+    // partial index ("sessionGeneration" > 0), created by the migration
+    @Index('idx_users_sessionGeneration', { synchronize: false })
+    @Column({ type: 'bigint', nullable: false, default: 0, select: false })
+    sessionGeneration!: string;
 
     @Column({ type: 'integer', nullable: false, default: 0 })
     pointBalance!: number;

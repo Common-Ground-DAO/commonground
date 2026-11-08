@@ -1,3 +1,5 @@
+@reference '../../../../tailwind.css';
+
 .messageAttachments {
     @apply flex flex-col gap-2 py-2;
 

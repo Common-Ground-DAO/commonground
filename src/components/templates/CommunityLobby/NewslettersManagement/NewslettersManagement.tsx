@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import React, { useEffect, useState } from 'react';
+import config from 'common/config';
 import { ChevronDownIcon } from '@heroicons/react/20/solid';
 import { useNavigationContext } from 'components/SuspenseRouter/SuspenseRouter';
 import Button from 'components/atoms/Button/Button';
@@ -10,7 +11,7 @@ import ManagementHeader2 from 'components/molecules/ManagementHeader2/Management
 import Scrollable from 'components/molecules/Scrollable/Scrollable';
 import ToggleInputField from 'components/molecules/inputs/ToggleInputField/ToggleInputField';
 import { useWindowSizeContext } from 'context/WindowSizeProvider'
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useLoadedCommunityContext } from 'context/CommunityProvider';
 import Tag from 'components/atoms/Tag/Tag';
 import SimpleLink from 'components/atoms/SimpleLink/SimpleLink';
@@ -22,6 +23,7 @@ import UserTag from 'components/atoms/UserTag/UserTag';
 import { useMultipleUserData } from 'context/UserDataProvider';
 import ScreenAwareDropdown from 'components/atoms/ScreenAwareDropdown/ScreenAwareDropdown';
 import ListItem from 'components/atoms/ListItem/ListItem';
+import { isPredefinedRole } from "util/predefinedRoles";
 
 const NewslettersManagement = () => {
   const { isMobile } = useWindowSizeContext();
@@ -32,7 +34,10 @@ const NewslettersManagement = () => {
   const navigate = useNavigate();
 
   const audienceCount = useAsyncMemo(async () => {
-    const memberRole = roles.find(r => r.title === PredefinedRole.Member);
+    if (!config.EMAIL_ENABLED) {
+      return undefined;
+    }
+    const memberRole = roles.find(r => isPredefinedRole(r, PredefinedRole.Member));
 
     if (memberRole) {
       return communityApi.getMemberNewsletterCount({
@@ -43,6 +48,9 @@ const NewslettersManagement = () => {
   }, [community.id]);
 
   const newsletterHistory = useAsyncMemo(async () => {
+    if (!config.EMAIL_ENABLED) {
+      return undefined;
+    }
     return communityApi.getNewsletterHistory({
       communityId: community.id,
       timeframe
@@ -154,6 +162,15 @@ const NewslettersManagement = () => {
       </div>
     </div>
   </div>;
+
+  // email delivery is a per-instance capability; without it newsletters
+  // cannot be sent at all
+  if (!config.EMAIL_ENABLED) {
+    return <div className={`flex flex-col gap-4 cg-text-main${isMobile ? ' px-4' : ''}`}>
+      {header}
+      <span>Email delivery is not configured on this instance, so community newsletters are unavailable.</span>
+    </div>
+  }
 
   if (isMobile) {
     return <div className={`flex flex-col h-full cg-text-main`}>

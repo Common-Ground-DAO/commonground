@@ -11,11 +11,17 @@ import {
   S3Client,
   S3ClientConfig
 } from "@aws-sdk/client-s3";
-import { parseUrl } from "@aws-sdk/url-parser";
-import { Hash } from "@aws-sdk/hash-node";
-import { HttpRequest } from "@aws-sdk/protocol-http";
+// The `@aws-sdk/{url-parser,hash-node,protocol-http}` packages were retired in
+// favour of their `@smithy/*` successors; `formatUrl` stayed on the AWS side.
+import { parseUrl } from "@smithy/url-parser";
+import { Hash } from "@smithy/hash-node";
+import { HttpRequest } from "@smithy/protocol-http";
 import { formatUrl } from "@aws-sdk/util-format-url";
-import sharp, { Blend } from 'sharp';
+// Types are imported by name rather than through the `sharp.*` namespace: the
+// namespace only exists in sharp's CommonJS `export =` typings, so it resolves
+// under the build's `moduleResolution: Node16` but not under the CommonJS
+// resolution ts-jest compiles the test suite with. The named types exist in both.
+import sharp, { Blend, type Sharp, type WebpOptions, type JpegOptions } from 'sharp';
 import crypto from "crypto";
 import { Readable } from "stream";
 import { Blob, Buffer } from "buffer";
@@ -28,6 +34,7 @@ import userHelper from "./users";
 import communityHelper from "./communities";
 import pool from "../util/postgres";
 import urlConfig from '../util/urls';
+import imageFilter from "../moderation/imageFilter";
 
 const s3_secret = dockerSecret('s3_secret') || process.env.S3_SECRET as string;
 const s3_signedUrlExpiration = 7 * 24 * 60 * 60; // 7 days
@@ -35,6 +42,10 @@ const s3_signedUrlExpiration = 7 * 24 * 60 * 60; // 7 days
 type SaveIntoS3Options = {
   withoutEnlargement?: boolean;
   animated?: boolean;
+  /** Skip the NSFW check for internally derived images whose source was
+   * already classified: the social-preview compositions and the old
+   * re-encoding migrations. Never set this for externally provided bytes. */
+  skipModeration?: boolean;
 }
 
 // IMAGE FUNCTIONS
@@ -199,7 +210,7 @@ async function createBackground(imageBuffer: Buffer, width: number, height: numb
 async function composeImages(background: Buffer, foreground: Buffer, width: number, height: number): Promise<Buffer> {
   const alphaValue = Math.round(0.5 * 255);
   const transparencyMask = Buffer.alloc(width * height, alphaValue);
-  const webpOptions: sharp.WebpOptions = { quality: 92, effort: 5 };
+  const webpOptions: WebpOptions = { quality: 92, effort: 5 };
   const opacity = {
     input: transparencyMask,
     raw: {
@@ -283,7 +294,7 @@ class FileHelper {
   public async convertToJpg(imageBuffer: Buffer, width: number, height: number): Promise<Buffer> {
     let image = sharp(imageBuffer);
     if (width && height) image = image.resize(width, height);
-    const jpegOptions: sharp.JpegOptions = { quality: 90, progressive: true };
+    const jpegOptions: JpegOptions = { quality: 90, progressive: true };
     return await image.jpeg(jpegOptions).toBuffer();
   }
 
@@ -338,9 +349,9 @@ class FileHelper {
       throw new Error(errors.server.FILESIZE_EXCEEDED);
     }
 
-    let resized: sharp.Sharp;
+    let resized: Sharp;
     let resizedBuffer: Buffer;
-    const webpOptions: sharp.WebpOptions = { quality: 92, effort: 5 };
+    const webpOptions: WebpOptions = { quality: 92, effort: 5 };
     if (resize) {
       let finalWidth = resize.width;
       let finalHeight = resize.height;
@@ -356,6 +367,20 @@ class FileHelper {
       resized = originalImage.rotate().webp(webpOptions);
     }
     resizedBuffer = await resized.toBuffer();
+
+    // NSFW gate — must run before anything reaches S3. Classifies a 224px
+    // normalization of the *source* buffer (so small+large variants of one
+    // upload agree and classify once); with `animated` set, frames beyond
+    // frame 0 are scanned too (randomly sampled above the frame cap — see
+    // MAX_FRAMES_SCANNED in the moderation module).
+    if (!options.skipModeration) {
+      await imageFilter.assertImageAllowed(imageBuffer, {
+        uploadType: uploadOptions.type,
+        userId,
+        animated: options.animated || false,
+      });
+    }
+
     const newMetadata = await sharp(resizedBuffer).metadata();
     const fileId = crypto.createHash('sha256').update(resizedBuffer).digest('hex');
 
@@ -385,9 +410,15 @@ class FileHelper {
       }
     }
     const putObject = new PutObjectCommand({
+      // The already materialised buffer, not the `resized` Sharp instance: a
+      // Sharp object is a Duplex of unknown length, and since @aws-sdk 3.9x the
+      // S3 client rejects unknown-length stream bodies outright
+      // ("Invalid value \"undefined\" for header x-amz-decoded-content-length")
+      // instead of falling back to chunked encoding. The bytes are identical -
+      // streaming the instance only re-ran the whole pipeline a second time.
       Bucket: cgBucketName,
       Key: fileId,
-      Body: resized
+      Body: resizedBuffer
     });
     await client.send(putObject);
     await this.upsertDatabaseFile(
@@ -450,7 +481,7 @@ class FileHelper {
   public async composeCommunityImage(imageBuffer: Buffer): Promise<Buffer> {
     const width = 1200;
     const height = 630;
-    const webpOptions: sharp.WebpOptions = { quality: 92, effort: 5 };
+    const webpOptions: WebpOptions = { quality: 92, effort: 5 };
     const foreground = await sharp(imageBuffer).resize(410, 410, { fit: 'cover' }).webp(webpOptions).toBuffer(); // await createHexagonalForeground(imageBuffer, Math.round(width * 0.43));
     const background = await createBackground(foreground, width, height);
     const composedImage = await composeImages(background, foreground, width, height);
@@ -537,7 +568,8 @@ class FileHelper {
         throw new Error(errors.server.NOT_FOUND);
       }
       const composedImage = await fileHelper.composeProfileImage(buffer);
-      const previewImage = await fileHelper.saveImage(userId, { type: 'userProfileImage' }, composedImage);
+      // source image passed the filter when it was stored
+      const previewImage = await fileHelper.saveImage(userId, { type: 'userProfileImage' }, composedImage, undefined, { skipModeration: true });
       await userHelper.updateUser(userId, { previewImageId: previewImage.fileId });
     } catch (e) {
       console.log("Error: could not update user profile social preview image", e);
@@ -562,7 +594,8 @@ class FileHelper {
         throw new Error(errors.server.NOT_FOUND);
       }
       const composedImage = await fileHelper.composeCommunityImage(buffer);
-      const previewImage = await fileHelper.saveImage(userId, { type: 'communityLogoSmall' }, composedImage);
+      // source image passed the filter when it was stored
+      const previewImage = await fileHelper.saveImage(userId, { type: 'communityLogoSmall' }, composedImage, undefined, { skipModeration: true });
       await communityHelper.updateCommunity({ id: communityId, previewImageId: previewImage.fileId });
     } catch (e) {
       console.log("Error: could not update community social preview image", e);

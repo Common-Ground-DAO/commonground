@@ -7,8 +7,8 @@ import DropdownItem from '../../atoms/ListItem/ListItem';
 import React from 'react';
 import Dropdown from '../Dropdown/Dropdown';
 import { getIcon } from '../NotificationMessage/NotificationMessage';
-import { ReactComponent as ChevronDownIcon } from '../../../components/atoms/icons/16/ChevronDown.svg';
-import { ReactComponent as CheckboxFilledIcon } from '../../../components/atoms/icons/16/CheckboxFilled.svg';
+import ChevronDownIcon from '../../../components/atoms/icons/16/ChevronDown.svg?react';
+import CheckboxFilledIcon from '../../../components/atoms/icons/16/CheckboxFilled.svg?react';
 
 import './NotificationTypeSelector.css';
 

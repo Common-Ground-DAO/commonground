@@ -18,7 +18,7 @@ import userApi from 'data/api/user';
 import dayjs from 'dayjs';
 import { useCommunityListView } from 'context/CommunityListViewProvider';
 import CommunityPhoto from 'components/atoms/CommunityPhoto/CommunityPhoto';
-import { ReactComponent as SparkIcon } from 'components/atoms/icons/misc/spark.svg';
+import SparkIcon from 'components/atoms/icons/misc/spark.svg?react';
 
 type Props = {
   setCurrentPage: (pageType: PageType) => void;
@@ -177,7 +177,7 @@ const HistoryPayment: React.FC<HistoryPaymentProps> = ({ transaction }) => {
   const { data, amount, communityId, createdAt } = transaction;
   const community = useCommunityListView(data.type === 'user-donate-community' ? (communityId || undefined) : undefined);
 
-  let content: JSX.Element;
+  let content: React.JSX.Element;
   let sign: '+' | '-' | '' = '';
   let datePrefix = '';
   if (data.type === 'user-donate-community') {

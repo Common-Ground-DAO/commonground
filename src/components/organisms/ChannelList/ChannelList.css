@@ -1,3 +1,5 @@
+@reference '../../../tailwind.css';
+
 .channel-list {
   @apply flex flex-col gap-0.5 cg-text-lg-500;
 

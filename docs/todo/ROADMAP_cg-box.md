@@ -208,8 +208,11 @@ setzen, bevor produktive Daten mit aktivem Mailversand laufen.**
   und Links auf cg.box prüfen. Keine Newsletter-Testsendung an echte Listen.
 - [x] TLS auf cg.box: Let’s-Encrypt-Zertifikat ausgestellt, extern ohne Ausnahme
   validiert. ACME-Kontakt: `info@just-tech.solutions`.
-- [ ] Zertifikate für `app.cg`/`id.app.cg` bei der DNS-Umschaltung ausstellen;
-  benötigte Callback-/Origin-Freigaben anpassen.
+- [x] DNS für `app.cg`/`id.app.cg` umgestellt: lokal, Cloudflare und Google liefern
+  `2.31.206.74`, keine AAAA-Einträge. Let’s-Encrypt-Zertifikate am 2026-11-08
+  ca. 13:47 UTC ausgestellt und extern validiert; beide Startseiten HTTP 200.
+  Gateway-Ziel `https://cg.box`, Community-API gesperrt (404), Service Worker HTTP 200.
+- [ ] Benötigte Callback-/Origin-Freigaben optionaler Integrationen anpassen.
 - [x] Vorhandene Datenschutz-, Nutzungsbedingungen- und Hilfeartikel aus dem Dump
   ohne Anmeldung über die API erfolgreich gelesen. Die drei Home-Links auf cg.box
   angepasst; Texte unverändert übernommen, kein neues Rechtstextsystem.
@@ -342,7 +345,7 @@ der alte Stack soll bei der DNS-Umschaltung stillgelegt werden.
 | Medien-Vorabkopie / Prüfung | SeaweedFS-Import vollständig: 212.863 Objekte / 8.095.994.574 Bytes, 0 Unterschiede im Prüfsummenvergleich; Vorabkopie von Jan als final akzeptiert; Browserprüfung offen |
 | SendGrid-Zustellung | Einzelne Testmail an Jans freigegebene Gmail-Adresse über API-Container: SendGrid `250 Ok`, 1 angenommen, 0 abgelehnt; Eingang von Jan bestätigt; echter OTP-Login noch zu prüfen |
 | Finaler Dump / Medienabgleich | Vorhandener Importstand ausdrücklich von Jan als final akzeptiert; kein neuer Dump/Delta-Abgleich |
-| Umschaltung / Freigabezeitpunkt | cg.box öffentlich seit 2026-11-08 ca. 13:42 UTC; app.cg/id.app.cg DNS und Zertifikate noch offen |
+| Umschaltung / Freigabezeitpunkt | cg.box öffentlich seit 2026-11-08 ca. 13:42 UTC; app.cg/id.app.cg DNS und Zertifikate seit ca. 13:47 UTC extern geprüft; manueller Login-/Transfer-Test offen |
 
 ---
 

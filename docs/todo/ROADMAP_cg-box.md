@@ -178,9 +178,14 @@ Produktions-RP `id.app.cg`; `id.app.test` ist dafür keine austauschbare Origin.
 - [ ] Optionale Integrationen entscheiden/konfigurieren: X/Twitter, WalletConnect und
   Giphy haben weder auf cg.box noch auf der Test-VM Schlüssel. Jan wurde gefragt.
   Ohne Schlüssel fehlen diese Funktionen; injizierte Browser-Wallets bleiben nutzbar.
-- [ ] Jan authentifiziert `cg.box` bei SendGrid über dessen DNS-Vorgaben und erstellt
-  einen separaten API-Key mit Mail-Send-Berechtigung.
-- [ ] SMTP in der privaten `docker/.env.selfhost` konfigurieren:
+- [x] Separaten SendGrid-API-Key auf cg.box privat hinterlegt; STARTTLS und
+  SMTP-Anmeldung auf `smtp.sendgrid.net:587` erfolgreich geprüft (Status 235).
+  Dabei wurde keine Nachricht versendet.
+- [x] Jan bestätigt: `cg.box` ist bei SendGrid vollständig authentifiziert.
+- [x] SMTP in der privaten `docker/.env.selfhost` konfiguriert und in API/Gateway
+  aktiviert. Absender: `Common Ground <noreply@cg.box>`. Einzelne System-Testmail zugestellt und von Jan bestätigt.
+  Nach Jans Freigabe des vorhandenen Datenstands auch in `job-runner` aktiviert;
+  der Vorbereitungs-Override ist seit Freischaltung nicht mehr aktiv.
 
 ```dotenv
 CG_ENABLE_MAIL=false
@@ -190,7 +195,7 @@ SMTP_SECURITY=starttls
 SMTP_USER=apikey
 SMTP_PASSWORD=<SendGrid-API-Key, nur in privater Konfiguration>
 CG_ENABLE_NEWSLETTERS=false
-EMAIL_FROM=no-reply@cg.box
+EMAIL_FROM=noreply@cg.box
 EMAIL_FROM_NAME='Common Ground'
 ```
 
@@ -211,21 +216,26 @@ setzen, bevor produktive Daten mit aktivem Mailversand laufen.**
 - [ ] Jan prüft bei Bedarf inhaltliche Aktualisierungen und ein ggf. nötiges Impressum;
   eine rechtliche Prüfung ist nicht Bestandteil der technischen Übernahme.
 
-### Aktueller Vorbereitungsbetrieb auf cg.box
+### Betriebsstand auf cg.box
 
 - Repository: `/root/commonground`, Branch `main`; private Konfiguration:
   `/root/commonground/docker/.env.selfhost` (0600).
 - Getesteter Dump: `/root/cg-migration/261108_prod.dump`, SHA-256 identisch zum
   Probedump. Restore erfolgreich (pg_restore 15 s); alle 62 Tabellen vor Migration
   exakt verglichen. 23 Migrationen erfolgreich, alle 1.565 Passkeys `id.app.cg`,
-  alte Push-Abonnements entfernt. **Noch kein finaler Datenstand nach Schreibstopp.**
+  alte Push-Abonnements entfernt. **Von Jan am 2026-11-08 ausdrücklich als finaler Umzugsstand akzeptiert;
+  spätere Änderungen der noch laufenden alten App werden nicht nachgezogen.**
 - Alle Dienste mit Healthcheck gesund. Interne API-Prüfung: Community-Liste liefert
   fünf importierte Communities; Gateway verweigert Community-API wie vorgesehen.
-  SMTP ist in API/Gateway/Jobs aus; Newsletter-Schalter in allen drei Prozessen false.
+  SendGrid-SMTP ist in API/Gateway/Jobs aktiv. Newsletter-Schalter in allen drei
+  Prozessen false. Öffentliche Community-API erfolgreich geprüft.
 - LUKSO-Hintergrunddienst meldet einzelne ungültige Profilmetadaten; sonstige
   Anwendungsdienste bei der Startprüfung ohne Fehler. LUKSO-Login noch nicht abgenommen.
-- Öffentlich liefert cg.box vorerst HTTP 503 mit Wartungstext. Die private Datei
-  `/root/cg-migration/prepare.yml` ersetzt dafür nur Caddys Konfiguration:
+- Seit 2026-11-08 ca. 13:42 UTC öffentlich HTTP 200 mit gültigem TLS-Zertifikat.
+  Der normale Stackstart hat den Wartungs-Override entfernt. Die private Datei
+  `/root/cg-migration/prepare.yml` bleibt für einen erneuten Wartungsbetrieb erhalten;
+  sie ersetzt Caddys Konfiguration und hält
+  `SMTP_HOST` beim `job-runner` leer:
 
   ```bash
   cd /root/commonground
@@ -239,6 +249,28 @@ setzen, bevor produktive Daten mit aktivem Mailversand laufen.**
   Medienablage bleibt für den letzten Kopierlauf erhalten. Der Medienimport setzt
   Content-Type anhand der tatsächlichen Dateiformate; die Objekt-IDs bleiben unverändert.
 
+### DNS bei der finalen Umschaltung
+
+In der DNS-Zone `app.cg` sind für das Gateway genau diese Web-Hostnamen vorgesehen:
+
+| Typ | Name | Ziel | Cloudflare |
+|---|---|---|---|
+| A | `@` (`app.cg`) | `2.31.206.74` | DNS only |
+| A | `id` (`id.app.cg`) | `2.31.206.74` | DNS only |
+
+TTL 300 Sekunden, sofern einstellbar. Vorhandene widersprechende A/CNAME-Einträge
+ersetzen; alte AAAA-Einträge an diesen Namen entfernen, da hier zunächst nur IPv4
+konfiguriert ist. Alte Web-/Infrastruktur-Subdomains und Wildcards erst bei der
+Umschaltung stilllegen. MX, SPF/DKIM/DMARC, SendGrid-Verifikation sowie NS/SOA und
+DNSSEC-Einstellungen nicht pauschal löschen. Ohne vollständige DNS-Liste ist keine
+abschließende Löschliste möglich.
+
+Caddy bedient `app.cg` und `id.app.cg` mit automatischen Zertifikaten nach dem
+normalen Stackstart und der DNS-Umschaltung; kein separater ACME-Hostname nötig.
+Falls CAA eingeschränkt ist, muss `letsencrypt.org` erlaubt sein. `cg.box` bleibt
+auf dem vorhandenen Serverziel. Keine zusätzlichen API-/S3-/WebSocket-Domains für
+das neue Stackprofil erforderlich.
+
 ## 5. Entscheidung zur Umschaltung
 
 - [ ] Probeimport erfolgreich, Importbefehle und Dauer bekannt.
@@ -251,6 +283,13 @@ setzen, bevor produktive Daten mit aktivem Mailversand laufen.**
   Stand und Rückweg für einen fehlgeschlagenen Start festhalten.
 
 ## 6. Finale Umschaltung — in dieser Reihenfolge
+
+**Freigabe vom 2026-11-08:** Jan akzeptiert ausdrücklich den bereits importierten
+DB- und Medienstand als endgültigen Umzugsstand. Die alte App lief dabei noch;
+spätere Änderungen dort werden bewusst nicht übernommen. Ein neuer Dump und eine
+Delta-Kopie entfallen auf Jans Wunsch. cg.box wurde gegen 13:42 UTC freigeschaltet.
+Die folgenden ursprünglichen Schritte 1–3 werden durch diese Entscheidung ersetzt;
+der alte Stack soll bei der DNS-Umschaltung stillgelegt werden.
 
 1. [ ] Alte Anwendung und schreibende Hintergrundjobs für Schreibzugriffe sperren.
    **Alten S3-Dienst und Kopiercontainer für den letzten Abgleich erreichbar halten.**
@@ -296,14 +335,14 @@ setzen, bevor produktive Daten mit aktivem Mailversand laufen.**
 | Punkt | Ergebnis |
 |---|---|
 | Auslieferungscommit | `db1823b` aus `main` auf cg.box gebaut (inkl. drei Footer-Links auf cg.box); spätere reine Protokolländerungen benötigen keinen Neubuild |
-| Newsletter-Schalter / Produktionswert | `CG_ENABLE_NEWSLETTERS=false` auf cg.box in API, Gateway und Jobs wirksam geprüft; SMTP bis zur SendGrid-Einrichtung aus |
+| Newsletter-Schalter / Produktionswert | `CG_ENABLE_NEWSLETTERS=false` auf cg.box in API, Gateway und Jobs wirksam geprüft; SendGrid in API/Gateway/Jobs aktiv |
 | Probedump-Pfad auf cg.test / SHA-256 | `/home/kaesual/import-test-2026-11-08/production-full.dump`; `a1f17f13fbea9c147df6f9857913f405d0d624098c98425bb58296c6e4152b6f`; vollständiger Dump erfolgreich importiert |
 | Restore-Dauer / Migrationsdauer | 34 s gesamt (pg_restore 11 s) / ca. 3 s für 23 Migrationen |
 | Geprüfte Importbefehlsfolge | Vollständiger Restore und Migrationen erfolgreich; 62 Tabellen vor Migration exakt gezählt, Passkey-Zuordnung vollständig; HTTPS-/Community-Smokecheck erfolgreich, manueller Login mit importiertem Konto offen |
-| Medien-Vorabkopie / Prüfung | SeaweedFS-Import vollständig: 212.863 Objekte / 8.095.994.574 Bytes, 0 Unterschiede im Prüfsummenvergleich; finale Delta-Kopie und Browserprüfung offen |
-| SendGrid-Zustellung | offen |
-| Finaler Dump / Medienabgleich | offen |
-| Umschaltung / Freigabezeitpunkt | offen |
+| Medien-Vorabkopie / Prüfung | SeaweedFS-Import vollständig: 212.863 Objekte / 8.095.994.574 Bytes, 0 Unterschiede im Prüfsummenvergleich; Vorabkopie von Jan als final akzeptiert; Browserprüfung offen |
+| SendGrid-Zustellung | Einzelne Testmail an Jans freigegebene Gmail-Adresse über API-Container: SendGrid `250 Ok`, 1 angenommen, 0 abgelehnt; Eingang von Jan bestätigt; echter OTP-Login noch zu prüfen |
+| Finaler Dump / Medienabgleich | Vorhandener Importstand ausdrücklich von Jan als final akzeptiert; kein neuer Dump/Delta-Abgleich |
+| Umschaltung / Freigabezeitpunkt | cg.box öffentlich seit 2026-11-08 ca. 13:42 UTC; app.cg/id.app.cg DNS und Zertifikate noch offen |
 
 ---
 

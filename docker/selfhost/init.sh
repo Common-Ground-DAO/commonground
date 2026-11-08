@@ -271,6 +271,8 @@ SMTP_USER=cg-app
 SMTP_PASSWORD=$(rand 24)
 EMAIL_FROM=no-reply@${CG_DOMAIN}
 EMAIL_FROM_NAME="Common Ground"
+# false pauses digest/article newsletters without disabling system mails.
+CG_ENABLE_NEWSLETTERS=true
 # built-in relay only: the domain it signs for (must be the domain of
 # EMAIL_FROM), the name it greets other mail servers with (the PTR record of
 # CG_PUBLIC_IP must point to it, and it must resolve back to CG_PUBLIC_IP)

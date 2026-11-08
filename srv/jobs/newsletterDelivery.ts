@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { isMainThread } from 'worker_threads';
-import emailUtils, { emailEnabled } from '../api/emails';
+import emailUtils, { newslettersEnabled } from '../api/emails';
 import emailHelper from '../repositories/emails';
 import newsletterHelper from '../repositories/newsletter';
 import emailBounceHelper, { BOUNCE_RETENTION_DAYS } from '../repositories/emailBounces';
@@ -54,8 +54,8 @@ async function sendEmails(users: { userId: string, email: string }[], newsletter
     } catch (error) {
         console.error('Could not delete expired bounce records', error);
     }
-    if (!emailEnabled()) {
-        console.log('Email delivery is not configured, skipping newsletter delivery');
+    if (!newslettersEnabled()) {
+        console.log('Newsletter delivery is disabled, skipping newsletter delivery');
         process.exit(0);
     }
     const newsletterId = generateNewsletterId();

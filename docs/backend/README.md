@@ -59,8 +59,8 @@
 > `syncState`) and the singleton processes' gateway refusal against commit 696102b, 2026-11-06;
 > the pool's `error` listener (idle connections only) and the LISTEN holders' own listeners against
 > commit 696102b, 2026-11-07;
-> the transfer-link routes (`/declineTransferLink`, sign-out) against commit 04c72b2, 2026-11-07;
-> `requireAuthToAdd()` and transfer-link sessions against commit c18b233, 2026-11-07
+> the transfer-link routes (`/declineTransferLink`, sign-out) against commit 04c72b2, 2026-11-07
+> Newsletter scheduling and worker pause verified against c18b233 + working-tree changes, 2026-11-08.
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -382,7 +382,8 @@ The largest route file. All routes use `registerPostRoute` on `communityRouter`.
 **Articles:**
 - `/getArticleList`, `/getArticleDetailView`
 - `/createArticle`, `/updateArticle`, `/deleteArticle`
-- `/sendArticleAsEmail`
+- `/sendArticleAsEmail` — refuses new scheduling with `NEWSLETTER_DISABLED` when
+  `CG_ENABLE_NEWSLETTERS=false` (`EMAIL_DISABLED` when SMTP is unavailable).
 
 **Calls (voice/video):**
 - `/getCall`, `/startCall`, `/startScheduledCall`
@@ -1394,12 +1395,16 @@ Located in `srv/jobs/`. All jobs are designed to run as **worker threads** (they
 
 ### `emailNotifications.ts`
 - **Purpose:** Sends article-as-email notifications and event-starting notifications.
+- `CG_ENABLE_NEWSLETTERS=false` skips the article work without marking queued articles
+  as sent; event reminders still run when SMTP is enabled.
 - **Two jobs in one:**
   1. `articleNotifications` -- Finds community articles marked for email delivery, prepares them, and sends them over SMTP to newsletter subscribers. Per-recipient failures are logged and skipped (`srv/util/sendToAll.ts`); the article is marked as sent either way.
   2. `eventNotifications` -- Finds upcoming events that need notification, sends email reminders to participants (same per-recipient failure handling; the event is marked as notified either way).
 
 ### `newsletterDelivery.ts`
 - **Purpose:** Sends the weekly platform newsletter to subscribed users.
+- `CG_ENABLE_NEWSLETTERS=false` skips delivery before newsletter entries are created;
+  bounce-record housekeeping still runs.
 - **Logic:** Generates a newsletter ID from the current date. Creates newsletter entries for eligible users. Sends personalized emails containing posts from followed communities plus general platform posts. Retries failed sends once. Before that, it deletes bounce records older than 180 days (`emailBounceHelper.deleteExpired()`).
 
 ### `bounceReceiver.ts`

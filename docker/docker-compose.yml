@@ -223,6 +223,7 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - EMAIL_FROM=${EMAIL_FROM:-}
       - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-}
+      - CG_ENABLE_NEWSLETTERS=${CG_ENABLE_NEWSLETTERS:-true}
       - PLATFORM_OPERATOR_USER_IDS=${PLATFORM_OPERATOR_USER_IDS:-}
       - BOT_USER_OWNER_LIMIT=${BOT_USER_OWNER_LIMIT:-5}
       - BOT_COMMUNITY_OWNER_LIMIT=${BOT_COMMUNITY_OWNER_LIMIT:-10}
@@ -305,6 +306,7 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - EMAIL_FROM=${EMAIL_FROM:-}
       - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-}
+      - CG_ENABLE_NEWSLETTERS=${CG_ENABLE_NEWSLETTERS:-true}
     # the schema must be current before any query: migrate-db has to exit 0
     # first (on a fresh install and after every update that brings migrations)
     depends_on:

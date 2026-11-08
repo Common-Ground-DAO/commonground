@@ -33,6 +33,16 @@ export function emailEnabled(): boolean {
     return mailConfig.enabled;
 }
 
+/** Pause bulk newsletters independently of login, security and event mails. */
+export function newslettersEnabled(): boolean {
+    return emailEnabled() && process.env.CG_ENABLE_NEWSLETTERS !== 'false';
+}
+
+export function requireNewsletterDelivery(): void {
+    if (!emailEnabled()) throw new Error(errors.server.EMAIL_DISABLED);
+    if (!newslettersEnabled()) throw new Error(errors.server.NEWSLETTER_DISABLED);
+}
+
 let transporter: Transporter | undefined;
 function getTransporter(): Transporter {
     if (!mailConfig.enabled) {
@@ -284,6 +294,7 @@ class EmailUtils {
     }
 
     public async sendNewsletter(recipient: EmailRecipient, posts: EmailPost[], generalPosts: EmailPost[]) {
+        requireNewsletterDelivery();
         if (posts.length === 0 && generalPosts.length === 0) {
             console.log('No posts to send to user: ', recipient.userId);
             return;
@@ -330,6 +341,7 @@ class EmailUtils {
     }
 
     public async sendArticleAsEmail(recipient: EmailRecipient, post: EmailPost, communityId: string) {
+        requireNewsletterDelivery();
         const content = `
         <tr><td colspan="4">
             <h1 style="text-align: center;">New post in your community</h1>

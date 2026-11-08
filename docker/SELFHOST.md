@@ -485,6 +485,15 @@ says so). Two ways forward:
 Then remove `SENDGRID_API_KEY` and `MAILCHIMP_*` and run
 `./selfhost/selfhost.sh up`.
 
+### Pausing newsletters
+
+Set `CG_ENABLE_NEWSLETTERS=false` in `.env.selfhost` and run `selfhost.sh up`.
+The weekly digest and community article newsletter delivery pause, and the API
+refuses new article-mail scheduling. Login codes, verification, security notices
+and event participant mails still use the configured SMTP server. The default is
+`true`. Existing queued articles and subscriptions are retained; review pending
+articles before re-enabling delivery.
+
 ### Unsubscribing
 
 Digest and community-post mails carry a one-click unsubscribe link
@@ -1407,7 +1416,9 @@ are removed from the restored database (they belong to its
 
 #### Only the database, from a dump file
 
-`restore --db-file <dump.pgc>` restores a plain `pg_dump -Fc` file — for
+`restore --db-file <dump.pgc>` requires a full `pg_dump -Fc` file with schema and
+data (omit `--data-only` / `-a`). Dumps without table schema are rejected during
+pre-flight, before replacing the database. It restores the file — for
 example from another server — with the same safety rules, role handling and
 `--undo` (a dump that needs a role this cluster lacks is refused before
 anything is stopped; [docs/database](../docs/database/README.md#restoring-a-postgresql-14-database-into-18)

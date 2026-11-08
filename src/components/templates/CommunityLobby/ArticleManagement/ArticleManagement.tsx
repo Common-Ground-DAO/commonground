@@ -12,6 +12,7 @@ import communityArticleManager from "data/managers/communityArticleManager";
 import { PredefinedRole } from "common/enums";
 import { useSnackbarContext } from "context/SnackbarContext";
 import GenericArticleManagement from "components/organisms/GenericArticleManagement/GenericArticleManagement";
+import errors from "common/errors";
 import { isPredefinedRole } from "util/predefinedRoles";
 
 type Props = {
@@ -80,7 +81,15 @@ export default function ArticleManagement(props: Props) {
                 communityArticleRef.current.markAsNewsletter = true;
                 showSnackbar({ type: 'success', text: 'Email newsletter sent successfully' });
             } catch (e) {
-                showSnackbar({ type: 'warning', text: 'Newsletter limit exceeded' });
+                const code = e instanceof Error ? e.message : '';
+                const text = code === errors.server.NEWSLETTER_DISABLED
+                    ? 'Newsletter delivery is paused on this instance.'
+                    : code === errors.server.EMAIL_DISABLED
+                        ? 'Email delivery is unavailable on this instance.'
+                        : code === errors.server.SEND_ARTICLE_LIMIT_EXCEEDED
+                            ? 'Newsletter limit exceeded'
+                            : 'The newsletter could not be scheduled. Please try again.';
+                showSnackbar({ type: 'warning', text });
             }
         }
     }, [community.id, showSnackbar]);

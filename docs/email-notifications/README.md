@@ -8,6 +8,7 @@
 > the "other devices were signed out" sentence of the password and address notices against commit 23a4c1e, 2026-11-01;
 > the session secret at startup and the shared per-address mail-limit secret against commit 696102b, 2026-11-06;
 > the budget of the event change and cancellation mails against commit 04c72b2, 2026-11-07.
+> Newsletter pause verified against c18b233 + working-tree changes, 2026-11-08.
 
 This document covers every email path in Common Ground: transactional mail (verification, one-time-password login, event mails), the weekly digest and per-community article newsletters, one-click unsubscribe, send limits, bounce handling, and the user/community preference model that gates them. Web push and in-app notifications are a separate delivery channel — see [docs/realtime](../realtime/README.md) (§ Push Notifications) — and the boundary between the two is described in [Boundary to web push](#boundary-to-web-push). Running a mail server for a self-hosted instance (the `mail` relay, SPF/DKIM/DMARC/PTR) is covered in [docs/deployment §3.9](../deployment/README.md#39-email-smtp-and-the-mail-relay) and [`docker/SELFHOST.md`](../../docker/SELFHOST.md#email).
 
@@ -46,10 +47,23 @@ Configuration comes from the environment and is parsed by `parseMailConfig()` in
 | `SMTP_USER`, `SMTP_PASSWORD` | — | SMTP AUTH; both or neither |
 | `EMAIL_FROM` | `no-reply@<host of BASE_URL>` | sender address (a plain address, no display name) |
 | `EMAIL_FROM_NAME` | `Common Ground` | sender display name |
+| `CG_ENABLE_NEWSLETTERS` | `true` | `false` pauses the weekly digest and community article newsletters; system mails keep using SMTP |
 
 The transport is created lazily as a **pool** (`pool: true`, at most 5 connections, 100 messages each), because the jobs send to many recipients at once; connection/greeting timeouts are 30 s, the socket timeout 60 s. Certificates are verified for `tls`/`starttls` (nodemailer default).
 
 The `api` and `job-runner` services receive these variables in both compose files. The dev stack points them at its `mailpit` catcher (`SMTP_HOST=mailpit`, port 1025, `none`; web UI on `EXTERNAL_LISTEN_IP:8025`) — `docker-compose.yml` uses that as the default even when the variables are missing from an older `docker/.env`, and an explicitly empty `SMTP_HOST` turns email off. Self-hosting: see [docs/deployment §3.9](../deployment/README.md#39-email-smtp-and-the-mail-relay).
+
+### Pausing newsletters
+
+Set `CG_ENABLE_NEWSLETTERS=false` in the instance environment and recreate the
+API/job-runner containers. SMTP remains enabled for login codes, verification,
+account-security notices and event participant mails. Subscriptions stay intact.
+The digest job creates no delivery entries; the article job does not select or
+mark queued articles as sent. Existing pending articles remain queued and may be
+sent when newsletters are re-enabled. Review that queue before re-enabling.
+`POST /community/sendArticleAsEmail` rejects scheduling with `NEWSLETTER_DISABLED`;
+the two newsletter composers also reject direct sends. The frontend reports the
+pause when scheduling is attempted. Unset/`true` preserves the previous behavior.
 
 ### Graceful degradation
 
@@ -127,7 +141,7 @@ A "Common Ground Digest" summarising the last 7 days of articles, sent to users 
 
 Flow:
 
-1. Skip entirely if `!emailEnabled()`.
+1. Skip delivery if `!newslettersEnabled()` (SMTP disabled or `CG_ENABLE_NEWSLETTERS=false`); bounce housekeeping still runs.
 2. Compute a numeric `newsletterId` from the current date (`YYYYMMDD`) — this de-duplicates a given week's send.
 3. `createNewsletterEntries(newsletterId)` (`srv/repositories/newsletter.ts`) inserts one `user_newsletter_status` row per eligible user (`weeklyNewsletter = true AND emailVerified = true AND deletedAt IS NULL`) that does not already have a row for this `newsletterId`, and returns the newly added users. Re-running the job the same day therefore does not re-send.
 4. For each user, `getPostsFromFollowedCommunities(userId)` (their communities) plus one shared `getGeneralCommunityPosts()` (up to 10 articles from all communities, published in the last 7 days) build two `EmailPost` lists.
@@ -280,7 +294,7 @@ Email-relevant workers are spawned from `srv/jobs.ts` (each runs in a worker thr
 | `emailNotifications.ts` | `*/1 * * * *` (every minute) | Article newsletters + "event starting soon" mails |
 | `bounceReceiver.ts` | permanent (selfhost relay only) | Receives the relay's bounce reports, see [Bounces](#bounces) |
 
-The every-minute `emailNotifications` job runs `articleNotifications()` then `eventNotifications()` in sequence. Failed sends to individual recipients are logged and don't stop the run; other errors (e.g. the database) exit the worker, which is respawned on the next tick.
+The every-minute `emailNotifications` job runs `articleNotifications()` only when newsletters are enabled, then `eventNotifications()` regardless of the newsletter switch (SMTP must still be enabled). Failed sends to individual recipients are logged and don't stop the run; other errors (e.g. the database) exit the worker, which is respawned on the next tick.
 
 ---
 

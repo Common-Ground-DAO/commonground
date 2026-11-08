@@ -27,7 +27,7 @@
 > every process and the old-scope cleanup (§2, §7), the transfer link's next path, confirmation
 > identifier, declining and sign-out (§11), and the gateway's start-up checks and cookie notes (§12)
 > against commit 04c72b2, 2026-11-07; what a transfer-link session may add (§7, §11, §12) and the
-> step-up dialog's methods (§7) against commit c18b233, 2026-11-07
+> step-up dialog's methods (§7) against commit 53aba9b, 2026-11-08
 
 # Authentication & Identity
 

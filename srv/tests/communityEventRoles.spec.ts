@@ -30,7 +30,9 @@ const callHelper = {
   updateCall: jest.fn(),
   getCallSlots: jest.fn(() => ({ overallCallSlots: 10, stageSlots: 5 })),
 };
-const communityHelper = { getCommunityPremiumTier: jest.fn(async () => 'FREE') };
+const communityHelper = { getCommunityPremiumTier: jest.fn(async () => 'FREE'), isCommunityWhitelisted: jest.fn(async () => true) };
+const articleHelper = { registerCommunityArticleForEmails: jest.fn() };
+const requireNewsletterDelivery = jest.fn();
 
 jest.mock('../api/util', () => ({
   registerPostRoute: (_router: unknown, path: string, _validator: unknown, handler: any) => {
@@ -46,7 +48,7 @@ jest.mock('../repositories/permissions', () => ({ __esModule: true, default: per
 jest.mock('../repositories/messages', () => ({ __esModule: true, default: {} }));
 jest.mock('../util/axios', () => ({ __esModule: true, default: {} }));
 jest.mock('../repositories/communities', () => ({ __esModule: true, default: communityHelper }));
-jest.mock('../repositories/articles', () => ({ __esModule: true, default: {} }));
+jest.mock('../repositories/articles', () => ({ __esModule: true, default: articleHelper }));
 jest.mock('../repositories/communityEvents', () => ({ __esModule: true, default: communityEventHelper }));
 jest.mock('../repositories/event', () => ({ __esModule: true, default: { emit: jest.fn() } }));
 jest.mock('../repositories/onchain', () => ({ __esModule: true, default: {} }));
@@ -54,7 +56,8 @@ jest.mock('../repositories/calls', () => ({ __esModule: true, default: callHelpe
 jest.mock('../repositories/files', () => ({ __esModule: true, default: {} }));
 jest.mock('../repositories/newsletter', () => ({ __esModule: true, default: {} }));
 jest.mock('../repositories/users', () => ({ __esModule: true, default: {} }));
-jest.mock('../api/emails', () => ({ __esModule: true, default: {} }));
+jest.mock('../api/emails', () => ({ __esModule: true, default: {}, requireNewsletterDelivery }));
+jest.mock('../util/eventMailBudget', () => ({ reserveEventMailRound: jest.fn(async () => true) }));
 
 import '../api/community';
 
@@ -114,5 +117,20 @@ describe('/updateCommunityEvent', () => {
     expect(communityEventHelper.updateCommunityEvent).not.toHaveBeenCalled();
     expect(callHelper.updateCall).not.toHaveBeenCalled();
     expect(callHelper.createCall).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('/sendArticleAsEmail while newsletters are paused', () => {
+  it('does not queue the article or change the pending newsletter', async () => {
+    requireNewsletterDelivery.mockImplementationOnce(() => { throw new Error('NEWSLETTER_DISABLED'); });
+    await expect(handlers['/sendArticleAsEmail'](asUser(), {}, {
+      communityId: COMMUNITY, articleId: 'article',
+    })).rejects.toThrow('NEWSLETTER_DISABLED');
+    expect(articleHelper.registerCommunityArticleForEmails).not.toHaveBeenCalled();
+  });
+  it('still queues an article when delivery is enabled', async () => {
+    await handlers['/sendArticleAsEmail'](asUser(), {}, { communityId: COMMUNITY, articleId: 'article' });
+    expect(articleHelper.registerCommunityArticleForEmails).toHaveBeenCalledWith('article', COMMUNITY);
   });
 });

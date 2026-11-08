@@ -22,7 +22,7 @@ import { convertBinaryMemberListToUuid, convertBinaryToUuid, convertUuidToBinary
 import { channelMemberListOrEmpty, memberListOrEmpty } from "../common/memberLists";
 import newsletterHelper from "../repositories/newsletter";
 import dayjs from "dayjs";
-import emailUtils from "./emails";
+import emailUtils, { requireNewsletterDelivery } from "./emails";
 import { reserveEventMailRound } from "../util/eventMailBudget";
 import userHelper from "../repositories/users";
 import messageHelper from "../repositories/messages";
@@ -1242,6 +1242,7 @@ registerPostRoute<
     if(!isCommunityWhitelisted) {
       throw new Error(errors.server.NOT_ALLOWED);
     } else {
+      requireNewsletterDelivery();
       return await articleHelper.registerCommunityArticleForEmails(data.articleId, data.communityId);
     }
   }

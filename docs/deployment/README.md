@@ -33,6 +33,7 @@
 > the secret files' modes and the storage container's copy of its config (§3.1, §3.2, §3.3), the
 > builder's own network (§3.3), the outgoing port-25 rule (§3.9, §3.11) and the gateway's host-only
 > cookie (§3.13) against commit 04c72b2, 2026-11-07
+> Newsletter switch verified against c18b233 + working-tree changes, 2026-11-08.
 
 This document describes how Common Ground is deployed: the four deployment
 targets, the single-server self-host stack in detail, how instance identity is
@@ -724,6 +725,11 @@ types in [docs/email-notifications](../email-notifications/README.md)). The
 `api` and `job-runner` services get `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`
 (`tls` | `starttls` | `none`), `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM` and
 `EMAIL_FROM_NAME` from `.env.selfhost`; an empty `SMTP_HOST` disables email.
+`CG_ENABLE_NEWSLETTERS=false` pauses digest/article newsletters independently of
+SMTP; set it on both API and job-runner via the supplied Compose configuration.
+Queued articles and subscriptions are retained. Login, security and event mails
+continue.
+
 Two ways to give it an SMTP server:
 
 **Built-in relay — `CG_ENABLE_MAIL=true`** (what `init.sh` writes). The `mail`

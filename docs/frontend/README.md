@@ -61,7 +61,7 @@
 > (`isAttachmentBusy`) against commit 63e944a, 2026-11-07; the replacement service worker of a gateway
 > ("Service worker on a gateway", the entry-point note) against commit 050245d, 2026-11-07;
 > the transfer page's account identifier and "This isn't me" against commit 04c72b2, 2026-11-07;
-> the step-up dialog's methods (`reauthMethods`) against commit c18b233, 2026-11-07
+> the step-up dialog's methods (`reauthMethods`) against commit 53aba9b, 2026-11-08
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 

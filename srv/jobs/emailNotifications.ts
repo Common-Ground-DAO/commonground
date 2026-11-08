@@ -3,7 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import { isMainThread } from 'worker_threads';
-import emailUtils, { emailEnabled } from '../api/emails';
+import emailUtils, { emailEnabled, newslettersEnabled } from '../api/emails';
 import emailHelper from '../repositories/emails';
 import articleHelper from '../repositories/articles';
 import newsletterHelper from '../repositories/newsletter';
@@ -86,7 +86,11 @@ const eventNotifications = async () => {
         console.log('Email delivery is not configured, skipping email notifications');
         process.exit(0);
     }
-    await articleNotifications();
+    // Keep queued articles pending while newsletters are paused. Event reminders
+    // are system mails and continue to be delivered.
+    if (newslettersEnabled()) {
+        await articleNotifications();
+    }
     await eventNotifications();
     process.exit(0);
 })();

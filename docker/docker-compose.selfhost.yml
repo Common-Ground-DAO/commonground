@@ -359,6 +359,7 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - EMAIL_FROM=${EMAIL_FROM:-}
       - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-}
+      - CG_ENABLE_NEWSLETTERS=${CG_ENABLE_NEWSLETTERS:-true}
       - CG_RECAPTCHA_SITE_KEY=${CG_RECAPTCHA_SITE_KEY}
       - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
       - CG_ENABLE_CALLS=${CG_ENABLE_CALLS:-true}
@@ -466,6 +467,7 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - EMAIL_FROM=${EMAIL_FROM:-}
       - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-}
+      - CG_ENABLE_NEWSLETTERS=${CG_ENABLE_NEWSLETTERS:-true}
       # receive the mail relay's bounce reports on port 2525 (mail-relay
       # network; same login as SMTP_USER/SMTP_PASSWORD)
       - MAIL_BOUNCE_RECEIVER=${CG_ENABLE_MAIL:-false}
@@ -676,6 +678,7 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - EMAIL_FROM=${EMAIL_FROM:-no-reply@${CG_DOMAIN}}
       - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-}
+      - CG_ENABLE_NEWSLETTERS=${CG_ENABLE_NEWSLETTERS:-true}
       - CG_ACTIVE_CHAINS=${CG_ACTIVE_CHAINS}
       - CG_ENABLE_CALLS=false
       # LUKSO sign-in checks the signature through the instance's onchain service

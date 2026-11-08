@@ -25,7 +25,8 @@
 > `1793635400000-permissionDataCleanup` (incl. the community order rebuild and the channel/article step)
 > against commits ccffa3b and 5f50cc0, 2026-11-03;
 > the raw pool's size (`PG_POOL_MAX`) against commit 696102b, 2026-11-06;
-> the `transfer_tokens.usedAt` row (declined links, sign-out) against commit 04c72b2, 2026-11-07
+> the `transfer_tokens.usedAt` row (declined links, sign-out) against commit 04c72b2, 2026-11-07; production-dump restore rehearsal against
+> c18b233 plus working-tree restore pre-flight changes, 2026-11-08
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -1629,10 +1630,24 @@ behind, synthetic rows, all objects owned by `postgres`, created by the
 Alpine-based `docker/db` image) restored cleanly into a fresh 18 cluster with
 the commands below; row counts matched table by table, `migrate-db` then
 applied the missing migrations, and the result equals a freshly migrated 18
-schema except for the `NOT NULL` constraint names above. A real production
-dump has not been restored yet.
+schema except for the `NOT NULL` constraint names above.
 
-TODO(verify) against the production database before move day:
+On 2026-11-08, a full PostgreSQL 14.6 (Ubuntu) production dump was also
+restored successfully on the local selfhost VM into PostgreSQL 18.4 (Alpine).
+The target needed the dump's owner role `cryptoadmin`, created with `NOLOGIN`.
+All 62 source tables matched their row counts before migration (4,428,266
+rows). The 23 pending migrations then succeeded; all 1,565 passkeys obtained
+`id.app.cg` from their stored registration data without manual backfill.
+Restore took 34 seconds including stopping the stack (11 seconds for
+`pg_restore`); the separate migration command took about 3 seconds. These
+are measurements of that VM and dump, not a downtime estimate for every
+server. Use a full schema-and-data custom archive with
+`selfhost.sh restore --db-file`; `--drill` additionally suppresses mail and
+clears push subscriptions on a rehearsal instance.
+
+For each final source/target pair, check before move day (the rehearsal
+verified owners, archive version and extensions; source locale and user-visible
+sort ordering still need comparison):
 
 - server version and platform: `SELECT version()` (`-musl` = Alpine like ours,
   `-gnu` = glibc);

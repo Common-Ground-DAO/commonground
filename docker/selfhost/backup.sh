@@ -1723,6 +1723,9 @@ missing_dump_roles() {
   local schema
   schema="$(docker run --rm -i --network none --entrypoint pg_restore "$img" --schema-only -f - < "$file")" \
     || die "could not read the dump (pg_restore --schema-only)"
+  if ! printf '%s\n' "$schema" | grep -E '^CREATE (UNLOGGED )?TABLE ' >/dev/null; then
+    die "dump has no table schema (data-only dump?): create a full pg_dump -Fc without --data-only/-a; this restore needs schema and data"
+  fi
   roles="$({ grep -E '^(ALTER .*OWNER TO|GRANT|REVOKE)' <<< "$schema" || true; } | { grep -oE '(TO|FROM) [^;]+' || true; } \
     | sed -E 's/^(TO|FROM) //; s/ WITH GRANT OPTION//; s/ GRANTED BY .*//' | tr ',' '\n' \
     | sed 's/^ *//; s/"//g' | sort -u)"

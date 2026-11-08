@@ -1,4 +1,275 @@
-# Roadmap: cg.box — move the hosted instance to a single self-host server
+# Umzug nach cg.box — minimaler Ablauf
+
+> Arbeitsstand: 2026-11-08. Entscheidungen und Fortschritt aus der Abstimmung mit
+> Jan; Code/Skripte gegen `c18b233` plus Arbeitsänderungen geprüft. DB-Probeimport
+> und Anwendungsstart auf cg.test am 2026-11-08 erfolgreich; cg.box noch nicht geprüft.
+> **Diese Checkliste ist der aktuelle Plan und ersetzt abweichende Anforderungen
+> der historischen Planung weiter unten.** Ziel: heute umziehen, sofern Probeimport
+> und Abnahme erfolgreich sind. Nur umzugserforderliche Änderungen vorziehen.
+
+## Beschlossen und bereits erledigt
+
+- [x] Jan bestätigt alle von Opus angeforderten Browsertests als erfolgreich:
+  Transfer-Session, Bestätigungsdialog, Security-Step und weitere S2-Testliste.
+- [x] S2-Härtung und Gateway-Service-Worker sind in `develop` (`c18b233`, `77684f5`).
+- [x] Dump vorhanden: `/home/jan/261108_prod.dump` (vollständiger Ersatzdump) auf der lokalen
+  Entwicklungsmaschine, ca. 236 MiB, PostgreSQL-Custom-Format.
+- [x] Hetzner-Server vorhanden; Jan hat Root-Zugang, `cg.box` zeigt bereits darauf.
+  Laut Jan noch kein Anwendungsstack installiert.
+- [x] Temporärer SFTP-Benutzer `cg-import` eingerichtet; Medien-Vorabkopie laut Jan
+  am 2026-11-08 erfolgreich abgeschlossen.
+  **Kein Speicherlimit, kein separates Dateisystem und kein zusätzlicher Kopieraufbau.**
+- Alte VAPID-Schlüssel und Umzugs-Push entfallen vollständig. Eigene neue Schlüssel
+  erzeugt der vorhandene Build; dafür kein eigenes Arbeitspaket beginnen.
+- Monitoring, automatisierte Backups und Backup-Server folgen nach dem Umzug.
+- Eigener Mailserver bleibt ausgeschaltet, sein Code bleibt erhalten. System-Mails
+  gehen über SendGrid; Wochen-Digest und Community-Artikelnewsletter bleiben aus.
+- `app.cg` und `id.app.cg` bleiben zunächst Login-/Transfer-Gateway, anschließend
+  einfache Weiterleitung. Ende der Übergangsphase später festlegen.
+- Updates manuell auslösen; vorhandenen Build-/Neustartablauf verwenden.
+- Keine mehrtägige Softlaunch-Phase und kein vollständiges Rechtstextsystem vorziehen.
+
+## 1. Auslieferungsstand abschließen
+
+- [x] Abgenommene Transfer-Session-Änderungen als `53aba9b` in `develop` integriert;
+  lokalen Arbeitsbranch gelöscht, ursprünglichen Worktree als detached Checkout erhalten.
+- [x] Kleinen Newsletter-Schalter ergänzen (`CG_ENABLE_NEWSLETTERS=false`): Wochen-Digest und Community-Artikelversand
+  deaktivierbar machen, einschließlich Anstoßen des Artikelversands. Pausierte Einträge
+  nicht als versendet markieren. OTP, Verifikation, Sicherheitshinweise und sonstige
+  System-Mails bleiben aktiv; Code und Abonnementeinstellungen bleiben erhalten.
+- [x] Relevante Prüfungen: 17 Tests bestanden; Backend-/Frontend-Typechecks, gezielter
+  ESLint-Lauf und Shell-Syntaxprüfung erfolgreich. Newsletter aus bei funktionierenden
+  System-Mails geprüft. Kombinierter Stand mit Transfer-Änderungen: 154 Backend-Tests,
+  sechs Reauth-Dialog-Tests und beide Typechecks erfolgreich. Deployment steht noch aus.
+  Bereits bestandene unveränderte Browsertests nicht grundlos wiederholen.
+- [ ] Änderungen committen/in `develop` integrieren; freigegebenen Stand gemäß bestehender
+  Release-Entscheidung nach `main` übernehmen. Auslieferungscommit festhalten und
+  gemergte Arbeitsbranches aufräumen.
+
+## 2. Medienkopie — Vorabkopie abgeschlossen, S3-Import folgt
+
+Quelle: alter SeaweedFS-Bucket `cg-media`, im Production-Container über `sw:` erreichbar.
+Jans Momentaufnahme: **212.802 Objekte, 8.094.779.700 Bytes (7,539 GiB)**.
+Ziel: `/srv/cg-import/upload/cg-media/` auf cg.box; für SFTP `/upload/cg-media`.
+Zugangsdaten bleiben außerhalb dieser Datei.
+
+Bereits gestarteter Befehl im alten Container:
+
+```bash
+rclone copy sw:cg-media \
+  :sftp,host=cg.box,user=cg-import:/upload/cg-media \
+  --sftp-ask-password \
+  --sftp-known-hosts-file /root/.ssh/known_hosts \
+  --sftp-disable-hashcheck \
+  --transfers 4 \
+  --progress
+```
+
+- [x] Vorabkopie laut Jan erfolgreich abgeschlossen (2026-11-08).
+  `copy` löscht keine zusätzlichen Zieldateien; finaler Abgleich nach Schreibstopp folgt.
+- [ ] Objekte später über die S3-Schnittstelle mit unveränderten Schlüsseln in das neue
+  SeaweedFS übernehmen. **Die Ablage ist kein SeaweedFS-Volume.** Benötigte Metadaten,
+  Bucket-/Datei-URL-Zuordnung sowie Vollständigkeit und Inhalt prüfen.
+- [ ] Bilder und Downloads nach Import in der Anwendung testen. Finalen Abgleich nach
+  Schreibstopp durchführen (Schritt 6); dann Objektanzahl und Größe neu messen.
+
+## 3. Produktionsdump auf der lokalen cg.test-VM probeweise importieren
+
+**Testziel ist die vorhandene lokale Test-VM**, nicht die Entwicklungsdatenbank oder
+cg.box. **Lokal wird ausschließlich PostgreSQL getestet, kein S3/Medienimport.**
+Der DB-Test kann vor Ende der Medienkopie beginnen. Testkonfiguration und
+lokalen CA-Zugang erhalten.
+
+- [x] Vorhandenen Dump auf die Test-VM kopiert, SHA-256 identisch; bisherige Test-DB
+  und Konfiguration unter `/home/kaesual/import-test-2026-11-08/` gesichert.
+- [x] Vollständiger Ersatzdump `261108_prod.dump`: PostgreSQL 14.6 (Ubuntu),
+  Schema und Daten. Der frühere reine Datendump wurde durch diesen ersetzt.
+- [x] Vorprüfung und Restore nach PostgreSQL 18.4 erfolgreich. Zusätzliche Besitzerrolle
+  `cryptoadmin NOLOGIN` auf dem Ziel angelegt; `pgcrypto`/`pg_trgm` vorhanden.
+  Alle 62 Quelltabellen stimmen vor Migration bei den Zeilenzahlen exakt überein
+  (4.428.266 Zeilen insgesamt).
+- [x] Drill hält SMTP ausgeschaltet; 4.338 importierte Push-Abonnements entfernt,
+  alle 91.570 Geräte erhalten. Valkey-Sitzungen zurückgesetzt. Die Migration entfernt
+  beide alten Verifikationscode-Spalten; kein zusätzlicher SQL-Nachlauf dafür nötig.
+- [x] 23 Migrationen erfolgreich (149 → 172). Restore gesamt 34 s, darin
+  `pg_restore` 11 s; separater Migrationsaufruf etwa 3 s. 65.672 Nutzer,
+  1.958.524 Nachrichten, 6.246 Communities, 208.918 Dateieinträge und 1.565 Passkeys
+  bleiben erhalten. Erwartete Änderungen: entfernte Wizard-/Assistant-Tabellen,
+  33.234 Fuel-/Aeternity-Wallets sowie die bestehenden Bereinigungsmigrationen
+  für Call-/Event-Berechtigungen. Neue Tabellen wurden angelegt.
+- [x] Alle 1.565 Passkeys haben durch die Migration anhand ihrer gespeicherten
+  Registrierungsdaten `rpId = 'id.app.cg'`, keine fehlende RP-Zuordnung oder doppelten
+  Credential-IDs. Kein manueller Passkey-Nachlauf nötig. Ein echter WebAuthn-Login
+  mit einem importierten Produktionspasskey wurde hier nicht durchgeführt.
+- [x] Alle Indizes gültig, alle Constraints validiert; Lesen als `reader` und
+  Schreiben als `writer` (mit anschließendem Rollback) erfolgreich.
+- [ ] Gespeicherte Domain-/Dateiverweise untersuchen und nur erforderliche Anpassungen
+  vornehmen; keine pauschale Textersetzung über die gesamte Datenbank. Geprüft:
+  kein `files.objectId` enthält eine absolute URL; Medien selbst lokal nicht geprüft.
+- [ ] Mit importierten Daten Login, Transfer, Security-Step, Communities und Nachrichten
+  prüfen. Mail-Flows nur mit lokalem Mailfänger bzw. kontrollierten Testempfängern prüfen;
+  die Drill-Konfiguration schaltet SMTP ab und muss dabei berücksichtigt werden.
+- [x] Erfolgreiche DB-Importbefehlsfolge unten festgehalten. Vollständige Medienübernahme
+  ist ein eigener Prüfschritt.
+- [x] Stack wieder gestartet, alle Dienste mit Healthcheck gesund. Hauptinstanz und
+  Gateway liefern ihre Konfiguration per HTTPS; Community-Liste mit importierten
+  Daten liefert `OK`. Im Onchain-Dienst treten RPC-Zeitüberschreitungen auf;
+  externe Blockchain-Anbindung ist damit noch nicht erfolgreich geprüft.
+
+Vorhandener Einstieg: `docker/selfhost/selfhost.sh restore --db-file <Pfad>` mit
+`--drill` und zunächst `--dry-run` auf der Test-VM. Nichtleere Ziele werden ohne
+`--force` abgewiesen; diesen Zusatz erst für das bewusst gewählte, gesicherte Testziel
+verwenden. Nach Restore läuft nur die DB; Migrationen vor regulärer Nutzung abschließen.
+`--db-file` hat keinen automatischen Tabellenanzahlvergleich, daher oben separat prüfen.
+Mit dem vollständigen Ersatzdump erfolgreich erprobt. [Restore-Dokumentation](../../docker/SELFHOST.md#only-the-database-from-a-dump-file).
+
+### Erprobte Befehlsfolge auf cg.test
+
+Im Repository auf der Test-VM; vorher Test-DB und private Konfiguration sichern.
+Die Rolle nur anlegen, wenn sie auf dem Ziel noch fehlt:
+
+```bash
+./docker/selfhost/selfhost.sh compose exec -T db psql -U postgres -d postgres \
+  -v ON_ERROR_STOP=1 -c 'CREATE ROLE cryptoadmin NOLOGIN;'
+./docker/selfhost/selfhost.sh restore \
+  --db-file /home/kaesual/import-test-2026-11-08/production-full.dump \
+  --force --drill --dry-run
+./docker/selfhost/selfhost.sh restore \
+  --db-file /home/kaesual/import-test-2026-11-08/production-full.dump \
+  --force --drill
+# Hier zuerst Zeilenzahlen gegen den Dump vergleichen, noch vor den Migrationen.
+./docker/selfhost/selfhost.sh compose run --rm --no-deps -T migrate-db
+# Hier RP-Zuordnung, Bestände und Bereinigung prüfen.
+./docker/selfhost/selfhost.sh up
+```
+
+Private Belege: `/home/kaesual/import-test-2026-11-08/` enthält Quell-, Restore-
+und Migrationszählungen, Logs, unveränderten Dump sowie die frühere Test-Sicherung.
+**Für cg.box** finalen Dump-Pfad verwenden, `--drill` weglassen und alte
+Push-Abonnements vor dem Anwendungsstart explizit entfernen:
+
+```sql
+UPDATE devices SET "webPushSubscription" = NULL
+WHERE "webPushSubscription" IS NOT NULL;
+```
+
+Die Testzeiten sind keine Zusage für das gesamte Ausfallfenster: Medienabgleich,
+Deployment, DNS und Abnahme kommen hinzu. Importierte Passkeys behalten ihre
+Produktions-RP `id.app.cg`; `id.app.test` ist dafür keine austauschbare Origin.
+
+## 4. cg.box und SendGrid vorbereiten
+
+- [ ] Root-Zugang für die Einrichtung verfügbar machen; vorhandenen Selfhost-Stack
+  installieren und freigegebenen Stand bauen. Bestehende Grundabsicherung nutzen,
+  temporären Importzugang bis zum letzten Kopierlauf erhalten. Keine neue
+  Infrastruktur-/Automatisierungsbaustelle beginnen.
+- [ ] Domain, öffentliche IPv4, Calls und benötigte Integrationen konfigurieren;
+  Gateway für `app.cg`/`id.app.cg` mit eigenen Session-Einstellungen vorbereiten.
+- [ ] Jan authentifiziert `cg.box` bei SendGrid über dessen DNS-Vorgaben und erstellt
+  einen separaten API-Key mit Mail-Send-Berechtigung.
+- [ ] SMTP in der privaten `docker/.env.selfhost` konfigurieren:
+
+```dotenv
+CG_ENABLE_MAIL=false
+SMTP_HOST=smtp.sendgrid.net
+SMTP_PORT=587
+SMTP_SECURITY=starttls
+SMTP_USER=apikey
+SMTP_PASSWORD=<SendGrid-API-Key, nur in privater Konfiguration>
+CG_ENABLE_NEWSLETTERS=false
+EMAIL_FROM=no-reply@cg.box
+EMAIL_FROM_NAME='Common Ground'
+```
+
+`CG_ENABLE_MAIL=false` deaktiviert den eigenen Relay-Container, **nicht** externes SMTP.
+Der SMTP-Code ist vorhanden. **Zusätzlich den neuen Newsletter-Schalter aus Schritt 1
+setzen, bevor produktive Daten mit aktivem Mailversand laufen.**
+[SendGrid-SMTP-Konfiguration](https://www.twilio.com/docs/sendgrid/for-developers/sending-email/integrating-with-the-smtp-api).
+
+- [ ] OTP und System-Mail an ein kontrolliertes Konto tatsächlich zustellen; Absender
+  und Links auf cg.box prüfen. Keine Newsletter-Testsendung an echte Listen.
+- [ ] TLS auf cg.box prüfen; Zertifikatsausstellung für die Gateway-Domains zur
+  DNS-Umschaltung vorbereiten. Benötigte Callback-/Origin-Freigaben anpassen.
+- [ ] Rechtstexte minimal bereitstellen: bestehende Artikel aus dem Dump prüfen,
+  öffentlich erreichbar machen und Links auf cg.box herstellen. Jan liefert nötige
+  Ergänzungen/aktualisierte Texte. Kein vollständiges Instanz-Rechtstextsystem bauen.
+
+## 5. Entscheidung zur Umschaltung
+
+- [ ] Probeimport erfolgreich, Importbefehle und Dauer bekannt.
+- [ ] Auslieferungsstand festgelegt; Newsletter aus, System-Mail getestet.
+- [ ] Medienimport geprüft; finaler Abgleich ausführbar.
+- [ ] Kurze Prüfung des Auslieferungsstands: Login/Transfer/Security-Step, Nachrichten,
+  Upload/Download und Calls. Bestandene unveränderte Browser-/PWA-Tests gelten weiter;
+  Änderungen gezielt nachtesten.
+- [ ] Ausfallfenster nach gemessener Dauer festlegen und ankündigen. DNS-Ziele, bisherigen
+  Stand und Rückweg für einen fehlgeschlagenen Start festhalten.
+
+## 6. Finale Umschaltung — in dieser Reihenfolge
+
+1. [ ] Alte Anwendung und schreibende Hintergrundjobs für Schreibzugriffe sperren.
+   **Alten S3-Dienst und Kopiercontainer für den letzten Abgleich erreichbar halten.**
+   Auch weitere Uploads über alte Endpunkte unterbinden.
+2. [ ] Frischen finalen DB-Dump erstellen und unverändert aufbewahren; der Probedump
+   ersetzt ihn nicht. Letzten Medienabgleich durchführen, inzwischen gelöschte Objekte
+   berücksichtigen. Etwaige Löschungen zuerst als Vorschau prüfen; Quelle nicht bereinigen.
+3. [ ] Finalen Dump auf cg.box mit geprobter Befehlsfolge importieren, Migrationen und
+   Importnachlauf durchführen; finalen Medienbestand in SeaweedFS übernehmen. Alte
+   Push-Abonnements ohne Löschen der Gerätezugänge entfernen. **Kein Drill-Modus in
+   Produktion**, keine alten VAPID-Schlüssel, kein Umzugs-Push.
+4. [ ] Daten/Konfiguration vor Freigabe prüfen; Hauptinstanz und Gateway starten.
+   Newsletter bleiben aus, System-Mails über SendGrid aktiv.
+5. [ ] `app.cg` und `id.app.cg` auf den neuen Server umstellen; `cg.box` zeigt schon
+   dorthin. Alte Anwendungs-/Infrastruktur-Hostnamen gemäß Gateway-Plan stilllegen;
+   erforderliche Mail-/Domainverifikations-DNS-Einträge nicht pauschal löschen.
+6. [ ] Zertifikate, Dienste/Logs, Login/Transfer, OTP, Nachrichten, Medien und Calls prüfen;
+   alte installierte PWA muss das Gateway erreichen. Alten Stack während der
+   DNS-Übergangszeit weiterhin für Schreibzugriffe gesperrt lassen.
+7. [ ] Freigabezeitpunkt festhalten. Alten Stack, finalen Dump und Quelldaten zunächst
+   behalten. Vor neuen Nutzerschreibzugriffen ist Rückkehr zum alten Stand möglich;
+   danach nicht einfach DNS zurückdrehen, sondern zuerst neue Daten berücksichtigen.
+8. [ ] Nach letztem Medienabgleich temporären Importzugang sperren und bestehende
+   Sitzungen beenden. Ablage erst nach verifiziertem Import entfernen.
+
+## 7. Nach dem Umzug — keine Voraussetzung für die Umschaltung
+
+- [ ] Tägliches Backup auf cg.box mit vorhandenen Werkzeugen einrichten. Ein separater
+  Backup-Server holt abgeschlossene Backups täglich per SSH/SCP ab; Jan kümmert sich
+  anschließend um diesen Server. Format, Aufbewahrung und konsistenten Abruf dann
+  festlegen. Automatischer Abruf ist noch nicht implementiert.
+- [ ] Monitoring später festlegen/einrichten; Telegram ist heute keine Voraussetzung.
+- [ ] Eigenen Mailserver/Newsletter später wieder aufnehmen; Code jetzt behalten.
+- [ ] Manuellen Updateablauf dokumentieren: vorhandenes `selfhost.sh update` führt
+  Pull, Build und Neustart aus.
+- [ ] Ende der Gateway-Phase und Weiterleitung festlegen. Umgang mit Domainregistrierungen
+  separat klären; den heutigen Umzug dafür nicht aufhalten.
+- [ ] Nach Abschluss Erkenntnisse in dauerhafte Dokumentation übernehmen, Folgearbeiten
+  auslagern und diese Arbeitsroadmap löschen.
+
+## Ergebnisprotokoll
+
+| Punkt | Ergebnis |
+|---|---|
+| Auslieferungscommit | offen |
+| Newsletter-Schalter / Produktionswert | `CG_ENABLE_NEWSLETTERS=false`; implementiert, Deployment offen |
+| Probedump-Pfad auf cg.test / SHA-256 | `/home/kaesual/import-test-2026-11-08/production-full.dump`; `a1f17f13fbea9c147df6f9857913f405d0d624098c98425bb58296c6e4152b6f`; vollständiger Dump erfolgreich importiert |
+| Restore-Dauer / Migrationsdauer | 34 s gesamt (pg_restore 11 s) / ca. 3 s für 23 Migrationen |
+| Geprüfte Importbefehlsfolge | Vollständiger Restore und Migrationen erfolgreich; 62 Tabellen vor Migration exakt gezählt, Passkey-Zuordnung vollständig; HTTPS-/Community-Smokecheck erfolgreich, manueller Login mit importiertem Konto offen |
+| Medien-Vorabkopie / Prüfung | Laut Jan erfolgreich abgeschlossen; Import in neues SeaweedFS und Medienprüfung offen |
+| SendGrid-Zustellung | offen |
+| Finaler Dump / Medienabgleich | offen |
+| Umschaltung / Freigabezeitpunkt | offen |
+
+---
+
+## Historische Planung bis 2026-11-07
+
+Die folgenden Phasen dokumentieren Vorarbeiten und frühere Entscheidungen.
+Offene Kästchen hier sind **keine zusätzliche Startbedingung**. Für die weitere
+Arbeit gilt die Checkliste oben. Frühere Merge-/Teststände können überholt sein;
+insbesondere sind Umzugs-Push, eigener Mailserver, Monitoring, Backup-Automatisierung
+und mehrtägiger Softlaunch keine Voraussetzungen mehr. Die frühere Agentenaufteilung
+beschreibt vergangene Arbeit und ist kein aktueller Delegationsauftrag.
 
 > Umbrella roadmap for moving the hosted Common Ground instance from `app.cg`
 > (Docker Swarm, `production` branch) to **`cg.box`** (one server, self-host
@@ -7,8 +278,7 @@
 > planning, whose decisions are carried over below. Delete this file when the move is done and `app.cg` is shut down; the
 > post-move items (P7) graduate into their own roadmaps or TODO.md.
 >
-> **No deadline, no blockers wanted:** "as soon as possible" means the move must
-> not wait on anything that isn't on this list — not that the list gets cut.
+> Historical scope; superseded by the minimal checklist of 2026-11-08 above.
 
 ## Target picture
 

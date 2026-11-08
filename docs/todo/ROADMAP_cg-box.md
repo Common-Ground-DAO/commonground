@@ -42,9 +42,12 @@
   System-Mails geprüft. Kombinierter Stand mit Transfer-Änderungen: 154 Backend-Tests,
   sechs Reauth-Dialog-Tests und beide Typechecks erfolgreich. Deployment steht noch aus.
   Bereits bestandene unveränderte Browsertests nicht grundlos wiederholen.
-- [ ] Änderungen committen/in `develop` integrieren; freigegebenen Stand gemäß bestehender
-  Release-Entscheidung nach `main` übernehmen. Auslieferungscommit festhalten und
-  gemergte Arbeitsbranches aufräumen.
+- [x] Änderungen lokal in `develop` integriert: Transfer-Scope `53aba9b`, Newsletter-Pause
+  und Importvorbereitung `70520b5`. Lokaler Transfer-Arbeitsbranch entfernt;
+  auf GitHub existiert kein gleichnamiger Arbeitsbranch.
+- [ ] GitHub-Push nach ausdrücklicher Freigabe (automatische Prüfung hat Push abgelehnt).
+- [ ] Freigegebenen Stand gemäß bestehender Release-Entscheidung nach `main` übernehmen
+  und auf cg.box ausliefern. Serverzugang bzw. Ausführung durch Jan noch abzustimmen.
 
 ## 2. Medienkopie — Vorabkopie abgeschlossen, S3-Import folgt
 
@@ -250,7 +253,7 @@ setzen, bevor produktive Daten mit aktivem Mailversand laufen.**
 
 | Punkt | Ergebnis |
 |---|---|
-| Auslieferungscommit | offen |
+| Auslieferungscommit | Kandidat `70520b5` lokal auf `develop`; enthält Transfer-Scope `53aba9b`, Push und Serverdeployment offen |
 | Newsletter-Schalter / Produktionswert | `CG_ENABLE_NEWSLETTERS=false`; implementiert, Deployment offen |
 | Probedump-Pfad auf cg.test / SHA-256 | `/home/kaesual/import-test-2026-11-08/production-full.dump`; `a1f17f13fbea9c147df6f9857913f405d0d624098c98425bb58296c6e4152b6f`; vollständiger Dump erfolgreich importiert |
 | Restore-Dauer / Migrationsdauer | 34 s gesamt (pg_restore 11 s) / ca. 3 s für 23 Migrationen |

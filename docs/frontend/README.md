@@ -63,6 +63,7 @@
 > the transfer page's account identifier and "This isn't me" against commit 04c72b2, 2026-11-07;
 > the step-up dialog's methods (`reauthMethods`) against commit 53aba9b, 2026-11-08;
 > Home footer destinations against f5981cb plus working changes, 2026-11-08
+> Migration roadmap references closed out against commit 5d0df48, 2026-11-08.
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -1423,7 +1424,7 @@ Constraints in the root `package.json` that are not self-explanatory. The
 and the 2026-10-31 refresh (F6) moved every package to its newest in-major
 release that has passed the 7-day age gate (except `mediasoup-client`, which
 moves together with the backend's `mediasoup` and its pinned worker); the
-deferred majors came in waves (`docs/todo/ROADMAP_cg-box.md`): TypeScript 6
+deferred majors came in waves (the completed cg.box roadmap, retained in git at `5d0df48`): TypeScript 6
 and joi 18 with wave M1 (2026-10-31), Vite 8 (with `@vitejs/plugin-react` 6,
 `vite-plugin-svgr` 5 and `vite-plugin-node-polyfills` 0.28) and react-router 7
 with wave M3 (2026-11-01), Tailwind CSS 4 with wave M4 (2026-11-02).

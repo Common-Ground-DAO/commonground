@@ -21,9 +21,8 @@
   unconfirmed** (2026-10-31, carried over when `ROADMAP_dependency-updates.md` and
   `ROADMAP_IMAGE_FILTER.md` were dissolved). Everything below was verified headlessly
   (API smokes, puppeteer suites, pixel/byte diffs) but needs a real browser/device,
-  and neither roadmap recorded it as done. Natural home: the browser passes of the
-  major-version waves in `ROADMAP_cg-box.md` (P2) on the test VM. Confirm once, then
-  strike:
+  and neither roadmap recorded it as done. The migration was accepted on 2026-11-08, but this broader matrix is not
+  individually attested by that acceptance. Confirm the remaining cases, then strike:
   - auth: passkeys on the main origin (sign-up, login, step-up; once the G4 UI
     lands), a pre-migration passkey on a legacy CG ID gateway, a cross-device
     (hybrid) attempt; every wallet login (MetaMask,
@@ -49,18 +48,36 @@
     attachments) and on a low-end device; a spot check of the server gate with
     real material.
 
-## Superseded by ROADMAP_cg-box.md (hosted Swarm retired)
+## cg.box follow-up after acceptance (2026-11-08)
 
-The hosted `app.cg` Docker Swarm stack gets no further rollouts; the hosted instance
-moves to a single self-host server (`ROADMAP_cg-box.md`). These items only concerned
-that stack — confirm and delete:
+The move is accepted; the operational record lives in [deployment docs](../deployment/README.md#official-cgbox-instance--accepted-2026-11-08).
+These tasks were deferred and do not reopen the migration:
 
-- Staging verification of the mediasoup 3.14 → 3.23 jump on the Swarm
-  `mediasoup_staging` inventory (the two-peer call checklist itself, incl. the
-  announced-address check, carries over to the test VM and cg.box — see the
-  manual-pass item above).
-- Cutting the Swarm stack over to the single `redis` service (or `REDIS_URL`).
-- Pinning SeaweedFS in the Swarm stack files and collapsing its three seaweed services.
+- [ ] Confirm the old production stack is stopped; disable the temporary `cg-import`
+  login and close its remaining sessions. Keep the imported source files and dump
+  until their retention period is agreed; do not delete them as part of acceptance.
+- [ ] Schedule daily local backups on cg.box and test restoration. Jan will arrange
+  a separate server which pulls completed backups daily over SSH/SCP; set retention
+  and access when that server is ready.
+- [ ] Add monitoring and choose the notification channel; Telegram is undecided.
+- [ ] Decide whether to configure X/Twitter, WalletConnect and Giphy. Add their
+  keys and required callback/origin settings only if retained.
+- [ ] Review the imported legal texts and any required legal notice. Consider
+  configurable legal/help links for self-hosted instances and audit remaining
+  official-site links (Home banner, feedback/support, premium, roles, newsletters,
+  plugin editor/appstore and identity help). The three Home footer links are migrated.
+- [ ] Set the end of the app.cg/id.app.cg gateway phase and the subsequent redirects;
+  decide registration retention before changing gateway/CGID compatibility code.
+- [ ] Revisit a local mail relay and newsletter delivery later; system mail currently
+  uses SendGrid and newsletters remain paused.
+- [ ] Retire obsolete Azure/Swarm/nginx deployment files after moving the reference-client
+  OpenAPI drift check and conformance suite to GitHub Actions (see existing CI task).
+  Swarm Redis/SeaweedFS rollout tasks are obsolete; no further Swarm deployment is planned.
+- [ ] Maintainer follow-up on issue #87 about call reliability, mentioning the
+  2026-10-28 ICE-TCP/startup fixes; draft and send separately when requested.
+- [ ] Evaluate removal of the legacy `/e/*` redirect separately from the migration.
+- [ ] If desired, scope separate workstreams for Ansible operations tooling, GHCR
+  images and contributor VM setup; these were not required for the accepted move.
 
 ## Maintainer decisions needed
 
@@ -96,8 +113,7 @@ that stack — confirm and delete:
   `init.sh` advises an A record only. Doing it properly: IPv6 on the `cryptogram`
   network (Docker ≥ 27 allocates a ULA prefix and NATs published ports with the client
   address kept), an IPv6 listen/announce address for mediasoup, `mail-dns` with
-  `ip6:` if the relay sends over IPv6, and a test on a host with public IPv6. Decide
-  whether cg.box needs it at launch.
+  `ip6:` if the relay sends over IPv6, and a test on a host with public IPv6. cg.box launched with IPv4; decide whether to add IPv6 later.
 
 ## Cleanup candidates (small, self-contained)
 
@@ -278,7 +294,7 @@ that stack — confirm and delete:
 - [ ] **Reference-client CI triggers point at a merged branch** (2026-10-31) —
   `pipelines/reference-client-conformance.yml` still names `feat/reference-client` in
   its push trigger and nightly schedule. Point it at `develop`; and since
-  `ROADMAP_cg-box.md` (P7) deletes the Azure pipelines, the OpenAPI drift check and
+  the post-migration cleanup will retire the Azure pipelines, the OpenAPI drift check and
   the conformance suite need a new home (GitHub Actions) before that, or they stop
   running.
 - [ ] **Triage the open conformance findings** (2026-08-06, reference-client
@@ -469,10 +485,10 @@ that stack — confirm and delete:
   abuse-prevention and UI design. Nothing in the bearer allowlist or the bot socket
   contract may accidentally enable them.
 
-## Notes for the major-version waves (ROADMAP_cg-box.md)
+## Remaining notes from the major-version waves
 
-Forward notes from the 2026-08 dependency updates, for the P2 waves of
-`ROADMAP_cg-box.md`. The current pins and their reasons are documented in
+Forward notes from the 2026-08 dependency updates and the completed cg.box
+migration (historical roadmap in git at `5d0df48`). The current pins and their reasons are documented in
 [docs/frontend](../frontend/README.md#dependency-pins-and-constraints) and
 [docs/backend](../backend/README.md#8-dependency-notes); this list is what each
 wave has to *change*.

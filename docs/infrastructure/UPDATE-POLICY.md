@@ -12,11 +12,12 @@
 > Tailwind 4 out of the Renovate majors list, which is gone with it (wave M4), against
 > commit 440c779, 2026-11-02; the standing exception for the host's distribution
 > security updates (`harden.sh`) against commit 170a73b, 2026-11-03
+> Migration roadmap references closed out against commit 5d0df48, 2026-11-08.
 
 # Update policy: 7-day minimum release age (3 days for security fixes)
 
 This is the supply-chain policy for every third-party artifact Common Ground
-builds from or runs (roadmap decision 3, `docs/todo/ROADMAP_cg-box.md`). It
+builds from or runs (roadmap decision 3, the completed cg.box roadmap, retained in git at `5d0df48`). It
 applies to all deployment shapes (dev stack, self-host, the hosted move to
 cg.box) and to every agent or human who changes dependencies.
 
@@ -100,13 +101,13 @@ one row per artifact).
 | Date | Package / version (ecosystem) | Advisory | Published | Where | Reason / mechanism |
 |---|---|---|---|---|---|
 | 2026-10-31 | `joi` 17.13.9 (npm) | GHSA-4528-x5fx-h6hg (high) | 2026-10-28T10:04Z | root, `srv/` (floor `^17.13.9`) | quadratic split in `string().email({ multiple: true })`; not reachable today (no validator uses `multiple: true`), taken anyway as the rule's first application. `npmPreapprovedPackages` entry in the root `.yarnrc.yml` until 2026-11-04; replaced by the 18.3.1 row below the same day |
-| 2026-10-31 | `joi` 18.3.1 (npm) | GHSA-4528-x5fx-h6hg (high) | 2026-10-28T09:59Z | root, `srv/` (`^18.3.1`) | the joi 18 upgrade (wave M1 of `docs/todo/ROADMAP_cg-box.md`): the advisory also covers `>= 18.0.0, < 18.3.1`, so the newest release older than 7 days (18.3.0) would have been vulnerable. Same reachability as above. The `npmPreapprovedPackages` entry `"joi@18.3.1"` replaced `"joi@17.13.9"` in the root `.yarnrc.yml` (no lockfile resolves joi 17 any more); remove it on 2026-11-04 |
+| 2026-10-31 | `joi` 18.3.1 (npm) | GHSA-4528-x5fx-h6hg (high) | 2026-10-28T09:59Z | root, `srv/` (`^18.3.1`) | the joi 18 upgrade (wave M1 of the completed cg.box roadmap, retained in git at `5d0df48`): the advisory also covers `>= 18.0.0, < 18.3.1`, so the newest release older than 7 days (18.3.0) would have been vulnerable. Same reachability as above. The `npmPreapprovedPackages` entry `"joi@18.3.1"` replaced `"joi@17.13.9"` in the root `.yarnrc.yml` (no lockfile resolves joi 17 any more); remove it on 2026-11-04 |
 | 2026-10-31 | `follow-redirects` 1.16.2 (npm) | GHSA-mrwp-f3q8-3g9p (high) | 2026-10-25T21:32Z | root, `srv/`, `contracts/`, `docker/hardhat/node/` (lockfiles, via `yarn up -R`) | cross-realm `sensitiveHeaders` arrays; not reachable today (the code never sets `sensitiveHeaders`). `npmPreapprovedPackages` entry in the root `.yarnrc.yml` until 2026-11-01 |
 
 ## Open advisories
 
 What `yarn npm audit --all --recursive` still reports after the in-major
-refresh of 2026-10-31 (F6 of `docs/todo/ROADMAP_cg-box.md`), and why each entry
+refresh of 2026-10-31 (F6 of the completed cg.box roadmap, retained in git at `5d0df48`), and why each entry
 is still there. Yarn's audit also lists **deprecated** packages (no advisory
 id); those are counted but only named per chain below. Re-run the audit in
 every workspace when updating this list and replace it as a whole.

@@ -130,11 +130,19 @@ declare global {
                 } | {
                     /** after a fresh User/prepareWalletAction of a login-enabled wallet */
                     type: 'wallet';
+                } | {
+                    type: 'verificationCode';
+                    code: string;
                 };
                 type Response = {
                     /** epoch ms until which sensitive actions are allowed */
                     validUntil: number;
                 };
+            }
+
+            namespace requestReauthenticationCode {
+                type Request = Record<string, never>;
+                type Response = void;
             }
 
             namespace requestSignupEmailCode {
@@ -573,6 +581,8 @@ declare global {
                      * enough to add what is missing; false: sign in again
                      */
                     recentSignIn?: boolean;
+                    /** Mail enabled and the account has a verified address. */
+                    canReauthenticateWithEmail?: boolean;
                 };
             }
 

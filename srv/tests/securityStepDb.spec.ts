@@ -29,6 +29,7 @@ import { Pool } from 'pg';
 import { webcrypto } from 'node:crypto';
 import { TransferLinksAndSecurityStep1793520000000 as Migration } from '../migrations/1793520000000-transferLinksAndSecurityStep';
 import { SessionGenerations1793560000000 as GenerationsMigration } from '../migrations/1793560000000-sessionGenerations';
+import { TransferPasskeySetup1794147976044 as PasskeySetupMigration } from '../migrations/1794147976044-transferPasskeySetup';
 import { TEST_PG_HOST, TEST_PG_PORT, TEST_PG_PASSWORD, describeDb } from './helpers/testPg';
 
 const HOST = TEST_PG_HOST;
@@ -106,7 +107,8 @@ describeDb('account-security step and transfer links on PostgreSQL', () => {
       "verificationCode" varchar(32), "verificationCodeExpiration" timestamptz(3))`);
     await q(`CREATE UNIQUE INDEX users_email_lower ON users (LOWER(email))`);
     await q(`CREATE INDEX "idx_users_verification_codes" ON users ("verificationCode")`);
-    await q(`CREATE TABLE passkeys (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "userId" uuid, "rpId" text, "deletedAt" timestamptz)`);
+    await q(`CREATE TABLE passkeys (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "userId" uuid REFERENCES users(id) ON DELETE CASCADE, "rpId" text, "deletedAt" timestamptz,
+      origin text, name text, data jsonb, counter bigint DEFAULT 0)`);
     await q(`CREATE TABLE wallets (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "userId" uuid, type text, "loginEnabled" boolean, "deletedAt" timestamptz)`);
     await q(`CREATE TABLE devices (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "userId" uuid, "publicKey" jsonb,
@@ -116,6 +118,7 @@ describeDb('account-security step and transfer links on PostgreSQL', () => {
     await q(`GRANT SELECT ON devices TO mediasoup`);
     await q(`GRANT ALL PRIVILEGES ON users, devices TO writer`);
     await q(`REVOKE ALL ON users, passkeys, wallets FROM mediasoup`);
+    await q(`GRANT SELECT, INSERT, UPDATE ON passkeys TO writer`);
 
     const runner = { query: (sql: string, params?: unknown[]) => q(sql, params) } as any;
     const migration = new Migration();
@@ -126,6 +129,11 @@ describeDb('account-security step and transfer links on PostgreSQL', () => {
     await generations.up(runner);
     await generations.down(runner);
     await generations.up(runner);
+
+    const passkeySetup = new PasskeySetupMigration();
+    await passkeySetup.up(runner);
+    await passkeySetup.down(runner);
+    await passkeySetup.up(runner);
 
     const insert = async (sql: string, params: unknown[] = []) => (await q(sql, params)).rows[0].id as string;
     user = await insert(`INSERT INTO users (email, "emailVerified", password) VALUES ('a@example.org', true, 'hash') RETURNING id`);
@@ -175,16 +183,40 @@ describeDb('account-security step and transfer links on PostgreSQL', () => {
     }
   });
 
+  it('first migrated passkey: concurrent attempts store exactly one, and deletion does not reopen setup', async () => {
+    const account = (await q(`INSERT INTO users (email) VALUES ('migration-first@example.org') RETURNING id`)).rows[0].id;
+    const { helper, pool } = withRole('writer', () => ({
+      helper: require('../repositories/passkeys').default as typeof import('../repositories/passkeys').default,
+      pool: require('../util/postgres').default as Pool,
+    }));
+    const key = (credentialID: string) => ({ rpId: 'cg.box', origin: 'https://cg.box', name: 'test',
+      credentialID, webAuthnUserID: 'handle', credentialPublicKeyBase64: 'AA==',
+      credentialDeviceType: 'singleDevice', credentialBackedUp: false, counter: 0 });
+    try {
+      const result = await Promise.allSettled([
+        helper.addFirstPasskey(account, key('first')),
+        helper.addFirstPasskey(account, key('second')),
+      ]);
+      expect(result.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+      expect(result.filter(r => r.status === 'rejected')).toHaveLength(1);
+      const stored = await q(`SELECT id FROM passkeys WHERE "userId" = $1`, [account]);
+      expect(stored.rows).toHaveLength(1);
+      await q(`UPDATE passkeys SET "deletedAt" = now() WHERE "userId" = $1`, [account]);
+      await expect(helper.addFirstPasskey(account, key('third'))).rejects.toThrow('REAUTH_REQUIRED');
+    }
+    finally { await pool.end(); }
+  });
+
   it('transfer tokens: of 20 concurrent redemptions exactly one succeeds; expired and deleted fail', async () => {
     const { helper, pool } = withRole('admin', () => ({
       helper: require('../repositories/transferTokens').default as typeof import('../repositories/transferTokens').default,
       pool: require('../util/postgres').default as Pool,
     }));
     try {
-      const { token } = await helper.create(user, '/c/x/', 600000, 0);
+      const { token } = await helper.create(user, '/c/x/', 600000, 0, 'cg.box');
       await expect(helper.peek(token)).resolves.toMatchObject({ userId: user });
       const results = await Promise.all(Array.from({ length: 20 }, () => helper.consume(token)));
-      expect(results.filter(Boolean)).toEqual([{ userId: user, nextPath: '/c/x/' }]);
+      expect(results.filter(Boolean)).toEqual([{ userId: user, nextPath: '/c/x/', passkeySetupRpId: 'cg.box' }]);
       await expect(helper.consume(token)).resolves.toBeNull();
 
       const expired = await helper.create(user, null, 1, 0);

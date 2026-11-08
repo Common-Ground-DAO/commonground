@@ -2,11 +2,11 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-export type ReauthMethod = 'passkey' | 'password' | 'wallet';
+export type ReauthMethod = 'passkey' | 'password' | 'wallet' | 'email';
 
 /**
  * The ways the "Confirm it's you" dialog offers, the first one shown first:
- * a passkey of this site, the password, a sign-in wallet — only those the
+ * a passkey of this site, the password, a sign-in wallet, a verified email — only those the
  * account has. Whether it has a password comes from User/getSecurityStatus;
  * while that is unknown (`null`), the password is offered and the server
  * answers.
@@ -15,6 +15,7 @@ export function reauthMethods(account: {
   canUsePasskey: boolean;
   hasPassword: boolean | null;
   hasLoginWallet: boolean;
+  canUseEmail?: boolean;
 }): ReauthMethod[] {
   const methods: ReauthMethod[] = [];
   if (account.canUsePasskey) {
@@ -25,6 +26,9 @@ export function reauthMethods(account: {
   }
   if (account.hasLoginWallet) {
     methods.push('wallet');
+  }
+  if (account.canUseEmail) {
+    methods.push('email');
   }
   return methods;
 }

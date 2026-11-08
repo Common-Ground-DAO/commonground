@@ -27,6 +27,8 @@
 > the raw pool's size (`PG_POOL_MAX`) against commit 696102b, 2026-11-06;
 > the `transfer_tokens.usedAt` row (declined links, sign-out) against commit 04c72b2, 2026-11-07; production-dump restore rehearsal against
 > c18b233 plus working-tree restore pre-flight changes, 2026-11-08
+> Passkey migration setup and email reauthentication verified against 556a989
+> plus working changes and regression tests, 2026-11-08.
 
 Common Ground uses PostgreSQL with TypeORM as the ORM layer. The database name is `cryptogram`. All entities live in `srv/entities/` and migrations in `srv/migrations/`. Schema synchronization is disabled (`synchronize: false`); all schema changes go through migrations.
 
@@ -154,6 +156,7 @@ One-time sign-in links from an instance on the same database (the app.cg gateway
 | `userId` | `uuid` | FK -> `users.id` (CASCADE), indexed |
 | `tokenHash` | `char(64)` | SHA-256 of the token, unique, `select: false`; the token itself is never stored |
 | `nextPath` | `varchar(2048)` | Nullable, a same-site path to continue to |
+| `passkeySetupRpId` | `text` | Nullable target RP for first-passkey setup, set only after a fresh legacy passkey authentication; migration `1794147976044-transferPasskeySetup` |
 | `createdAt` | `timestamptz(3)` | Default `now()` |
 | `expiresAt` | `timestamptz(3)` | About 10 minutes after creation, indexed |
 | `usedAt` | `timestamptz(3)` | Nullable; set by the single statement that redeems the token, or when the link (or another unused link of the account) is declined, or its owner signs out where it was minted (it then never redeems) |

@@ -60,6 +60,10 @@ class UserApiConnector extends BaseApiConnector {
   }
 
   /** step-up: proves again that the session user is at the keyboard */
+  public async requestReauthenticationCode(): Promise<void> {
+    await this.ajax<API.User.requestReauthenticationCode.Response>("POST", "/requestReauthenticationCode", {});
+  }
+
   public async reauthenticate(data: API.User.reauthenticate.Request): Promise<API.User.reauthenticate.Response> {
     return await this.ajax<API.User.reauthenticate.Response>(
       "POST",

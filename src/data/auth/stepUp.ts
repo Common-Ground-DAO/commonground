@@ -10,9 +10,10 @@
  * session's last authentication is older than its window. `BaseApiConnector`
  * then calls `stepUpManager.request(...)`, which opens the ReauthDialog
  * (registered by StepUpProvider) and resolves `true` once the user confirmed
- * with a passkey, the password or a wallet — the connector retries the
- * request once. Screens that run a WebAuthn ceremony afterwards (adding a
- * passkey) ask `isFresh()` first, because a ceremony must start from a click.
+ * with a passkey, the password, a wallet or a verified email code — the
+ * connector retries the request once. Passkey registration checks whether
+ * that confirmation interrupted its options request and then requires a
+ * new click before starting the WebAuthn ceremony.
  *
  * Kept free of React so the API layer can import it.
  */

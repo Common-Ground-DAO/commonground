@@ -25,7 +25,7 @@ import { requireRecentAuth } from "../util/authSession";
 import { getVerifiedSignupEmail } from "../util/signupEmail";
 import { emailEnabled } from "./emails";
 import { notifyNewSignInMethod } from "../util/signInNotice";
-import { requireAuthToAdd } from "../util/securityStep";
+import { requirePasskeyAddition } from "../util/passkeyAddition";
 import { changeAndSignOut } from "../util/signOutOtherDevices";
 
 // Passkeys on the instance's own origin (docs/auth-identity §7). Mounted only
@@ -99,7 +99,7 @@ registerPostRoute<
       // adding a sign-in method to an existing account
       // (while the account has no sign-in method here at all, a sign-in
       // within the hour is enough — srv/util/securityStep.ts)
-      await requireAuthToAdd(request, 'sign-in-method', { emailRequired: emailEnabled() });
+      await requirePasskeyAddition(request, rp.rpId, emailEnabled());
       const [ownData, existing, existingHandle] = await Promise.all([
         userHelper.getOwnDataById(user.id),
         passkeyHelper.listUserPasskeys(user.id, rp.rpId),
@@ -151,12 +151,18 @@ registerPostRoute<
     const { user } = request.session;
     const name = data.name || defaultPasskeyName(request);
     if (user) {
-      await requireAuthToAdd(request, 'sign-in-method', { emailRequired: emailEnabled() });
+      const firstOnly = await requirePasskeyAddition(request, rp.rpId, emailEnabled());
       const passkey = await verifyRegistration(rp, request.session, data.registrationResponse, {
         userId: user.id,
         name,
       });
-      await passkeyHelper.addPasskey(user.id, passkey);
+      if (firstOnly) {
+        await passkeyHelper.addFirstPasskey(user.id, passkey);
+        delete request.session.transferPasskeyRpId;
+      }
+      else {
+        await passkeyHelper.addPasskey(user.id, passkey);
+      }
       const rows = await passkeyHelper.listUserPasskeys(user.id, rp.rpId);
       await emitOwnPasskeys(user.id, rows);
 

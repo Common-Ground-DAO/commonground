@@ -32,7 +32,7 @@ function formatDate(value: string | null) {
 /**
  * The account's passkeys on this instance (Passkey/list): name, created, last
  * used, synced; rename, remove (step-up; never the last way to sign in) and
- * add (step-up first: the ceremony needs a click of its own afterwards).
+ * add (the server checks authorization; a confirmation requires a new click).
  * The list is also reported to the browser's passkey manager (Signal API).
  */
 const PasskeySettings: React.FC<Props> = (props) => {
@@ -119,23 +119,9 @@ const PasskeySettings: React.FC<Props> = (props) => {
     }
   }, [passkey, lockModal, showSnackbar]);
 
-  const addPasskey = useCallback(async () => {
-    lockModal(true);
-    let result: Awaited<ReturnType<typeof ensureRecentAuth>>;
-    try {
-      result = await ensureRecentAuth('add a passkey', { allowWallet: true });
-    }
-    finally {
-      lockModal(false);
-    }
-    if (result === 'fresh') {
-      await createPasskey();
-    }
-    else if (result === 'reauthenticated') {
-      // the confirmation used up this click; the passkey dialog needs a new one
-      setConfirmedForAdd(true);
-    }
-  }, [ensureRecentAuth, createPasskey, lockModal]);
+  // Let registrationOptions decide: a transfer can authorize first setup without
+  // general step-up. registerPasskey already pauses for a fresh click after reauth.
+  const addPasskey = createPasskey;
 
   const saveName = useCallback(async () => {
     if (!renaming) {

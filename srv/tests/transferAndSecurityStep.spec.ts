@@ -124,6 +124,7 @@ const emailUtils = {
   sendNewSignInMethodEmail: jest.fn(async () => undefined),
   sendVerificationEmail: jest.fn(async () => undefined),
   sendOneTimePasswordEmail: jest.fn(async () => undefined),
+  sendReauthenticationCodeEmail: jest.fn(async (_email: string, _code: string) => undefined),
   sendAddressInUseEmail: jest.fn(async () => undefined),
   sendEmailChangedEmail: jest.fn(async () => undefined),
   sendPasswordChangedEmail: jest.fn(async () => undefined),
@@ -147,14 +148,14 @@ jest.doMock('../repositories/loginMethods', () => ({
 }));
 
 // --- transfer tokens: a table with the semantics of the SQL statements
-type TokenRow = { hash: string; userId: string; nextPath: string | null; expiresAt: number; usedAt: number | null };
+type TokenRow = { passkeySetupRpId: string | null; hash: string; userId: string; nextPath: string | null; expiresAt: number; usedAt: number | null };
 const tokenRows: TokenRow[] = [];
 const transferTokens = {
-  create: jest.fn(async (userId: string, nextPath: string | null, ttlMs: number) => {
+  create: jest.fn(async (userId: string, nextPath: string | null, ttlMs: number, _generation: number, passkeySetupRpId: string | null = null) => {
     const { newTransferToken, hashTransferToken } = require('../util/transferLink');
     const token = newTransferToken();
     const expiresAt = Date.now() + ttlMs;
-    tokenRows.push({ hash: hashTransferToken(token), userId, nextPath, expiresAt, usedAt: null });
+    tokenRows.push({ passkeySetupRpId, hash: hashTransferToken(token), userId, nextPath, expiresAt, usedAt: null });
     return { token, expiresAt: new Date(expiresAt) };
   }),
   peek: jest.fn(async (token: string) => {
@@ -168,7 +169,7 @@ const transferTokens = {
     const row = tokenRows.find(r => r.hash === hashTransferToken(token) && r.usedAt === null && r.expiresAt > Date.now());
     if (!row) return null;
     row.usedAt = Date.now();
-    return { userId: row.userId, nextPath: row.nextPath };
+    return { userId: row.userId, nextPath: row.nextPath, passkeySetupRpId: row.passkeySetupRpId };
   }),
   decline: jest.fn(async (token: string) => {
     const { hashTransferToken } = require('../util/transferLink');
@@ -355,7 +356,7 @@ describe('transfer links: minting', () => {
     expect(url).toMatch(/^https:\/\/cg\.box\/transfer#[A-Za-z0-9_-]{43}$/);
     expect(expiresAt).toBeGreaterThan(Date.now() + 9 * 60 * 1000);
     expect(expiresAt).toBeLessThanOrEqual(Date.now() + 10 * 60 * 1000);
-    expect(transferTokens.create).toHaveBeenCalledWith(USER, '/c/abc/?x=1', 10 * 60 * 1000, 0);
+    expect(transferTokens.create).toHaveBeenCalledWith(USER, '/c/abc/?x=1', 10 * 60 * 1000, 0, null);
     // the stored value is the hash, never the token
     const token = url.split('#')[1];
     expect(tokenRows[0].hash).toBe(transferLink.hashTransferToken(token));
@@ -368,7 +369,7 @@ describe('transfer links: minting', () => {
       // dot segments that normalize into a protocol-relative path
       '/.//evil.com', '/..//evil.com', '/a/..//evil.com', '/%2e//evil.com']) {
       await call('User/createTransferLink', loggedIn(), { nextPath: next });
-      expect(transferTokens.create).toHaveBeenLastCalledWith(USER, null, expect.any(Number), 0);
+      expect(transferTokens.create).toHaveBeenLastCalledWith(USER, null, expect.any(Number), 0, null);
     }
   });
 
@@ -1070,5 +1071,81 @@ describe('logout', () => {
     const oldSid = request.sessionID;
     await call('User/logout', request, undefined);
     expect(sessionStore.has(oldSid)).toBe(false);
+  });
+});
+
+
+describe('first-passkey transfer proof', () => {
+  it('attests only a fresh legacy passkey login, without upgrading ordinary transfers', async () => {
+    for (const [legacy, method, minutes, expected] of [
+      [true, 'passkey', 0, 'cg.box'], [false, 'passkey', 0, null],
+      [true, 'password', 0, null], [true, 'wallet', 0, null],
+      [true, 'transfer', 0, null], [true, 'passkey', 6, null],
+    ] as const) {
+      process.env.CG_LEGACY_CGID = String(legacy);
+      await call('User/createTransferLink', signedInAgo(minutes, method), {});
+      expect(tokenRows.at(-1)?.passkeySetupRpId).toBe(expected);
+    }
+  });
+
+  it('carries the server claim into a regenerated transfer session, once', async () => {
+    process.env.CG_LEGACY_CGID = 'true';
+    const { url } = await call('User/createTransferLink', fresh(USER, 'passkey'), {});
+    delete process.env.CG_LEGACY_CGID;
+    const token = url.split('#')[1];
+    const request = makeRequest();
+    await call('User/redeemTransferLink', request, { token, device: { publicKey: DEVICE_KEY } });
+    expect(request.session).toMatchObject({ authMethod: 'transfer', transferPasskeyRpId: 'cg.box' });
+    expect(sessionStore.get(request.sessionID)).toMatchObject({ transferPasskeyRpId: 'cg.box' });
+    await expect(call('User/redeemTransferLink', makeRequest(), { token, device: { publicKey: DEVICE_KEY } })).rejects.toThrow('TRANSFER_LINK_INVALID');
+  });
+});
+
+describe('email reauthentication', () => {
+  it('confirms the current account using its verified address and refreshes step-up', async () => {
+    const request = fresh(USER, 'transfer');
+    await call('User/requestReauthenticationCode', request, {});
+    expect(emailUtils.sendReauthenticationCodeEmail).toHaveBeenCalledWith(COMPLETE.email, expect.stringMatching(/^\d{8}$/));
+    const code = lastCode(emailUtils.sendReauthenticationCodeEmail);
+    await expect(call('User/reauthenticate', request, { type: 'verificationCode', code })).resolves.toMatchObject({ validUntil: expect.any(Number) });
+    expect(request.session.authMethod).toBe('verificationCode');
+    await expect(call('User/reauthenticate', request, { type: 'verificationCode', code })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
+  });
+
+  it('does not send for anonymous, unverified or mail-disabled sessions, or accept a client-selected address', async () => {
+    await expect(call('User/requestReauthenticationCode', makeRequest(), {})).rejects.toThrow('LOGIN_REQUIRED');
+    await expect(call('User/requestReauthenticationCode', loggedIn(), { email: 'foreign@example.org' })).rejects.toThrow();
+    facts[USER].emailVerified = false;
+    await expect(call('User/requestReauthenticationCode', loggedIn(), {})).rejects.toThrow('NOT_ALLOWED');
+    facts[USER].emailVerified = true;
+    mailEnabled = false;
+    await expect(call('User/requestReauthenticationCode', loggedIn(), {})).rejects.toThrow('EMAIL_DISABLED');
+    expect(emailUtils.sendReauthenticationCodeEmail).not.toHaveBeenCalled();
+  });
+
+  it('isolates codes by purpose, account and the currently verified address', async () => {
+    const { issueEmailCode } = require('../util/emailCodes');
+    const loginCode = await issueEmailCode('login', USER, COMPLETE.email);
+    await expect(call('User/reauthenticate', loggedIn(), { type: 'verificationCode', code: loginCode })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
+    await call('User/requestReauthenticationCode', loggedIn(), {});
+    const code = lastCode(emailUtils.sendReauthenticationCodeEmail);
+    await expect(call('User/reauthenticate', loggedIn(OTHER_USER), { type: 'verificationCode', code })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
+    facts[USER].email = 'changed@example.org';
+    await expect(call('User/reauthenticate', loggedIn(), { type: 'verificationCode', code })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
+  });
+
+  it('expires codes and exhausts wrong guesses without refreshing the session', async () => {
+    const { issueEmailCode, EMAIL_CODE_MAX_ATTEMPTS } = require('../util/emailCodes');
+    const expired = await issueEmailCode('reauth', USER, COMPLETE.email, Date.now() - 16 * 60 * 1000);
+    await expect(call('User/reauthenticate', loggedIn(), { type: 'verificationCode', code: expired })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
+    await call('User/requestReauthenticationCode', loggedIn(), {});
+    const code = lastCode(emailUtils.sendReauthenticationCodeEmail);
+    const wrong = code === '00000000' ? '11111111' : '00000000';
+    const request = loggedIn();
+    for (let i = 0; i < EMAIL_CODE_MAX_ATTEMPTS; i++) {
+      await expect(call('User/reauthenticate', request, { type: 'verificationCode', code: wrong })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
+    }
+    await expect(call('User/reauthenticate', request, { type: 'verificationCode', code })).rejects.toThrow('VERIFY_EMAIL_INVALID_TOKEN');
+    expect(request.session.authAt).toBeUndefined();
   });
 });

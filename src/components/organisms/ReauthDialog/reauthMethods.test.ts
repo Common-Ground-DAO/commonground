@@ -45,3 +45,16 @@ describe('shownReauthMethod', () => {
     expect(shownReauthMethod(null, { ...account, passwordPending: false })).toBe('password');
   });
 });
+
+
+describe('email confirmation availability', () => {
+  it('keeps email available even when a password and wallets are recorded', () => {
+    expect(reauthMethods({ canUsePasskey: false, hasPassword: true, hasLoginWallet: true, canUseEmail: true }))
+      .toEqual(['password', 'wallet', 'email']);
+  });
+  it('uses email as the remaining method only when the server permits it', () => {
+    const account = { canUsePasskey: false, hasPassword: false, hasLoginWallet: false, passwordPending: false };
+    expect(shownReauthMethod(null, { ...account, canUseEmail: true })).toBe('email');
+    expect(shownReauthMethod(null, { ...account, canUseEmail: false })).toBeNull();
+  });
+});

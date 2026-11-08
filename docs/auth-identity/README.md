@@ -28,6 +28,8 @@
 > identifier, declining and sign-out (§11), and the gateway's start-up checks and cookie notes (§12)
 > against commit 04c72b2, 2026-11-07; what a transfer-link session may add (§7, §11, §12) and the
 > step-up dialog's methods (§7) against commit 53aba9b, 2026-11-08
+> Passkey migration setup and email reauthentication verified against 556a989
+> plus working changes and regression tests, 2026-11-08.
 
 # Authentication & Identity
 
@@ -983,10 +985,22 @@ it may have nothing to confirm "it's you" with, so a sign-in (or transfer link) 
 silent device-key session alone is not (`REAUTH_REQUIRED` — the user signs in again or gets a new
 transfer link). Otherwise the plain step-up applies, exactly as for removing or replacing a method
 or a verified address: a transfer-link session never satisfies it, so for a complete account a
-transfer-link session is an ordinary sign-in and adds a method only after `User/reauthenticate`.
+transfer-link session is an ordinary sign-in. The first-passkey migration grant below is a
+separate, narrowly scoped exception.
 Whether the account lacks it is computed from the database at the time of the request
 (`computeSecurityStatus`, with the api's mail setting) — not from the session's cached
 `securityStepClearFor`, the realtime record in Valkey or anything the client sends.
+
+**First passkey after migration.** A transfer minted in legacy CG ID mode within five
+minutes of a passkey authentication carries `passkeySetupRpId` for the configured target host.
+The redeemed session stores this as `transferPasskeyRpId`; it can authorize registration of
+that account's first passkey on that RP for one hour after redemption, even if passwords or
+login wallets already exist. `requirePasskeyAddition` checks this independently of general
+step-up. The database insert locks the user and checks all passkey rows for that RP, including
+soft-deleted rows; competing attempts cannot both use the exception. Removing a passkey does
+not reopen it. A plain transfer, stale source authentication, other target RP, or a device-only
+login grants no such exception. Existing sessions/tokens receive no retroactive grant.
+Other additions, replacement/removal and device sign-out still use their normal guards.
 
 Protected: `User/setPassword` replacing a password; a new address via
 `User/requestEmailVerification` replacing a verified one (and, on an instance without mail, an
@@ -1017,19 +1031,27 @@ classified.
 `{type:'passkey', authenticationResponse}` (a `stepup` assertion of one of the user's own
 credentials), `{type:'password', password}` (also for accounts that have passkeys) or
 `{type:'wallet'}` (a `prepareWalletAction` signature of one of the user's login-enabled wallets,
-at most 5 minutes old, the wallet checked again as at login). It sets `authAt`/`authMethod` and returns `{ validUntil }`.
+at most 5 minutes old, the wallet checked again as at login), or
+`{type:'verificationCode', code}`. For the latter, logged-in clients first call
+`POST /User/requestReauthenticationCode {}`: the server sends an eight-digit code only to the
+account's current verified address. Mail must be enabled; send budgets are shared with login
+codes. Codes expire after 15 minutes, are consumed once, have a guess budget, and use a distinct
+`reauth` purpose so login/verification codes cannot be substituted. Verification reads the
+current verified address again. The endpoint accepts no client-selected address or user ID.
+It sets `authAt`/`authMethod` and returns `{ validUntil }`.
 
 **Client.** `BaseApiConnector` answers `REAUTH_REQUIRED` by opening the "Confirm it's you to
 {action}" dialog (`ReauthDialog`: of the account's own methods a passkey of this site first,
-then the password, then a sign-in wallet — `reauthMethods`; whether the account has a password it
+then the password, then a sign-in wallet, plus an email code when available — `reauthMethods`; whether the account has a password it
 learns from `User/getSecurityStatus`; a passkey or wallet shows at once, the password form only
 once the account is known to have one, or after a failed lookup) and retries
 the same request once after `User/reauthenticate`; a cancelled dialog surfaces as
 `REAUTH_REQUIRED` and is not shown as an error. The same dialog serves a session from a transfer
 link of a complete account; `redeemTransferLink` clears the client's freshness estimate, so the
-settings screens ask before a ceremony there too. Screens that start a WebAuthn ceremony after the
-confirmation (adding a passkey) or that need the prepared wallet afterwards (adding a sign-in
-wallet) confirm first (`useStepUp().ensureRecentAuth`). `LAST_LOGIN_METHOD` is shown as "This is
+passkey settings ask the server for registration options before deciding whether confirmation
+is needed. `registerPasskey` pauses after an actual confirmation dialog and asks for another click
+before starting WebAuthn. Wallet-addition screens still confirm before preparing the signature
+(`useStepUp().ensureRecentAuth`). `LAST_LOGIN_METHOD` is shown as "This is
 your last way to sign in …". Details: [frontend §10](../frontend/README.md#10-authentication-ui).
 
 ### Passkeys in the web app
@@ -1342,7 +1364,7 @@ never from how the session came about, and it is not enforced in legacy CG ID mo
   `/verify-email` …), which serve HTML. For a session whose account is in
   the step, only the step's endpoints work (method + path, case-insensitive): `User/`
   `getSecurityStatus`, `checkLoginStatus`, `ensureSession`, `getSignableSecret`, `login`, `logout`,
-  `clearLoginSession`, `reauthenticate`, `setPassword`, `requestEmailVerification`, `verifyEmail`,
+  `clearLoginSession`, `reauthenticate`, `requestReauthenticationCode`, `setPassword`, `requestEmailVerification`, `verifyEmail`,
   `prepareWalletAction`, `addPreparedWallet`, `updateWallet`, `getWallets`, `getUserData`,
   `previewTransferLink`, `redeemTransferLink`, `emailUnsubscribe` (GET and POST, token-authenticated
   one-click links); `Passkey/` `registrationOptions`,
@@ -1364,13 +1386,14 @@ never from how the session came about, and it is not enforced in legacy CG ID mo
   `PASSKEY_RP_ID`, if set) like every backend process, for the relying party.
 - **What is missing** — `POST /User/getSecurityStatus` → `{ required, needsSignInMethod,
   needsVerifiedEmail, needsNewPassword, email, emailVerified, hasPassword, passkeys, loginWallets,
-  pendingEmail, recentSignIn }`; login responses carry `securityStepRequired`. `pendingEmail` is
+  pendingEmail, recentSignIn, canReauthenticateWithEmail }`; login responses carry `securityStepRequired`. `pendingEmail` is
   set after a code request whether or not the address was free, so it reveals nothing.
   `recentSignIn: false` means the session cannot add what is missing (see below).
 - **Completing it** — adding what is missing needs a sign-in or transfer link within the last
   60 minutes, but no step-up (`requireAuthToAdd`, [§7](#step-up-for-sensitive-actions)); a transfer
   link counts only for what the account still lacks at that moment, so once the step is done the
-  same session needs the step-up for every further change to its sign-in methods:
+  same session normally needs step-up for further changes (the first-passkey migration exception
+  is described in §7):
   a passkey on this origin, a password, or a wallet — a new one is linked as a sign-in wallet, one
   the account already has gets sign-in switched on; either way a SIWE signature checked against
   this instance's domain ([§5.2](#52-wallet-type-wallet--evm-only)) —, and an address confirmed

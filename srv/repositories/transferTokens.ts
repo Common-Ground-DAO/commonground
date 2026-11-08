@@ -24,14 +24,14 @@ class TransferTokenHelper {
    * minting session's generation. Returns the token itself — the only time
    * it exists outside the link.
    */
-  public async create(userId: string, nextPath: string | null, ttlMs: number, generation: number): Promise<{ token: string; expiresAt: Date }> {
+  public async create(userId: string, nextPath: string | null, ttlMs: number, generation: number, passkeySetupRpId: string | null = null): Promise<{ token: string; expiresAt: Date }> {
     await pool.query(`DELETE FROM transfer_tokens WHERE "expiresAt" < now() - interval '${RETENTION}'`);
     const token = newTransferToken();
     const result = await pool.query<{ expiresAt: Date }>(`
-      INSERT INTO transfer_tokens ("userId", "tokenHash", "nextPath", "expiresAt", "generation")
-      VALUES ($1, $2, $3, now() + ($4::integer * interval '1 millisecond'), $5)
+      INSERT INTO transfer_tokens ("userId", "tokenHash", "nextPath", "expiresAt", "generation", "passkeySetupRpId")
+      VALUES ($1, $2, $3, now() + ($4::integer * interval '1 millisecond'), $5, $6)
       RETURNING "expiresAt"
-    `, [userId, hashTransferToken(token), nextPath, ttlMs, generation]);
+    `, [userId, hashTransferToken(token), nextPath, ttlMs, generation, passkeySetupRpId]);
     return { token, expiresAt: result.rows[0].expiresAt };
   }
 
@@ -52,15 +52,15 @@ class TransferTokenHelper {
    * Uses the token up: one statement, so of two concurrent redemptions
    * exactly one gets the row. Null when unknown, expired or already used.
    */
-  public async consume(token: string): Promise<{ userId: string; nextPath: string | null } | null> {
-    const result = await pool.query<{ userId: string; nextPath: string | null }>(`
+  public async consume(token: string): Promise<{ userId: string; nextPath: string | null; passkeySetupRpId: string | null } | null> {
+    const result = await pool.query<{ userId: string; nextPath: string | null; passkeySetupRpId: string | null }>(`
       UPDATE transfer_tokens t
       SET "usedAt" = now()
       WHERE t."tokenHash" = $1
         AND t."usedAt" IS NULL
         AND t."expiresAt" > now()
         AND ${LIVE_USER}
-      RETURNING t."userId", t."nextPath"
+      RETURNING t."userId", t."nextPath", t."passkeySetupRpId"
     `, [hashTransferToken(token)]);
     return result.rows[0] ?? null;
   }

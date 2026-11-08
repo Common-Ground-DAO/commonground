@@ -183,6 +183,18 @@ class EmailUtils {
         await this.sendEmail({ to, subject, text, html: htmlTemplate });
     }
 
+    /** Fresh confirmation for a signed-in account; distinct from login codes. */
+    public async sendReauthenticationCodeEmail(to: string, code: string) {
+        const subject = 'Confirm your Common Ground account action';
+        const text = `Your confirmation code: ${code}\n\nEnter it in the confirmation dialog where you requested it. It is valid for 15 minutes. If you did not request this code, do not share it and ignore this email.\n`;
+        const html = `<tr><td colspan="4" style="padding:20px;text-align:center;">
+          <h2>Your confirmation code: ${escapeHtml(code)}</h2>
+          <p>Enter it in the confirmation dialog where you requested it. It is valid for 15 minutes.</p>
+          <p>If you did not request this code, do not share it and ignore this email.</p>
+        </td></tr>`;
+        await this.sendEmail({ to, subject, text, html: this.getHTMLTemplate(html, false) });
+    }
+
     /** Email login: the 8-digit one-time code. */
     public async sendOneTimePasswordEmail(to: string, code: string) {
         const subject = 'Your Common Ground login code';

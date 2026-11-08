@@ -126,6 +126,7 @@ const OPEN_ROUTES = new Set([
   "POST /user/logout",
   "POST /user/clearloginsession",
   "POST /user/reauthenticate",
+  "POST /user/requestreauthenticationcode",
   "POST /user/setpassword",
   "POST /user/requestemailverification",
   "POST /user/verifyemail",

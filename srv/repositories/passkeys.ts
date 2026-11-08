@@ -95,6 +95,34 @@ class PasskeyHelper {
     }
   }
 
+  /** Includes removed credentials: deletion never reopens migration setup. */
+  public async hasUserPasskeys(userId: string, rpId: string, db: Pool | PoolClient = pool): Promise<boolean> {
+    const result = await db.query(`SELECT 1 FROM passkeys WHERE "userId" = $1 AND "rpId" = $2 LIMIT 1`, [userId, rpId]);
+    return result.rows.length > 0;
+  }
+
+  /** Serializes first-passkey setup across transfers, including concurrent inserts. */
+  public async addFirstPasskey(userId: string, passkey: NewPasskey): Promise<string> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT "id" FROM users WHERE "id" = $1 FOR UPDATE', [userId]);
+      if (await this.hasUserPasskeys(userId, passkey.rpId, client)) {
+        throw new Error(errors.server.REAUTH_REQUIRED);
+      }
+      const id = await this.addPasskey(userId, passkey, client);
+      await client.query('COMMIT');
+      return id;
+    }
+    catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    }
+    finally {
+      client.release();
+    }
+  }
+
   /** Lookup for an assertion: one credential of one RP, deleted rows included (→ DELETED). */
   public async getByCredentialId(rpId: string, credentialID: string): Promise<PasskeyRow | null> {
     const result = await pool.query<PasskeyRow>(`

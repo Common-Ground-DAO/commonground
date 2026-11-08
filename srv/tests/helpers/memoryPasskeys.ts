@@ -57,6 +57,13 @@ const store = {
   async addPasskey(userId: string, passkey: NewPasskey) {
     return insert(userId, passkey).id;
   },
+  async hasUserPasskeys(userId: string, rpId: string) {
+    return rows.some(r => r.userId === userId && r.rpId === rpId);
+  },
+  async addFirstPasskey(userId: string, passkey: NewPasskey) {
+    if (rows.some(r => r.userId === userId && r.rpId === passkey.rpId)) throw new Error('REAUTH_REQUIRED');
+    return insert(userId, passkey).id;
+  },
   async getByCredentialId(rpId: string, credentialID: string) {
     const matches = rows.filter(r => r.rpId === rpId && r.data.credentialID === credentialID);
     return matches.find(r => r.deletedAt === null) || matches[0] || null;

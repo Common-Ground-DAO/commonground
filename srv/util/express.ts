@@ -99,6 +99,9 @@ declare module 'express-session' {
     // srv/util/authSession.ts); never set by a device-key login
     authAt?: number;
     authMethod?: AuthMethod;
+    // A redeemed transfer attested by a fresh legacy passkey login. Only the
+    // first passkey on this RP can use it; never a general step-up grant.
+    transferPasskeyRpId?: string;
 
     // legacy CG ID mode only: result of a successful CgId assertion, redeemed
     // by User/login {type:'passkey-success'}

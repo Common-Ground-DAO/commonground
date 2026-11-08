@@ -658,6 +658,27 @@ async function isFreshSignInWalletProof(prepared: Models.Server.Session.Prepared
   );
 }
 
+async function verifiedReauthenticationEmail(userId: string): Promise<string> {
+  if (!emailEnabled()) throw new Error(errors.server.EMAIL_DISABLED);
+  const ownData = await userHelper.getOwnDataById(userId);
+  if (!ownData.email || !ownData.emailVerified) throw new Error(errors.server.NOT_ALLOWED);
+  return ownData.email;
+}
+
+registerPostRoute<API.User.requestReauthenticationCode.Request, API.User.requestReauthenticationCode.Response>(
+  userRouter,
+  '/requestReauthenticationCode',
+  validators.API.User.requestReauthenticationCode,
+  async (request, response) => {
+    const user = request.session?.user;
+    if (!user) throw new Error(errors.server.LOGIN_REQUIRED);
+    const email = await verifiedReauthenticationEmail(user.id);
+    await limitOneTimePasswordMail(request, response, email);
+    const code = await issueEmailCode('reauth', user.id, email);
+    await emailUtils.sendReauthenticationCodeEmail(email, code);
+  },
+);
+
 registerPostRoute<
   API.User.reauthenticate.Request,
   API.User.reauthenticate.Response
@@ -690,6 +711,11 @@ registerPostRoute<
       if (!(await userHelper.isPasswordCorrect(user.id, data.password))) {
         throw new Error(errors.server.NOT_ALLOWED);
       }
+    }
+    else if (data.type === 'verificationCode') {
+      const email = await verifiedReauthenticationEmail(user.id);
+      await consumeEmailCode('reauth', user.id, email, data.code,
+        codeId => emailCodeAttemptLimiter(`reauth:${codeId}`));
     }
     else if (data.type === 'wallet') {
       const { preparedCredential } = request.session;
@@ -2240,6 +2266,7 @@ registerPostRoute<
     return {
       ...status,
       pendingEmail: emailEnabled() ? await getPendingEmail(user.id) : null,
+      canReauthenticateWithEmail: emailEnabled() && !!status.email && status.emailVerified,
       // what is missing can be added in this session (else: sign in again
       // or open a new transfer link)
       recentSignIn: hasRecentAuth(request, { allow: SECURITY_STEP_AUTH, maxAgeMs: SECURITY_STEP_AUTH_MAX_AGE_MS }),
@@ -2270,7 +2297,9 @@ registerPostRoute<
     const nextPath = transferNextPath(data.nextPath, target);
     // with the minting session's generation: a sign-out of other devices
     // after this (or one this session missed) leaves the link unusable
-    const { token, expiresAt } = await transferTokenHelper.create(user.id, nextPath, TRANSFER_LINK_TTL_MS, request.session.gen ?? 0);
+    const passkeySetupRpId = isLegacyCgidMode() && hasRecentAuth(request, { allow: ['passkey'] })
+      ? new URL(target).hostname : null;
+    const { token, expiresAt } = await transferTokenHelper.create(user.id, nextPath, TRANSFER_LINK_TTL_MS, request.session.gen ?? 0, passkeySetupRpId);
     return {
       url: transferLinkUrl(target, token),
       expiresAt: new Date(expiresAt).getTime(),
@@ -2404,6 +2433,10 @@ registerPostRoute<
       deviceOS: userAgent.os.name,
     });
     await establishLoginSession(request, { userId, deviceId, method: 'transfer' });
+    if (row.passkeySetupRpId) {
+      request.session.transferPasskeyRpId = row.passkeySetupRpId;
+      await new Promise<void>((resolve, reject) => request.session.save(e => e ? reject(e) : resolve()));
+    }
     return {
       ownData,
       communities,

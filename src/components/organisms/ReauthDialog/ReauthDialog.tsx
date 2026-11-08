@@ -5,6 +5,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal';
 import Button from 'components/atoms/Button/Button';
+import TextInputField from 'components/molecules/inputs/TextInputField/TextInputField';
+import { cooldownLabel, useCooldown } from 'hooks/useCooldown';
+import { EMAIL_CODE_LENGTH } from 'common/authInputRules';
 import PasswordField from 'components/molecules/PasswordField/PasswordField';
 import WalletSignature from 'components/molecules/WalletSignature/WalletSignature';
 import { usePasskeyContext } from 'context/PasskeyProvider';
@@ -14,6 +17,7 @@ import loginManager from 'data/appstate/login';
 import stepUpManager, { type StepUpRequest } from 'data/auth/stepUp';
 import errors from 'common/errors';
 import { rateLimitMessage } from 'data/auth/authErrors';
+import { retryAfterSecondsOf } from 'data/api/apiError';
 import { reauthMethods, shownReauthMethod, type ReauthMethod } from './reauthMethods';
 import './ReauthDialog.css';
 
@@ -29,7 +33,7 @@ type Props = {
  * REAUTH_REQUIRED (or a screen asks for a fresh authentication first) — also
  * in a session that came from a transfer link, which is an ordinary sign-in
  * once the account is complete. Of the account's own methods a passkey is
- * offered first, then the password, then a sign-in wallet (reauthMethods).
+ * offered first, then the password, a sign-in wallet and a verified email (reauthMethods).
  * Every WebAuthn ceremony starts from a click in here.
  */
 const ReauthDialog: React.FC<Props> = ({ request, onDone }) => {
@@ -42,7 +46,12 @@ const ReauthDialog: React.FC<Props> = ({ request, onDone }) => {
   // whether the account has a password at all (null: not known yet)
   const [hasPassword, setHasPassword] = useState<boolean | null>(null);
   const [passwordPending, setPasswordPending] = useState(true);
-  const methods = useMemo(() => reauthMethods({ canUsePasskey, hasPassword, hasLoginWallet }), [canUsePasskey, hasPassword, hasLoginWallet]);
+  const [emailAddress, setEmailAddress] = useState<string | null>(null);
+  const canUseEmail = !!emailAddress;
+  const [emailSent, setEmailSent] = useState(false);
+  const [emailCode, setEmailCode] = useState('');
+  const { left: resendWait, start: startResendWait } = useCooldown();
+  const methods = useMemo(() => reauthMethods({ canUsePasskey, hasPassword, hasLoginWallet, canUseEmail }), [canUsePasskey, hasPassword, hasLoginWallet, canUseEmail]);
 
   // a passkey or a wallet right away; the password form only once the
   // account is known to have one (no password field that goes away again)
@@ -51,7 +60,12 @@ const ReauthDialog: React.FC<Props> = ({ request, onDone }) => {
   useEffect(() => {
     let active = true;
     userApi.getSecurityStatus()
-      .then(status => { if (active) setHasPassword(status.hasPassword); })
+      .then(status => {
+        if (active) {
+          setHasPassword(status.hasPassword);
+          setEmailAddress(status.canReauthenticateWithEmail ? status.email : null);
+        }
+      })
       // unknown: the password is offered and the server answers
       .catch(() => undefined)
       .finally(() => { if (active) setPasswordPending(false); });
@@ -60,11 +74,11 @@ const ReauthDialog: React.FC<Props> = ({ request, onDone }) => {
 
   // a method the account turned out not to have gives way to the next one
   useEffect(() => {
-    const shown = shownReauthMethod(method, { canUsePasskey, hasPassword, hasLoginWallet, passwordPending });
+    const shown = shownReauthMethod(method, { canUsePasskey, hasPassword, hasLoginWallet, canUseEmail, passwordPending });
     if (shown !== method) {
       setMethod(shown);
     }
-  }, [method, canUsePasskey, hasPassword, hasLoginWallet, passwordPending]);
+  }, [method, canUsePasskey, hasPassword, hasLoginWallet, canUseEmail, passwordPending]);
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -112,6 +126,41 @@ const ReauthDialog: React.FC<Props> = ({ request, onDone }) => {
     }
   }, [password, confirmed]);
 
+  const sendEmailCode = useCallback(async () => {
+    setLoading(true);
+    setError(undefined);
+    try {
+      await userApi.requestReauthenticationCode();
+      setEmailSent(true);
+      setEmailCode('');
+      startResendWait();
+    }
+    catch (e) {
+      if (e instanceof Error && e.message === errors.server.RATE_LIMIT_EXCEEDED) {
+        startResendWait(retryAfterSecondsOf(e));
+        setError(rateLimitMessage(e));
+      }
+      else {
+        setError('The code could not be sent. Please try again.');
+      }
+    }
+    finally { setLoading(false); }
+  }, [startResendWait]);
+
+  const confirmEmailCode = useCallback(async () => {
+    setLoading(true);
+    setError(undefined);
+    try {
+      const { validUntil } = await userApi.reauthenticate({ type: 'verificationCode', code: emailCode });
+      confirmed(validUntil);
+    }
+    catch (e) {
+      setError(e instanceof Error && e.message === errors.server.RATE_LIMIT_EXCEEDED
+        ? rateLimitMessage(e) : 'That code is incorrect or expired. Try again or request a new code.');
+    }
+    finally { setLoading(false); }
+  }, [emailCode, confirmed]);
+
   const walletSigned = useCallback(async (data: API.User.prepareWalletAction.Request) => {
     const prepared = await userApi.prepareWalletAction(data);
     if (!prepared.readyForLogin) {
@@ -144,6 +193,9 @@ const ReauthDialog: React.FC<Props> = ({ request, onDone }) => {
     }
     if (methods.includes('wallet') && method !== 'wallet') {
       items.push(<Button key='wallet' role='textual' className='w-full' text='Use a wallet' onClick={() => { setError(undefined); setMethod('wallet'); }} />);
+    }
+    if (methods.includes('email') && method !== 'email') {
+      items.push(<Button key='email' role='textual' className='w-full' text='Use an email code' onClick={() => { setError(undefined); setMethod('email'); }} />);
     }
     return items;
   }, [method, methods, passwordPending]);
@@ -192,6 +244,21 @@ const ReauthDialog: React.FC<Props> = ({ request, onDone }) => {
           />
         </form>}
 
+        {method === 'email' && <div className='flex flex-col gap-3'>
+          <span className='cg-text-sm-400 cg-text-secondary'>
+            {emailSent ? 'Enter the code sent to' : 'Send a confirmation code to'} {emailAddress}.
+          </span>
+          {emailSent && <form className='flex flex-col gap-3' onSubmit={ev => { ev.preventDefault(); void confirmEmailCode(); }}>
+            <TextInputField label='Confirmation code' value={emailCode}
+              onChange={value => setEmailCode(value.replace(/\D/g, '').slice(0, EMAIL_CODE_LENGTH))}
+              inputMode='numeric' autoComplete='one-time-code' maxLetters={EMAIL_CODE_LENGTH} autoFocus disabled={loading} />
+            <Button role='primary' text='Confirm' loading={loading} disabled={loading || emailCode.length !== EMAIL_CODE_LENGTH} />
+          </form>}
+          <Button role={emailSent ? 'textual' : 'primary'}
+            text={cooldownLabel(emailSent ? 'Send a new code' : 'Send code', resendWait)}
+            onClick={sendEmailCode} disabled={loading || resendWait > 0} loading={loading && !emailSent} />
+        </div>}
+
         {method === 'wallet' && <WalletSignature
           signText='Confirm with this wallet'
           hint='Sign a message with a wallet you use to sign in.'
@@ -203,7 +270,7 @@ const ReauthDialog: React.FC<Props> = ({ request, onDone }) => {
         {/* no usable passkey and no sign-in wallet: the password may not
             exist either (e.g. an account that signs in with X) — a fresh
             sign-in also counts */}
-        {!canUsePasskey && !hasLoginWallet && !passwordPending && hasPassword !== true && <div className='flex flex-col gap-2'>
+        {!canUsePasskey && !hasLoginWallet && !canUseEmail && !passwordPending && hasPassword !== true && <div className='flex flex-col gap-2'>
           <span className='cg-text-sm-400 cg-text-secondary'>
             {hasPassword === false
               ? "There's no password on this account. Sign out and sign in again to continue."

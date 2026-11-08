@@ -9,6 +9,8 @@
 > the session secret at startup and the shared per-address mail-limit secret against commit 696102b, 2026-11-06;
 > the budget of the event change and cancellation mails against commit 04c72b2, 2026-11-07.
 > Newsletter pause verified against c18b233 + working-tree changes, 2026-11-08.
+> Passkey migration setup and email reauthentication verified against 556a989
+> plus working changes and regression tests, 2026-11-08.
 
 This document covers every email path in Common Ground: transactional mail (verification, one-time-password login, event mails), the weekly digest and per-community article newsletters, one-click unsubscribe, send limits, bounce handling, and the user/community preference model that gates them. Web push and in-app notifications are a separate delivery channel — see [docs/realtime](../realtime/README.md) (§ Push Notifications) — and the boundary between the two is described in [Boundary to web push](#boundary-to-web-push). Running a mail server for a self-hosted instance (the `mail` relay, SPF/DKIM/DMARC/PTR) is covered in [docs/deployment §3.9](../deployment/README.md#39-email-smtp-and-the-mail-relay) and [`docker/SELFHOST.md`](../../docker/SELFHOST.md#email).
 
@@ -110,6 +112,7 @@ User-provided values (post titles, community and event names, image URLs) are HT
 | Email verification | `sendVerificationEmail` | `POST /user/requestEmailVerification` (and account creation on an instance without the sign-up code step) | An 8-digit code plus a link to `<APP_URL>/verify-email?email=…&token=<code>` (both URI-component-encoded) that works while signed in to the account that asked; a dev setup that wants the link on the Vite dev server sets `BASE_URL` accordingly. Send limits apply ([Send limits](#send-limits)). |
 | Address in use | `sendAddressInUseEmail` | `POST /user/requestEmailVerification` for an address another account has verified | Notice instead of a code; the requester gets the same answer as for a free address. Send limits apply ([Send limits](#send-limits)). |
 | One-time password login | `sendOneTimePasswordEmail` | `POST /user/sendOneTimePasswordForLogin` | Emails an 8-digit login code (15 minutes) only to the **verified** address of an account; nothing is sent for an unconfirmed or unknown address, the answer is the same. Requires `emailEnabled()`; send limits apply. |
+| Account action confirmation | `sendReauthenticationCodeEmail` | `POST /user/requestReauthenticationCode` | Logged-in account only; current verified address, eight-digit code, 15 minutes, separate `reauth` purpose, shared login-mail send budgets. Consumed by `User/reauthenticate`. |
 | Password changed | `sendPasswordChangedEmail` | `POST /user/setPassword` | Notice to the verified address. A replaced password signs the account's other devices out, and the notice says so ("All other devices signed in to your account were signed out."); a first password does not ([auth-identity §2](../auth-identity/README.md#signing-out-other-devices)). |
 | Address changed | `sendEmailChangedEmail` | `POST /user/verifyEmail` replacing a verified address | Notice to the previous address; it says that the account's other devices were signed out. |
 | Event mails | `sendEventEmail` | See [Event notification mails](#event-notification-mails) | — |

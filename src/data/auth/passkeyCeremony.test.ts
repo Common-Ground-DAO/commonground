@@ -107,6 +107,19 @@ describe('toPasskeyCeremonyError', () => {
 });
 
 describe('registerPasskey', () => {
+  it('honors server-authorized registration without a general step-up, as after migration', async () => {
+    stepUpManager.clear();
+    const prompt = vi.fn(async () => false);
+    stepUpManager.setHandler(prompt);
+    try {
+      vi.mocked(browser.startRegistration).mockResolvedValue({ id: 'migrated-key' } as never);
+      vi.mocked(passkeyApi.verifyRegistration).mockResolvedValue({ status: 'attached', passkeys: [] });
+      await expect(registerPasskey()).resolves.toMatchObject({ credentialId: 'migrated-key' });
+      expect(prompt).not.toHaveBeenCalled();
+    }
+    finally { stepUpManager.setHandler(undefined); }
+  });
+
   it('verifies the registration and returns the credential id', async () => {
     vi.mocked(browser.startRegistration).mockResolvedValue({ id: 'cred-1' } as never);
     const result = await registerPasskey({ displayName: 'alice' });

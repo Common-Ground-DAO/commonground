@@ -13,6 +13,7 @@ import { EMAIL_CODE_GUESSES, EMAIL_CODE_LENGTH } from "../common/authInputRules"
  *
  * - `login`: the one-time code of the email login (User/sendOneTimePasswordForLogin
  *   → User/login {type:'verificationCode'}), valid LOGIN_CODE_TTL_MS;
+ * - `reauth`: confirms a signed-in account action, valid LOGIN_CODE_TTL_MS;
  * - `verify`: confirms an address for the account (User/requestEmailVerification
  *   → User/verifyEmail), valid VERIFY_CODE_TTL_MS. The address only becomes the
  *   account's address once the code comes back.
@@ -25,7 +26,7 @@ import { EMAIL_CODE_GUESSES, EMAIL_CODE_LENGTH } from "../common/authInputRules"
  * by the caller (`checkAttempt`, an atomic counter in Valkey).
  */
 
-export type EmailCodePurpose = "login" | "verify";
+export type EmailCodePurpose = "login" | "verify" | "reauth";
 
 export const LOGIN_CODE_TTL_MS = 15 * 60 * 1000;
 export const VERIFY_CODE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -57,7 +58,7 @@ export async function issueEmailCode(
   email: string,
   now = Date.now(),
 ): Promise<string> {
-  const ttlMs = purpose === "login" ? LOGIN_CODE_TTL_MS : VERIFY_CODE_TTL_MS;
+  const ttlMs = purpose === "verify" ? VERIFY_CODE_TTL_MS : LOGIN_CODE_TTL_MS;
   const code = generateEmailCode();
   const stored: StoredCode = {
     codeId: randomUUID(),
@@ -111,7 +112,7 @@ export async function consumeEmailCode(
   // expired and exhausted login codes answer like a wrong code (and an
   // exhausted one is deleted). Verification codes belong to the signed-in
   // account and may say what went wrong.
-  const silent = purpose === "login";
+  const silent = purpose !== "verify";
   if (!(stored.expiresAt > now)) {
     throw new Error(silent ? errors.server.VERIFY_EMAIL_INVALID_TOKEN : errors.server.VERIFY_EMAIL_EXPIRED_TOKEN);
   }

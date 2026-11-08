@@ -93,6 +93,8 @@ const userApi = {
 
   signOutOtherDevices: Joi.object<API.User.signOutOtherDevices.Request>({}).strict(true),
 
+  requestReauthenticationCode: Joi.object<API.User.requestReauthenticationCode.Request>({}).strict(true).required(),
+
   reauthenticate: Joi.alternatives().try(
     Joi.object({
       type: Joi.equal("passkey").required(),
@@ -105,6 +107,10 @@ const userApi = {
     Joi.object({
       // proof: a fresh User/prepareWalletAction of a login-enabled wallet
       type: Joi.equal("wallet").required(),
+    }).strict(true),
+    Joi.object({
+      type: Joi.equal("verificationCode").required(),
+      code: common.EmailCode.required(),
     }).strict(true),
   ).required(),
 

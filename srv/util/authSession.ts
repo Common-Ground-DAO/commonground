@@ -14,7 +14,8 @@ import { loginGeneration, userSessionIndexOf, userSessionsOf } from "./userSessi
  * a fresh authentication. `transfer` is a transfer-link redemption
  * (User/redeemTransferLink): it never satisfies the default step-up, and it
  * adds a sign-in method or an address only while the account still lacks
- * exactly that (the account-security step, srv/util/securityStep.ts).
+ * exactly that (the account-security step, srv/util/securityStep.ts). A separate
+ * attested migration grant may add the first local passkey (passkeyAddition.ts).
  */
 export type AuthMethod =
   | "passkey"
@@ -45,9 +46,9 @@ const DEFAULT_STEP_UP_METHODS: ReadonlySet<AuthMethod> = new Set<AuthMethod>(DEF
 /**
  * What the account-security step accepts for adding what the account lacks
  * (srv/util/securityStep.ts requireAuthToAdd): any interactive sign-in, and a
- * transfer-link session. Nowhere else does a transfer-link session count —
+ * transfer-link session. Outside the scoped first-passkey migration grant,
  * for an account that is not in the step it is an ordinary sign-in, and
- * every change to its sign-in methods takes the default step-up.
+ * changes to its sign-in methods take the default step-up.
  */
 export const SECURITY_STEP_AUTH: readonly AuthMethod[] = [...DEFAULT_STEP_UP_LIST, "transfer"];
 

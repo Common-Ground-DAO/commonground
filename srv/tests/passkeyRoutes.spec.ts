@@ -84,6 +84,7 @@ const emailUtils = {
   sendNewSignInMethodEmail: jest.fn(async () => undefined),
   sendVerificationEmail: jest.fn(async () => undefined),
   sendOneTimePasswordEmail: jest.fn(async () => undefined),
+  sendReauthenticationCodeEmail: jest.fn(async (_email: string, _code: string) => undefined),
 };
 jest.doMock('../api/emails', () => ({ __esModule: true, default: emailUtils, emailEnabled: () => mailEnabled }));
 
@@ -301,6 +302,44 @@ describe('Passkey/authenticationOptions', () => {
 });
 
 describe('passkey registration', () => {
+  it('a fresh legacy-passkey transfer adds the first local passkey despite an existing wallet/password, once only', async () => {
+    await seedPasskey(new SoftAuthenticator(), USER, 'id.app.cg');
+    securityFacts.loginWallets = 2;
+    const transfer = () => freshlyAuthenticated(USER, { authMethod: 'transfer', transferPasskeyRpId: 'cg.box' });
+    const request = transfer();
+    // The grant cannot change a password, even before its passkey is added.
+    await expect(call('User/setPassword', request, { password: 'another password' })).rejects.toThrow('REAUTH_REQUIRED');
+    const options = await call('Passkey/registrationOptions', request, {});
+    await expect(call('Passkey/verifyRegistration', request, {
+      registrationResponse: new SoftAuthenticator().createCredential(options, ORIGIN),
+    })).resolves.toMatchObject({ status: 'attached' });
+    expect(request.session.transferPasskeyRpId).toBeUndefined();
+    await expect(call('Passkey/registrationOptions', transfer(), {})).rejects.toThrow('REAUTH_REQUIRED');
+    memoryPasskeys.rows.find(r => r.rpId === 'cg.box')!.deletedAt = new Date().toISOString();
+    await expect(call('Passkey/registrationOptions', transfer(), {})).rejects.toThrow('REAUTH_REQUIRED');
+  });
+
+  it.each([
+    { authAt: Date.now() - 61 * 60 * 1000 },
+    { authAt: Date.now() + 60 * 1000 },
+    { transferPasskeyRpId: 'other.example' },
+    { transferPasskeyRpId: undefined },
+    { authMethod: undefined },
+  ])('rejects an expired, future, foreign or unproven migration grant: %j', async extra => {
+    const request = freshlyAuthenticated(USER, { authMethod: 'transfer', transferPasskeyRpId: 'cg.box', ...extra });
+    await expect(call('Passkey/registrationOptions', request, {})).rejects.toThrow('REAUTH_REQUIRED');
+  });
+
+  it('rechecks first-passkey eligibility after options, before saving', async () => {
+    const request = freshlyAuthenticated(USER, { authMethod: 'transfer', transferPasskeyRpId: 'cg.box' });
+    const options = await call('Passkey/registrationOptions', request, {});
+    await seedPasskey(new SoftAuthenticator(), USER);
+    await expect(call('Passkey/verifyRegistration', request, {
+      registrationResponse: new SoftAuthenticator().createCredential(options, ORIGIN),
+    })).rejects.toThrow('REAUTH_REQUIRED');
+    expect(memoryPasskeys.rows).toHaveLength(1);
+  });
+
   it('sign-up: the verified passkey waits in the session, nothing is stored', async () => {
     const request = makeRequest();
     const options = await call('Passkey/registrationOptions', request, { displayName: 'newbie' });
@@ -794,7 +833,7 @@ const PROTECTED: Record<string, { data: any; sideEffects: () => jest.Mock[]; add
 const NOT_PROTECTED = new Set([
   // sign-in, sign-up and session
   'User/getSignableSecret', 'User/verifyCaptcha', 'User/clearLoginSession', 'User/login', 'User/ensureSession',
-  'User/reauthenticate', 'User/requestSignupEmailCode', 'User/verifySignupEmailCode', 'User/checkLoginStatus',
+  'User/reauthenticate', 'User/requestReauthenticationCode', 'User/requestSignupEmailCode', 'User/verifySignupEmailCode', 'User/checkLoginStatus',
   'User/logout', 'User/createUser', 'User/prepareWalletAction', 'User/sendOneTimePasswordForLogin',
   'User/requestEmailVerification', 'User/verifyEmail', 'User/getSecurityStatus',
   // transfer links: minted for the session's own user, redeemed logged out

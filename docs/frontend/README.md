@@ -61,7 +61,8 @@
 > (`isAttachmentBusy`) against commit 63e944a, 2026-11-07; the replacement service worker of a gateway
 > ("Service worker on a gateway", the entry-point note) against commit 050245d, 2026-11-07;
 > the transfer page's account identifier and "This isn't me" against commit 04c72b2, 2026-11-07;
-> the step-up dialog's methods (`reauthMethods`) against commit 53aba9b, 2026-11-08
+> the step-up dialog's methods (`reauthMethods`) against commit 53aba9b, 2026-11-08;
+> Home footer destinations against f5981cb plus working changes, 2026-11-08
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -316,6 +317,10 @@ Not a visual component but a critical infrastructure piece. `SuspenseRouter` wra
 ---
 
 ## 2. Views
+
+Home's privacy, terms and help links point to the official community articles on
+`https://cg.box` (`src/views/Home/Home.tsx`). Their contents remain community
+articles; configurable per-instance legal pages are still deferred.
 
 Views are full pages composed of templates/organisms. They live in `src/views/` and are loaded via React.lazy for code splitting. Views are grouped below by function.
 

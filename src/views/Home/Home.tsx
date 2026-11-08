@@ -40,9 +40,9 @@ import { getAuthMode } from 'data/auth/authMode';
 import securityStepState from 'data/auth/securityStep';
 import SearchInputField from 'components/molecules/inputs/SearchInputField/SearchInputField';
 
-const privacyPolicyLink = 'https://app.cg/c/commonground/article/privacy-policy-4vhHTcaUHQnDfmCDdQcNFf/';
-const termsOfUseLink = 'https://app.cg/c/commonground/article/terms-of-use-tuVcsrBtEkM441vv3GdeM8/';
-const helpLink = 'https://app.cg/c/commonground/article/help-13Pqw7xeDHRXnRoQWvwxhg/';
+const privacyPolicyLink = 'https://cg.box/c/commonground/article/privacy-policy-4vhHTcaUHQnDfmCDdQcNFf/';
+const termsOfUseLink = 'https://cg.box/c/commonground/article/terms-of-use-tuVcsrBtEkM441vv3GdeM8/';
+const helpLink = 'https://cg.box/c/commonground/article/help-13Pqw7xeDHRXnRoQWvwxhg/';
 
 export default function Home() {
   const [search, _setSearch] = useState('');

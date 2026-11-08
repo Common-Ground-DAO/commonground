@@ -2,7 +2,8 @@
 
 > Arbeitsstand: 2026-11-08. Entscheidungen und Fortschritt aus der Abstimmung mit
 > Jan; Code/Skripte gegen `c18b233` plus Arbeitsänderungen geprüft. DB-Probeimport
-> und Anwendungsstart auf cg.test am 2026-11-08 erfolgreich; cg.box noch nicht geprüft.
+> und Anwendungsstart auf cg.test erfolgreich; cg.box am 2026-11-08 aufgebaut,
+> Datenbank importiert und Dienste hinter einer HTTPS-Wartungsseite gestartet.
 > **Diese Checkliste ist der aktuelle Plan und ersetzt abweichende Anforderungen
 > der historischen Planung weiter unten.** Ziel: heute umziehen, sofern Probeimport
 > und Abnahme erfolgreich sind. Nur umzugserforderliche Änderungen vorziehen.
@@ -15,7 +16,7 @@
 - [x] Dump vorhanden: `/home/jan/261108_prod.dump` (vollständiger Ersatzdump) auf der lokalen
   Entwicklungsmaschine, ca. 236 MiB, PostgreSQL-Custom-Format.
 - [x] Hetzner-Server vorhanden; Jan hat Root-Zugang, `cg.box` zeigt bereits darauf.
-  Laut Jan noch kein Anwendungsstack installiert.
+  Stack inzwischen unter `/root/commonground` eingerichtet.
 - [x] Temporärer SFTP-Benutzer `cg-import` eingerichtet; Medien-Vorabkopie laut Jan
   am 2026-11-08 erfolgreich abgeschlossen.
   **Kein Speicherlimit, kein separates Dateisystem und kein zusätzlicher Kopieraufbau.**
@@ -40,14 +41,17 @@
 - [x] Relevante Prüfungen: 17 Tests bestanden; Backend-/Frontend-Typechecks, gezielter
   ESLint-Lauf und Shell-Syntaxprüfung erfolgreich. Newsletter aus bei funktionierenden
   System-Mails geprüft. Kombinierter Stand mit Transfer-Änderungen: 154 Backend-Tests,
-  sechs Reauth-Dialog-Tests und beide Typechecks erfolgreich. Deployment steht noch aus.
+  sechs Reauth-Dialog-Tests und beide Typechecks erfolgreich. Auf cg.box hinter der Wartungsseite ausgerollt.
   Bereits bestandene unveränderte Browsertests nicht grundlos wiederholen.
 - [x] Änderungen lokal in `develop` integriert: Transfer-Scope `53aba9b`, Newsletter-Pause
   und Importvorbereitung `70520b5`. Lokaler Transfer-Arbeitsbranch entfernt;
   auf GitHub existiert kein gleichnamiger Arbeitsbranch.
-- [ ] GitHub-Push nach ausdrücklicher Freigabe (automatische Prüfung hat Push abgelehnt).
-- [ ] Freigegebenen Stand gemäß bestehender Release-Entscheidung nach `main` übernehmen
-  und auf cg.box ausliefern. Serverzugang bzw. Ausführung durch Jan noch abzustimmen.
+- [x] GitHub-Push ausdrücklich freigegeben und erfolgt. `develop` nach `main` gemergt:
+  `f5981cb`, Dateiinhalt identisch zum getesteten Stand. `main` ist Deployment-Branch,
+  `develop` bleibt Entwicklungsbranch.
+- [x] SSH-Zugang zu cg.box mit eigenem Schlüssel eingerichtet und Server-Fingerprint
+  gegen Jans Angabe geprüft. `main` auf cg.box geklont und vollständig gebaut;
+  Typechecks, Lint, Frontend-/Backend-/DB-Build und HTML-Rewrite-Prüfung erfolgreich.
 
 ## 2. Medienkopie — Vorabkopie abgeschlossen, S3-Import folgt
 
@@ -70,9 +74,11 @@ rclone copy sw:cg-media \
 
 - [x] Vorabkopie laut Jan erfolgreich abgeschlossen (2026-11-08).
   `copy` löscht keine zusätzlichen Zieldateien; finaler Abgleich nach Schreibstopp folgt.
-- [ ] Objekte später über die S3-Schnittstelle mit unveränderten Schlüsseln in das neue
-  SeaweedFS übernehmen. **Die Ablage ist kein SeaweedFS-Volume.** Benötigte Metadaten,
-  Bucket-/Datei-URL-Zuordnung sowie Vollständigkeit und Inhalt prüfen.
+- [x] Medien über die S3-Schnittstelle in SeaweedFS übernommen: 212.863 Objekte,
+  8.095.994.574 Bytes. Alle Quelldateien gegen ihren SHA-256-Objektschlüssel geprüft;
+  rclone-Prüfsummenvergleich zum Ziel: 212.863 Übereinstimmungen, keine Unterschiede.
+  Content-Type anhand des Dateiformats gesetzt und für alle sechs Formate geprüft
+  (WebP, JPEG, PNG, GIF, BMP, MP4). Objekt-IDs unverändert.
 - [ ] Bilder und Downloads nach Import in der Anwendung testen. Finalen Abgleich nach
   Schreibstopp durchführen (Schritt 6); dann Objektanzahl und Größe neu messen.
 
@@ -162,12 +168,15 @@ Produktions-RP `id.app.cg`; `id.app.test` ist dafür keine austauschbare Origin.
 
 ## 4. cg.box und SendGrid vorbereiten
 
-- [ ] Root-Zugang für die Einrichtung verfügbar machen; vorhandenen Selfhost-Stack
-  installieren und freigegebenen Stand bauen. Bestehende Grundabsicherung nutzen,
-  temporären Importzugang bis zum letzten Kopierlauf erhalten. Keine neue
-  Infrastruktur-/Automatisierungsbaustelle beginnen.
-- [ ] Domain, öffentliche IPv4, Calls und benötigte Integrationen konfigurieren;
-  Gateway für `app.cg`/`id.app.cg` mit eigenen Session-Einstellungen vorbereiten.
+- [x] cg.box: Ubuntu 26.04.1, x86_64, 16 GB RAM. Docker und Compose installiert;
+  Stack aus `main` gebaut. Vorhandenes `harden.sh` für Firewall, Systemparameter,
+  Logbegrenzung und Updates verwendet; SSH-Konfiguration und Importbenutzer erhalten.
+  Docker-Updates bleiben manuell. Kein Backup-Timer installiert.
+- [x] `cg.box`, öffentliche IPv4 und Calls konfiguriert; Gateway-Prozesse für
+  `app.cg`/`id.app.cg` mit eigenen Sessions vorbereitet und gestartet.
+- [ ] Optionale Integrationen entscheiden/konfigurieren: X/Twitter, WalletConnect und
+  Giphy haben weder auf cg.box noch auf der Test-VM Schlüssel. Jan wurde gefragt.
+  Ohne Schlüssel fehlen diese Funktionen; injizierte Browser-Wallets bleiben nutzbar.
 - [ ] Jan authentifiziert `cg.box` bei SendGrid über dessen DNS-Vorgaben und erstellt
   einen separaten API-Key mit Mail-Send-Berechtigung.
 - [ ] SMTP in der privaten `docker/.env.selfhost` konfigurieren:
@@ -191,11 +200,43 @@ setzen, bevor produktive Daten mit aktivem Mailversand laufen.**
 
 - [ ] OTP und System-Mail an ein kontrolliertes Konto tatsächlich zustellen; Absender
   und Links auf cg.box prüfen. Keine Newsletter-Testsendung an echte Listen.
-- [ ] TLS auf cg.box prüfen; Zertifikatsausstellung für die Gateway-Domains zur
-  DNS-Umschaltung vorbereiten. Benötigte Callback-/Origin-Freigaben anpassen.
-- [ ] Rechtstexte minimal bereitstellen: bestehende Artikel aus dem Dump prüfen,
-  öffentlich erreichbar machen und Links auf cg.box herstellen. Jan liefert nötige
-  Ergänzungen/aktualisierte Texte. Kein vollständiges Instanz-Rechtstextsystem bauen.
+- [x] TLS auf cg.box: Let’s-Encrypt-Zertifikat ausgestellt, extern ohne Ausnahme
+  validiert. ACME-Kontakt: `info@just-tech.solutions`.
+- [ ] Zertifikate für `app.cg`/`id.app.cg` bei der DNS-Umschaltung ausstellen;
+  benötigte Callback-/Origin-Freigaben anpassen.
+- [x] Vorhandene Datenschutz-, Nutzungsbedingungen- und Hilfeartikel aus dem Dump
+  ohne Anmeldung über die API erfolgreich gelesen. Die drei Home-Links auf cg.box
+  angepasst; Texte unverändert übernommen, kein neues Rechtstextsystem.
+- [ ] Jan prüft bei Bedarf inhaltliche Aktualisierungen und ein ggf. nötiges Impressum;
+  eine rechtliche Prüfung ist nicht Bestandteil der technischen Übernahme.
+
+### Aktueller Vorbereitungsbetrieb auf cg.box
+
+- Repository: `/root/commonground`, Branch `main`; private Konfiguration:
+  `/root/commonground/docker/.env.selfhost` (0600).
+- Getesteter Dump: `/root/cg-migration/261108_prod.dump`, SHA-256 identisch zum
+  Probedump. Restore erfolgreich (pg_restore 15 s); alle 62 Tabellen vor Migration
+  exakt verglichen. 23 Migrationen erfolgreich, alle 1.565 Passkeys `id.app.cg`,
+  alte Push-Abonnements entfernt. **Noch kein finaler Datenstand nach Schreibstopp.**
+- Alle Dienste mit Healthcheck gesund. Interne API-Prüfung: Community-Liste liefert
+  fünf importierte Communities; Gateway verweigert Community-API wie vorgesehen.
+  SMTP ist in API/Gateway/Jobs aus; Newsletter-Schalter in allen drei Prozessen false.
+- LUKSO-Hintergrunddienst meldet einzelne ungültige Profilmetadaten; sonstige
+  Anwendungsdienste bei der Startprüfung ohne Fehler. LUKSO-Login noch nicht abgenommen.
+- Öffentlich liefert cg.box vorerst HTTP 503 mit Wartungstext. Die private Datei
+  `/root/cg-migration/prepare.yml` ersetzt dafür nur Caddys Konfiguration:
+
+  ```bash
+  cd /root/commonground
+  ./docker/selfhost/selfhost.sh compose -f /root/cg-migration/prepare.yml up -d
+  ```
+
+  **Während der Vorbereitung diesen Aufruf verwenden.** Ein normales `selfhost.sh up`
+  entfernt den Override und gibt die Anwendung frei; erst nach finalem Import und
+  Freigabe verwenden. Die Gateway-Domains zeigen weiterhin auf den alten Server.
+- Private Logs und Importwerkzeuge liegen unter `/root/cg-migration/`. Die ursprüngliche
+  Medienablage bleibt für den letzten Kopierlauf erhalten. Der Medienimport setzt
+  Content-Type anhand der tatsächlichen Dateiformate; die Objekt-IDs bleiben unverändert.
 
 ## 5. Entscheidung zur Umschaltung
 
@@ -253,12 +294,12 @@ setzen, bevor produktive Daten mit aktivem Mailversand laufen.**
 
 | Punkt | Ergebnis |
 |---|---|
-| Auslieferungscommit | Kandidat `70520b5` lokal auf `develop`; enthält Transfer-Scope `53aba9b`, Push und Serverdeployment offen |
-| Newsletter-Schalter / Produktionswert | `CG_ENABLE_NEWSLETTERS=false`; implementiert, Deployment offen |
+| Auslieferungscommit | `main`-Merge `f5981cb` gepusht und auf cg.box gebaut; enthält `53aba9b` und `70520b5`. Spätere reine Protokolländerungen benötigen keinen Neubuild |
+| Newsletter-Schalter / Produktionswert | `CG_ENABLE_NEWSLETTERS=false` auf cg.box in API, Gateway und Jobs wirksam geprüft; SMTP bis zur SendGrid-Einrichtung aus |
 | Probedump-Pfad auf cg.test / SHA-256 | `/home/kaesual/import-test-2026-11-08/production-full.dump`; `a1f17f13fbea9c147df6f9857913f405d0d624098c98425bb58296c6e4152b6f`; vollständiger Dump erfolgreich importiert |
 | Restore-Dauer / Migrationsdauer | 34 s gesamt (pg_restore 11 s) / ca. 3 s für 23 Migrationen |
 | Geprüfte Importbefehlsfolge | Vollständiger Restore und Migrationen erfolgreich; 62 Tabellen vor Migration exakt gezählt, Passkey-Zuordnung vollständig; HTTPS-/Community-Smokecheck erfolgreich, manueller Login mit importiertem Konto offen |
-| Medien-Vorabkopie / Prüfung | Laut Jan erfolgreich abgeschlossen; Import in neues SeaweedFS und Medienprüfung offen |
+| Medien-Vorabkopie / Prüfung | SeaweedFS-Import vollständig: 212.863 Objekte / 8.095.994.574 Bytes, 0 Unterschiede im Prüfsummenvergleich; finale Delta-Kopie und Browserprüfung offen |
 | SendGrid-Zustellung | offen |
 | Finaler Dump / Medienabgleich | offen |
 | Umschaltung / Freigabezeitpunkt | offen |

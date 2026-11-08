@@ -127,7 +127,9 @@ id.app.cg ──┤          (develop, gateway mode)   SeaweedFS             │
 30. **A transfer session adds sign-in methods only while the account is in the
     account-security step**; for a complete account it is an ordinary sign-in,
     and changes to sign-in methods need the usual re-authentication (narrows
-    decision 18).
+    decision 18). (Implemented 2026-11-07: a transfer session counts only for
+    what the account lacks at the time of the request; docs/auth-identity §7,
+    §11, §12.)
 31. **The DNS zone of app.cg is cut down to `app.cg` and `id.app.cg` on move
     day**, not before: the other records still serve the running production
     instance until then (P6).
@@ -341,7 +343,8 @@ and a browser pass on the test VM:
   addresses with "send confirmation again" for signed-in users (decision 20);
   X/LUKSO/Farcaster-only accounts must add a passkey, password or wallet; methods
   added in a transfer session are full methods, notices to the verified address
-  are the safeguard (decision 18). Anti-bot: nothing beyond G4's verified
+  are the safeguard (decision 18; a transfer session adds them only during the
+  step, decision 30). Anti-bot: nothing beyond G4's verified
   address and captcha. docs/auth-identity §5, §8, §11.)
 - [x] **G11 Session cookie on expired sessions.** When the session has expired
   at page load, parallel requests mint new anonymous sessions whose cookies can

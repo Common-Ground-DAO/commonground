@@ -60,7 +60,8 @@
 > `autoScroll` against commit a67ef53, 2026-11-07; the composer's send block during image uploads
 > (`isAttachmentBusy`) against commit 63e944a, 2026-11-07; the replacement service worker of a gateway
 > ("Service worker on a gateway", the entry-point note) against commit 050245d, 2026-11-07;
-> the transfer page's account identifier and "This isn't me" against commit 04c72b2, 2026-11-07
+> the transfer page's account identifier and "This isn't me" against commit 04c72b2, 2026-11-07;
+> the step-up dialog's methods (`reauthMethods`) against commit c18b233, 2026-11-07
 
 This document describes the frontend architecture of Common Ground, a browser-based social platform for communities built with React and TypeScript. It is intended for AI agents and developers working on the codebase.
 
@@ -1563,7 +1564,7 @@ The X popup page (`/twitter-login`, `TwitterCallbackView`) shows "Too many attem
 
 ### Step-up (`src/data/auth/stepUp.ts`, `StepUpProvider`, `ReauthDialog`)
 
-The server answers protected actions (password, email change, passkey add/remove, sign-in wallets, X/LUKSO/Farcaster accounts, bot tokens, …) with `REAUTH_REQUIRED` when the last authentication is older than 5 minutes. `BaseApiConnector` then calls `stepUpManager.request(...)` (also after a `LOGIN_REQUIRED` device re-login — at most one re-login and one step-up per request); `StepUpProvider` shows `ReauthDialog` — "Confirm it's you to {action}" with a passkey (if the account has one here), the password, or a sign-in wallet — and the request is retried once (`User/reauthenticate`). The action text comes from the route (`stepUpRequestForRoute`). The wallet option is hidden while `User/addPreparedWallet` waits (a wallet confirmation would replace the prepared wallet); the settings pages that add a sign-in wallet therefore call `useStepUp().ensureRecentAuth(...)` before the wallet signature. `stepUpManager` tracks a client-side freshness estimate (interactive login, `createUser`, `reauthenticate`) so screens can confirm before starting a WebAuthn ceremony. A cancelled dialog surfaces as `REAUTH_REQUIRED`, which `securityActionErrorMessage` (`src/data/auth/authErrors.ts`) maps to "show nothing".
+The server answers protected actions (password, email change, passkey add/remove, sign-in wallets, X/LUKSO/Farcaster accounts, bot tokens, …) with `REAUTH_REQUIRED` when the last authentication is older than 5 minutes. `BaseApiConnector` then calls `stepUpManager.request(...)` (also after a `LOGIN_REQUIRED` device re-login — at most one re-login and one step-up per request); `StepUpProvider` shows `ReauthDialog` — "Confirm it's you to {action}" with the account's own methods: a passkey (if the account has one here), the password (hidden once `User/getSecurityStatus` says the account has none; `reauthMethods`, `src/components/organisms/ReauthDialog/reauthMethods.ts`), or a sign-in wallet — and the request is retried once (`User/reauthenticate`). The action text comes from the route (`stepUpRequestForRoute`). The wallet option is hidden while `User/addPreparedWallet` waits (a wallet confirmation would replace the prepared wallet); the settings pages that add a sign-in wallet therefore call `useStepUp().ensureRecentAuth(...)` before the wallet signature. `stepUpManager` tracks a client-side freshness estimate (interactive login, `createUser`, `reauthenticate`) so screens can confirm before starting a WebAuthn ceremony. A cancelled dialog surfaces as `REAUTH_REQUIRED`, which `securityActionErrorMessage` (`src/data/auth/authErrors.ts`) maps to "show nothing".
 
 ### Transfer links (`/transfer`, `TransferView`)
 

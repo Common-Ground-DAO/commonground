@@ -223,6 +223,12 @@ const users = {
   setPassword: jest.fn(async (userId: string) => {
     facts[userId] = { ...facts[userId], hasPassword: true, passwordChangeRequired: false };
   }),
+  // only while the account has none (one conditional UPDATE in the repository)
+  setFirstPassword: jest.fn(async (userId: string) => {
+    if (facts[userId].hasPassword) return false;
+    facts[userId] = { ...facts[userId], hasPassword: true, passwordChangeRequired: false };
+    return true;
+  }),
   updateUser: jest.fn(async () => undefined),
   setUserExtraDataField: jest.fn(async () => undefined),
   isEmailAvailable: jest.fn(async () => true),
@@ -507,20 +513,60 @@ describe('transfer links: redemption', () => {
     await expect(call('User/redeemTransferLink', makeRequest(), { token: 'short', device: { publicKey: DEVICE_KEY } })).rejects.toThrow();
   });
 
-  it('a transfer session may add a sign-in method, not replace one', async () => {
+  it('a transfer session adds what the account-security step asks for, and nothing more', async () => {
+    // an account that moved over: no sign-in method that works here, no verified address
+    facts[USER] = { ...COMPLETE, hasPassword: false, email: null, emailVerified: false };
     const token = await mint();
     const request = makeRequest();
-    await call('User/redeemTransferLink', request, { token, device: { publicKey: DEVICE_KEY } });
-    // the account has a password: replacing it needs a real re-authentication
-    await expect(call('User/setPassword', request, { password: 'new password' })).rejects.toThrow('REAUTH_REQUIRED');
-    // adding a sign-in wallet is fine
+    const result = await call('User/redeemTransferLink', request, { token, device: { publicKey: DEVICE_KEY } });
+    expect(result.securityStepRequired).toBe(true);
+    // the address: a code to it, then the code back
+    await call('User/requestEmailVerification', request, { email: 'mine@example.org' });
+    await call('User/verifyEmail', request, { email: 'mine@example.org', token: lastCode(emailUtils.sendVerificationEmail) });
+    expect(facts[USER]).toMatchObject({ email: 'mine@example.org', emailVerified: true });
+    // a sign-in wallet
     request.session.preparedCredential = { type: 'wallet', result: { readyForCreation: true }, preWallet: { type: 'evm' } };
     await call('User/addPreparedWallet', request, { loginEnabled: true, visibility: 'private' });
-    expect((mocks.wallets as any).createWallet).toHaveBeenCalled();
+    expect((mocks.wallets as any).createWallet).toHaveBeenCalledTimes(1);
+    facts[USER] = { ...facts[USER], loginWallets: 1 };
     // an added way in leaves the account's other devices signed in (the
     // gateway's and those of other transfers among them)
     expect(signOutOtherDevices).not.toHaveBeenCalled();
     expect(request.session.user).toMatchObject({ id: USER, deviceId: 'device-new' });
+    await expect(call('User/getSecurityStatus', request, {})).resolves.toMatchObject({ required: false });
+
+    // the step is done: from now on the same session is an ordinary sign-in
+    request.session.preparedCredential = { type: 'wallet', result: { readyForCreation: true }, preWallet: { type: 'evm' } };
+    await expect(call('User/addPreparedWallet', request, { loginEnabled: true, visibility: 'private' })).rejects.toThrow('REAUTH_REQUIRED');
+    await expect(call('User/setPassword', request, { password: 'long enough' })).rejects.toThrow('REAUTH_REQUIRED');
+    expect((mocks.wallets as any).createWallet).toHaveBeenCalledTimes(1);
+    expect(users.setPassword).not.toHaveBeenCalled();
+    expect(users.setFirstPassword).not.toHaveBeenCalled();
+  });
+
+  it('a transfer session of a complete account adds a sign-in method only after the step-up', async () => {
+    const token = await mint();
+    const request = makeRequest();
+    const result = await call('User/redeemTransferLink', request, { token, device: { publicKey: DEVICE_KEY } });
+    expect(result.securityStepRequired).toBe(false);
+    // the account has a password: replacing it needs a real re-authentication
+    await expect(call('User/setPassword', request, { password: 'new password' })).rejects.toThrow('REAUTH_REQUIRED');
+    // and so does adding a way in
+    request.session.preparedCredential = { type: 'wallet', result: { readyForCreation: true }, preWallet: { type: 'evm' } };
+    await expect(call('User/addPreparedWallet', request, { loginEnabled: true, visibility: 'private' })).rejects.toThrow('REAUTH_REQUIRED');
+    (mocks.wallets as any).getOwnWalletLoginEnabled.mockResolvedValueOnce(false);
+    await expect(call('User/updateWallet', request, { id: '00000000-0000-4000-8000-0000000000aa', loginEnabled: true })).rejects.toThrow('REAUTH_REQUIRED');
+    await expect(call('Passkey/registrationOptions', request, {})).rejects.toThrow('REAUTH_REQUIRED');
+    await expect(call('User/requestEmailVerification', request, { email: 'new@example.org' })).rejects.toThrow('REAUTH_REQUIRED');
+    expect((mocks.wallets as any).createWallet).not.toHaveBeenCalled();
+    expect((mocks.wallets as any).updateWallet).not.toHaveBeenCalled();
+    expect(emailUtils.sendVerificationEmail).not.toHaveBeenCalled();
+    // after confirming it's them, the same request goes through
+    await call('User/reauthenticate', request, { type: 'password', password: 'correct horse' });
+    expect(request.session.authMethod).toBe('password');
+    await call('User/addPreparedWallet', request, { loginEnabled: true, visibility: 'private' });
+    expect((mocks.wallets as any).createWallet).toHaveBeenCalled();
+    expect(signOutOtherDevices).not.toHaveBeenCalled();
   });
 
   it('is off on a legacy CG ID (gateway) process', async () => {
@@ -655,10 +701,11 @@ describe('account-security step: adding what is missing', () => {
     // an account that signs in with X only: a device-key session days later
     await expect(call('User/setPassword', loggedIn(), { password: 'long enough' })).rejects.toThrow('REAUTH_REQUIRED');
     await expect(call('User/setPassword', signedInAgo(61), { password: 'long enough' })).rejects.toThrow('REAUTH_REQUIRED');
-    expect(users.setPassword).not.toHaveBeenCalled();
+    expect(users.setFirstPassword).not.toHaveBeenCalled();
     // the X sign-in (or a transfer link) 59 minutes ago
     await expect(call('User/setPassword', signedInAgo(59), { password: 'long enough' })).resolves.toEqual({ signedOutDevices: 0, signOutDelayed: false });
-    expect(users.setPassword).toHaveBeenCalledWith(USER, 'long enough');
+    expect(users.setFirstPassword).toHaveBeenCalledWith(USER, 'long enough');
+    expect(users.setPassword).not.toHaveBeenCalled();
     await flush();
     // a first password is an added way in: the other devices stay signed in
     expect(signOutOtherDevices).not.toHaveBeenCalled();
@@ -671,9 +718,31 @@ describe('account-security step: adding what is missing', () => {
     await expect(call('User/setPassword', request, { password: 'another one' })).resolves.toEqual({ signedOutDevices: 2, signOutDelayed: false });
     expect(signOutOtherDevices).toHaveBeenCalledWith(request);
     // only after the change committed
-    expect(signOutOtherDevices.mock.invocationCallOrder[0]).toBeGreaterThan(users.setPassword.mock.invocationCallOrder[1]);
+    expect(signOutOtherDevices.mock.invocationCallOrder[0]).toBeGreaterThan(users.setPassword.mock.invocationCallOrder[0]);
     await flush();
     expect(emailUtils.sendPasswordChangedEmail).toHaveBeenLastCalledWith('someone@example.org', true);
+  });
+
+  it('two first passwords at once: one is added, the other is a replacement and needs the step-up', async () => {
+    facts[USER] = { ...COMPLETE, hasPassword: false };
+    const results = await Promise.allSettled([
+      call('User/setPassword', signedInAgo(5, 'transfer'), { password: 'first one' }),
+      call('User/setPassword', signedInAgo(5, 'transfer'), { password: 'second one' }),
+    ]);
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(r => r.status === 'rejected').map(r => (r as PromiseRejectedResult).reason.message)).toEqual(['REAUTH_REQUIRED']);
+    expect(users.setPassword).not.toHaveBeenCalled();
+    await flush();
+    expect(emailUtils.sendPasswordChangedEmail).toHaveBeenCalledTimes(1);
+
+    // the request that lost the race at the write itself: nothing changed, no notice
+    jest.clearAllMocks();
+    facts[USER] = { ...COMPLETE, hasPassword: false };
+    users.setFirstPassword.mockResolvedValueOnce(false);
+    await expect(call('User/setPassword', signedInAgo(5, 'transfer'), { password: 'late one' })).rejects.toThrow('REAUTH_REQUIRED');
+    await flush();
+    expect(emailUtils.sendPasswordChangedEmail).not.toHaveBeenCalled();
+    expect(signOutOtherDevices).not.toHaveBeenCalled();
   });
 
   it('a password below the policy: a new one, after confirming the old one', async () => {

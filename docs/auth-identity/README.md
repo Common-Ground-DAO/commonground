@@ -26,7 +26,8 @@
 > against commit 696102b, 2026-11-07; the LUKSO sign-in message (§5.7), the host-only cookie on
 > every process and the old-scope cleanup (§2, §7), the transfer link's next path, confirmation
 > identifier, declining and sign-out (§11), and the gateway's start-up checks and cookie notes (§12)
-> against commit 04c72b2, 2026-11-07
+> against commit 04c72b2, 2026-11-07; what a transfer-link session may add (§7, §11, §12) and the
+> step-up dialog's methods (§7) against commit c18b233, 2026-11-07
 
 # Authentication & Identity
 
@@ -971,15 +972,21 @@ the client can re-authenticate and retry the same request.
 
 **Adding a way in** — a passkey (`registrationOptions` / `verifyRegistration` while logged in), a
 sign-in wallet (`addPreparedWallet` with `loginEnabled`, `updateWallet` switching it on), a first
-password (`setPassword` without one), an X/LUKSO/Farcaster account (`addUserAccount`), an address
+password (`setPassword` without one; written only while the account still has none, so of two
+concurrent requests the second answers `REAUTH_REQUIRED` like a replacement), an
+X/LUKSO/Farcaster account (`addUserAccount`), an address
 while the account has none verified (`requestEmailVerification`) — goes through
 `requireAuthToAdd()` (`srv/util/securityStep.ts`): while the account lacks exactly that (no
 sign-in method here / no verified address — the account-security step, [§11](#11-transfer-links-and-the-account-security-step)),
 it may have nothing to confirm "it's you" with, so a sign-in (or transfer link) within the last
-60 minutes is enough (`SECURITY_STEP_AUTH_MAX_AGE_MS`); a silent device-key session alone is not
-(`REAUTH_REQUIRED` — the user signs in again or gets a new transfer link). Otherwise the step-up
-applies, and a fresh transfer-link session counts. Removing or replacing a method or a verified address keeps the plain step-up,
-which a transfer-link session never satisfies.
+60 minutes is enough (`SECURITY_STEP_AUTH_MAX_AGE_MS`, accepted methods `SECURITY_STEP_AUTH`); a
+silent device-key session alone is not (`REAUTH_REQUIRED` — the user signs in again or gets a new
+transfer link). Otherwise the plain step-up applies, exactly as for removing or replacing a method
+or a verified address: a transfer-link session never satisfies it, so for a complete account a
+transfer-link session is an ordinary sign-in and adds a method only after `User/reauthenticate`.
+Whether the account lacks it is computed from the database at the time of the request
+(`computeSecurityStatus`, with the api's mail setting) — not from the session's cached
+`securityStepClearFor`, the realtime record in Valkey or anything the client sends.
 
 Protected: `User/setPassword` replacing a password; a new address via
 `User/requestEmailVerification` replacing a verified one (and, on an instance without mail, an
@@ -1013,9 +1020,14 @@ credentials), `{type:'password', password}` (also for accounts that have passkey
 at most 5 minutes old, the wallet checked again as at login). It sets `authAt`/`authMethod` and returns `{ validUntil }`.
 
 **Client.** `BaseApiConnector` answers `REAUTH_REQUIRED` by opening the "Confirm it's you to
-{action}" dialog (`ReauthDialog`: passkey if the account has one here, password, or a sign-in
-wallet) and retries the same request once after `User/reauthenticate`; a cancelled dialog surfaces
-as `REAUTH_REQUIRED` and is not shown as an error. Screens that start a WebAuthn ceremony after the
+{action}" dialog (`ReauthDialog`: of the account's own methods a passkey of this site first,
+then the password, then a sign-in wallet — `reauthMethods`; whether the account has a password it
+learns from `User/getSecurityStatus`; a passkey or wallet shows at once, the password form only
+once the account is known to have one, or after a failed lookup) and retries
+the same request once after `User/reauthenticate`; a cancelled dialog surfaces as
+`REAUTH_REQUIRED` and is not shown as an error. The same dialog serves a session from a transfer
+link of a complete account; `redeemTransferLink` clears the client's freshness estimate, so the
+settings screens ask before a ceremony there too. Screens that start a WebAuthn ceremony after the
 confirmation (adding a passkey) or that need the prepared wallet afterwards (adding a sign-in
 wallet) confirm first (`useStepUp().ensureRecentAuth`). `LAST_LOGIN_METHOD` is shown as "This is
 your last way to sign in …". Details: [frontend §10](../frontend/README.md#10-authentication-ui).
@@ -1293,8 +1305,10 @@ generic.
   "tokenHash" = $1 AND "usedAt" IS NULL AND "expiresAt" > now() AND <live human account>
   RETURNING …`) uses the token up, so of two concurrent redemptions exactly one succeeds. Then a
   device is created and `establishLoginSession()` runs with `authMethod: 'transfer'` (new session
-  id, awaited save). The answer is the login response plus `nextPath`. A transfer session may add a
-  sign-in method, but is no recent authentication for anything else ([§7](#step-up-for-sensitive-actions)).
+  id, awaited save). The answer is the login response plus `nextPath`. While the account is in the
+  account-security step, a transfer session may add what the step asks for (below); otherwise it is
+  an ordinary sign-in and no recent authentication for anything — adding a sign-in method included
+  ([§7](#step-up-for-sensitive-actions)).
 - **Limits** (`srv/util/authLimits.ts`) — preview and redemption: 120 attempts per 15 minutes per
   client IP, and after 20 failed attempts in 15 minutes an IP is refused before the lookup
   (`ipFailureLimiter`); more than 100 failures per hour instance-wide log one `[security]` warning
@@ -1354,12 +1368,15 @@ never from how the session came about, and it is not enforced in legacy CG ID mo
   set after a code request whether or not the address was free, so it reveals nothing.
   `recentSignIn: false` means the session cannot add what is missing (see below).
 - **Completing it** — adding what is missing needs a sign-in or transfer link within the last
-  60 minutes, but no step-up (`requireAuthToAdd`, [§7](#step-up-for-sensitive-actions)):
+  60 minutes, but no step-up (`requireAuthToAdd`, [§7](#step-up-for-sensitive-actions)); a transfer
+  link counts only for what the account still lacks at that moment, so once the step is done the
+  same session needs the step-up for every further change to its sign-in methods:
   a passkey on this origin, a password, or a wallet — a new one is linked as a sign-in wallet, one
   the account already has gets sign-in switched on; either way a SIWE signature checked against
   this instance's domain ([§5.2](#52-wallet-type-wallet--evm-only)) —, and an address confirmed
   with a code ([§8](#email-verification)). Methods added this way, also in a transfer-link
-  session, are full sign-in methods; the notices to the verified address are the safeguard. Adding
+  session, are full sign-in methods; the notices to the verified address are the safeguard
+  (decisions 18 and 30 of the cg.box roadmap). Adding
   them signs no other device out, so the account's other transfer sessions and its gateway devices
   stay signed in ([§2](#signing-out-other-devices)). A password below the policy is replaced with
   `setPassword`, which asks for the current password first (step-up) and, like every replaced
@@ -1434,8 +1451,10 @@ it serves:
   login answer on a gateway carries the account (`ownData`) but no communities, chats, unread count
   or push subscription. `User/clearLoginSession` creates no session when there is none.
   A device-key session on the gateway can mint a transfer link as well; it yields a `transfer`
-  session on the new instance, which may add a sign-in method there (decision 18 of the cg.box
-  roadmap, [§11](#11-transfer-links-and-the-account-security-step)).
+  session on the new instance, which adds a sign-in method or an address there only while the
+  account still lacks it (the account-security step); for a complete account it is an ordinary
+  sign-in, and any change to its sign-in methods takes the step-up (decisions 18 and 30 of the
+  cg.box roadmap, [§7](#step-up-for-sensitive-actions), [§11](#11-transfer-links-and-the-account-security-step)).
 - **wsapi** (`GATEWAY_SOCKET_EVENTS`, `gatewaySocketEventGuard`) — a Socket.IO middleware in front
   of every event handler lets only `cgPing` and `watchCgIdRequest` (the CG ID popup's result) through;
   every other event is dropped without an acknowledgement. There is no socket sign-in, so a gateway

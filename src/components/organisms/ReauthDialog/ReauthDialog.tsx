@@ -2,7 +2,7 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import ScreenAwareModal from 'components/atoms/ScreenAwareModal/ScreenAwareModal';
 import Button from 'components/atoms/Button/Button';
 import PasswordField from 'components/molecules/PasswordField/PasswordField';
@@ -14,6 +14,7 @@ import loginManager from 'data/appstate/login';
 import stepUpManager, { type StepUpRequest } from 'data/auth/stepUp';
 import errors from 'common/errors';
 import { rateLimitMessage } from 'data/auth/authErrors';
+import { reauthMethods, shownReauthMethod, type ReauthMethod } from './reauthMethods';
 import './ReauthDialog.css';
 
 type Props = {
@@ -22,14 +23,14 @@ type Props = {
   onDone: (confirmed: boolean) => void;
 };
 
-type Method = 'choose' | 'password' | 'wallet';
-
 /**
  * "Confirm it's you to {action}" (docs/auth-identity §8): re-authentication
  * before a sensitive action, opened by StepUpProvider when the server answers
- * REAUTH_REQUIRED (or a screen asks for a fresh authentication first). A
- * passkey is offered first, then the password, then a sign-in wallet. Every
- * WebAuthn ceremony starts from a click in here.
+ * REAUTH_REQUIRED (or a screen asks for a fresh authentication first) — also
+ * in a session that came from a transfer link, which is an ordinary sign-in
+ * once the account is complete. Of the account's own methods a passkey is
+ * offered first, then the password, then a sign-in wallet (reauthMethods).
+ * Every WebAuthn ceremony starts from a click in here.
  */
 const ReauthDialog: React.FC<Props> = ({ request, onDone }) => {
   const passkey = usePasskeyContext();
@@ -38,8 +39,32 @@ const ReauthDialog: React.FC<Props> = ({ request, onDone }) => {
   const hasPasskeys = (ownUser?.passkeys?.length || 0) > 0;
   const canUsePasskey = hasPasskeys && passkey.supported && !passkey.legacy;
   const hasLoginWallet = request.allowWallet && !!wallets?.some(wallet => wallet.loginEnabled && wallet.type === 'evm');
+  // whether the account has a password at all (null: not known yet)
+  const [hasPassword, setHasPassword] = useState<boolean | null>(null);
+  const [passwordPending, setPasswordPending] = useState(true);
+  const methods = useMemo(() => reauthMethods({ canUsePasskey, hasPassword, hasLoginWallet }), [canUsePasskey, hasPassword, hasLoginWallet]);
 
-  const [method, setMethod] = useState<Method>(canUsePasskey ? 'choose' : 'password');
+  // a passkey or a wallet right away; the password form only once the
+  // account is known to have one (no password field that goes away again)
+  const [method, setMethod] = useState<ReauthMethod | null>(() => shownReauthMethod(null, { canUsePasskey, hasPassword: null, hasLoginWallet, passwordPending: true }));
+
+  useEffect(() => {
+    let active = true;
+    userApi.getSecurityStatus()
+      .then(status => { if (active) setHasPassword(status.hasPassword); })
+      // unknown: the password is offered and the server answers
+      .catch(() => undefined)
+      .finally(() => { if (active) setPasswordPending(false); });
+    return () => { active = false; };
+  }, []);
+
+  // a method the account turned out not to have gives way to the next one
+  useEffect(() => {
+    const shown = shownReauthMethod(method, { canUsePasskey, hasPassword, hasLoginWallet, passwordPending });
+    if (shown !== method) {
+      setMethod(shown);
+    }
+  }, [method, canUsePasskey, hasPassword, hasLoginWallet, passwordPending]);
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -111,17 +136,17 @@ const ReauthDialog: React.FC<Props> = ({ request, onDone }) => {
 
   const alternatives = useMemo(() => {
     const items: React.ReactNode[] = [];
-    if (method !== 'password') {
+    if (methods.includes('password') && !passwordPending && method !== 'password') {
       items.push(<Button key='password' role='textual' className='w-full' text='Use your password' onClick={() => { setError(undefined); setMethod('password'); }} />);
     }
-    if (canUsePasskey && method !== 'choose') {
-      items.push(<Button key='passkey' role='textual' className='w-full' text='Use a passkey' onClick={() => { setError(undefined); setMethod('choose'); }} />);
+    if (methods.includes('passkey') && method !== 'passkey') {
+      items.push(<Button key='passkey' role='textual' className='w-full' text='Use a passkey' onClick={() => { setError(undefined); setMethod('passkey'); }} />);
     }
-    if (hasLoginWallet && method !== 'wallet') {
+    if (methods.includes('wallet') && method !== 'wallet') {
       items.push(<Button key='wallet' role='textual' className='w-full' text='Use a wallet' onClick={() => { setError(undefined); setMethod('wallet'); }} />);
     }
     return items;
-  }, [method, canUsePasskey, hasLoginWallet]);
+  }, [method, methods, passwordPending]);
 
   return (
     <ScreenAwareModal
@@ -136,7 +161,7 @@ const ReauthDialog: React.FC<Props> = ({ request, onDone }) => {
           <span className='cg-text-md-400 cg-text-secondary'>To {request.action}, confirm it's you first.</span>
         </div>
 
-        {method === 'choose' && <Button
+        {method === 'passkey' && <Button
           className='w-full'
           role='primary'
           text='Use a passkey'
@@ -175,12 +200,14 @@ const ReauthDialog: React.FC<Props> = ({ request, onDone }) => {
 
         {!!error && <span className='cg-text-md-400 cg-text-error'>{error}</span>}
 
-        {/* no passkey here and no sign-in wallet: the password may not exist
-            either (e.g. an account that signs in with X) — a fresh sign-in
-            also counts */}
-        {!hasPasskeys && !hasLoginWallet && <div className='flex flex-col gap-2'>
+        {/* no usable passkey and no sign-in wallet: the password may not
+            exist either (e.g. an account that signs in with X) — a fresh
+            sign-in also counts */}
+        {!canUsePasskey && !hasLoginWallet && !passwordPending && hasPassword !== true && <div className='flex flex-col gap-2'>
           <span className='cg-text-sm-400 cg-text-secondary'>
-            No password on this account? Sign out and sign in again to continue.
+            {hasPassword === false
+              ? "There's no password on this account. Sign out and sign in again to continue."
+              : "No password on this account? Sign out and sign in again to continue."}
           </span>
           <Button className='w-full' role='chip' text='Sign out' onClick={signOut} />
         </div>}

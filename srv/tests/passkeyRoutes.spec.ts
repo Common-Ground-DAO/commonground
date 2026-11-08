@@ -116,6 +116,7 @@ const users = {
   })),
   isPasswordCorrect: jest.fn(async (_id: string, password: string) => password === 'correct horse'),
   setPassword: jest.fn(async () => undefined),
+  setFirstPassword: jest.fn(async () => true),
   updateUser: jest.fn(async () => undefined),
   removeUserAccount: jest.fn(async () => undefined),
   addUserAccount: jest.fn(async () => undefined),
@@ -315,6 +316,34 @@ describe('passkey registration', () => {
     const request = silentlyLoggedIn();
     await expect(call('Passkey/registrationOptions', request, {})).rejects.toThrow('REAUTH_REQUIRED');
     expect(memoryPasskeys.rows).toHaveLength(0);
+  });
+
+  it('a transfer session adds one while the account has no sign-in method here; afterwards only after a step-up', async () => {
+    const transfer = () => makeRequest({ user: { id: USER, deviceId: 'd' }, authAt: Date.now(), authMethod: 'transfer' });
+    const addPasskey = async (request: any) => {
+      const options = await call('Passkey/registrationOptions', request, {});
+      return call('Passkey/verifyRegistration', request, { registrationResponse: new SoftAuthenticator().createCredential(options, ORIGIN) });
+    };
+    // in the account-security step: nothing to confirm "it's you" with
+    Object.assign(securityFacts, { hasPassword: false, passkeys: 0, loginWallets: 0 });
+    const inStep = transfer();
+    await expect(addPasskey(inStep)).resolves.toMatchObject({ status: 'attached' });
+    expect(memoryPasskeys.rows).toHaveLength(1);
+
+    // the step is done (the account has a passkey here now): the same kind of
+    // session is an ordinary sign-in, and a second passkey takes the step-up
+    securityFacts.passkeys = 1;
+    await expect(addPasskey(transfer())).rejects.toThrow('REAUTH_REQUIRED');
+
+    // a complete account: the same
+    Object.assign(securityFacts, defaultSecurityFacts);
+    const request = transfer();
+    await expect(addPasskey(request)).rejects.toThrow('REAUTH_REQUIRED');
+    expect(memoryPasskeys.rows).toHaveLength(1);
+    // confirming with the password lets it through
+    await call('User/reauthenticate', request, { type: 'password', password: 'correct horse' });
+    await expect(addPasskey(request)).resolves.toMatchObject({ status: 'attached' });
+    expect(memoryPasskeys.rows).toHaveLength(2);
   });
 
   it('adding keeps one user handle per account and excludes known credentials; the owner is notified', async () => {
@@ -738,8 +767,10 @@ describe('User/login {type: wallet}', () => {
  * Every route of the User, Passkey and Bot APIs is classified here. A new
  * route fails this test until it is added to one of the two lists — sensitive
  * ones with a request that must be refused without a recent authentication.
- * `adds`: the request adds a way into the account, which a fresh
- * transfer-link session may do (everything else it may not).
+ * `adds`: the request adds a way into the account, which a transfer-link
+ * session may do only while the account lacks a sign-in method here (the
+ * account-security step); for a complete account it needs the step-up like
+ * everything else.
  */
 const PROTECTED: Record<string, { data: any; sideEffects: () => jest.Mock[]; adds?: boolean }> = {
   'User/setPassword': { data: { password: 'new password' }, sideEffects: () => [users.setPassword] },
@@ -806,21 +837,29 @@ describe('step-up: protected routes', () => {
       jest.setSystemTime(Date.now() + 5 * 60 * 1000 + 1);
       await expect(call(name, request, spec.data)).rejects.toThrow('REAUTH_REQUIRED');
 
-      // a transfer session may only add a way in, never remove or replace one
-      const transfer = makeRequest({ user: { id: USER, deviceId: 'd' }, authAt: Date.now(), authMethod: 'transfer', preparedCredential: prepared });
-      if (spec.adds) {
-        await call(name, transfer, spec.data).catch((e: Error) => {
-          expect(e.message).not.toBe('REAUTH_REQUIRED');
-        });
-        jest.clearAllMocks();
-      }
-      else {
-        await expect(call(name, transfer, spec.data)).rejects.toThrow('REAUTH_REQUIRED');
-      }
+      // a transfer session of a complete account is an ordinary sign-in: it
+      // neither adds, removes nor replaces a way in without the step-up
+      const transfer = () => makeRequest({ user: { id: USER, deviceId: 'd' }, authAt: Date.now(), authMethod: 'transfer', preparedCredential: prepared });
+      await expect(call(name, transfer(), spec.data)).rejects.toThrow('REAUTH_REQUIRED');
 
       for (const sideEffect of spec.sideEffects()) {
         expect(sideEffect).not.toHaveBeenCalled();
       }
+
+      // while the account has no sign-in method here (the account-security
+      // step), a transfer session may add one — and still nothing else
+      Object.assign(securityFacts, { hasPassword: false, passkeys: 0, loginWallets: 0 });
+      if (spec.adds) {
+        await call(name, transfer(), spec.data).catch((e: Error) => {
+          expect(e.message).not.toBe('REAUTH_REQUIRED');
+        });
+        jest.clearAllMocks();
+      }
+      else if (name !== 'User/setPassword') {
+        // (a first password is an addition, covered in transferAndSecurityStep.spec.ts)
+        await expect(call(name, transfer(), spec.data)).rejects.toThrow('REAUTH_REQUIRED');
+      }
+      Object.assign(securityFacts, defaultSecurityFacts);
 
       // within the window the step-up check passes (the call may still fail
       // later on the mocked data, but not for lack of authentication)

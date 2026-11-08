@@ -330,6 +330,11 @@ async function transferAndIsolation(gw) {
   main.cookie = '';
   const redeemed = await main.call('POST', '/User/redeemTransferLink', { token, device: { publicKey: deviceKey() } });
   check(redeemed.json?.data?.ownData?.id === env.USER_ID && redeemed.json?.data?.nextPath === '/c/somewhere/', `transfer: redeemed on the instance, deep link kept (${redeemed.json?.error ?? redeemed.json?.data?.nextPath})`);
+  // the account is complete: the transfer session is an ordinary sign-in there,
+  // and adding a sign-in method takes the step-up
+  check(redeemed.json?.data?.securityStepRequired === false, `transfer: the account needs no security step (${redeemed.json?.data?.securityStepRequired})`);
+  const addPasskey = await main.call('POST', '/Passkey/registrationOptions', {});
+  check(addPasskey.json?.error === 'REAUTH_REQUIRED', `transfer: a session of a complete account adds a passkey only after the step-up (${addPasskey.json?.error ?? 'ok'})`);
   const again = await client(MAIN, MAIN_ORIGIN, ip()).call('POST', '/User/redeemTransferLink', { token, device: { publicKey: deviceKey() } });
   check(again.json?.error === 'TRANSFER_LINK_INVALID', 'transfer: a link signs in once');
   // and the instance's cookie on the gateway: anonymous

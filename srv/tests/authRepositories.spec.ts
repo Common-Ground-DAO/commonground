@@ -98,6 +98,17 @@ describe('password login check', () => {
     expect(bcrypt.getRounds(params[1])).toBe(12);
   });
 
+  it('a first password is written only while the account has none', async () => {
+    poolQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+    await expect(userHelper.setFirstPassword(USER, 'a new password')).resolves.toBe(true);
+    const [sql, params] = poolQuery.mock.calls[0];
+    expect(normalize(sql)).toContain('WHERE "id" = $1 AND "deletedAt" IS NULL AND "password" IS NULL');
+    expect(params[0]).toBe(USER);
+    expect(bcrypt.getRounds(params[1])).toBe(12);
+    poolQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await expect(userHelper.setFirstPassword(USER, 'a new password')).resolves.toBe(false);
+  });
+
   it('confirming an address: an unverified holder loses it in the same transaction', async () => {
     const OTHER = '00000000-0000-4000-8000-000000000002';
     clientQuery.mockImplementation(async (sql: string) => {

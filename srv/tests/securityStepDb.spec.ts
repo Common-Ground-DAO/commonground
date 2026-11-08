@@ -236,6 +236,64 @@ describeDb('account-security step and transfer links on PostgreSQL', () => {
       await pool.end();
     }
   });
+
+  it('a transfer session adds a way in only while the database shows the account lacks it', async () => {
+    const { securityStep, pool } = withRole('admin', () => ({
+      securityStep: require('../util/securityStep') as typeof import('../util/securityStep'),
+      pool: require('../util/postgres').default as Pool,
+    }));
+    const moved = (await q(`INSERT INTO users (email) VALUES ('moved@example.org') RETURNING id`)).rows[0].id as string;
+    const session = (authMethod: string, agoMs = 0) => ({ session: { user: { id: moved, deviceId: 'd' }, authAt: Date.now() - agoMs, authMethod } }) as any;
+    const add = (request: unknown, what: 'sign-in-method' | 'email') => securityStep.requireAuthToAdd(request as any, what, { emailRequired: true });
+    try {
+      // no sign-in method here and no verified address: the step, in both parts
+      await expect(add(session('transfer', 30 * 60 * 1000), 'sign-in-method')).resolves.toEqual({ userId: moved });
+      await expect(add(session('transfer'), 'email')).resolves.toEqual({ userId: moved });
+      // a device-key session alone is no sign-in
+      await expect(add({ session: { user: { id: moved, deviceId: 'd' } } }, 'sign-in-method')).rejects.toThrow('REAUTH_REQUIRED');
+      // a passkey of the old relying party does not count here
+      await q(`INSERT INTO passkeys ("userId", "rpId") VALUES ($1, 'id.app.cg')`, [moved]);
+      await expect(add(session('transfer'), 'sign-in-method')).resolves.toEqual({ userId: moved });
+      // one of this instance does: a second method takes the step-up, the address still not
+      await q(`INSERT INTO passkeys ("userId", "rpId") VALUES ($1, 'cg.box')`, [moved]);
+      await expect(add(session('transfer'), 'sign-in-method')).rejects.toThrow('REAUTH_REQUIRED');
+      await expect(add(session('transfer'), 'email')).resolves.toEqual({ userId: moved });
+      await expect(securityStep.isSecurityStepRequiredForRealtime(moved)).resolves.toBe(true);
+      // complete: the transfer session is an ordinary sign-in for everything
+      await q(`UPDATE users SET "emailVerified" = true WHERE id = $1`, [moved]);
+      await expect(add(session('transfer'), 'email')).rejects.toThrow('REAUTH_REQUIRED');
+      await expect(add(session('transfer'), 'sign-in-method')).rejects.toThrow('REAUTH_REQUIRED');
+      // the realtime check agrees (the api's record was cleared on the way)
+      await expect(securityStep.isSecurityStepRequiredForRealtime(moved)).resolves.toBe(false);
+      // the usual step-up works
+      await expect(add(session('passkey'), 'sign-in-method')).resolves.toEqual({ userId: moved });
+      await expect(add(session('passkey', 6 * 60 * 1000), 'sign-in-method')).rejects.toThrow('REAUTH_REQUIRED');
+    }
+    finally {
+      await pool.end();
+    }
+  });
+
+  it('a first password: of concurrent writes exactly one lands, and never over an existing password', async () => {
+    const { users, pool } = withRole('writer', () => ({
+      users: require('../repositories/users').default as typeof import('../repositories/users').default,
+      pool: require('../util/postgres').default as Pool,
+    }));
+    const fresh = (await q(`INSERT INTO users (email) VALUES ('first-pw@example.org') RETURNING id`)).rows[0].id as string;
+    try {
+      const results = await Promise.all(Array.from({ length: 5 }, (_, i) => users.setFirstPassword(fresh, `password ${i}`)));
+      expect(results.filter(Boolean)).toHaveLength(1);
+      const stored = (await q(`SELECT password FROM users WHERE id = $1`, [fresh])).rows[0].password as string;
+      await expect(users.setFirstPassword(fresh, 'another one')).resolves.toBe(false);
+      expect((await q(`SELECT password FROM users WHERE id = $1`, [fresh])).rows[0].password).toBe(stored);
+      // an account that had one all along
+      await expect(users.setFirstPassword(user, 'another one')).resolves.toBe(false);
+    }
+    finally {
+      await pool.end();
+    }
+  }, 30000);
+
   describe('session generations', () => {
     type Repos = {
       users: typeof import('../repositories/users').default;

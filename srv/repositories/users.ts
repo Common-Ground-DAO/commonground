@@ -1719,6 +1719,21 @@ class UserHelper {
     }
   }
 
+  /**
+   * Sets the account's first password: only while it has none, in the same
+   * statement (two concurrent requests cannot both add one). false: the
+   * account has a password by now (or is gone) — nothing was written.
+   */
+  public async setFirstPassword(userId: string, password: string): Promise<boolean> {
+    const hash = await _hashPassword(password);
+    const result = await pool.query(`
+      UPDATE users
+      SET "password" = $2, "passwordChangeRequired" = FALSE, "updatedAt" = now()
+      WHERE "id" = $1 AND "deletedAt" IS NULL AND "password" IS NULL
+    `, [userId, hash]);
+    return result.rowCount === 1;
+  }
+
   public async updateUser(
     userId: string,
     data: Partial<Omit<Models.User.OwnData, "id" | "updatedAt" | "extraData"> & {

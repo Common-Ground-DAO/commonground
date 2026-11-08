@@ -12,8 +12,9 @@ import { loginGeneration, userSessionIndexOf, userSessionsOf } from "./userSessi
  * account creation and `User/reauthenticate` record it together with `authAt`;
  * a device-key login (silent re-login) records neither, so it never counts as
  * a fresh authentication. `transfer` is a transfer-link redemption
- * (User/redeemTransferLink), which may add a sign-in method but never
- * satisfies the default step-up.
+ * (User/redeemTransferLink): it never satisfies the default step-up, and it
+ * adds a sign-in method or an address only while the account still lacks
+ * exactly that (the account-security step, srv/util/securityStep.ts).
  */
 export type AuthMethod =
   | "passkey"
@@ -42,10 +43,13 @@ const DEFAULT_STEP_UP_LIST: readonly AuthMethod[] = [
 const DEFAULT_STEP_UP_METHODS: ReadonlySet<AuthMethod> = new Set<AuthMethod>(DEFAULT_STEP_UP_LIST);
 
 /**
- * Adding a sign-in method (srv/util/securityStep.ts requireAuthToAdd) also
- * accepts a fresh transfer-link session; removing or replacing one does not.
+ * What the account-security step accepts for adding what the account lacks
+ * (srv/util/securityStep.ts requireAuthToAdd): any interactive sign-in, and a
+ * transfer-link session. Nowhere else does a transfer-link session count —
+ * for an account that is not in the step it is an ordinary sign-in, and
+ * every change to its sign-in methods takes the default step-up.
  */
-export const ADD_SIGN_IN_METHOD_AUTH: readonly AuthMethod[] = [...DEFAULT_STEP_UP_LIST, "transfer"];
+export const SECURITY_STEP_AUTH: readonly AuthMethod[] = [...DEFAULT_STEP_UP_LIST, "transfer"];
 
 function saveSession(session: express.Request["session"]) {
   return new Promise<void>((resolve, reject) => {

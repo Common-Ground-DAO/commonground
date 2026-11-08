@@ -38,7 +38,7 @@ import { keyRateLimitHandler } from "../util/rateLimit";
 import { getMainRp, getProcessRpIdOrNull, isLegacyCgidMode } from "../util/passkeyConfig";
 import { isGatewayMode } from "../util/gateway";
 import { verifyAuthentication } from "../util/passkeys";
-import { ADD_SIGN_IN_METHOD_AUTH, endLoginSession, establishLoginSession, hasRecentAuth, recordReauthentication, requireRecentAuth, stepUpValidUntil, type AuthMethod } from "../util/authSession";
+import { endLoginSession, establishLoginSession, hasRecentAuth, recordReauthentication, requireRecentAuth, stepUpValidUntil, SECURITY_STEP_AUTH, type AuthMethod } from "../util/authSession";
 import {
   SIGNUP_CODE_MAX_ATTEMPTS,
   SIGNUP_CODE_TTL_MS,
@@ -1753,8 +1753,11 @@ registerPostRoute<
     if (hasPassword) {
       ({ devices: signedOutDevices, delayed: signOutDelayed } = await changeAndSignOut(request, (beforeCommit) => userHelper.setPassword(userId, data.password, beforeCommit)));
     }
-    else {
-      await userHelper.setPassword(userId, data.password);
+    else if (!(await userHelper.setFirstPassword(userId, data.password))) {
+      // a password arrived in the meantime (a concurrent request): this one
+      // would replace it, which takes the step-up — the client confirms and
+      // retries, and the retry takes the replacing branch
+      throw new Error(errors.server.REAUTH_REQUIRED);
     }
     notifyPasswordChanged(userId, hasPassword);
     return { signedOutDevices, signOutDelayed };
@@ -2239,7 +2242,7 @@ registerPostRoute<
       pendingEmail: emailEnabled() ? await getPendingEmail(user.id) : null,
       // what is missing can be added in this session (else: sign in again
       // or open a new transfer link)
-      recentSignIn: hasRecentAuth(request, { allow: ADD_SIGN_IN_METHOD_AUTH, maxAgeMs: SECURITY_STEP_AUTH_MAX_AGE_MS }),
+      recentSignIn: hasRecentAuth(request, { allow: SECURITY_STEP_AUTH, maxAgeMs: SECURITY_STEP_AUTH_MAX_AGE_MS }),
     };
   }
 );
@@ -2370,8 +2373,10 @@ registerPostRoute<
     await beginLogin(request);
     // Signs in with a transfer link: never into an existing login (the app
     // signs out first, after asking), a new session, and the session counts
-    // as authenticated by 'transfer' — enough to add a sign-in method, never
-    // to remove or replace one.
+    // as authenticated by 'transfer' — enough to add what the account-security
+    // step asks for (srv/util/securityStep.ts requireAuthToAdd); for an
+    // account that is not in the step it is an ordinary sign-in, never a
+    // step-up.
     if (isLegacyCgidMode()) {
       throw new Error(errors.server.NOT_SUPPORTED);
     }

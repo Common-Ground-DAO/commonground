@@ -8,7 +8,7 @@ import pool from "./postgres";
 import redisManager from "../redis";
 import { getSecurityFacts, type SecurityFacts } from "../repositories/loginMethods";
 import { getProcessRpIdOrNull, isLegacyCgidMode } from "./passkeyConfig";
-import { requireRecentAuth, ADD_SIGN_IN_METHOD_AUTH } from "./authSession";
+import { requireRecentAuth, SECURITY_STEP_AUTH } from "./authSession";
 import { getSecurityStepVersion } from "./securityStepVersion";
 
 /**
@@ -228,13 +228,17 @@ export const SECURITY_STEP_AUTH_MAX_AGE_MS = 60 * 60 * 1000;
  *
  * - While the account lacks exactly what is being added (the security step),
  *   it may have nothing to re-authenticate with: an interactive sign-in or a
- *   transfer link within SECURITY_STEP_AUTH_MAX_AGE_MS is enough. A silent
- *   device-key session alone is not (REAUTH_REQUIRED; the user signs in again
- *   or gets a new transfer link).
- * - Otherwise a recent authentication is needed (the usual window), and a
- *   transfer-link session counts (ADD_SIGN_IN_METHOD_AUTH). Removing or
- *   replacing a method or a verified address keeps the default
- *   requireRecentAuth, where it does not.
+ *   transfer link within SECURITY_STEP_AUTH_MAX_AGE_MS is enough
+ *   (SECURITY_STEP_AUTH). A silent device-key session alone is not
+ *   (REAUTH_REQUIRED; the user signs in again or gets a new transfer link).
+ * - Otherwise the default step-up applies, as for removing or replacing a
+ *   method: a transfer-link session is an ordinary sign-in there and does not
+ *   count.
+ *
+ * Whether the account lacks it is computed from the database at the time of
+ * the request (computeSecurityStatus, with this process's mail setting) —
+ * not from the session's cached "complete" mark, the realtime record in
+ * Valkey or anything the client says.
  */
 export async function requireAuthToAdd(
   request: express.Request,
@@ -251,8 +255,8 @@ export async function requireAuthToAdd(
       (what === "sign-in-method" && status.needsSignInMethod) ||
       (what === "email" && status.needsVerifiedEmail)
     ) {
-      return requireRecentAuth(request, { allow: ADD_SIGN_IN_METHOD_AUTH, maxAgeMs: SECURITY_STEP_AUTH_MAX_AGE_MS });
+      return requireRecentAuth(request, { allow: SECURITY_STEP_AUTH, maxAgeMs: SECURITY_STEP_AUTH_MAX_AGE_MS });
     }
   }
-  return requireRecentAuth(request, { allow: ADD_SIGN_IN_METHOD_AUTH });
+  return requireRecentAuth(request);
 }

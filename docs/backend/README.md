@@ -59,7 +59,8 @@
 > `syncState`) and the singleton processes' gateway refusal against commit 696102b, 2026-11-06;
 > the pool's `error` listener (idle connections only) and the LISTEN holders' own listeners against
 > commit 696102b, 2026-11-07;
-> the transfer-link routes (`/declineTransferLink`, sign-out) against commit 04c72b2, 2026-11-07
+> the transfer-link routes (`/declineTransferLink`, sign-out) against commit 04c72b2, 2026-11-07;
+> `requireAuthToAdd()` and transfer-link sessions against commit c18b233, 2026-11-07
 
 This document provides a comprehensive reference for the Common Ground backend. It is intended for AI agents and developers working on the codebase.
 
@@ -455,8 +456,9 @@ one does not.
 classified as protected or not. Adding a way into the account (a passkey, a
 sign-in wallet, a first password, an X/LUKSO/Farcaster account, an address while
 none is verified) goes through `requireAuthToAdd()` (`srv/util/securityStep.ts`)
-instead: a sign-in within the hour suffices while the account lacks exactly that (the account-security
-step), otherwise a recent authentication where a transfer-link session counts.
+instead: a sign-in or transfer link within the hour suffices while the account lacks exactly that
+(the account-security step, computed from the database at request time), otherwise the plain
+step-up, where a transfer-link session does not count.
 Throttles (all numbers in `srv/util/authLimits.ts`, table in
 [auth-identity §4 "Limits"](../auth-identity/README.md#limits); off on a dev
 stack, like the account limit of 20 per network and hour, 50 per day): password login 60 attempts per 15 minutes per IP and, per

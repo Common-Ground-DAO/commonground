@@ -69,6 +69,7 @@ services:
       - "443:443/udp"
     environment:
       - CG_DOMAIN=${CG_DOMAIN}
+      - CG_WWW_REDIRECT=${CG_WWW_REDIRECT:-off}
       - CG_ACME_EMAIL=${CG_ACME_EMAIL}
       - CG_TLS_MODE=${CG_TLS_MODE:-acme}
       # on: docker-compose.selfhost.calls.yml (calls enabled)

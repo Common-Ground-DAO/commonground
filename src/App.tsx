@@ -90,6 +90,7 @@ import { PluginIframeProvider } from 'context/PluginIframeProvider';
 import "@farcaster/auth-kit/styles.css";
 import { AuthKitProvider } from "@farcaster/auth-kit";
 import UserInfoManager from 'components/atoms/UserInfoManager/UserInfoManager';
+import LocalDataRecovery from 'components/organisms/LocalDataRecovery/LocalDataRecovery';
 import SignedOutNotice from 'components/organisms/SignedOutNotice/SignedOutNotice';
 import { PluginDetailsModalProvider } from 'context/PluginDetailsModalProvider';
 import { IsolationModeProvider } from 'context/IsolationModeProvider';
@@ -449,7 +450,7 @@ function App() {
     );
   }
 
-  return content;
+  return <>{content}<LocalDataRecovery /></>;
 }
 
 export default App;

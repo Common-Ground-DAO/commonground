@@ -15,6 +15,7 @@ type Props = {
   hideMobileHandler?: boolean;
   noDefaultScrollable?: boolean;
   floatingMode?: boolean;
+  contentOwnsScroll?: boolean;
 
   overrideZIndex?: number;
   footerActions?: React.JSX.Element;
@@ -80,7 +81,7 @@ const BottomSliderModal: React.FC<React.PropsWithChildren<Props>> = (props) => {
           while scrolled to the top, which is what makes the drag-to-close
           gesture win over scrolling there).
         */}
-        <Sheet.Content>
+        <Sheet.Content disableScroll={props.contentOwnsScroll} disableDrag={props.contentOwnsScroll}>
           {content}
           {props.footerActions && <div className='flex justify-center p-2'>
             {props.footerActions}

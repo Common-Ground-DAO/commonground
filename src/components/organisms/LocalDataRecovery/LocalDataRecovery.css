@@ -1,0 +1,15 @@
+.local-data-recovery {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483647;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: var(--surface-background-2nd, #171923);
+    color: var(--text-primary, #fff);
+    overflow: auto;
+}
+.local-data-recovery > div { max-width: 28rem; }
+.local-data-recovery h1 { font-size: 1.5rem; margin-bottom: 1rem; }
+.local-data-recovery p { margin-bottom: 1.5rem; }
+.local-data-recovery button { padding: 12px 24px; border: 1px solid currentColor; border-radius: 8px; cursor: pointer; }

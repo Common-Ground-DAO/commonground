@@ -526,3 +526,48 @@ describe('community URL taken over by another community', () => {
     expect(b.navigations).toEqual([]);
   });
 });
+
+
+describe('slow snapshot recovery', () => {
+  it('preserves the cache during a slow read and completes after the former seven second timeout', async () => {
+    installBrowserEnv(); installFakeIdb();
+    const tab = await openTab();
+    await tab.community.setupAfterLogin([communityFixture()]);
+    const { default: uniques } = await import('data/databases/unique');
+    const original = uniques.uniques.get.bind(uniques.uniques);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void;
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    let delayed = false;
+    const spy = vi.spyOn(uniques.uniques, 'get').mockImplementation((async (key: any) => {
+      const row = await original(key);
+      if (key === 'OwnCommunityIds' && !delayed) { delayed = true; entered(); await gate; }
+      return row;
+    }) as any);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const first = tab.community.setupAfterLogin([communityFixture({ title: 'New title', updatedAt: T(3) })]);
+    try {
+      await waiting;
+      await vi.advanceTimersByTimeAsync(8000);
+      expect(await tab.community.getOwnCommunities()).toHaveLength(1);
+      expect(tab.community.setupAfterLogin([])).toBe(first);
+      release();
+      await first;
+      expect((await tab.community.getOwnCommunities())[0].title).toBe('New title');
+    } finally { release(); await first; spy.mockRestore(); vi.useRealTimers(); }
+  });
+
+  it('allows a fresh merge after an actual failed read without clearing cached communities', async () => {
+    installBrowserEnv(); installFakeIdb();
+    const tab = await openTab();
+    await tab.community.setupAfterLogin([communityFixture()]);
+    const { default: uniques } = await import('data/databases/unique');
+    const spy = vi.spyOn(uniques.uniques, 'get').mockRejectedValueOnce(new Error('Injected read failure'));
+    await expect(tab.community.setupAfterLogin([])).rejects.toThrow('Injected read failure');
+    spy.mockRestore();
+    expect(await tab.community.getOwnCommunities()).toHaveLength(1);
+    await tab.community.setupAfterLogin([communityFixture({ title: 'Recovered', updatedAt: T(3) })]);
+    expect((await tab.community.getOwnCommunities())[0].title).toBe('Recovered');
+  });
+});

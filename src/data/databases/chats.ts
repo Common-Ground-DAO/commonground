@@ -108,75 +108,58 @@ class ChatDatabase extends AbstractDatabase<{
   public async setupAfterLogin(chats: Models.Chat.ChatFromApi[], options?: { requestStartedAt?: number }): Promise<void> {
     const requestStartedAt = snapshotRequestStart(options?.requestStartedAt);
     if (!this._setupPromise) {
-      this._setupPromise = new Promise<void>(async (resolve, reject) => {
-        let rejected = false;
-        const susTimeout = setTimeout(() => {
-          console.log("ChatDatabase.setupAfterLogin is taking longer than 7s, cancelling...");
-          rejected = true;
-          reject(new Error("ChatDatabase.setupAfterLogin timed out"));
-        }, 7_000);
-    
-        try {
-          const newChats = chats.map(chatFromApi);
-          for (const chat of newChats) {
-            // the lastRead guard is seeded after the merge below
-            channelDatabaseManager.registerAccessForChannel({
-              channelId: chat.channelId,
-              chatId: chat.id,
-            });
-          }
+      // Keep the real operation in flight until it settles. A UI timeout must
+      // neither clear this cache nor start another writer beside this one.
+      this._setupPromise = (async () => {
+        const newChats = chats.map(chatFromApi);
+        for (const chat of newChats) {
+          // the lastRead guard is seeded after the merge below
+          channelDatabaseManager.registerAccessForChannel({
+            channelId: chat.channelId,
+            chatId: chat.id,
+          });
+        }
 
-          if (!rejected) {
-            // one transaction on fresh rows: another tab may write the same
-            // chats meanwhile; read state and lastMessage are merged, never
-            // replaced by an older snapshot
-            const { stored, channelIdsToDelete } = await this.db.transaction('rw', this.db.chats, async () => {
-              const oldChats = await this.db.chats.toArray();
-              const oldChatsById = new Map(oldChats.map(c => [c.id, c]));
-              const toPut: StoredChat[] = [];
-              const stored: StoredChat[] = [];
-              for (const newChat of newChats) {
-                const oldChat = oldChatsById.get(newChat.id);
-                oldChatsById.delete(newChat.id);
-                const merged = mergeChatSnapshot(oldChat, newChat);
-                if (!oldChat || !isEqual(oldChat, merged)) {
-                  toPut.push(merged);
-                }
-                stored.push(merged);
+        {
+          // one transaction on fresh rows: another tab may write the same
+          // chats meanwhile; read state and lastMessage are merged, never
+          // replaced by an older snapshot
+          const { stored, channelIdsToDelete } = await this.db.transaction('rw', this.db.chats, async () => {
+            const oldChats = await this.db.chats.toArray();
+            const oldChatsById = new Map(oldChats.map(c => [c.id, c]));
+            const toPut: StoredChat[] = [];
+            const stored: StoredChat[] = [];
+            for (const newChat of newChats) {
+              const oldChat = oldChatsById.get(newChat.id);
+              oldChatsById.delete(newChat.id);
+              const merged = mergeChatSnapshot(oldChat, newChat);
+              if (!oldChat || !isEqual(oldChat, merged)) {
+                toPut.push(merged);
               }
-              // remaining chats in oldChatsById don't have a counterpart in
-              // newChats and need to be deleted, unless an event wrote them
-              // after this snapshot's request started
-              const chatsToDelete = Array.from(oldChatsById.values()).filter(c => deletableBySnapshot(c, requestStartedAt));
-              console.log(`Updating ${toPut.length} chats, deleting ${chatsToDelete.length} chats`);
-              await this.db.chats.bulkDelete(chatsToDelete.map(c => c.id));
-              await this.db.chats.bulkPut(toPut);
-              return { stored, channelIdsToDelete: chatsToDelete.map(c => c.channelId) };
-            });
-            this.registerChatLastRead(stored);
+              stored.push(merged);
+            }
+            // remaining chats in oldChatsById don't have a counterpart in
+            // newChats and need to be deleted, unless an event wrote them
+            // after this snapshot's request started
+            const chatsToDelete = Array.from(oldChatsById.values()).filter(c => deletableBySnapshot(c, requestStartedAt));
+            console.log(`Updating ${toPut.length} chats, deleting ${chatsToDelete.length} chats`);
+            await this.db.chats.bulkDelete(chatsToDelete.map(c => c.id));
+            await this.db.chats.bulkPut(toPut);
+            return { stored, channelIdsToDelete: chatsToDelete.map(c => c.channelId) };
+          });
+          this.registerChatLastRead(stored);
 
-            const results = await Dexie.Promise.allSettled(
-              channelIdsToDelete.map(channelId => channelDatabaseManager.deleteChannelDatabase({ channelId })).filter(Boolean),
-            );
-            for (const result of results) {
-              if (result.status === 'rejected') {
-                console.error("Error deleting chat database", result.reason);
-              }
+          const results = await Dexie.Promise.allSettled(
+            channelIdsToDelete.map(channelId => channelDatabaseManager.deleteChannelDatabase({ channelId })).filter(Boolean),
+          );
+          for (const result of results) {
+            if (result.status === 'rejected') {
+              console.error("Error deleting chat database", result.reason);
             }
           }
         }
-        catch (e) {
-          clearTimeout(susTimeout);
-          rejected = true;
-          reject(e);
-        }
-        finally {
-          if (!rejected) {
-            clearTimeout(susTimeout);
-            resolve();
-          }
-          delete this._setupPromise;
-        }
+      })().finally(() => {
+        this._setupPromise = undefined;
       });
     }
     return this._setupPromise;

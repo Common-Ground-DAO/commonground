@@ -238,77 +238,60 @@ class UserDatabase extends AbstractDatabase<{
   private _setupPromise: Promise<void> | undefined;
   public setupAfterLogin(data: Models.User.OwnData): Promise<void> {
     if (!this._setupPromise) {
-      this._setupPromise = new Promise<void>(async (resolve, reject) => {
-        let rejected = false;
-        const susTimeout = setTimeout(() => {
-          console.log("UserDatabase.setupAfterLogin is taking longer than 7s, cancelling login...");
-          rejected = true;
-          reject(new Error("UserDatabase.setupAfterLogin timed out"));
-        }, 7_000);
-    
-        try {
-          !this.isReady && await this.ready;
-          const tmp = await uniqueDb.uniques.get("OwnData") as (Unique.Object & { key: "OwnData" }) | undefined;
-          const current = tmp?.data;
-      
-          const changed = (
-            !current ||
-            current.id !== data.id ||
-            current.displayAccount !== data.displayAccount ||
-            current.followingCount !== data.followingCount ||
-            current.followerCount !== data.followerCount ||
-            current.newsletter !== data.newsletter ||
-            current.email !== data.email ||
-            current.trustScore !== data.trustScore ||
-            current.onlineStatus !== data.onlineStatus ||
-            current.updatedAt !== data.updatedAt ||
-            current.pointBalance !== data.pointBalance ||
-            !_.isEqual(current.accounts, data.accounts) ||
-            !_.isEqual(current.finishedTutorials, data.finishedTutorials) ||
-            !_.isEqual(current.communityOrder, data.communityOrder) ||
-            !_.isEqual(current.premiumFeatures, data.premiumFeatures) ||
-            !_.isEqual(current.passkeys, data.passkeys) ||
-            !_.isEqual(current.features, data.features) ||
-            !_.isEqual(current.extraData, data.extraData)
-          );
+      // Keep the real operation in flight until it settles. A UI timeout must
+      // neither clear this cache nor start another writer beside this one.
+      this._setupPromise = (async () => {
+        !this.isReady && await this.ready;
+        const tmp = await uniqueDb.uniques.get("OwnData") as (Unique.Object & { key: "OwnData" }) | undefined;
+        const current = tmp?.data;
 
-          // a snapshot older than own data another tab already got from an
-          // event (same user) must not overwrite it
-          const olderThanStored = !!current && current.id === data.id && isOlderThanStored(current, data);
+        const changed = (
+          !current ||
+          current.id !== data.id ||
+          current.displayAccount !== data.displayAccount ||
+          current.followingCount !== data.followingCount ||
+          current.followerCount !== data.followerCount ||
+          current.newsletter !== data.newsletter ||
+          current.email !== data.email ||
+          current.trustScore !== data.trustScore ||
+          current.onlineStatus !== data.onlineStatus ||
+          current.updatedAt !== data.updatedAt ||
+          current.pointBalance !== data.pointBalance ||
+          !_.isEqual(current.accounts, data.accounts) ||
+          !_.isEqual(current.finishedTutorials, data.finishedTutorials) ||
+          !_.isEqual(current.communityOrder, data.communityOrder) ||
+          !_.isEqual(current.premiumFeatures, data.premiumFeatures) ||
+          !_.isEqual(current.passkeys, data.passkeys) ||
+          !_.isEqual(current.features, data.features) ||
+          !_.isEqual(current.extraData, data.extraData)
+        );
 
-          if (changed && olderThanStored) {
-            console.log("OwnData from login is older than the stored data, keeping the stored data");
-          } else if (changed) {
-            if (!!current) {
-              console.log("OwnData has changed, updating db entry. Old, New:", current, data);
-            }
-            await uniqueDb.uniques.put({ key: "OwnData", data });
+        // a snapshot older than own data another tab already got from an
+        // event (same user) must not overwrite it
+        const olderThanStored = !!current && current.id === data.id && isOlderThanStored(current, data);
 
-            // clear user db if own user was switched or login is new
-            if (!current || current.id !== data.id) {
-              this.userDataLastUpdateMap.clear();
-              await this.db.userData.clear();
-            }
-          } else {
-            console.log("OwnData didn't change, no update required");
+        if (changed && olderThanStored) {
+          console.log("OwnData from login is older than the stored data, keeping the stored data");
+        } else if (changed) {
+          if (!!current) {
+            console.log("OwnData has changed, updating db entry. Old, New:", current, data);
           }
+          await uniqueDb.uniques.put({ key: "OwnData", data });
 
-          this.retrieveWallets().catch(e => {
-            console.log("Error while retrieving own wallets", e);
-          });
-        }
-        catch (e) {
-          clearTimeout(susTimeout);
-          rejected = true;
-          reject(e);
-        }
-        finally {
-          if (!rejected) {
-            clearTimeout(susTimeout);
-            resolve();
+          // clear user db if own user was switched or login is new
+          if (!current || current.id !== data.id) {
+            this.userDataLastUpdateMap.clear();
+            await this.db.userData.clear();
           }
-          delete this._setupPromise;
+        } else {
+          console.log("OwnData didn't change, no update required");
         }
+
+        this.retrieveWallets().catch(e => {
+          console.log("Error while retrieving own wallets", e);
+        });
+      })().finally(() => {
+        this._setupPromise = undefined;
       });
     }
     return this._setupPromise;

@@ -1,4 +1,6 @@
-> Status: verified against commit 40f4a0b0f, 2026-08-04; `emailEnabled()` reference and email
+> Status: verified against commit 7224927 plus the local login persistence and
+> update-coordination working-tree changes, 2026-11-08; other sections verified
+> against commit 40f4a0b0f, 2026-08-04; `emailEnabled()` reference and email
 > send limits against commit e44dac1, 2026-10-31; session store instance (Valkey state
 > instance) against commit ff0da06, 2026-10-31; sessions (§2), the login endpoint (§4), passkeys
 > (§5.3, §7), the recovery-phrase gate (§5.2), sign-up (§6), step-up (§7), the keepalive (§10)
@@ -424,8 +426,9 @@ Silent re-authentication is built on an asymmetric device key rather than a stor
   `ECDSA` / `namedCurve: "P-384"`, `extractable: false`, usages `["sign"]`. The **private key never
   leaves the browser** and is non-extractable.
 - **Storage**: the `CryptoKeyPair` is stored in IndexedDB (`CG_DEVICE_KEY_IDENT`). Saving a new key
-  clears the store first, so a browser profile holds one device keypair at a time
-  (`src/data/util/device.ts:93-125`).
+  replaces the store in one transaction, so a browser profile holds one device keypair at a time.
+  Saving resolves only when that transaction commits; an aborted replacement preserves the previous
+  key. Connections close on success, failure and version changes (`src/data/util/device.ts`).
 - **Public key**: exported as JWK (`key_ops: ["verify"]`) and sent to the server at login/signup,
   where it is persisted on the `devices` row (`srv/entities/device.ts:44-45`).
 - **Signing** (`src/data/util/device.ts:149-167` and inline in `login.ts`): the browser signs the
@@ -1267,7 +1270,12 @@ The client login lifecycle is owned by `LoginManager` (`src/data/appstate/login.
   that logout.
 - **Post-login setup** (`setupAfterLogin`): seeds the local Dexie databases (user, communities,
   chats), hands the notification count to the in-memory chat stores (`setupChatAfterLogin`), starts the socket login (not awaited: the transport reports when the tab is live),
-  and registers the push subscription.
+  and starts optional push registration without making login wait for it. All local snapshot results
+  are checked. Storage failure or a 30-second local-data deadline shows a blocking Reload screen;
+  it preserves cached data and device keys instead of clearing and retrying an in-flight writer.
+  Automatic device-login retries are suspended in that recovery state. Update-triggered reloads
+  wait for login/transfer/logout and the actual local work to settle; an explicit recovery reload
+  starts a fresh page without deleting website data.
 
 **Account-security step and transfer links (client).** Login responses set
 `securityStepState` (`src/data/auth/securityStep.ts`) from `securityStepRequired`, and

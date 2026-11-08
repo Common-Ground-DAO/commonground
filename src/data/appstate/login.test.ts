@@ -57,6 +57,8 @@ const fake = vi.hoisted(() => {
     server,
     keyPair: undefined as CryptoKeyPair | undefined,
     /** options of every community/chat snapshot merge (setupAfterLogin) */
+    communitySetupGate: undefined as Deferred<void> | undefined,
+    communitySetupError: undefined as Error | undefined,
     snapshots: [] as { db: string; options?: { requestStartedAt?: number } }[],
     /** client event handlers (connectionManager) of the tab opened last */
     clientEventHandlers: new Map<string, (...args: unknown[]) => void>(),
@@ -173,6 +175,10 @@ vi.mock('data/util/device', () => {
 const stubDb = (db?: string, name = db) => ({
   setupAfterLogin: async (_data: unknown, options?: { requestStartedAt?: number }) => {
     if (db) fake.snapshots.push({ db, options });
+    if (db === 'community') {
+      await fake.communitySetupGate?.promise;
+      if (fake.communitySetupError) throw fake.communitySetupError;
+    }
   },
   clear: async () => { if (name) fake.cleared.push(name); },
   registerStoredChats: async () => { fake.storedRowsRegistered.push(`${db}`); },
@@ -228,6 +234,8 @@ afterEach(() => {
 });
 
 function resetServer() {
+  fake.communitySetupGate = undefined;
+  fake.communitySetupError = undefined;
   fake.snapshots.length = 0;
   fake.notificationCounts.length = 0;
   fake.unreadCountGate = undefined;
@@ -1224,5 +1232,97 @@ describe('gateway instance (docs/auth-identity §12)', () => {
     expect(fake.io!.sockets).toHaveLength(0);
     fake.unreadCountGate.resolve();
     channel.close();
+  });
+});
+
+
+describe('local login recovery and PWA updates', () => {
+  it('waits past the former 1.5 second update deadline until local setup finishes', async () => {
+    const env = setupWithCrypto();
+    useDataLayerFakeTimers();
+    const reload = vi.fn();
+    Object.assign(env.window.location, { reload });
+    storeUser('u1', 'dev-1');
+    const gate = deferred<void>();
+    fake.communitySetupGate = gate;
+    const tab = await openTab();
+    const first = tab.loginManager.autoLogin();
+    try {
+      await until(() => fake.snapshots.some(x => x.db === 'community'));
+      tab.loginManager.triggerSafeWindowReload();
+      tab.loginManager.triggerSafeWindowReload();
+      await vi.advanceTimersByTimeAsync(8000);
+      expect(reload).not.toHaveBeenCalled();
+      expect(tab.loginManager.state).toBe('loggingin');
+      expect(fake.cleared).toEqual([]);
+      gate.resolve();
+      await first;
+      await settle();
+      expect(tab.loginManager.state).toBe('loggedin');
+      expect(reload).toHaveBeenCalledTimes(1);
+    } finally { gate.resolve(); await first; }
+  });
+
+  it('ends a stalled login with recovery, preserves the session and does not start another writer', async () => {
+    setupWithCrypto();
+    useDataLayerFakeTimers();
+    storeUser('u1', 'dev-1');
+    const gate = deferred<void>();
+    fake.communitySetupGate = gate;
+    const tab = await openTab();
+    const { default: localData, LOCAL_DATA_TIMEOUT_MS } = await import('./localData');
+    const first = tab.loginManager.autoLogin();
+    const outcome = Promise.allSettled([first]);
+    try {
+      await until(() => fake.snapshots.some(x => x.db === 'community'));
+      await vi.advanceTimersByTimeAsync(LOCAL_DATA_TIMEOUT_MS);
+      expect((await outcome)[0].status).toBe('rejected');
+      expect(localData.error).not.toBeNull();
+      expect(fake.server.sessionUserId).toBe('u1');
+      expect(tab.loginManager.currentUser?.deviceId).toBe('dev-1');
+      expect(fake.cleared).toEqual([]);
+      expect(fake.deletedDeviceKeys).toEqual([]);
+      await expect(tab.loginManager.login({ email: 'test@example.com', code: '12345678' })).rejects.toThrow('Local data');
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fake.server.loginCalls).toBe(1);
+      expect(fake.snapshots.filter(x => x.db === 'community')).toHaveLength(1);
+      gate.resolve();
+      await settle();
+      // A late completion cannot silently put the failed login into loggedin.
+      expect(tab.loginManager.state).not.toBe('loggedin');
+    } finally { gate.resolve(); await outcome; }
+  });
+
+  it('reports a failed snapshot instead of silently marking a partial login successful', async () => {
+    setupWithCrypto();
+    storeUser('u1', 'dev-1');
+    fake.communitySetupError = new Error('Injected storage failure');
+    const tab = await openTab();
+    await expect(tab.loginManager.autoLogin()).rejects.toThrow('Local data');
+    expect(tab.loginManager.state).not.toBe('loggedin');
+    expect(fake.cleared).toEqual([]);
+    expect(fake.server.sessionUserId).toBe('u1');
+  });
+
+  it('also waits for device authentication before applying an update', async () => {
+    const env = setupWithCrypto();
+    const reload = vi.fn();
+    Object.assign(env.window.location, { reload });
+    storeUser('u1', 'dev-1');
+    const gate = deferred<void>();
+    fake.server.loginGate = gate;
+    const tab = await openTab();
+    const first = tab.loginManager.autoLogin();
+    try {
+      await until(() => fake.server.loginCalls === 1);
+      tab.loginManager.triggerSafeWindowReload();
+      await settle();
+      expect(reload).not.toHaveBeenCalled();
+      gate.resolve();
+      await first;
+      await settle();
+      expect(fake.snapshots.some(x => x.db === 'community')).toBe(true);
+      expect(reload).toHaveBeenCalledTimes(1);
+    } finally { gate.resolve(); await first; }
   });
 });

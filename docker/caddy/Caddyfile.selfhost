@@ -4,6 +4,8 @@
 #
 # Environment (set by docker-compose.selfhost.yml from .env.selfhost):
 #   CG_DOMAIN        the instance's domain
+#   CG_WWW_REDIRECT  "on" redirects www.CG_DOMAIN to the main HTTPS origin
+#                    (requires DNS for www); off by default
 #   CG_TLS_MODE      where the certificates come from:
 #     acme      Caddy obtains and renews Let's Encrypt certificates — the
 #               domain must point to this server in public DNS and ports
@@ -51,6 +53,16 @@ import /etc/caddy/common.caddy
 {$CG_DOMAIN} {
 	import cg_app "https://{$CG_DOMAIN}:* wss://{$CG_DOMAIN}:*" "https:" https {$CG_CGID_VHOST:off} on
 }
+
+# Optional canonical-host redirect; paths and query strings are preserved.
+(www_redirect_on) {
+	www.{$CG_DOMAIN} {
+		redir https://{$CG_DOMAIN}{uri} permanent
+	}
+}
+(www_redirect_off) {
+}
+import www_redirect_{$CG_WWW_REDIRECT:off}
 
 # Legacy CG ID mini-app (passkeys on a separate origin), when this instance
 # itself runs in legacy CG ID mode (CG_CGID_VHOST=on); a normal instance —

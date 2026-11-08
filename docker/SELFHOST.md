@@ -112,6 +112,14 @@ started and the instance stays down; `up`/`update` say so and point to
 commit>`, then `build` and `up`). Take a backup before updating
 (`./selfhost/selfhost.sh backup run`).
 
+## Optional www redirect
+
+To redirect `www.<your-domain>` to the main HTTPS origin, point its DNS record
+at this server and set `CG_WWW_REDIRECT=on` in `docker/.env.selfhost`.
+Then run `./selfhost/selfhost.sh up` from `docker/`. Caddy obtains a certificate
+for the www name and sends a permanent redirect, preserving the path and query
+string. The switch defaults to `off`; enable it only for a name you control.
+
 ## Local test instance (no public DNS)
 
 Let's Encrypt can only issue certificates for names that resolve publicly to

@@ -79,6 +79,7 @@ const AudioWidgetMobile: React.FC<Props> = (props) => {
       <BottomSliderModal
         isOpen={isOpen}
         onClose={closeDrawer}
+        contentOwnsScroll
         noDefaultScrollable
         floatingMode
         customClassname='audio-widget-mobile'

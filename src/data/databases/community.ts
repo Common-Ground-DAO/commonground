@@ -625,7 +625,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
     const requestStartedAt = Date.now();
     const community = await communityManager.getCommunityDetailView({id: communityId});
     await this.addCommunity(community, requestStartedAt);
-    return community; 
+    return community;
   }
 
   // public async getCommunityMembers(communityId: string) {
@@ -723,7 +723,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
   }
 
   public async getChannelsById(channelIds: string[]) {
-    return await this.db.channels.where('channelId').anyOf(channelIds).toArray();    
+    return await this.db.channels.where('channelId').anyOf(channelIds).toArray();
   }
 
   public async areCommunitiesUnread(communityIds: string[]) {
@@ -948,349 +948,328 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
   public setupAfterLogin(communities: Models.Community.DetailViewFromApi[], options?: { requestStartedAt?: number }): Promise<void> {
     const requestStartedAt = snapshotRequestStart(options?.requestStartedAt);
     if (!this._setupPromise) {
-      this._setupPromise = new Promise<void>(async (resolve, reject) => {
-        let rejected = false;
-        const susTimeout = setTimeout(() => {
-          console.log("CommunityDatabase.setupAfterLogin is taking longer than 7s, cancelling...");
-          rejected = true;
-          reject(new Error("CommunityDatabase.setupAfterLogin timed out"));
-        }, 7_000);
-    
-        try {
-          const newCommunities = [...communities];
-          for (const newCommunity of newCommunities) {
-            this.rememberCommunityUrl(newCommunity.id, newCommunity.url);
-            for (const channel of newCommunity.channels) {
-              // lastRead is seeded after the merge below (never the snapshot's)
-              channelDatabaseManager.registerAccessForChannel({
-                channelId: channel.channelId,
-                communityId: channel.communityId,
-              });
-            }
-            for (const call of newCommunity.calls) {
-              channelDatabaseManager.registerAccessForChannel({
-                callId: call.id,
-                channelId: call.channelId,
-                communityId: call.communityId,
-              });
-            }
+      // Keep the real operation in flight until it settles. A UI timeout must
+      // neither clear this cache nor start another writer beside this one.
+      this._setupPromise = (async () => {
+        const newCommunities = [...communities];
+        for (const newCommunity of newCommunities) {
+          this.rememberCommunityUrl(newCommunity.id, newCommunity.url);
+          for (const channel of newCommunity.channels) {
+            // lastRead is seeded after the merge below (never the snapshot's)
+            channelDatabaseManager.registerAccessForChannel({
+              channelId: channel.channelId,
+              communityId: channel.communityId,
+            });
           }
-          /** stored channels the snapshot did not change (seed the lastRead guard) */
-          const unchangedChannels: StoredChannel[] = [];
-          let mergedChannels: StoredChannel[] = [];
-          const communityIdsToDelete: string[] = [];
-          const communitiesToUpsert: Models.Community.DetailView[] = [];
-      
-          /**
-           * An array of [ communityId, channelId ] arrays
-           */
-          const channelIdsToDelete: [string, string][] = [];
-          const channelsToUpsert: Models.Community.Channel[] = [];
-          const areaIdsToDelete: [string, string][] = [];
-          const areasToUpsert: Models.Community.Area[] = [];
-          const roleIdsToDelete: [string, string][] = [];
-          const rolesToUpsert: Models.Community.Role[] = [];
-          const callIdsToDelete: string[] = [];
-          const callsToUpsert: Models.Calls.Call[] = [];
-      
-          const oldCommunityIds = (await uniqueDb.uniques.get("OwnCommunityIds") as Unique.OwnCommunityIds | undefined)?.ids;
-          const newCommunityIds: string[] = [];
-          if (!!oldCommunityIds) {
-            // data exists, do update
-            const [
-              oldCommunities,
-              allOldChannels,
-              allOldAreas,
-              allOldRoles,
-              allOldCalls,
-            ] = await Promise.all([
-              this.db.communities.where("id").anyOf(oldCommunityIds).toArray(),
-              this.db.channels.where("communityId").anyOf(oldCommunityIds).toArray(),
-              this.db.areas.where("communityId").anyOf(oldCommunityIds).toArray(),
-              this.db.roles.where("communityId").anyOf(oldCommunityIds).toArray(),
-              this.db.calls.where("communityId").anyOf(oldCommunityIds).toArray(),
-            ]);
-      
-            for (const oldCommunity of oldCommunities) {
-              const index = newCommunities.findIndex(c => c.id === oldCommunity.id);
-              let newCommunity: Models.Community.DetailViewFromApi | undefined;
-      
-              if (index > -1) {
-                newCommunity = newCommunities[index];
-                newCommunities.splice(index, 1);
-              }
-      
-              if (!newCommunity) {
-                // community was deleted
-                communityIdsToDelete.push(oldCommunity.id);
-                allOldChannels
-                  .filter(c => c.communityId === oldCommunity.id)
-                  .forEach(c => channelIdsToDelete.push([c.communityId, c.channelId]));
-                allOldAreas
-                  .filter(a => a.communityId === oldCommunity.id)
-                  .forEach(a => areaIdsToDelete.push([a.communityId, a.id]));
-                allOldRoles
-                  .filter(r => r.communityId === oldCommunity.id)
-                  .forEach(r => roleIdsToDelete.push([r.communityId, r.id]));
-                allOldCalls
-                  .filter(c => c.communityId === oldCommunity.id)
-                  .forEach(c => callIdsToDelete.push(c.id));
-      
-              } else {
-                // community exists
-                newCommunityIds.push(newCommunity.id);
-                const { roles, channels, areas, calls, ...updateData } = newCommunity;
-
-                // Check if plugins have changed
-                let pluginsChanged = !isEqual(updateData.plugins, oldCommunity.plugins);
-
-                if (
-                  oldCommunity.updatedAt !== newCommunity.updatedAt ||
-                  newCommunity.myRoleIds.length !== oldCommunity.myRoleIds.length ||
-                  newCommunity.myRoleIds.some(roleId => !oldCommunity.myRoleIds.includes(roleId)) ||
-                  newCommunity.blockState?.state !== oldCommunity.blockState?.state ||
-                  newCommunity.blockState?.until !== oldCommunity.blockState?.until ||
-                  newCommunity.tokens.length !== oldCommunity.tokens.length ||
-                  newCommunity.tokens.some(token => !oldCommunity.tokens.find(t => t.contractId === token.contractId || t.order === token.order)) ||
-                  newCommunity.premium?.activeUntil !== oldCommunity.premium?.activeUntil ||
-                  newCommunity.premium?.featureName !== oldCommunity.premium?.featureName ||
-                  newCommunity.premium?.autoRenew !== oldCommunity.premium?.autoRenew ||
-                  newCommunity.pointBalance !== oldCommunity.pointBalance ||
-                  newCommunity.official !== oldCommunity.official ||
-                  newCommunity.myApplicationStatus !== oldCommunity.myApplicationStatus ||
-                  newCommunity.membersPendingApproval !== oldCommunity.membersPendingApproval ||
-                  newCommunity.enablePersonalNewsletter !== oldCommunity.enablePersonalNewsletter ||
-                  newCommunity.myNewsletterEnabled !== oldCommunity.myNewsletterEnabled ||
-                  pluginsChanged
-                ) {
-                  // community changed
-                  console.log("Community changed and needs to be updated", updateData);
-                  communitiesToUpsert.push(updateData);
-                }
-      
-                // update channels
-                const oldChannels = allOldChannels.filter(channel => channel.communityId === oldCommunity.id);
-                for (const channel of channels) {
-                  let oldChannel: StoredChannel | undefined;
-                  const index = oldChannels.findIndex(c => c.channelId === channel.channelId);
-                  if (index > -1) {
-                    oldChannel = oldChannels[index];
-                    oldChannels.splice(index, 1);
-                  }
-                  if (
-                    !oldChannel ||
-                    oldChannel.updatedAt !== channel.updatedAt ||
-                    oldChannel.unread !== channel.unread ||
-                    oldChannel.lastRead !== channel.lastRead ||
-                    isoTime(channel.lastRead) > isoTime(oldChannel.serverLastRead) ||
-                    oldChannel.rolePermissions.length !== channel.rolePermissions.length ||
-                    oldChannel.lastMessageDate !== channel.lastMessageDate ||
-                    channel.rolePermissions.some((newPermisson, i) => {
-                      const existingPermission = oldChannel?.rolePermissions.find(rp => (
-                        rp.roleId === newPermisson.roleId &&
-                        rp.roleTitle === newPermisson.roleTitle &&
-                        rp.roleType === newPermisson.roleType
-                      ));
-                      return (
-                        !existingPermission ||
-                        existingPermission.permissions.length !== newPermisson.permissions.length ||
-                        existingPermission.permissions.some(p => !newPermisson.permissions.includes(p))
-                      );
-                    })
-                  ) {
-                    // channel is new or was changed and needs to be added
-                    console.log("Channel changed and needs to be updated", channel);
-                    channelsToUpsert.push(channel);
-                  } else {
-                    unchangedChannels.push(oldChannel);
-                    // console.log(`Community Channel with channelId ${channel.channelId} did not change`);
-                  }
-                }
-                for (const oldChannel of oldChannels) {
-                  // the "leftover" channels don't exist in db anymore
-                  // and need to be deleted
-                  console.log(`Removing Community Channel with channelId ${oldChannel.channelId}`);
-                  channelIdsToDelete.push([oldChannel.communityId, oldChannel.channelId]);
-                }
-      
-                const oldAreas = allOldAreas.filter(a => a.communityId === oldCommunity.id);
-                for (const area of areas) {
-                  let oldArea: Models.Community.Area | undefined;
-                  const index = oldAreas.findIndex(a => a.id === area.id);
-                  if (index > -1) {
-                    oldArea = oldAreas[index];
-                    oldAreas.splice(index, 1);
-                  }
-                  if (!oldArea || oldArea.updatedAt !== area.updatedAt) {
-                    // area is new or was changed and needs to be added
-                    console.log("Area changed and needs to be updated", area);
-                    areasToUpsert.push(area);
-                  } else {
-                    // console.log(`Community Area with id ${area.id} did not change`);
-                  }
-                }
-                for (const oldArea of oldAreas) {
-                  // the "leftover" areas don't exist in db anymore
-                  // and need to be deleted
-                  console.log(`Removing Community Area with id ${oldArea.id}`);
-                  areaIdsToDelete.push([oldArea.communityId, oldArea.id]);
-                }
-      
-                const oldRoles = allOldRoles.filter(r => r.communityId === oldCommunity.id);
-                for (const role of roles) {
-                  let oldRole: Models.Community.Role | undefined;
-                  const index = oldRoles.findIndex(r => r.id === role.id);
-                  if (index > -1) {
-                    oldRole = oldRoles[index];
-                    oldRoles.splice(index, 1);
-                  }
-                  if (!oldRole || oldRole.updatedAt !== role.updatedAt) {
-                    // role is new or was changed and needs to be added
-                    console.log("Role changed and needs to be updated", role);
-                    rolesToUpsert.push(role);
-                  } else {
-                    // console.log(`Community Role with id ${role.id} did not change`);
-                  }
-                }
-                for (const oldRole of oldRoles) {
-                  // the "leftover" roles don't exist in db anymore
-                  // and need to be deleted
-                  console.log(`Removing Community Role with id ${oldRole.id}`);
-                  roleIdsToDelete.push([oldRole.communityId, oldRole.id]);
-                }
-      
-                const oldCalls = allOldCalls.filter(c => c.communityId === oldCommunity.id);
-                for (const call of calls) {
-                  let oldCall: Models.Calls.Call | undefined;
-                  const index = oldCalls.findIndex(r => r.id === call.id);
-                  if (index > -1) {
-                    oldCall = oldCalls[index];
-                    oldCalls.splice(index, 1);
-                  }
-                  if (
-                    !oldCall ||
-                    oldCall.callServerUrl !== call.callServerUrl ||
-                    oldCall.slots !== call.slots ||
-                    oldCall.callMembers !== call.callMembers ||
-                    call.previewUserIds.some((id, i) => id !== oldCall?.previewUserIds?.[i])
-                  ) {
-                    // call is new or was changed and needs to be added
-                    console.log("Call changed and needs to be updated", call);
-                    callsToUpsert.push(call);
-                  } else {
-                    // console.log(`Community Call with id ${call.id} did not change`);
-                  }
-                }
-                for (const oldCall of oldCalls) {
-                  // the "leftover" calls don't exist in db anymore
-                  // and need to be deleted
-                  console.log(`Removing Community Call with id ${oldCall.id}`);
-                  callIdsToDelete.push(oldCall.id);
-                }
-              }
-            }
-          }
-      
-          // all items left in "communities" are new
-          for (const newCommunity of newCommunities) {
-            newCommunityIds.push(newCommunity.id);
-            console.log(`Creating new Community in DB with id ${newCommunity.id}`);
-            const { roles, channels, areas, calls, ...updateData } = newCommunity;
-            communitiesToUpsert.push(updateData);
-            channelsToUpsert.push(...channels);
-            areasToUpsert.push(...areas);
-            rolesToUpsert.push(...roles);
-            callsToUpsert.push(...calls);
-          }
-      
-          let deletedChannelKeys: [string, string][] = [];
-          if (!rejected) {
-            await this.db.transaction(
-              'rw',
-              ['communities', 'channels', 'areas', 'roles', 'calls'],
-              async (tx) => {
-                const abortTxTimeout = setTimeout(() => {
-                  tx.abort();
-                }, 5000);
-
-                await Dexie.Promise.all([
-                  tx.communities.bulkPut(communitiesToUpsert).then(() => {
-                    return tx.communities.bulkDelete(communityIdsToDelete);
-                  }),
-                  // re-read in this transaction: another tab may have written
-                  // newer data since the comparison above. Rows an event
-                  // wrote after this snapshot's request started are kept.
-                  tx.channels.bulkGet(channelsToUpsert.map(c => [c.communityId, c.channelId] as [string, string])).then(stored => {
-                    mergedChannels = channelsToUpsert.map((channel, i) => mergeChannelRow(stored[i], channel));
-                    return tx.channels.bulkPut(mergedChannels);
-                  }).then(() => {
-                    return bulkDeleteUnlessNewer(tx.channels, channelIdsToDelete, requestStartedAt);
-                  }).then(deleted => {
-                    deletedChannelKeys = deleted;
-                  }),
-                  bulkPutUnlessNewer(tx.areas, areasToUpsert, a => [a.communityId, a.id] as [string, string]).then(() => {
-                    return bulkDeleteUnlessNewer(tx.areas, areaIdsToDelete, requestStartedAt);
-                  }),
-                  bulkPutUnlessNewer(tx.roles, rolesToUpsert, r => [r.communityId, r.id] as [string, string]).then(() => {
-                    return bulkDeleteUnlessNewer(tx.roles, roleIdsToDelete, requestStartedAt);
-                  }),
-                  bulkPutUnlessNewer(tx.calls, callsToUpsert, c => c.id).then(() => {
-                    return bulkDeleteUnlessNewer(tx.calls, callIdsToDelete, requestStartedAt);
-                  }),
-                ]);
-
-                clearTimeout(abortTxTimeout);
-              }
-            );
-        
-            this.registerChannelLastRead([...unchangedChannels, ...mergedChannels]);
-            // delete the message databases of the channels really deleted
-            for (const [, channelId] of deletedChannelKeys) {
-              channelDatabaseManager.deleteChannelDatabase({ channelId });
-            }
-            console.log("Updating OwnCommunityIds", newCommunityIds);
-            await uniqueDb.transaction("rw", uniqueDb.uniques, async tx => {
-              const now = Date.now();
-              const existing = await tx.uniques.get("CommunityDetailViewUpdateTimestamps");
-              let object = (existing || { key: "CommunityDetailViewUpdateTimestamps", data: {} }) as Unique.CommunityDetailViewUpdateTimestamps;
-              for (const communityId of newCommunityIds) {
-                object.data[communityId] = now;
-              }
-              // bugfix
-              if ("communityId" in object.data) {
-                delete object.data.communityId;
-              }
-              await tx.uniques.put(object);
-              // update OwnCommunityIds, if changed
-              if (
-                !oldCommunityIds ||
-                newCommunityIds.length !== oldCommunityIds.length ||
-                newCommunityIds.some((id, i) => id !== oldCommunityIds[i])
-              ) {
-                await tx.uniques.put({
-                  key: "OwnCommunityIds",
-                  ids: newCommunityIds,
-                });
-              }
+          for (const call of newCommunity.calls) {
+            channelDatabaseManager.registerAccessForChannel({
+              callId: call.id,
+              channelId: call.channelId,
+              communityId: call.communityId,
             });
           }
         }
-        catch (e) {
-          clearTimeout(susTimeout);
-          rejected = true;
-          reject(e);
-        }
-        finally {
-          if (!rejected) {
-            clearTimeout(susTimeout);
-            resolve();
+        /** stored channels the snapshot did not change (seed the lastRead guard) */
+        const unchangedChannels: StoredChannel[] = [];
+        let mergedChannels: StoredChannel[] = [];
+        const communityIdsToDelete: string[] = [];
+        const communitiesToUpsert: Models.Community.DetailView[] = [];
+
+        /**
+         * An array of [ communityId, channelId ] arrays
+         */
+        const channelIdsToDelete: [string, string][] = [];
+        const channelsToUpsert: Models.Community.Channel[] = [];
+        const areaIdsToDelete: [string, string][] = [];
+        const areasToUpsert: Models.Community.Area[] = [];
+        const roleIdsToDelete: [string, string][] = [];
+        const rolesToUpsert: Models.Community.Role[] = [];
+        const callIdsToDelete: string[] = [];
+        const callsToUpsert: Models.Calls.Call[] = [];
+
+        const oldCommunityIds = (await uniqueDb.uniques.get("OwnCommunityIds") as Unique.OwnCommunityIds | undefined)?.ids;
+        const newCommunityIds: string[] = [];
+        if (!!oldCommunityIds) {
+          // data exists, do update
+          const [
+            oldCommunities,
+            allOldChannels,
+            allOldAreas,
+            allOldRoles,
+            allOldCalls,
+          ] = await Promise.all([
+            this.db.communities.where("id").anyOf(oldCommunityIds).toArray(),
+            this.db.channels.where("communityId").anyOf(oldCommunityIds).toArray(),
+            this.db.areas.where("communityId").anyOf(oldCommunityIds).toArray(),
+            this.db.roles.where("communityId").anyOf(oldCommunityIds).toArray(),
+            this.db.calls.where("communityId").anyOf(oldCommunityIds).toArray(),
+          ]);
+
+          for (const oldCommunity of oldCommunities) {
+            const index = newCommunities.findIndex(c => c.id === oldCommunity.id);
+            let newCommunity: Models.Community.DetailViewFromApi | undefined;
+
+            if (index > -1) {
+              newCommunity = newCommunities[index];
+              newCommunities.splice(index, 1);
+            }
+
+            if (!newCommunity) {
+              // community was deleted
+              communityIdsToDelete.push(oldCommunity.id);
+              allOldChannels
+                .filter(c => c.communityId === oldCommunity.id)
+                .forEach(c => channelIdsToDelete.push([c.communityId, c.channelId]));
+              allOldAreas
+                .filter(a => a.communityId === oldCommunity.id)
+                .forEach(a => areaIdsToDelete.push([a.communityId, a.id]));
+              allOldRoles
+                .filter(r => r.communityId === oldCommunity.id)
+                .forEach(r => roleIdsToDelete.push([r.communityId, r.id]));
+              allOldCalls
+                .filter(c => c.communityId === oldCommunity.id)
+                .forEach(c => callIdsToDelete.push(c.id));
+
+            } else {
+              // community exists
+              newCommunityIds.push(newCommunity.id);
+              const { roles, channels, areas, calls, ...updateData } = newCommunity;
+
+              // Check if plugins have changed
+              let pluginsChanged = !isEqual(updateData.plugins, oldCommunity.plugins);
+
+              if (
+                oldCommunity.updatedAt !== newCommunity.updatedAt ||
+                newCommunity.myRoleIds.length !== oldCommunity.myRoleIds.length ||
+                newCommunity.myRoleIds.some(roleId => !oldCommunity.myRoleIds.includes(roleId)) ||
+                newCommunity.blockState?.state !== oldCommunity.blockState?.state ||
+                newCommunity.blockState?.until !== oldCommunity.blockState?.until ||
+                newCommunity.tokens.length !== oldCommunity.tokens.length ||
+                newCommunity.tokens.some(token => !oldCommunity.tokens.find(t => t.contractId === token.contractId || t.order === token.order)) ||
+                newCommunity.premium?.activeUntil !== oldCommunity.premium?.activeUntil ||
+                newCommunity.premium?.featureName !== oldCommunity.premium?.featureName ||
+                newCommunity.premium?.autoRenew !== oldCommunity.premium?.autoRenew ||
+                newCommunity.pointBalance !== oldCommunity.pointBalance ||
+                newCommunity.official !== oldCommunity.official ||
+                newCommunity.myApplicationStatus !== oldCommunity.myApplicationStatus ||
+                newCommunity.membersPendingApproval !== oldCommunity.membersPendingApproval ||
+                newCommunity.enablePersonalNewsletter !== oldCommunity.enablePersonalNewsletter ||
+                newCommunity.myNewsletterEnabled !== oldCommunity.myNewsletterEnabled ||
+                pluginsChanged
+              ) {
+                // community changed
+                console.log("Community changed and needs to be updated", updateData);
+                communitiesToUpsert.push(updateData);
+              }
+
+              // update channels
+              const oldChannels = allOldChannels.filter(channel => channel.communityId === oldCommunity.id);
+              for (const channel of channels) {
+                let oldChannel: StoredChannel | undefined;
+                const index = oldChannels.findIndex(c => c.channelId === channel.channelId);
+                if (index > -1) {
+                  oldChannel = oldChannels[index];
+                  oldChannels.splice(index, 1);
+                }
+                if (
+                  !oldChannel ||
+                  oldChannel.updatedAt !== channel.updatedAt ||
+                  oldChannel.unread !== channel.unread ||
+                  oldChannel.lastRead !== channel.lastRead ||
+                  isoTime(channel.lastRead) > isoTime(oldChannel.serverLastRead) ||
+                  oldChannel.rolePermissions.length !== channel.rolePermissions.length ||
+                  oldChannel.lastMessageDate !== channel.lastMessageDate ||
+                  channel.rolePermissions.some((newPermisson, i) => {
+                    const existingPermission = oldChannel?.rolePermissions.find(rp => (
+                      rp.roleId === newPermisson.roleId &&
+                      rp.roleTitle === newPermisson.roleTitle &&
+                      rp.roleType === newPermisson.roleType
+                    ));
+                    return (
+                      !existingPermission ||
+                      existingPermission.permissions.length !== newPermisson.permissions.length ||
+                      existingPermission.permissions.some(p => !newPermisson.permissions.includes(p))
+                    );
+                  })
+                ) {
+                  // channel is new or was changed and needs to be added
+                  console.log("Channel changed and needs to be updated", channel);
+                  channelsToUpsert.push(channel);
+                } else {
+                  unchangedChannels.push(oldChannel);
+                  // console.log(`Community Channel with channelId ${channel.channelId} did not change`);
+                }
+              }
+              for (const oldChannel of oldChannels) {
+                // the "leftover" channels don't exist in db anymore
+                // and need to be deleted
+                console.log(`Removing Community Channel with channelId ${oldChannel.channelId}`);
+                channelIdsToDelete.push([oldChannel.communityId, oldChannel.channelId]);
+              }
+
+              const oldAreas = allOldAreas.filter(a => a.communityId === oldCommunity.id);
+              for (const area of areas) {
+                let oldArea: Models.Community.Area | undefined;
+                const index = oldAreas.findIndex(a => a.id === area.id);
+                if (index > -1) {
+                  oldArea = oldAreas[index];
+                  oldAreas.splice(index, 1);
+                }
+                if (!oldArea || oldArea.updatedAt !== area.updatedAt) {
+                  // area is new or was changed and needs to be added
+                  console.log("Area changed and needs to be updated", area);
+                  areasToUpsert.push(area);
+                } else {
+                  // console.log(`Community Area with id ${area.id} did not change`);
+                }
+              }
+              for (const oldArea of oldAreas) {
+                // the "leftover" areas don't exist in db anymore
+                // and need to be deleted
+                console.log(`Removing Community Area with id ${oldArea.id}`);
+                areaIdsToDelete.push([oldArea.communityId, oldArea.id]);
+              }
+
+              const oldRoles = allOldRoles.filter(r => r.communityId === oldCommunity.id);
+              for (const role of roles) {
+                let oldRole: Models.Community.Role | undefined;
+                const index = oldRoles.findIndex(r => r.id === role.id);
+                if (index > -1) {
+                  oldRole = oldRoles[index];
+                  oldRoles.splice(index, 1);
+                }
+                if (!oldRole || oldRole.updatedAt !== role.updatedAt) {
+                  // role is new or was changed and needs to be added
+                  console.log("Role changed and needs to be updated", role);
+                  rolesToUpsert.push(role);
+                } else {
+                  // console.log(`Community Role with id ${role.id} did not change`);
+                }
+              }
+              for (const oldRole of oldRoles) {
+                // the "leftover" roles don't exist in db anymore
+                // and need to be deleted
+                console.log(`Removing Community Role with id ${oldRole.id}`);
+                roleIdsToDelete.push([oldRole.communityId, oldRole.id]);
+              }
+
+              const oldCalls = allOldCalls.filter(c => c.communityId === oldCommunity.id);
+              for (const call of calls) {
+                let oldCall: Models.Calls.Call | undefined;
+                const index = oldCalls.findIndex(r => r.id === call.id);
+                if (index > -1) {
+                  oldCall = oldCalls[index];
+                  oldCalls.splice(index, 1);
+                }
+                if (
+                  !oldCall ||
+                  oldCall.callServerUrl !== call.callServerUrl ||
+                  oldCall.slots !== call.slots ||
+                  oldCall.callMembers !== call.callMembers ||
+                  call.previewUserIds.some((id, i) => id !== oldCall?.previewUserIds?.[i])
+                ) {
+                  // call is new or was changed and needs to be added
+                  console.log("Call changed and needs to be updated", call);
+                  callsToUpsert.push(call);
+                } else {
+                  // console.log(`Community Call with id ${call.id} did not change`);
+                }
+              }
+              for (const oldCall of oldCalls) {
+                // the "leftover" calls don't exist in db anymore
+                // and need to be deleted
+                console.log(`Removing Community Call with id ${oldCall.id}`);
+                callIdsToDelete.push(oldCall.id);
+              }
+            }
           }
-          delete this._setupPromise;
         }
+
+        // all items left in "communities" are new
+        for (const newCommunity of newCommunities) {
+          newCommunityIds.push(newCommunity.id);
+          console.log(`Creating new Community in DB with id ${newCommunity.id}`);
+          const { roles, channels, areas, calls, ...updateData } = newCommunity;
+          communitiesToUpsert.push(updateData);
+          channelsToUpsert.push(...channels);
+          areasToUpsert.push(...areas);
+          rolesToUpsert.push(...roles);
+          callsToUpsert.push(...calls);
+        }
+
+        let deletedChannelKeys: [string, string][] = [];
+        {
+          await this.db.transaction(
+            'rw',
+            ['communities', 'channels', 'areas', 'roles', 'calls'],
+            async (tx) => {
+
+              await Dexie.Promise.all([
+                tx.communities.bulkPut(communitiesToUpsert).then(() => {
+                  return tx.communities.bulkDelete(communityIdsToDelete);
+                }),
+                // re-read in this transaction: another tab may have written
+                // newer data since the comparison above. Rows an event
+                // wrote after this snapshot's request started are kept.
+                tx.channels.bulkGet(channelsToUpsert.map(c => [c.communityId, c.channelId] as [string, string])).then(stored => {
+                  mergedChannels = channelsToUpsert.map((channel, i) => mergeChannelRow(stored[i], channel));
+                  return tx.channels.bulkPut(mergedChannels);
+                }).then(() => {
+                  return bulkDeleteUnlessNewer(tx.channels, channelIdsToDelete, requestStartedAt);
+                }).then(deleted => {
+                  deletedChannelKeys = deleted;
+                }),
+                bulkPutUnlessNewer(tx.areas, areasToUpsert, a => [a.communityId, a.id] as [string, string]).then(() => {
+                  return bulkDeleteUnlessNewer(tx.areas, areaIdsToDelete, requestStartedAt);
+                }),
+                bulkPutUnlessNewer(tx.roles, rolesToUpsert, r => [r.communityId, r.id] as [string, string]).then(() => {
+                  return bulkDeleteUnlessNewer(tx.roles, roleIdsToDelete, requestStartedAt);
+                }),
+                bulkPutUnlessNewer(tx.calls, callsToUpsert, c => c.id).then(() => {
+                  return bulkDeleteUnlessNewer(tx.calls, callIdsToDelete, requestStartedAt);
+                }),
+              ]);
+
+            }
+          );
+
+          this.registerChannelLastRead([...unchangedChannels, ...mergedChannels]);
+          // delete the message databases of the channels really deleted
+          for (const [, channelId] of deletedChannelKeys) {
+            channelDatabaseManager.deleteChannelDatabase({ channelId });
+          }
+          console.log("Updating OwnCommunityIds", newCommunityIds);
+          await uniqueDb.transaction("rw", uniqueDb.uniques, async tx => {
+            const now = Date.now();
+            const existing = await tx.uniques.get("CommunityDetailViewUpdateTimestamps");
+            let object = (existing || { key: "CommunityDetailViewUpdateTimestamps", data: {} }) as Unique.CommunityDetailViewUpdateTimestamps;
+            for (const communityId of newCommunityIds) {
+              object.data[communityId] = now;
+            }
+            // bugfix
+            if ("communityId" in object.data) {
+              delete object.data.communityId;
+            }
+            await tx.uniques.put(object);
+            // update OwnCommunityIds, if changed
+            if (
+              !oldCommunityIds ||
+              newCommunityIds.length !== oldCommunityIds.length ||
+              newCommunityIds.some((id, i) => id !== oldCommunityIds[i])
+            ) {
+              await tx.uniques.put({
+                key: "OwnCommunityIds",
+                ids: newCommunityIds,
+              });
+            }
+          });
+        }
+      })().finally(() => {
+        this._setupPromise = undefined;
       });
     }
     return this._setupPromise;
-    
+
   }
 
   public async clear() {
@@ -1373,7 +1352,7 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
           tx.roles.where("communityId").equals(communityId).toArray(),
           tx.calls.where("communityId").equals(communityId).toArray(),
         ]);
-    
+
         const deletable = (row: unknown) => deletableBySnapshot(row, requestStartedAt);
         const channelIdsToDelete: string[] = [];
         for (const existingChannel of existingChannels) {
@@ -1403,12 +1382,12 @@ class CommunityDatabase extends AbstractDatabase<CommunityDatabaseTables, Retrie
             callIdsToDelete.push(existingCall.id);
           }
         }
-    
+
         // delete old channel databases
         for (const channelId of channelIdsToDelete) {
           channelDatabaseManager.deleteChannelDatabase({ channelId });
         }
-    
+
         // read state: a newer local lastRead (and its cleared count) is kept
         const existingChannelsById = new Map(existingChannels.map(c => [c.channelId, c]));
         const mergedChannels = channels.map(c => mergeChannelRow(

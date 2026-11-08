@@ -95,3 +95,12 @@
     border: 1px solid var(--border-secondary);
     background: var(--surface-background-3rd);
 }
+/* The account list owns scrolling; the sheet header still drags to close. */
+.audio-widget-mobile .user-setting-modal-content-top-container {
+    max-height: calc(var(--visualHeight) - 160px);
+    min-height: 0;
+
+    > .cg-scrollable {
+        min-height: 0;
+    }
+}

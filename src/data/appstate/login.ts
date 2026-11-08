@@ -3,6 +3,7 @@
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
 import userApi from "../api/user";
+import localData from "./localData";
 import { generateNewKeyPair, getDeviceKeyPair, saveDeviceKeyPair, deleteDeviceKeyPair, getAllDeviceKeyPairs } from "../util/device";
 import userDatabase from "data/databases/user";
 import communityDatabase from "data/databases/community";
@@ -106,7 +107,8 @@ class LoginManager {
   private _deviceLoginFailedAt = 0;
   private _currentUser: CurrentUser | null = JSON.parse(localStorage.getItem(CURRENT_USER_KEY) || 'null');
   private _windowReloadTriggered = false;
-  private _waitBeforeWindowReload?: Promise<any>;
+  private _reloadRequested = false;
+  private _transferInProgress?: Promise<API.User.redeemTransferLink.Response>;
 
   constructor() {
     // Every tab keeps its own login state. Other tabs' logins and logouts
@@ -201,23 +203,27 @@ class LoginManager {
   }
 
   public triggerSafeWindowReload() {
-    if (this._windowReloadTriggered === false) {
-      this._windowReloadTriggered = true;
-      if (!!this._waitBeforeWindowReload) {
-        this._waitBeforeWindowReload.finally(() => {
-          window.location.reload();
-        });
-        setTimeout(() => {
-          window.location.reload();
-        }, 1500);
-      } else {
-        window.location.reload();
+    if (this._reloadRequested) return;
+    this._reloadRequested = true;
+    // Wait for the whole login (including device keys), logout and all local
+    // writes. Re-check after awaiting: another operation may have started.
+    void (async () => {
+      while (true) {
+        await Promise.allSettled([
+          this._loginInProgress, this.__autoLoginPromise,
+          this.logoutPromise, this._transferInProgress,
+        ]);
+        await localData.whenIdle();
+        if (!this._loginRunning && !this.logoutPromise && !this._transferInProgress && !localData.busy) break;
       }
-    }
+      this._windowReloadTriggered = true;
+      window.location.reload();
+    })();
   }
 
   private __autoLoginPromise: Promise<void> | undefined;
   public async autoLogin(): Promise<void> {
+    localData.assertHealthy();
     if (!this.__autoLoginPromise) {
       // resolves `true` when this tab is to follow the stored user afterwards
       const run = (async (): Promise<boolean> => {
@@ -840,7 +846,7 @@ class LoginManager {
   /** a failed device login left this tab anonymous with its stored device: retry */
   private needsDeviceLoginRetry(): boolean {
     return (
-      this.state === "anonymous" && !!this._currentUser && !this._loginRunning && !this.logoutPromise &&
+      !localData.error && this.state === "anonymous" && !!this._currentUser && !this._loginRunning && !this.logoutPromise &&
       this.readStoredUser()?.deviceId === this._currentUser.deviceId
     );
   }
@@ -963,7 +969,17 @@ class LoginManager {
    * then counts as authenticated by the link, which is not a recent
    * authentication for sensitive actions.
    */
-  public async redeemTransferLink(token: string): Promise<API.User.redeemTransferLink.Response> {
+  public redeemTransferLink(token: string): Promise<API.User.redeemTransferLink.Response> {
+    if (!this._transferInProgress) {
+      this._transferInProgress = this.redeemTransfer(token).finally(() => {
+        this._transferInProgress = undefined;
+      });
+    }
+    return this._transferInProgress;
+  }
+
+  private async redeemTransfer(token: string): Promise<API.User.redeemTransferLink.Response> {
+    localData.assertHealthy();
     if (this.currentUser) {
       throw new Error(errors.server.ALREADY_LOGGED_IN);
     }
@@ -1033,6 +1049,7 @@ class LoginManager {
   private _login(options: InternalLoginOptions): Promise<API.User.login.Response>;
   private _login(options: InternalLoginOptions, mayTakeOver: true): Promise<API.User.login.Response | 'taken-over'>;
   private async _login(options: InternalLoginOptions, mayTakeOver = false): Promise<API.User.login.Response | 'taken-over'> {
+    localData.assertHealthy();
     if (!this._loginRunning || !this._loginInProgress) {
       this._loginRunning = true;
       this._loginInProgress = new Promise<API.User.login.Response | 'taken-over'>(async (resolve, reject) => {
@@ -1232,37 +1249,27 @@ class LoginManager {
     // a gateway (docs/auth-identity §12) keeps no local data: no entity
     // snapshots, chat stores, socket login or push subscription
     if (isGatewayInstance()) return;
-    const serviceWorkerManager = (await import("./serviceWorker")).default;
-    if (this._windowReloadTriggered === false) {
+    if (this._windowReloadTriggered) return;
+    await localData.run(async () => {
       channelDatabaseManager.userId = data.ownData.id;
       setupChatAfterLogin(data.unreadNotificationCount);
-      // an account in the security step gets no realtime connection and no
-      // push subscription until it finished the step (the page reloads then)
-      const restricted = data.securityStepRequired === true;
-      const promise = Promise.allSettled([
-        userDatabase.setupAfterLogin(data.ownData).catch(async (e) => {
-          await userDatabase.clear();
-          return userDatabase.setupAfterLogin(data.ownData);
-        }),
-        communityDatabase.setupAfterLogin(data.communities, { requestStartedAt }).catch(async (e) => {
-          await communityDatabase.clear();
-          return communityDatabase.setupAfterLogin(data.communities, { requestStartedAt });
-        }),
-        chatDatabase.setupAfterLogin(data.chats, { requestStartedAt }).catch(async (e) => {
-          await chatDatabase.clear();
-          return chatDatabase.setupAfterLogin(data.chats, { requestStartedAt });
-        }),
-        // not awaited: `loggedin` does not wait for the socket login (the
-        // transport reports `live` itself)
-        restricted ? Promise.resolve() : (webSocketManager.login(data.deviceId).catch(e => debugLog("socket login", e)), Promise.resolve()),
-        restricted ? Promise.resolve() : serviceWorkerManager.setupAfterLogin(data.webPushSubscription),
+      // Settle every writer before reporting a failure; never erase valid
+      // cached data just because a merge failed or the device was slow.
+      const results = await Promise.allSettled([
+        userDatabase.setupAfterLogin(data.ownData),
+        communityDatabase.setupAfterLogin(data.communities, { requestStartedAt }),
+        chatDatabase.setupAfterLogin(data.chats, { requestStartedAt }),
       ]);
-      this._waitBeforeWindowReload = promise;
-      try {
-        await promise;
-      } finally {
-        delete this._waitBeforeWindowReload;
-      }
+      const failed = results.find(result => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
+    });
+    const restricted = data.securityStepRequired === true;
+    if (!restricted) {
+      webSocketManager.login(data.deviceId).catch(e => debugLog("socket login", e));
+      // Optional push setup must not hold a successful local login open.
+      void import("./serviceWorker").then(({ default: manager }) =>
+        manager.setupAfterLogin(data.webPushSubscription)
+      ).catch(e => debugLog("push setup", e));
     }
   }
 
@@ -1274,19 +1281,16 @@ class LoginManager {
         // an old page of the app stored on this origin as it is
         return;
       }
-      const promise = Promise.allSettled([
-        userDatabase.clear(),
-        communityDatabase.clear(),
-        chatDatabase.clear(),
-        channelDatabaseManager.clear(),
-      ]);
-      this._waitBeforeWindowReload = promise;
-      try {
-        await promise;
-        console.log("Clear for logout results", promise);
-      } finally {
-        delete this._waitBeforeWindowReload;
-      }
+      await localData.run(async () => {
+        const results = await Promise.allSettled([
+          userDatabase.clear(),
+          communityDatabase.clear(),
+          chatDatabase.clear(),
+          channelDatabaseManager.clear(),
+        ]);
+        const failed = results.find(result => result.status === 'rejected');
+        if (failed?.status === 'rejected') throw failed.reason;
+      });
     }
   }
 }

@@ -347,8 +347,12 @@ const UserSettingsModalContent: React.FC<Props> = (props) => {
       style.width = props.closedWidth;
       style.height = props.collapsed ? FOOTERHEIGHTCOLLAPSED : FOOTERHEIGHT;
     } else {
-      style.height = currentHeight;
-      if (!isMobile) style.width = DESKTOP_EXPANDED_WIDTH;
+      // The mobile sheet sizes itself from its bounded list. Feeding the
+      // ResizeObserver height back into its flex parent can collapse it.
+      if (!isMobile) {
+        style.height = currentHeight;
+        style.width = DESKTOP_EXPANDED_WIDTH;
+      }
     }
     
     return style;

@@ -146,6 +146,8 @@ else
 # KEEP THIS FILE SECRET — it contains all credentials of your instance.
 
 CG_DOMAIN=${CG_DOMAIN}
+# Set on after www.CG_DOMAIN points here: HTTPS redirect to the main domain.
+CG_WWW_REDIRECT=off
 # Passkeys (docs/auth-identity §7) are bound to PASSKEY_RP_ID: empty = the
 # host of CG_DOMAIN (the usual choice); otherwise that host or a parent domain
 # of it. Never change it once passkeys exist. CG_LEGACY_CGID=true is only for

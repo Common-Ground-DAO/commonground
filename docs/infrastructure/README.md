@@ -1,4 +1,5 @@
-> Status: verified against commit 8613352a4, 2026-08-04; image-moderation
+> Status: optional www redirect verified against commit 7224927 plus this change,
+> 2026-11-08; other sections verified against commit 8613352a4, 2026-08-04; image-moderation
 > additions against the fix/image-filter-review-53 branch, 2026-08-15; local
 > TLS mode, call ports, root builds and startup ordering against commit
 > a5633d5be (+ fix/selfhost-local-test), 2026-10-27; npx/lockfile-refresh
@@ -1195,12 +1196,13 @@ This profile runs the **entire stack on one server** with real production semant
 The routing, headers and instance config are described in
 [section 3](#3-caddy-the-edge); specific to the self-host config:
 
-- Env-driven: `CG_DOMAIN`, `CG_ACME_EMAIL`, `CG_TLS_MODE`,
+- Env-driven: `CG_DOMAIN`, `CG_ACME_EMAIL`, `CG_TLS_MODE`, `CG_WWW_REDIRECT`,
   `CG_CALLS_EDGE`, `CG_CGID_VHOST`, `CG_ID_DOMAIN`, `CG_GATEWAY_EDGE`,
   `CG_GATEWAY_DOMAIN`, `CG_GATEWAY_ID_DOMAIN`, plus the instance-config
   variables (`CG_*`, and `GATEWAY_CG_*` for the gateway's sites). Nothing is templated into the config or the image at build time,
   so the image does not depend on the domain.
 - The global options block does `import tls_mode_{$CG_TLS_MODE:acme}`: snippet `tls_mode_acme` sets `email {$CG_ACME_EMAIL}` (Let's Encrypt), `tls_mode_internal` sets `local_certs` + `skip_install_trust` (every site from Caddy's local CA; root in the `caddy-data` volume under `/data/caddy/pki/authorities/local/`). Any other value fails at startup. Compose passes `CG_TLS_MODE=${CG_TLS_MODE:-acme}`, so an `.env.selfhost` without the key stays on ACME.
+- With `CG_WWW_REDIRECT=on`, `www.{$CG_DOMAIN}` gets a TLS site that permanently redirects to `https://{$CG_DOMAIN}{uri}`, preserving paths and queries. The default is `off`; the www DNS record must point at this server before enabling it.
 - The main site imports `cg_app` with `X-Forwarded-Proto: https`, `frame-src https:`, `connect-src` for `https://` and `wss://` on the own domain, and adds HSTS (`max-age=31536000`, HTTPS responses only).
 - `{$CG_DOMAIN}:4443` → `reverse_proxy https://mediasoup:4443` with `tls_insecure_skip_verify` (the internal hop trusts mediasoup's self-signed cert) — only with `CG_CALLS_EDGE=on`, which `docker-compose.selfhost.calls.yml` sets together with publishing the port.
 - The legacy CG ID site (`{$CG_ID_DOMAIN}`) exists only with `CG_CGID_VHOST=on` (see [Legacy CG ID mini-app](#legacy-cg-id-mini-app)); `CG_ID_DOMAIN` is otherwise unused, and an `.env.selfhost` from before 2026-10-31 that still carries it no longer gets a second site or certificate.

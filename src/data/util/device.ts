@@ -2,6 +2,8 @@
 //
 // Additional terms: see LICENSE-ADDITIONAL-TERMS.md
 
+import localData from "data/appstate/localData";
+
 const DEVICE_IDB_IDENT = "CG_DEVICE_KEY_IDENT";
 
 type IDBKeyPairObject = {
@@ -21,129 +23,64 @@ export async function generateNewKeyPair(): Promise<CryptoKeyPair> {
   );
 }
 
-async function getKeyPairDatabase(): Promise<IDBDatabase> {
-  return new Promise<IDBDatabase>((resolve, reject) => {
-    const openRequest = indexedDB.open(DEVICE_IDB_IDENT, 1);
-    openRequest.onerror = (ev) => {
-      console.error("Error opening key database", ev);
-      reject(openRequest.error);
-    };
-    openRequest.onsuccess = (ev) => {
-      const db = openRequest.result;
-      resolve(db);
-    };
-    openRequest.onupgradeneeded = (ev) => {
-      openRequest.result.createObjectStore(DEVICE_IDB_IDENT, { keyPath: "deviceId" });
-    };
+/** Resolve only on transaction commit, never on a single request's success.
+ * Close on every exit, including failed requests and another tab's upgrade.
+ */
+async function withDeviceStore<T>(mode: IDBTransactionMode, operation: (store: IDBObjectStore, result: (value: T) => void) => void): Promise<T> {
+  return localData.run(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(DEVICE_IDB_IDENT, 1);
+      request.onerror = () => reject(request.error);
+      request.onupgradeneeded = () => request.result.createObjectStore(DEVICE_IDB_IDENT, { keyPath: 'deviceId' });
+      request.onsuccess = () => {
+        request.result.onversionchange = () => request.result.close();
+        resolve(request.result);
+      };
+    });
+    try {
+      return await new Promise<T>((resolve, reject) => {
+        const tx = db.transaction(DEVICE_IDB_IDENT, mode);
+        let value: T;
+        tx.oncomplete = () => resolve(value);
+        tx.onabort = () => reject(tx.error ?? new Error('Device key transaction aborted'));
+        try {
+          operation(tx.objectStore(DEVICE_IDB_IDENT), result => { value = result; });
+        } catch (error) {
+          tx.abort();
+          reject(error);
+        }
+      });
+    } finally {
+      db.close();
+    }
   });
 }
 
 export async function getDeviceKeyPair(deviceId: string): Promise<IDBKeyPairObject> {
-  const db = await getKeyPairDatabase();
-
-  const keyPair = await new Promise<IDBKeyPairObject>((resolve, reject) => {
-    const getTransaction = db.transaction(DEVICE_IDB_IDENT, "readonly");
-    const objectStore = getTransaction.objectStore(DEVICE_IDB_IDENT);
-    const getRequest = objectStore.get(deviceId);
-    getRequest.onerror = (ev) => {
-      console.error("Error getting key object", ev);
-      reject(getRequest.error);
-    };
-    getRequest.onsuccess = async (ev) => {
-      let obj: IDBKeyPairObject = getRequest.result;
-      if (obj) {
-        console.log("Found existing device key pair in IDB");
-        resolve(obj);
-      } else {
-        reject(new Error("KeyPair not found"))
-      }
-    };
+  const keyPair = await withDeviceStore<IDBKeyPairObject | undefined>('readonly', (store, result) => {
+    const request = store.get(deviceId);
+    request.onsuccess = () => result(request.result);
   });
-
-  db.close();
+  if (!keyPair) throw new Error('KeyPair not found');
   return keyPair;
 }
 
 export async function getAllDeviceKeyPairs(): Promise<IDBKeyPairObject[]> {
-  const db = await getKeyPairDatabase();
-
-  const keyPairs = await new Promise<IDBKeyPairObject[]>((resolve, reject) => {
-    const getTransaction = db.transaction(DEVICE_IDB_IDENT, "readonly");
-    const objectStore = getTransaction.objectStore(DEVICE_IDB_IDENT);
-    const getRequest = objectStore.getAll();
-    getRequest.onerror = (ev) => {
-      console.error("Error getting key object", ev);
-      reject(getRequest.error);
-    };
-    getRequest.onsuccess = async (ev) => {
-      let objs: IDBKeyPairObject[] = getRequest.result;
-      if (objs) {
-        console.log(`Found ${objs.length} existing device key pairs in IDB`);
-        resolve(objs);
-      } else {
-        reject(new Error("No KeyPairs found"))
-      }
-    };
+  return withDeviceStore('readonly', (store, result) => {
+    const request = store.getAll();
+    request.onsuccess = () => result(request.result);
   });
-
-  db.close();
-  return keyPairs;
 }
 
 export async function saveDeviceKeyPair(userId: string, deviceId: string, keyPair: CryptoKeyPair): Promise<void> {
-  const db = await getKeyPairDatabase();
-
-  await new Promise<void>((resolve, reject) => {
-    const obj: IDBKeyPairObject = {
-      userId,
-      deviceId,
-      keyPair
-    };
-    const putTransaction = db.transaction(DEVICE_IDB_IDENT, "readwrite");
-    const objectStore = putTransaction.objectStore(DEVICE_IDB_IDENT);
-    const clearRequest = objectStore.clear();
-    clearRequest.onerror = (ev) => {
-      console.error("Error clearing object store", ev);
-      reject(clearRequest.error);
-    };
-    clearRequest.onsuccess = (ev) => {
-      const putRequest = objectStore.put(obj);
-      putRequest.onerror = (ev) => {
-        // ToDo: is indexeddb available e.g. in Firefox Private Windows?
-        // CLient would just fail connecting otherwise.
-        console.error("Error putting key object", ev);
-        reject(putRequest.error);
-      };
-      putRequest.onsuccess = (ev) => {
-        console.log("New device key pair saved to IDB")
-        resolve();
-      };
-    };
+  await withDeviceStore<void>('readwrite', store => {
+    store.clear();
+    store.put({ userId, deviceId, keyPair });
   });
-
-  db.close();
 }
 
 export async function deleteDeviceKeyPair(deviceId: string): Promise<void> {
-  const db = await getKeyPairDatabase();
-
-  await new Promise<void>((resolve, reject) => {
-    const deleteTransaction = db.transaction(DEVICE_IDB_IDENT, "readwrite");
-    const objectStore = deleteTransaction.objectStore(DEVICE_IDB_IDENT);
-    const putRequest = objectStore.delete(deviceId)
-    putRequest.onerror = (ev) => {
-      // ToDo: is indexeddb available e.g. in Firefox Private Windows?
-      // CLient would just fail connecting otherwise.
-      console.error("Error deleting object", ev);
-      reject(putRequest.error);
-    };
-    putRequest.onsuccess = (ev) => {
-      console.log("Device key pair deleted from IDB")
-      resolve();
-    };
-  });
-
-  db.close();
+  await withDeviceStore<void>('readwrite', store => { store.delete(deviceId); });
 }
 
 export async function signApiSecret(deviceId: string, secret: string) {

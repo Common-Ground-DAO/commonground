@@ -1,6 +1,8 @@
 # Common Ground Frontend Documentation
 
-> Status: verified against commit 4a9754f8f, 2026-08-04; ConnectionManager,
+> Status: verified against commit 7224927 plus the local-data recovery and mobile
+> account-scrolling working-tree changes, 2026-11-08; other sections verified
+> against commit 4a9754f8f, 2026-08-04; ConnectionManager,
 > WebSocketManager, LoginManager cross-tab behaviour, `ConnectionStatusIndicator`, the
 > `x-cg-socket-id` header and §8 items 1–2 (independent tabs) against commit 964f6b3,
 > 2026-11-02; `data/index.ts`, the database table, "Chat runtime and
@@ -707,9 +709,12 @@ Manages authentication:
 - Supports multiple login methods: device keypair, password, wallet (SIWE), Twitter, LUKSO, Farcaster, passkey (`{ account: 'passkey', authenticationResponse }` → `User/login {type:'passkey'}`; `{ account: 'passkey-legacy' }` → `passkey-success` on a legacy CG ID instance), email verification code.
 - An interactive login and `createUser` mark the session as freshly authenticated for `stepUpManager`; a device-key re-login, `logout()` and a logout in another tab clear it.
 - `autoLogin()`: attempts login with the stored device keypair; the deprecated mnemonic re-login (`CRYPTOGRAM_USER_MNEMONIC`) only runs on a legacy CG ID instance — elsewhere the stored phrase is removed.
-- `setupAfterLogin()`: initializes all Dexie databases with login response data.
+- `setupAfterLogin()`: merges user, community and chat snapshots and checks every result before marking the login successful. A failed merge preserves existing cache data; it does not clear and retry a still-running operation. Each database retains its actual in-flight promise until settlement.
+- `localData` tracks local login/logout work and device-key transactions. After 30 seconds, or a storage failure, `LocalDataRecovery` covers the app with a Reload action. The current attempt rejects; further attempts in this page do not start competing writers. Reload preserves website data and starts a fresh page. A late completion does not dismiss recovery or mark the failed login successful.
+- Update-triggered reloads wait for the whole login/transfer/logout and all tracked local work, including operations whose UI wait timed out. They do not force a reload on a short timer. A user can explicitly reload from the recovery screen if a storage operation never settles.
+- Device-key writes resolve on transaction completion, not on the individual put request. Connections close after success or failure and on `versionchange`. Optional push registration runs separately from successful local login setup.
 - `logout()`: clears all databases, removes device keypair, resets state, then broadcasts the logout.
-- Every tab has its own login state. HTTP logins (device, interactive, `createUser`, transfer link) run under the Web Lock `cg:login` (wait at most 15 s); a device login holds it for secret, signature and request (one signable secret per session). After 10 s (`LOGIN_LOCK_HOLD_MAX_MS`) the lock is released for the other tabs, but the holder keeps waiting for its own request; it only starts no further step (signature, request) without the lock — it queues again once. A device login answered `INVALID_SECRET` (a late secret request of another tab replaced the secret) is repeated once under the lock with a fresh secret. Inside the lock a tab compares the stored current user with the device it is about to log in and follows the stored user if they differ. A page device login that fails with anything but `NOT_FOUND` is retried with a backoff (5/15/60 s, ±50 %) and on the next visibility/online check (never sooner than 5 s after the failure); `User/logout` also runs under the lock. A tab that had to wait for the lock and then finds the session logged in as the stored user takes it over instead of a second login. Logins and logouts are broadcast on `BroadcastChannel('cg:auth')` (`authBroadcast.ts`), with the `storage` event on `CG_CURRENT_USER` (and a re-check when the tab becomes visible) as fallback: another tab's logout drops this tab's login without a second `User/logout`; another tab's login is taken over after `User/checkLoginStatus` (no HTTP login); another user's login counts as a logout first. A logout also posts `'anonymous'` on the legacy `CG_LOGIN_STATE` channel for one release (older pages still open); nothing listens there.
+- Every tab has its own login state. HTTP logins (device, interactive, `createUser`, transfer link) run under the Web Lock `cg:login` (wait at most 15 s); a device login holds it for secret, signature and request (one signable secret per session). After 10 s (`LOGIN_LOCK_HOLD_MAX_MS`) the lock is released for the other tabs, but the holder keeps waiting for its own request; it only starts no further step (signature, request) without the lock — it queues again once. A device login answered `INVALID_SECRET` (a late secret request of another tab replaced the secret) is repeated once under the lock with a fresh secret. Inside the lock a tab compares the stored current user with the device it is about to log in and follows the stored user if they differ. A page device login that fails with anything but `NOT_FOUND` or a local-data recovery error is retried with a backoff (5/15/60 s, ±50 %) and on the next visibility/online check (never sooner than 5 s after the failure); `User/logout` also runs under the lock. A tab that had to wait for the lock and then finds the session logged in as the stored user takes it over instead of a second login. Logins and logouts are broadcast on `BroadcastChannel('cg:auth')` (`authBroadcast.ts`), with the `storage` event on `CG_CURRENT_USER` (and a re-check when the tab becomes visible) as fallback: another tab's logout drops this tab's login without a second `User/logout`; another tab's login is taken over after `User/checkLoginStatus` (no HTTP login); another user's login counts as a logout first. A logout also posts `'anonymous'` on the legacy `CG_LOGIN_STATE` channel for one release (older pages still open); nothing listens there.
 - `loginRequiredErrorHandler()` (any tab): under the login lock re-checks the session with `User/checkLoginStatus`; only if it is not this tab's user any more it runs `autoLogin()`.
 
 #### ServiceWorkerManager (`serviceWorker.ts`)
@@ -1044,6 +1049,12 @@ Two `react-modal-sheet` props in `BottomSliderModal` are deliberate:
 against `WindowSizeProvider`'s `--visualHeight` mechanism) and
 `dragVelocityThreshold={500}` (v5 raised the flick-to-dismiss threshold to
 1200 px/s; 500 keeps the earlier swipe-to-close feel).
+
+The mobile user-settings sheet opts into `contentOwnsScroll`: its own bounded
+`Scrollable` handles the account list, while `Sheet.Content` disables its extra
+scrolling and dragging. The sheet header still drags to close. Mobile content
+uses its natural height up to the viewport limit; it does not feed the measured
+list height back into its flex parent.
 
 `AnimatedContainerVertical` and `AnimatedTabPage` are **not** motion-based despite
 their names — they animate with a plain CSS transition and CSS keyframes respectively.

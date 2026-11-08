@@ -52,6 +52,7 @@
 - [x] SSH-Zugang zu cg.box mit eigenem Schlüssel eingerichtet und Server-Fingerprint
   gegen Jans Angabe geprüft. `main` auf cg.box geklont und vollständig gebaut;
   Typechecks, Lint, Frontend-/Backend-/DB-Build und HTML-Rewrite-Prüfung erfolgreich.
+  Nachtrag `db1823b` (drei Footer-Links) ebenfalls vollständig erfolgreich gebaut.
 
 ## 2. Medienkopie — Vorabkopie abgeschlossen, S3-Import folgt
 
@@ -294,7 +295,7 @@ setzen, bevor produktive Daten mit aktivem Mailversand laufen.**
 
 | Punkt | Ergebnis |
 |---|---|
-| Auslieferungscommit | `main`-Merge `f5981cb` gepusht und auf cg.box gebaut; enthält `53aba9b` und `70520b5`. Spätere reine Protokolländerungen benötigen keinen Neubuild |
+| Auslieferungscommit | `db1823b` aus `main` auf cg.box gebaut (inkl. drei Footer-Links auf cg.box); spätere reine Protokolländerungen benötigen keinen Neubuild |
 | Newsletter-Schalter / Produktionswert | `CG_ENABLE_NEWSLETTERS=false` auf cg.box in API, Gateway und Jobs wirksam geprüft; SMTP bis zur SendGrid-Einrichtung aus |
 | Probedump-Pfad auf cg.test / SHA-256 | `/home/kaesual/import-test-2026-11-08/production-full.dump`; `a1f17f13fbea9c147df6f9857913f405d0d624098c98425bb58296c6e4152b6f`; vollständiger Dump erfolgreich importiert |
 | Restore-Dauer / Migrationsdauer | 34 s gesamt (pg_restore 11 s) / ca. 3 s für 23 Migrationen |
